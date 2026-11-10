@@ -22,15 +22,15 @@ failed build and on failed tests.
 ## The fixture stack
 
 ```sh
-node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-prerequisites | --prove-inside keys|cache|resolver|args|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
+node apps/mobile-ios/scripts/fixture-stack.mjs [--approve] [--dry-run | --self-check | --once | --prove-tmpdir-guard | --prove-env-guard stray|no-env-file|live-stub|relay-issuer | --prove-home-guard | --prove-prerequisites | --prove-inside keys|cache|resolver|args|home|probe | --prove-recorder-read missing|unreadable | --prove-title-guard recorder|folder]
 node apps/mobile-ios/scripts/fixture-check.mjs --udid <simulator udid> [--only <xcodebuild -only-testing value>]
 ```
 
 `fixture-stack.mjs` brings the stack up and keeps it running until Ctrl-C. `--approve`
 approves every phone that asks to pair. `--self-check` proves the stack end to end and
 exits. `--once` brings it up, prints it and tears it down; both keep the stack up at least
-12 s under the recorder watch. `--dry-run` runs the two pre-boot checks below on the very
-command and environment a boot would use, prints that command and exits without starting
+12 s under the recorder watch. `--dry-run` runs the four pre-boot checks below on the very
+commands and environments a boot would use, prints those commands and exits without starting
 anything. A boot whose checks fail, or whose watch catches a call, exits 2.
 
 `fixture-check.mjs` brings the stack up with approval on, boots the simulator if it is
@@ -62,8 +62,9 @@ folder alone.
 
 ```
 stack.json      issuer, relay, server, serverId, machineId, workspaceId, sessionId, nonce, scratch, tokenFile,
-                announced (the three discovery fields), inside (what the fourth check read), probe (what the
-                daemon ran and answered), recorderLog, recorderBaseline (the probe's one line)
+                announced (the three discovery fields), inside (what check 5 read, the daemon's home facts
+                included), probe (what the daemon ran and answered), recorderLog, recorderBaseline (the
+                probe's one line)
 owner-token     the server's bearer token, mode 0600 (the only place the scripts write it)
 server/         the daemon's data, its keychain file included (no login keychain is touched)
 relay/          the relay's data
@@ -72,10 +73,40 @@ stubs/          zsh (the daemon's login shell, stood in for), bin/claude and bin
                 recorder.log (one line per recorded call, never a prompt; the probe's line first),
                 claude-config/ and codex-home/ (the empty folders a real CLI run with that environment
                 would write into)
+home/           the owned home: the HOME of the daemon, the relay and the stub shell (below), empty at boot
+report.json     written at every stop: stoppedAt, home, homeEntries (the names of what is under home/,
+                never the content)
 logs/           server.log, relay.log, xcodebuild.log
 results/        one .xcresult per check
 check.json      startedAt, finishedAt, udid, only, exitCode, resultBundle
 ```
+
+## The owned home
+
+`home/` is the HOME of every child: the daemon's environment, the relay's environment and the
+fixed environment the stub shell prints all carry `HOME=<tmpdir>/home`, an empty folder the stack
+makes beside its other folders, inside the folder its marker protects, before either child is
+built. The stack's own HOME, the person's, is never handed on: it is not in the allowlist. The
+empty `CLAUDE_CONFIG_DIR` and `CODEX_HOME` folders the daemon also gets are not enough on their
+own: several of the server's readers resolve their paths from the home instead, and Node's and
+Bun's `os.homedir()` answer `$HOME` when it is set:
+
+- `packages/analytics/src/collector.ts:61`, the analytics collector's transcripts, `~/.claude/projects`;
+- `packages/host/src/session-history/service.ts:92` and
+  `packages/host/src/sessions/adapters/claude-adapter.ts:171`, the transcripts,
+  `CLAVE_TRANSCRIPTS_ROOT` when it is set, else `~/.claude/projects`;
+- `packages/host/src/triage/sources.ts:163`, the triage sources, `~/.codex/auth.json`;
+- `packages/host/src/extensions-reader.ts:34` and `:409`, the extensions, `~/.claude` and
+  `~/.claude.json`.
+
+The analytics collector runs in the plugin runner, which the plugin host forks with an environment
+built from the daemon's own `PATH`, `HOME`, `TMPDIR`, `TEMP`, `SystemRoot` and
+`ELECTRON_RUN_AS_NODE` (`packages/host/src/plugins/plugin-host.ts:113-117`), so the daemon's HOME
+is the runner's too. `CLAVE_TRANSCRIPTS_ROOT` is not allowlisted, and check 3 requires it set
+nowhere, so the transcript readers fall back to the owned home as well. Check 3 proves the HOME of
+both children and of the stub before the boot, check 5 proves it from inside the daemon, and at
+every stop the names under `home/` are written to `report.json`: the record of what the server
+kept there.
 
 ## What the self-check proves
 
@@ -95,8 +126,8 @@ told not to. The stack starts the daemon with `--no-titles` (no tab is named, la
 PR #354), `--test-no-activate` (the test mode, which also stops the usage clock and opens
 the daemon's test route) and `--test-no-machine-usage` (no usage read of the machine login;
 the flag counts only beside the previous one, `packages/host/src/test-mode.ts`). The daemon's
-environment is built from an allowlist (`HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`,
-`LC_ALL`, `LC_CTYPE`, `TERM`) plus what the stack sets: `SHELL`, a script named `zsh` under
+environment is built from an allowlist (`USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`,
+`LC_CTYPE`, `TERM`) plus what the stack sets: `HOME`, the owned home (above); `SHELL`, a script named `zsh` under
 `stubs/` that prints a FIXED environment the stack wrote into it at boot, the very same
 variables, never the environment of any process (the daemon reads its login environment with
 `$SHELL -lic 'env -0'`), and runs a `-c` command with /bin/sh; `PATH`, led by `stubs/bin`,
@@ -107,12 +138,12 @@ first two arguments, never the stdin) to `stubs/recorder.log`, the `claude` one 
 keychain file. Bun is started with `--no-env-file` before every entry (the daemon's and the
 relay's), since it loads `.env`, `.env.<NODE_ENV>` and `.env.local` from its working directory
 otherwise. Nothing else of the parent process or of the repository reaches the daemon or the
-relay: no agent login, no server address. The claim is exactly that: an allowlisted
-environment, written once into the daemon and once into its stub shell, and two empty
-credential folders; the fourth check reads the sorted keys of the daemon's `process.env` from
-inside and requires them equal to that set.
+relay: no agent login, no server address, not the person's home. The claim is exactly that: an
+allowlisted environment, written once into the daemon and once into its stub shell, two empty
+credential folders and an empty owned home; check 5 reads the sorted keys of the daemon's
+`process.env` from inside and requires them equal to that set.
 
-Six checks, printed first, every boot; one failing stops the boot with exit 2:
+Seven checks, printed first, every boot; one failing stops the boot with exit 2:
 
 0. before the relay and the daemon start (the provider is in-process), the relay's command
    starts Bun with `--no-env-file` before its entry and names the loopback issuer
@@ -123,10 +154,17 @@ Six checks, printed first, every boot; one failing stops the boot with exit 2:
    own variables, its `SHELL` the stub whose text prints exactly those variables and echoes no
    live environment, the first folder of its `PATH` the recorders', `CLAUDE_CONFIG_DIR` and
    `CODEX_HOME` the empty folders (no shell is run for it);
-3. after the daemon has announced itself and before anything is seeded, its discovery file
+3. at the same moment, the `HOME` of the daemon's environment, of the relay's environment and of
+   the fixed environment read back from the stub shell's text is the owned home: exactly
+   `<tmpdir>/home`, an empty real folder (a symlink refused, never followed) inside a run folder
+   holding the stack's marker, and not the person's own home (the stack's `os.homedir()` or its
+   user's login home); `CLAVE_TRANSCRIPTS_ROOT` is set in none of the three. Every value is
+   compared as written, so a wrong one is never read, listed or followed, and a failure names
+   the child and the key and prints the owned paths alone, never the value;
+4. after the daemon has announced itself and before anything is seeded, its discovery file
    (`clave-server.json`) says `titles: "off"`, `testMode: true` and `machineUsage: false`
    (`startStack`, step 3b);
-4. at the same moment, read inside the daemon through its test route (`POST /e2e/evaluate`,
+5. at the same moment, read inside the daemon through its test route (`POST /e2e/evaluate`,
    `packages/server/src/fixtures/route.ts`, there only under `--test-no-activate`). On a daemon
    carrying lane C's title hooks (`globalThis.__claveE2E.titles`, PR #354 from 33524ed6) the
    title module itself answers `launch()`, the one-shot's executable, arguments and PATH as a
@@ -136,11 +174,14 @@ Six checks, printed first, every boot; one failing stops the boot with exit 2:
    it. The facts say which road was taken. The cached environment (read from the daemon's own
    backend module either way) must resolve `claude` and `codex` to the recorders by canonical
    path and name the empty folders; the sorted keys of the daemon's `process.env` must equal
-   the allowlist plus the stack's own; the one-shot's executable must have the recorder's
-   canonical path, no wrapper token may precede its own arguments, and on the module road its
-   environment must carry no credential (`startStack`, step 3c, `assertInside`). Nothing runs
-   here;
-5. only then the daemon itself runs the probe (`startStack`, step 3d): inside the daemon the
+   the allowlist plus the stack's own; the daemon's `os.homedir()`, its `process.env.HOME` and
+   the cached login `HOME` must be the owned home, the root each reader listed under "The owned
+   home" computes, by that reader's own expression, must lie under it, and `CLAVE_TRANSCRIPTS_ROOT` must be unset
+   (the plugin runner inherits the daemon's HOME, `plugin-host.ts:113-117`, so this covers the
+   collector too); the one-shot's executable must have the recorder's canonical path, no wrapper
+   token may precede its own arguments, and on the module road its environment must carry no
+   credential (`startStack`, step 3c, `assertInside`). Nothing runs here;
+6. only then the daemon itself runs the probe (`startStack`, step 3d): inside the daemon the
    one-shot's executable is resolved again the same way, its canonical path checked once more
    against the recorder's and the probe's arguments against exactly `--version`, a wrapper or
    a foreign path refused without starting anything, and the recorder must answer its fixed
@@ -157,20 +198,31 @@ the step under way, and ends the run with exit 2, in every mode (the long run
 `fixture-check.mjs` uses, `--once`, `--self-check`); a signal during the boot stops the
 children already started and exits 2 when that last read saw a problem. Nothing under
 `~/.claude` or any other folder of this Mac is read: the evidence is the stack's own recorder
-log and its own two folders.
+log, its own two folders and, at the stop, the names under its own `home/`.
 
 Proofs that the checks go red, every flag kept so no boot ever runs with wrong flags, and only
-the stack's own files touched: `--prove-tmpdir-guard` starts nothing; `--prove-env-guard
+the stack's own files touched (their lines count the checks from 1: check 3 above is "check 4
+of 4"): `--prove-tmpdir-guard` starts nothing; `--prove-env-guard
 stray|no-env-file|live-stub|relay-issuer` starts nothing and hands the pre-boot checks one thing
 wrong (a stray variable, the daemon's command with `--env-file=.env` in place of `--no-env-file`,
 a stub shell echoing a live environment, a relay command naming the hub as its issuer),
-expecting exactly that check red and the others green, the key named and never its value; `--prove-prerequisites` hands the third check a discovery read saying
-`titles: "on"`; `--prove-inside keys` hands the fourth one stray key in the daemon's
+expecting exactly the check it breaks red and the others green, the key named and never its
+value (a live stub breaks two: it prints no fixed `HOME` either, so check 3 goes red beside
+check 2); `--prove-home-guard` starts nothing and hands check 3, in turn, (a) the daemon's `HOME`
+set to the stack's own `os.homedir()`, built in memory and never printed, (b) the daemon's `HOME`
+in a sibling folder outside the run folder, made and removed by the proof, (c) the relay's `HOME`
+set to the stack's own home and (d) a stub shell whose fixed text carries another `HOME` (the
+stack's block rewritten with it, so check 2 still reads the text the stack wrote and only check
+3's read-back can see it), each expected red alone with its exact reason, a case whose check
+lines hold the value failing with the lines withheld, then (e) the unmutated build, every check
+green; `--prove-prerequisites` hands check 4 a discovery read saying
+`titles: "on"`; `--prove-inside keys` hands check 5 one stray key in the daemon's
 environment, `--prove-inside cache` a cached login `PATH` without the recorders,
-`--prove-inside resolver` a one-shot that would start another executable and `--prove-inside
-args` arguments other than `--version`, each refused before the probe, and `--prove-inside
-probe` hands the daemon a wrong expected canonical path, which it refuses to run, nothing
-started; `--prove-recorder-read missing|unreadable` removes or replaces the owned recorder log
+`--prove-inside resolver` a one-shot that would start another executable, `--prove-inside
+args` arguments other than `--version` and `--prove-inside home` another folder (`scratch/`) as
+the owned home it expects, so the daemon's real `os.homedir()` must fail it, each refused before
+the probe, and `--prove-inside probe` hands the daemon a wrong expected canonical path, which it
+refuses to run, nothing started; `--prove-recorder-read missing|unreadable` removes or replaces the owned recorder log
 while the stack runs and expects the watch to latch a failure; `--prove-title-guard recorder`
 runs the `claude` recorder itself with `-p` while the stack runs (never a CLI), so a foreign
 line lands in the recorder log, and `--prove-title-guard folder` plants one file in the owned
