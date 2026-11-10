@@ -9,8 +9,21 @@ import path from 'node:path'
 // in node-pty — a native module built for Electron's ABI, not this runner's.
 // The env it answers is the test's: PATH names a folder holding the `claude`
 // of the case (one that writes, one that refuses, none at all).
-const mocks = vi.hoisted(() => ({ env: { ...process.env } as Record<string, string> }))
+const mocks = vi.hoisted(() => ({
+  env: { ...process.env } as Record<string, string>,
+  shell: '/bin/sh'
+}))
 vi.mock('../pty-manager', () => ({ getLoginShellEnv: () => mocks.env }))
+// The commit message and the push summary run on the helpers runner
+// (PRDCT-4326), which reads the login env from the PTY backend and, for a
+// command the PATH cannot place, starts the user's login shell. Both are the
+// test's: a login shell would put the machine's own `claude` back on the PATH
+// and the "none" case would call a real model.
+vi.mock('../sessions/adapters/pty-backend', () => ({
+  getLoginShellEnv: () => mocks.env,
+  getUserShell: () => mocks.shell,
+  accountTokenForSpawn: async () => undefined
+}))
 
 import { describeClaudeFailure, serverGitPort, type ServerGitPort } from './git-port'
 import type { GitEvent } from '@clave/server'
@@ -80,6 +93,12 @@ beforeAll(() => {
   stub(bins.writing, '/bin/cat >/dev/null; echo "feat: written by the server"')
   stub(bins.refusing, '/bin/cat >/dev/null; echo "Not logged in · Please run /login" >&2; exit 1')
   mkdirSync(bins.none, { recursive: true })
+  // A `sh` that drops the login flag: `-l -c <command>` runs as `-c <command>`.
+  const shellDir = path.join(root, 'bin-shell')
+  mkdirSync(shellDir, { recursive: true })
+  mocks.shell = path.join(shellDir, 'sh')
+  writeFileSync(mocks.shell, '#!/bin/sh\nshift\nshift\nexec /bin/sh -c "$1"\n')
+  chmodSync(mocks.shell, 0o755)
   port = serverGitPort({ debounceMs: 50, maxWaitMs: 200, log: () => {} })
   port.subscribe((event) => events.push(event))
 })
