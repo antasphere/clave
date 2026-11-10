@@ -1,5 +1,9 @@
 import { createContext } from 'react'
-import { raiseLevel, riskFloor, type RiskLevel } from '../../../src/shared/permission-risk'
+import {
+  riskFloor,
+  shownLevel as ruleShown,
+  type RiskLevel
+} from '../../../src/shared/permission-risk'
 import type { Permission, PermissionReading as Reading } from './reducer'
 
 /* What the permission card reads (PermissionReading.tsx, PRDCT-4331): the
@@ -27,8 +31,8 @@ export function shownLevel(
   request: Permission,
   reading: Reading | undefined,
   cwd: string | undefined
-): RiskLevel {
-  return raiseLevel(
+): RiskLevel | null {
+  return ruleShown(
     riskFloor({ toolName: request.toolName, input: request.input, cwd }),
     reading?.level
   )

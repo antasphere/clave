@@ -164,6 +164,30 @@ describe('the explainer trigger', () => {
     })
   })
 
+  it('never lets the model say "reads only" for a request the rules could not prove', async () => {
+    const f = fixture(async () => reading({ level: 'reads', sentence: 'Runs the tests.' }))
+    f.emit(bash('r1', 'npm test'))
+    await settle()
+    expect(f.published[0]).not.toHaveProperty('level')
+    expect(f.published[0]).toMatchObject({ sentence: 'Runs the tests.' })
+  })
+
+  it('lets the model give an unknown request an upper level', async () => {
+    const explain = vi.fn<Explain>(async () => reading({ level: 'outside' }))
+    const f = fixture(explain)
+    f.emit(bash('r1', 'npm test'))
+    await settle()
+    expect(explain.mock.calls[0][1].floor).toBe('unknown')
+    expect(f.published[0]).toMatchObject({ level: 'outside' })
+  })
+
+  it('says a failure on an unknown request with no level', async () => {
+    const f = fixture(async () => ({ ok: false, reason: 'limit', detail: 'x' }))
+    f.emit(bash('r1', 'make'))
+    await settle()
+    expect(f.published).toEqual([{ type: 'permission_explained', id: 'r1', failed: 'limit' }])
+  })
+
   it('says why no sentence came, with the floor', async () => {
     const f = fixture(async () => ({ ok: false, reason: 'timeout', detail: 'slow' }))
     f.emit(bash('r1', 'git push origin main'))

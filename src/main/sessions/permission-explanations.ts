@@ -14,7 +14,7 @@
 import type { SessionHostService } from '@clave/server'
 import type { SessionEvent, SessionStream } from '../../shared/session-model'
 import type { HelperOutcome } from '../helpers/registry'
-import { raiseLevel, riskFloor, toolDescription } from '../../shared/permission-risk'
+import { isExplainable, riskFloor, shownLevel, toolDescription } from '../../shared/permission-risk'
 import {
   parseExplainerReply,
   type ExplainerInput,
@@ -39,9 +39,14 @@ export interface ExplainingHostOptions {
   explain: (sessionId: string, input: ExplainerInput) => Promise<HelperOutcome<ExplainerReading>>
 }
 
-/** A request the explainer reads: a tool to allow, never a question. */
-export const isExplainable = (request: PermissionRequest): boolean =>
-  !!request.toolName && !request.questions?.length
+const withLevel = (
+  event: PermissionExplained,
+  level: PermissionExplained['level'] | null
+): PermissionExplained => (level ? { ...event, level } : event)
+
+/** A request the explainer reads: a tool to allow, never a question, an
+ *  elicitation or a question whose input did not parse (`permission-risk.ts`). */
+export { isExplainable }
 
 export function explainingSessionHost(options: ExplainingHostOptions): {
   host: SessionHostService
@@ -106,15 +111,21 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
         // A newer request took the id meanwhile, or the session went.
         if (asked.get(key) !== signature) return
         const event: PermissionExplained = outcome.ok
-          ? {
-              type: 'permission_explained',
-              id: request.id,
-              // The model may raise the floor, never lower it.
-              level: raiseLevel(floor, outcome.value.level),
-              sentence: outcome.value.sentence,
-              asked: outcome.value.asked
-            }
-          : { type: 'permission_explained', id: request.id, level: floor, failed: outcome.reason }
+          ? withLevel(
+              {
+                type: 'permission_explained',
+                id: request.id,
+                sentence: outcome.value.sentence,
+                asked: outcome.value.asked
+              },
+              // The model raises what the rules found, may give an unknown
+              // request an upper level, never says "reads only" by itself.
+              shownLevel(floor, outcome.value.level)
+            )
+          : withLevel(
+              { type: 'permission_explained', id: request.id, failed: outcome.reason },
+              shownLevel(floor)
+            )
         let readings = held.get(sessionId)
         if (!readings) held.set(sessionId, (readings = new Map()))
         readings.delete(request.id)

@@ -36,11 +36,11 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   return (
     <div
       className="chat-permission-reading"
-      data-level={level}
+      data-level={level ?? 'unknown'}
       data-state={reading?.sentence ? 'read' : loading ? 'reading' : 'none'}
     >
-      <span className="chat-permission-level" data-level={level}>
-        {RISK_LABELS[level]}
+      <span className="chat-permission-level" data-level={level ?? 'unknown'}>
+        {level ? RISK_LABELS[level] : 'Not verified'}
       </span>
       {reading?.sentence ? (
         <p className="chat-permission-sentence">
@@ -88,11 +88,11 @@ export function PermissionLevelTag({ request }: { request: Permission }): React.
   return (
     <span
       className="chat-permission-level"
-      data-level={level}
+      data-level={level ?? 'unknown'}
       data-size="small"
       title={reading?.sentence}
     >
-      {RISK_LABELS[level]}
+      {level ? RISK_LABELS[level] : 'Not verified'}
     </span>
   )
 }

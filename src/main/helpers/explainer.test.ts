@@ -43,6 +43,12 @@ describe('the explainer prompt', () => {
     expect(prompt).toContain('Never lower than "irreversible"')
   })
 
+  it('tells the model when the rules could not tell, with no floor to keep', () => {
+    const prompt = explainerPrompt({ ...INPUT, floor: 'unknown' })
+    expect(prompt).toContain('The rules could not tell')
+    expect(prompt).not.toContain('Never lower than')
+  })
+
   it('clips a long request and a long message', () => {
     const prompt = explainerPrompt({
       ...INPUT,

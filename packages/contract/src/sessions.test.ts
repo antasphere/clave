@@ -144,6 +144,7 @@ const events: unknown[] = [
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a' }, sent: true },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-b' }, typed: true },
   { type: 'permission_explained', id: 'p', level: 'reads' },
+  { type: 'permission_explained', id: 'p', sentence: 'Runs the tests.', asked: 'yes' },
   {
     type: 'permission_explained',
     id: 'p',

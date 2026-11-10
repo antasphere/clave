@@ -339,7 +339,9 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('permission_explained'),
     id: z.string(),
-    level: z.enum(['reads', 'project', 'outside', 'irreversible']),
+    /** Absent: no level to show (the rules could not tell, and the reading
+     *  did not give one of the upper levels): "Not verified". */
+    level: z.enum(['reads', 'project', 'outside', 'irreversible']).optional(),
     sentence: z.string().optional(),
     asked: z.enum(['yes', 'no', 'unclear']).optional(),
     failed: z.string().optional()

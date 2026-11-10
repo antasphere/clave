@@ -11,7 +11,7 @@
  * Pure, and free of Node and Electron.
  */
 import { asData, firstJsonObject } from './helper-prompt'
-import { isRiskLevel, RISK_LABELS, type RiskLevel } from './permission-risk'
+import { isRiskLevel, RISK_LABELS, type RiskLevel, type RuleLevel } from './permission-risk'
 
 /** The opening words of the explainer's prompt: the session history keeps
  *  the one-shot's transcript out of the list by them. */
@@ -34,8 +34,9 @@ export interface ExplainerInput {
   agentWords?: string
   /** The session's working folder: "the project". */
   cwd?: string
-  /** The level the rules gave: the model is told it, and can only raise it. */
-  floor: RiskLevel
+  /** What the rules gave: a level the model can only raise, or `unknown`,
+   *  when the model's reading is the only level there is. */
+  floor: RuleLevel
 }
 
 export interface ExplainerReading {
@@ -75,12 +76,20 @@ A coding agent working on that person's computer asks to use a tool. Everything 
 
 ${blocks.join('\n\n')}
 
-The rules already rated this request "${input.floor}" (${RISK_LABELS[input.floor]}).
+${
+  input.floor === 'unknown'
+    ? 'The rules could not tell what this request does: your reading is the only one.'
+    : `The rules already rated this request "${input.floor}" (${RISK_LABELS[input.floor]}).`
+}
 
 Reply with ONE line of JSON and nothing else:
 {"sentence": "...", "level": "...", "asked": "..."}
 - sentence: what saying yes does, for someone who does not program. One or two short sentences, at most 30 words. Plain words: no command names, no flags, no code, no file paths (say "four files of the project", "a file outside the project", "a website"). Say what it touches and whether it changes anything, for example "Reads four files of the project. Changes nothing." or "Deletes the project's build folder for good."
-- level: "reads" (reads only, changes nothing), "project" (changes files inside the project folder), "outside" (touches files outside the project, other programs, or the internet), or "irreversible" (deletes, overwrites history, sends or publishes something, runs code from the internet, uses administrator rights: hard to undo). Never lower than "${input.floor}".
+- level: "reads" (reads only, changes nothing), "project" (changes files inside the project folder), "outside" (touches files outside the project, other programs, or the internet), or "irreversible" (deletes, overwrites history, sends or publishes something, runs code from the internet, uses administrator rights: hard to undo). ${
+    input.floor === 'unknown'
+      ? 'When unsure, choose the higher level.'
+      : `Never lower than "${input.floor}".`
+  }
 - asked: "yes" when it is what the person asked for or a plain step toward it, "no" when it goes beyond or against what they asked, "unclear" when their message does not say.`
 }
 

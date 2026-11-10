@@ -366,7 +366,7 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('permission_explained'),
     id: Schema.String,
-    level: Schema.Literal('reads', 'project', 'outside', 'irreversible'),
+    level: Schema.optional(Schema.Literal('reads', 'project', 'outside', 'irreversible')),
     sentence: Schema.optional(Schema.String),
     asked: Schema.optional(Schema.Literal('yes', 'no', 'unclear')),
     failed: Schema.optional(Schema.String)
