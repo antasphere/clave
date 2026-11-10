@@ -9,7 +9,6 @@ import {
   type ReactNode
 } from 'react'
 import {
-  riskFloor,
   ruleReading,
   shownLevel as ruleShown,
   type RiskLevel
@@ -38,16 +37,24 @@ export const PermissionReadingProvider = PermissionReadingContext.Provider
  *  that runs no explainer (an older server) never answers. */
 export const READING_GIVE_UP_MS = 45_000
 
-/** The level a request shows: the rules' floor, raised by the reading. */
+/** The level a request shows: the rules' level, raised by the reading. For
+ *  a request the rules read only in part, the floor of its readable parts,
+ *  raised by the reading; no level until there is a sentence. */
 export function shownLevel(
   request: Permission,
   reading: Reading | undefined,
   cwd: string | undefined
 ): RiskLevel | null {
-  return ruleShown(
-    riskFloor({ toolName: request.toolName, input: request.input, cwd }),
-    reading?.level
-  )
+  const rules = ruleReading({ toolName: request.toolName, input: request.input, cwd })
+  const model = reading?.sentence ? (reading.level ?? null) : reading?.level
+  return ruleShown(rules.level, model, rules.atLeast)
+}
+
+/** Whether the rules read the request only in part: a part they could not
+ *  read, the others reaching a floor. */
+export function readInPart(request: Permission, cwd: string | undefined): boolean {
+  const rules = ruleReading({ toolName: request.toolName, input: request.input, cwd })
+  return rules.level === 'unknown' && !!rules.atLeast
 }
 
 /** Whether what the request reads may show a secret: the rules' note

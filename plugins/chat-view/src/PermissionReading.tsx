@@ -3,6 +3,7 @@ import {
   ArrowUturnLeftIcon,
   ExclamationTriangleIcon,
   GlobeAltIcon,
+  KeyIcon,
   PencilSquareIcon
 } from '@heroicons/react/24/outline'
 import { isExplainable, RISK_LABELS, type RiskLevel } from '../../../src/shared/permission-risk'
@@ -10,6 +11,7 @@ import type { Permission } from './reducer'
 import {
   maySecrets,
   PermissionReadingContext,
+  readInPart,
   READING_GIVE_UP_MS,
   shownLevel
 } from './permission-reading-context'
@@ -79,21 +81,38 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   // The rules could neither prove nor detect a level: the model's sentence is
   // all there is, and the card says so in words rather than in a faint pill
   // beside a confident sentence.
-  const unverified = level === null && !!reading?.sentence
+  // Read only in part (a part the rules could not read): until a model has
+  // read it, no level and one line that says so; then the model's level,
+  // never under what the readable parts reach, and the same words.
+  const partial = readInPart(request, value?.cwd)
+  const unverified = (level === null || partial) && !!reading?.sentence
+  const unchecked = partial
+    ? 'Not verified. Clave could not check all of this'
+    : 'Not verified. Clave could not check this'
   // The rules' note, beside the level or the "Not verified" line: what is
   // read may hold a secret. A hint, in the same neutral ink as the level.
-  const secrets = maySecrets(request, value?.cwd) && (level !== null || unverified)
+  const secrets = maySecrets(request, value?.cwd) && (level !== null || unverified || partial)
   return (
     <div
       className="chat-permission-reading"
       data-level={level ?? 'unverified'}
       data-state={reading?.sentence ? 'read' : waiting ? 'reading' : failed ? 'failed' : 'none'}
     >
-      {!(level === null && (waiting || unverified)) && <LevelPill level={level} />}
-      {secrets && <span className="chat-permission-secrets">May show secrets</span>}
+      {!(level === null && (waiting || unverified || partial)) && <LevelPill level={level} />}
+      {secrets && (
+        <span className="chat-permission-secrets">
+          <KeyIcon aria-hidden="true" />
+          May show secrets
+        </span>
+      )}
+      {partial && !reading?.sentence && (
+        <p className="chat-permission-sentence" data-verified="false">
+          {unchecked}.
+        </p>
+      )}
       {reading?.sentence ? (
         <p className="chat-permission-sentence" data-verified={unverified ? 'false' : undefined}>
-          {unverified && 'Not verified. Clave could not check this; a model reads it as: '}
+          {unverified && `${unchecked}; a model reads it as: `}
           {reading.sentence}
           {reading.asked && MATCH_WORDS[reading.asked] && (
             <span className="chat-permission-match" data-asked={reading.asked}>

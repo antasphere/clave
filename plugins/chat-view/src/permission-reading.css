@@ -68,10 +68,17 @@
 }
 /* The secrets note: a hint beside the level, in its neutral ink. */
 .chat-permission-secrets {
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing);
   color: var(--text-secondary);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+.chat-permission-secrets svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
 }
 /* No level earned: the model's reading, said to be one, in the quiet ink;
    never a tone that reads as "safe". */

@@ -136,6 +136,61 @@ describe('the reading on the card', () => {
     expect(plain).not.toContain('May show secrets')
   })
 
+  it('marks "May show secrets" with an icon in the neutral ink', () => {
+    const html = render(<PermissionReading request={request('grep -r KEY .')} />, {
+      explained: {},
+      cwd: '/repo'
+    })
+    expect(html).toMatch(
+      /<span class="chat-permission-secrets"><svg[^>]*>[\s\S]*<\/svg>May show secrets<\/span>/
+    )
+    const css = readFileSync(
+      join(__dirname, '../../../../plugins/chat-view/src/permission-reading.css'),
+      'utf8'
+    )
+    expect(css).toMatch(/\.chat-permission-secrets \{[^}]*color: var\(--text-secondary\)/)
+  })
+
+  it.each([
+    "echo 'rm -rf ~' > cleanup.sh && bash cleanup.sh",
+    'python3 wipe.py > log.txt',
+    'node reset-prod.js | tee out.log',
+    'mkdir tmp && ./deploy.sh',
+    'touch x && make nuke',
+    "printf 'rm -rf src\\n' > x.sh && sh x.sh"
+  ])(
+    'read only in part, %s: no level and one line with the helper off, the floor once read',
+    (command) => {
+      // Helper off: no reading ever comes; the card gave up waiting.
+      const off = render(<PermissionReading request={request(command)} />, null)
+      expect(off).not.toContain('chat-permission-level')
+      expect(off).toContain('Not verified. Clave could not check all of this.')
+      expect(off).not.toContain('Changes files of the project')
+      const failed = render(
+        <PermissionReading request={request(command)} />,
+        explained({ failed: 'timeout' })
+      )
+      expect(failed).not.toContain('chat-permission-level')
+      expect(failed).toContain('Not verified. Clave could not check all of this.')
+      // The model says it only reads: the floor, and the same words before the sentence.
+      const read = render(
+        <PermissionReading request={request(command)} />,
+        explained({ level: 'reads', sentence: 'Writes a log file.' })
+      )
+      expect(read).toContain('data-level="project"')
+      expect(read).toContain(
+        'Not verified. Clave could not check all of this; a model reads it as: Writes a log file.'
+      )
+      // The model raises it.
+      expect(
+        render(
+          <PermissionReading request={request(command)} />,
+          explained({ level: 'irreversible', sentence: 'Deletes the home folder.' })
+        )
+      ).toContain('data-level="irreversible"')
+    }
+  )
+
   it('takes the level the model gives an unknown request', () => {
     const html = render(
       <PermissionReading request={request(UNKNOWN)} />,
