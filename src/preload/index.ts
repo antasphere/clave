@@ -2495,7 +2495,13 @@ const electronAPI = {
   gitCommitFiles: (cwd: string, hash: string) => ipcRenderer.invoke('git:commit-files', cwd, hash),
   gitCommitDiff: (cwd: string, hash: string, filePath: string) =>
     ipcRenderer.invoke('git:commit-diff', cwd, hash, filePath),
-  gitGenerateCommitMessage: (cwd: string) => ipcRenderer.invoke('git:generate-commit-message', cwd),
+  // The git panel's two one-shots run where this Mac's helpers run
+  // (PRDCT-4330): on the server behind the window when there is one (it owns
+  // the helpers' preference and the accounts), in main when it runs in-process.
+  gitGenerateCommitMessage: viaServer<[string], string>({
+    ipc: (cwd) => ipcRenderer.invoke('git:generate-commit-message', cwd),
+    server: ({ api }, cwd) => api.git.generateCommitMessage(cwd)
+  }),
   gitMagicSync: (repoPaths: string[]) => ipcRenderer.invoke('git:magic-sync', repoPaths),
   gitMagicPull: (repoPaths: string[]) => ipcRenderer.invoke('git:magic-pull', repoPaths),
   gitRefreshRemotes: (repoPaths: string[]) => ipcRenderer.invoke('git:refresh-remotes', repoPaths),
@@ -2503,8 +2509,13 @@ const electronAPI = {
   onGitBatchProgress: (callback: (progress: GitBatchProgress) => void) =>
     createIpcListener<[GitBatchProgress]>('git:batch-progress', callback),
   gitJourney: (cwd: string, maxCount?: number) => ipcRenderer.invoke('git:journey', cwd, maxCount),
-  gitSummarizePush: (cwd: string, commitMessages: string[], diffStats: string) =>
-    ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
+  gitSummarizePush: viaServer<[string, string[], string], { title: string; description: string }>({
+    ipc: (cwd, commitMessages, diffStats) =>
+      ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
+    server: async ({ api }, cwd, commitMessages, diffStats) => ({
+      ...(await api.git.summarizePush(cwd, commitMessages, diffStats))
+    })
+  }),
 
   showNotification: (options: { title: string; body: string; sessionId: string }) =>
     ipcRenderer.invoke('notification:show', options),
