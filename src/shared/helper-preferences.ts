@@ -33,3 +33,8 @@ export interface HelperPreferencePatch {
   model?: string | null
   account?: HelperAccount
 }
+
+/** What a server released before the helpers' settings is said to need. The
+ *  client says the same words (`packages/client/src/settings.ts`, which
+ *  cannot import this file; its test holds the two equal). */
+export const HELPERS_NEED_UPDATE = 'This server needs an update to show its helpers.'

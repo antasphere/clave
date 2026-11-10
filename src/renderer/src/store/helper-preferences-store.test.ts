@@ -52,6 +52,15 @@ describe('the machine the page names', () => {
     const local = store.useHelperPreferencesStore.getState().byMachine.local
     expect(local.helpers).toEqual([helper()])
     expect(local.error).toBe('That is not a model name.')
+    api.fleetHelpers.mockRejectedValue(
+      new Error(
+        'Error invoking remote method: Error: This server needs an update to show its helpers.'
+      )
+    )
+    await store.loadHelperPreferences('server-old')
+    expect(store.useHelperPreferencesStore.getState().byMachine['server-old'].error).toBe(
+      'This server needs an update to show its helpers.'
+    )
     api.fleetHelpers.mockRejectedValue(new Error('socket closed: token=secret'))
     await store.loadHelperPreferences('server-c')
     const failed = store.useHelperPreferencesStore.getState().byMachine['server-c']
@@ -63,24 +72,34 @@ describe('the machine the page names', () => {
 describe('what a row offers', () => {
   it('models: the helper’s default first and marked, every alias once, an unknown pick kept', () => {
     const choices = store.helperModelChoices(helper({ model: 'claude-sonnet-4-6' }))
-    expect(choices[0]).toEqual({ value: 'haiku', label: 'Haiku 4.5 (default)' })
+    // By family, never a version the page cannot know: the CLI resolves the alias.
+    expect(choices[0]).toEqual({ value: 'haiku', label: 'Haiku (default)' })
+    expect(choices.find((c) => c.value === 'sonnet')?.label).toBe('Sonnet')
+    expect(choices.find((c) => c.value === 'opus')?.label).toBe('Opus')
+    expect(choices.find((c) => c.value === 'fable')?.label).toBe('Fable')
+    expect(
+      choices
+        .filter((c) => !c.value.startsWith('claude-'))
+        .map((c) => c.label)
+        .join(' ')
+    ).not.toMatch(/\d/)
+    // A full id picked elsewhere reads from its own shape.
+    expect(choices.find((c) => c.value === 'claude-sonnet-4-6')?.label).toBe('Sonnet 4.6')
     const values = choices.map((c) => c.value)
     expect(values).toEqual(expect.arrayContaining(['opus', 'sonnet', 'fable', 'claude-sonnet-4-6']))
     expect(new Set(values).size).toBe(values.length)
   })
 
-  it('accounts: the tab’s own, the machine login, each account but Default, a removed one said so', () => {
+  it('accounts: the tab’s own, the machine login, each account but Default', () => {
     const accounts = [
       { id: 'default', label: 'Default' },
       { id: 'helpers', label: 'Helpers account' }
     ]
-    expect(store.helperAccountChoices(accounts, { kind: 'session' }).map((c) => c.value)).toEqual([
+    expect(store.helperAccountChoices(accounts).map((c) => c.value)).toEqual([
       'session',
       'machine',
       'account:helpers'
     ])
-    const gone = store.helperAccountChoices(accounts, { kind: 'account', accountId: 'old' })
-    expect(gone.at(-1)).toEqual({ value: 'account:old', label: 'old (removed)' })
     for (const account of [
       { kind: 'session' as const },
       { kind: 'machine' as const },
@@ -92,6 +111,11 @@ describe('what a row offers', () => {
   it('says what a person gets when a helper is off, a later one included', () => {
     expect(store.helperWhenOff('tab-title')).toMatch(/first words/)
     expect(store.helperWhenOff('exchange-digest')).toMatch(/no digest/)
+    expect(store.helperWhenOff('exchange-digest')).toMatch(
+      /the card says the digest is switched off/
+    )
+    expect(store.helperDoes('tab-title')).toBe('Names a new tab from its first message.')
+    expect(store.helperDoes('permission-explainer')).toMatch(/short call/)
     expect(store.helperWhenOff('permission-explainer')).toMatch(/goes without it/)
   })
 })

@@ -3,7 +3,9 @@ import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import type { HelperPreference } from '../../../../shared/helper-preferences'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import {
+  ACCOUNT_REMOVED,
   EMPTY_MACHINE_HELPERS,
+  helperDoes,
   accountFromValue,
   accountValue,
   helperAccountChoices,
@@ -46,8 +48,13 @@ function HelperRow({
       <div className="min-w-0 flex-1">
         <p className="settings-row-title">{helper.label}</p>
         <p className="settings-row-description" data-helper-when-off={helper.id}>
-          {helper.enabled ? `Runs on ${modelLabel(helper)}.` : helperWhenOff(helper.id)}
+          {helper.enabled ? helperDoes(helper.id) : helperWhenOff(helper.id)}
         </p>
+        {helper.accountRemoved && (
+          <p className="settings-row-description" data-helper-account-removed={helper.id}>
+            {ACCOUNT_REMOVED}
+          </p>
+        )}
       </div>
       <div className="settings-row-controls">
         <SettingsSelect
@@ -60,7 +67,7 @@ function HelperRow({
         />
         <SettingsSelect
           value={accountValue(helper.account)}
-          options={helperAccountChoices(accounts, helper.account)}
+          options={helperAccountChoices(accounts)}
           onChange={(value) => set({ account: accountFromValue(value) })}
           ariaLabel={`${helper.label}: account`}
           disabled={!helper.enabled}
@@ -74,10 +81,6 @@ function HelperRow({
       </div>
     </div>
   )
-}
-
-function modelLabel(helper: HelperPreference): string {
-  return helperModelChoices(helper).find((c) => c.value === helper.model)?.label ?? helper.model
 }
 
 /** The page's body for one machine: its helpers, read when it opens. */

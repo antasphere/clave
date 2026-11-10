@@ -5,11 +5,29 @@
  * token and the API key go out as the plain strings the wire carries (the
  * encoded side of the contract's redacted fields) and come back in nothing.
  */
-import type { Effect } from 'effect'
+import { Schema, type Effect } from 'effect'
+import { NotFoundProblem } from '@structure-ai/http'
 import type * as S from '@clave/contract/settings'
 import type { Call, DerivedClient } from './call'
 
 export type ClaudeAccount = typeof S.ClaudeAccountView.Type
+
+/** A server released before the helpers' settings (PRDCT-4330): its router
+ *  answers their routes with its own 404. Said as the fix, an update. */
+export const HELPERS_NEED_UPDATE = 'This server needs an update to show its helpers.'
+export class HelperPreferencesMissing extends Error {
+  readonly _tag = 'HelperPreferencesMissing'
+  constructor() {
+    super(HELPERS_NEED_UPDATE)
+    this.name = 'HelperPreferencesMissing'
+  }
+}
+const helpersMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new HelperPreferencesMissing()
+      : error
+  })
 export type CodexAccount = typeof S.CodexAccountView.Type
 export type CodexAccountKind = typeof S.CodexAccountKind.Type
 export type AccountProvider = typeof S.AccountProvider.Type
@@ -196,11 +214,14 @@ export function settingsClient(callApi: Call): SettingsClient {
         call((g) => g.setWorkspaceLaunchProfile({ payload: { workspaceId, family, profileId } }))
     },
     helpers: {
-      list: () => call((g) => g.listHelperPreferences({ payload: {} })).then((v) => v.helpers),
-      set: (helperId, patch) =>
-        call((g) => g.setHelperPreference({ payload: { helperId, ...patch } })).then(
+      list: () =>
+        helpersMissing(call((g) => g.listHelperPreferences({ payload: {} }))).then(
           (v) => v.helpers
-        )
+        ),
+      set: (helperId, patch) =>
+        helpersMissing(
+          call((g) => g.setHelperPreference({ payload: { helperId, ...patch } }))
+        ).then((v) => v.helpers)
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)

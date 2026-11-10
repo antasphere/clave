@@ -7,10 +7,11 @@
  * Mac's on its own route), and the list kept is that machine's last answer.
  */
 import { create } from 'zustand'
-import type {
-  HelperAccount,
-  HelperPreference,
-  HelperPreferencePatch
+import {
+  HELPERS_NEED_UPDATE,
+  type HelperAccount,
+  type HelperPreference,
+  type HelperPreferencePatch
 } from '../../../shared/helper-preferences'
 import { CLAUDE_MODELS, claudeModelName } from '../../../shared/claude-models'
 
@@ -54,11 +55,16 @@ export async function loadHelperPreferences(machine: string): Promise<void> {
   try {
     const helpers = await window.electronAPI.fleetHelpers(machine)
     patchMachine(machine, () => ({ status: 'ready', error: null, helpers }))
-  } catch {
+  } catch (error) {
+    // A server released before this page answers its routes with a 404,
+    // which the client says as the update it needs.
+    const message = error instanceof Error ? error.message : ''
     patchMachine(machine, (current) => ({
       ...current,
       status: 'error',
-      error: 'The helpers could not be read from this machine.'
+      error: message.includes(HELPERS_NEED_UPDATE)
+        ? HELPERS_NEED_UPDATE
+        : 'The helpers could not be read from this machine.'
     }))
   }
 }
@@ -88,9 +94,11 @@ export interface Choice {
   hint?: string
 }
 
-/** The models a helper may run on: the CLI's aliases (a helper follows its
- *  family as models ship), the helper's own default first and marked; a
- *  model picked elsewhere that the list does not name stays offered. */
+/** The models a helper may run on: the CLI's aliases, labelled by family
+ *  ("Haiku"), never by a version: the helper passes the alias and the CLI
+ *  decides which model it is. The helper's own default comes first and is
+ *  marked; a model picked elsewhere that the list does not name stays
+ *  offered, read from its id. */
 export function helperModelChoices(
   helper: Pick<HelperPreference, 'model' | 'defaultModel'>
 ): Choice[] {
@@ -100,8 +108,14 @@ export function helperModelChoices(
   if (!ordered.includes(helper.model)) ordered.push(helper.model)
   return ordered.map((value) => ({
     value,
-    label: `${claudeModelName(value) ?? value}${value === helper.defaultModel ? ' (default)' : ''}`
+    label: `${aliasLabel(value)}${value === helper.defaultModel ? ' (default)' : ''}`
   }))
+}
+
+function aliasLabel(value: string): string {
+  if (CLAUDE_MODELS.some((model) => model.alias === value))
+    return value.charAt(0).toUpperCase() + value.slice(1)
+  return claudeModelName(value) ?? value
 }
 
 /** An account as the select carries it. */
@@ -117,11 +131,11 @@ export function accountFromValue(value: string): HelperAccount {
 
 /** The accounts a helper may run on, on that machine: the tab's own (the
  *  default), the machine login, then each Claude account the machine has
- *  but its Default (which IS the machine login). One picked earlier and
- *  since removed stays listed, said so, until another is picked. */
+ *  but its Default (which IS the machine login). An account removed since
+ *  it was picked is not offered: the machine reports the helper on the
+ *  tab's own (`accountRemoved`), and the row says so. */
 export function helperAccountChoices(
-  accounts: ReadonlyArray<{ id: string; label: string }>,
-  current: HelperAccount
+  accounts: ReadonlyArray<{ id: string; label: string }>
 ): Choice[] {
   const choices: Choice[] = [
     { value: 'session', label: "The tab's own account", hint: 'The account the tab runs on' },
@@ -130,8 +144,6 @@ export function helperAccountChoices(
   for (const account of accounts)
     if (account.id !== 'default')
       choices.push({ value: `account:${account.id}`, label: account.label })
-  if (current.kind === 'account' && !accounts.some((a) => a.id === current.accountId))
-    choices.push({ value: accountValue(current), label: `${current.accountId} (removed)` })
   return choices
 }
 
@@ -139,11 +151,29 @@ export function helperAccountChoices(
  *  not named here still says something true. */
 const WHEN_OFF: Record<string, string> = {
   'tab-title': "Off: a tab is named after its first message's first words.",
-  'exchange-digest': 'Off: exchange cards show no digest, and say the helper is off.',
-  'work-digest': 'Off: work cards keep no title of their own, and say the helper is off.',
+  'exchange-digest':
+    'Off: an exchange card shows no digest; the card says the digest is switched off.',
+  'work-digest':
+    'Off: a work card keeps no title of its own; the card says the digest is switched off.',
   'commit-message': 'Off: the git panel writes no commit message for you.',
   'push-summary': 'Off: the git panel writes no push summary for you.'
 }
+
+/** What the helper does, in plain words, for the line under its name. */
+const WHAT_IT_DOES: Record<string, string> = {
+  'tab-title': 'Names a new tab from its first message.',
+  'exchange-digest': 'Sums up each exchange of a chat on its card.',
+  'work-digest': 'Titles each stretch of an agent’s work on its card.',
+  'commit-message': 'Writes the commit message in the git panel.',
+  'push-summary': 'Writes the summary of what a push sends.'
+}
+
+export function helperDoes(id: string): string {
+  return WHAT_IT_DOES[id] ?? 'A short call Clave makes on its own.'
+}
+
+/** The row's line for a helper on an account that is gone. */
+export const ACCOUNT_REMOVED = "Its account was removed: it runs on the tab's own account."
 
 export function helperWhenOff(id: string): string {
   return WHEN_OFF[id] ?? 'Off: Clave goes without it, and nothing is asked of a model.'
