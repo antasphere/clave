@@ -9,17 +9,20 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.printToString
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -300,7 +303,13 @@ class AppEvidenceTest {
         rule.onNodeWithContentDescription("Message").performTextInput("will this land?")
         rule.onNodeWithContentDescription("Send message").performClick()
         val asked = SystemClock.elapsedRealtime()
-        waitForText("Delivery unknown", timeoutMs = 75_000)
+        // Normally shown within a second (264 ms and 342 ms in the runs of 10 November); it timed
+        // out twice, cause not established, so a timeout here says what the screen showed.
+        try {
+            waitForText("Delivery unknown", timeoutMs = 75_000)
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("no unknown delivery after the failed write; the screen: ${rule.onRoot(useUnmergedTree = true).printToString()}", e)
+        }
         val tookMs = SystemClock.elapsedRealtime() - asked
         android.util.Log.i("AppEvidenceTest", "Delivery unknown shown $tookMs ms after the send")
         waitForText("Send again (may duplicate)")
