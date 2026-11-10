@@ -1,0 +1,115 @@
+/* The updater's error callout (UpdatesTab.tsx): the drawing of where the link
+   broke beside the words, in the ink of the first-run walk's drawing
+   (onboarding.css `.onb-drawing`), from the app's tokens so every theme and
+   skin just works. */
+.upd-error {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+}
+.upd-error-words {
+  min-width: 0;
+  flex: 1;
+}
+.upd-error-detail {
+  display: block;
+  margin-top: 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.upd-drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  flex-shrink: 0;
+  width: 132px;
+  height: auto;
+}
+.upd-drawing :is(.ln, .bx, .ring) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.upd-drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.upd-drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 3 4;
+}
+.upd-drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.upd-drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.upd-drawing .bx--front {
+  fill: var(--paper);
+}
+.upd-drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.upd-drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.upd-drawing .dot--c {
+  fill: var(--color-accent);
+}
+.upd-drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--color-accent) 60%, transparent);
+  stroke-width: 1;
+}
+.upd-drawing .upd-faded {
+  opacity: 0.45;
+}
+/* The line that draws itself is dashed in the drawing's own units (no line
+   is longer than 80), so its stroke scales with the drawing. */
+.upd-drawing .travel {
+  vector-effect: none;
+  stroke-width: 1.9;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .upd-drawing .travel {
+    stroke-dasharray: 80;
+    animation: upd-travel 640ms cubic-bezier(0.65, 0, 0.35, 1) both;
+  }
+  .upd-drawing .ring--pulse {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: upd-pulse 2.4s ease-out 640ms infinite;
+  }
+}
+@keyframes upd-travel {
+  from {
+    stroke-dashoffset: 80;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes upd-pulse {
+  from {
+    opacity: 0.9;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 2.2;
+  }
+}
+@media (max-width: 520px) {
+  .upd-drawing {
+    display: none;
+  }
+}

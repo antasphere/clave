@@ -34,6 +34,12 @@ export interface LinkedDocument {
   title: string
   revision: number
   path?: string
+  /**
+   * The folder an agent opened (PRDCT-4262): `path` is then its entry page
+   * (`index.html`, else its one .html file), and the folder is what Slideless
+   * serves and keeps versions of. Absent when a file was opened.
+   */
+  root?: string
   content: string
   sourceHash?: string
   conflict?: string
@@ -85,7 +91,19 @@ export const linkedUpdateSchema = z
     signaturePath: z.string().optional(),
     signatureMode: z.enum(['default', 'none', 'custom']).optional(),
     signatureTextPath: z.string().optional(),
-    reloadExternal: z.boolean().optional()
+    reloadExternal: z.boolean().optional(),
+    /**
+     * With reloadExternal: reload only when the file on disk is not what the
+     * panel last loaded or saved (the watcher's call, PRDCT-4261), so a
+     * panel's own save never reloads the panel under the person's cursor.
+     */
+    ifChanged: z.boolean().optional(),
+    /**
+     * With content: the file this was typed against is no longer the one on
+     * disk (the panel reloaded it from disk in between). The store records a
+     * conflict and keeps the edit, never writing it over the newer file.
+     */
+    stale: z.boolean().optional()
   })
   .strict()
   .refine((v) => !(v.signatureMode && v.signaturePath), 'Choose signatureMode or signaturePath')

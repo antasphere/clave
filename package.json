@@ -115,6 +115,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@antasphere/slideless": "0.14.1",
     "@bufbuild/buf": "1.73.0",
     "@bufbuild/protoc-gen-es": "2.16.0",
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

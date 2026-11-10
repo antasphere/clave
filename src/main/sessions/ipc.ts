@@ -14,6 +14,17 @@ import { hasServerEventPublisher } from '../server/session-events'
 import { getSessionHost } from './host'
 import { lineageParents } from './lineage'
 
+/** A refused write as one line naming the field, not zod's JSON dump. */
+function parseWrite(input: unknown): ReturnType<typeof SessionInputSchema.parse> {
+  const result = SessionInputSchema.safeParse(input)
+  if (result.success) return result.data
+  const issue = result.error.issues[0]
+  const where = issue?.path.length ? `${issue.path.join('.')}: ` : ''
+  throw new Error(
+    `Clave could not send this message (${where}${issue?.message ?? 'invalid input'}).`
+  )
+}
+
 let registered = false
 /** Second consumers have independent subscriptions; destroying their window
  * removes only their listeners, never the process or xterm's subscription. */
@@ -110,7 +121,7 @@ export function registerSessionIpc(): void {
     const write: SessionWrite =
       input instanceof Uint8Array
         ? { type: 'bytes', data: input }
-        : (SessionInputSchema.parse(input) as SessionWrite)
+        : (parseWrite(input) as SessionWrite)
     return getSessionHost().write(id, write)
   })
   ipcMain.handle('sessions:capabilities', (event, id: string) => {

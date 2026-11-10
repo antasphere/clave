@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUpdaterStore } from '../../store/updater-store'
 import { ClaveMark } from './ClaveMark'
+import { describeUpdaterError } from '../../../../shared/updater-errors'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -120,7 +121,7 @@ export function UpdateOverlay(): React.JSX.Element {
                 <>
                   <p className="text-[15px] font-medium text-text-primary">Update failed</p>
                   <p className="text-control text-text-tertiary mt-1 max-w-[280px]">
-                    {errorMessage || 'An unexpected error occurred'}
+                    {describeUpdaterError(errorMessage, { kind: 'download' }).summary}
                   </p>
                   {/* Auto-update is the only distribution channel — no App Store,
                       no package manager. Without these two links a user whose

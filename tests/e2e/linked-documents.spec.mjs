@@ -166,6 +166,8 @@ export async function run(t) {
     )
     const html = await client.call('clave_open_side_panel', { path: `${ROOT}/page.html` })
     t.check('HTML link opens through same MCP flow', !toolErrored(html), html)
+    // HTML opens on the rendered page now (PRDCT-4262); the source is one click away.
+    await win.getByRole('button', { name: 'Source', exact: true }).click()
     const source = win.locator('[data-testid="linked-document-panel"] .cm-content')
     await source.fill(
       '<link rel="stylesheet" href="page.css"><h1>Edited HTML</h1><script>window.linkedLoads = 1</script>'

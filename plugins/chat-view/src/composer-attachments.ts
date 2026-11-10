@@ -15,6 +15,7 @@ import {
   nextLabel,
   reconcileAttachments,
   removeMarker,
+  sessionReach,
   type Attachment,
   type AttachmentSource,
   type SessionAttachment
@@ -22,6 +23,7 @@ import {
 import { onSessionsDrag } from '../../../src/renderer/src/lib/session-drag'
 import { failureText, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
+import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import type { Session } from '../../../src/renderer/src/store/session-types'
 
 /* The composer's attachments, shared by the chat and terminal views: the
@@ -239,12 +241,19 @@ export function useComposerAttachments(opts: {
           sessionId: id,
           name: session.name || session.folderName || id,
           agent: agentLabel(session),
-          cwd: session.cwd
+          cwd: session.cwd,
+          // A tab of another machine says so, and one this tab's agent cannot
+          // reach is marked, never refused (8 November 2026: a server's tab
+          // dropped here failed the whole send).
+          ...sessionReach(id, sessionId, (serverId) => {
+            const { connections } = useFleetStore.getState()
+            return connections.find((c) => c.id === serverId)?.name ?? 'a Clave server'
+          })
         }
         attach(record)
       }
     },
-    [attach, closed, preparations.length, report]
+    [attach, closed, preparations.length, report, sessionId]
   )
 
   const withdraw = (key: string): void => {

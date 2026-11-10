@@ -28,6 +28,7 @@ import {
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
 import { agentUpdateManager } from './agent-updates'
+import { startSlideless } from './slideless'
 import { buildAppMenu } from './app-menu'
 import { initTelemetry, cleanupTelemetry } from './telemetry'
 import { initNotificationManager } from './notification-manager'
@@ -691,6 +692,7 @@ app.whenReady().then(() => {
     snapshot: prereleaseSnapshotOutcome()
   })
   agentUpdateManager.start()
+  startSlideless()
   initTelemetry()
   initMissionControl()
 
