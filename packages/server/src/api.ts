@@ -72,7 +72,7 @@ import { GitLive } from './git/api'
 // ── ADR 0004: the routines (`routines/api.ts`) ──
 import { RoutinesLive } from './routines/api'
 // ── Issue #266: the server's version and its self-upgrade ──
-import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
+import { GetServerInfo, RequestServerUpgrade, SetServerName } from '@clave/contract/server-info'
 import {
   CreatePendingRequest,
   ReadPendingRequestResult,
@@ -224,6 +224,7 @@ export const ServerInfoLive = HttpApiBuilder.group(ClaveApi, 'server', (handlers
   handlers
     .handle('info', HttpCqrs.query(GetServerInfo))
     .handle('upgrade', HttpCqrs.command(RequestServerUpgrade))
+    .handle('name', HttpCqrs.command(SetServerName))
 )
 
 // ── Lane B: terminals ──

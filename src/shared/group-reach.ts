@@ -1,11 +1,11 @@
 /**
- * The "same group" leg of the cross-tab reach rule (`assertCanReach`, both the
- * served road and the window's): two sessions share a group when the group
- * counts both among its members, and its members are its tabs AND the live
- * sessions of its quick-launch terminals. A group terminal is the group's own
- * dev server, so a tab of the group reads its logs (PRDCT-3420); sending to it
- * stays refused by the plain-terminal guard, not by this rule. Pure, so one
- * test pins it for both roads.
+ * The "same group" leg of the relation between two tabs (`isRelated` /
+ * `canReach`, both the served road and the window's): two sessions share a
+ * group when the group counts both among its members, and its members are its
+ * tabs AND the live sessions of its quick-launch terminals. Since PRDCT-4236
+ * it limits nothing (any tab may be reached); it only breaks the tie when
+ * several tabs share the name a call targets. Pure, so one test pins it for
+ * both roads.
  */
 export interface ReachGroupLike {
   sessionIds: ReadonlyArray<string>

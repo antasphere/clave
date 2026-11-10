@@ -35,6 +35,7 @@ workspace (the owner's call, after the merge):
   "catchUp": true,
   "timeoutMinutes": 30,
   "scope": "machine",
+  "runsOn": "every",
   "report": {
     "template": ".clave/routines/workspace-health",
     "schema": ".clave/routines/workspace-health/schema.json",
@@ -48,14 +49,22 @@ and the template copied to `~/.antasphere/.clave/routines/workspace-health/` (th
 files of `workspace-health/` here). A personal copy of the workspace file (`romain.clave`)
 changes `params.extra` or the account without touching the shared one.
 
-To run it on the Mac Studio rather than on whichever Mac reads the file, add
-`"server": "MacStudio"` beside `scope` (the Mac Studio server's own name: the first label of its hostname, or the name its install gave it with `--server-name`). The Mac Studio's
-server then runs it alone; every other Mac on a Clave that knows the field lists it and never
-runs it, and a Mac connected
-to the Mac Studio shows that server's runs on the same toolbar button, with the report
-read over the connection and Run now asked of the Mac Studio. Add `"publish": true` inside
-`report` to also push every run's deck to the workspace's Slideless, behind one share link
-the panel shows.
+`runsOn` says where it runs, and it is required (PRDCT-4241): `"every"` runs it once on every
+machine that reads the file, which is what a machine's own health check wants; a server's own
+name or id (`"runsOn": "romains-mac-studio"`) runs it on that Clave server alone, every other
+machine listing it without running it and a Mac connected to that server showing its runs in the
+same Routines popover, the report read over the connection and Run now asked of the server. A
+server's own name is shown and set in Settings › Servers (the first label of its hostname until
+someone sets it). Add `"publish": true` inside `report` to also push every run's deck to the
+workspace's Slideless, behind one share link the panel shows.
+
+A routine that should run on one machine without touching a shared file is **created** on that
+machine instead: an agent calls `clave_routine_create` (then `clave_routine_list`, `_update`,
+`_pause`, `_delete`, `_run`), or a person uses the “+” of the machine's section in the Routines
+popover. Such a routine is kept by that server in its own store, runs there alone on the
+built-in report page the app ships (`resources/routines/default-report`, beside this folder's
+example), and `clave_routine_move_to_file` writes it into a `.clave` file like the one above when
+it should be shared, with `runsOn` set to the machine's name.
 
 Until Steward's reconciler (`steward doctor` / `steward up`) lands, the prompt names
 today's commands; the day it lands, the prompt shrinks to the reconciler and the schema

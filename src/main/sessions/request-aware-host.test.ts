@@ -749,3 +749,37 @@ describe('a refused Resume keeps the session’s prompts (PRDCT-4193, rounds 4 a
     expect(f.requests.snapshot().pending).toHaveLength(0)
   })
 })
+
+describe('a move to another provider rides through the request-aware host (PRDCT-4300)', () => {
+  it('forwards the provider override to the base host, cancelling the old process’s prompts', async () => {
+    const restart = vi.fn(async () => ({
+      id: session.id,
+      cwd: '/repo',
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }))
+    const requests = new PendingRequests()
+    const wrapped = requestAwareSessionHost({
+      host: { ...SessionHost.none, get: () => session, list: () => [session], restart },
+      requests,
+      subscribeAll: () => () => undefined
+    })
+    const provider = {
+      adapterId: 'codex-chat',
+      model: 'gpt-5.5',
+      resume: 'thread-7',
+      continuedFrom: { provider: 'claude', road: 'converted' as const }
+    }
+    await wrapped.host.restart(session.id, { codexAccountId: 'c1' }, false, undefined, provider)
+    expect(restart).toHaveBeenCalledWith(
+      session.id,
+      { codexAccountId: 'c1' },
+      false,
+      undefined,
+      provider
+    )
+  })
+})

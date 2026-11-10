@@ -161,6 +161,16 @@ export class RoutinesStore {
     return gone
   }
 
+  /** A routine removed on purpose (a created one deleted, PRDCT-4242): its
+   *  clock, its runs and its publish state go now, not after the prune. */
+  forget(key: string): boolean {
+    const doc = this.load()
+    if (!(key in doc.routines)) return false
+    delete doc.routines[key]
+    this.save()
+    return true
+  }
+
   publishState(key: string): RoutinePublishState | null {
     return this.load().routines[key]?.publish ?? null
   }

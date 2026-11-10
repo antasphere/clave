@@ -68,7 +68,7 @@ describe('chat motion', () => {
   })
   it('a card of working notes opens by gliding to its height, its steps rising in turn', () => {
     expect(block('.stretch-card::details-content')).toMatch(/transition:[^;]*block-size/)
-    expect(block('.stretch-step')).toMatch(/transition-delay:[^;]*--stretch-i/)
+    expect(block('.stretch-card[open] .stretch-step')).toMatch(/animation-delay:[^;]*--stretch-i/)
     expect(block('.stretch-card[open] .stretch-step')).toMatch(/opacity:\s*1/)
     // The rail and the steps are the exchange timeline's geometry, so the
     // two cards read as one family.

@@ -11,6 +11,8 @@ import { registerOnboardingHandlers } from './onboarding-handlers'
 import { registerFeedbackHandlers } from './feedback-handlers'
 import { registerFsHandlers } from './fs-handlers'
 import { registerPtyHandlers } from './pty-handlers'
+// ── PRDCT-4300: a tab changes provider ──
+import { registerProviderSwitchHandlers } from './provider-switch-handlers'
 import { registerShellHandlers } from './shell-handlers'
 import { registerExchangeDigestHandlers } from './exchange-digest-handlers'
 import { registerLocationHandlers } from './location-handlers'
@@ -65,6 +67,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerFeedbackHandlers()
   registerFsHandlers()
   registerPtyHandlers()
+  registerProviderSwitchHandlers()
   registerShellHandlers()
   registerExchangeDigestHandlers()
   registerLocationHandlers()

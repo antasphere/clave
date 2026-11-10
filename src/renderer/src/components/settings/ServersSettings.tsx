@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import type { SavedServerConnection, ServerConnectionStatus } from '@clave/contract/fleet'
+import { SERVER_NAME_RULE, isServerName } from '@clave/contract/server-name'
 import type { FleetDesktopAPI } from '../../../../preload/fleet-types'
 import type { Workspace } from '../../../../shared/workspace-types'
 import type {
@@ -20,6 +21,9 @@ import {
   UPGRADE_NOW_WARNING
 } from '../../lib/server-connection-text'
 import { reportFleetError, useFleetStore } from '../../store/fleet-store'
+import { useRoutinesStore } from '../../store/routines-store'
+import { whenLabel } from '../../../../../plugins/routine-report/src/run-labels'
+import { describeCron } from '../../../../main/routines/cron'
 import { ServerCombineRow } from '../fleet/ServerCombineRow'
 import { useSessionStore, type SettingsSection as Section } from '../../store/session-store'
 import { useSettingsMachineStore } from '../../store/settings-machine-store'
@@ -175,6 +179,106 @@ function ServerOverview({
   )
 }
 
+/**
+ * A server's own name (PRDCT-4241): what a routine's `runsOn` places it by,
+ * shown so a person knows what to write, and set from here so the name is
+ * one the person chose rather than the hostname's first label. The server
+ * keeps it in its own data, so it outlives the install script's re-run and
+ * an upgrade. `name` is the name as last read; `rename` asks the machine and
+ * answers the name now in force, or throws the machine's refusal.
+ */
+export function ServerOwnName({
+  name,
+  rename,
+  testId
+}: {
+  name: string | null | undefined
+  rename: (name: string) => Promise<string>
+  testId: string
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const valid = isServerName(draft.trim())
+  const save = async (): Promise<void> => {
+    if (!valid) return
+    setBusy(true)
+    try {
+      await rename(draft.trim())
+      setEditing(false)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'The name could not be set.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <SettingsRow
+      label="Name for routines"
+      description={
+        editing
+          ? SERVER_NAME_RULE
+          : name
+            ? `A routine runs here when its runsOn says "${name}".`
+            : 'This machine has not said its name yet.'
+      }
+    >
+      <div className="settings-row-controls" data-testid={testId} data-server-own-name={name ?? ''}>
+        {editing ? (
+          <>
+            <input
+              className="input-field"
+              aria-label="Name for routines"
+              value={draft}
+              autoFocus
+              disabled={busy}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void save()
+                if (event.key === 'Escape') setEditing(false)
+              }}
+              data-server-own-name-input
+            />
+            <button className="btn-secondary" disabled={busy} onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn-primary"
+              disabled={busy || !valid}
+              onClick={() => void save()}
+              data-server-own-name-save
+            >
+              Save
+            </button>
+          </>
+        ) : (
+          <>
+            <code className="settings-row-value font-mono select-text">{name ?? '—'}</code>
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                setDraft(name ?? '')
+                setError(null)
+                setEditing(true)
+              }}
+              data-server-own-name-rename
+            >
+              Rename
+            </button>
+          </>
+        )}
+        {error && (
+          <span className="status-text" data-status="error" role="alert">
+            {error}
+          </span>
+        )}
+      </div>
+    </SettingsRow>
+  )
+}
+
 /** The server's version against this app's (issue #266): the state in plain
  *  words, the command an older server needs, and "Upgrade now" behind a
  *  confirmation of what it ends. */
@@ -296,6 +400,8 @@ function ServerRow({
         </div>
         {error && <SettingsCallout tone="danger" inset role="alert" text={error} />}
         {connection.enabled && <ServerVersion id={connection.id} />}
+        {connected && <ConnectedServerName id={connection.id} />}
+        {connected && <ServerRoutinesList id={connection.id} />}
         <ServerOverview
           key={`${connection.id}:${connected}`}
           id={connection.id}
@@ -304,6 +410,89 @@ function ServerRow({
         <ServerCombineRow id={connection.id} />
       </div>
     </div>
+  )
+}
+
+/** Everything a server runs, across all its workspaces (PRDCT-4244): the
+ *  routines of its own files and the ones created on it, each with its
+ *  workspace, its schedule and its next run. The question the workspace's
+ *  Routines popover does not answer: what is this machine doing? */
+function ServerRoutinesList({ id }: { id: string }): React.JSX.Element | null {
+  const listing = useRoutinesStore((s) => s.remote[id])
+  if (!listing) return null
+  const running = listing.routines.filter((v) => v.routine.runsHere !== false)
+  return (
+    <SettingsRow
+      label="Routines"
+      description={
+        running.length
+          ? `${running.length} routine${running.length === 1 ? '' : 's'} run on this server, across its workspaces.`
+          : 'No routine runs on this server.'
+      }
+    >
+      {running.length > 0 && (
+        <ul className="settings-list" data-testid="server-routines">
+          {running.map((v) => (
+            <li
+              key={v.routine.key}
+              className="settings-list-row"
+              data-routine={v.routine.name}
+              data-origin={v.routine.origin ?? 'file'}
+            >
+              <span className="settings-list-main">{v.routine.name}</span>
+              <span className="settings-list-meta">
+                {v.routine.workspaceName} ·{' '}
+                {v.routine.invalid
+                  ? 'cannot run'
+                  : v.routine.paused
+                    ? 'paused'
+                    : v.nextRunAt
+                      ? `next ${whenLabel(v.nextRunAt)}`
+                      : describeCron(v.routine.schedule)}
+                {(v.routine.origin ?? 'file') === 'created' ? ' · created here' : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SettingsRow>
+  )
+}
+
+/** A connected server's own name, from the version sync's last read, set
+ *  through main and read again (PRDCT-4241). */
+function ConnectedServerName({ id }: { id: string }): React.JSX.Element {
+  const name = useFleetStore((s) => s.versions[id]?.serverName)
+  return (
+    <ServerOwnName
+      name={name}
+      testId="server-own-name"
+      rename={async (next) => {
+        const status = await window.electronAPI.fleetSetServerName(id, next)
+        return status.serverName ?? next
+      }}
+    />
+  )
+}
+
+/** This Mac's own name as a server, the one a routine's `runsOn` names this
+ *  machine by whether the in-process server or the installed service runs
+ *  it (PRDCT-4241). */
+function ThisMacName(): React.JSX.Element {
+  const [name, setName] = useState<string | null>(null)
+  useEffect(() => {
+    void window.electronAPI.routinesOwnName().then(setName, () => undefined)
+  }, [])
+  return (
+    <ServerOwnName
+      name={name}
+      testId="this-mac-own-name"
+      rename={async (next) => {
+        const current = await window.electronAPI.routinesSetOwnName(next)
+        setName(current)
+        return current
+      }}
+    />
   )
 }
 
@@ -395,6 +584,7 @@ function ThisMacServer(): React.JSX.Element {
       description="A Clave server that outlives the app: its sessions keep running after you quit, and your other Macs work in them."
     >
       <SettingsCard data-this-mac-server data-install-state={status?.state ?? 'unknown'}>
+        <ThisMacName />
         <SettingsRow
           label="Run Clave as a server on this Mac"
           description={

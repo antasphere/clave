@@ -30,7 +30,7 @@ const NEEDS: Record<string, ReadonlyArray<'records' | 'accounts' | 'profiles' | 
   switchAccount: ['records', 'accounts'],
   openSession: ['records', 'accounts', 'profiles'],
   launchGroup: ['records', 'accounts', 'pins'],
-  // PRDCT-4123: the caller's own unit and the parents the reach rule reads.
+  // PRDCT-4123: the caller's own unit and the parents the name tie-break reads.
   setWork: ['records'],
   handOver: ['records']
 }
@@ -122,6 +122,10 @@ export async function attachedShell<W extends ToolWindow>(
       profiles
         ? chatDefaultFor(profiles, family, workspaceId)
         : base.chatDefault(family, workspaceId),
-    pins: () => pins ?? base.pins()
+    pins: () => pins ?? base.pins(),
+    // The model a chat starts on is the SERVER's remembered one, a preference
+    // its API does not serve: this Mac's own would judge the account by the
+    // wrong model, so the pick falls back to the shared caps (PRDCT-4253).
+    launchModel: () => undefined
   }
 }

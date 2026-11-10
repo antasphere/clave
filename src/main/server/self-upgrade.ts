@@ -380,8 +380,11 @@ export interface SelfUpgradeOptions {
   readonly activity: AgentActivity
   readonly clock?: Clock
   readonly idleMs?: number
-  /** The server's own name (PRDCT-4149), told to the clients in its info. */
-  readonly name?: string
+  /** The server's own name (PRDCT-4149), told to the clients in its info;
+   *  read at each use when given as a function. */
+  readonly name?: string | (() => string)
+  /** Stores a name set from a Mac (PRDCT-4241); answers the name in force. */
+  readonly setName?: (name: string) => string
 }
 
 export type SelfUpgrade = ServerInfoService & { close(): void }
@@ -462,13 +465,27 @@ export function createSelfUpgrade(options: SelfUpgradeOptions): SelfUpgrade {
     }, idleMs)
   }
 
-  return {
-    info: (): ServerInfo => ({
+  const ownName = (): string | undefined =>
+    typeof options.name === 'function' ? options.name() : options.name
+  const info = (): ServerInfo => {
+    const name = ownName()
+    return {
       version: options.version,
       installRef: facts?.ref ?? null,
       upgrade: status,
-      ...(options.name ? { name: options.name } : {})
-    }),
+      ...(name ? { name } : {})
+    }
+  }
+  return {
+    info,
+    ...(options.setName
+      ? {
+          setName: (name: string): ServerInfo => {
+            options.setName!(name)
+            return info()
+          }
+        }
+      : {}),
     requestUpgrade: (request: ServerUpgradeRequest): ServerUpgradeStatus => {
       if (!facts)
         throw new CapabilityUnavailable({

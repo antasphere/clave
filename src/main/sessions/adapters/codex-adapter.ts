@@ -43,6 +43,8 @@ import { commandTitle } from '../../../shared/command-title'
 import type { McpConfigPort } from '../../ports/mcp-config'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+/** How long a model/list may take before the picker calls it unavailable. */
+const MODEL_LIST_TIMEOUT_MS = 5000
 /** The efforts a model/list row says its model takes, with Codex's gloss. */
 const codexEfforts = (row: Record<string, unknown>): { id: string; hint: string }[] =>
   (Array.isArray(row.supportedReasoningEfforts) ? row.supportedReasoningEfforts : []).flatMap(
@@ -682,6 +684,31 @@ interface HandleState {
   ended: boolean
   closing: boolean
 }
+/** The menu's rows from the app-server's model/list rows: the visible
+ *  models, each with its gloss, its efforts and its default level. */
+export function codexModelOptions(rows: unknown[]): ModelOption[] {
+  return rows.flatMap((row) => {
+    const r = object(row)
+    const id = text(r.model) || text(r.id)
+    if (!id || r.hidden === true) return []
+    const hint = text(r.description)
+    const efforts = codexEfforts(r).map((effort) => ({
+      id: effort.id,
+      label: effortLabel(effort.id),
+      ...(effort.hint ? { hint: effort.hint } : {})
+    }))
+    const defaultEffort = text(r.defaultReasoningEffort)
+    return [
+      {
+        id,
+        label: text(r.displayName) || id,
+        ...(hint ? { hint } : {}),
+        ...(efforts.length ? { efforts } : {}),
+        ...(defaultEffort ? { defaultEffort } : {})
+      }
+    ]
+  })
+}
 export class CodexAdapter implements SessionAdapter {
   readonly id = 'codex-chat'
   readonly provider = 'codex'
@@ -870,28 +897,53 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error('Codex session has ended')
     await this.start(state)
     if (!state.connection) throw new Error('Codex is not connected')
-    const rows = await this.listModels(state)
-    return rows.flatMap((row) => {
-      const r = object(row)
-      const id = text(r.model) || text(r.id)
-      if (!id || r.hidden === true) return []
-      const hint = text(r.description)
-      const efforts = codexEfforts(r).map((effort) => ({
-        id: effort.id,
-        label: effortLabel(effort.id),
-        ...(effort.hint ? { hint: effort.hint } : {})
-      }))
-      const defaultEffort = text(r.defaultReasoningEffort)
-      return [
-        {
-          id,
-          label: text(r.displayName) || id,
-          ...(hint ? { hint } : {}),
-          ...(efforts.length ? { efforts } : {}),
-          ...(defaultEffort ? { defaultEffort } : {})
+    return codexModelOptions(await this.listModels(state))
+  }
+  /** The app-server's model/list with no session of it open (PRDCT-4300):
+   *  one connection on the given home that initializes, lists and closes,
+   *  no thread started, nothing written to the home. */
+  async listModelsWithoutSession(
+    cwd: string,
+    profile?: LaunchProfile,
+    env?: Record<string, string>
+  ): Promise<ModelOption[]> {
+    let exited = false
+    const connection = this.connect(
+      cwd,
+      {
+        notification: () => undefined,
+        request: (frame) => connection.reject(frame.id, `Unsupported request: ${frame.method}`),
+        error: () => undefined,
+        exit: () => {
+          exited = true
         }
-      ]
-    })
+      },
+      profile,
+      env
+    )
+    try {
+      await connection.request('initialize', {
+        clientInfo: { name: 'clave_chat', title: 'Clave', version: '1.0.0' }
+      })
+      connection.notify('initialized')
+      // The same deadline as a session's list: an app-server that starts
+      // and never answers must not leave the menu on Loading… for good.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Codex did not list its models in time')),
+          MODEL_LIST_TIMEOUT_MS
+        )
+      })
+      try {
+        const result = object(await Promise.race([connection.request('model/list', {}), deadline]))
+        return codexModelOptions(Array.isArray(result.data) ? result.data : [])
+      } finally {
+        clearTimeout(timer)
+      }
+    } finally {
+      if (!exited) await connection.close()
+    }
   }
   /** The app-server's model/list rows, kept for the effort check; a stub that
    *  never answers must not hang the picker, hence the deadline. */
@@ -899,7 +951,10 @@ export class CodexAdapter implements SessionAdapter {
     const listing = state.connection!.request('model/list', {})
     let timer: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Codex did not list its models in time')), 5000)
+      timer = setTimeout(
+        () => reject(new Error('Codex did not list its models in time')),
+        MODEL_LIST_TIMEOUT_MS
+      )
     })
     try {
       const result = object(await Promise.race([listing, deadline]))

@@ -10,8 +10,10 @@
  * as a checkpoint; clave_open_session answers no `workspaceId`; clave_list
  * loses the opener (`parentId`) of a tab once the daemon restarted (the
  * opener only in the listener's memory, before `openedBy` was on the
- * record); a send to a plain terminal is not refused; clave_resume_session
- * does not restart a stopped tab.
+ * record); a send to a plain terminal is not refused; a send to a tab
+ * nobody related opened is refused instead of delivered (the former reach
+ * rule back, PRDCT-4236);
+ * clave_resume_session does not restart a stopped tab.
  */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
@@ -135,7 +137,8 @@ export async function run(t) {
     t.equal('and the checkpoint typed nothing into the caller', userFrames(launch.pid).length, 1)
 
     // The opened chat answers its opener as "parent" (its own config, read
-    // once its process is up), and a tab nobody related opened is refused.
+    // once its process is up), and a tab nobody related opened is reached
+    // all the same (PRDCT-4236: any tab of the server may be messaged).
     const chatConfig = path.join(server.dataDir, 'mcp-configs', `${chat.sessionId}.json`)
     await eventually(
       () => existsSync(chatConfig),
@@ -164,12 +167,12 @@ export async function run(t) {
     })
     const toStranger = await mcp.call('clave_send_to_session', {
       sessionId: stranger.id,
-      message: 'never delivered'
+      message: 'delivered to a stranger'
     })
     t.check(
-      'a tab nobody related opened is refused to the caller',
-      toolErrored(toStranger) && errorText(toStranger).includes('not related to yours'),
-      errorText(toStranger)
+      'a tab nobody related opened is messaged by the caller',
+      !toolErrored(toStranger) && toolPayload(toStranger)?.delivered === true,
+      toStranger
     )
 
     // The daemon restarts: every tab is a stopped record; the tokens are on disk.

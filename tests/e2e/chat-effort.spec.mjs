@@ -62,6 +62,8 @@ async function exercise(t, chat, testId, label) {
   t.check(`${label}: the pick is remembered per adapter`, true)
 
   await view.getByRole('button', { name: 'Model', exact: true }).click()
+  // Provider first, then the model (PRDCT-4300).
+  await win.locator('.chat-model-provider[data-adapter="echo"]').click()
   await win.getByRole('menuitem', { name: /Echo 2/ }).click()
   await view.locator('.chat-model-trigger').filter({ hasText: 'Echo 2' }).waitFor()
   assert.ok(
@@ -75,6 +77,7 @@ async function exercise(t, chat, testId, label) {
   assert.ok(await until(async () => (await win.locator('[role="menu"]').count()) === 0))
 
   await view.getByRole('button', { name: 'Model', exact: true }).click()
+  await win.locator('.chat-model-provider[data-adapter="echo"]').click()
   await win.getByRole('menuitem', { name: /Echo 1/ }).click()
   await chip.filter({ hasText: 'Low' }).waitFor()
   t.check(`${label}: it comes back with the model's own level`, true)

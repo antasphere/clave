@@ -12,8 +12,8 @@ vi.mock('./roads', () => ({ noteRoad: vi.fn() }))
 /**
  * The two work tools on the server road (PRDCT-4123), over fakes: the call
  * reaches the server's ChangeSessionWork with the change the arguments say,
- * the reach rule of the messaging tools gates assigning another tab, and a
- * refusal comes back in the rule's own words.
+ * any tab may be assigned or handed over to (PRDCT-4236), and a refusal
+ * comes back in the rule's own words.
  */
 const ID = {
   lead: '00000000-0000-4000-8000-0000000000a1',
@@ -121,7 +121,7 @@ describe('clave_set_work on the server road', () => {
     expect(w.calls.map(([id]) => id)).toEqual([ID.lead, ID.next])
   })
 
-  it('reaches a tab the caller opened, and refuses a stranger before any change', async () => {
+  it('reaches a tab the caller opened, and a stranger too (PRDCT-4236)', async () => {
     const w = world([ID.lead])
     await serveCommand(
       'setWork',
@@ -130,10 +130,9 @@ describe('clave_set_work on the server road', () => {
     )
     await serveCommand('setWork', { sessionId: ID.child, role: 'worker' }, w.ctx(ID.lead))
     expect(w.works.get(ID.child)?.role).toBe('worker')
-    await expect(
-      serveCommand('setWork', { sessionId: ID.stranger, role: 'worker' }, w.ctx(ID.lead))
-    ).rejects.toThrow(/not related to yours/)
-    expect(w.calls.some(([id]) => id === ID.stranger)).toBe(false)
+    await serveCommand('setWork', { sessionId: ID.stranger, role: 'worker' }, w.ctx(ID.lead))
+    expect(w.calls.some(([id]) => id === ID.stranger)).toBe(true)
+    expect(w.works.get(ID.stranger)).toMatchObject({ unit: 'lane-a', role: 'worker' })
   })
 
   it("answers the rule's refusal in its own words, and refuses a call with no tab", async () => {
@@ -173,16 +172,20 @@ describe('clave_hand_over on the server road', () => {
     expect(w.works.get(ID.lead)?.standing).toBe('superseded')
   })
 
-  it('refuses a successor outside its reach, and an ambiguous call', async () => {
+  it('offers to a successor outside the group (PRDCT-4236), and refuses an ambiguous call', async () => {
     const w = world([ID.lead])
     await serveCommand(
       'setWork',
       { unit: 'lane-a', kind: 'lane', label: 'L', role: 'lead' },
       w.ctx(ID.lead)
     )
-    await expect(serveCommand('handOver', { to: ID.stranger }, w.ctx(ID.lead))).rejects.toThrow(
-      /not related to yours/
-    )
+    const offered = (await serveCommand('handOver', { to: ID.stranger }, w.ctx(ID.lead))) as {
+      changed: { sessionId: string }[]
+    }
+    expect(w.calls.at(-1)?.[0]).toBe(ID.lead)
+    expect(offered.changed.map((c) => c.sessionId)).toEqual([ID.stranger])
+    expect(w.works.get(ID.stranger)?.standing).toBe('pending')
+    await serveCommand('handOver', { cancel: true }, w.ctx(ID.lead))
     await expect(
       serveCommand('handOver', { to: ID.next, accept: true }, w.ctx(ID.lead))
     ).rejects.toThrow(/exactly one of/)

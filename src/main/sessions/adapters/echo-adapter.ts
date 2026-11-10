@@ -45,10 +45,16 @@ export class EchoAdapter implements SessionAdapter {
   readonly images = true
   private handles = new Map<string, EventEmitter>()
   private sequence = 0
+  /** The launch's prompt, sent as the first message at ready and consumed
+   *  then, as the Claude and Codex adapters do: what a tab moved here from
+   *  another provider opens on (its handoff, PRDCT-4300). */
+  private prompts = new Map<string, string>()
 
   prepare(spec: SpawnSpec): SessionHandle {
     if (this.handles.has(spec.id)) throw new Error(`Echo session already exists: ${spec.id}`)
     this.handles.set(spec.id, new EventEmitter())
+    const prompt = (spec.options as { initialPrompt?: unknown } | undefined)?.initialPrompt
+    if (typeof prompt === 'string' && prompt) this.prompts.set(spec.id, prompt)
     return { id: spec.id }
   }
 
@@ -81,6 +87,11 @@ export class EchoAdapter implements SessionAdapter {
       kind: 'event',
       event: { type: 'effort', effort: ECHO_MODELS[0].defaultEffort ?? null }
     })
+    const prompt = this.prompts.get(handle.id)
+    if (prompt !== undefined) {
+      this.prompts.delete(handle.id)
+      this.write(handle, { type: 'user_message', text: prompt })
+    }
   }
 
   /** A frame as if the session had produced it, on the stream every
@@ -141,6 +152,7 @@ export class EchoAdapter implements SessionAdapter {
     const emitter = this.handles.get(handle.id)
     if (!emitter) return
     this.handles.delete(handle.id)
+    this.prompts.delete(handle.id)
     try {
       lazyTerminalPorts.mcpConfig.remove(handle.id)
     } catch {

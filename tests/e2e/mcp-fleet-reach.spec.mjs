@@ -2,7 +2,7 @@
  * An agent on the Mac reaches the tabs it opened on a Clave server for
  * everything, not only reading (PRDCT-4193). On the fleet harness: one
  * daemon, one Mac, a Claude tab on the Mac as the caller (its own token is
- * the tab identity the reach rule reads), the desktop MCP as the road. On
+ * the tab identity the tools require), the desktop MCP as the road. On
  * the server: a plain terminal and a Claude chat (the real chat adapter over
  * `fixtures/claude-stream-stub.mjs`, which records what reaches its stdin).
  *

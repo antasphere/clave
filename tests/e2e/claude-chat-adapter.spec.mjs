@@ -284,7 +284,9 @@ setInterval(()=>{},1000);
       ['Opus (1M context)', 'opus[1m]']
     ]) {
       await win.getByRole('button', { name: 'Model', exact: true }).click()
-      const menu = win.locator('.chat-model-menu[role="menu"]')
+      // Provider first, then the model (PRDCT-4300).
+      await win.locator('.chat-model-provider[data-adapter="claude-chat"]').click()
+      const menu = win.locator('.chat-model-menu[role="menu"][aria-label="Models"]')
       await menu.waitFor()
       await menu.getByText(label, { exact: true }).click()
       await menu.waitFor({ state: 'hidden' })

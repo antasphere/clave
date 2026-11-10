@@ -28,7 +28,7 @@ import {
   switchTargets,
   type PoolAccount
 } from './account-pool'
-import type { CodexAccount } from '../../../preload/index.d'
+import type { CodexAccount, RestartOverridesInput } from '../../../preload/index.d'
 import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-ownership'
 
 /**
@@ -70,12 +70,25 @@ function poolAccounts(provider: AccountProvider): PoolAccount[] {
 
 /** The pool's pick for a new session. A named account is honored; when no
  *  account is named, the selected account is used while it has headroom, else
- *  the next one along. The launch setting can opt into the menu recommendation. */
-export function accountForLaunch(provider: 'claude', preferredId?: string): ClaudeProfile
-export function accountForLaunch(provider: 'codex', preferredId?: string): CodexAccount
+ *  the next one along. The launch setting can opt into the menu recommendation.
+ *  `model` is the model the launch will run (the `.clave` file's, the agent
+ *  call's): a Claude account is judged for THAT model's caps, so a Fable
+ *  week spent never costs a launch on Opus its account. With no model, the
+ *  shared caps alone decide. */
+export function accountForLaunch(
+  provider: 'claude',
+  preferredId?: string,
+  model?: string
+): ClaudeProfile
+export function accountForLaunch(
+  provider: 'codex',
+  preferredId?: string,
+  model?: string
+): CodexAccount
 export function accountForLaunch(
   provider: AccountProvider,
-  preferredId?: string
+  preferredId?: string,
+  model?: string
 ): ClaudeProfile | CodexAccount {
   const selected =
     provider === 'codex'
@@ -92,7 +105,7 @@ export function accountForLaunch(
   }
   const id = pickAccount({
     accounts: poolAccounts(provider),
-    usage: accountsUsageFor(provider),
+    usage: poolUsageForModel(provider, model),
     preferredId: preferredId ?? selected,
     preferRecommended:
       preferredId === undefined && useAccountPolicyStore.getState().useRecommendedAccount
@@ -104,10 +117,13 @@ export function accountForLaunch(
  *  "any" for the pool's pick. Throws with the names that exist. */
 export function resolveAccountRef(
   provider: AccountProvider,
-  ref: string | undefined
+  ref: string | undefined,
+  model?: string
 ): ClaudeProfile | CodexAccount {
   if (!ref || ref === 'any') {
-    return provider === 'codex' ? accountForLaunch('codex') : accountForLaunch('claude')
+    return provider === 'codex'
+      ? accountForLaunch('codex', undefined, model)
+      : accountForLaunch('claude', undefined, model)
   }
   if (provider === 'codex') {
     const { accounts } = useCodexAccountStore.getState()
@@ -135,18 +151,26 @@ export function sessionAccountUsage(session: Session): AccountUsageSummary | und
   const provider = accountProviderOf(session)
   if (!provider) return undefined
   const summary = accountsUsageFor(provider)[sessionAccountId(session, provider)]
-  return provider === 'claude' ? claudeUsageForModel(summary, session.model) : summary
+  return claudeUsageForModel(summary, session.model)
+}
+
+/** Every account's usage as seen for one model: the shared caps plus that
+ *  model's family cap on each (Claude's families, Codex's model buckets). */
+function poolUsageForModel(
+  provider: AccountProvider,
+  model: string | undefined
+): Record<string, AccountUsageSummary | undefined> {
+  const usage = accountsUsageFor(provider)
+  return Object.fromEntries(
+    Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, model)])
+  )
 }
 
 function sessionPoolUsage(
   session: Session,
   provider: AccountProvider
 ): Record<string, AccountUsageSummary | undefined> {
-  const usage = accountsUsageFor(provider)
-  if (provider !== 'claude') return usage
-  return Object.fromEntries(
-    Object.entries(usage).map(([id, summary]) => [id, claudeUsageForModel(summary, session.model)])
-  )
+  return poolUsageForModel(provider, session.model)
 }
 
 /** One account a session could move to, as the Switch account menu draws it. */
@@ -200,7 +224,7 @@ export function nextAccountFor(session: Session): string | null {
     usage: sessionPoolUsage(session, provider),
     preferredId: current,
     leavingId: current,
-    preferSessionHeadroom: true
+    preferWeeklyHeadroom: true
   })
   return next === current ? null : next
 }
@@ -210,6 +234,31 @@ export interface SwitchResult {
   /** The conversation came along; false means the tab started fresh. */
   resumed: boolean
   error?: string
+}
+
+/** The part of a restart's patch the served `session.restarted` push does
+ *  not carry: the provider switch's fields (PRDCT-4300). Null when the patch
+ *  holds none. */
+function providerPatchOf(
+  patch: Record<string, unknown> | undefined
+): Partial<
+  Pick<
+    Session,
+    'claudeMode' | 'codexMode' | 'claudeAgentsMode' | 'launchProfileId' | 'model' | 'continuedFrom'
+  >
+> | null {
+  if (!patch) return null
+  const keys = [
+    'claudeMode',
+    'codexMode',
+    'claudeAgentsMode',
+    'launchProfileId',
+    'model',
+    'continuedFrom'
+  ] as const
+  const rest: Record<string, unknown> = {}
+  for (const key of keys) if (key in patch) rest[key] = patch[key]
+  return Object.keys(rest).length ? (rest as ReturnType<typeof providerPatchOf>) : null
 }
 
 /**
@@ -256,7 +305,7 @@ export async function switchSessionAccount(
 export async function restartSessionProcess(
   sessionId: string,
   options: {
-    overrides?: Record<string, string | undefined>
+    overrides?: RestartOverridesInput
     resendRejected?: boolean
     /** A Resume, not a move: the host refuses it while the session runs. */
     onlyIfStopped?: boolean
@@ -268,6 +317,13 @@ export async function restartSessionProcess(
         | 'claudeConfigDir'
         | 'codexAccountId'
         | 'codexAccountLabel'
+        // A move to another provider (PRDCT-4300, `switch-provider.ts`).
+        | 'claudeMode'
+        | 'codexMode'
+        | 'claudeAgentsMode'
+        | 'launchProfileId'
+        | 'model'
+        | 'continuedFrom'
       >
     >
   } = {}
@@ -299,9 +355,26 @@ export async function restartSessionProcess(
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }
   }
-  // The push applied it already: the answer only reports.
-  if (!ownAnswerApplies(sessionId, requestId, result.requestId))
+  // The push applied it already: the answer only reports. The push knows
+  // the account alone; what a provider switch changes besides (the family,
+  // the model, the card's note) is written here without remounting again.
+  if (!ownAnswerApplies(sessionId, requestId, result.requestId)) {
+    if (providerPatchOf(options.patch)) {
+      // The whole of what the answer-first road writes, the conversation id
+      // the answer names included (the push left the old provider's), the
+      // epoch untouched since the pane remounted on the push already.
+      const rest = {
+        claudeSessionId: result.claudeSessionId,
+        launchProfileId: result.launchProfileId,
+        model: result.model,
+        ...options.patch
+      }
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, ...rest } : s))
+      }))
+    }
     return { ok: true, resumed: result.resumed }
+  }
   const current = useSessionStore.getState()
   current.applySessionRestart(sessionId, {
     claudeSessionId: result.claudeSessionId,

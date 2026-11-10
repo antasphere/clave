@@ -14,7 +14,7 @@ import {
 } from '../../store/codex-account-store'
 import type { CodexAccount } from '../../../../preload/index.d'
 import { useAccountLoginStore } from '../../store/account-login-store'
-import { useCodexAccountsUsage, headroomLabel } from '../../store/usage-store'
+import { useCodexAccountsUsage, capStatusLine } from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
 import { CodexLogo } from '../icons/cli-logos'
 import { SettingsSection, SettingsCard, SettingsCallout, Radio } from './primitives'
@@ -188,13 +188,13 @@ function AccountRow({
   const clearCredential = useCodexAccountStore((s) => s.clearCredential)
   const summary = useCodexAccountsUsage((s) => s.byAccount[account.id])
   const isDefault = account.id === DEFAULT_CODEX_ACCOUNT_ID
-  const headroom = headroomLabel(summary)
+  // One cap set, no families: the headroom, or the cap that is out and
+  // when it comes back ("Overall out · back in 2d 5h").
   const description = [
     isDefault
       ? `${describeCodexAccountAuth(account)} · ~/.codex`
       : describeCodexAccountAuth(account),
-    account.kind === 'apiKey' ? 'fallback only' : headroom,
-    account.kind !== 'apiKey' && isExhausted(summary) ? 'at limit' : null
+    account.kind === 'apiKey' ? 'fallback only' : capStatusLine(summary)
   ]
     .filter(Boolean)
     .join(' · ')

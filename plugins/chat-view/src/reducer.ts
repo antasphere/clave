@@ -7,6 +7,7 @@ import type {
 import type { Attachment } from '../../../src/shared/attachments'
 import { inputRequestMeta } from '@clave/contract/input-kinds'
 import { formMessageMarker } from '../../../src/shared/form-message'
+import { sameId } from './models'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
@@ -119,6 +120,13 @@ export interface Conversation {
    *  (PRDCT-4191). Null until the host has said. */
   run: number | null
   model: string | null
+  /** The model the reader just picked from the chip, until the provider
+   *  confirms it (a `session_meta` naming it clears this) or refuses it (an
+   *  `error` clears it, and the chip reads `model` again). The chip and the
+   *  effort chip read it over `model` while it is set, so a switch shows the
+   *  instant it is made, not one or two seconds later at the CLI's answer
+   *  (PRDCT-4273). */
+  pendingModel: string | null
   /** The reasoning effort the provider last reported; null while it has not
    *  said, or for a model that runs at none. */
   effort: string | null
@@ -133,6 +141,7 @@ export const emptyConversation: Conversation = {
   state: 'idle',
   run: null,
   model: null,
+  pendingModel: null,
   effort: null,
   permissionMode: null
 }
@@ -164,6 +173,9 @@ export type Action =
    *  host that counts from 1 again, so the run heard so far is forgotten
    *  and the first word of the new connection is taken whatever its number. */
   | { reconnected: true }
+  /** The reader picked a model from the chip (PRDCT-4273): shown at once,
+   *  confirmed or reverted by the provider's answer. */
+  | { pickModel: string }
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
@@ -244,7 +256,9 @@ function liveBefore(entries: Entry[], id: string): boolean {
   return entry?.kind === 'permission' && !isSettled(entry)
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
-  if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
+  if ('exit' in action)
+    return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null }
+  if ('pickModel' in action) return { ...state, pendingModel: action.pickModel }
   if ('reconnected' in action) return state.run === null ? state : { ...state, run: null }
   if ('session' in action) {
     // The subscribe's answer is the host's current word AT THE TIME IT WAS
@@ -527,15 +541,34 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       if (!entries.some((e) => e.kind === 'permission' && e.request.id === event.id))
         entries.push({ kind: 'permission', request: event, at })
       return { ...state, entries, state: 'blocked' }
-    case 'session_meta':
-      return { ...state, model: event.model }
+    case 'session_meta': {
+      // The provider's word on the model. A pick is confirmed by the word
+      // that names it (the switch's own echo, or the settings read after it
+      // naming its resolution); any other word is kept as the model and the
+      // pick stays shown, since a settings read answered out of order can
+      // still carry the model from before the switch (round 2 of PRDCT-4256).
+      const confirmed =
+        state.pendingModel !== null &&
+        event.model !== null &&
+        sameId(event.model, state.pendingModel)
+      return { ...state, model: event.model, ...(confirmed ? { pendingModel: null } : {}) }
+    }
     case 'effort':
       return { ...state, effort: event.effort }
     case 'permission_mode':
       return { ...state, permissionMode: { mode: event.mode, modes: event.modes } }
     case 'error':
       entries.push({ kind: 'error', message: event.message, at })
-      return { ...state, entries, state: event.fatal ? 'ended' : state.state }
+      // A refused switch comes back as an error (the CLI's reason, or the
+      // adapter's refusal of the write): the chip reads the model it is still
+      // on. Any other error in that window reverts it the same way, and the
+      // switch's own confirmation, when it comes, names the model again.
+      return {
+        ...state,
+        entries,
+        state: event.fatal ? 'ended' : state.state,
+        pendingModel: null
+      }
     case 'turn_interrupted': {
       // The message that started the turn is the last one the reader sent;
       // an answer still streaming when the stop landed is closed as it stands.

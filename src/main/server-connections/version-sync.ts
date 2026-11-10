@@ -54,8 +54,13 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
   if (server.kind === 'unreachable') return { kind: 'unreachable', ...base }
   if (server.kind === 'missing')
     return { kind: 'manual', ...base, command: manualUpgradeCommand(appVersion) }
-  const { version, installRef, upgrade } = server.info
-  const known = { ...base, serverVersion: version, installRef }
+  const { version, installRef, upgrade, name } = server.info
+  const known = {
+    ...base,
+    serverVersion: version,
+    installRef,
+    ...(name ? { serverName: name } : {})
+  }
   if (!upgrade.supported)
     return {
       kind: 'unsupported',
@@ -128,6 +133,8 @@ export interface VersionSyncDeps {
     when: 'idle' | 'now'
   ) => Promise<ServerUpgradeStatus>
   readonly publish: (results: ServerVersionStatus[]) => void
+  /** `SetServerName` on that server (PRDCT-4241); throws what the server refused. */
+  readonly setName?: (serverId: string, name: string) => Promise<unknown>
   readonly setInterval?: (fn: () => void, ms: number) => unknown
   readonly clearInterval?: (handle: unknown) => void
   readonly setTimeout?: (fn: () => void, ms: number) => unknown
@@ -144,6 +151,8 @@ export interface VersionSync {
   results(): ServerVersionStatus[]
   /** Ask the server to upgrade to this app's version now, without waiting for idle. */
   upgradeNow(serverId: string): Promise<ServerVersionStatus>
+  /** Set the server's own name (PRDCT-4241), then read it again; answers its status. */
+  rename(serverId: string, name: string): Promise<ServerVersionStatus>
 }
 
 const messageOf = (error: unknown): string =>
@@ -231,6 +240,12 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
     // reads a server still older after the ask as failed.
     const decided = decideOne(connection.id, read)
     if (decided.kind === 'upgrade' && deps.automatic) return ask(connection.id, read, 'idle')
+    // A server away keeps the name it last gave (PRDCT-4241): what tells a
+    // routine placed on it from one placed on a machine nobody has.
+    if (decided.kind === 'unreachable') {
+      const previous = current.find((r) => r.serverId === connection.id)
+      if (previous?.serverName) return { ...decided, serverName: previous.serverName }
+    }
     return decided
   }
 
@@ -290,6 +305,16 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
     refresh,
     refreshServer,
     results: () => current,
+    rename: async (serverId, name) => {
+      if (!deps.setName) throw new Error('Server names cannot be set from this app.')
+      const connection = deps.connections().find((c) => c.id === serverId && c.enabled)
+      if (!connection) throw new Error('Unknown server connection.')
+      await deps.setName(serverId, name)
+      const results = await refreshServer(serverId)
+      const status = results.find((r) => r.serverId === serverId)
+      if (!status) throw new Error('The server did not answer after the rename.')
+      return status
+    },
     upgradeNow: async (serverId) => {
       if (!deps.automatic)
         throw new Error(

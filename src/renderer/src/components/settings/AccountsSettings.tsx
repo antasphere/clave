@@ -12,7 +12,11 @@ import { AntasphereAccountSection } from './AntasphereAccountSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { CodexAccountsSection } from './CodexAccountsSection'
 import { loadAccountLogins } from '../../store/account-login-store'
-import { useAccountPolicyStore, type AccountSwitchMode } from '../../store/account-policy-store'
+import {
+  useAccountPolicyStore,
+  type AccountSwitchMode,
+  type FamilyLimitRule
+} from '../../store/account-policy-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 
 /** The policy's knobs (ADR 0002): what a tab does when its account is about
@@ -22,11 +26,20 @@ function SwitchPolicySection(): ReactElement {
   const byWorkspace = useAccountPolicyStore((s) => s.byWorkspace)
   const setMode = useAccountPolicyStore((s) => s.setMode)
   const setWorkspaceMode = useAccountPolicyStore((s) => s.setWorkspaceMode)
+  const onFamilyLimit = useAccountPolicyStore((s) => s.onFamilyLimit)
+  const familyByWorkspace = useAccountPolicyStore((s) => s.familyByWorkspace)
+  const setOnFamilyLimit = useAccountPolicyStore((s) => s.setOnFamilyLimit)
+  const setWorkspaceOnFamilyLimit = useAccountPolicyStore((s) => s.setWorkspaceOnFamilyLimit)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const workspaceName = useWorkspaceStore(
     (s) => s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.name ?? null
   )
   const own = activeWorkspaceId ? (byWorkspace[activeWorkspaceId] ?? '') : ''
+  const ownFamily = activeWorkspaceId ? (familyByWorkspace[activeWorkspaceId] ?? '') : ''
+  const familyChoices: { value: FamilyLimitRule; label: string }[] = [
+    { value: 'switch-model', label: 'Continue on another model of the same account' },
+    { value: 'switch-account', label: 'Switch to another account' }
+  ]
   const choices: { value: AccountSwitchMode; label: string; description: string }[] = [
     {
       value: 'propose',
@@ -79,6 +92,34 @@ function SwitchPolicySection(): ReactElement {
                 setWorkspaceMode(activeWorkspaceId, value === 'default' ? null : value)
               }
               testId="account-policy-workspace"
+            />
+          </SettingsRow>
+        )}
+        <SettingsRow
+          label="When one model's cap is out"
+          description="A subscription meters each model family's week on its own. With the Fable week spent and the rest open, the tab is offered Opus 5.5 on the same account before another account; this is what the automatic mode takes. A tab kept on its model from its menu falls to the account."
+        >
+          <SettingsSelect<FamilyLimitRule>
+            value={onFamilyLimit}
+            ariaLabel="What happens when one model family's cap is out"
+            options={familyChoices}
+            onChange={(value) => setOnFamilyLimit(value)}
+            testId="account-policy-family"
+          />
+        </SettingsRow>
+        {activeWorkspaceId && (
+          <SettingsRow
+            label={`This workspace${workspaceName ? ` · ${workspaceName}` : ''}, one model's cap`}
+            description="Its own rule, over the one above."
+          >
+            <SettingsSelect<FamilyLimitRule | 'default'>
+              value={ownFamily || 'default'}
+              ariaLabel="This workspace's rule when one model family's cap is out"
+              options={[{ value: 'default', label: 'Same as every workspace' }, ...familyChoices]}
+              onChange={(value) =>
+                setWorkspaceOnFamilyLimit(activeWorkspaceId, value === 'default' ? null : value)
+              }
+              testId="account-policy-family-workspace"
             />
           </SettingsRow>
         )}

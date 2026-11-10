@@ -33,6 +33,11 @@ const PopoverContent = React.forwardRef<
      *  does not follow a scale on its parent, so it jumped against the frame
      *  while the frame grew. Default `pop`. */
     motion?: 'pop' | 'rise'
+    /** `false` drops the surface (`.menu-surface`, its padding): the content
+     *  draws its own, for a popover whose surface animates inside a frame
+     *  the positioning engine sizes once (the Routines popover). Default
+     *  `true`. Animated mode only. */
+    surface?: boolean
   }
 >(
   (
@@ -43,6 +48,7 @@ const PopoverContent = React.forwardRef<
       animated,
       open,
       motion: kind = 'pop',
+      surface = true,
       children,
       ...props
     },
@@ -69,7 +75,7 @@ const PopoverContent = React.forwardRef<
                   animate={to}
                   exit={from}
                   transition={popoverTransition}
-                  className={cn('menu-surface w-auto p-1', className)}
+                  className={cn(surface ? 'menu-surface w-auto p-1' : 'w-auto', className)}
                 >
                   {children}
                 </motion.div>

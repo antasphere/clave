@@ -241,8 +241,8 @@ export async function run(t) {
     }
 
     // ── 2b. Members outside any group fold too; a lane with no lead says so ──
-    // Three tabs at the top level, opened by the seed tab as its children so
-    // the reach rule lets it assign them: the two members of one lane draw
+    // Three tabs at the top level, opened by the seed tab as its children
+    // (any tab may assign any tab since PRDCT-4236): the two members of one lane draw
     // one row that goes to the lead; a lane whose only member here is its
     // verifier reads vacant and says it has no lead.
     const loose = {}

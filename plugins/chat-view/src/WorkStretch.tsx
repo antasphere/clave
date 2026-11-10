@@ -62,6 +62,10 @@ export function WorkStretch({
   const [fresh] = useState(() => Date.now() - span.to < FRESH_MS)
   const disclosure = useDisclosure(id)
   const [built, setBuilt] = useState(disclosure.initial)
+  // Built on approach (hover or focus), as a tool call's panel is, so the
+  // steps are there before the card opens: the height glides to their real
+  // size and they stagger in, rather than opening onto nothing and popping.
+  const build = (): void => setBuilt(true)
   // The steps that count as notes, in order, so a flagged note's number
   // (the digest counts notes alone) finds its step.
   const noteSteps = stretch.steps.filter((step) => step.note !== null && step.work.length > 0)
@@ -85,7 +89,7 @@ export function WorkStretch({
           if (disclosure.toggle(event)) setBuilt(true)
         }}
       >
-        <summary className="stretch-summary">
+        <summary className="stretch-summary" onPointerEnter={build} onFocus={build}>
           <StretchDrawing />
           <span className="stretch-words">
             <span className="stretch-eyebrow">
