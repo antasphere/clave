@@ -58,6 +58,11 @@ nonisolated struct NotificationResponseInput: Sendable {
   var path: [Route] = []
   /// A sentence for the Machines screen when a notification could not go further.
   var notice: String?
+  /// A deep link that could not open yet: nobody is signed in, or its machine has no credential
+  /// on this phone. It opens once the owner's machines load with it paired, or at its pairing.
+  private(set) var pendingLink: DeepLink?
+  /// What Machines says while a link waits.
+  nonisolated static let pendingLinkNotice = "Sign in and pair this machine to open the conversation."
   /// True once the launch has read the sign-in and chosen the first screen.
   private(set) var isReady = false
 
@@ -100,7 +105,7 @@ nonisolated struct NotificationResponseInput: Sendable {
         navigate(to: destination)
       }
     }
-    if let explicit, let link = DeepLink.parse(explicit) { path = Self.path(for: link) }
+    if let explicit, let link = DeepLink.parse(explicit) { open(link) }
     launchURL = nil
     isReady = true
     if let inbox { await readyInbox(inbox) }
@@ -154,7 +159,38 @@ nonisolated struct NotificationResponseInput: Sendable {
       return
     }
     AppLog.event("deeplink.opened")
-    path = Self.path(for: link)
+    open(link)
+  }
+
+  /// The one way a deep link opens: at once when someone is signed in and the link's machine has a
+  /// credential, else kept (a second link replaces the first) with Machines saying why.
+  private func open(_ link: DeepLink) {
+    if canOpen(link) {
+      path = Self.path(for: link)
+      pendingLink = nil
+      clearPendingLinkNotice()
+    } else {
+      pendingLink = link
+      path = []
+      notice = Self.pendingLinkNotice
+    }
+  }
+
+  /// Someone is signed in and the link's machine is paired: its row is kept paired after the
+  /// machines load, the relay reached or not (MachinesModel.refresh keeps every record that has a
+  /// credential).
+  private func canOpen(_ link: DeepLink) -> Bool {
+    guard account.isSignedIn, let machines else { return false }
+    return machines.row(link.machineId)?.paired == true
+  }
+
+  /// The kept link opens once its machine is paired.
+  private func openPendingLinkIfPaired() {
+    if let link = pendingLink, canOpen(link) { open(link) }
+  }
+
+  private func clearPendingLinkNotice() {
+    if notice == Self.pendingLinkNotice { notice = nil }
   }
 
   func navigate(to destination: NotificationDestination) {
@@ -170,6 +206,13 @@ nonisolated struct NotificationResponseInput: Sendable {
 
   /// Leaves the Pairing screen for the paired machine's workspaces.
   func continueAfterPairing(machineId: String) {
+    if let link = pendingLink, link.machineId == machineId {
+      // The link that waited for this pairing opens now.
+      path = Self.path(for: link)
+      pendingLink = nil
+      clearPendingLinkNotice()
+      return
+    }
     if case .pairing? = path.last { path.removeLast() }
     open(machineId: machineId)
   }
@@ -319,6 +362,11 @@ nonisolated struct NotificationResponseInput: Sendable {
   /// Another person (or nobody) is signed in: everything built for the
   /// previous owner is dropped, never handed over.
   private func ownerChanged(_ namespace: String?) {
+    if namespace == nil {
+      // A sign-out drops the link that waited, and what Machines said about it.
+      pendingLink = nil
+      clearPendingLinkNotice()
+    }
     for connection in connections.values { connection.stop() }
     connections = [:]
     for conversation in conversations.values { conversation.disappear() }
@@ -363,6 +411,8 @@ nonisolated struct NotificationResponseInput: Sendable {
       let inbox = self.inbox
       Task { [weak self] in
         await model.load()
+        // The owner may have changed while the machines loaded.
+        if self?.machines === model { self?.openPendingLinkIfPaired() }
         if let inbox { await self?.readyInbox(inbox) }
         await self?.registerForRemoteNotificationsIfPaired()
       }
@@ -370,4 +420,13 @@ nonisolated struct NotificationResponseInput: Sendable {
   }
 
   nonisolated deinit {}
+}
+
+extension DeepLink {
+  /// The machine the link's place is on.
+  nonisolated var machineId: String {
+    switch self {
+    case .chat(let machineId, _), .request(let machineId, _): machineId
+    }
+  }
 }

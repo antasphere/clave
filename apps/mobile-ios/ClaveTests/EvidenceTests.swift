@@ -6,14 +6,16 @@ import XCTest
 /// URL (`CLAVE_IOS_OPEN_URL`) read, handed to the launch and absent from a release-like build.
 @MainActor
 final class EvidenceTests: XCTestCase {
-  private func environment() -> AppEnvironment {
+  private func environment(
+    secure: any SecureStore = InMemorySecureStore(), kv: any KeyValueStore = InMemoryKeyValueStore()
+  ) -> AppEnvironment {
     let server = UITestFakeServer()
     let defaults = UserDefaults(suiteName: "clave.evidence-tests")!
     defaults.removePersistentDomain(forName: "clave.evidence-tests")
     return AppEnvironment(
       buildKind: .development, issuer: UITestFakeServer.hubOrigin, relayOverride: nil,
       transport: UITestFakeTransport(server: server), webSocketTransport: UITestFakeWebSocketTransport(server: server),
-      secureStore: InMemorySecureStore(), keyValueStore: InMemoryKeyValueStore(), opener: UITestFakeOpener(),
+      secureStore: secure, keyValueStore: kv, opener: UITestFakeOpener(),
       usesRemoteNotifications: false, appearanceDefaults: defaults)
   }
 
@@ -65,10 +67,15 @@ final class EvidenceTests: XCTestCase {
     XCTAssertEqual(AppEnvironment.live(debug).openURLAtLaunch, URL(string: "clave-ios://chat/m_fake/s_fake"))
   }
 
-  func testTheLaunchOpensTheURLItWasGiven() async {
-    let model = AppModel(environment: environment().opening(DeepLink.chat(machineId: "m_fake", sessionId: "s_fake").url))
+  /// A signed-in owner with the machine paired: the launch opens the URL's conversation at once.
+  func testTheLaunchOpensTheURLItWasGiven() async throws {
+    let secure = InMemorySecureStore()
+    let kv = InMemoryKeyValueStore()
+    try await signInWithTheFakeMachinePaired(environment(secure: secure, kv: kv))
+    let model = AppModel(environment: environment(secure: secure, kv: kv).opening(DeepLink.chat(machineId: "m_fake", sessionId: "s_fake").url))
     await model.start()
     XCTAssertEqual(model.path, [.workspaces(machineId: "m_fake"), .chat(machineId: "m_fake", sessionId: "s_fake")])
+    XCTAssertNil(model.pendingLink)
   }
 
   func testTheFakeAsksForNotificationsOnlyWhenTheLaunchSaysSo() {

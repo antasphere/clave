@@ -41,7 +41,16 @@ extension XCTestCase {
     if !app.launchArguments.contains("--ui-test-fake") { app.launchArguments.append("--ui-test-fake") }
     app.launch()
     signIn(app)
+    pairTheFakeMachine(app)
+    app.buttons["pairing.continue"].tap()
+    XCTAssertTrue(app.buttons["workspaces.row.scratch"].waitForExistence(timeout: 10))
+    return app
+  }
 
+  /// From Machines, signed in: saves the fake relay and pairs `m_fake`, ending on the Pairing
+  /// screen with the pairing approved.
+  @MainActor
+  func pairTheFakeMachine(_ app: XCUIApplication) {
     let field = app.textFields["machines.relay.field"]
     XCTAssertTrue(field.waitForExistence(timeout: 5))
     field.tap()
@@ -60,9 +69,5 @@ extension XCTestCase {
     let paired = NSPredicate(format: "label BEGINSWITH 'Paired'")
     expectation(for: paired, evaluatedWith: state)
     waitForExpectations(timeout: 15)
-
-    app.buttons["pairing.continue"].tap()
-    XCTAssertTrue(app.buttons["workspaces.row.scratch"].waitForExistence(timeout: 10))
-    return app
   }
 }

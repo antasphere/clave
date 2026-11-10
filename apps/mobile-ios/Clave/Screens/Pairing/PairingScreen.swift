@@ -56,9 +56,12 @@ struct PairingScreen: View {
   private var actions: some View {
     switch state {
     case .approved?:
-      Button("Continue to workspaces") { model.continueAfterPairing(machineId: machineId) }
-        .buttonStyle(.clave(.primary))
-        .accessibilityIdentifier("pairing.continue")
+      // A deep link that waited for this pairing opens instead of the workspaces.
+      Button(model.pendingLink?.machineId == machineId ? "Continue to the conversation" : "Continue to workspaces") {
+        model.continueAfterPairing(machineId: machineId)
+      }
+      .buttonStyle(.clave(.primary))
+      .accessibilityIdentifier("pairing.continue")
     case .refused?, .expired?, .failed?, .cancelled?:
       Button("Try again") { attempt += 1 }
         .buttonStyle(.clave(.secondary))

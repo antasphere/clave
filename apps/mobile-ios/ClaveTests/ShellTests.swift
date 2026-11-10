@@ -36,6 +36,23 @@ nonisolated final class CountingTransport: HTTPTransport, @unchecked Sendable {
   }
 }
 
+/// A signed-in owner with the fake machine paired, as ShellTests has always built one: the fake's
+/// account signed in over `environment`'s stores, `m_fake`'s credential and record kept for it.
+/// Returns the model that signed in.
+@MainActor
+@discardableResult
+func signInWithTheFakeMachinePaired(_ environment: AppEnvironment) async throws -> AppModel {
+  let model = AppModel(environment: environment)
+  await model.start()
+  await model.account.signIn()
+  let machines = try XCTUnwrap(model.machines)
+  let base = machineBaseURL(relay: UITestFakeServer.relayOrigin, machineId: UITestFakeServer.machineId)
+  try await machines.credentials.set(UITestFakeServer.machineId, Credential(serverUrl: base, bearer: UITestFakeServer.deviceToken))
+  try await machines.records.set(
+    EnrollmentRecord(machineId: UITestFakeServer.machineId, deviceId: "d", serverId: "srv", serverName: "Fake Mac", pairedAt: 1))
+  return model
+}
+
 @MainActor
 final class ShellTests: XCTestCase {
   private func environment(
@@ -104,13 +121,119 @@ final class ShellTests: XCTestCase {
     XCTAssertEqual(third.path, [.workspaces(machineId: UITestFakeServer.machineId)])
   }
 
-  func testADeepLinkOpensTheConversation() async {
-    let model = AppModel(environment: environment())
+  /// A signed-in owner with the machine paired: the link opens at once.
+  func testADeepLinkOpensTheConversation() async throws {
+    let secure = InMemorySecureStore()
+    let kv = InMemoryKeyValueStore()
+    try await signInWithTheFakeMachinePaired(environment(secure: secure, kv: kv))
+    let model = AppModel(environment: environment(secure: secure, kv: kv))
     await model.start()
-    model.handle(url: DeepLink.chat(machineId: "m1", sessionId: "s 1").url)
-    XCTAssertEqual(model.path, [.workspaces(machineId: "m1"), .chat(machineId: "m1", sessionId: "s 1")])
+    model.handle(url: DeepLink.chat(machineId: UITestFakeServer.machineId, sessionId: "s 1").url)
+    XCTAssertEqual(
+      model.path, [.workspaces(machineId: UITestFakeServer.machineId), .chat(machineId: UITestFakeServer.machineId, sessionId: "s 1")])
+    XCTAssertNil(model.pendingLink)
     model.handle(url: URL(string: "https://example.com/chat/m1/s1")!)
     XCTAssertEqual(model.path.count, 2, "a URL that is not the app's changes nothing")
+  }
+
+  // MARK: a deep link before the sign-in
+
+  private let fakeChat = DeepLink.chat(machineId: UITestFakeServer.machineId, sessionId: UITestFakeServer.sessionId)
+
+  /// Waits up to two seconds for `condition`: the owner's machines load after a sign-in on a task
+  /// of their own.
+  private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
+    for _ in 0..<200 {
+      if condition() { return true }
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return condition()
+  }
+
+  func testALaunchLinkWhileSignedOutIsKeptWithTheNotice() async {
+    let model = AppModel(environment: environment().opening(fakeChat.url))
+    await model.start()
+    XCTAssertEqual(model.pendingLink, fakeChat)
+    XCTAssertEqual(model.path, [])
+    XCTAssertEqual(model.notice, AppModel.pendingLinkNotice)
+    XCTAssertEqual(model.notice, "Sign in and pair this machine to open the conversation.")
+  }
+
+  func testAKeptLinkOpensOnceTheOwnersMachinesLoadWithItsMachinePaired() async throws {
+    let secure = InMemorySecureStore()
+    let kv = InMemoryKeyValueStore()
+    let owner = try await signInWithTheFakeMachinePaired(environment(secure: secure, kv: kv))
+    await owner.account.signOut()
+    let model = AppModel(environment: environment(secure: secure, kv: kv).opening(fakeChat.url))
+    await model.start()
+    XCTAssertEqual(model.pendingLink, fakeChat, "signed out at launch: kept")
+    await model.account.signIn()
+    let opened = await eventually { model.path == AppModel.path(for: self.fakeChat) }
+    XCTAssertTrue(opened, "the kept link never opened: \(model.path)")
+    XCTAssertNil(model.pendingLink)
+    XCTAssertNil(model.notice)
+  }
+
+  func testAKeptLinkIsConsumedByThePairingOfItsMachineOnly() async {
+    let model = AppModel(environment: environment().opening(fakeChat.url))
+    await model.start()
+    await model.account.signIn()
+    XCTAssertEqual(model.pendingLink, fakeChat, "signed in, its machine not paired: still kept")
+
+    model.path = [.pairing(machineId: "m_other")]
+    model.continueAfterPairing(machineId: "m_other")
+    XCTAssertEqual(model.path, [.workspaces(machineId: "m_other")], "another machine's pairing continues to its workspaces")
+    XCTAssertEqual(model.pendingLink, fakeChat)
+    XCTAssertEqual(model.notice, AppModel.pendingLinkNotice)
+
+    model.path = [.pairing(machineId: UITestFakeServer.machineId)]
+    model.continueAfterPairing(machineId: UITestFakeServer.machineId)
+    XCTAssertEqual(model.path, AppModel.path(for: fakeChat))
+    XCTAssertNil(model.pendingLink)
+    XCTAssertNil(model.notice)
+  }
+
+  func testALinkForAPairedMachineOpensAtOnce() async throws {
+    let secure = InMemorySecureStore()
+    let kv = InMemoryKeyValueStore()
+    try await signInWithTheFakeMachinePaired(environment(secure: secure, kv: kv))
+    let model = AppModel(environment: environment(secure: secure, kv: kv))
+    await model.start()
+    model.handle(url: fakeChat.url)
+    XCTAssertEqual(model.path, AppModel.path(for: fakeChat))
+    XCTAssertNil(model.pendingLink)
+    XCTAssertNil(model.notice)
+  }
+
+  func testASecondLinkReplacesTheFirst() async {
+    let model = AppModel(environment: environment())
+    await model.start()
+    model.handle(url: fakeChat.url)
+    let second = DeepLink.request(machineId: "m2", requestId: "r2")
+    model.handle(url: second.url)
+    XCTAssertEqual(model.pendingLink, second)
+    XCTAssertEqual(model.path, [])
+    XCTAssertEqual(model.notice, AppModel.pendingLinkNotice)
+  }
+
+  func testASignOutDropsTheKeptLink() async {
+    let model = AppModel(environment: environment().opening(fakeChat.url))
+    await model.start()
+    await model.account.signIn()
+    XCTAssertEqual(model.pendingLink, fakeChat)
+    await model.account.signOut()
+    XCTAssertNil(model.pendingLink)
+    XCTAssertNil(model.notice)
+  }
+
+  func testAURLThatIsNotTheAppsChangesNothing() async {
+    let model = AppModel(environment: environment())
+    await model.start()
+    model.handle(url: fakeChat.url)
+    model.handle(url: URL(string: "https://example.com/chat/m1/s1")!)
+    XCTAssertEqual(model.pendingLink, fakeChat)
+    XCTAssertEqual(model.path, [])
+    XCTAssertEqual(model.notice, AppModel.pendingLinkNotice)
   }
 
   // MARK: the relay

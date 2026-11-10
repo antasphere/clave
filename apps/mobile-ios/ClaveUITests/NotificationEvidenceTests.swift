@@ -12,24 +12,32 @@ final class NotificationEvidenceTests: XCTestCase {
     continueAfterFailure = false
   }
 
-  /// The fake keeps nothing across launches, so a launch naming a chat starts signed out: the
-  /// launch opens the link's route at once, over a machine this new process has not paired, and
-  /// the route says so. Signing in then starts from Machines; the link is not kept for it.
+  /// The fake keeps nothing across launches, so a launch naming a chat starts signed out: the link
+  /// is kept, Machines says what it waits for, and once the person signs in and pairs its machine
+  /// the pairing continues to the conversation.
   @MainActor
-  func testALaunchURLOpensItsRouteOnTheFakesCleanStart() {
+  func testALaunchURLIsKeptThroughTheSignInAndPairing() {
     let app = XCUIApplication()
     app.launchArguments = ["--ui-test-fake"]
     app.launchEnvironment["CLAVE_IOS_OPEN_URL"] = chatLink.absoluteString
     app.launch()
-    let unpaired = app.buttons["connection.unpaired"]
-    XCTAssertTrue(unpaired.waitForExistence(timeout: 10), "The launch URL did not open the chat's route")
-    XCTAssertTrue(app.staticTexts["This machine is not paired any more."].exists)
-    keepScreenshot(topic: "notifications", name: "launch-url-signed-out")
-    unpaired.tap()
+    let notice = app.staticTexts.matching(
+      NSPredicate(format: "label CONTAINS %@", "Sign in and pair this machine to open the conversation.")
+    ).firstMatch
+    XCTAssertTrue(notice.waitForExistence(timeout: 10), "Machines does not say the link waits")
+    XCTAssertTrue(app.buttons["machines.appearance"].isHittable, "Machines is not on top")
+    keepScreenshot(topic: "notifications", name: "launch-url-kept")
+
     signIn(app)
-    // Nothing reopens the chat after the sign-in: Machines stays on top.
-    XCTAssertTrue(app.buttons["machines.appearance"].isHittable)
-    XCTAssertFalse(element(app, "chat.composer.field").exists)
+    pairTheFakeMachine(app)
+    let next = app.buttons["pairing.continue"]
+    XCTAssertTrue(next.waitForExistence(timeout: 5))
+    XCTAssertEqual(next.label, "Continue to the conversation")
+    next.tap()
+    XCTAssertTrue(element(app, "chat.composer.field").waitForExistence(timeout: 10), "The kept link did not open the chat")
+    let title = app.staticTexts.matching(identifier: "pane.title").matching(NSPredicate(format: "label == 'Seeded chat'")).firstMatch
+    XCTAssertTrue(title.exists)
+    keepScreenshot(topic: "notifications", name: "launch-url-opened")
   }
 
   /// The deep link opened by the system while the app runs, signed in and paired: the chat over
