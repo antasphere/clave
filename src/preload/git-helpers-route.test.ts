@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   endpoint: null as { url: string; token: string; mode?: string } | null,
   external: false,
+  unreachable: false,
   server: [] as Array<{ method: string; args: unknown[] }>
 }))
 vi.mock('electron', () => ({
@@ -26,6 +27,10 @@ vi.mock('@clave/client/node', () => ({
       dispose: async () => {},
       git: {
         generateCommitMessage: async (...args: unknown[]) => {
+          if (mocks.unreachable)
+            throw Object.assign(new Error("Clave's server at http://127.0.0.1:9 did not answer"), {
+              _tag: 'ServerUnreachable'
+            })
           mocks.server.push({ method: 'generateCommitMessage', args })
           return 'feat: from the server'
         },
@@ -105,7 +110,26 @@ describe("this Mac's git one-shots", () => {
 describe('a server of its own that cannot be reached', () => {
   it('refuses rather than run the helper in main', async () => {
     await load(null, true)
-    await expect(api.gitGenerateCommitMessage('/repo')).rejects.toThrow(/not reachable/)
+    await expect(api.gitGenerateCommitMessage('/repo')).rejects.toThrow(
+      "Clave's server did not answer. Try again in a moment."
+    )
     expect(ipcGit()).toEqual([])
+  })
+})
+
+describe('a server of its own that stops answering', () => {
+  it('is said in plain words, without its address', async () => {
+    await load({ url: 'http://127.0.0.1:1', token: 't', mode: 'attached' }, true)
+    mocks.unreachable = true
+    try {
+      const error = await api.gitGenerateCommitMessage('/repo').then(
+        () => null,
+        (e: Error) => e.message
+      )
+      expect(error).toBe("Clave's server did not answer. Try again in a moment.")
+      expect(ipcGit()).toEqual([])
+    } finally {
+      mocks.unreachable = false
+    }
   })
 })

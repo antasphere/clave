@@ -24,7 +24,11 @@ import type {
 } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
-import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
+import {
+  SERVER_SILENT,
+  type HelperPreference,
+  type HelperPreferencePatch
+} from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
@@ -520,9 +524,17 @@ const viaHelperHost =
       }
     )
     if (!(await serverExternal)) return route.ipc(...args)
-    const backing = await serverRouter.backing()
-    if (!backing) throw new Error("Clave's server is not reachable: this Mac's helpers run there.")
-    return route.server(backing, ...args)
+    // A server that cannot be reached is said in plain words, no address;
+    // its own refusal ("Switched off …") passes through.
+    const backing = await serverRouter.backing().catch(() => null)
+    if (!backing) throw new Error(SERVER_SILENT)
+    try {
+      return await route.server(backing, ...args)
+    } catch (error) {
+      const tag = (error as { _tag?: unknown } | null)?._tag
+      if (tag === 'ServerUnreachable' || tag === 'ServerRefused') throw new Error(SERVER_SILENT)
+      throw error
+    }
   }
 const viaAttachedServer =
   <A extends unknown[]>(route: {

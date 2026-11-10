@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import log from 'electron-log/main'
 import { gitManager } from '../git-manager'
 import { isServerExternal } from '../server/endpoint'
+import { SERVER_SILENT } from '../../shared/helper-preferences'
 import { GitRepoWatcher } from '../git-watch'
 import { GIT_WATCH_DEBOUNCE_MS, GIT_WATCH_MAX_WAIT_MS } from '../constants'
 import { logPullFailures } from '../pull-log'
@@ -42,9 +43,7 @@ const repoWatcher = new GitRepoWatcher({
   maxWaitMs: GIT_WATCH_MAX_WAIT_MS
 })
 
-/** What a person reads when the server that writes this Mac's commit
- *  messages cannot be reached: no address, no protocol words. */
-export const SERVER_SILENT = "Clave's server did not answer. Try again in a moment."
+export { SERVER_SILENT }
 
 /** Sync all's commit message, written where this Mac's helpers run
  *  (PRDCT-4330): with a server of its own behind the window, that server

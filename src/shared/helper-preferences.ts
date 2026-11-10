@@ -38,3 +38,7 @@ export interface HelperPreferencePatch {
  *  client says the same words (`packages/client/src/settings.ts`, which
  *  cannot import this file; its test holds the two equal). */
 export const HELPERS_NEED_UPDATE = 'This server needs an update to show its helpers.'
+
+/** What a person reads when the server that runs this Mac's helpers cannot
+ *  be reached (PRDCT-4330): no address, no protocol words. */
+export const SERVER_SILENT = "Clave's server did not answer. Try again in a moment."
