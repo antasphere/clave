@@ -52,7 +52,7 @@ is waiting on in a modal (the permission explainer, PRDCT-4331) goes above them 
 - **The history marker opens the prompt.** A helper's transcript lands in the store like
   any conversation; `session-history/index.ts` keeps it out of the history by the
   prompt's first words (`TITLE_HELPER_MARKER`, `DIGEST_HELPER_MARKER`,
-  `WORK_DIGEST_MARKER`). A new helper adds its marker there.
+  `WORK_DIGEST_MARKER`, `GIT_HELPER_MARKER`). A new helper adds its marker there.
 - **No Electron.** The standalone server loads the runner with the title generator and
   the exchange digest (`sessions/host-graph.test.ts`).
 

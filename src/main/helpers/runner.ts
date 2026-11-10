@@ -1,4 +1,5 @@
 import { execFile, type ChildProcess } from 'child_process'
+import { basename } from 'path'
 import {
   accountTokenForSpawn,
   getLoginShellEnv,
@@ -228,8 +229,12 @@ async function spawnOnce(
   // login (null) carries neither a token nor the legacy config dir.
   const onOwnAccount = config.claudeProfileId !== undefined
   const accountId = onOwnAccount ? (config.claudeProfileId ?? undefined) : context.claudeProfileId
+  const profile = launchProfileManager.resolveClaudeCli(
+    context.workspaceId,
+    context.launchProfileId
+  )
   const shot = buildOneShotLaunch({
-    profile: launchProfileManager.resolveClaudeCli(context.workspaceId, context.launchProfileId),
+    profile,
     args: helperCliArgs(definition.systemPrompt, config),
     loginEnv: getLoginShellEnv(),
     account: {
@@ -261,12 +266,21 @@ async function spawnOnce(
           return
         }
         if (err) {
-          const killed = (err as { killed?: boolean }).killed === true
-          const reason = classifyFailure({ killed, message: err.message, stderr, stdout })
+          const { killed, code } = err as { killed?: boolean; code?: unknown }
+          // "Command failed: <file> <every argument>" carries the system
+          // prompt: what the call said is its exit and its stderr, not that.
+          const head = err.message.startsWith('Command failed')
+            ? `exit code ${String(code)}`
+            : err.message
+          const reason = classifyFailure({ killed: killed === true, message: head, stderr, stdout })
+          // 127 is the login shell's "command not found": said the way the
+          // panel recognises it (`describeClaudeFailure`), not as a bare code.
+          const missing =
+            code === 127 ? `${basename(profile.command[0] ?? 'claude')}: command not found` : null
           const detail =
             reason === 'timeout'
               ? `No answer in ${Math.round(definition.timeoutMs / 1000)} s`
-              : [err.message, stderr?.trim()].filter(Boolean).join(' — ') || 'unknown error'
+              : [missing ?? head, stderr?.trim() || stdout?.trim()].filter(Boolean).join(' — ')
           console.warn(`[helpers] ${definition.id}: ${reason}: ${detail.slice(0, 300)}`)
           resolve(failure(reason, detail))
           return

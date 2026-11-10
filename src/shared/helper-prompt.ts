@@ -94,6 +94,10 @@ function closingBrace(text: string, start: number): number {
   return -1
 }
 
+/** The opening words of the git panel's helper prompts (`src/main/helpers/git.ts`):
+ *  the session history reads them to keep those one-shots out of the history. */
+export const GIT_HELPER_MARKER = 'Clave git helper:'
+
 /** The first line of every helper's system prompt: the helper is a
  *  function, not an agent (`--system-prompt` replaces the CLI's own). */
 export const HELPER_SYSTEM_PREAMBLE =

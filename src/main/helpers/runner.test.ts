@@ -310,6 +310,23 @@ describe('typed failure reasons', () => {
     expect(classifyFailure({ message: 'spawn claude ENOENT' })).toBe('failed')
   })
 
+  it("a failure's detail is the exit and stderr, never the argv with the system prompt in it", async () => {
+    const h = helper({ systemPrompt: 'SECRET-SYSTEM-PROMPT about rate limits' })
+    const done = runHelper(h, 'x')
+    await ticks()
+    const err = Object.assign(
+      new Error('Command failed: claude -p --system-prompt SECRET-SYSTEM-PROMPT about rate limits'),
+      { code: 1 }
+    )
+    mocks.spawned[0].finish(err, '', 'something broke')
+    const outcome = await done
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'failed',
+      detail: 'exit code 1 — something broke'
+    })
+  })
+
   it('a timed-out child is a timeout, not retried', async () => {
     const h = helper({ attempts: 2 })
     const done = runHelper(h, 'x')

@@ -1,6 +1,7 @@
 import type { LedgerLaunch, LedgerRow } from './ledger'
 import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { GIT_HELPER_MARKER } from '../../shared/helper-prompt'
 import { LAUNCH_KEYS } from '../../shared/runtime-choices'
 
 /**
@@ -179,11 +180,13 @@ export const TITLE_HELPER_MARKER =
 export function isTitleHelperConversation(lastPrompt: string | null): boolean {
   if (lastPrompt === null) return false
   const prompt = lastPrompt.trimStart()
-  // The exchange and work digests' one-shots too (src/main/exchange-digest.ts).
+  // The exchange and work digests' one-shots too (src/main/exchange-digest.ts),
+  // and the git panel's commit message and push summary (src/main/helpers/git.ts).
   return (
     prompt.startsWith(TITLE_HELPER_MARKER) ||
     prompt.startsWith(DIGEST_HELPER_MARKER) ||
-    prompt.startsWith(WORK_DIGEST_MARKER)
+    prompt.startsWith(WORK_DIGEST_MARKER) ||
+    prompt.startsWith(GIT_HELPER_MARKER)
   )
 }
 
