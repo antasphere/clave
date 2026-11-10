@@ -5,7 +5,6 @@ import com.clave.android.OwnerSession
 import com.clave.core.chat.Admission
 import com.clave.core.chat.AdmissionContext
 import com.clave.core.chat.AttachmentJson
-import com.clave.core.chat.DeliveryController
 import com.clave.core.chat.MAX_TRANSFER_BYTES
 import com.clave.core.chat.NO_FILES_ROUTE
 import com.clave.core.chat.PickedKind
@@ -16,10 +15,6 @@ import com.clave.core.chat.labelled
 import com.clave.core.contract.Attachment
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.FileDelivery
-import com.clave.core.state.ARRIVED_NOTHING_DISCARDED
-import com.clave.core.state.ARRIVED_NOTHING_SENT
-import com.clave.core.state.BEING_COMPLETED
-import com.clave.core.state.STILL_SENDING
 import com.clave.core.transport.ServerError
 import com.clave.core.transport.messageOf
 import com.clave.platform.files.ContentFiles
@@ -131,7 +126,16 @@ class ChatSession(
     private suspend fun readDelivery() {
         val mark = delivery.marks.get(machineId, sessionId)
         val unknown = delivery.sends.forSession(machineId, sessionId).lastOrNull()
-        _state.update { it.copy(deliveryMark = mark, unknownSend = unknown) }
+        val stored = drafts.get(machineId, sessionId)
+        _state.update {
+            // Delivered meanwhile (the pass, a completion that landed): the composer's copy goes too.
+            val delivered = composerAfterDelivered(it.unknownSend, unknown, mark, stored, it.draft, it.attachments)
+            if (delivered == null) {
+                it.copy(deliveryMark = mark, unknownSend = unknown)
+            } else {
+                it.copy(deliveryMark = mark, unknownSend = unknown, draft = delivered.first, attachments = delivered.second)
+            }
+        }
     }
 
     /** The composer's text: shown at once, written to the draft store after a pause. */
@@ -194,7 +198,7 @@ class ChatSession(
                             it.copy(
                                 draft = if (it.draft == text) "" else it.draft,
                                 attachments = if (it.attachments == attachments) emptyList() else it.attachments,
-                                error = if (outcome.clientMessageId == unknownAtStart) ARRIVED_NOTHING_SENT else null,
+                                error = sentenceAfterSent(outcome.clientMessageId, unknownAtStart),
                             )
                         }
                         if (_state.value.draft.isEmpty()) drafts.clear(machineId, sessionId)
@@ -230,23 +234,16 @@ class ChatSession(
         discarding = true
         scope.launch {
             try {
-                when (store.discardUnknown(machineId, sessionId, unknown.clientMessageId)) {
-                    DeliveryController.DiscardResult.Discarded, null -> {
-                        delivery.marks.clear(machineId, sessionId)
-                        draftWrite?.cancel()
-                        drafts.clear(machineId, sessionId)
-                        owner.kv.remove(attachmentKey)
-                        _state.update { it.copy(draft = "", attachments = emptyList(), error = null) }
-                    }
-                    DeliveryController.DiscardResult.AlreadyDelivered -> _state.update {
-                        it.copy(draft = if (it.draft == (unknown.draftText ?: unknown.text)) "" else it.draft, error = ARRIVED_NOTHING_DISCARDED)
-                    }
-                    DeliveryController.DiscardResult.AlreadyRejected -> _state.update { it.copy(error = null) }
-                    DeliveryController.DiscardResult.BeingCompleted -> _state.update { it.copy(error = BEING_COMPLETED) }
-                    DeliveryController.DiscardResult.InFlight -> _state.update { it.copy(error = STILL_SENDING) }
-                    // No longer waiting (discarded already): the card goes with the next read.
-                    DeliveryController.DiscardResult.NothingToDiscard -> _state.update { it.copy(error = null) }
+                val result = store.discardUnknown(machineId, sessionId, unknown.clientMessageId)
+                val shown = _state.value
+                val after = composerAfterDiscard(result, shown.draft, shown.attachments, unknown)
+                if (after.clearsStored) {
+                    delivery.marks.clear(machineId, sessionId)
+                    draftWrite?.cancel()
+                    drafts.clear(machineId, sessionId)
+                    owner.kv.remove(attachmentKey)
                 }
+                _state.update { it.copy(draft = after.draft, attachments = after.attachments, error = after.error) }
             } finally {
                 discarding = false
                 readDelivery()
