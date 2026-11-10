@@ -49,6 +49,8 @@ class FakeIssuer(private val clock: () -> Long) : AutoCloseable {
         val exp: Long? = null,
         val iat: Long? = null,
         val nonce: String? = null,
+        /** Leave the nonce claim out of an ID token the request asked one for. */
+        val omitNonce: Boolean = false,
         val alg: String? = null,
         /** Sign with another key than the one the JWKS publishes. */
         val otherKey: Boolean = false,
@@ -312,7 +314,7 @@ class FakeIssuer(private val clock: () -> Long) : AutoCloseable {
             t?.azp?.let { put("azp", it) }
             put("exp", t?.exp ?: (now + idTokenTtlSec))
             put("iat", t?.iat ?: now)
-            if (nonce != null) put("nonce", t?.nonce ?: nonce)
+            if (nonce != null && t?.omitNonce != true) put("nonce", t?.nonce ?: nonce)
             put("name", user.name)
             put("email", user.email)
             put("email_verified", user.emailVerified)

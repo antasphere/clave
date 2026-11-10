@@ -120,6 +120,16 @@ class JwtTest {
     }
 
     @Test
+    fun `a sign-in token without a nonce is refused, and a refresh token without one is read`() {
+        val noNonce = decodeIdToken(token(payload = JsonObject(claims - "nonce")))
+        assertEquals(null, noNonce.nonce)
+        // The sign-in asked for a nonce: a token that carries none is not the answer to it.
+        assertEquals(IdTokenRefusal.Nonce, refusal { checkIdToken(noNonce, expected) })
+        // A refresh asks for none, so none is expected.
+        checkIdToken(noNonce, expected.copy(nonce = null))
+    }
+
+    @Test
     fun `tolerates a minute of clock skew on the lifetime, and not a second more`() {
         checkIdToken(decoded, expected.copy(nowMs = 2_000_000_030L * 1000))
         checkIdToken(decoded, expected.copy(nowMs = 1_899_999_970L * 1000))

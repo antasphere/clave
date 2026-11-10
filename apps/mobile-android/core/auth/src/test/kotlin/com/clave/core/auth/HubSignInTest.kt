@@ -283,6 +283,7 @@ class HubSignInTest {
             "expired" to FakeIssuer.Tamper(exp = nowSec - 3600),
             "not yet valid" to FakeIssuer.Tamper(iat = nowSec + 3600),
             "nonce" to FakeIssuer.Tamper(nonce = "stale"),
+            "no nonce" to FakeIssuer.Tamper(omitNonce = true),
             "algorithm" to FakeIssuer.Tamper(alg = "HS256"),
         )
         for ((name, tamper) in tampers) {
