@@ -74,7 +74,7 @@
 // --dry-run; the guard must latch each (exit 3). --check and --dry-run together
 // are refused.
 import { execFileSync, spawn } from 'node:child_process'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
   accessSync,
   chmodSync,
@@ -95,7 +95,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
-import { ensureWorkspace } from '../../mobile/scripts/dev-server.mjs'
 import { startOidcProvider } from '../../../tests/e2e/fixtures/oidc-provider.mjs'
 import { runKeychain } from '../../../tests/e2e/fixtures/run-keychain.mjs'
 
@@ -1167,8 +1166,34 @@ const echoReplied = (items, text) =>
       i.event.delta.includes(text)
   )
 
-async function startEchoSession(daemon, owner) {
-  const workspace = await ensureWorkspace(daemon.url, daemon.token, SCRATCH, 'scratch')
+/**
+ * Makes `rootDir` a workspace of the daemon, named `name`, when it is not one: the base dev
+ * server's helper of the same name, carried here through the runner's own client so the runner
+ * imports nothing of apps/mobile, which the React Native retirement removes.
+ */
+async function ensureWorkspace(owner, rootDir, name) {
+  mkdirSync(rootDir, { recursive: true, mode: 0o700 })
+  const state = await owner('GET', '/workspaces')
+  if (state.status < 200 || state.status >= 300 || !Array.isArray(state.body?.workspaces))
+    throw new Error(`/workspaces answered ${state.status}`)
+  const existing = state.body.workspaces.find((w) => w.rootDir === rootDir)
+  if (existing) return existing
+  const workspace = { id: randomUUID(), name, rootDir, profileFile: null, createdAt: Date.now() }
+  const written = await owner('POST', '/workspaces/registry', {
+    workspaces: [...state.body.workspaces, workspace],
+    base: { revision: state.body.revision, instance: state.body.instance }
+  })
+  if (written.status < 200 || written.status >= 300)
+    throw new Error(`/workspaces/registry answered ${written.status}`)
+  if (written.body?.ok !== true)
+    throw new Error(
+      `the daemon refused the workspace: ${written.body?.reason ?? 'no reason given'}`
+    )
+  return workspace
+}
+
+async function startEchoSession(owner) {
+  const workspace = await ensureWorkspace(owner, SCRATCH, 'scratch')
   const profiles = await owner('GET', '/launch-profiles')
   if (profiles.status !== 200) throw new Error(`/launch-profiles answered ${profiles.status}`)
   const echo = (profiles.body?.customProfiles ?? []).find(
@@ -1615,7 +1640,7 @@ async function main() {
   const machine = await waitForMachine(relayRun)
   note(`machine ${machine.id} (${machine.name}) online on the relay`)
 
-  const echo = await startEchoSession(daemon, owner)
+  const echo = await startEchoSession(owner)
   note(`session ${echo.sessionId} in workspace ${echo.workspace.id}, Echo replied to ${echo.nonce}`)
 
   const fixture = {
