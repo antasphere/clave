@@ -11,7 +11,9 @@ import path from 'node:path'
 // of the case (one that writes, one that refuses, none at all).
 const mocks = vi.hoisted(() => ({
   env: { ...process.env } as Record<string, string>,
-  shell: '/bin/sh'
+  shell: '/bin/sh',
+  /** The default launch profile's command: the git helpers start on it. */
+  command: ['claude']
 }))
 vi.mock('../pty-manager', () => ({ getLoginShellEnv: () => mocks.env }))
 // The commit message and the push summary run on the helpers runner
@@ -19,6 +21,17 @@ vi.mock('../pty-manager', () => ({ getLoginShellEnv: () => mocks.env }))
 // command the PATH cannot place, starts the user's login shell. Both are the
 // test's: a login shell would put the machine's own `claude` back on the PATH
 // and the "none" case would call a real model.
+vi.mock('../launch-profile-manager', () => ({
+  launchProfileManager: {
+    resolveClaudeCli: () => ({
+      id: 'default',
+      name: 'Default',
+      family: 'claude',
+      command: mocks.command,
+      additionalArgs: []
+    })
+  }
+}))
 vi.mock('../sessions/adapters/pty-backend', () => ({
   getLoginShellEnv: () => mocks.env,
   getUserShell: () => mocks.shell,
@@ -26,6 +39,8 @@ vi.mock('../sessions/adapters/pty-backend', () => ({
 }))
 
 import { describeClaudeFailure, serverGitPort, type ServerGitPort } from './git-port'
+import { startEmbedded } from '@clave/server'
+import { FakeSource } from '@clave/server/test-support'
 import type { GitEvent } from '@clave/server'
 
 /**
@@ -231,6 +246,39 @@ describe('the daemon’s git port over a real checkout', () => {
     )
     await port.commit(repo, 'feat: d')
   })
+
+  it('a signed-out Claude on the launch profile is the sentence, refused as declared over HTTP', async () => {
+    // The fleet's regression (PRDCT-4326): the git helpers start on the
+    // default launch profile, so a signed-out Claude THERE must be the
+    // sentence and the 422, even with a `claude` on the PATH that would write.
+    const signedOut = path.join(root, 'profile-signed-out')
+    stub(signedOut, '/bin/cat >/dev/null; echo "Not logged in · Please run /login" >&2; exit 1')
+    mocks.command = [path.join(signedOut, 'claude')]
+    withClaude(bins.writing)
+    writeFileSync(path.join(repo, 'f.txt'), 'six\n')
+    await port.stage(repo, ['f.txt'])
+    const server = await startEmbedded({
+      ports: { sessions: new FakeSource(), git: port },
+      helloTimeoutMs: 200
+    })
+    try {
+      const response = await fetch(`${server.url}/git/generate-commit-message`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: repo })
+      })
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        _tag: 'GitOperationFailed',
+        message:
+          'This server\'s Claude is not signed in: run "claude login" on the server to generate commit messages.'
+      })
+    } finally {
+      await server.stop()
+      mocks.command = ['claude']
+      await port.commit(repo, 'feat: f')
+    }
+  }, 30_000)
 
   it('reports a Magic sync’s progress and carries the Claude sentence in the repo’s result', async () => {
     withClaude(bins.refusing)
