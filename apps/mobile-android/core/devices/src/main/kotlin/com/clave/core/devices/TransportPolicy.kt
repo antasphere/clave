@@ -26,7 +26,10 @@ public sealed interface TransportVerdict {
     }
 }
 
-private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "[::1]", "::1")
+/** The two names the debug build's network security config lets the platform reach in clear
+ *  (adb reverse lands on the phone's IPv4 loopback). The prototype also took the IPv6
+ *  loopback; here the platform would refuse it, so the policy refuses it first. */
+private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost")
 
 public fun isLoopbackHost(hostname: String): Boolean = hostname.lowercase() in LOOPBACK_HOSTS
 

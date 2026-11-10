@@ -24,11 +24,35 @@ class TransportPolicyTest {
     fun `plain http to the loopback in a development build only`() {
         assertTrue(ok("http://127.0.0.1:43201", Development))
         assertTrue(ok("ws://localhost:43201/push", Development))
-        assertTrue(ok("http://[::1]:43201", Development))
         assertFalse(ok("http://192.168.1.5:43201", Development))
         assertFalse(ok("http://127.0.0.1:43201", Release))
         assertFalse(ok("ws://127.0.0.1:43201/push", Release))
         assertFalse(ok("http://100.64.0.2:43127", Release))
+    }
+
+    @Test
+    fun `the loopback is the exact name the debug build lets through, and an address names a host`() {
+        // Plain http only to 127.0.0.1 and localhost, as the debug network security config says;
+        // a name that starts like one, another loopback form or the IPv6 loopback is refused.
+        for (url in listOf(
+            "http://localhost.evil.example/",
+            "http://127.0.0.1.example/",
+            "http://127.0.0.1./",
+            "http://127.0.0.2/",
+            "http://127.1/",
+            "http://2130706433/",
+            "http://0.0.0.0/",
+            "http://[::1]:43201",
+            "ws://[::1]:43201/push",
+        )) {
+            assertFalse(url, ok(url, Development))
+        }
+        assertTrue(ok("http://LOCALHOST:43201", Development))
+        // An address with no host is no address, whatever its scheme and build.
+        for (url in listOf("https:///m/x", "wss:///push", "http:///x")) {
+            assertEquals(url, TransportVerdict.Refused("\"$url\" is not an address."), credentialMayTravelTo(url, Development))
+            assertEquals(url, TransportVerdict.Refused("\"$url\" is not an address."), credentialMayTravelTo(url, Release))
+        }
     }
 
     @Test
