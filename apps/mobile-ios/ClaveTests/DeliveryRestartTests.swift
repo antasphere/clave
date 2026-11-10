@@ -334,7 +334,7 @@ final class DeliveryRestartTests: XCTestCase {
     let discard = Task { await model.discardUnknownSend() }
     await eventually("Discard waits for the pass") { await parts.delivery.claimState(old).waiting == 1 }
     let reloaded = try await UnknownSends(
-      store: OwnerScopedKeyValueStore(base: FileKeyValueStore(directory: folder), namespace: namespace)
+      store: OwnerScopedKeyValueStore(base: FileKeyValueStore(directory: folder), namespace: namespace), machineId: "m1"
     ).list()
     let record = reloaded.first { $0.clientMessageId == old }
     XCTAssertNotNil(record, "the send is still in the file")
@@ -353,7 +353,7 @@ final class DeliveryRestartTests: XCTestCase {
     let model = try makeModel()
     await model.appear()
     let old = await unknownSend(model, "Discard, the ledger refusing writes.")
-    await store.refuseWrites(of: UnknownSends.key)
+    await store.refuseWrites(of: UnknownSends.key(for: "m1"))
     await model.discardUnknownSend()
     XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the bar stays")
     XCTAssertEqual(model.deliveryMark?.clientMessageId, old)
@@ -372,7 +372,7 @@ final class DeliveryRestartTests: XCTestCase {
     await model.appear()
     let text = "Send again, the ledger refusing writes."
     let old = await unknownSend(model, text)
-    await store.refuseWrites(of: UnknownSends.key)
+    await store.refuseWrites(of: UnknownSends.key(for: "m1"))
     await model.resendUnderNewId()
     XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the bar stays")
     XCTAssertEqual(model.deliveryMark?.clientMessageId, old)

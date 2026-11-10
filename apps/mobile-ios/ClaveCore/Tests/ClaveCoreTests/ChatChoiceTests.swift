@@ -17,7 +17,7 @@ private func ownerStore(_ directory: URL) -> OwnerScopedKeyValueStore {
 
 private func controller(over store: any KeyValueStore) -> DeliveryController {
   DeliveryController(
-    sends: UnknownSends(store: store), marks: DeliveryMarks(store: store), drafts: Drafts(store: store),
+    sends: UnknownSends(store: store, machineId: machine), marks: DeliveryMarks(store: store), drafts: Drafts(store: store),
     attachmentDrafts: AttachmentDrafts(store: store))
 }
 
@@ -123,7 +123,7 @@ final class ChatChoiceTests: XCTestCase {
   /// What a reload of the file finds: the ledger, the conversation's mark and its draft.
   private func reloaded() async throws -> (ledger: [UnknownSend], mark: DeliveryMark?, draft: String) {
     let store = ownerStore(directory)
-    let ledger = try await UnknownSends(store: store).list()
+    let ledger = try await UnknownSends(store: store, machineId: machine).list()
     let mark = try await DeliveryMarks(store: store).get(machine, session)
     let draft = try await Drafts(store: store).get(machine, session)
     return (ledger, mark, draft)
@@ -251,7 +251,7 @@ final class ChatChoiceTests: XCTestCase {
   private func discardWhoseRecordRemovalFailsAfterTheMark() async throws -> String {
     let id = "message-order"
     let store = FailingLedgerStore(
-      ownerStore(directory), ledgerKey: UnknownSends.key, markKey: deliveryMarkKey(machine, session))
+      ownerStore(directory), ledgerKey: UnknownSends.key(for: machine), markKey: deliveryMarkKey(machine, session))
     let first = controller(over: store)
     try await recordUnknownSend(unknownSend(id), reason: "lost", sends: first.sends, marks: first.marks)
     try await Drafts(store: store).set(machine, session, text)
@@ -300,7 +300,7 @@ final class ChatChoiceTests: XCTestCase {
   func testAChoiceTheLedgerCannotWriteThrowsBeforeItWaitsAndChangesNothing() async throws {
     let id = "message-not-kept"
     let store = FailingLedgerStore(
-      ownerStore(directory), ledgerKey: UnknownSends.key, markKey: deliveryMarkKey(machine, session))
+      ownerStore(directory), ledgerKey: UnknownSends.key(for: machine), markKey: deliveryMarkKey(machine, session))
     let first = controller(over: store)
     try await recordUnknownSend(unknownSend(id), reason: "lost", sends: first.sends, marks: first.marks)
     await store.refuseEveryLedgerWrite()

@@ -355,7 +355,7 @@ final class DeliveryRaceTests: XCTestCase {
     let text = "Held before the ledger."
     model.draft = text
     await model.flushDraft()
-    await store.hold(UnknownSends.key)
+    await store.hold(UnknownSends.key(for: "m1"))
     let returned = Returned()
     // Both run on the main actor in order: the second starts at the first one's first suspension.
     let first = Task { await model.send() }
@@ -500,7 +500,7 @@ final class DeliveryRaceTests: XCTestCase {
     server.answerStatusByDefault(.unreadable)
     model.draft = "A file, and a late read of the ledger."
     // The send's own entry reads the ledger once; the bar's read after it is held.
-    await store.holdReads(UnknownSends.key, skipping: 1)
+    await store.holdReads(UnknownSends.key(for: "m1"), skipping: 1)
     let sending = Task { await model.send() }
     await eventually("the bar holds at its read of the ledger") { await store.readsWaiting == 1 }
     await eventually("the send's outcome is marked") {

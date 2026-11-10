@@ -99,7 +99,7 @@ final class ChatSendTests: XCTestCase {
   func testAForbiddenWriteFailsInTheServersWordsAndIsNeverAskedAbout() async throws {
     let kv = InMemoryKeyValueStore()
     let delivery = DeliveryController(
-      sends: UnknownSends(store: kv), marks: DeliveryMarks(store: kv), drafts: Drafts(store: kv),
+      sends: UnknownSends(store: kv, machineId: "m"), marks: DeliveryMarks(store: kv), drafts: Drafts(store: kv),
       attachmentDrafts: AttachmentDrafts(store: kv), now: { 1 })
     let send = UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "m-1", text: "Not allowed.", at: 1)
     try await delivery.begin(send)

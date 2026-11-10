@@ -70,6 +70,9 @@ nonisolated struct NotificationResponseInput: Sendable {
   @ObservationIgnored private var pushRegistry: PushTokenRegistry?
   @ObservationIgnored private var apnsToken: String?
   @ObservationIgnored private var launchURL: URL?
+  /// The move of each owner's shared ledger to its machines' own, by owner namespace: one task,
+  /// which every connection of that owner waits for before it is built.
+  @ObservationIgnored private var ledgerMoves: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private var starting = false
   @ObservationIgnored private var started = false
   @ObservationIgnored private var askedForRemoteNotifications = false
@@ -223,10 +226,10 @@ nonisolated struct NotificationResponseInput: Sendable {
   /// when this phone keeps no credential for it.
   func connection(for machineId: String) async -> MachineConnection? {
     if let existing = connections[machineId], !existing.isUnpaired { return existing }
-    guard let machines, let owner = account.ownerKeyValueStore,
-      let credential = try? await machines.credentials.get(machineId)
-    else { return nil }
-    // The owner may have changed while the credential was read.
+    guard let machines, let owner = account.ownerKeyValueStore else { return nil }
+    await moveSharedLedger(of: owner)
+    guard let credential = try? await machines.credentials.get(machineId) else { return nil }
+    // The owner may have changed while the ledger moved or the credential was read.
     guard self.machines === machines else { return nil }
     if let existing = connections[machineId], !existing.isUnpaired { return existing }
     let row = machines.row(machineId)
@@ -246,6 +249,26 @@ nonisolated struct NotificationResponseInput: Sendable {
     connections[machineId] = connection
     await connection.start()
     return connection
+  }
+
+  /// Moves the sends of unknown outcome every machine of this owner once kept under one key to each
+  /// machine's own, once per owner: a caller arriving while the move runs waits for the same move,
+  /// and one arriving later finds it done. A move that fails leaves the records under the old key,
+  /// none dropped, for the next launch to move.
+  private func moveSharedLedger(of owner: OwnerScopedKeyValueStore) async {
+    if let move = ledgerMoves[owner.namespace] {
+      await move.value
+      return
+    }
+    let move = Task {
+      do {
+        try await migrateLegacyUnknownSends(owner)
+      } catch {
+        AppLog.event("ledger.move.failed")
+      }
+    }
+    ledgerMoves[owner.namespace] = move
+    await move.value
   }
 
   /// The conversation of a session on a machine, made on first use over that machine's

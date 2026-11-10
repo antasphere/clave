@@ -208,11 +208,11 @@ struct MachineDeliveryParts {
   let drafts: Drafts
   let attachmentDrafts: AttachmentDrafts
 
-  init(store: any KeyValueStore) {
+  init(store: any KeyValueStore, machineId: String = "m1") {
     drafts = Drafts(store: store)
     attachmentDrafts = AttachmentDrafts(store: store)
     delivery = DeliveryController(
-      sends: UnknownSends(store: store), marks: DeliveryMarks(store: store), drafts: drafts,
+      sends: UnknownSends(store: store, machineId: machineId), marks: DeliveryMarks(store: store), drafts: drafts,
       attachmentDrafts: attachmentDrafts)
   }
 }
@@ -381,7 +381,7 @@ final class ChatModelTests: XCTestCase {
     XCTAssertNotEqual(ids[0], ids[1])
     XCTAssertNil(model.deliveryMark)
     XCTAssertEqual(model.draft, "")
-    let ledger = try await UnknownSends(store: store).list()
+    let ledger = try await UnknownSends(store: store, machineId: "m1").list()
     XCTAssertEqual(ledger, [])
   }
 
@@ -397,7 +397,7 @@ final class ChatModelTests: XCTestCase {
     XCTAssertNil(model.deliveryMark)
     XCTAssertEqual(model.draft, "Forget it.")
     XCTAssertEqual(server.writes.count, 1)
-    let ledger = try await UnknownSends(store: store).list()
+    let ledger = try await UnknownSends(store: store, machineId: "m1").list()
     XCTAssertEqual(ledger, [])
     let mark = try await DeliveryMarks(store: store).get("m1", "s1")
     XCTAssertNil(mark)

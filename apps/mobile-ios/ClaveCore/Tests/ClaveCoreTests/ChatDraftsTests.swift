@@ -155,12 +155,12 @@ final class ChatDraftsTests: XCTestCase {
     let file = PickedFile(uri: "file:///a", name: "a", mimeType: "text/plain", size: 1, kind: .file)
 
     try await Drafts(store: ownerA).set("m", "s", "A's draft")
-    try await UnknownSends(store: ownerA).add(send)
+    try await UnknownSends(store: ownerA, machineId: "m").add(send)
     try await DeliveryMarks(store: ownerA).set("m", "s", mark)
     try await AttachmentDrafts(store: ownerA).set("m", "s", [file])
 
     let draftB = try await Drafts(store: ownerB).get("m", "s")
-    let sendsB = try await UnknownSends(store: ownerB).list()
+    let sendsB = try await UnknownSends(store: ownerB, machineId: "m").list()
     let markB = try await DeliveryMarks(store: ownerB).get("m", "s")
     let filesB = try await AttachmentDrafts(store: ownerB).get("m", "s")
     XCTAssertEqual(draftB, "")
@@ -169,14 +169,14 @@ final class ChatDraftsTests: XCTestCase {
     XCTAssertEqual(filesB, [])
 
     try await Drafts(store: ownerB).set("m", "s", "B's draft")
-    try await UnknownSends(store: ownerB).add(UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "message-b", text: "from B", at: 2))
+    try await UnknownSends(store: ownerB, machineId: "m").add(UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "message-b", text: "from B", at: 2))
     let draftA = try await Drafts(store: ownerA).get("m", "s")
-    let sendsA = try await UnknownSends(store: ownerA).list()
+    let sendsA = try await UnknownSends(store: ownerA, machineId: "m").list()
     XCTAssertEqual(draftA, "A's draft")
     XCTAssertEqual(sendsA, [send])
 
     let keys = Set(await base.values.keys)
-    for key in [draftKey("m", "s"), UnknownSends.key] {
+    for key in [draftKey("m", "s"), UnknownSends.key(for: "m")] {
       XCTAssertTrue(keys.contains("\(namespaceA):\(key)"), key)
       XCTAssertTrue(keys.contains("\(namespaceB):\(key)"), key)
     }

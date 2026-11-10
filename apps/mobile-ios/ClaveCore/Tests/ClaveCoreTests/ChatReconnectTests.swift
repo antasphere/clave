@@ -14,7 +14,7 @@ private final class Harness: @unchecked Sendable {
   let writeFails = Box(false)
   let statusFails = Box(false)
   let requestsFail = Box(false)
-  lazy var sends = UnknownSends(store: kv)
+  lazy var sends = UnknownSends(store: kv, machineId: "m-1")
   lazy var marks = DeliveryMarks(store: kv)
   lazy var drafts = Drafts(store: kv)
 
@@ -160,7 +160,7 @@ final class ChatReconnectTests: XCTestCase {
     // A restart: new stores over the same key-value store.
     let restarted = Harness()
     let fresh = ReconnectPorts(
-      sends: UnknownSends(store: h.kv), marks: DeliveryMarks(store: h.kv), drafts: Drafts(store: h.kv),
+      sends: UnknownSends(store: h.kv, machineId: "m-1"), marks: DeliveryMarks(store: h.kv), drafts: Drafts(store: h.kv),
       status: { _ in WriteStatus(status: .unknown) },
       write: { s in restarted.writes.mutate { $0.append(s) }; return WriteAnswer(status: .accepted) },
       refreshRequests: { _ in }, refreshHistory: { _, _ in })
@@ -185,11 +185,12 @@ final class ChatReconnectTests: XCTestCase {
 
   func testDoesNotReconcileAnotherMachineOrSendAPlainUnsentDraft() async throws {
     let h = try await harness()
-    try await h.sends.add(UnknownSend(machineId: "other", sessionId: "s-1", clientMessageId: "other-message", text: "x", at: 1))
+    let otherLedger = UnknownSends(store: h.kv, machineId: "other")
+    try await otherLedger.add(UnknownSend(machineId: "other", sessionId: "s-1", clientMessageId: "other-message", text: "x", at: 1))
     try await h.drafts.set("m-1", "unsent", "do not send")
     _ = try await h.run()
     XCTAssertEqual(h.writes.value, [])
-    let other = try await h.sends.forMachine("other")
+    let other = try await otherLedger.list()
     XCTAssertEqual(other.count, 1)
     let draft = try await h.drafts.get("m-1", "unsent")
     XCTAssertEqual(draft, "do not send")
@@ -220,7 +221,7 @@ final class ChatReconnectTests: XCTestCase {
   }
 
   func testConcurrentAddsNeverDropAnId() async throws {
-    let sends = UnknownSends(store: InMemoryKeyValueStore())
+    let sends = UnknownSends(store: InMemoryKeyValueStore(), machineId: "m")
     try await withThrowingTaskGroup(of: Void.self) { group in
       for index in 0..<20 {
         group.addTask { try await sends.add(UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "parallel-\(index)", text: "t", at: 1)) }
@@ -235,13 +236,13 @@ final class ChatReconnectTests: XCTestCase {
   }
 
   func testAnUnreadableLedgerOrMarkIsEmpty() async throws {
-    let kv = InMemoryKeyValueStore([UnknownSends.key: "not json", deliveryMarkKey("m", "s"): "{\"kind\":\"other\"}"])
-    let list = try await UnknownSends(store: kv).list()
+    let kv = InMemoryKeyValueStore([UnknownSends.key(for: "m"): "not json", deliveryMarkKey("m", "s"): "{\"kind\":\"other\"}"])
+    let list = try await UnknownSends(store: kv, machineId: "m").list()
     XCTAssertEqual(list, [])
     let mark = try await DeliveryMarks(store: kv).get("m", "s")
     XCTAssertNil(mark)
-    let mixed = InMemoryKeyValueStore([UnknownSends.key: "[{\"machineId\":\"m\",\"sessionId\":\"s\",\"clientMessageId\":\"message-1\",\"text\":\"t\"},{\"bad\":1}]"])
-    let kept = try await UnknownSends(store: mixed).list()
+    let mixed = InMemoryKeyValueStore([UnknownSends.key(for: "m"): "[{\"machineId\":\"m\",\"sessionId\":\"s\",\"clientMessageId\":\"message-1\",\"text\":\"t\"},{\"bad\":1}]"])
+    let kept = try await UnknownSends(store: mixed, machineId: "m").list()
     XCTAssertEqual(kept, [UnknownSend(machineId: "m", sessionId: "s", clientMessageId: "message-1", text: "t", at: 0)])
   }
 
@@ -256,7 +257,7 @@ final class ChatReconnectTests: XCTestCase {
 }
 
 private func controllerOver(_ kv: InMemoryKeyValueStore) -> DeliveryController {
-  DeliveryController(sends: UnknownSends(store: kv), marks: DeliveryMarks(store: kv), drafts: Drafts(store: kv), attachmentDrafts: AttachmentDrafts(store: kv))
+  DeliveryController(sends: UnknownSends(store: kv, machineId: "m"), marks: DeliveryMarks(store: kv), drafts: Drafts(store: kv), attachmentDrafts: AttachmentDrafts(store: kv))
 }
 
 final class ChatDeliveryControllerTests: XCTestCase {
@@ -290,7 +291,7 @@ final class ChatDeliveryControllerTests: XCTestCase {
     let drafts = Drafts(store: kv)
     let attachments = AttachmentDrafts(store: kv)
     // One drafts instance for the composer and the controller, as the app wires it: each caches.
-    let controller = DeliveryController(sends: UnknownSends(store: kv), marks: DeliveryMarks(store: kv), drafts: drafts, attachmentDrafts: attachments)
+    let controller = DeliveryController(sends: UnknownSends(store: kv, machineId: "m"), marks: DeliveryMarks(store: kv), drafts: drafts, attachmentDrafts: attachments)
     try await drafts.set("m", "s", draft)
     try await attachments.set("m", "s", [])
     let s = sendOf("message-1001")
@@ -315,7 +316,7 @@ final class ChatDeliveryControllerTests: XCTestCase {
   func testAReconnectQueriesUnknownSendsPreservesEditsAndSendsNoOrdinaryDraft() async throws {
     let kv = InMemoryKeyValueStore()
     let drafts = Drafts(store: kv)
-    let controller = DeliveryController(sends: UnknownSends(store: kv), marks: DeliveryMarks(store: kv), drafts: drafts, attachmentDrafts: AttachmentDrafts(store: kv))
+    let controller = DeliveryController(sends: UnknownSends(store: kv, machineId: "m"), marks: DeliveryMarks(store: kv), drafts: drafts, attachmentDrafts: AttachmentDrafts(store: kv))
     let s = sendOf("message-1002")
     try await controller.begin(s)
     try await controller.finish(s, .unknown(clientMessageId: s.clientMessageId, reason: "unknown"))
@@ -423,7 +424,7 @@ final class ChatDeliveryControllerTests: XCTestCase {
     let kv = InMemoryKeyValueStore()
     let marks = FailingMarkStore(kv)
     let controller = DeliveryController(
-      sends: UnknownSends(store: kv), marks: DeliveryMarks(store: marks), drafts: Drafts(store: kv),
+      sends: UnknownSends(store: kv, machineId: "m"), marks: DeliveryMarks(store: marks), drafts: Drafts(store: kv),
       attachmentDrafts: AttachmentDrafts(store: kv))
     let s = sendOf("message-2000")
     try await recordUnknownSend(s, reason: "lost", sends: controller.sends, marks: DeliveryMarks(store: kv))

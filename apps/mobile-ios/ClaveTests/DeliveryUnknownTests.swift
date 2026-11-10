@@ -234,7 +234,7 @@ final class DeliveryUnknownTests: XCTestCase {
 
   /// This conversation's sends in the ledger (the sentinel is another conversation's).
   private func ledger() async throws -> [String] {
-    try await UnknownSends(store: store).forSession("m1", "s1").map(\.clientMessageId)
+    try await UnknownSends(store: store, machineId: "m1").forSession("m1", "s1").map(\.clientMessageId)
   }
 
   /// A send nobody can tell the outcome of: the write's answer lost, kept by the server or not,
@@ -252,7 +252,7 @@ final class DeliveryUnknownTests: XCTestCase {
   /// Drops the push socket, and waits until the model's own reconnection pass has gone through
   /// the whole ledger: the sentinel, last in it, has been asked about once more.
   private func reconnectionPass() async throws {
-    try await UnknownSends(store: store).add(
+    try await UnknownSends(store: store, machineId: "m1").add(
       UnknownSend(machineId: "m1", sessionId: "s-sentinel", clientMessageId: sentinelId, text: "another conversation", at: 1))
     server.answerStatus(.answer("unknown"), for: sentinelId)
     let asked = server.asks.filter { $0 == sentinelId }.count

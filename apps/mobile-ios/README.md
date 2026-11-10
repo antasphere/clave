@@ -14,6 +14,12 @@ owed with the Apple team), callback scheme `clave-ios` (`clave-ios://oauth/callb
 deep link `clave-ios://chat/<machineId>/<sessionId>`), OAuth client name `Clave iOS`,
 Keychain service `com.clave.ios.dev.credentials`. Deployment target iOS 17.
 
+The key-value store (one JSON file in the app's support folder, every key under the owner's
+namespace) keeps each machine's sends of unknown outcome under a key of its own,
+`clave.unknown-sends:<machineId>`. The app has had development installs only; records still
+under the old shared key `clave.unknown-sends` are moved to their machine's key at the owner's
+first connection, exactly once, none dropped.
+
 ## The toolchain
 
 Xcode 26.0.1 (17A400) with Swift 6.2 and the iOS 26.0 simulator runtime; the iOS 17.5

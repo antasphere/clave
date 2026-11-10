@@ -107,24 +107,30 @@ struct SerialQueue {
   }
 }
 
-/// The ledger of sends of unknown outcome, one JSON list under "clave.unknown-sends"; writes are serialized.
+/// One machine's ledger of sends of unknown outcome: one JSON list under
+/// "clave.unknown-sends:<machineId>". Its writes are serialized, and two machines' ledgers are two
+/// keys, so the ledgers that two machines' connections build never rewrite one list.
 public actor UnknownSends {
-  /// The store key the list lives under.
-  public static let key = "clave.unknown-sends"
+  /// The store key a machine's list lives under.
+  public static func key(for machineId: String) -> String { "clave.unknown-sends:\(machineId)" }
 
+  /// The machine whose sends this ledger keeps.
+  public nonisolated let machineId: String
   private let store: any KeyValueStore
   private var queue = SerialQueue()
 
-  /// The ledger over `store` (an owner-scoped store keeps two owners' ledgers apart).
-  public init(store: any KeyValueStore) {
+  /// The ledger of `machineId` over `store` (an owner-scoped store keeps two owners' ledgers apart).
+  public init(store: any KeyValueStore, machineId: String) {
     self.store = store
+    self.machineId = machineId
   }
 
-  /// Every send in the ledger; an unreadable list is an empty one.
+  private var key: String { Self.key(for: machineId) }
+
+  /// Every send in this machine's ledger; an unreadable list is an empty one.
   public func list() async throws -> [UnknownSend] {
-    guard let raw = try await store.get(Self.key), !raw.isEmpty else { return [] }
-    guard let parsed = try? JSONDecoder().decode([Lenient<UnknownSend>].self, from: Data(raw.utf8)) else { return [] }
-    return parsed.compactMap(\.value)
+    guard let raw = try await store.get(key) else { return [] }
+    return decodeLedger(raw)
   }
 
   /// The sends of one machine.
@@ -165,13 +171,52 @@ public actor UnknownSends {
     }.value
   }
 
+  /// Keeps each of `sends` whose id the ledger does not hold yet; one the ledger holds stays as it
+  /// is.
+  func addMissing(_ sends: [UnknownSend]) async throws {
+    try await queue.enqueue { [self] in
+      let current = try await list()
+      let missing = sends.filter { send in !current.contains { $0.clientMessageId == send.clientMessageId } }
+      if !missing.isEmpty { try await write(current + missing) }
+    }.value
+  }
+
   private func write(_ sends: [UnknownSend]) async throws {
     if sends.isEmpty {
-      try await store.remove(Self.key)
+      try await store.remove(key)
     } else {
-      try await store.set(Self.key, encodeStored(sends))
+      try await store.set(key, encodeStored(sends))
     }
   }
+}
+
+/// A ledger list as stored; an unreadable list is an empty one, an unreadable record is left out.
+private func decodeLedger(_ raw: String) -> [UnknownSend] {
+  guard !raw.isEmpty, let parsed = try? JSONDecoder().decode([Lenient<UnknownSend>].self, from: Data(raw.utf8)) else { return [] }
+  return parsed.compactMap(\.value)
+}
+
+/// The key every machine of an owner kept its sends of unknown outcome under, in one list, before
+/// each machine had a ledger of its own.
+public let legacyUnknownSendsKey = "clave.unknown-sends"
+
+/// Moves the records of the list every machine of an owner once shared to their machine's own
+/// ledger: each record under its machine's key unless a record of its id is already there, none
+/// copied to another machine and none dropped, then the old list removed. Run once per owner store
+/// before its first connection, while nothing else writes these ledgers; once the old list is gone,
+/// a run changes nothing.
+public func migrateLegacyUnknownSends(_ store: any KeyValueStore) async throws {
+  guard let raw = try await store.get(legacyUnknownSendsKey) else { return }
+  var machines: [String] = []
+  var records: [String: [UnknownSend]] = [:]
+  for record in decodeLedger(raw) {
+    if records[record.machineId] == nil { machines.append(record.machineId) }
+    records[record.machineId, default: []].append(record)
+  }
+  for machineId in machines {
+    try await UnknownSends(store: store, machineId: machineId).addMissing(records[machineId] ?? [])
+  }
+  try await store.remove(legacyUnknownSendsKey)
 }
 
 /// What the composer shows above a draft whose last send did not land.

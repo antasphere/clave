@@ -76,7 +76,8 @@ import Observation
     drafts = Drafts(store: ownerKeyValueStore)
     attachmentDrafts = AttachmentDrafts(store: ownerKeyValueStore)
     delivery = DeliveryController(
-      sends: UnknownSends(store: ownerKeyValueStore), marks: DeliveryMarks(store: ownerKeyValueStore), drafts: drafts,
+      sends: UnknownSends(store: ownerKeyValueStore, machineId: machineId), marks: DeliveryMarks(store: ownerKeyValueStore),
+      drafts: drafts,
       attachmentDrafts: attachmentDrafts)
     client = try ClaveServerClient(credential: credential, transport: environment.transport, build: environment.buildKind)
     let bearer = credential.bearer
