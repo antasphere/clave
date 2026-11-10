@@ -67,8 +67,17 @@ function script(file, lines) {
   return file
 }
 
-/** The stand-ins and the empty homes, under `root`. */
-function isolation(root) {
+/** One shell word: the value in single quotes. */
+const quoted = (value) => `'${String(value).replaceAll("'", "'\\''")}'`
+
+/** The keychain search list's paths, never anything inside a keychain. */
+const searchList = () =>
+  execFileSync('/usr/bin/security', ['list-keychains', '-d', 'user'], { encoding: 'utf8' })
+
+/** The stand-ins and the empty homes, under `root`. On macOS the keychain
+ *  file is named to `onKeychain` before it is created, so the cleanup deletes
+ *  it whatever happens next. */
+function isolation(root, onKeychain) {
   const stubs = path.join(root, 'stubs')
   const claudeConfig = path.join(root, 'claude-config')
   const codexHome = path.join(root, 'codex-home')
@@ -77,23 +86,6 @@ function isolation(root) {
   writeFileSync(log, '', { mode: 0o600 })
   const record = (name) =>
     `printf '%s %s %s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ${name} "$1" "$2" >> '${log}'`
-  // The daemon reads its login environment through `$SHELL -lic 'env -0'`:
-  // this one answers with the environment it was handed. A `-c` command runs
-  // with /bin/sh. Named zsh, a name the daemon accepts as a login shell.
-  const shell = script(path.join(stubs, 'zsh'), [
-    '#!/bin/sh',
-    'cmd=""',
-    'while [ $# -gt 0 ]; do',
-    '  case "$1" in',
-    '    -c) shift; cmd="$1" ;;',
-    '  esac',
-    '  shift',
-    'done',
-    'case "$cmd" in',
-    '  ""|"env -0") exec /usr/bin/env -0 ;;',
-    '  *) exec /bin/sh -c "$cmd" ;;',
-    'esac'
-  ])
   const claude = script(path.join(stubs, 'claude'), ['#!/bin/sh', record('claude'), 'exit 0'])
   const codex = script(path.join(stubs, 'codex'), ['#!/bin/sh', record('codex'), 'exit 0'])
   const realBun = bunBinary({ PATH: process.env.PATH ?? '' }, REPO)
@@ -106,9 +98,11 @@ function isolation(root) {
   let keychain
   if (process.platform === 'darwin') {
     keychain = path.join(root, 'test.keychain-db')
+    onKeychain(keychain)
     execFileSync('/usr/bin/security', ['create-keychain', '-p', '', keychain], { stdio: 'ignore' })
     execFileSync('/usr/bin/security', ['set-keychain-settings', keychain], { stdio: 'ignore' })
   }
+  const shell = path.join(stubs, 'zsh')
   const env = {}
   for (const key of ENV_ALLOWLIST) if (process.env[key] !== undefined) env[key] = process.env[key]
   Object.assign(env, {
@@ -120,6 +114,29 @@ function isolation(root) {
     CLAVE_BUN: bun,
     ...(keychain && { CLAVE_KEYCHAIN_FILE: keychain })
   })
+  // The daemon reads its login environment through `$SHELL -lic 'env -0'`.
+  // This stand-in answers with the daemon's own allowlisted environment,
+  // written into it, and nothing of its caller's: `env -i` starts empty, so
+  // run by hand from a real shell it still shows only these keys. A `-c`
+  // command runs with /bin/sh on the same environment. Named zsh, a name the
+  // daemon accepts as a login shell.
+  const fixed = Object.entries(env)
+    .map(([key, value]) => `${key}=${quoted(value)}`)
+    .join(' ')
+  script(shell, [
+    '#!/bin/sh',
+    'cmd=""',
+    'while [ $# -gt 0 ]; do',
+    '  case "$1" in',
+    '    -c) shift; cmd="$1" ;;',
+    '  esac',
+    '  shift',
+    'done',
+    'case "$cmd" in',
+    `  ""|"env -0") exec /usr/bin/env -i ${fixed} /usr/bin/env -0 ;;`,
+    `  *) exec /usr/bin/env -i ${fixed} /bin/sh -c "$cmd" ;;`,
+    'esac'
+  ])
   return { env, log, claude, codex }
 }
 
@@ -138,16 +155,29 @@ async function inside(server, source) {
 
 describe("the daemon's title opt-out, booted", () => {
   let root = null
+  let keychain = null
   afterEach(() => {
+    // delete-keychain takes the file and its search-list entry away together;
+    // removing the folder alone would leave the entry behind.
+    if (keychain) {
+      try {
+        execFileSync('/usr/bin/security', ['delete-keychain', keychain], { stdio: 'ignore' })
+      } catch {
+        // Never created, or already gone.
+      }
+      // Matched by the run folder's unique name: the list may spell /var as /private/var.
+      expect(searchList()).not.toContain(path.basename(root))
+    }
     if (root) rmSync(root, { recursive: true, force: true })
     root = null
+    keychain = null
   })
 
   it(
     'under --no-titles the title module is off inside the daemon, the discovery file says so, and a one-shot would reach only the recorder',
     async () => {
       root = mkdtempSync(path.join(tmpdir(), 'clave-server-no-titles-'))
-      const iso = isolation(root)
+      const iso = isolation(root, (file) => (keychain = file))
       const server = await startServerProcess({
         repo: REPO,
         dataDir: path.join(root, 'data'),
@@ -195,7 +225,7 @@ describe("the daemon's title opt-out, booted", () => {
     'without the flag titles stay on: the opt-out is the flag alone, and the hooks answer null',
     async () => {
       root = mkdtempSync(path.join(tmpdir(), 'clave-server-no-titles-'))
-      const iso = isolation(root)
+      const iso = isolation(root, (file) => (keychain = file))
       const server = await startServerProcess({
         repo: REPO,
         dataDir: path.join(root, 'data'),
