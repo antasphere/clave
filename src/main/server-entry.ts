@@ -61,7 +61,7 @@ import { standaloneSidebar } from './server/standalone-sidebar'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
 import { explainingSessionHost } from './sessions/permission-explanations'
-import { explainPermission } from './sessions/explain-permission'
+import { explainerPorts } from './sessions/explain-permission'
 import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
 import { executeSecretAction } from './secret-actions'
 import {
@@ -315,7 +315,7 @@ async function main(): Promise<void> {
     subscribeAll: (listener) => sessionManager.subscribeAll(listener),
     subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
     publish: (id, event) => sessionManager.publishHostEvent(id, event),
-    explain: explainPermission
+    ...explainerPorts(requests)
   }).host
   installE2eHooks({ sessionHost: sessions })
   // ── Wave 5, lane C: the plugins (PRDCT-3433) ──

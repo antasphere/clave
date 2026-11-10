@@ -182,16 +182,17 @@ async function bootServer(): Promise<void> {
           { PendingRequests },
           { requestAwareSessionHost },
           { explainingSessionHost },
-          { explainPermission }
+          { explainerPorts }
         ] = await Promise.all([
           import('@clave/server'),
           import('./sessions/request-aware-host'),
           import('./sessions/permission-explanations'),
           import('./sessions/explain-permission')
         ])
+        const requests = new PendingRequests()
         const aware = requestAwareSessionHost({
           host: getSessionHost(),
-          requests: new PendingRequests(),
+          requests,
           subscribeAll: (listener) => sessionManager.subscribeAll(listener),
           subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
           publish: (id, event) => sessionManager.publishHostEvent(id, event),
@@ -203,7 +204,7 @@ async function bootServer(): Promise<void> {
           subscribeAll: (listener) => sessionManager.subscribeAll(listener),
           subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
           publish: (id, event) => sessionManager.publishHostEvent(id, event),
-          explain: explainPermission
+          ...explainerPorts(requests)
         })
         setSessionHost(explained.host)
         installE2eHooks({ sessionHost: explained.host })

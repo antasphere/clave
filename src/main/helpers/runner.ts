@@ -152,6 +152,8 @@ function mayStart(definition: HelperDefinition<unknown, unknown>): boolean {
 function startsBefore(job: Job, other: Job): boolean {
   const pool = job.definition.pool?.id
   if (pool !== undefined && pool === other.definition.pool?.id) return job.seq < other.seq
+  // ── PRDCT-4331: a helper that serves the newest ask first ──
+  if (job.definition.newestFirst && job.definition === other.definition) return job.seq > other.seq
   if (job.definition.priority !== other.definition.priority)
     return job.definition.priority > other.definition.priority
   return job.seq < other.seq
@@ -186,11 +188,14 @@ function pump(): void {
     if (index === -1) return
     const [job] = queue.splice(index, 1)
     count(job.definition, 1)
+    runningJobs.add(job)
     void execute(job)
       .catch((error: unknown) =>
         failure('failed', error instanceof Error ? error.message : String(error))
       )
       .then((outcome) => {
+        runningJobs.delete(job)
+        if (job.owner !== undefined) cancelledOwners.delete(job.owner)
         count(job.definition, -1)
         job.resolve(outcome)
         pump()
@@ -205,6 +210,8 @@ async function execute(job: Job): Promise<HelperOutcome<unknown>> {
   let last: HelperOutcome<unknown> = failure('failed', 'Not run')
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (closed || generation !== born) return failure('cancelled', 'Cancelled')
+    if (job.owner !== undefined && cancelledOwners.has(job.owner))
+      return failure('cancelled', 'Cancelled')
     const config = helperConfig(definition)
     let stdout:
       | { ok: true; stdout: string; stderr: string }
@@ -274,6 +281,8 @@ async function spawnOnce(
   // The account's token is read across an await: a `cancelAll` (or the
   // quit) in between must not be followed by a child nothing would signal.
   if (closed || generation !== born) return failure('cancelled', 'Cancelled')
+  if (job.owner !== undefined && cancelledOwners.has(job.owner))
+    return failure('cancelled', 'Cancelled')
   const prompt = definition.buildPrompt(job.input)
   return new Promise((resolve) => {
     // execFile calls back once; held to it, so a slot is never freed twice.
@@ -319,6 +328,7 @@ async function spawnOnce(
       }
     )
     children.set(child, definition.id)
+    if (job.owner !== undefined) ownerOf.set(child, job.owner)
     // If the CLI exits before the prompt is written, the callback above says
     // why; an unhandled 'error' on stdin would end the whole process.
     child.stdin?.on?.('error', (error) => {
@@ -365,6 +375,41 @@ export function shutdown(): void {
 export function isShutDown(): boolean {
   return closed
 }
+
+// ── PRDCT-4331: end one owner's work, waiting AND running ──
+/** Owners whose running job was ended: no retry, no child after an await. */
+const cancelledOwners = new Set<string>()
+const ownerOf = new WeakMap<ChildProcess, string>()
+/** End everything one owner asked (a permission reading whose request was
+ *  answered): its waiting jobs answered `cancelled`, its running CLI
+ *  signalled as `cancelAll` signals it, no retry after. */
+export function cancelOwned(owner: string): void {
+  cancelQueued(owner)
+  let running = false
+  for (const child of [...children.keys()]) {
+    if (ownerOf.get(child) !== owner) continue
+    running = true
+    cancelled.add(child)
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* already gone */
+    }
+    const hard = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }, HELPER_CANCEL_GRACE_MS)
+    hard.unref?.()
+    child.once?.('exit', () => clearTimeout(hard))
+  }
+  // A job between two attempts, or waiting for its token, has no child yet.
+  if (running || runningOwner(owner)) cancelledOwners.add(owner)
+}
+const runningJobs = new Set<Job>()
+const runningOwner = (owner: string): boolean => [...runningJobs].some((job) => job.owner === owner)
 
 /** Refuse the jobs an owner (a closed tab) still has waiting. */
 export function cancelQueued(owner: string): void {

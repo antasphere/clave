@@ -35,8 +35,20 @@ export interface ExplainingHostOptions {
   subscribeRemoved?: (listener: (id: string) => void) => () => void
   /** Into the session's stream, as the adapter's own events go. */
   publish: (id: string, event: PermissionExplained) => void
-  /** Run the explainer for a session (the helper on the session's account). */
-  explain: (sessionId: string, input: ExplainerInput) => Promise<HelperOutcome<ExplainerReading>>
+  /** Run the explainer for a session (the helper on the session's account),
+   *  under an owner of its own so it can be ended. */
+  explain: (
+    sessionId: string,
+    input: ExplainerInput,
+    owner: string
+  ) => Promise<HelperOutcome<ExplainerReading>>
+  /** End a reading nobody waits on any more (its request answered or
+   *  withdrawn): waiting, it never starts; running, its CLI is ended. */
+  cancel?: (owner: string) => void
+  /** Every request that leaves pending, whoever settled it (an answer from
+   *  any client, a withdrawal, the session's end): the pending-requests
+   *  service's own word. */
+  onSettled?: (listener: (sessionId: string, providerRequestId: string) => void) => () => void
 }
 
 const withLevel = (
@@ -60,6 +72,18 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
    *  same id with the same content is not read twice; a different one (a
    *  restarted process counting its ids from the start) is. */
   const asked = new Map<string, string>()
+  /** The reading in flight for each key, by its owner. */
+  const inflight = new Map<string, string>()
+  let readings = 0
+  /** The request is answered or withdrawn: its reading, if still running or
+   *  waiting, is ended, and whatever it would have said is dropped. */
+  const settle = (sessionId: string, id: string): void => {
+    const key = keyOf(sessionId, id)
+    const owner = inflight.get(key)
+    if (owner === undefined) return
+    inflight.delete(key)
+    options.cancel?.(owner)
+  }
   const said = new Map<string, { asked?: string; words: string }>()
   const keyOf = (sessionId: string, id: string): string => `${sessionId}\u0000${id}`
   const contextOf = (sessionId: string): { asked?: string; words: string } => {
@@ -98,8 +122,12 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
       ...(cwd && { cwd }),
       floor
     }
+    const owner = `${key}\u0000${++readings}`
+    const previous = inflight.get(key)
+    if (previous !== undefined) options.cancel?.(previous)
+    inflight.set(key, owner)
     void options
-      .explain(sessionId, input)
+      .explain(sessionId, input, owner)
       .catch(
         (error: unknown): HelperOutcome<ExplainerReading> => ({
           ok: false,
@@ -108,8 +136,12 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
         })
       )
       .then((outcome) => {
-        // A newer request took the id meanwhile, or the session went.
+        // Answered or withdrawn meanwhile, a newer request took the id, or
+        // the session went: nobody reads this one.
+        if (inflight.get(key) !== owner) return
+        inflight.delete(key)
         if (asked.get(key) !== signature) return
+        if (!outcome.ok && outcome.reason === 'cancelled') return
         const event: PermissionExplained = outcome.ok
           ? withLevel(
               {
@@ -149,11 +181,18 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
       const context = contextOf(sessionId)
       context.words = (context.words + event.delta).slice(-4 * AGENT_WORDS_CHARS)
     } else if (event.type === 'permission_request') explain(sessionId, event)
+    else if (event.type === 'permission_withdrawn') settle(sessionId, event.id)
   })
+  const offSettled = options.onSettled?.(settle)
   const forget = (sessionId: string): void => {
+    const prefix = keyOf(sessionId, '')
+    for (const [key, owner] of [...inflight])
+      if (key.startsWith(prefix)) {
+        inflight.delete(key)
+        options.cancel?.(owner)
+      }
     held.delete(sessionId)
     said.delete(sessionId)
-    const prefix = keyOf(sessionId, '')
     for (const key of [...asked.keys()]) if (key.startsWith(prefix)) asked.delete(key)
   }
   const offRemoved = options.subscribeRemoved?.(forget)
@@ -162,6 +201,7 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
     close: () => {
       off()
       offRemoved?.()
+      offSettled?.()
     },
     explanationsOf: (sessionId) => [...(held.get(sessionId)?.values() ?? [])],
     host: {
@@ -179,6 +219,10 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
         const value = input as { type: string; text?: unknown; form?: unknown }
         if (value.type === 'user_message' && typeof value.text === 'string' && !value.form)
           hear(id, value.text)
+        // The person answered: the reading of that request is no longer read.
+        const answered = input as { type: string; id?: unknown }
+        if (answered.type === 'permission_response' && typeof answered.id === 'string')
+          settle(id, answered.id)
         return base.write(id, input)
       }
     }

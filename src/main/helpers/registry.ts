@@ -52,6 +52,10 @@ export interface HelperDefinition<Input, Output> {
    *  git calls, as before the helpers). Without it only an unreadable reply
    *  or an unexplained failure is retried. A cancel is never retried. */
   retryAnyFailure?: boolean
+  /** PRDCT-4331 (the permission explainer): among this helper's waiting jobs,
+   *  the NEWEST runs first: the card on screen goes before the requests a
+   *  person already left behind. */
+  newestFirst?: boolean
 }
 
 /** What the runner asks before each call. `claudeProfileId` undefined means

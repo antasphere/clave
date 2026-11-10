@@ -28,8 +28,12 @@ export const permissionExplainerHelper = defineHelper<ExplainerInput, ExplainerR
   model: 'haiku',
   fallbackModel: 'sonnet',
   timeoutMs: EXPLAINER_TIMEOUT_MS,
-  // Above every other helper (commit message 80): a person waits on it.
+  // Above every other helper (commit message 80): a person waits on it. Not
+  // background work: it never waits behind the digests or takes their room,
+  // at most two at once, the newest request first (the card on screen), and
+  // each one ended when its request is answered (`cancelOwned`).
   priority: 100,
   concurrency: 2,
+  newestFirst: true,
   attempts: 2
 })

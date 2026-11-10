@@ -47,9 +47,17 @@ const bash = (
   ]
 })
 
-type Explain = (id: string, input: ExplainerInput) => Promise<HelperOutcome<ExplainerReading>>
+type Explain = (
+  id: string,
+  input: ExplainerInput,
+  owner: string
+) => Promise<HelperOutcome<ExplainerReading>>
 
-function fixture(explain: Explain): ReturnType<typeof explainingSessionHost> & {
+function fixture(
+  explain: Explain,
+  cancel: (owner: string) => void = () => {}
+): ReturnType<typeof explainingSessionHost> & {
+  settled: (sessionId: string, id: string) => void
   emit: (event: SessionEvent) => void
   published: PermissionExplained[]
   write: ReturnType<typeof vi.fn>
@@ -58,6 +66,7 @@ function fixture(explain: Explain): ReturnType<typeof explainingSessionHost> & {
   const listeners = new Set<(value: SessionStream) => void>()
   const all = new Set<(id: string, value: SessionStream) => void>()
   const removed = new Set<(id: string) => void>()
+  const settledListeners = new Set<(sessionId: string, id: string) => void>()
   const published: PermissionExplained[] = []
   const write = vi.fn(async () => {})
   const base: SessionHostService = {
@@ -88,14 +97,20 @@ function fixture(explain: Explain): ReturnType<typeof explainingSessionHost> & {
       published.push(event)
       emit(event)
     },
-    explain
+    explain,
+    cancel,
+    onSettled: (listener) => {
+      settledListeners.add(listener)
+      return () => settledListeners.delete(listener)
+    }
   })
   return {
     ...wrapped,
     emit,
     published,
     write,
-    remove: () => removed.forEach((listener) => listener(session.id))
+    remove: () => removed.forEach((listener) => listener(session.id)),
+    settled: (sessionId, id) => settledListeners.forEach((listener) => listener(sessionId, id))
   }
 }
 
@@ -111,6 +126,14 @@ const reading = (value: Partial<ExplainerReading>): HelperOutcome<ExplainerReadi
   model: 'haiku'
 })
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+const settleTicks = settle
+const settle_ = async (
+  f: ReturnType<typeof fixture>,
+  how: (f: ReturnType<typeof fixture>) => unknown
+): Promise<void> => {
+  await how(f)
+  await settle()
+}
 
 describe('the explainer trigger', () => {
   it('reads a tool permission with what the person asked and what the agent said, as data', async () => {
@@ -263,6 +286,54 @@ describe('the explainer trigger', () => {
     await settle()
     f.remove()
     expect(f.explanationsOf(session.id)).toEqual([])
+  })
+})
+
+describe('a reading nobody waits on', () => {
+  const pending = (): {
+    explain: Explain
+    resolve: (outcome: HelperOutcome<ExplainerReading>) => void
+  } => {
+    let resolve: (outcome: HelperOutcome<ExplainerReading>) => void = () => {}
+    return { explain: () => new Promise((r) => (resolve = r)), resolve: (o) => resolve(o) }
+  }
+  it.each([
+    [
+      'answered here',
+      (f: ReturnType<typeof fixture>) =>
+        f.host.write(session.id, { type: 'permission_response', id: 'r1', optionId: 'allow-once' })
+    ],
+    [
+      'withdrawn by the provider',
+      (f: ReturnType<typeof fixture>) => f.emit({ type: 'permission_withdrawn', id: 'r1' })
+    ],
+    ['settled by another client', (f: ReturnType<typeof fixture>) => f.settled(session.id, 'r1')]
+  ])('is ended when its request is %s, and says nothing after', async (_how, settle) => {
+    const cancel = vi.fn()
+    const run = pending()
+    const f = fixture(run.explain, cancel)
+    f.emit(bash('r1', 'rm -rf build'))
+    await settleTicks()
+    await settle_(f, settle)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(cancel.mock.calls[0][0]).toContain('r1')
+    run.resolve(reading({}))
+    await settleTicks()
+    expect(f.published).toEqual([])
+  })
+  it('publishes nothing for a cancelled run', async () => {
+    const f = fixture(async () => ({ ok: false, reason: 'cancelled', detail: 'x' }))
+    f.emit(bash('r1', 'ls'))
+    await settleTicks()
+    expect(f.published).toEqual([])
+  })
+  it('ends what a removed session still reads', async () => {
+    const cancel = vi.fn()
+    const f = fixture(pending().explain, cancel)
+    f.emit(bash('r1', 'ls'))
+    f.emit(bash('r2', 'pwd'))
+    f.remove()
+    expect(cancel).toHaveBeenCalledTimes(2)
   })
 })
 
