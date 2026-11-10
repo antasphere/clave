@@ -70,12 +70,24 @@ export function raiseLevel(floor: RiskLevel, ...others: readonly unknown[]): Ris
   return level
 }
 
-/** Two parts of one request together: `unknown` sits above a proven read and
- *  below every detected level that changes something. */
-const ORDER: readonly RuleLevel[] = ['reads', 'unknown', 'project', 'outside', 'irreversible']
+/** Two parts of one request together (fix round 5): a part the rules could
+ *  not read makes the whole `unknown` (what it runs may be anything), unless
+ *  another part is "Hard to undo" (nothing can be worse). What the readable
+ *  parts reach is kept beside it as a floor (`RuleReading.atLeast`). */
+const ORDER: readonly RuleLevel[] = ['reads', 'project', 'outside', 'unknown', 'irreversible']
 export function combine(a: RuleLevel, b: RuleLevel): RuleLevel {
   return ORDER.indexOf(b) > ORDER.indexOf(a) ? b : a
 }
+
+/** The rules' own bookkeeping inside ONE part: `unknown` there means nothing
+ *  found yet, so it sits below every level found. */
+const FOUND: readonly RuleLevel[] = ['reads', 'unknown', 'project', 'outside', 'irreversible']
+function upper(a: RuleLevel, b: RuleLevel): RuleLevel {
+  return FOUND.indexOf(b) > FOUND.indexOf(a) ? b : a
+}
+
+/** What the readable parts of a request reach when another part is unknown. */
+export type Floor = 'project' | 'outside'
 
 /**
  * The level a request SHOWS, from what the rules said and what the model
@@ -84,9 +96,15 @@ export function combine(a: RuleLevel, b: RuleLevel): RuleLevel {
  * "reads only" by itself and never lowers anything. Null: no level to show
  * ("Not verified").
  */
-export function shownLevel(rule: RuleLevel, model?: unknown): RiskLevel | null {
-  if (rule === 'unknown') return isRiskLevel(model) && model !== 'reads' ? model : null
-  return raiseLevel(rule, model)
+export function shownLevel(rule: RuleLevel, model?: unknown, atLeast?: Floor): RiskLevel | null {
+  if (rule !== 'unknown') return raiseLevel(rule, model)
+  const given = isRiskLevel(model) && model !== 'reads' ? model : null
+  if (!atLeast) return given
+  // A floor from the parts the rules could read: the model's reading may
+  // raise it and never go under it ("reads" or no level gives the floor).
+  // No reading at all (`undefined`): no level, the card says it is unchecked.
+  if (model === undefined) return null
+  return raiseLevel(atLeast, given)
 }
 
 export interface RiskInput {
@@ -189,6 +207,9 @@ function mcpLevel(name: string, input: unknown, ctx: Context, acc: Acc): RiskLev
  */
 export interface RuleReading {
   level: RuleLevel
+  /** With an `unknown` level: what the parts the rules could read reach. The
+   *  model's reading may raise it, never go under it. */
+  atLeast?: Floor
   maySecrets: boolean
   hints: string[]
 }
@@ -199,7 +220,13 @@ const MAX_HINTS = 8
 export function ruleReading({ toolName, input, cwd }: RiskInput): RuleReading {
   const acc = newAcc()
   const level = toolLevel(toolName ?? '', record(input), input, cwd, acc)
-  return { level, maySecrets: acc.maySecrets, hints: [...acc.hints].slice(0, MAX_HINTS) }
+  const floor = acc.floor
+  return {
+    level,
+    ...(level === 'unknown' && (floor === 'project' || floor === 'outside') && { atLeast: floor }),
+    maySecrets: acc.maySecrets,
+    hints: [...acc.hints].slice(0, MAX_HINTS)
+  }
 }
 
 /** The level of one permission request, from the rules alone. */
@@ -241,7 +268,7 @@ function toolLevel(
     // touches is the model's to read.
     if (!paths.length) return 'project'
     let level: RuleLevel = 'project'
-    for (const path of paths) level = combine(level, writeLevel(resolve(ctx.dir, path), ctx))
+    for (const path of paths) level = upper(level, writeLevel(resolve(ctx.dir, path), ctx))
     return level
   }
   if (name === 'item/permissions/requestApproval') return 'outside'
@@ -281,7 +308,7 @@ function readToolLevel(
     if (!pathOk({ value: item.value, glob: item.glob, quoted: true }, ctx, true)) proven = false
     if (secretWord(item.value) || (item.glob && globMaySecret(item.value))) acc.maySecrets = true
     const at = resolve(ctx.dir, item.value.replace(/[*?[{].*$/, '') || '.')
-    if (at === null || (!isDevice(at) && !inside(at, ctx.base))) level = combine(level, 'outside')
+    if (at === null || (!isDevice(at) && !inside(at, ctx.base))) level = upper(level, 'outside')
   }
   if (proven && level === 'unknown') return 'reads'
   return level
@@ -313,6 +340,8 @@ interface Context {
   /** The folder the command is in now, followed through `cd`; null once
    *  the rules cannot follow it. */
   dir: string | null
+  /** The re-proof of a read outside the project: `..` may climb anywhere. */
+  anywhere?: boolean
 }
 
 function startContext(cwd?: string, at?: string): Context {
@@ -609,7 +638,7 @@ function pathOk(word: PWord, ctx: Context, leadingGlobOk = false): boolean {
     for (const part of v.split('/')) {
       if (part === '..') depth--
       else if (part && part !== '.') depth++
-      if (depth < 0) return false
+      if (depth < 0 && !ctx.anywhere) return false
     }
     resolved = normalise(`${ctx.dir}/${v}`)
   }
@@ -1054,6 +1083,8 @@ interface Acc {
   downloaded: Set<string>
   /** Work left: a request too large to read is unknown past it. */
   budget: number
+  /** What the readable parts reach, kept when another part is unknown. */
+  floor: RuleLevel
 }
 const newAcc = (): Acc => ({
   maySecrets: false,
@@ -1061,7 +1092,8 @@ const newAcc = (): Acc => ({
   fetched: false,
   stdinShell: false,
   downloaded: new Set(),
-  budget: 4000
+  budget: 4000,
+  floor: 'reads'
 })
 
 /** The level of a shell command: proven reads, else what its structure
@@ -1072,7 +1104,7 @@ function scriptLevel(command: string, ctx: Context, provable: boolean, acc: Acc)
   if (!command.trim()) return 'outside'
   let level = detectScript(command, ctx, 0, acc)
   // A download run by a shell: piped or sourced into one, or saved and run.
-  if (acc.fetched && acc.stdinShell) level = combine(level, 'irreversible')
+  if (acc.fetched && acc.stdinShell) level = upper(level, 'irreversible')
   // The level: a proof wins over a detection (the note and hints stay).
   if (provable && proven(command, ctx)) return 'reads'
   return level
@@ -1483,10 +1515,10 @@ function detectScript(source: string, start: Context, depth: number, acc: Acc): 
   const ctx: Context = { base: start.base, dir: start.dir }
   let level: RuleLevel = 'reads'
   for (const seg of lex(source)) {
-    if (--acc.budget < 0) return combine(level, 'unknown')
-    level = combine(level, segmentLevel(seg, ctx, depth, acc))
+    if (--acc.budget < 0) return join(level, 'unknown', acc)
+    level = join(level, segmentLevel(seg, ctx, depth, acc), acc)
     for (const code of seg.code)
-      if (code.trim()) level = combine(level, detectScript(code, ctx, depth + 1, acc))
+      if (code.trim()) level = join(level, detectScript(code, ctx, depth + 1, acc), acc)
     for (const t of seg.text) noticeText(t, acc)
     followCd(seg, ctx)
   }
@@ -1542,7 +1574,7 @@ function unwrap(
   acc: Acc
 ): { at: number; level: RuleLevel; writes: string[] } {
   let i = k
-  let level: RuleLevel = 'unknown'
+  let level: RuleLevel = 'reads'
   const writes: string[] = []
   for (;;) {
     const name = baseName(words[i] ?? '')
@@ -1598,13 +1630,47 @@ function unwrap(
   }
 }
 
+/** Two parts together, keeping what the readable ones reach as the floor. */
+function join(a: RuleLevel, b: RuleLevel, acc: Acc): RuleLevel {
+  for (const l of [a, b]) if (l === 'project' || l === 'outside') acc.floor = upper(acc.floor, l)
+  return combine(a, b)
+}
+
+/** One part as the proof sees it: 'reads' when it is proven on its own (a
+ *  `cd` too: it changes nothing), 'outside' when it would be proven if the
+ *  whole disk were the project (a read of paths outside it), else null. The
+ *  whole request still needs the strict proof to be "reads". */
+function provenSegment(seg: Segment, ctx: Context): RuleLevel | null {
+  const words = seg.words
+  if (!words.length) return null
+  // `cd` changes nothing; where it leads is followed by `followCd`.
+  if (words[0] === 'cd') return 'reads'
+  if (words.some((w) => /[$`\u0000]/.test(w))) return null
+  const pwords = words.map((value, i) => ({
+    value,
+    glob: !seg.quoted[i] && /[*?[]/.test(value),
+    quoted: seg.quoted[i]
+  }))
+  if (provenCommand(pwords, ctx)) return 'reads'
+  const home = (v: string): string => v.replace(/^~(?=\/|$)/, '/~home')
+  const everywhere: Context = { base: '/', dir: ctx.dir ?? '/', anywhere: true }
+  if (
+    provenCommand(
+      pwords.map((w) => ({ ...w, value: home(w.value) })),
+      everywhere
+    )
+  )
+    return 'outside'
+  return null
+}
+
 function segmentLevel(seg: Segment, ctx: Context, depth: number, acc: Acc): RuleLevel {
   const words = seg.words
   let k = 0
   while (k < words.length && isAssignment(words[k])) k++
   let level: RuleLevel = 'reads'
   const raise = (l: RuleLevel): void => {
-    level = combine(level, l)
+    level = join(level, l, acc)
   }
 
   // Redirections into a file: the project, outside, or what governs.
@@ -1613,6 +1679,14 @@ function segmentLevel(seg: Segment, ctx: Context, depth: number, acc: Acc): Rule
     if (secretWord(r.target)) acc.maySecrets = true
   }
 
+  // A part the proof settles on its own: it reads (inside the project), or
+  // it only reads paths outside it.
+  const settled = k === 0 ? provenSegment(seg, ctx) : null
+  if (settled) {
+    noteSecrets(baseName(words[0]), words.slice(1), seg.quoted.slice(1), ctx, acc)
+    raise(settled)
+    return level
+  }
   const { at, level: wrapped, writes } = unwrap(words, k, acc)
   raise(wrapped)
   for (const w of writes) raise(writeTarget(w, ctx))
@@ -1738,16 +1812,18 @@ function programLevel(
       acc.maySecrets ||= inner.maySecrets
       for (const h of inner.hints) acc.hints.add(h)
       acc.fetched ||= inner.fetched
+      acc.floor = upper(acc.floor, inner.floor)
       // `bash -c "$(curl …)"`: it runs what was downloaded.
-      if (inner.fetched && /\$\(|`/.test(args[c + 1])) level = combine(level, 'irreversible')
-      if (inner.fetched && inner.stdinShell) level = combine(level, 'irreversible')
+      if (inner.fetched && /\$\(|`/.test(args[c + 1])) level = upper(level, 'irreversible')
+      if (inner.fetched && inner.stdinShell) level = upper(level, 'irreversible')
       return level
     }
     const script = operands.find((o) => o !== '-')
     if (script === undefined) {
       acc.stdinShell = true
       let level: RuleLevel = 'unknown'
-      for (const body of seg.stdin) level = combine(level, detectScript(body, ctx, depth + 1, acc))
+      for (const body of seg.stdin)
+        level = join(level, detectScript(body, ctx, depth + 1, acc), acc)
       return level
     }
     if (acc.downloaded.has(script)) return 'irreversible'
@@ -1779,7 +1855,7 @@ function programLevel(
         : /^--output(?:-document)?=(.+)$/.exec(a)?.[1]
       if (out && out !== '-') {
         acc.downloaded.add(out)
-        level = combine(level, writeTarget(out, ctx)) as RiskLevel
+        level = upper(level, writeTarget(out, ctx)) as RiskLevel
       }
     })
     for (const r of seg.redirects) if (r.op.includes('>')) acc.downloaded.add(r.target)
@@ -1793,7 +1869,7 @@ function programLevel(
     }
     const remote = args.slice(i + 1)
     return remote.length
-      ? combine('outside', detectScript(remote.join(' '), ctx, depth + 1, acc))
+      ? join('outside', detectScript(remote.join(' '), ctx, depth + 1, acc), acc)
       : 'outside'
   }
   if (NETWORK.has(program)) return 'outside'
@@ -1864,7 +1940,7 @@ function programLevel(
     let level: RuleLevel = 'project'
     for (const o of operands) {
       const w = writeTarget(o, ctx)
-      level = combine(level, w === 'project' ? 'project' : 'irreversible')
+      level = upper(level, w === 'project' ? 'project' : 'irreversible')
     }
     return level
   }
@@ -1872,7 +1948,7 @@ function programLevel(
     let level: RuleLevel = 'unknown'
     for (const o of operands) {
       const w = writeTarget(o, ctx)
-      level = combine(level, w === 'project' ? 'project' : 'irreversible')
+      level = upper(level, w === 'project' ? 'project' : 'irreversible')
     }
     return level
   }
@@ -1881,7 +1957,7 @@ function programLevel(
     let level: RuleLevel = 'unknown'
     args.forEach((a, i) => {
       if (/^-(?:fprint0?|fprintf|fls)$/.test(a) && args[i + 1])
-        level = combine(level, writeTarget(args[i + 1], ctx))
+        level = upper(level, writeTarget(args[i + 1], ctx))
     })
     const exec = args.findIndex((a) => /^-(?:exec|execdir|ok|okdir)$/.test(a))
     if (exec >= 0) {
@@ -1889,18 +1965,20 @@ function programLevel(
       const inner = args
         .slice(exec + 1, end < 0 ? args.length : end)
         .map((a) => (a === '{}' ? './x' : a))
-      level = combine(
+      level = join(
         level,
         segmentLevel(
           { ...newSegment(), words: inner, quoted: inner.map(() => false) },
           ctx,
           depth + 1,
           acc
-        )
+        ),
+        acc
       )
     }
-    for (const o of args) level = combine(level, readTarget(o, ctx))
-    return level
+    for (const o of args) level = upper(level, readTarget(o, ctx))
+    // Not settled by the proof: unknown, what it was seen to do kept as the floor.
+    return join('unknown', level, acc)
   }
   if (program === 'dd') return args.some((a) => a.startsWith('of=')) ? 'irreversible' : 'unknown'
   if (/^mkfs/.test(program) || /^newfs/.test(program)) return 'irreversible'
@@ -1915,16 +1993,16 @@ function programLevel(
   // What changes files of the project.
   if (program === 'mkdir' || program === 'touch' || program === 'tee') {
     let level: RuleLevel = program === 'tee' ? 'reads' : 'unknown'
-    for (const o of operands) level = combine(level, writeTarget(o, ctx))
+    for (const o of operands) level = upper(level, writeTarget(o, ctx))
     return level
   }
   if (program === 'cp' || program === 'mv' || program === 'ln' || program === 'install') {
     if (operands.length < 2) return 'unknown'
     let level: RuleLevel = writeTarget(operands[operands.length - 1], ctx)
     for (const o of operands.slice(0, -1)) {
-      level = combine(level, readTarget(o, ctx))
+      level = upper(level, readTarget(o, ctx))
       // A move takes the file away from where it was.
-      if (program === 'mv') level = combine(level, writeTarget(o, ctx))
+      if (program === 'mv') level = upper(level, writeTarget(o, ctx))
     }
     return level
   }
@@ -1932,14 +2010,14 @@ function programLevel(
     if (!flags.some((f) => /^-[A-Za-z]*i/.test(f) || /^--in-place/.test(f))) return 'unknown'
     const files = operands.slice(args.some((a) => a === '-e' || a === '-f') ? 0 : 1)
     let level: RuleLevel = 'project'
-    for (const f of files) level = combine(level, writeTarget(f, ctx))
+    for (const f of files) level = upper(level, writeTarget(f, ctx))
     return level
   }
   if (program === 'chmod' || program === 'chown' || program === 'chgrp') {
     let level: RuleLevel = 'unknown'
     for (const o of operands.slice(1)) {
       const w = writeTarget(o, ctx)
-      level = combine(
+      level = upper(
         level,
         w === 'project' ? 'project' : flags.some((f) => /R/.test(f)) ? 'irreversible' : w
       )
@@ -1952,18 +2030,20 @@ function programLevel(
     let level: RuleLevel = 'unknown'
     for (const o of args) {
       const value = o.startsWith('-') && o.includes('=') ? o.slice(o.indexOf('=') + 1) : o
-      level = combine(level, readTarget(value, ctx))
+      level = upper(level, readTarget(value, ctx))
     }
     // An option that writes the file it names (`sort -o`, `tree -o`).
     args.forEach((a, i) => {
       if (/^(?:-o|--output)$/.test(a) && args[i + 1] && program !== 'find')
-        level = combine(level, writeTarget(args[i + 1], ctx))
+        level = upper(level, writeTarget(args[i + 1], ctx))
       const eq = /^--output=(.+)$/.exec(a)
-      if (eq) level = combine(level, writeTarget(eq[1], ctx))
+      if (eq) level = upper(level, writeTarget(eq[1], ctx))
     })
     if (program === 'uniq' && operands.length >= 2)
-      level = combine(level, writeTarget(operands[1], ctx))
-    return level
+      level = upper(level, writeTarget(operands[1], ctx))
+    // A reader the proof did not settle (an option off its allowlist): unknown,
+    // what it was seen to read or write kept as the floor.
+    return join('unknown', level, acc)
   }
   // Anything else: unknown, the model reads it.
   return 'unknown'
@@ -1989,7 +2069,7 @@ function gitLevel(args: string[], ctx: Context): RuleLevel {
     rest.forEach((a, j) => {
       const out =
         a === '--output' ? rest[j + 1] : a.startsWith('--output=') ? a.slice(9) : undefined
-      if (out !== undefined) level = combine(level, writeTarget(out, ctx))
+      if (out !== undefined) level = upper(level, writeTarget(out, ctx))
     })
     return level
   }

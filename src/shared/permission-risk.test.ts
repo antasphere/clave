@@ -690,10 +690,15 @@ const TO_UNKNOWN = new Set<string>([
   'launchctl load ~/Library/LaunchAgents/x.plist',
   'printenv',
   'security find-generic-password -s x -w',
+  'sort -o important.txt other.txt',
+  'find . -okdir rm {} ;',
+  'find . -okdir rm {} \\;',
   'fd -x rm',
   'fd . -X rm -rf',
   "rg --pre 'rm -rf build' x",
   "yq -i '.a=1' cfg.yml",
+  'tree -o out.txt',
+  'uniq a.txt b.txt',
   'xxd -r dump.hex bin',
   'date -s 12:00',
   "man -P 'rm -rf build' ls",
@@ -704,6 +709,7 @@ const TO_UNKNOWN = new Set<string>([
   'history -c',
   "less +'!rm -rf build' f",
   "alias git='rm -rf'",
+  '/usr/bin/time -o out.txt ls',
   "sed -n '1w /Users/bob/.zshrc' README.md",
   "sed -n '$w out.txt' README.md",
   "sed '1e rm -rf build' README.md",
@@ -715,10 +721,15 @@ const TO_UNKNOWN = new Set<string>([
   "tar -tf x.tar --use-compress-program='rm -rf build'",
   "tar -tvf x.tar --checkpoint=1 --checkpoint-action=exec='rm -rf build'",
   "tar -xf x.tar --to-command='rm -rf ~'",
+  'less -o copy.txt README.md',
   "rg --hostname-bin='rm -rf build' foo",
   "ag --pager 'rm -rf build' foo",
   'fd --exec=rm',
   'fd -Hx rm',
+  'grep --file=$HOME/.ssh/id_ed25519 -r x .',
+  'diff --from-file=/Users/bob/.aws/credentials a.txt',
+  'find -L ~ -name "*.pem" -exec cat {} +',
+  'find -H /Users/bob/.ssh -type f',
   'set',
   'export -p',
   'declare -p',
@@ -746,6 +757,7 @@ const TO_UNKNOWN = new Set<string>([
   "node -e \"require('fs').writeFileSync(process.env.HOME + '/.zshrc', '')\"",
   "perl -pi -e 's/a/b/' /Users/bob/.zshrc",
   'php -r \'array_map("unlink", glob("*"));\'',
+  'echo "deploy:; rm -rf ~" >> Makefile && make deploy',
   'defaults delete com.apple.dock',
   'launchctl remove com.example.agent',
   'pkill -9 -f postgres',
@@ -762,10 +774,7 @@ const LOWERED = new Set<string>([
   'gh repo edit --visibility public',
   'npm publish',
   'mcp__slack__chat_postMessage mcp slack post_message',
-  'find . -okdir rm {} ;',
-  'find . -okdir rm {} \\;',
   'npx del-cli build',
-  'echo "deploy:; rm -rf ~" >> Makefile && make deploy',
   'gh api graphql -f query=\'mutation { deleteRepository(input:{repositoryId:"x"}) { clientMutationId } }\'',
   'kubectl exec db-0 -- rm -rf /var/lib/postgresql/data',
   "docker exec web sh -c 'rm -rf /app'"
@@ -822,7 +831,7 @@ describe('the verifier tables, in the meaning R1 and R3 give them', () => {
   })
   it('counts what changed meaning', () => {
     expect([READS_WITH_NOTE.size, TO_UNKNOWN.size, LOWERED.size, STRICT.size]).toEqual([
-      35, 79, 13, 2
+      35, 91, 10, 2
     ])
   })
   it('a plan to approve and a malformed question stay unknown', () => {
@@ -1063,6 +1072,42 @@ describe('hints, not levels', () => {
   })
   it('a proven read keeps its level whatever it mentions', () => {
     expect(read('grep "rm -rf" README.md')).toEqual(['reads', ['rm']])
+  })
+})
+
+/* Fix round 5: a part the rules cannot read makes the whole unknown; what
+   the readable parts reach is the floor (`atLeast`). The verifier's five
+   examples and D11/D12 of its fourth pass. */
+const FLOORED: Array<[string, 'project' | 'outside']> = [
+  ["echo 'rm -rf ~' > cleanup.sh && bash cleanup.sh", 'project'],
+  ['python3 wipe.py > log.txt', 'project'],
+  ['node reset-prod.js | tee out.log', 'project'],
+  ['mkdir tmp && ./deploy.sh', 'project'],
+  ['touch x && make nuke', 'project'],
+  ["printf 'rm -rf src\\n' > x.sh && sh x.sh", 'project'],
+  ['npm test && git push', 'outside']
+]
+describe('unknown with a floor', () => {
+  it.each(FLOORED)('%s: unknown, at least %s', (command, floor) => {
+    const r = ruleReading({ toolName: 'Bash', input: { command }, cwd })
+    expect(r.level).toBe('unknown')
+    expect(r.atLeast).toBe(floor)
+    // Helper off, or the reading not there yet: no level.
+    expect(shownLevel(r.level, undefined, r.atLeast)).toBeNull()
+    // The model says it only reads: the floor.
+    expect(shownLevel(r.level, 'reads', r.atLeast)).toBe(floor)
+  })
+  it('a hard-to-undo part wins over an unknown one', () => {
+    expect(
+      ruleReading({ toolName: 'Bash', input: { command: 'rm -rf build && make' }, cwd })
+    ).toMatchObject({
+      level: 'irreversible'
+    })
+  })
+  it('readable parts alone keep their level, and carry no floor', () => {
+    const r = ruleReading({ toolName: 'Bash', input: { command: 'cd src && npm install' }, cwd })
+    expect(r.level).toBe('outside')
+    expect(r.atLeast).toBeUndefined()
   })
 })
 
@@ -1552,6 +1597,61 @@ describe('generated properties', () => {
     expect(unhinted).toEqual([])
   })
 
+  it('a readable part joined with an unknown one is unknown with its floor, or hard to undo; never "reads"', () => {
+    const UNKNOWN_POOL = [
+      'bash x.sh',
+      './deploy.sh',
+      'make nuke',
+      'python3 x.py',
+      'node x.js',
+      'npm run clean'
+    ]
+    const EXAMPLES = [
+      ...SEEDS,
+      'mkdir -p a',
+      'touch x',
+      'git add .',
+      'git commit -m x',
+      'echo x > f.txt',
+      'npm install',
+      'git push',
+      'cat /etc/hosts',
+      'rm -rf build',
+      'git push --force'
+    ]
+    const rank = (l: RuleLevel | undefined): number =>
+      ['reads', 'project', 'outside'].indexOf(l ?? 'reads')
+    const bad: string[] = []
+    let n = 0
+    for (const u of UNKNOWN_POOL) {
+      n++
+      const r = ruleReading({ toolName: 'Bash', input: { command: `${u} > f` }, cwd })
+      if (r.level !== 'unknown' || r.atLeast !== 'project')
+        bad.push(`${u} > f: ${r.level} ${r.atLeast}`)
+    }
+    for (const e of EXAMPLES) {
+      const alone = ruleReading({ toolName: 'Bash', input: { command: e }, cwd }).level
+      for (const u of UNKNOWN_POOL)
+        for (const c of [
+          `${e} && ${u}`,
+          `${u} && ${e}`,
+          `${e}; ${u}`,
+          `${e} | ${u}`,
+          `${u} | ${e}`
+        ]) {
+          n++
+          const r = ruleReading({ toolName: 'Bash', input: { command: c }, cwd })
+          if (alone === 'irreversible') {
+            if (r.level !== 'irreversible') bad.push(`${c}: ${r.level}`)
+          } else if (r.level !== 'unknown') bad.push(`${c}: ${r.level}`)
+          else if (rank(r.atLeast) < rank(alone))
+            bad.push(`${c}: floor ${r.atLeast}, part ${alone}`)
+        }
+    }
+    counts.floors = n
+    expect(bad).toEqual([])
+  })
+
   it('counts the generated cases', () => {
     const total = Object.values(counts).reduce((a, n) => a + n, 0)
     console.log(`permission-risk: ${total} generated cases`, counts)
@@ -1579,10 +1679,20 @@ describe('shownLevel: what the model may do', () => {
     expect(shownLevel('unknown', undefined)).toBeNull()
     expect(shownLevel('unknown', 'safe')).toBeNull()
   })
-  it('combines parts: unknown sits above a proven read, below a change', () => {
+  it('combines parts: an unknown part makes the whole unknown, unless a part is hard to undo', () => {
     expect(combine('reads', 'unknown')).toBe('unknown')
-    expect(combine('unknown', 'project')).toBe('project')
+    expect(combine('unknown', 'project')).toBe('unknown')
+    expect(combine('outside', 'unknown')).toBe('unknown')
+    expect(combine('unknown', 'irreversible')).toBe('irreversible')
+    expect(combine('reads', 'project')).toBe('project')
     expect(raiseLevel('outside', 'project')).toBe('outside')
+  })
+  it('a floor: the model raises it, never goes under it; no reading, no level', () => {
+    expect(shownLevel('unknown', 'reads', 'project')).toBe('project')
+    expect(shownLevel('unknown', null, 'project')).toBe('project')
+    expect(shownLevel('unknown', 'irreversible', 'project')).toBe('irreversible')
+    expect(shownLevel('unknown', 'project', 'outside')).toBe('outside')
+    expect(shownLevel('unknown', undefined, 'project')).toBeNull()
   })
 })
 
