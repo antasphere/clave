@@ -171,4 +171,45 @@ describe('a digest that could not be read', () => {
     for (const reason of ['disabled', 'failed', 'outdated', 'unknown-session', undefined] as const)
       expect(canAskAgain(reason)).toBe(false)
   })
+
+  it('when the window’s server comes, the filed digests are read again and a card that failed for want of it is asked again', async () => {
+    let connected: () => void = () => {}
+    const previous = (globalThis as { window?: unknown }).window
+    Object.assign(globalThis, {
+      window: {
+        electronAPI: {
+          onServerConnected: (callback: () => void) => {
+            connected = callback
+            return () => {}
+          }
+        }
+      }
+    })
+    try {
+      // What the server has filed for the tab: read when it comes.
+      const d = createDigests<string, { ok: true; title: string }>({
+        filed: () => Promise.resolve({ other: { ok: true, title: 'Filed' } }),
+        read: () =>
+          read.mock.calls.length === 0
+            ? (read(), Promise.reject(new Error('no server')))
+            : (read(), Promise.resolve({ ok: true, title: 'Now' }))
+      })
+      d.useStore.getState().file('s', {})
+      d.view('s', [{ key: 'k', payload: '' }], {})
+      await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+      await flush()
+      expect(d.useStore.getState().states['s|k']).toMatchObject({
+        state: 'failed',
+        reason: 'unanswered'
+      })
+      connected()
+      await vi.advanceTimersByTimeAsync(0)
+      await flush()
+      expect(read).toHaveBeenCalledTimes(2)
+      expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done' })
+      expect(d.useStore.getState().states['s|other']).toMatchObject({ state: 'done' })
+    } finally {
+      Object.assign(globalThis, { window: previous })
+    }
+  })
 })

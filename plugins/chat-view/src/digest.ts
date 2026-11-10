@@ -187,7 +187,10 @@ export function createDigests<Payload, Done>(api: {
    *  while its wait ran (a burst of messages) is not read in its old form. */
   const current = new Map<string, Set<string>>()
   /** What each card was last asked with, so its "Ask again" can ask. */
-  const asked = new Map<string, { item: DigestItem<Payload>; launch: DigestLaunch }>()
+  const asked = new Map<
+    string,
+    { sessionId: string; item: DigestItem<Payload>; launch: DigestLaunch }
+  >()
   /** Each card's latest ask: an answer of an older one is not applied. */
   const asks = new Map<string, number>()
   const failed = (reason?: DigestFailure): DigestStateOf<Done> => ({
@@ -217,7 +220,7 @@ export function createDigests<Payload, Done>(api: {
       )
     )
       return
-    asked.set(id, { item, launch })
+    asked.set(id, { sessionId, item, launch })
     const generation = (asks.get(id) ?? 0) + 1
     asks.set(id, generation)
     store.set(id, { state: 'waiting' })
@@ -262,11 +265,37 @@ export function createDigests<Payload, Done>(api: {
     )
   }
 
+  /** When the window's server comes (or comes back): what is filed for every
+   *  tab loaded so far is read again from it, so a view that opened before it
+   *  gets the server's digests, and a card that failed for want of it is asked
+   *  again at once (PRDCT-4327). Bound once, on the first view. */
+  let watching = false
+  const watchServer = (): void => {
+    if (watching || typeof window === 'undefined') return
+    const onConnected = window.electronAPI?.onServerConnected
+    if (!onConnected) return
+    watching = true
+    onConnected(() => {
+      const { loaded, states } = useStore.getState()
+      for (const sessionId of Object.keys(loaded))
+        void api
+          .filed(sessionId)
+          ?.then((filed) => useStore.getState().file(sessionId, filed))
+          .catch(() => {})
+      for (const [id, last] of asked) {
+        const state = states[id]
+        if (state?.state === 'failed' && state.reason === 'unanswered')
+          ask(last.sessionId, last.item, last.launch, true)
+      }
+    })
+  }
+
   const view = (
     sessionId: string,
     items: readonly DigestItem<Payload>[],
     launch: DigestLaunch
   ): void => {
+    watchServer()
     current.set(sessionId, new Set(items.map((item) => item.key)))
     if (!useStore.getState().loaded[sessionId]) return
     for (const item of items) ask(sessionId, item, launch)

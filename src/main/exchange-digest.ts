@@ -1,3 +1,4 @@
+import fs from 'fs'
 import { DigestStore } from './exchange-digest-store'
 import { settingsPorts } from './ports'
 import { TEST_NO_ACTIVATE } from './test-mode'
@@ -111,6 +112,7 @@ function read(request: DigestRequest): Promise<DigestResult> {
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
   if (TEST_NO_ACTIVATE) {
+    journalRead('exchange', request.sessionId, request.key)
     const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return testAccount(exchangeDigestHelper, request.launch).then(
@@ -148,6 +150,7 @@ function read(request: DigestRequest): Promise<DigestResult> {
 function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   // Under the harness, the reply comes from CLAVE_E2E_WORK_DIGEST_REPLY.
   if (TEST_NO_ACTIVATE) {
+    journalRead('work', request.sessionId, request.key)
     const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return testAccount(workDigestHelper, request.launch).then(
@@ -179,6 +182,21 @@ function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
       }
       return placeNote(outcome.value, offset)
     })
+}
+
+/** Under the harness, every read is journaled where THIS process keeps its
+ *  data (main: the app's user data; a separate server: `userData/server`;
+ *  a daemon: its data dir), one JSON line each, so a spec tells which
+ *  process read a digest (`chat-digest-early.spec.mjs`). */
+function journalRead(kind: 'exchange' | 'work', sessionId: string, key: string): void {
+  try {
+    fs.appendFileSync(
+      settingsPorts().storage.pathOf('e2e-digest-reads.jsonl'),
+      `${JSON.stringify({ kind, sessionId, key, pid: process.pid, at: Date.now() })}\n`
+    )
+  } catch {
+    /* a journal that cannot be written is no read of its own */
+  }
 }
 
 /** The harness's reply, with `{account}` standing for the account the read
