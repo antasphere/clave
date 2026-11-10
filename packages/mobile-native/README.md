@@ -159,7 +159,7 @@ anew (the provider's registrations live in its memory), the chat is seeded again
 the folder to start over. Nothing the fixture cleans lies outside what it created: the three
 owned folders and the recorder log under `<tmpdir>/stubs` (and `<tmpdir>/stubs/elsewhere-home`
 under the `divergent-home` mutation), the daemon's stored registration and session under
-`<tmpdir>/server`.
+`<tmpdir>/server`, and in its tmux folder only what the paragraph below names.
 
 **No real agent, no real login, and the proof of it.** The daemon names every fresh chat by
 its first message with a `claude -p` one-shot (`packages/host/src/title-generator.ts`), the
@@ -185,24 +185,53 @@ through the machine login's keychain item. The fixture keeps all three off:
   the system directories, so the **recorders** `claude` and `codex` are the only ones the
   daemon can find (every invocation appends one line, time, command, first two arguments,
   never the stdin, to `<tmpdir>/stubs/recorder.log`); `CLAUDE_CONFIG_DIR` and `CODEX_HOME`,
-  two more folders of the fixture's own recreated empty at every boot; the issuer; the
-  keychain file on macOS. The login environment the stand-in answers is all of it less the
-  last two, the daemon's own settings, which it reads from its process environment and no
-  child of it needs. Both Bun children start with `--no-env-file`, so no `.env` of the
+  two more folders of the fixture's own recreated empty at every boot; `TMUX_TMPDIR`, the
+  fixture's tmux folder (below); the issuer; the keychain file on macOS. The login
+  environment the stand-in answers is all of it less the last two, the daemon's own
+  settings, which it reads from its process environment and no child of it needs. Both Bun children start with `--no-env-file`, so no `.env` of the
   working directory reaches them past the allowlist. The plugin runners the daemon forks
   inherit the flag: Bun 1.4.1's `fork` hands its runtime flags on (probed on a Mac: a `.env`
   planted in the child's folder was read without the flag and not with it). Nothing here
   claims it for any other descendant.
 
+**tmux's sockets are the fixture's.** At its start, and whenever it lists the sessions it
+could adopt, the daemon asks a tmux it finds for the sessions of its `clave` socket
+(`packages/host/src/sessions/adapters/pty-backend.ts`, `liveTmuxSessions`), and the person's
+own Clave keeps its sessions on a socket of that name. tmux 3.5a builds the socket's path as
+`<TMUX_TMPDIR>/tmux-<uid>/<name>` from the first of `$TMUX_TMPDIR` and `/tmp` that resolves
+(`tmux.h`, `TMUX_SOCK`; `tmux.c`, `expand_paths` and `make_label`): a value unset, empty or
+naming nothing is dropped and `/tmp` is used, the person's own sockets, and a symlink is
+followed wherever it points. So the daemon and the login environment of its stand-in shell
+both carry `TMUX_TMPDIR`, the fixture's **tmux folder**: `/tmp/clave-fixture-tmux-<12 hex of
+the stubs folder's real path>` under the real `/tmp` (`/private/tmp` on macOS), outside the
+run folder so every socket's name fits a socket address (104 bytes on macOS, 108 on Linux)
+whatever the run folder's length. A missing one is made with mode 700 and a marker,
+`.clave-native-fixture-tmux`, naming its stubs folder. One already there is taken only when it
+is this user's plain folder, mode 700, carrying exactly that marker, its lease (`.lease`, the
+pid of the fixture holding it) held by no live process, no socket anywhere in it and nothing
+the fixture never makes; then only what a past run left is removed, the lease and the empty
+folders a tmux client and the decoy leave, one at a time and never recursively. Anything else
+is refused, exit code 2, before a byte is written. A boot holds the lease from its install to
+its stop and gives it back on every way out; a dry run takes none. The folder stays with its
+run folder: remove both to start over. What rests on tmux's source and what was seen apart:
+the fallback to `/tmp` and the socket's path are read from tmux 3.5a's source, never seen by
+asking a socket; the fixture asks no tmux anything and starts none. On this Mac the stand-in's
+PATH reaches no tmux (Homebrew's is in `/opt/homebrew/bin`), so a fresh run folder's daemon
+finds none, while a reused data folder may keep the path a past daemon found
+(`<tmpdir>/server/tmux-path.json`): either way the socket's folder is the fixture's.
+
 It checks in two stages, prints every check as `check ok` or `check FAIL`, and **refuses to
 go on unless all pass** (exit code 2). Before any process starts (`preflight`): (1) the argv
 the daemon will get carries the three flags; (2) both the environment the daemon will get
 and the login environment its shell answers, read the way the daemon reads it, name the
-fixture's home as `HOME` and resolve `claude` and `codex` to the recorders. After the daemon
+fixture's home as `HOME`, resolve `claude` and `codex` to the recorders and carry exactly the
+fixture's tmux folder as `TMUX_TMPDIR`, a folder that exists by its own real path, this user's
+with mode 700, other than `/tmp` itself, holding only its marker and its lease, with room for
+the `clave` and `default` sockets' names. After the daemon
 announced itself and before any chat (`bootChecks`): (3) the discovery file says titles off;
 (4) it says the test mode on and the machine usage off, and the daemon answers
 `POST /e2e/evaluate`; (5) asked of the daemon itself through its test
-hooks, the title one-shot's own resolver (the daemon's cached login environment, the one-shot's locate) names the recorder `claude`, the cached login PATH names the recorder `codex`, the daemon's own `PATH` starts with the recorders' folder, and the daemon's `SHELL` is the fixture's `zsh` under a name the daemon runs a command through (the host's `POSIX_SHELLS`: any other name would send the Codex read to the real `/bin/zsh`); (6) asked of the daemon itself, the keys of its environment are the allowlist's and the fixture's own and nothing else (names compared, never values); (7) asked of the daemon itself, `os.homedir()` and `HOME` both resolve to the fixture's home (compared inside the daemon, which answers yes or no and never a path). `--preflight` runs the first two alone on the folder's stubs and exits, starting no daemon, relay or provider (the stand-in shell runs, as the daemon would run it): the way for a lane to show its worktree's stance before its first boot. A folder the fixture may write and clean is one it created, or one it marked: a regular file `.clave-native-fixture` at its root holding exactly the fixture's stamp (read with `lstat`, so a symlink is refused); a folder holding anything else and no marker, or a marker naming another owner, is refused with exit code 2 before a byte is written, and a dry run on a folder it reuses rewrites nothing while the install there is complete (the shell, the two recorders, the recorder log and the home); an incomplete one is installed again, its recorder log and owned folders emptied.
+hooks, the title one-shot's own resolver (the daemon's cached login environment, the one-shot's locate) names the recorder `claude`, the cached login PATH names the recorder `codex`, the daemon's own `PATH` starts with the recorders' folder, and the daemon's `SHELL` is the fixture's `zsh` under a name the daemon runs a command through (the host's `POSIX_SHELLS`: any other name would send the Codex read to the real `/bin/zsh`); (6) asked of the daemon itself, the keys of its environment are the allowlist's and the fixture's own and nothing else (names compared, never values); (7) asked of the daemon itself, `os.homedir()` and `HOME` both resolve to the fixture's home and `TMUX_TMPDIR` is exactly the fixture's tmux folder, still its own real path (compared inside the daemon, which answers yes or no and never a path); the folder holds no socket, and the check says whether a tmux client of the daemon made its `tmux-<uid>` folder there, which tmux does in the folder it chose. `--preflight` runs the first two alone on the folder's stubs and exits, starting no daemon, relay or provider (the stand-in shell runs, as the daemon would run it): the way for a lane to show its worktree's stance before its first boot. A folder the fixture may write and clean is one it created, or one it marked: a regular file `.clave-native-fixture` at its root holding exactly the fixture's stamp (read with `lstat`, so a symlink is refused); a folder holding anything else and no marker, or a marker naming another owner, is refused with exit code 2 before a byte is written, and a dry run on a folder it reuses rewrites nothing while the install there is complete (the shell, the two recorders, the recorder log and the home); an incomplete one is installed again, its recorder log and owned folders emptied.
 
 **While it runs, the recorder guards every mode.** The first line a recorder writes, in the plain run or under `--approve`, is printed and the fixture stops the three processes and exits 3; a read of the log that fails (the file gone or unreadable) stops them the same way, a failure and never "no calls" (the log exists, empty, from the install on). The enforcement is continuous, never a dry run.
 
@@ -230,13 +259,22 @@ variable redirects: a clock run without them would read the person's own login);
 daemon on the calling shell's PATH instead, so the fifth check fails and nothing is seeded;
 `divergent-home` passes the preflight on the fixture's home and starts the daemon with
 another empty folder of the fixture's own as `HOME` (`<tmpdir>/stubs/elsewhere-home`, never
-the person's home), so the seventh check fails and nothing is seeded; `drop-recorders` starts no daemon, relay or provider: the second check aborts first. The test runs the six, and the
-running-mode guard once.
+the person's home), so the seventh check fails and nothing is seeded;
+`divergent-tmux-tmpdir` passes the preflight on the fixture's tmux folder and starts the
+daemon with a decoy as `TMUX_TMPDIR`, a folder of the fixture's own inside the tmux folder,
+made with mode 700 before the daemon starts and held to the same conditions tmux puts on a
+folder, so no socket can fall back to `/tmp`: the seventh check fails and nothing is seeded;
+`drop-recorders` starts no daemon, relay or provider: the second check aborts first; nor does
+`drop-tmux-tmpdir`, which takes `TMUX_TMPDIR` out of the daemon's environment: the second
+check aborts first. No mutation starts a daemon without `TMUX_TMPDIR`. The test runs the
+eight, and the running-mode guard once.
 
 Options: `--approve` approves every pending pairing as it appears (off by default; the token file is the way otherwise); `--check`; `--preflight`; `--json`, one JSON object instead of the lines, the checks included; `--timeout <ms>`, how long each process may take to announce itself (90 s by default). Exit codes: 2 a refused boot or a refused run folder, 3 the recorder caught an attempt while running or its log could not be read, 1 a failed proof or an error. A port of 0 takes a free one; without `--tmpdir` a fresh folder under the system
 temporary directory. On the Mac, the iOS simulator reaches `127.0.0.1` directly; the Android
-emulator needs `adb -s <serial> reverse tcp:<port> tcp:<port>` for the three ports, or the
-address `10.0.2.2`. A result on the Echo fixture proves the protocol, never a real provider
+emulator needs `adb -s <serial> reverse tcp:<port> tcp:<port>` for the three ports: the
+provider listens on `127.0.0.1` and names `http://127.0.0.1:<issuer port>` as its issuer, so
+reached through `10.0.2.2` its discovery document names another origin and a strict issuer
+check refuses it. A result on the Echo fixture proves the protocol, never a real provider
 or a physical phone.
 
 The secrets of the daemon never reach the login keychain: on macOS they go to a keychain

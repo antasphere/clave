@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by vitest */
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,10 +13,14 @@ import {
   REDIRECTS,
   RUN_FOLDER_MARKER,
   RUN_FOLDER_OWNER,
+  TMUX_DECOY,
+  TMUX_FOLDER_LEASE,
+  TMUX_FOLDER_MARKER,
   proveFixture,
   proveNoProvider,
   recorderLines,
-  startFixture
+  startFixture,
+  tmuxFolderFor
 } from './scripts/fixture-server.mjs'
 
 /* The fixture server both native phones are tested against, BOOTED here on
@@ -37,9 +41,9 @@ import {
    the test hook the daemon still announces titles off and the recorder alone
    catches it; with the usage clock started the recorder and the push channel
    catch the reads; with a PATH without the recorders the second check aborts
-   before any process; a daemon handed another PATH, or another home of the
-   fixture's own, is refused by the fifth or the seventh check before any
-   chat.
+   before any process, and so does one without TMUX_TMPDIR; a daemon handed
+   another PATH, another home of the fixture's own or a decoy of its own as
+   TMUX_TMPDIR, is refused by the fifth or the seventh check before any chat.
 
    Every case here starts this checkout's daemon, a relay and the provider,
    and most seed an Echo chat, so they run only on purpose: with
@@ -75,7 +79,7 @@ const freePort = () =>
 const BOOT = process.env.CLAVE_FIXTURE_BOOT === '1'
 /** How many booted cases the block below holds: on CI every one of them runs,
  *  or the file fails (an inverted or skipped block, a weakened first case). */
-const BOOTED_CASES = 8
+const BOOTED_CASES = 10
 let bootedRan = 0
 afterAll(() => {
   if (process.env.CI === 'true')
@@ -101,7 +105,12 @@ describe.runIf(BOOT)('the fixture server', () => {
   }
   afterAll(async () => {
     for (const fixture of fixtures) await fixture.stop()
-    for (const dir of folders) rmSync(dir, { recursive: true, force: true })
+    for (const dir of folders) {
+      // The run folder's tmux folder, the fixture's own under /tmp, goes with it.
+      const stubs = path.join(dir, 'stubs')
+      if (existsSync(stubs)) rmSync(tmuxFolderFor(stubs), { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('passes its two pre-boot checks, boots the provider on the named port, passes its five post-boot checks, signs the daemon in, lists it on the relay, seeds the chat, and the whole proof passes', async () => {
@@ -136,12 +145,22 @@ describe.runIf(BOOT)('the fixture server', () => {
       'PATH',
       'CLAUDE_CONFIG_DIR',
       'CODEX_HOME',
+      'TMUX_TMPDIR',
       'CLAVE_ANTASPHERE_ISSUER'
     ])
       expect(fixture.checks[5].detail).toContain(key)
-    // Its home, asked of the daemon itself: the fixture's folder.
-    expect(fixture.checks[6].detail).toBe('os.homedir() and HOME are stubs/home')
+    // Its home and its tmux folder, asked of the daemon itself: the fixture's
+    // own; a tmux client, where the daemon finds a tmux, chose that folder.
+    expect(fixture.checks[6].detail).toMatch(
+      /^os\.homedir\(\) and HOME are stubs\/home; TMUX_TMPDIR is the fixture's tmux folder, where (a tmux client of the daemon made its folder|no tmux client has made its folder)$/
+    )
     expect(fixture.server.env.HOME).toBe(fixture.stubs.home)
+    expect(fixture.stubs.tmux).toBe(tmuxFolderFor(path.join(tmpdir, 'stubs')))
+    expect(fixture.server.env.TMUX_TMPDIR).toBe(fixture.stubs.tmux)
+    // While it runs, this process holds the tmux folder's lease.
+    expect(readFileSync(path.join(fixture.stubs.tmux, TMUX_FOLDER_LEASE), 'utf8')).toBe(
+      `${process.pid}\n`
+    )
     expect(readFileSync(path.join(tmpdir, RUN_FOLDER_MARKER), 'utf8')).toBe(RUN_FOLDER_OWNER)
     expect(fixture.server.discovery).toMatchObject({
       titles: 'off',
@@ -177,7 +196,7 @@ describe.runIf(BOOT)('the fixture server', () => {
         flags: DAEMON_FLAGS,
         announces: { titles: 'off', testMode: true, machineUsage: false }
       },
-      stubs: { home: fixture.stubs.home },
+      stubs: { home: fixture.stubs.home, tmux: fixture.stubs.tmux },
       mutation: null
     })
     expect(lines.join('\n')).not.toContain(token)
@@ -362,6 +381,69 @@ describe.runIf(BOOT)('the fixture server', () => {
     expect(error.checks[6].detail).toMatch(
       /os\.homedir\(\) inside the daemon is not the fixture's home/
     )
+  }, 240_000)
+
+  it("refuses to boot without TMUX_TMPDIR in the daemon's environment: the second check aborts before any process, and the lease is given back", async () => {
+    const tmpdir = tmp('no-tmux-tmpdir')
+    let error = null
+    try {
+      // A start that returns is a refusal that did not come: the fixture is
+      // stopped with the others, and the assertions below say why it failed.
+      fixtures.push(
+        await startFixture({
+          ports: { server: 0, relay: 0, issuer: 0 },
+          tmpdir,
+          mutate: 'drop-tmux-tmpdir',
+          log: () => {}
+        })
+      )
+    } catch (e) {
+      error = e
+    }
+    expect(error).not.toBeNull()
+    expect(error.message).toMatch(/refuses to boot, before any daemon/)
+    expect(error.checks).toHaveLength(2)
+    expect(error.checks[0].ok).toBe(true)
+    expect(error.checks[1]).toMatchObject({ stage: 'preflight', kind: 'observed', ok: false })
+    expect(error.checks[1].detail).toBe("TMUX_TMPDIR in the daemon's environment is unset")
+    // Nothing started: no relay folder, no daemon discovery file.
+    expect(existsSync(path.join(tmpdir, 'relay'))).toBe(false)
+    expect(existsSync(path.join(tmpdir, 'server', 'clave-server.json'))).toBe(false)
+    const folder = tmuxFolderFor(path.join(tmpdir, 'stubs'))
+    expect(readdirSync(folder)).toEqual([TMUX_FOLDER_MARKER])
+  }, 240_000)
+
+  it("refuses to boot a daemon whose TMUX_TMPDIR is a decoy of the fixture's own: the seventh check, asked of the daemon itself, fails before any chat", async () => {
+    const tmpdir = tmp('tmux-decoy')
+    let error = null
+    try {
+      // A start that returns is a refusal that did not come: the fixture is
+      // stopped with the others, and the assertions below say why it failed.
+      fixtures.push(
+        await startFixture({
+          ports: { server: 0, relay: 0, issuer: 0 },
+          tmpdir,
+          mutate: 'divergent-tmux-tmpdir',
+          log: () => {}
+        })
+      )
+    } catch (e) {
+      error = e
+    }
+    expect(error).not.toBeNull()
+    expect(error.message).toMatch(/refuses to boot, before any chat/)
+    expect(error.checks).toHaveLength(7)
+    expect(error.checks.slice(0, 6).every((c) => c.ok)).toBe(true)
+    expect(error.checks[6]).toMatchObject({ stage: 'boot', kind: 'observed', ok: false })
+    expect(error.checks[6].detail).toBe(
+      "TMUX_TMPDIR inside the daemon is not the fixture's tmux folder"
+    )
+    // The decoy existed before the daemon started, inside the fixture's own
+    // folder; the lease was given back at the stop; nothing reached the recorder.
+    const folder = tmuxFolderFor(path.join(tmpdir, 'stubs'))
+    expect(readdirSync(folder)).toContain(TMUX_DECOY)
+    expect(readdirSync(folder)).not.toContain(TMUX_FOLDER_LEASE)
+    expect(readFileSync(path.join(tmpdir, 'stubs', 'recorder.log'), 'utf8')).toBe('')
   }, 240_000)
 
   it('while running, the first recorder line stops the three processes with exit code 3: the recorder itself run with -p, never a CLI', async () => {

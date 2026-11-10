@@ -19,7 +19,17 @@
 //      with has the fixture's `zsh` as its login shell, and both that
 //      environment and the login environment the shell answers, read the way
 //      the daemon reads it (`$SHELL -lic 'env -0'`), name the fixture's home
-//      as HOME and resolve `claude` and `codex` to the fixture's recorders;
+//      as HOME, resolve `claude` and `codex` to the fixture's recorders, and
+//      carry exactly the fixture's tmux folder as TMUX_TMPDIR: a folder under
+//      the real /tmp named for this run folder, its own real path, this
+//      user's with mode 700, holding only its marker and its lease, with
+//      room in a socket address for every socket's name. tmux 3.5a
+//      (tmux.h TMUX_SOCK, tmux.c expand_paths and make_label) drops a
+//      TMUX_TMPDIR that is unset, empty or does not resolve and falls back
+//      to /tmp, where the person's own Clave keeps its `clave` socket, and
+//      follows a symlink wherever it points; the daemon lists that socket's
+//      sessions at its start (pty-backend.ts, liveTmuxSessions) whenever it
+//      finds a tmux;
 //   after the daemon announced itself and before any chat (`bootChecks`):
 //   3. the daemon's discovery file says `titles: "off"`;
 //   4. it says `testMode: true` and `machineUsage: false`, and the daemon
@@ -33,8 +43,12 @@
 //      allowlist's and the fixture's own and nothing else (names compared,
 //      never values);
 //   7. inside the running daemon, `os.homedir()` and HOME both resolve to
-//      the fixture's home (compared inside the daemon, which answers yes or
-//      no, never a path).
+//      the fixture's home, and TMUX_TMPDIR is exactly the fixture's tmux
+//      folder and still its own real path (compared inside the daemon, which
+//      answers yes or no, never a path); the folder holds no socket, and
+//      whether it holds the `tmux-<uid>` folder a tmux client makes there is
+//      reported: a tmux client ran and chose the fixture's folder, or none
+//      ran.
 //
 // Only then does it start the provider on the issuer port (its dynamic
 // registration takes any redirect URI a client sends, so clave-ios:// and
@@ -144,8 +158,17 @@
 //     fixture's home and then starts the daemon with another empty folder of
 //     the fixture's own as HOME (<tmpdir>/stubs/elsewhere-home, never the
 //     person's home), so the seventh check, asked of the daemon itself,
-//     fails and nothing is seeded; `drop-recorders` starts nothing at all:
-//     the second check aborts before any daemon, relay or provider.
+//     fails and nothing is seeded; `divergent-tmux-tmpdir` passes the
+//     preflight on the fixture's tmux folder and then starts the daemon with
+//     a decoy as TMUX_TMPDIR, a folder of the fixture's own inside its tmux
+//     folder, made with mode 700 before the daemon starts and held to the
+//     same conditions tmux puts on a folder, so no socket can fall back to
+//     /tmp: the seventh check, asked of the daemon itself, fails and nothing
+//     is seeded; `drop-recorders` starts nothing at all: the second check
+//     aborts before any daemon, relay or provider; nor does
+//     `drop-tmux-tmpdir`, which takes TMUX_TMPDIR out of the daemon's
+//     environment: the second check aborts first. No mutation ever starts
+//     a daemon without TMUX_TMPDIR.
 //
 // Secrets: the daemon's token is in the token file (mode 0600) and in the
 // discovery file under the data folder, never on stdout; on macOS the
@@ -160,6 +183,19 @@
 // fixture's stamp, read with lstat so a symlink is refused); anything else is
 // refused before a byte is written, and a dry run never rewrites a folder it
 // reuses.
+//
+// One folder lives outside the run folder: the fixture's tmux folder,
+// /tmp/clave-fixture-tmux-<12 hex of the stubs folder's real path> under the
+// real /tmp, so every socket's name fits a socket address whatever the run
+// folder's length. A missing one is made with mode 700 and a marker naming
+// its run folder (`.clave-native-fixture-tmux`). One already there is taken
+// only when it is this user's plain folder, mode 700, carrying that exact
+// marker, its lease (`.lease`, the pid of the fixture holding it) held by no
+// live process, no socket anywhere in it and nothing the fixture never
+// makes; then only what a past run left is removed, its lease and the empty
+// folders tmux and the decoy leave, one at a time and never recursively.
+// Anything else is refused before a byte is written. A boot holds the lease
+// from its install to its stop, and gives it back on every way out.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -173,6 +209,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync
@@ -214,8 +251,25 @@ export const MUTATIONS = [
   'start-usage-clock',
   'divergent-daemon-env',
   'divergent-home',
-  'drop-recorders'
+  'divergent-tmux-tmpdir',
+  'drop-recorders',
+  'drop-tmux-tmpdir'
 ]
+/** The socket names a tmux of the daemon's could take under TMUX_TMPDIR:
+ *  `clave`, the daemon's own (pty-backend.ts, TMUX_SOCKET), and `default`, a
+ *  bare `tmux` run in one of its terminals. */
+export const TMUX_LABELS = ['clave', 'default']
+/** The bytes of a socket address's path (sun_path): tmux refuses a socket
+ *  whose path does not fit, ENAMETOOLONG (client.c, client_connect). */
+export const SUN_PATH_BYTES = process.platform === 'linux' ? 108 : 104
+/** The fixture's tmux folder: /tmp/<prefix><12 hex>, under the real /tmp. */
+export const TMUX_FOLDER_PREFIX = 'clave-fixture-tmux-'
+/** The marker inside it, naming the stubs folder it belongs to. */
+export const TMUX_FOLDER_MARKER = '.clave-native-fixture-tmux'
+/** The lease inside it: the pid of the fixture that holds it, one line. */
+export const TMUX_FOLDER_LEASE = '.lease'
+/** The decoy of `divergent-tmux-tmpdir`, a folder inside the tmux folder. */
+export const TMUX_DECOY = 'decoy'
 /** The usage clock's first tick runs five seconds after the daemon starts. */
 export const CLOCK_WINDOW_MS = 7_000
 /** The variables of this shell the daemon's environment keeps, as they are.
@@ -400,6 +454,206 @@ export function claimRunFolder(root) {
   return { root, marker, fresh: false }
 }
 
+/** What the tmux folder's marker holds: the stubs folder it belongs to. */
+const tmuxFolderStamp = (stubsReal) => `clave-native-fixture-server/1 tmux ${stubsReal}\n`
+
+/** Where tmux puts its sockets when TMUX_TMPDIR names none: /tmp, real. */
+export const tmuxFallback = () => realpathSync('/tmp')
+
+const lstatOrNull = (file) => {
+  try {
+    return lstatSync(file)
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+/** A process another user owns answers EPERM: alive all the same. */
+const pidAlive = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code === 'EPERM'
+  }
+}
+
+/**
+ * The fixture's tmux folder for a stubs folder that exists: under the real
+ * /tmp, so every socket's name fits a socket address whatever the run
+ * folder's length, and named for the stubs folder's real path, so one run
+ * folder always has the same one and two never share it.
+ */
+export function tmuxFolderFor(stubsDir) {
+  const hash = createHash('sha256').update(realpathSync(stubsDir)).digest('hex').slice(0, 12)
+  return path.join(tmuxFallback(), `${TMUX_FOLDER_PREFIX}${hash}`)
+}
+
+/**
+ * Take the fixture's tmux folder for `stubsDir`, and return its path. A
+ * missing one is made with mode 700 and the marker naming this stubs folder.
+ * One already there is taken only when it is this user's plain folder, mode
+ * 700, carrying exactly that marker, its lease held by no live process, no
+ * socket anywhere in it and nothing the fixture never makes; then only what a
+ * past run left is removed, its lease and the empty folders a tmux client and
+ * the decoy leave, one at a time and never recursively (rmdir refuses a
+ * folder that is not empty). Anything else is refused before a byte is
+ * written: an owner and a mode that match are never enough. With `lease`,
+ * this process's pid is written as the lease, given back by releaseTmuxFolder.
+ */
+export function claimTmuxFolder(stubsDir, { lease = false } = {}) {
+  const stubsReal = realpathSync(stubsDir)
+  const folder = tmuxFolderFor(stubsReal)
+  const stamp = tmuxFolderStamp(stubsReal)
+  const own = `tmux-${process.getuid()}`
+  const refuse = (why) => {
+    const error = new Error(
+      `refusing the fixture's tmux folder ${folder}: ${why}; nothing in it was touched`
+    )
+    error.refusedFolder = true
+    return error
+  }
+  const stat = lstatOrNull(folder)
+  if (stat === null) {
+    // Never recursive: a folder made there since the lstat fails the mkdir,
+    // and is never taken over.
+    mkdirSync(folder, { mode: 0o700 })
+    chmodSync(folder, 0o700)
+    writeFileSync(path.join(folder, TMUX_FOLDER_MARKER), stamp, { mode: 0o600, flag: 'wx' })
+  } else {
+    if (stat.isSymbolicLink()) throw refuse('it is a symlink')
+    if (!stat.isDirectory()) throw refuse('it is not a folder')
+    if (stat.uid !== process.getuid()) throw refuse(`it belongs to uid ${stat.uid}`)
+    if ((stat.mode & 0o777) !== 0o700)
+      throw refuse(`its mode is ${(stat.mode & 0o777).toString(8)}, not 700`)
+    const marker = path.join(folder, TMUX_FOLDER_MARKER)
+    if (lstatOrNull(marker)?.isFile() !== true || readFileSync(marker, 'utf8') !== stamp)
+      throw refuse(`it carries no ${TMUX_FOLDER_MARKER} naming ${stubsReal}`)
+    const leaseFile = path.join(folder, TMUX_FOLDER_LEASE)
+    const leaseStat = lstatOrNull(leaseFile)
+    if (leaseStat !== null) {
+      const text = leaseStat.isFile() ? readFileSync(leaseFile, 'utf8') : ''
+      if (!/^[1-9][0-9]*\n$/.test(text))
+        throw refuse(`${TMUX_FOLDER_LEASE} is not a lease the fixture writes`)
+      const holder = Number(text.trim())
+      if (pidAlive(holder))
+        throw refuse(
+          `a live process holds its lease, pid ${holder}; remove ${TMUX_FOLDER_LEASE} by hand only once no fixture runs on this run folder`
+        )
+    }
+    // What a past run may leave, and nothing else: the lease, the tmux-<uid>
+    // folder a tmux client makes, the decoy with its own; each of those
+    // folders empty, so a socket is never removed.
+    const known = [TMUX_FOLDER_MARKER, TMUX_FOLDER_LEASE, own, TMUX_DECOY]
+    const unknown = readdirSync(folder).filter((name) => !known.includes(name))
+    if (unknown.length) throw refuse(`it holds what the fixture never makes: ${unknown.join(', ')}`)
+    const leftovers = []
+    const emptyFolder = (rel) => {
+      const where = path.join(folder, rel)
+      const entry = lstatOrNull(where)
+      if (entry === null) return
+      if (entry.isSymbolicLink() || !entry.isDirectory())
+        throw refuse(`${rel} is not a plain folder`)
+      if (readdirSync(where).length)
+        throw refuse(
+          `${rel} is not empty: a tmux socket may live there, stop what runs on it first`
+        )
+      leftovers.push(where)
+    }
+    const decoy = lstatOrNull(path.join(folder, TMUX_DECOY))
+    if (decoy !== null) {
+      if (decoy.isSymbolicLink() || !decoy.isDirectory())
+        throw refuse(`${TMUX_DECOY} is not a plain folder`)
+      const inDecoy = readdirSync(path.join(folder, TMUX_DECOY)).filter((name) => name !== own)
+      if (inDecoy.length)
+        throw refuse(`${TMUX_DECOY} holds what the fixture never makes: ${inDecoy.join(', ')}`)
+      emptyFolder(path.join(TMUX_DECOY, own))
+      leftovers.push(path.join(folder, TMUX_DECOY))
+    }
+    emptyFolder(own)
+    // Every entry known and nothing live: only now is anything removed.
+    for (const where of leftovers) rmdirSync(where)
+    if (leaseStat !== null) rmSync(leaseFile)
+  }
+  if (lease)
+    writeFileSync(path.join(folder, TMUX_FOLDER_LEASE), `${process.pid}\n`, {
+      mode: 0o600,
+      flag: 'wx'
+    })
+  return folder
+}
+
+/** Give the tmux folder's lease back: removed only when it names this process. */
+export function releaseTmuxFolder(folder) {
+  if (!folder) return
+  const leaseFile = path.join(folder, TMUX_FOLDER_LEASE)
+  if (lstatOrNull(leaseFile)?.isFile() !== true) return
+  if (readFileSync(leaseFile, 'utf8') === `${process.pid}\n`) rmSync(leaseFile)
+}
+
+/**
+ * Why `dir` cannot be a daemon's TMUX_TMPDIR, or null when it can. tmux 3.5a
+ * takes the first of TMUX_TMPDIR and /tmp that resolves (tmux.h TMUX_SOCK;
+ * tmux.c expand_paths, make_label): a value unset, empty or naming nothing is
+ * dropped and /tmp is used, where the person's own sockets are, and a symlink
+ * is followed wherever it points. So the value must name a folder that
+ * exists, by its own real path, this user's with mode 700, other than /tmp
+ * itself, and leave room in a socket address for every socket's name under it.
+ */
+export function tmuxTmpdirProblem(dir, { uid = process.getuid(), sunPath = SUN_PATH_BYTES } = {}) {
+  if (typeof dir !== 'string' || dir === '')
+    return 'TMUX_TMPDIR is unset or empty, so tmux would use /tmp'
+  if (!path.isAbsolute(dir)) return `TMUX_TMPDIR ${dir} is not an absolute path`
+  const stat = lstatOrNull(dir)
+  if (stat === null) return `TMUX_TMPDIR ${dir} does not exist, so tmux would use /tmp`
+  if (stat.isSymbolicLink()) return `TMUX_TMPDIR ${dir} is a symlink`
+  if (!stat.isDirectory()) return `TMUX_TMPDIR ${dir} is not a folder`
+  let real
+  try {
+    real = realpathSync(dir)
+  } catch {
+    return `TMUX_TMPDIR ${dir} does not resolve, so tmux would use /tmp`
+  }
+  if (real !== dir) return `TMUX_TMPDIR ${dir} is not its own real path, ${real}`
+  if (real === tmuxFallback()) return `TMUX_TMPDIR ${dir} is /tmp itself`
+  if (stat.uid !== uid) return `TMUX_TMPDIR ${dir} belongs to uid ${stat.uid}, not ${uid}`
+  if ((stat.mode & 0o777) !== 0o700)
+    return `TMUX_TMPDIR ${dir} has mode ${(stat.mode & 0o777).toString(8)}, not 700`
+  for (const label of TMUX_LABELS) {
+    const socket = path.join(dir, `tmux-${uid}`, label)
+    const bytes = Buffer.byteLength(socket)
+    if (bytes >= sunPath)
+      return `the tmux socket ${socket} takes ${bytes} bytes, and a socket address holds ${sunPath - 1}`
+  }
+  return null
+}
+
+/** Before a boot, the tmux folder holds its marker naming this stubs folder
+ *  and at most its lease: no tmux-<uid> folder yet, so no socket. Null when so. */
+export function tmuxFolderContentsProblem(folder, stubsDir) {
+  const marker = path.join(folder, TMUX_FOLDER_MARKER)
+  if (
+    lstatOrNull(marker)?.isFile() !== true ||
+    readFileSync(marker, 'utf8') !== tmuxFolderStamp(realpathSync(stubsDir))
+  )
+    return `the tmux folder ${folder} carries no ${TMUX_FOLDER_MARKER} naming this run folder`
+  const other = readdirSync(folder).filter(
+    (name) => name !== TMUX_FOLDER_MARKER && name !== TMUX_FOLDER_LEASE
+  )
+  if (other.length) return `the tmux folder ${folder} already holds ${other.join(', ')}`
+  return null
+}
+
+/** What tmux has made in a tmux folder, read from outside: whether a tmux
+ *  client made its tmux-<uid> folder there (tmux.c make_label makes it in the
+ *  folder it chose), and what that folder holds (a socket means a server). */
+export function tmuxTrace(folder) {
+  const own = path.join(folder, `tmux-${process.getuid()}`)
+  const client = lstatOrNull(own)?.isDirectory() === true
+  return { client, inside: client ? readdirSync(own).sort() : [] }
+}
+
 /** One shell word: the value in single quotes. */
 const quoted = (value) => `'${String(value).replaceAll("'", "'\\''")}'`
 
@@ -415,11 +669,13 @@ const quoted = (value) => `'${String(value).replaceAll("'", "'\\''")}'`
  * The daemon's home, the Claude config folder and the Codex home, the
  * fixture's own, are recreated empty, and the recorder log recreated empty,
  * at every boot: the log exists from the install on, so a read that finds it
- * missing is a failure, never "no calls". Nothing outside this folder is
- * touched, and with `reuse` an install already there is taken as it is,
- * nothing rewritten (a dry run on a reused folder).
+ * missing is a failure, never "no calls". Outside this folder only the
+ * fixture's tmux folder is touched, and only as claimTmuxFolder says (with
+ * `lease`, a boot's), and with `reuse` an install already there is taken as
+ * it is, nothing rewritten and the tmux folder only named (a dry run on a
+ * reused folder).
  */
-export function installStubs(dir, { reuse = false } = {}) {
+export function installStubs(dir, { reuse = false, lease = false } = {}) {
   const log = path.join(dir, RECORDER_LOG_NAME)
   const home = path.join(dir, 'home')
   const claudeConfigDir = path.join(dir, 'claude-config')
@@ -432,11 +688,17 @@ export function installStubs(dir, { reuse = false } = {}) {
     log,
     home,
     claudeConfigDir,
-    codexHome
+    codexHome,
+    tmux: null
   }
-  if (reuse && [installed.shell, installed.claude, installed.codex, log, home].every(existsSync))
+  if (reuse && [installed.shell, installed.claude, installed.codex, log, home].every(existsSync)) {
+    // Named, never claimed again: the preflight checks the folder as it is.
+    installed.tmux = tmuxFolderFor(dir)
     return installed
+  }
   mkdirSync(dir, { recursive: true })
+  // The tmux folder first: a refusal there comes before anything here is rewritten.
+  installed.tmux = claimTmuxFolder(dir, { lease })
   for (const owned of [home, claudeConfigDir, codexHome]) {
     rmSync(owned, { recursive: true, force: true })
     mkdirSync(owned, { recursive: true })
@@ -503,7 +765,7 @@ export function installStubs(dir, { reuse = false } = {}) {
       ''
     ].join('\n')
   )
-  return { dir, shell, claude, codex, log, home, claudeConfigDir, codexHome }
+  return { dir, shell, claude, codex, log, home, claudeConfigDir, codexHome, tmux: installed.tmux }
 }
 
 /** The lines the recorders wrote since the boot, never a prompt. Throws when
@@ -531,9 +793,11 @@ export function ownedFolderEntries(stubs) {
  * fixture's home as HOME (every reader of the daemon that finds the home
  * through `os.homedir()` or HOME, `~/.claude`, `~/.claude.json` and
  * `~/.codex/auth.json` among them, finds the fixture's empty folder), the
- * stand-in as SHELL, the recorders then the system directories as PATH, and
- * the two owned credential folders. The same under every mutation: no
- * mutation writes this shell's PATH into a file.
+ * stand-in as SHELL, the recorders then the system directories as PATH, the
+ * two owned credential folders, and the fixture's tmux folder as TMUX_TMPDIR
+ * (left out when the stubs name none, which the preflight then refuses). The
+ * same under every mutation: no mutation writes this shell's PATH into a
+ * file, and none takes TMUX_TMPDIR out of it.
  */
 export function loginEnvOf(stubs) {
   const env = {}
@@ -543,19 +807,23 @@ export function loginEnvOf(stubs) {
   env.PATH = `${stubs.dir}${path.delimiter}${SYSTEM_PATH}`
   env.CLAUDE_CONFIG_DIR = stubs.claudeConfigDir
   env.CODEX_HOME = stubs.codexHome
+  if (typeof stubs.tmux === 'string' && stubs.tmux !== '') env.TMUX_TMPDIR = stubs.tmux
   return env
 }
 
 /**
  * The daemon's environment: the login environment above (this shell's own
  * PATH in its place only under the one mutation that stands a real `claude`
- * in the preflight's way, to be caught), then the daemon's two settings
- * (DAEMON_SETTINGS), the issuer and on macOS the keychain file. Computed
- * once, checked before the boot, then handed to the daemon as it is.
+ * in the preflight's way, to be caught; TMUX_TMPDIR left out only under the
+ * one mutation the preflight must refuse before any process), then the
+ * daemon's two settings (DAEMON_SETTINGS), the issuer and on macOS the
+ * keychain file. Computed once, checked before the boot, then handed to the
+ * daemon as it is.
  */
-export function childEnv(issuer, serverDir, stubs, { recorders = true } = {}) {
+export function childEnv(issuer, serverDir, stubs, { recorders = true, tmux = true } = {}) {
   const env = loginEnvOf(stubs)
   if (!recorders) env.PATH = process.env.PATH ?? SYSTEM_PATH
+  if (!tmux) delete env.TMUX_TMPDIR
   env.CLAVE_ANTASPHERE_ISSUER = issuer
   if (process.platform === 'darwin')
     env.CLAVE_KEYCHAIN_FILE = path.join(serverDir, 'fixture.keychain-db')
@@ -766,8 +1034,10 @@ const expect = (condition, message) => {
  * The two checks before any daemon, relay or provider starts: the argv the daemon will get
  * carries the three flags (`argv`), and both the environment it will get and
  * the login environment its shell answers, read the way the daemon reads
- * it, name the fixture's home and resolve `claude` and `codex` to the
- * recorders (`observed`). `--preflight` runs these alone.
+ * it, name the fixture's home, resolve `claude` and `codex` to the
+ * recorders and carry exactly the fixture's tmux folder as TMUX_TMPDIR, the
+ * folder itself held to what tmux asks of one (`observed`). `--preflight`
+ * runs these alone.
  */
 export async function preflight({ flags, stubs, env, log }) {
   const results = []
@@ -785,13 +1055,18 @@ export async function preflight({ flags, stubs, env, log }) {
     }
   )
   await check(
-    "the recorders stand in: the daemon's login shell is the fixture's zsh, and both the environment it will get and the login environment that shell answers name the fixture's home and resolve claude and codex to the recorders",
+    "the recorders stand in and tmux's sockets are the fixture's: the daemon's login shell is the fixture's zsh, and both the environment it will get and the login environment that shell answers name the fixture's home, resolve claude and codex to the recorders, and carry exactly the fixture's tmux folder as TMUX_TMPDIR, a folder tmux takes as it is",
     'observed',
     async () => {
       expect(
         shellStandsIn(env.SHELL, stubs.shell),
         `the daemon's SHELL would be ${env.SHELL}, not the fixture's zsh`
       )
+      // The folder first, as tmux would take it: every TMUX_TMPDIR below is
+      // compared with it, and a folder that fails here would send tmux to /tmp.
+      const tmuxProblem =
+        tmuxTmpdirProblem(stubs.tmux) ?? tmuxFolderContentsProblem(stubs.tmux, stubs.dir)
+      expect(tmuxProblem === null, tmuxProblem)
       // Both: the shell answers what was written into it, never what it is
       // handed, so the environment the daemon gets is read apart from it.
       const login = loginShellEnvOf(env.SHELL, env)
@@ -813,8 +1088,13 @@ export async function preflight({ flags, stubs, env, log }) {
           codex && same(codex, stubs.codex),
           `codex resolves to ${codex ?? 'nothing'} on the PATH of the daemon's ${where}`
         )
+        const value = vars.TMUX_TMPDIR
+        expect(
+          value === stubs.tmux,
+          `TMUX_TMPDIR in the daemon's ${where} is ${value === undefined ? 'unset' : value === '' ? 'empty' : `${value}, not the fixture's tmux folder`}`
+        )
       }
-      return `claude and codex are the recorders under ${stubs.dir}, HOME its home`
+      return `claude and codex are the recorders under ${stubs.dir}, HOME its home, TMUX_TMPDIR ${stubs.tmux}`
     }
   )
   return results
@@ -826,7 +1106,7 @@ export async function preflight({ flags, stubs, env, log }) {
  * that its test fixture route answers, and, asked of the daemon itself
  * through its test hooks (`observed`): what its title one-shot would start,
  * where its cached login PATH finds `codex`, what its own PATH starts with,
- * the keys of its environment, and where its home is.
+ * the keys of its environment, and where its home and its tmux folder are.
  */
 export async function bootChecks({ server, stubs, log }) {
   const results = []
@@ -912,11 +1192,12 @@ export async function bootChecks({ server, stubs, log }) {
     }
   )
   await check(
-    "inside the running daemon, its home is the fixture's: os.homedir() and HOME both resolve to the fixture's home",
+    "inside the running daemon, its home and its tmux folder are the fixture's: os.homedir() and HOME both resolve to the fixture's home, TMUX_TMPDIR is exactly the fixture's tmux folder and still its own real path, and no socket is in that folder",
     'observed',
     async () => {
       // Compared inside the daemon, which answers yes or no: no path of its
-      // leaves it, so a home that is not the fixture's is never printed.
+      // leaves it, so a home or a tmux folder that is not the fixture's is
+      // never printed.
       const inside = await evaluate(
         server,
         `async () => {
@@ -924,15 +1205,38 @@ export async function bootChecks({ server, stubs, log }) {
           const fs = await import('node:fs')
           const real = (p) => { try { return fs.realpathSync(p) } catch { return null } }
           const want = real(${JSON.stringify(stubs.home)})
+          const tmux = ${JSON.stringify(stubs.tmux)}
+          const value = process.env.TMUX_TMPDIR
           return {
             homedir: want !== null && real(os.homedir()) === want,
-            env: want !== null && real(process.env.HOME ?? '') === want
+            env: want !== null && real(process.env.HOME ?? '') === want,
+            tmuxSet: typeof value === 'string' && value !== '',
+            tmuxSame: value === tmux,
+            tmuxReal: real(value ?? '') === tmux
           }
         }`
       )
       expect(inside.homedir === true, "os.homedir() inside the daemon is not the fixture's home")
       expect(inside.env === true, "HOME inside the daemon is not the fixture's home")
-      return `os.homedir() and HOME are ${path.relative(path.dirname(stubs.dir), stubs.home)}`
+      expect(inside.tmuxSet === true, 'TMUX_TMPDIR is unset or empty inside the daemon')
+      expect(
+        inside.tmuxSame === true,
+        "TMUX_TMPDIR inside the daemon is not the fixture's tmux folder"
+      )
+      expect(
+        inside.tmuxReal === true,
+        "TMUX_TMPDIR inside the daemon does not resolve to the fixture's tmux folder"
+      )
+      // Where tmux looked, read from outside: a tmux client of the daemon's
+      // makes its tmux-<uid> folder in the folder it chose, so that folder
+      // here means it chose the fixture's; a socket in it would mean a tmux
+      // server, which the fixture never asks for.
+      const trace = tmuxTrace(stubs.tmux)
+      expect(
+        trace.inside.length === 0,
+        `the fixture's tmux folder holds ${trace.inside.join(', ')} under tmux-${process.getuid()}: a tmux server runs on the daemon's sockets`
+      )
+      return `os.homedir() and HOME are ${path.relative(path.dirname(stubs.dir), stubs.home)}; TMUX_TMPDIR is the fixture's tmux folder, ${trace.client ? 'where a tmux client of the daemon made its folder' : 'where no tmux client has made its folder'}`
     }
   )
   return results
@@ -1095,25 +1399,39 @@ export async function startFixture({
   const root = tmpdir ?? mkdtempSync(path.join(os.tmpdir(), 'clave-native-fixture-'))
   claimRunFolder(root)
   const bun = bunBinary(process.env, REPO)
-  const stubs = installStubs(path.join(root, 'stubs'))
+  const stubs = installStubs(path.join(root, 'stubs'), { lease: true })
+  // From here this process holds the tmux folder's lease, and every way out
+  // gives it back: a refusal, a failed start, the stop.
+  const release = () => releaseTmuxFolder(stubs.tmux)
   const serverDir = path.join(root, 'server')
   const flags = flagsFor(mutate)
-  // The issuer's port is known only once the provider listens; the preflight
-  // checks the shell and the PATH, which do not depend on it, on the very
-  // environment the daemon is then handed, the issuer filled in.
-  const env = childEnv('http://127.0.0.1:0', serverDir, stubs, {
-    recorders: mutate !== 'drop-recorders'
-  })
-  const checks = await preflight({ flags, stubs, env, log })
-  // Only drop-title-opt-out boots with the flags check failed, to show the
-  // daemon announcing titles on; it is refused below, before any chat.
-  if (!checks[1].ok || (!checks[0].ok && mutate !== 'drop-title-opt-out'))
-    throw refusal(checks, 'daemon')
-  const provider = await startOidcProvider({
-    port: ports?.issuer ?? 0,
-    registrationStatus: 200,
-    user: OWNER
-  })
+  let env
+  let checks
+  let provider
+  try {
+    // The issuer's port is known only once the provider listens; the preflight
+    // checks the shell, the PATH and the tmux folder, which do not depend on
+    // it, on the very environment the daemon is then handed, the issuer
+    // filled in.
+    env = childEnv('http://127.0.0.1:0', serverDir, stubs, {
+      recorders: mutate !== 'drop-recorders',
+      tmux: mutate !== 'drop-tmux-tmpdir'
+    })
+    checks = await preflight({ flags, stubs, env, log })
+    // Only drop-title-opt-out boots with the flags check failed, to show the
+    // daemon announcing titles on; it is refused below, before any chat. A
+    // second check that fails, the recorders or the tmux folder, starts nothing.
+    if (!checks[1].ok || (!checks[0].ok && mutate !== 'drop-title-opt-out'))
+      throw refusal(checks, 'daemon')
+    provider = await startOidcProvider({
+      port: ports?.issuer ?? 0,
+      registrationStatus: 200,
+      user: OWNER
+    })
+  } catch (error) {
+    release()
+    throw error
+  }
   env.CLAVE_ANTASPHERE_ISSUER = provider.issuer
   log(`issuer ${provider.issuer}`)
   let relay = null
@@ -1124,6 +1442,7 @@ export async function startFixture({
     await stopChild(server?.child)
     await stopChild(relay?.child)
     await provider.close()
+    release()
   }
   try {
     relay = await startRelay({
@@ -1142,11 +1461,12 @@ export async function startFixture({
     // credential stay.
     for (const stale of ['antasphere-account-client.json', 'antasphere-account-session.json'])
       rmSync(path.join(serverDir, stale), { force: true })
-    // The two mutations that give the daemon an environment other than the
+    // The three mutations that give the daemon an environment other than the
     // checked one: this shell's PATH, carrying a real claude, so the fifth
-    // check, asked of the daemon itself, has something to catch; or another
-    // folder of the fixture's own as HOME, empty, never the person's, so the
-    // seventh check, asked of the daemon itself, has something to catch.
+    // check, asked of the daemon itself, has something to catch; another
+    // folder of the fixture's own as HOME, empty, never the person's, or a
+    // decoy of the fixture's own as TMUX_TMPDIR, so the seventh check, asked
+    // of the daemon itself, has something to catch.
     let daemonEnv = env
     if (mutate === 'divergent-daemon-env')
       daemonEnv = { ...env, PATH: process.env.PATH ?? SYSTEM_PATH }
@@ -1155,6 +1475,19 @@ export async function startFixture({
       rmSync(elsewhere, { recursive: true, force: true })
       mkdirSync(elsewhere)
       daemonEnv = { ...env, HOME: elsewhere }
+    }
+    if (mutate === 'divergent-tmux-tmpdir') {
+      // A decoy that exists before the daemon starts, inside the fixture's
+      // own tmux folder (the install removed a past one), and held to what
+      // tmux asks of a folder: a tmux of the daemon's would take it, never
+      // /tmp. The seventh check, asked of the daemon itself, has something to
+      // catch; no run ever hands the daemon a TMUX_TMPDIR that is missing.
+      const decoy = path.join(stubs.tmux, TMUX_DECOY)
+      mkdirSync(decoy, { mode: 0o700 })
+      chmodSync(decoy, 0o700)
+      const problem = tmuxTmpdirProblem(decoy)
+      if (problem !== null) throw new Error(`the decoy tmux folder cannot stand in: ${problem}`)
+      daemonEnv = { ...env, TMUX_TMPDIR: decoy }
     }
     server = await startDaemon({
       bun,
@@ -1231,7 +1564,8 @@ export async function startFixture({
         title: STUB_TITLE,
         home: stubs.home,
         claudeConfigDir: stubs.claudeConfigDir,
-        codexHome: stubs.codexHome
+        codexHome: stubs.codexHome,
+        tmux: stubs.tmux
       },
       checks,
       mutation: mutate,
@@ -1785,10 +2119,19 @@ async function main(argv) {
       stderr(error.message)
       process.exit(2)
     }
-    // A reused folder is checked as it is: a dry run rewrites nothing.
-    const stubs = installStubs(path.join(root, 'stubs'), { reuse: !claim.fresh })
+    // A reused folder is checked as it is: a dry run rewrites nothing, and
+    // takes no lease. A tmux folder it cannot take is a refusal, exit 2.
+    let stubs
+    try {
+      stubs = installStubs(path.join(root, 'stubs'), { reuse: !claim.fresh })
+    } catch (error) {
+      if (!error.refusedFolder) throw error
+      stderr(error.message)
+      process.exit(2)
+    }
     const env = childEnv('http://127.0.0.1:0', path.join(root, 'server'), stubs, {
-      recorders: options.mutate !== 'drop-recorders'
+      recorders: options.mutate !== 'drop-recorders',
+      tmux: options.mutate !== 'drop-tmux-tmpdir'
     })
     const checks = await preflight({ flags: flagsFor(options.mutate), stubs, env, log: stderr })
     const failed = checks.filter((c) => !c.ok).length
