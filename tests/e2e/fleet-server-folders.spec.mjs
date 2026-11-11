@@ -10,13 +10,18 @@
  * 3. A folder of this Mac dropped on a server tab's composer, as a desktop
  *    drop (the composer's attachments) and as a path dragged as text (the
  *    Chat view's and the Enclave view's own drop), never lands in the
- *    message as this Mac's path.
+ *    message as this Mac's path: the refusal card says so above the
+ *    composer instead, naming the server, in the plural for several, and
+ *    goes with Escape or with the next file that lands; the caret stays in
+ *    the composer meanwhile, and the conversation gets no line of its own.
  * 4. A server's file tab offers no "Reveal in Finder".
  *
  * Fails if: either picker opens this Mac's dialog (or the group dialog is not
  * told its group's server), the server picker cannot be clicked over the
  * dialog, a dropped Mac folder's path is typed into a server tab's message,
- * or "Reveal in Finder" is offered for a server's file.
+ * the refusal card is missing, wrong or unmovable (or a line in the
+ * conversation repeats it), or "Reveal in Finder" is offered for a server's
+ * file.
  */
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -70,6 +75,11 @@ export async function run(t) {
     // A real folder of this Mac, so the upload's refusal is a folder's.
     const macFolder = fixturePath(`server-folders-mac-${process.pid}`)
     mkdirSync(macFolder, { recursive: true })
+    // Two more for a drop of several, and a plain file that does go.
+    const macFolders = [macFolder, `${macFolder}-b`, `${macFolder}-c`]
+    for (const folder of macFolders) mkdirSync(folder, { recursive: true })
+    const macFile = path.join(macFolder, 'goes-to-the-server.txt')
+    writeFileSync(macFile, 'a plain file of this Mac\n')
 
     await request(server, '/launch-profiles', {
       profile: {
@@ -264,6 +274,30 @@ export async function run(t) {
         { kind, value }
       )
     const settled = () => new Promise((resolve) => setTimeout(resolve, 2500))
+    const serverName = mac.owners[0].name
+    const card = chat.locator('.chat-composer-wrap [data-drop-refusal]')
+    const cardShown = (count) =>
+      eventually(
+        async () =>
+          (await card.getAttribute('data-drop-refusal', { timeout: 100 }).catch(() => null)) ===
+          count,
+        `the refusal card counts ${count}`
+      ).then(
+        () => true,
+        () => false
+      )
+    const cardGone = (how) =>
+      eventually(async () => (await card.count()) === 0, `the card goes on ${how}`).then(
+        () => true,
+        () => false
+      )
+    // A missing card fails its check at once rather than waiting out the spec.
+    const text = (locator) => locator.textContent({ timeout: 3000 }).catch(() => null)
+    const composerFocused = () =>
+      chat.evaluate((root) => {
+        const active = document.activeElement
+        return active?.getAttribute('aria-label') === 'Message' && root.contains(active)
+      })
     await composer.fill('')
     await drop(composer, 'text/uri-list', `file://${macFolder}`)
     await settled()
@@ -272,14 +306,62 @@ export async function run(t) {
       !(await composer.inputValue()).includes(macFolder),
       await composer.inputValue()
     )
-    await composer.fill('')
-    await drop(composer, 'text/plain', macFolder)
-    await settled()
-    t.check(
-      'a Mac folder dragged as text puts no path of this Mac in a server chat’s message',
-      !(await composer.inputValue()).includes(macFolder),
-      await composer.inputValue()
+    t.check('the refusal card comes up above the composer for the folder', await cardShown('1'))
+    t.equal(
+      'its title says the folders stay on this Mac',
+      await text(card.locator('.notice-card-title')),
+      'Folders stay on this Mac'
     )
+    t.equal(
+      'its sentence names the server the tab runs on',
+      await text(card.locator('.notice-card-body')),
+      `This session runs on ${serverName}, which can't open the folders on your Mac. Drop files instead: they are copied to the server.`
+    )
+    t.check(
+      'it is a warning, said by its icon and its word',
+      (await card.getAttribute('data-tone', { timeout: 3000 }).catch(() => null)) === 'warning' &&
+        (await text(card.locator('.notice-card-tone'))) === 'Warning' &&
+        (await card.locator('.notice-card-eyebrow svg').count()) === 1
+    )
+    t.equal(
+      'the conversation gets no line of its own for it',
+      await chat.locator('.chat-notice', { hasText: path.basename(macFolder) }).count(),
+      0
+    )
+    t.check('the caret stays in the composer under the card', await composerFocused())
+    await win.keyboard.type('still typing')
+    t.equal('typing goes on with the card up', await composer.inputValue(), 'still typing')
+    await win.keyboard.press('Escape')
+    t.check('Escape from the composer takes the card away', await cardGone('Escape'))
+    t.equal('Escape leaves what was typed', await composer.inputValue(), 'still typing')
+
+    await composer.fill('')
+    await drop(composer, 'text/plain', macFolders.join('\n'))
+    await settled()
+    const typed = await composer.inputValue()
+    t.check(
+      'Mac folders dragged as text put no path of this Mac in a server chat’s message',
+      !macFolders.some((folder) => typed.includes(folder)),
+      typed
+    )
+    t.check('several folders of one drop make one card', await cardShown('3'))
+    t.equal(
+      'its title is in the plural',
+      await text(card.locator('.notice-card-title')),
+      '3 folders stay on this Mac'
+    )
+    // A plain file of this Mac does go to the server, and takes the card away.
+    await drop(composer, 'text/uri-list', `file://${macFile}`)
+    const landed = await eventually(
+      async () =>
+        (await text(chat.locator('.chat-composer-files')))?.includes('goes-to-the-server.txt'),
+      'the file is attached'
+    ).then(
+      () => true,
+      () => false
+    )
+    t.check('a plain file dropped next is attached', landed)
+    t.check('the next file that lands takes the card away', await cardGone('an attach'))
 
     // The same tab in the Enclave view: its own drop of a path as text.
     await win.getByLabel('Session menu', { exact: true }).click()
@@ -297,6 +379,30 @@ export async function run(t) {
       !(await terminalComposer.inputValue()).includes(macFolder),
       await terminalComposer.inputValue()
     )
+    const termCard = pane.locator('.term-composer-wrap [data-drop-refusal]')
+    const termShown = await eventually(
+      async () => (await termCard.count()) === 1,
+      'the Enclave view’s refusal card comes up'
+    ).then(
+      () => true,
+      () => false
+    )
+    t.check('the Enclave view raises the same card above its composer', termShown)
+    if (termShown) {
+      t.check(
+        'it names the server too',
+        (await text(termCard.locator('.notice-card-body')))?.includes(serverName),
+        await text(termCard.locator('.notice-card-body'))
+      )
+      await termCard.getByRole('button', { name: 'Dismiss', exact: true }).click({ timeout: 3000 })
+      t.check(
+        'its X takes it away',
+        await eventually(async () => (await termCard.count()) === 0, 'the X closes the card').then(
+          () => true,
+          () => false
+        )
+      )
+    }
 
     // ── 4. A server's file tab offers no Reveal in Finder ───────────────────
     const tree = win.locator(`[data-file-tree-root="${owned('file', owner, server.root)}"]`)
