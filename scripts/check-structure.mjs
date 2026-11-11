@@ -101,7 +101,7 @@ function* files(dir) {
   }
 }
 
-for (const home of [
+const obsoleteHomes = [
   'src',
   'native',
   'plugins',
@@ -111,7 +111,19 @@ for (const home of [
   'apps/mobile',
   'packages/server/src/relay/main.ts',
   'packages/clave-channel/bin'
-]) {
+]
+// A generated path that covered a whole obsolete home would let any source
+// back into it, every file of it then read as generated output.
+for (const home of obsoleteHomes) {
+  const directory = path.join(root, home)
+  assert(
+    !legacyGenerated.some(
+      (generated) => directory === generated || directory.startsWith(generated + path.sep)
+    ),
+    `Obsolete source home listed as generated output: ${home}`
+  )
+}
+for (const home of obsoleteHomes) {
   const directory = path.join(root, home)
   if (!existsSync(directory)) continue
   const entries = statSync(directory).isDirectory() ? files(directory) : [directory]

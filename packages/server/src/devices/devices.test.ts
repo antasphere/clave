@@ -723,19 +723,21 @@ describe('the paired phone mobile boundary', () => {
    */
   const phoneClient = (w: World, token: string): PhoneClient => {
     const send = async <T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> => {
-      const headers = {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
-      }
-      // The phone's own paired bearer, never the owner's: under the owner's, every
-      // call here would pass as well, the phone's scope never tried.
-      expect(headers.Authorization).not.toBe(`Bearer ${w.server.token}`)
-      const response = await fetch(`${w.server.url}${path}`, {
+      const request = new Request(`${w.server.url}${path}`, {
         method,
-        headers,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
+        },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {})
       })
+      // The phone's own paired bearer, never the owner's, held on the very request
+      // that is sent: under the owner's, every call here would pass as well, the
+      // phone's scope never tried.
+      expect(request.headers.get('authorization')).toBe(`Bearer ${token}`)
+      expect(request.headers.get('authorization')).not.toBe(`Bearer ${w.server.token}`)
+      const response = await fetch(request)
       const text = await response.text()
       expect(response.ok, `${method} ${path}: ${response.status} ${text}`).toBe(true)
       return (text.length > 0 ? JSON.parse(text) : undefined) as T

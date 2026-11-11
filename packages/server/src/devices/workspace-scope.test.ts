@@ -283,15 +283,18 @@ it('serves authoritative live and stopped workspace stamps to a real paired phon
     // The phone's reads as the retired React Native app's `ClaveServerClient` sent
     // them (last at 00e16111): a GET under the paired bearer, `Accept:
     // application/json`. That client threw on a status outside 2xx and on an answer
-    // that is not JSON; either fails the test here. Its bearer is held where the
-    // header is built: the paired session's token, never the owner's, under which
-    // every read below would pass as well.
+    // that is not JSON; either fails the test here. Its bearer is held on the very
+    // request that is sent: the paired session's token, never the owner's, under
+    // which every read below would pass as well.
     const ownerToken = server.token
     const phone = async (path: string): Promise<unknown> => {
-      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-      expect(headers.Authorization).toBe(`Bearer ${deviceSession.token}`)
-      expect(headers.Authorization).not.toBe(`Bearer ${ownerToken}`)
-      const response = await fetch(`${baseUrl}${path}`, { method: 'GET', headers })
+      const request = new Request(`${baseUrl}${path}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      })
+      expect(request.headers.get('authorization')).toBe(`Bearer ${deviceSession.token}`)
+      expect(request.headers.get('authorization')).not.toBe(`Bearer ${ownerToken}`)
+      const response = await fetch(request)
       const text = await response.text()
       expect(response.ok, `GET ${path}: ${response.status} ${text}`).toBe(true)
       return JSON.parse(text)
