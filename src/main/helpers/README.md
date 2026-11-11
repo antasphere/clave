@@ -37,6 +37,11 @@ export const myHelper = defineHelper<Input, Output>({
 const outcome = await runHelper(myHelper, input, launchContext, { owner: sessionId })
 ```
 
+A new helper is also one more export in `catalog.ts`: the Helpers settings page lists the
+catalog, and the standalone server knows a helper only once the catalog has loaded its file.
+`catalog.test.ts` loads every module of this folder and fails when the registry knows a
+helper the catalog does not name.
+
 Nothing in the runner changes for a new helper. Priorities today: permission explainer
 100 (`explainer.ts`; a person is waiting on the card, PRDCT-4331), commit message 80, tab title 70, push
 summary 40, exchange digest 30, work digest 20.

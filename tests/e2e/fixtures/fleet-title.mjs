@@ -2,9 +2,8 @@
 // profile runs it. Never calls a provider. Every one-shot helper starts on
 // that profile (PRDCT-4326), so this stands for the server's whole Claude:
 // a tab title is answered (the fixture's name), and every other helper — a
-// commit message, a push summary, a digest — meets a signed-out Claude Code,
-// the way the server's `claude` refused before the helpers ran on the
-// profile (`fleet-world.mjs`, `seedClaudeStub`).
+// commit message, a push summary, a digest — meets a signed-out Claude Code
+// (the sentence `fleet-git.spec.mjs` reads in the git panel).
 let prompt = ''
 process.stdin.on('data', (chunk) => {
   prompt += chunk

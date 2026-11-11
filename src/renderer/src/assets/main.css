@@ -523,7 +523,9 @@ body.reorder-dragging * {
 
 /* A server's conversation (PRDCT-4321): the sidebar's server badge, the
    server's name in its colour, with a dot for its connection: green while
-   connected, a grey ring while it is not (its rows are its last answer). */
+   connected, a grey ring while it is not (its rows are its last answer).
+   A server with no colour on this Mac wears the group pill's fill
+   (.history-row-group, its neighbour on the title line). */
 .history-server {
   display: inline-flex;
   align-items: center;
@@ -535,7 +537,7 @@ body.reorder-dragging * {
   font-size: 10px;
   line-height: 1rem;
   color: var(--text-secondary);
-  background-color: var(--bg-hover);
+  background-color: var(--surface-200);
 }
 .history-server-dot {
   width: 6px;
