@@ -10,7 +10,7 @@ import Foundation
 // - pending: asked again with backoff for at most the budget, then unknown.
 // - rejected: the draft stays with the reason; a resend is a new id.
 // - absent: the same send is completed once with the same id; a second loss is unknown, and a
-//   completion the server refuses (401, 403, or a 422 SessionWriteRefused or SessionNotFound) is
+//   completion the server refuses (401, 403, 404, or a 422 SessionWriteRefused or SessionNotFound) is
 //   writeRefused: still unknown, never written again by itself.
 // - unknown: nothing is sent by itself; the person chooses.
 //
@@ -51,7 +51,7 @@ public enum SendOutcome: Sendable, Equatable {
   /// Another kind of failure (the token refused, a scope that forbids it): the draft stays.
   case failed(clientMessageId: String, reason: String)
   /// The outcome is still not known: the server refused this phone's attempt to complete the send
-  /// under the same id (401, 403, or a 422 SessionWriteRefused or SessionNotFound), and no write of it
+  /// under the same id (401, 403, 404, or a 422 SessionWriteRefused or SessionNotFound), and no write of it
   /// happens again by itself; its status may still be read.
   case writeRefused(clientMessageId: String, reason: String)
 
@@ -158,8 +158,11 @@ public func reconcile(_ clientMessageId: String, ports: SendPorts, options: Send
         if answer.status == .accepted { return .sent(clientMessageId: clientMessageId, reconciled: true) }
         return await reconcile(clientMessageId, ports: ports, options: options, mayRetry: false)
       } catch {
-        // A 401 or 403 proves only that this attempt was refused: the first write may still land.
-        if let refused = error as? ServerError, refused.kind == .unauthenticated || refused.kind == .forbidden {
+        // A 401, 403 or 404 proves only that this attempt was refused or failed: the first write may
+        // still land.
+        if let refused = error as? ServerError,
+          refused.kind == .unauthenticated || refused.kind == .forbidden || refused.kind == .notFound
+        {
           return .writeRefused(clientMessageId: clientMessageId, reason: refused.message)
         }
         // So does a 422 saying the session refused the write or does not exist.

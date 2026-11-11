@@ -29,9 +29,10 @@ keeps the bar until the person chooses: Discard or Send again then clears the ba
 phone cannot tell whether the message was delivered, and sends nothing; the draft and the
 picked files stay, and the person checks the conversation before sending it again.
 When the server refuses this phone's attempt to complete a send of unknown outcome (401, 403,
-or a 422 that says the session refused the write or does not exist), the send stays unknown and
-the phone never writes it again by itself; a later status answer of accepted or rejected still
-settles it, and the person's choice on the bar ends it. A send whose record was kept but whose
+404, or a 422 that says the session refused the write or does not exist), the send stays unknown
+and the phone never writes it again by itself, unless the refusal itself could not be written to
+the device: then a pass after a restart may complete it once, under its id; a later status answer
+of accepted or rejected still settles it, and the person's choice on the bar ends it. A send whose record was kept but whose
 mark could not be written is shown as unknown, never as not sent, until a pass settles it or the
 person chooses.
 

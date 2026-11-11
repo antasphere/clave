@@ -407,4 +407,44 @@ final class ChatOrphanMarkTests: XCTestCase {
     XCTAssertEqual(found.ledger, [], "the settle removed the record")
     XCTAssertNil(found.mark, "the mark is gone")
   }
+
+  // MARK: - Round 5d's gaps K12 and K15
+
+  /// K12: a choice on a send this run saw delivered, while the conversation's mark names a newer send:
+  /// the choice answers delivered, and the newer send's stored mark stays byte-equal.
+  func testAChoiceOnASendThisRunSawDeliveredLeavesANewerSendsMarkByteEqual() async throws {
+    let older = "m-k12-older-0000000000a"
+    let newer = "m-k12-newer-0000000000b"
+    let c = controller(over: ownerStore(directory))
+    let first = unknownSend(older)
+    try await c.begin(first)
+    try await c.finish(first, .sent(clientMessageId: older, reconciled: false))
+    try await recordUnknownSend(unknownSend(newer), reason: "lost", sends: c.sends, marks: c.marks)
+    let markBefore = try await stored(deliveryMarkKey(machine, session))
+    let resolution = try await c.discardPending(machineId: machine, sessionId: session, clientMessageId: older, choice: .discard)
+    XCTAssertEqual(resolution, .settledMeanwhile, "this run saw it delivered")
+    let markAfter = try await stored(deliveryMarkKey(machine, session))
+    XCTAssertEqual(markAfter, markBefore, "the newer send's mark, byte-equal")
+  }
+
+  /// K15: after a reload, a pass meets a send carrying a choice an ended run left and finds it
+  /// accepted: it settles it delivered and counts the delivery as seen, so a choice on it answers that
+  /// it was delivered meanwhile.
+  func testAfterAReloadALeftoverChoiceOnASendFoundAcceptedIsSettledDeliveredAndCountsAsSeen() async throws {
+    let id = "m-k15-leftover-00000001"
+    let first = controller(over: ownerStore(directory))
+    try await recordUnknownSend(unknownSend(id), reason: "lost", sends: first.sends, marks: first.marks)
+    try await first.sends.recordChoice(id, .discard)
+    let restarted = controller(over: ownerStore(directory))
+    let probe = PassProbe(.accepted)
+    try await probe.run(restarted)
+    XCTAssertEqual(probe.writes.value, [], "nothing written")
+    let found = try await reloaded()
+    XCTAssertEqual(found.ledger, [], "settled delivered: the record out")
+    XCTAssertNil(found.mark, "the mark cleared")
+    let seen = await restarted.wasDelivered(id)
+    XCTAssertTrue(seen, "the delivery counts as seen")
+    let resolution = try await restarted.discardPending(machineId: machine, sessionId: session, clientMessageId: id, choice: .discard)
+    XCTAssertEqual(resolution, .settledMeanwhile)
+  }
 }

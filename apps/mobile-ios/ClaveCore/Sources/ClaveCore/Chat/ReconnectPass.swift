@@ -41,7 +41,7 @@ public struct ReconnectPorts: Sendable {
   /// Told of a send the server has (its reconciliation answered sent), before the settle's writes,
   /// so a settle that ends part way still counts as seen.
   public var delivered: (@Sendable (UnknownSend) async -> Void)?
-  /// Told of a send whose completion attempt the server refused (401, 403, or a 422 SessionWriteRefused
+  /// Told of a send whose completion attempt the server refused (401, 403, 404, or a 422 SessionWriteRefused
   /// or SessionNotFound), before the settle's writes, so this run writes it no more even when the
   /// record of the refusal cannot be written.
   public var writeRefused: (@Sendable (UnknownSend) async -> Void)?
@@ -244,9 +244,9 @@ func writeRefusedHold(_ reason: String) -> String {
 /// The ledger, the draft and the mark after one send's outcome: sent takes the send out of the
 /// ledger, keeps in the draft only what was added after the text sent, takes the files it carried
 /// off the attachment draft and clears the mark; rejected leaves the ledger and marks the reason;
-/// unknown stays in the ledger, marked; failed waits for the next pass; writeRefused stays in the
-/// ledger with the refusal in its record and, once that is written, marks the hold unless the mark
-/// names another send.
+/// unknown stays in the ledger, marked unless the mark names another send; failed waits for the
+/// next pass; writeRefused stays in the ledger with the refusal in its record and, once that is
+/// written, marks the hold unless the mark names another send.
 public func settleSend(
   _ send: UnknownSend,
   _ outcome: SendOutcome,
@@ -268,6 +268,9 @@ public func settleSend(
     try await sends.remove(send.clientMessageId)
     try await marks.set(send.machineId, send.sessionId, DeliveryMark(kind: .rejected, clientMessageId: send.clientMessageId, reason: reason, at: now()))
   case .unknown(_, let reason):
+    // A mark naming a newer send is that send's: this one shows again once that one has settled.
+    let mark = try await marks.get(send.machineId, send.sessionId)
+    guard mark == nil || mark?.clientMessageId == send.clientMessageId else { return }
     try await marks.set(send.machineId, send.sessionId, DeliveryMark(kind: .unknown, clientMessageId: send.clientMessageId, reason: reason, at: now()))
   case .failed:
     // The machine is not reachable after all: the send waits for the next pass.

@@ -908,4 +908,58 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertNil(restarted.deliveryMark, "no bar after a restart either")
     XCTAssertEqual(server.attempts, [old], "nothing written beyond the lost original")
   }
+
+  // MARK: - Round 5d's gap K20 and 5b's note n5
+
+  /// K20: the composer's own send whose completion is refused (the first write lost, the status
+  /// absent, the same-id write 403): the record stays in the ledger with its refusal, the mark says the
+  /// hold, and the draft and the file stay.
+  func testTheComposersOwnSendWhoseCompletionIsRefusedKeepsItsRecordTheHoldAndItsDraft() async throws {
+    let model = try makeModel()
+    await model.appear()
+    model.attach(try file("own-refused.txt"))
+    model.draft = "Sent text."
+    server.planWrites(.loseBeforeKept, .refuse(status: 403, message: "A phone may not do this."))
+    server.answerStatusByDefault(.answer("absent"))
+    await model.send()
+    let id = server.attempts.first ?? ""
+    XCTAssertEqual(server.attempts, [id, id], "the lost first write and the refused completion")
+    let records = try await parts.delivery.sends.list()
+    XCTAssertEqual(records.map(\.clientMessageId), [id], "the record stays")
+    XCTAssertEqual(records.first?.writeRefused, "A phone may not do this.", "with its refusal")
+    let mark = try await parts.delivery.marks.get("m1", "s1")
+    XCTAssertEqual(mark?.kind, .unknown, "the send stays unknown")
+    XCTAssertEqual(mark?.reason, holdSentence("A phone may not do this."), "the mark says the hold")
+    XCTAssertEqual(model.deliveryMark?.reason, holdSentence("A phone may not do this."), "and so does the bar")
+    XCTAssertEqual(model.draft, "Sent text.", "the draft stays")
+    XCTAssertEqual(model.pendingFiles.map(\.name), ["own-refused.txt"], "the file stays")
+  }
+
+  /// n5: an older send reconciled unknown while the conversation's mark names a newer send: the newer
+  /// send's stored mark stays byte-equal, and once that one is delivered and its mark cleared, the
+  /// composer shows the older send's bar.
+  func testAnOlderSendReconciledUnknownKeepsANewerSendsMarkAndShowsItsBarOnceThatOneIsDelivered() async throws {
+    let older = "m-n5-older-000000000000a"
+    let newer = "m-n5-newer-000000000000b"
+    try await parts.delivery.sends.add(UnknownSend(machineId: "m1", sessionId: "s1", clientMessageId: older, text: "The older message.", at: 1))
+    try await parts.delivery.sends.add(UnknownSend(machineId: "m1", sessionId: "s1", clientMessageId: newer, text: "The newer message.", at: 2))
+    try await parts.delivery.marks.set(
+      "m1", "s1", DeliveryMark(kind: .unknown, clientMessageId: newer, reason: "Delivery has not been confirmed.", at: 2))
+    let model = try makeModel()
+    await model.appear()
+    XCTAssertEqual(model.deliveryMark?.clientMessageId, newer, "the bar names the newer send")
+    let before = await store.values[deliveryMarkKey("m1", "s1")]
+    server.answerStatus(.answer("unknown"), for: older)
+    server.answerStatus(.held, for: newer)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await until("the pass holds at the newer send's status read") { server.isHoldingStatus(of: newer) }
+    let during = await store.values[deliveryMarkKey("m1", "s1")]
+    XCTAssertEqual(during, before, "the older send's unknown settle leaves the newer send's mark byte-equal")
+    server.answerHeldStatus(of: newer, .answer("accepted"))
+    await passFinished(asked)
+    await until("the composer shows the older send's bar") { model.deliveryMark?.clientMessageId == older }
+    XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the older send is still unknown")
+    XCTAssertEqual(server.attempts, [], "nothing written")
+  }
 }

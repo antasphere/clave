@@ -18,6 +18,7 @@ private let text = "The message the server refused to complete."
 private let forbidden = ServerError(.forbidden, "A phone may not do this.", status: 403)
 private let unauthenticated = ServerError(.unauthenticated, "The server refused the token.", status: 401)
 private let unreachable = ServerError(.network, "The server could not be reached.")
+private let notFound = ServerError(.notFound, "The server has no such route.", status: 404)
 
 /// A refusal the server declares, as a 422 with the contract's failure carries it.
 private func declared(_ tag: String, _ message: String = "The provider refused the message.") -> ServerError {
@@ -442,5 +443,84 @@ final class ChatWriteRefusalTests: XCTestCase {
     let found = try await reloaded()
     XCTAssertEqual(found.ledger, [], "neither send left in the ledger")
     XCTAssertNil(found.mark, "and no bar")
+  }
+
+  // MARK: - Round 5d's gaps K18 and K24
+
+  /// K18: the composer's own send whose completion is refused (the first write lost, the status absent,
+  /// the same-id write 403), the hold's record write refused once: this run's next pass writes nothing
+  /// for it.
+  func testTheComposersOwnRefusedCompletionWhoseHoldCannotBeWrittenIsWrittenNoMoreThisRun() async throws {
+    let id = "m-k18-own-refused-00001"
+    let store = OnceRefusingStore(ownerStore(directory))
+    let c = controller(over: store)
+    let own = unknownSend(id)
+    try await c.begin(own)
+    let probe = SendProbe(first: .failure(unreachable), status: .absent, then: .failure(forbidden))
+    let outcome = await sendMessage(id, ports: probe.ports)
+    XCTAssertEqual(outcome, .writeRefused(clientMessageId: id, reason: forbidden.message))
+    await store.refuseNextWrite(of: UnknownSends.key(for: machine))
+    do {
+      try await c.finish(own, outcome)
+      XCTFail("the hold's record write was not refused")
+    } catch is Refused {}
+    let pass = PassProbe(.absent)
+    try await pass.run(c)
+    XCTAssertEqual(pass.writes.value, [], "this run writes it no more")
+  }
+
+  /// K24: the hold of a send no ledger holds sets no mark: the mark key stays absent, and a mark that
+  /// is there stays byte-equal.
+  func testAHoldForASendNoLedgerHoldsSetsNoMark() async throws {
+    let id = "m-k24-no-record-0000001"
+    let store = ownerStore(directory)
+    let sends = UnknownSends(store: store, machineId: machine)
+    let marks = DeliveryMarks(store: store)
+    let refused = SendOutcome.writeRefused(clientMessageId: id, reason: forbidden.message)
+    try await settleSend(unknownSend(id), refused, sends: sends, marks: marks, drafts: Drafts(store: store), now: { 5 })
+    let absent = try await stored(deliveryMarkKey(machine, session))
+    XCTAssertNil(absent, "no mark set")
+    try await marks.set(machine, session, DeliveryMark(kind: .unknown, clientMessageId: id, reason: "lost", at: 1))
+    let before = try await stored(deliveryMarkKey(machine, session))
+    try await settleSend(unknownSend(id), refused, sends: sends, marks: marks, drafts: Drafts(store: store), now: { 5 })
+    let after = try await stored(deliveryMarkKey(machine, session))
+    XCTAssertEqual(after, before, "a mark already there stays byte-equal")
+  }
+
+  // MARK: - A completion answered 404 (round 5d's note E-n1)
+
+  /// The first write lost, the status absent, the same-id write answered 404 (the relay's answer for a
+  /// machine it does not know): it proves only that this attempt failed, so the send is writeRefused.
+  func testASameIdWriteAnswered404AfterALostFirstWriteIsWriteRefused() async {
+    let id = "m-completion-404-000001"
+    let probe = SendProbe(first: .failure(unreachable), status: .absent, then: .failure(notFound))
+    let outcome = await sendMessage(id, ports: probe.ports)
+    XCTAssertEqual(outcome, .writeRefused(clientMessageId: id, reason: notFound.message))
+    XCTAssertEqual(probe.writes.value, 2, "the lost first write and the failed completion")
+  }
+
+  /// A control: a FIRST write answered 404 stays failed, and is never asked about.
+  func testAFirstWriteAnswered404StaysFailed() async {
+    let id = "m-first-404-00000000001"
+    let probe = SendProbe(first: .failure(notFound), status: .absent)
+    let outcome = await sendMessage(id, ports: probe.ports)
+    XCTAssertEqual(outcome, .failed(clientMessageId: id, reason: notFound.message))
+    XCTAssertEqual(probe.statusReads.value, 0, "never asked about")
+  }
+
+  /// The composer's own send whose completion is answered 404: finish keeps the record with the
+  /// refusal and marks the hold, instead of dropping the record.
+  func testTheComposersOwnSendWhoseCompletionIsAnswered404KeepsItsHeldRecord() async throws {
+    let id = "m-own-404-0000000000001"
+    let c = controller(over: ownerStore(directory))
+    let own = unknownSend(id)
+    try await c.begin(own)
+    let outcome = await sendMessage(id, ports: SendProbe(first: .failure(unreachable), status: .absent, then: .failure(notFound)).ports)
+    try await c.finish(own, outcome)
+    let found = try await reloaded()
+    XCTAssertEqual(found.ledger.map(\.clientMessageId), [id], "the record stays")
+    XCTAssertEqual(found.ledger.first?.writeRefused, notFound.message, "with the refusal")
+    XCTAssertEqual(found.mark?.kind, .unknown, "the send stays unknown")
+    XCTAssertEqual(found.mark?.reason, hold(notFound.message), "with the hold's sentence")
   }
 }
