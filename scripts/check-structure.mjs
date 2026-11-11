@@ -76,7 +76,13 @@ const legacyGenerated = [
   'packages/mobile/android',
   'packages/mobile/.expo',
   'packages/mobile/expo-env.d.ts',
-  'packages/mobile/e2e/.output'
+  'packages/mobile/e2e/.output',
+  // The React Native app's own generated output, after its retirement from apps/mobile.
+  'apps/mobile/ios',
+  'apps/mobile/android',
+  'apps/mobile/.expo',
+  'apps/mobile/expo-env.d.ts',
+  'apps/mobile/e2e/.output'
 ].map((file) => path.join(root, file))
 
 function* files(dir) {
@@ -100,6 +106,9 @@ for (const home of [
   'native',
   'plugins',
   'packages/mobile',
+  // The React Native app, retired for the two native apps: kept on the branch
+  // mobile-react-native-baseline-20261109, never to come back here.
+  'apps/mobile',
   'packages/server/src/relay/main.ts',
   'packages/clave-channel/bin'
 ]) {

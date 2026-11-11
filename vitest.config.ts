@@ -9,8 +9,7 @@ import { defineConfig } from 'vitest/config'
  * since an untrusted file whose prompt is neither disclosed nor stripped looks
  * exactly like one that is.
  *
- * Every app folder is included, including workers and CLI entrypoints. The
- * mobile app keeps its separate suite and platform-specific configuration.
+ * Every app folder is included, including workers and CLI entrypoints.
  * A new .test.ts or .test.tsx runs by existing. Tests needing a DOM declare
  * `// @vitest-environment jsdom` in their own file.
  */

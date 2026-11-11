@@ -14,15 +14,15 @@ prototype files they were ported from by their path on that branch.
 
 ## The two apps
 
-|                  | iPhone                                                         | Android                                                            |
-| ---------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Folder           | `apps/mobile-ios`                                              | `apps/mobile-android`                                              |
-| Interface        | SwiftUI, its logic in the Swift package `ClaveCore`            | Kotlin and Jetpack Compose, its own Gradle build                   |
-| Toolchain        | Xcode 26.0.1, the iOS 26.0 simulator runtime; iOS 17 and later | JDK 21, compileSdk 37; Android 8.0 (minSdk 26) and later           |
-| Identifier       | bundle `com.clave.ios.dev`                                     | application id `com.clave.app.android` (`.debug` on a debug build) |
-| Sign-in callback | `clave-ios://oauth/callback`                                   | `clave-android://oauth/callback`                                   |
-| CI entry         | `bash apps/mobile-ios/ci.sh`                                   | `bash apps/mobile-android/ci.sh`                                   |
-| Reference        | `apps/mobile-ios/README.md`                                    | `apps/mobile-android/README.md`                                    |
+|                  | iPhone                                                                   | Android                                                            |
+| ---------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Folder           | `apps/mobile-ios`                                                        | `apps/mobile-android`                                              |
+| Interface        | SwiftUI, its logic in the Swift package `ClaveCore`                      | Kotlin and Jetpack Compose, its own Gradle build                   |
+| Toolchain        | Xcode 26.0.1 and Swift 6.2 (CI: the app on Xcode 26.2); iOS 17 and later | JDK 21, compileSdk 37; Android 8.0 (minSdk 26) and later           |
+| Identifier       | bundle `com.clave.ios.dev` (Debug), `com.clave.ios` (Release)            | application id `com.clave.app.android` (`.debug` on a debug build) |
+| Sign-in callback | `clave-ios://oauth/callback`                                             | `clave-android://oauth/callback`                                   |
+| CI entry         | `bash apps/mobile-ios/ci.sh`                                             | `bash apps/mobile-android/ci.sh`                                   |
+| Reference        | `apps/mobile-ios/README.md`                                              | `apps/mobile-android/README.md`                                    |
 
 Neither identifier is the prototype's `com.clave.app.mobile` or the Mac app's
 `com.clave.app`, so a test install never replaces another app or reads its data. Both apps
@@ -41,9 +41,12 @@ ordered history in [mobile-timeline.md](mobile-timeline.md), the account in
 [antasphere-account.md](antasphere-account.md) and the agents' requests in
 [server-requests.md](server-requests.md).
 
-## What the two apps share: `packages/mobile-native`
+## What `packages/mobile-native` holds for the phones
 
-`packages/mobile-native/README.md` is the reference. In one screen:
+`packages/mobile-native/README.md` is the reference. Neither app reads these files at its
+head yet: each runs a fixture stack of its own (`apps/mobile-ios/scripts/fixture-stack.mjs`,
+`apps/mobile-android/scripts/fixture-env.mjs`), and the Android one runs the same three boot
+checks as the fixture server below. In one screen:
 
 - `fixtures/`: the fixture vectors, the wire shapes and commands the phones use, exported
   from the contract's own Effect schemas and commands, each sample decoded through the
@@ -51,10 +54,10 @@ ordered history in [mobile-timeline.md](mobile-timeline.md), the account in
 - `assets/`: the four desktop themes' tokens read from `packages/ui/src/tokens.css`, the
   Heroicons paths and Geist Sans (OFL), generated deterministically; `assets.test.mjs` fails
   when a generated file no longer matches its source.
-- `scripts/fixture-server.mjs`: the fixture server both apps are tested against, this
-  checkout's own server as a daemon with the Echo adapter, a local relay and a local OpenID
-  Connect provider on ports the caller names, its processes kept off every real provider and
-  proven so. `--check` runs its proof and exits 0 only with its summary line.
+- `scripts/fixture-server.mjs`: a fixture server for the phones, this checkout's own server
+  as a daemon with the Echo adapter, a local relay and a local OpenID Connect provider on
+  ports the caller names, its processes kept off every real provider and proven so. `--check`
+  runs its proof and exits 0 only with its summary line.
 
 ```sh
 npm ci
@@ -70,11 +73,14 @@ the stack and drives the app against it.
 
 ## CI
 
-`.github/workflows/mobile.yml` has four jobs: one that says which app folders are here; the
-Linux job for the vectors, the assets and the fixture server, its booted cases included; the
-iPhone app on macOS with Xcode 26.0.1; the Android app on Linux with JDK 21. An app job whose
-folder is absent says so in one line and passes. `npm run check:structure` requires each app
-folder that exists to hold its `ci.sh` and no `package.json`.
+`.github/workflows/mobile.yml` has four jobs: one that finds which apps hold their entry,
+`ci.sh`; the Linux job for the vectors, the assets and the fixture server, its booted cases
+included; the iPhone app on macOS, its core package's tests on Xcode 26.0.1 and the app built
+and tested on Xcode 26.2, since the runner image has no iOS 26.0 runtime, which Xcode 26.0.1
+needs to build the app; the Android app on Linux with JDK 21. While an app's `ci.sh` is absent
+its job is skipped, with a notice, so a green app check is never a pass on an absent app.
+`npm run check:structure` requires each app folder that holds files to hold its `ci.sh`, and
+no `package.json`.
 
 ## What a fixture result proves
 
