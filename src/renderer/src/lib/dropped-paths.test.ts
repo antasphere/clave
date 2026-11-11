@@ -31,10 +31,10 @@ describe('failureText', () => {
     expect(
       failureText(
         new Error(
-          "Error invoking remote method 'sessions:files': Error: Folders and special files cannot be attached."
+          "Error invoking remote method 'sessions:files': Error: Folders cannot be attached."
         )
       )
-    ).toBe('Folders and special files cannot be attached.')
+    ).toBe('Folders cannot be attached.')
     expect(failureText(new Error('Pasted images must be 5 MiB or smaller.'))).toBe(
       'Pasted images must be 5 MiB or smaller.'
     )
