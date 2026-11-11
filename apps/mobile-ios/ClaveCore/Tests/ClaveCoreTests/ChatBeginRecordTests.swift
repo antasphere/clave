@@ -65,11 +65,28 @@ private actor HoldingStore: KeyValueStore {
   func refuseNextWrite(of key: String) { refusing.insert(key) }
   /// How many writes wait.
   var waiting: Int { held.count }
-  /// Holds and refuses nothing more, and lets the waiting writes go on.
+  /// Holds and refuses nothing more, and lets the waiting writes and reads go on.
   func disarm() {
     holding = [:]
     refusing = []
+    readHold = nil
     release()
+    releaseReads()
+  }
+
+  private var readHold: (key: String, skip: Int)?
+  private var heldReads: [CheckedContinuation<Void, Never>] = []
+
+  /// Holds the read of `key` that comes after `skipping` more reads of it until `releaseReads`. Its
+  /// value is read before it waits, so the held read returns what the store held when it began.
+  func holdRead(of key: String, skipping: Int) { readHold = (key, skipping) }
+  /// How many reads wait.
+  var waitingReads: Int { heldReads.count }
+  /// Lets the waiting reads go on.
+  func releaseReads() {
+    let waiting = heldReads
+    heldReads = []
+    for read in waiting { read.resume() }
   }
   /// Lets the waiting writes go on.
   func release() {
@@ -85,7 +102,18 @@ private actor HoldingStore: KeyValueStore {
     if refuse { throw Refused() }
   }
 
-  func get(_ key: String) async throws -> String? { try await inner.get(key) }
+  func get(_ key: String) async throws -> String? {
+    let value = try await inner.get(key)
+    if let hold = readHold, hold.key == key {
+      if hold.skip == 0 {
+        readHold = nil
+        await withCheckedContinuation { heldReads.append($0) }
+      } else {
+        readHold = (key, hold.skip - 1)
+      }
+    }
+    return value
+  }
 
   func set(_ key: String, _ value: String) async throws {
     try await gate(key)
@@ -209,5 +237,67 @@ final class ChatBeginRecordTests: XCTestCase {
     let found = try await reloaded()
     XCTAssertEqual(found.ledger, [], "the record was undone")
     XCTAssertNil(found.mark, "and no mark")
+  }
+
+  /// The bar of a send without its mark says only what is known of it: that delivery is not confirmed,
+  /// or, for a send whose completion the server refused, its hold, never that it may still be sent
+  /// (round 5d's note on the bar's first sentence).
+  func testTheBarOfASendWithoutItsMarkSaysOnlyWhatIsKnown() {
+    XCTAssertEqual(unconfirmedSendReason(send("m-unmarked-00000000001")), "Delivery has not been confirmed.")
+    let held = send("m-unmarked-00000000002").with(writeRefused: "A phone may not do this.")
+    XCTAssertEqual(unconfirmedSendReason(held), writeRefusedHold("A phone may not do this."))
+    XCTAssertTrue(unconfirmedSendReason(held).contains("will not try again by itself"), "the held send's bar says its hold")
+  }
+
+  /// The same order with a pass whose claim would read the ledger while the undo is held, that read
+  /// held until the undo has landed and `begin` has ended: a claim would then find the send still
+  /// listed and no longer the composer's. A pass skips a send the composer drives before it claims it,
+  /// so it never reads or writes the send (round 5d's probe G6; without that skip the old id is
+  /// written and the composer's "not sent" follows a completion).
+  func testAPassWhoseClaimReadStraddlesTheUndoNeverReadsOrWritesTheSend() async throws {
+    let id = "m-begin-claim-read-00001"
+    let store = HoldingStore(ownerStore(directory))
+    let c = controller(over: store)
+    await store.holdNextWrite(of: deliveryMarkKey(machine, session), refuse: true)
+    let beginning = Task { try await c.begin(send(id)) }
+    await eventually("the mark write waits") { await store.waiting == 1 }
+    // The next ledger write is the undo's removal of the record.
+    await store.holdNextWrite(of: UnknownSends.key(for: machine), refuse: false)
+    await store.release()
+    await eventually("the undo waits") { await store.waiting == 1 }
+    guard await store.waiting == 1 else {
+      await store.disarm()
+      XCTFail("begin never took the record out")
+      return
+    }
+    // The pass's first ledger read is its list of the machine's sends; a claim of the send would read
+    // the ledger once more, and that read is held.
+    await store.holdRead(of: UnknownSends.key(for: machine), skipping: 1)
+    let during = PassProbe()
+    let ended = Box(false)
+    let pass = Task {
+      defer { ended.value = true }
+      try await during.run(c)
+    }
+    await eventually("the pass ends, or its claim's read waits") {
+      if ended.value { return true }
+      return await store.waitingReads == 1
+    }
+    // The undo lands and `begin` ends while that read, if any, waits.
+    await store.release()
+    do {
+      try await beginning.value
+      XCTFail("begin did not throw")
+    } catch is SendNotRecorded {
+    } catch {
+      XCTFail("another error: \(error)")
+    }
+    await store.releaseReads()
+    await store.disarm()
+    try await pass.value
+    XCTAssertEqual(during.statusReads.value, [], "the send's status never read")
+    XCTAssertEqual(during.writes.value, [], "the send never written")
+    let found = try await reloaded()
+    XCTAssertEqual(found.ledger, [], "the record was undone")
   }
 }

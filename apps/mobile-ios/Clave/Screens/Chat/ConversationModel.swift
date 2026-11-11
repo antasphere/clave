@@ -464,9 +464,9 @@ final class ConversationModel {
   static let lostTrack = "This phone lost its record of this message, so it cannot tell whether it was delivered. Check the conversation before you send it again."
   /// The same after Send again on such a send: nothing was sent, under the old id or a new one.
   static let lostTrackNotSent = "This phone lost its record of this message, so it cannot tell whether it was delivered, and did not send it again. Check the conversation before you send it."
-  /// The bar of a send whose record the phone kept but whose mark it could not write: shown from the
-  /// record, never written.
-  static let recordedWithoutMark = "This phone kept this message but could not finish recording it, so it may still be sent when the connection comes back."
+  /// The bar of a send this conversation's ledger holds without its mark: what any send of unknown
+  /// outcome says, since nothing more is known of it (a held send's bar says its hold instead).
+  static let recordedWithoutMark = unconfirmedDelivery
 
   /// The person's choice on the bar's send, through the machine's controller; nil when it failed. A
   /// choice the phone could not write down is said in the composer, and the bar stays.
@@ -603,7 +603,7 @@ final class ConversationModel {
       newest = record
     }
     guard let newest else { return nil }
-    return DeliveryMark(kind: .unknown, clientMessageId: newest.clientMessageId, reason: Self.recordedWithoutMark, at: newest.at)
+    return DeliveryMark(kind: .unknown, clientMessageId: newest.clientMessageId, reason: unconfirmedSendReason(newest), at: newest.at)
   }
 
   /// What a send of unknown outcome carried, read back from the ledger (after a restart, or for a

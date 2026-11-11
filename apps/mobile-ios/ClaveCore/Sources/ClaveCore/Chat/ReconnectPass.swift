@@ -241,6 +241,17 @@ func writeRefusedHold(_ reason: String) -> String {
   "The server refused this phone's new attempt to send this message (\(reason)), so the phone will not try again by itself. Whether the message arrived is still unknown."
 }
 
+/// What the bar of a send of unknown outcome says: delivery is not confirmed.
+public let unconfirmedDelivery = "Delivery has not been confirmed."
+
+/// What the bar says for a send of unknown outcome whose own mark is not stored (its mark write
+/// failed, a process ended between the record and the mark, or a newer send's mark holds the
+/// conversation's place): the hold when the server refused the phone's attempt to complete it,
+/// else what any send of unknown outcome says. Nothing more is known of such a send.
+public func unconfirmedSendReason(_ send: UnknownSend) -> String {
+  send.writeRefused.map(writeRefusedHold) ?? unconfirmedDelivery
+}
+
 /// The ledger, the draft and the mark after one send's outcome: sent takes the send out of the
 /// ledger, keeps in the draft only what was added after the text sent, takes the files it carried
 /// off the attachment draft and clears the mark; rejected leaves the ledger and marks the reason;
@@ -568,7 +579,7 @@ public actor DeliveryController {
     do {
       try await marks.set(
         send.machineId, send.sessionId,
-        DeliveryMark(kind: .unknown, clientMessageId: id, reason: "Delivery has not been confirmed.", at: send.at))
+        DeliveryMark(kind: .unknown, clientMessageId: id, reason: unconfirmedDelivery, at: send.at))
     } catch {
       let markFailure = reasonOf(error)
       do {
