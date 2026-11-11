@@ -10,12 +10,20 @@ import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../stor
 import { pickServerFolder } from '../store/server-folder-store'
 import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
 import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
-import type { LaunchProfile, LauncherFamily } from '../../../shared/agent-launch'
+import {
+  profileSetsPermissions,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../../shared/agent-launch'
 import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
 import { permissionRungFor, useLaunchSettingsStore } from '../store/launch-settings-store'
 import { HARNESS_BY_ID } from '../../../shared/harness'
 import { CHAT_PROFILE_IDS, chatDefaultFor } from '../../../shared/open-session-modes'
-import { selectedChatProfile } from '../store/launch-profile-store'
+import {
+  profilesFor,
+  selectedChatProfile,
+  selectedLaunchProfile
+} from '../store/launch-profile-store'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -109,12 +117,21 @@ type SpawnOptions = NonNullable<Parameters<Window['electronAPI']['spawnSession']
  *  is a subcommand with no model or permission flag of its own. Cmd+Y keeps
  *  its bypass: a dangerous setup never carries a rung. */
 export function setupSpawnFlags(
-  setup: AgentSetup | null
+  setup: AgentSetup | null,
+  launchProfileId?: string,
+  workspaceId: string | null = null
 ): Pick<SpawnOptions, 'model' | 'permissionMode'> {
   if (!setup || setup.kind === 'claude-agents') return {}
-  const rung = setup.dangerousMode
-    ? undefined
-    : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
+  // A profile that sets its own permissions keeps them: no default rung
+  // travels with it (verifier, round 2). The profile is the one named, else
+  // the family's selected one.
+  const profile =
+    (launchProfileId && profilesFor(setup.kind).find((p) => p.id === launchProfileId)) ||
+    selectedLaunchProfile(setup.kind, workspaceId)
+  const rung =
+    setup.dangerousMode || (profile && profileSetsPermissions(profile))
+      ? undefined
+      : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
   return {
     ...(setup.model ? { model: setup.model } : {}),
     // The spawn's type names Claude's rungs; the other harnesses' (Codex's
@@ -256,7 +273,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
       ...modes,
       dangerousMode,
-      ...setupSpawnFlags(req.setup),
+      ...setupSpawnFlags(req.setup, launchProfileId, workspaceId),
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(launchProfileId ? { launchProfileId } : {}),
       ...(serverProfile ? { launchProfile: serverProfile } : {}),
@@ -384,7 +401,7 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
       dangerousMode,
       initialPrompt,
       launchProfileId,
-      ...setupSpawnFlags(req.setup),
+      ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields
     })

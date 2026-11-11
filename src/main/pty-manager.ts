@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
   isCodexRung,
+  profileSetsPermissions,
   sanitizeCarriedLaunchProfile,
   type LauncherFamily
 } from '../shared/agent-launch'
@@ -202,7 +203,18 @@ class PtyManager {
     // a mode the spawn names (a routine's own, a restart's) wins. The rung is
     // checked against the harness's ladder; its bypass rung is the dangerous
     // flag, never a mode passed as such.
-    if (family && !options.claudeAgentsMode && !options.dangerousMode && !options.permissionMode) {
+    // A profile that sets its own permissions keeps them (verifier, round 2).
+    const ownProfile = family
+      ? (carried ??
+        launchProfileManager.resolve(family, options?.workspaceId, options?.launchProfileId))
+      : undefined
+    if (
+      family &&
+      !options.claudeAgentsMode &&
+      !options.dangerousMode &&
+      !options.permissionMode &&
+      !(ownProfile && profileSetsPermissions(ownProfile))
+    ) {
       const rung = permissionDefaultFor(family)
       if (rung === HARNESS_BY_ID[family].bypassRung) options = { ...options, dangerousMode: true }
       else if (rung)

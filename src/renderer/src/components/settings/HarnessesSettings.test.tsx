@@ -142,6 +142,16 @@ describe('a missing harness', () => {
     expect(h.selects).toEqual([])
   })
 
+  it('reads a harness not checked yet as present: no Install, its settings shown (verifier, F4)', () => {
+    h.agents = ['claude', 'codex', 'antigravity', 'pi'].map((id) => ({
+      ...agent(id, false),
+      lastCheckedAt: null
+    }))
+    const html = render()
+    expect(html).not.toContain('data-harness-install=')
+    expect(h.selects.length).toBeGreaterThan(0)
+  })
+
   it('offers no Install for a harness that is installed', () => {
     h.agents = ['claude', 'codex', 'antigravity', 'pi'].map((id) => agent(id, true))
     const html = render()

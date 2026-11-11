@@ -375,6 +375,46 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     ).toEqual(['claude', '--dangerously-skip-permissions'])
   })
 
+  it("claude: a profile's own mode wins over the default rung, bypass included; a rung off the ladder is dropped", () => {
+    const planned: LaunchProfile = { ...claude, additionalArgs: ['--permission-mode', 'plan'] }
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: planned, permissionMode: 'acceptEdits' })
+    ).toEqual(['claude', '--permission-mode', 'plan'])
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: planned, permissionMode: 'bypassPermissions' })
+    ).toEqual(['claude', '--permission-mode', 'plan'])
+    // Cmd+Y is explicit: it still wins over the profile's mode.
+    expect(buildAgentArgv({ kind: 'claude', profile: planned, dangerousMode: true })).toEqual([
+      'claude',
+      '--permission-mode',
+      'plan',
+      '--dangerously-skip-permissions'
+    ])
+    // The wire takes any rung name now; Claude is handed its own alone.
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'workspace-write' })
+    ).toEqual(['claude'])
+    expect(buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'dontAsk' })).toEqual([
+      'claude',
+      '--permission-mode',
+      'dontAsk'
+    ])
+  })
+
+  it("codex: a profile's own sandbox or approval flags win over the default rung", () => {
+    const own: LaunchProfile = { ...codex, additionalArgs: ['--sandbox', 'read-only'] }
+    expect(
+      buildAgentArgv({ kind: 'codex', profile: own, permissionMode: 'workspace-write' })
+    ).toEqual(['codex', '--sandbox', 'read-only', '-c', TITLE])
+    const yolo: LaunchProfile = { ...codex, additionalArgs: ['--yolo'] }
+    expect(buildAgentArgv({ kind: 'codex', profile: yolo, permissionMode: 'read-only' })).toEqual([
+      'codex',
+      '--yolo',
+      '-c',
+      TITLE
+    ])
+  })
+
   it('codex: a rung is --sandbox, full access turns approvals off too', () => {
     expect(buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'read-only' })).toEqual([
       'codex',

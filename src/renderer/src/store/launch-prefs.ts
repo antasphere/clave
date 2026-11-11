@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { useAccountPolicyStore } from './account-policy-store'
 import { isValidModelName } from '../../../shared/model-name'
+import { chatProfileSource } from '../../../shared/agent-launch'
+import { CHAT_PROFILE_IDS } from '../../../shared/open-session-modes'
 
 /** Which agent a session runs. One field instead of the four booleans
  *  (`claudeMode` / `claudeAgentsMode` / `antigravityMode` / `codexMode`) the
@@ -72,6 +74,12 @@ export function agentAcceptsPrompt(setup: AgentSetup | null): boolean {
  *  hand-edit: an unknown kind would launch nothing at all. Exported so the
  *  hardening is testable — it is the only thing standing between a hand-edited
  *  preference file and a launch button that does nothing. */
+function isProfilePick(id: string): boolean {
+  if (id.startsWith('builtin-')) return false
+  if (Object.values(CHAT_PROFILE_IDS).includes(id)) return false
+  return chatProfileSource(id) === undefined
+}
+
 export function parseSetup(raw: unknown): AgentSetup | null {
   if (!raw || typeof raw !== 'object') return null
   const value = raw as Record<string, unknown>
@@ -87,7 +95,11 @@ export function parseSetup(raw: unknown): AgentSetup | null {
     ...(typeof value.codexAccountId === 'string' && kind === 'codex'
       ? { codexAccountId: value.codexAccountId }
       : {}),
-    ...(typeof value.launchProfileId === 'string'
+    // A launch profile is remembered only when it was a pick (Advanced): the
+    // launcher before PRDCT-4423 stored the transport on every launch, and a
+    // built-in or chat-form id kept from then would hold the button to one
+    // transport whatever the interaction mode says (verifier, round 2).
+    ...(typeof value.launchProfileId === 'string' && isProfilePick(value.launchProfileId)
       ? { launchProfileId: value.launchProfileId }
       : {}),
     ...(typeof value.model === 'string' && isValidModelName(value.model)

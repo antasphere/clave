@@ -154,3 +154,19 @@ describe('getLastAgentSetup and the recommended account', () => {
     useAccountPolicyStore.setState({ useRecommendedAccount: false })
   })
 })
+
+describe('parseSetup — a remembered launch profile (PRDCT-4423, verifier round 2)', () => {
+  it('keeps a saved profile picked under Advanced and drops a built-in or chat-form transport', () => {
+    expect(parseSetup({ kind: 'claude', dangerousMode: false, launchProfileId: 'work' })).toEqual({
+      kind: 'claude',
+      dangerousMode: false,
+      launchProfileId: 'work'
+    })
+    for (const stale of ['builtin-claude', 'claude-chat', 'codex-chat', 'chat:claude:work']) {
+      expect(parseSetup({ kind: 'claude', dangerousMode: false, launchProfileId: stale })).toEqual({
+        kind: 'claude',
+        dangerousMode: false
+      })
+    }
+  })
+})

@@ -295,7 +295,9 @@ export function buildAgentArgv(input: {
   // `bypassPermissions` launches as `dangerousMode` does.
   const dangerous =
     input.dangerousMode === true ||
-    (input.kind === 'claude' && input.permissionMode === 'bypassPermissions')
+    (input.kind === 'claude' &&
+      input.permissionMode === 'bypassPermissions' &&
+      !profileSetsPermissions(input.profile))
   if (input.kind === 'claude') {
     if (input.resumeSessionId) argv.push('--resume', input.resumeSessionId)
     else if (input.sessionId) argv.push('--session-id', input.sessionId)
@@ -308,7 +310,13 @@ export function buildAgentArgv(input: {
     if (input.effort) argv.push('--effort', input.effort)
     // A profile's own `--permission-mode` is a deliberate choice and wins
     // over the person's default rung (verifier, round 1).
-    if (input.permissionMode && !dangerous && !claudeProfilePermissions(input.profile).mode)
+    if (
+      input.permissionMode &&
+      !dangerous &&
+      CLAUDE_MODES.has(input.permissionMode) &&
+      input.permissionMode !== 'bypassPermissions' &&
+      !profileSetsPermissions(input.profile)
+    )
       argv.push(
         '--permission-mode',
         input.permissionMode === 'default' ? 'manual' : input.permissionMode
@@ -445,6 +453,23 @@ export function claudeProfilePermissions(profile: LaunchProfile): {
       mode === 'bypassPermissions' || tokens.includes('--allow-dangerously-skip-permissions')
   }
 }
+
+/** Whether a profile's own flags set its permissions (Claude's
+ *  `--permission-mode`, Codex's sandbox or approval flags): a saved profile
+ *  is a deliberate choice, and the person's default rung (Settings →
+ *  Harnesses) never overrides it, on any road (verifier, rounds 1 and 2). */
+export function profileSetsPermissions(profile: LaunchProfile): boolean {
+  if (profile.family === 'claude') return claudeProfilePermissions(profile).mode !== undefined
+  if (profile.family === 'codex') return Object.keys(codexProfilePolicy(profile)).length > 0
+  return false
+}
+
+/** Claude's `--permission-mode` values: the ladder's rungs and `dontAsk`
+ *  (a routine's own, ADR 0004). Anything else is never passed to the CLI. */
+const CLAUDE_MODES = new Set<string>([
+  ...HARNESS_BY_ID.claude.permissionRungs.map((rung) => rung.id),
+  'dontAsk'
+])
 
 export const AGENT_CAPABILITIES = {
   claude: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'supported' },
