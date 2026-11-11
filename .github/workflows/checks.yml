@@ -31,6 +31,8 @@ jobs:
         task: [lint, typecheck, unit-1, unit-2, unit-3, unit-4, unit-5, unit-6, unit-7, unit-8]
     steps:
       - uses: actions/checkout@v4
+      # Bun 1.4.1 matches the dev dependency used by the server-process tests.
+      # Setup explicitly downloads Electron: npm install no longer fetches its binary.
       - uses: ./.github/actions/setup-checks
 
       - uses: actions/cache@v4
@@ -51,6 +53,7 @@ jobs:
 
       - name: Generated code is current
         if: matrix.task == 'typecheck'
+        # A .proto change must include its checked-in terminal-service bindings.
         run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
       - name: Build secure filesystem helper

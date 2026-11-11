@@ -78,6 +78,10 @@ describe('the required Linux check cannot silently lose execution', () => {
       "linux-checks-v1-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json', '**/package.json', 'scripts/postinstall.cjs', 'electron-builder.yml', '.npmrc', '.github/actions/setup-checks/action.yml') }}"
     )
     expect(cache.with['restore-keys']).toBeUndefined()
+    const node = setup.runs.steps.find((step) => step.uses === 'actions/setup-node@v4')
+    expect(node.with.cache).toBe(
+      "${{ steps.dependencies.outputs.cache-hit != 'true' && 'npm' || '' }}"
+    )
     expect(setup.runs.steps.find((step) => step.name === 'Install dependencies').if).toBe(
       "steps.dependencies.outputs.cache-hit != 'true'"
     )
