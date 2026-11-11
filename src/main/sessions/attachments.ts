@@ -119,7 +119,9 @@ export async function preparePrompt(
             session: file.sessionId,
             name: file.name,
             agent: file.agent,
-            cwd: file.cwd
+            cwd: file.cwd,
+            ...(file.machine ? { machine: file.machine } : {}),
+            ...(file.reachable === false ? { reachable: false } : {})
           })
       )
       continue
@@ -160,6 +162,12 @@ export async function preparePrompt(
     has('folder') ? '- a local folder: list and read its contents at its path.' : '',
     has('session')
       ? '- a Clave session (another tab of this app): read it with clave_read_session, message it with clave_send_to_session, by its session id.'
+      : '',
+    attachments.some((f) => f.delivery === 'session' && f.machine)
+      ? '  A session with "machine" runs on that other Clave machine; unless it is marked unreachable, the tools take its id as given.'
+      : '',
+    attachments.some((f) => f.delivery === 'session' && f.reachable === false)
+      ? '  A session with "reachable": false runs where your Clave tools cannot reach it: refer to it by name and ask the user to relay, never call the tools with its id.'
       : ''
   ].filter(Boolean)
   const suffix = lines.length ? [...legend, ...lines].join('\n') : ''

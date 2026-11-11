@@ -77,7 +77,11 @@ export const SessionAttachment = Schema.Struct({
   sessionId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
   name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
   agent: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64)),
-  cwd: Schema.String.pipe(Schema.maxLength(4096))
+  cwd: Schema.String.pipe(Schema.maxLength(4096)),
+  /** The machine the tab runs on, by name, when it is not the receiving tab's. */
+  machine: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))),
+  /** False when the receiving agent's Clave tools cannot reach the tab. */
+  reachable: Schema.optional(Schema.Literal(false))
 })
 export type SessionAttachment = typeof SessionAttachment.Type
 export const Attachment = Schema.Union(FileAttachment, SessionAttachment)

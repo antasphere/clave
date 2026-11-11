@@ -97,3 +97,35 @@ describe('a change of a session’s work (PRDCT-4123)', () => {
     expect(payloads).toEqual([{ id: 't', change: offer }])
   })
 })
+
+describe('refusedWrite', () => {
+  it('names the field that failed in one line instead of the union tree', async () => {
+    const { Schema, ParseResult } = await import('effect')
+    const { SessionWrite } = await import('@clave/contract/sessions')
+    const { refusedWrite } = await import('./sessions')
+    const bad = {
+      type: 'user_message',
+      text: 'hi',
+      attachments: [
+        {
+          id: 'a',
+          delivery: 'session',
+          sessionId: 'not a/session',
+          name: 'Lane',
+          agent: 'Claude Code',
+          cwd: '/w'
+        }
+      ]
+    }
+    let message = ''
+    try {
+      Schema.encodeSync(SessionWrite)(bad as never)
+    } catch (error) {
+      expect(ParseResult.isParseError(error)).toBe(true)
+      message = refusedWrite(error as Parameters<typeof refusedWrite>[0])
+    }
+    expect(message).toMatch(/^Clave could not send this message \(attachments\.0\./)
+    expect(message).not.toMatch(/└─|readonly/)
+    expect(message.split('\n')).toHaveLength(1)
+  })
+})

@@ -58,6 +58,7 @@ import type {
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
+import type { SlidelessAPI } from '../shared/slideless'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   LaunchProfile,
@@ -1078,6 +1079,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   secretSubmit: (id: string, secret: string) => Promise<SecretRequestView>
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
+  slideless: SlidelessAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>

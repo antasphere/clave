@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
 
 /* What a reader attaches to a chat message. The attachment record is what the
    composer holds and what the transcript shows. A FILE record is a name, a
@@ -23,6 +24,21 @@ export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
 const labelSchema = z.string().min(1).max(32).optional()
+
+const BARE_SESSION_ID = /^[a-zA-Z0-9_-]{1,128}$/
+/** A tab id an agent on this Mac can name: a tab of this Mac by its bare id,
+ *  or a paired server's tab by its owner key (`clave-owner:session:<server>:<id>`),
+ *  which the Clave tools take since PRDCT-4166. Dropping a server's tab on the
+ *  composer used to fail the whole send on the bare-id pattern alone. */
+export function isAttachableSessionId(value: string): boolean {
+  if (BARE_SESSION_ID.test(value)) return true
+  if (value.length > 1024 || !value.startsWith('clave-owner:')) return false
+  try {
+    return BARE_SESSION_ID.test(parseSessionKey(value).sessionId)
+  } catch {
+    return false
+  }
+}
 
 export const FileAttachmentSchema = z
   .object({
@@ -51,15 +67,53 @@ export const SessionAttachmentSchema = z
     label: labelSchema,
     delivery: z.literal('session'),
     /** The Clave session id, the one the agent tools take. */
-    sessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+    sessionId: z.string().refine(isAttachableSessionId, 'Not a Clave tab id'),
     /** The tab's name as the sidebar shows it. */
     name: z.string().min(1).max(255),
     /** The agent in that tab, in the reader's words: Claude Code, Codex, Terminal… */
     agent: z.string().min(1).max(64),
-    cwd: z.string().max(4096)
+    cwd: z.string().max(4096),
+    /** The machine the tab runs on, by name, when it is not the machine of the
+     *  tab the message goes to: a paired server, or this Mac seen from a
+     *  server's tab. Absent when both tabs share a machine. */
+    machine: z.string().min(1).max(128).optional(),
+    /** False when the receiving agent's Clave tools cannot reach the tab (a
+     *  server's agent knows its own server's tabs only). Absent means it can. */
+    reachable: z.literal(false).optional()
   })
   .strict()
 export type SessionAttachment = z.infer<typeof SessionAttachmentSchema>
+
+/** What this Mac calls itself to a server's agent. */
+export const THIS_MAC = 'the Mac this message was sent from'
+
+/**
+ * Where a dropped tab sits relative to the tab it is dropped on, by their
+ * keys as this Mac names them. Same machine: nothing to say. A server's tab
+ * dropped on a tab of this Mac: the agent here reaches it by its key, so it
+ * only names the machine. Anything dropped on a server's tab from elsewhere
+ * (this Mac, or a second server): that server's agent knows its own tabs
+ * only, so the record says the tab is out of its reach rather than the send
+ * being refused. `nameOf` turns a server id into the name the reader gave it.
+ */
+export function sessionReach(
+  droppedId: string,
+  targetId: string,
+  nameOf: (serverId: string) => string
+): Pick<SessionAttachment, 'machine' | 'reachable'> {
+  const owner = ownerOfKey(droppedId)
+  const here = ownerOfKey(targetId)
+  if (owner === here) return {}
+  const machine = owner === LOCAL_SERVER_ID ? THIS_MAC : nameOf(owner)
+  return here === LOCAL_SERVER_ID ? { machine } : { machine, reachable: false }
+}
+function ownerOfKey(id: string): string {
+  try {
+    return parseSessionKey(id).serverId
+  } catch {
+    return LOCAL_SERVER_ID
+  }
+}
 
 export const AttachmentSchema = z.union([FileAttachmentSchema, SessionAttachmentSchema])
 export const AttachmentsSchema = z.array(AttachmentSchema).max(MAX_ATTACHMENTS)

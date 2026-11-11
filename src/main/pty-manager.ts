@@ -526,7 +526,17 @@ class PtyManager {
       sessionManager.write(id, new TextEncoder().encode(data))
   }
   async kill(id: string, killTmuxSession = true): Promise<void> {
-    if (!sessionManager.get(id)) return
+    if (!sessionManager.get(id)) {
+      // A stopped tab, placed by a restart and never resumed (PRDCT-4236),
+      // has no process here: only its record. A close for good takes the
+      // record too, or the next launch brings the closed tab back. Found by
+      // its id, since a record may be keyed by its tmux name.
+      if (killTmuxSession) {
+        const record = ptyBackend.listAdoptableSessions().find((r) => r.id === id)
+        if (record) ptyBackend.discardSessionRecord(record.tmuxName ?? record.id)
+      }
+      return
+    }
     // A chat tab closed for good takes its record with it, first, so a kill
     // that throws cannot leave a closed tab to be offered back at the next
     // launch. On quit (killTmuxSession false) the record stays for the restore.
