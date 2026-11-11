@@ -1092,13 +1092,16 @@ export class CodexAdapter implements SessionAdapter {
     state.ready = (async () => {
       const options = object(state.spec.options)
       // The launch's own choice (Clave's dangerous mode) first, then the
-      // person's rung (PRDCT-4424: Settings → Harnesses, the launch's
-      // `permissionRung`), which replaces what the profile's flags ask for
-      // when given, then the defaults; an absent sandbox leaves the one
-      // Codex's config gives the folder.
+      // profile's own flags (a saved profile is a deliberate choice: a YOLO
+      // profile stays YOLO), then the person's rung (PRDCT-4424: Settings →
+      // Harnesses, the launch's `permissionRung`, a default), then the
+      // defaults; an absent sandbox leaves the one Codex's config gives the
+      // folder.
+      const ownPolicy = state.profile ? codexProfilePolicy(state.profile) : {}
       const profilePolicy =
-        codexRungPolicy(options.permissionRung) ??
-        (state.profile ? codexProfilePolicy(state.profile) : {})
+        Object.keys(ownPolicy).length > 0
+          ? ownPolicy
+          : (codexRungPolicy(options.permissionRung) ?? {})
       const launchMode = text(options.permissionMode)
       if (launchMode && !['on-request', 'never'].includes(launchMode))
         throw new Error(`Unsupported Codex permissionMode: ${launchMode}`)

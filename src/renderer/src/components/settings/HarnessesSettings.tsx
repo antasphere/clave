@@ -259,7 +259,9 @@ function HarnessBlock({
   const update = useAgentUpdatesStore((s) => s.update)
   const [open, setOpen] = useState(false)
   const [install, setInstall] = useState<InstallState>({ busy: false, result: null })
-  const missing = status?.installed === false
+  // Missing only when a CHECK said so: before the first check main reports
+  // every harness as not installed with no check time (the verifier's F4).
+  const missing = status?.installed === false && status.lastCheckedAt !== null
 
   const runInstall = async (): Promise<void> => {
     setInstall({ busy: true, result: null })

@@ -306,7 +306,9 @@ export function buildAgentArgv(input: {
     // ADR 0004: a routine run's own flags. The CLI names the ask-every-time
     // mode `manual` on its command line; `default` is its running name.
     if (input.effort) argv.push('--effort', input.effort)
-    if (input.permissionMode && !dangerous)
+    // A profile's own `--permission-mode` is a deliberate choice and wins
+    // over the person's default rung (verifier, round 1).
+    if (input.permissionMode && !dangerous && !claudeProfilePermissions(input.profile).mode)
       argv.push(
         '--permission-mode',
         input.permissionMode === 'default' ? 'manual' : input.permissionMode
@@ -319,7 +321,11 @@ export function buildAgentArgv(input: {
     if (input.resumeSessionId) argv.push('resume')
     if (input.dangerousMode) {
       argv.push(input.resumeSessionId ? '--dangerously-bypass-approvals-and-sandbox' : '--yolo')
-    } else if (isCodexRung(input.permissionMode)) {
+    } else if (
+      isCodexRung(input.permissionMode) &&
+      Object.keys(codexProfilePolicy(input.profile)).length === 0
+    ) {
+      // A profile's own sandbox or approval flags win over the default rung.
       // The person's rung (PRDCT-4424): the sandbox, and for full access the
       // approvals off too, which is what the rung promises. Before the thread
       // id on a resume, as the approvals flag is.

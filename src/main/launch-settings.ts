@@ -19,6 +19,7 @@ import {
 } from '../shared/harness'
 import { preferencesManager } from './preferences-manager'
 import { rememberedChatModel } from './sessions/chat-model-default'
+import { migrateChatView } from './sessions/chat-view-default'
 
 export const LAUNCH_SETTINGS_IPC = {
   get: 'launch-settings:get',
@@ -71,6 +72,9 @@ export function setLaunchSettings(patch: {
 }
 
 export function registerLaunchSettingsHandlers(): void {
+  // An old `chatView` becomes the interaction mode once, at boot, so Settings
+  // shows the person's real choice before any chat opens (verifier, F5).
+  migrateChatView()
   ipcMain.handle(LAUNCH_SETTINGS_IPC.get, () => getLaunchSettings())
   ipcMain.handle(LAUNCH_SETTINGS_IPC.set, (_event, patch: unknown) => {
     if (!patch || typeof patch !== 'object') throw new Error('Bad launch settings')

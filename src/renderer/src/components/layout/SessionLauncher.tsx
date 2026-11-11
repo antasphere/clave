@@ -13,7 +13,7 @@ import {
 } from '../../store/launch-prefs'
 import { launchSession, type LaunchCwd } from '../../lib/launch-session'
 import { setWorkspaceLaunchProfile, useLaunchProfileStore } from '../../store/launch-profile-store'
-import { chatProfileSource, type LauncherFamily } from '../../../../shared/agent-launch'
+import { type LauncherFamily } from '../../../../shared/agent-launch'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from '../../lib/launch-source'
 import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
@@ -199,7 +199,6 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     antigravity: antigravityShortcut,
     pi: piShortcut
   }
-  const interactionMode = useLaunchSettingsStore((s) => s.interactionMode)
   const harnessSettings = useLaunchSettingsStore((s) => s.harnesses)
   const agentStatuses = useAgentUpdatesStore((s) => s.agents)
   /** Installed unless a CHECK said otherwise: before the first check main
@@ -344,21 +343,6 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     void run({ setup: next, cwd, remember: true })
   }
 
-  /** The transport a launch of this harness runs on (PRDCT-4425): the chat
-   *  default of its family when the interaction mode is a chat view and the
-   *  harness has a chat adapter, else the family's selected TERMINAL profile
-   *  (a chat profile selected as the default stands for its terminal form
-   *  here: the "(chat)" twins are never a row of their own). */
-  const transportFor = (source: LaunchSource, harness: Harness): string => {
-    if (interactionMode !== 'terminal' && harness.chatAdapterId) {
-      const chat = source.chatProfileId(harness.id)
-      if (chat) return chat
-    }
-    const selected = source.selectedProfileId(harness.id)
-    if (!isChatProfileRef(harness.id, selected)) return selected
-    return chatProfileSource(selected)?.id ?? `builtin-${harness.id}`
-  }
-
   /** The models a harness's row offers on hover, or null for a harness with
    *  no model level (Antigravity takes no model on its command line). */
   const modelsFor = (
@@ -445,7 +429,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
         {
           kind: harness.id,
           dangerousMode: false,
-          launchProfileId: choice.launchProfileId ?? transportFor(source, harness),
+          // A plain row names no profile: the launch road derives the transport
+          // from the interaction mode (`transportProfileFor`), the same way
+          // the agent button and the shortcuts do. An Advanced pick names its.
+          ...(choice.launchProfileId ? { launchProfileId: choice.launchProfileId } : {}),
           ...(choice.model ? { model: choice.model } : {}),
           ...(choice.accountId && pool === 'claude' ? { claudeProfileId: choice.accountId } : {}),
           ...(choice.accountId && pool === 'codex' ? { codexAccountId: choice.accountId } : {})
@@ -605,13 +592,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           {isClaude && (
             <DropdownMenuItem
               data-harness-agents
-              onSelect={() =>
-                launch({
-                  kind: 'claude-agents',
-                  dangerousMode: false,
-                  launchProfileId: transportFor(source, { ...harness, chatAdapterId: null })
-                })
-              }
+              onSelect={() => launch({ kind: 'claude-agents', dangerousMode: false })}
             >
               <span className="flex-1">Agents…</span>
               {options.shortcuts && agentsShortcut && (

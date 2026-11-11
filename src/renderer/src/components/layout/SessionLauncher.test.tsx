@@ -239,7 +239,11 @@ describe('the rows are the installed harnesses', () => {
 })
 
 describe('a click on a row launches at once', () => {
-  it('runs the preferred model on the chat profile when the mode is a chat view', async () => {
+  // A row names no profile: the transport comes from the interaction mode on
+  // the launch road (`transportProfileFor`, launch-session.ts), the same for
+  // the agent button and the shortcuts (the verifier's round 1 found the
+  // rows alone followed the mode).
+  it('runs the preferred model, naming no profile, so the launch road derives the transport', async () => {
     g.harnesses = { claude: { preferredModel: 'claude-fable-5-1[1m]' } }
     render()
     item('data-harness-row', 'claude').handlers.onClick!()
@@ -247,44 +251,32 @@ describe('a click on a row launches at once', () => {
     expect(launched().setup).toEqual({
       kind: 'claude',
       dangerousMode: false,
-      launchProfileId: 'claude-chat',
       model: 'claude-fable-5-1[1m]'
     })
     // The transport is not a pick: it never becomes the workspace's profile.
     expect(g.pinned).toEqual([])
   })
 
-  it('runs the terminal profile when the mode is the terminal, and no model when none is preferred', async () => {
+  it('names no model when none is preferred, whatever the mode', async () => {
     g.interactionMode = 'terminal'
     render()
     item('data-harness-row', 'codex').handlers.onClick!()
     await Promise.resolve()
-    expect(launched().setup).toEqual({
-      kind: 'codex',
-      dangerousMode: false,
-      launchProfileId: 'builtin-codex'
-    })
+    expect(launched().setup).toEqual({ kind: 'codex', dangerousMode: false })
   })
 
-  it('a harness with no chat adapter always runs its terminal profile', async () => {
+  it('a harness with no chat adapter launches the same way, with no profile named', async () => {
     render()
     item('data-harness-row', 'antigravity').handlers.onSelect!()
     await Promise.resolve()
-    expect(launched().setup).toMatchObject({
-      kind: 'antigravity',
-      launchProfileId: 'builtin-antigravity'
-    })
+    expect(launched().setup).toEqual({ kind: 'antigravity', dangerousMode: false })
   })
 
-  it('Agents… starts claude agents on the terminal profile', async () => {
+  it('Agents… starts claude agents, with no profile named', async () => {
     render()
     item('data-harness-agents').handlers.onSelect!()
     await Promise.resolve()
-    expect(launched().setup).toEqual({
-      kind: 'claude-agents',
-      dangerousMode: false,
-      launchProfileId: 'builtin-claude'
-    })
+    expect(launched().setup).toEqual({ kind: 'claude-agents', dangerousMode: false })
   })
 })
 
@@ -322,7 +314,6 @@ describe('hover: the models, then who pays', () => {
     expect(launched().setup).toEqual({
       kind: 'claude',
       dangerousMode: false,
-      launchProfileId: 'claude-chat',
       model: 'claude-opus-5-5',
       claudeProfileId: 'home'
     })

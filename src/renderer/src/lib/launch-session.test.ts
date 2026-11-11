@@ -70,7 +70,7 @@ vi.mock('../store/launch-prefs', () => ({
   agentSetupToModes: () => f.modes,
   rememberAgentSetup: f.remember
 }))
-import { launchSession } from './launch-session'
+import { launchSession, transportProfileFor } from './launch-session'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
 
 afterEach(() => {
@@ -526,5 +526,48 @@ describe('launches in a server workspace (#241)', () => {
     expect(await launchSession({ setup, cwd: { kind: 'workspace-root' } })).toBeNull()
     expect(f.notice).toHaveBeenCalledWith(expect.stringContaining('could not start the session'))
     expect(f.setState).not.toHaveBeenCalled()
+  })
+})
+
+describe('transportProfileFor', () => {
+  // The transport of every road (PRDCT-4425): the launcher's rows, the agent
+  // button, the shortcuts and a server launch run on the family's chat default
+  // when the mode is a chat view, on nothing (the terminal) otherwise. Round 1
+  // of the verifier: only the rows followed the mode.
+  const chat = (family: 'claude' | 'codex'): string | undefined =>
+    family === 'claude' ? 'chat:claude:work' : undefined
+  afterEach(() => {
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
+    vi.unstubAllGlobals()
+  })
+  it('answers the chat default in a chat mode, the built-in chat when the family has none', () => {
+    vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
+    useLaunchSettingsStore.setState({ interactionMode: 'folio' })
+    expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBe(
+      'chat:claude:work'
+    )
+    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBe('codex-chat')
+  })
+  it('answers nothing in Terminal mode, for a harness with no chat, for claude agents, and for a Claude chat on Windows', () => {
+    vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBeUndefined()
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
+    expect(transportProfileFor({ kind: 'pi', dangerousMode: false }, chat)).toBeUndefined()
+    expect(transportProfileFor({ kind: 'antigravity', dangerousMode: false }, chat)).toBeUndefined()
+    expect(
+      transportProfileFor({ kind: 'claude-agents', dangerousMode: false }, chat)
+    ).toBeUndefined()
+    expect(transportProfileFor(null, chat)).toBeUndefined()
+    vi.stubGlobal('window', { electronAPI: { platform: 'win32' } })
+    expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBeUndefined()
+    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBe('codex-chat')
+  })
+  it('keeps a profile the setup names, whatever the mode', () => {
+    vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    expect(
+      transportProfileFor({ kind: 'claude', dangerousMode: false, launchProfileId: 'work' }, chat)
+    ).toBe('work')
   })
 })

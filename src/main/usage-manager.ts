@@ -403,7 +403,8 @@ async function fetchWithTimeout(input: string, init: RequestInit): Promise<Respo
  *  a fixture token is then "unreachable", never refused, so the account it
  *  names stays usable and the launcher can offer it (the menu greys a dead
  *  connection out since 11 November 2026, PRDCT-4423). Never set outside tests. */
-const usageOffline = (): boolean => process.env.CLAVE_E2E_USAGE_OFFLINE === '1'
+const usageOffline = (): boolean =>
+  process.env.CLAVE_E2E_USAGE_OFFLINE === '1' && typeof process.env.CLAVE_E2E_NS === 'string'
 
 /** The usage endpoint, with a login credential (keychain or config dir). */
 async function readFromEndpoint(token: string): Promise<UsageLimits | UsageError> {

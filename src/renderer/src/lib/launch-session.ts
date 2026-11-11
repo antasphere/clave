@@ -13,6 +13,9 @@ import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
 import type { LaunchProfile, LauncherFamily } from '../../../shared/agent-launch'
 import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
 import { permissionRungFor, useLaunchSettingsStore } from '../store/launch-settings-store'
+import { HARNESS_BY_ID } from '../../../shared/harness'
+import { CHAT_PROFILE_IDS, chatDefaultFor } from '../../../shared/open-session-modes'
+import { selectedChatProfile } from '../store/launch-profile-store'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -120,6 +123,33 @@ export function setupSpawnFlags(
   }
 }
 
+/**
+ * The launch profile a setup runs on when it names none (PRDCT-4425): the
+ * family's chat default when the person's interaction mode is a chat view
+ * and the harness has a chat adapter, else nothing, which main resolves to
+ * the family's terminal profile. One rule for every road, the launcher's
+ * rows, the agent button, the keyboard shortcuts and a server launch alike
+ * (the verifier's round 1: the button and the shortcuts ignored the mode).
+ * `claude agents` is a subcommand with no chat; a Claude chat is not offered
+ * on Windows (`launch-profile-manager.ts`), where the terminal stays the
+ * answer. A setup that names a profile (an Advanced pick, a remembered pin)
+ * keeps it.
+ */
+export function transportProfileFor(
+  setup: AgentSetup | null,
+  chatDefault: (family: 'claude' | 'codex') => string | undefined
+): string | undefined {
+  if (!setup) return undefined
+  if (setup.launchProfileId) return setup.launchProfileId
+  if (setup.kind === 'claude-agents') return undefined
+  const harness = HARNESS_BY_ID[setup.kind]
+  if (!harness.chatAdapterId) return undefined
+  if (useLaunchSettingsStore.getState().interactionMode === 'terminal') return undefined
+  if (setup.kind === 'claude' && window.electronAPI?.platform === 'win32') return undefined
+  const family = setup.kind as 'claude' | 'codex'
+  return chatDefault(family) ?? CHAT_PROFILE_IDS[family]
+}
+
 const NO_AGENT = {
   claudeMode: false,
   claudeAgentsMode: false,
@@ -205,7 +235,14 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
   const dangerousMode = req.setup?.dangerousMode ?? false
   const initialPrompt =
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
-  const pick = req.setup ? await serverPick(serverId, req.setup) : {}
+  // The transport from the mode, against the server's own profiles: its chat
+  // default in chat form when the person launches in a chat view.
+  const serverSettings = await serverSettingsReady(serverId)
+  const launchProfileId = transportProfileFor(req.setup, (family) =>
+    serverSettings?.profiles ? chatDefaultFor(serverSettings.profiles, family, null) : undefined
+  )
+  const setup = req.setup && launchProfileId ? { ...req.setup, launchProfileId } : req.setup
+  const pick = setup ? await serverPick(serverId, setup) : {}
   const serverProfile = pick.profile
   const claudeAccount = modes.claudeMode || modes.claudeAgentsMode ? pick.claudeAccount : undefined
   const codexAccount = modes.codexMode ? pick.codexAccount : undefined
@@ -216,7 +253,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
       dangerousMode,
       ...setupSpawnFlags(req.setup),
       ...(initialPrompt ? { initialPrompt } : {}),
-      ...(req.setup?.launchProfileId ? { launchProfileId: req.setup.launchProfileId } : {}),
+      ...(launchProfileId ? { launchProfileId } : {}),
       ...(serverProfile ? { launchProfile: serverProfile } : {}),
       ...(claudeAccount
         ? { claudeProfileId: claudeAccount.id, claudeProfileLabel: claudeAccount.label }
@@ -300,14 +337,15 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
   const isClaudeSession = modes.claudeMode || modes.claudeAgentsMode
   const launchWorkspaceId = req.workspaceId ?? getActiveWorkspaceId()
   const pickedModel = req.setup?.model
+  const launchProfileId = transportProfileFor(req.setup, (family) =>
+    selectedChatProfile(family, launchWorkspaceId)
+  )
   const [claudeModel, codexModel] = await Promise.all([
     isClaudeSession
-      ? (pickedModel ??
-        rememberedLaunchModel('claude', req.setup?.launchProfileId, launchWorkspaceId))
+      ? (pickedModel ?? rememberedLaunchModel('claude', launchProfileId, launchWorkspaceId))
       : undefined,
     modes.codexMode
-      ? (pickedModel ??
-        rememberedLaunchModel('codex', req.setup?.launchProfileId, launchWorkspaceId))
+      ? (pickedModel ?? rememberedLaunchModel('codex', launchProfileId, launchWorkspaceId))
       : undefined
   ])
   const profile = isClaudeSession
@@ -340,12 +378,12 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
       ...modes,
       dangerousMode,
       initialPrompt,
-      launchProfileId: req.setup?.launchProfileId,
+      launchProfileId,
       ...setupSpawnFlags(req.setup),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields
     })
-    if (req.exactProfile && sessionInfo.launchProfileId !== req.setup?.launchProfileId) {
+    if (req.exactProfile && sessionInfo.launchProfileId !== launchProfileId) {
       let cleanupSucceeded = false
       try {
         const created = (await window.electronAPI.sessionsList()).find(
