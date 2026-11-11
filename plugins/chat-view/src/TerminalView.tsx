@@ -61,7 +61,7 @@ import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from
 import { useStretchDigests, useTimelineDigests } from './digest'
 import { digestKey } from '../../../src/shared/exchange-digest'
 import { workDigestKey } from '../../../src/shared/work-digest'
-import { foldStretches, rowKey, stretchNotes, toolCount, type Row } from './stretches'
+import { digestNotes, foldStretches, rowKey, toolCount, type Row } from './stretches'
 import { WorkStretch } from './WorkStretch'
 import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
@@ -884,7 +884,7 @@ export function TerminalView({
     () =>
       blocks.flatMap(({ block, key }) => {
         if (block.kind !== 'work-stretch' || !stretchContext.recent.has(key)) return []
-        const notes = stretchNotes(block)
+        const { notes } = digestNotes(block)
         return [{ key: workDigestKey(notes), notes, tools: toolCount(block) }]
       }),
     [blocks, stretchContext]

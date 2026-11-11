@@ -6,7 +6,15 @@ import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { useDisclosure } from './disclosure'
 import { digestMessages, gist, useExchange, useExchanges, type ExchangeSide } from './exchanges'
 import { digestKey } from '../../../src/shared/exchange-digest'
-import { useDigestState } from './digest'
+import {
+  digestFailureLine,
+  DIGEST_SLOW_LINE,
+  canAskAgain,
+  retryDigest,
+  useDigestState,
+  type DigestCard,
+  type DigestFailure
+} from './digest'
 import { ExchangeDrawing } from './ExchangeDrawing'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -42,10 +50,14 @@ export function DeliveryStack({
   const { sessionId, index, recent } = useExchanges()
   // What the digest reads, and so its key; the view asks for it
   // (`useTimelineDigests`), this only shows where it stands.
-  const key = useMemo(() => digestKey(digestMessages(group, index)), [group, index])
+  const read = useMemo(() => digestMessages(group, index), [group, index])
+  const key = useMemo(() => digestKey(read), [read])
   const digest = useDigestState(sessionId, key, recent.has(id))
   const done = digest.state === 'done' ? digest.result : null
-  const flagged = done?.needsYou ? done.message : null
+  // The digest counts the messages it read: put back in the timeline's own
+  // count, past the ones the clip left out in front.
+  const left = group.messages.length - read.length
+  const flagged = done?.needsYou && done.message !== null ? done.message + left : null
   return (
     <section
       className="chat-delivery-stack exchange-timeline"
@@ -63,7 +75,9 @@ export function DeliveryStack({
           </span>
           <span className="exchange-digest" aria-live="polite">
             <span className="exchange-digest-inner">
-              {digest.state === 'reading' ? (
+              {digest.state === 'reading' && digest.slow ? (
+                <DigestSlow />
+              ) : digest.state === 'reading' ? (
                 <span className="exchange-digest-reading">Reading what matters for you…</span>
               ) : done ? (
                 <DigestLine
@@ -73,6 +87,8 @@ export function DeliveryStack({
                     flagged === null ? undefined : (event) => openCard(event.currentTarget, flagged)
                   }
                 />
+              ) : digest.state === 'failed' ? (
+                <DigestUnread reason={digest.reason} onRetry={() => retryDigest(sessionId, key)} />
               ) : null}
             </span>
           </span>
@@ -90,6 +106,47 @@ export function DeliveryStack({
         ))}
       </ol>
     </section>
+  )
+}
+
+/** A read that could not be made (PRDCT-4327): one quiet line with the
+ *  class of the reason, and a way to ask again. Shared with the work cards. */
+export function DigestUnread({
+  reason,
+  card = 'exchange',
+  onRetry
+}: {
+  reason: DigestFailure | undefined
+  card?: DigestCard
+  onRetry: () => void
+}): React.JSX.Element {
+  return (
+    <span className="digest-unread" data-reason={reason ?? 'failed'}>
+      <span className="digest-unread-words">{digestFailureLine(reason, card)}</span>
+      {canAskAgain(reason) && (
+        <button
+          type="button"
+          className="digest-unread-retry"
+          onClick={(event) => {
+            // Inside a card's summary: ask, never toggle the card.
+            event.preventDefault()
+            event.stopPropagation()
+            onRetry()
+          }}
+        >
+          Ask again
+        </button>
+      )}
+    </span>
+  )
+}
+
+/** A read past the view's patience: it says so, and the answer still lands. */
+export function DigestSlow(): React.JSX.Element {
+  return (
+    <span className="digest-unread" data-slow="">
+      <span className="digest-unread-words">{DIGEST_SLOW_LINE}</span>
+    </span>
   )
 }
 

@@ -716,6 +716,24 @@ class PtyManager {
   }
   /** The persisted record of a live session, as it is now. */
   getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)
+  /** The launch a session this process spawned runs on (PRDCT-4327): what a
+   *  host's digests read when the session keeps no record of it. Null for a
+   *  session it did not spawn. */
+  spawnLaunchOf(id: string): {
+    workspaceId?: string
+    launchProfileId?: string
+    claudeProfileId?: string
+    configDir?: string
+  } | null {
+    const options = this.spawns.get(id)?.options
+    if (!options) return null
+    return {
+      workspaceId: options.workspaceId,
+      launchProfileId: options.launchProfileId,
+      claudeProfileId: options.claudeProfileId,
+      configDir: options.configDir
+    }
+  }
   setSessionViewRecord = ptyBackend.setSessionViewRecord.bind(ptyBackend)
   setSessionWorkspace = ptyBackend.setSessionWorkspace.bind(ptyBackend)
   setSessionClaudeSessionId = ptyBackend.setSessionClaudeSessionId.bind(ptyBackend)

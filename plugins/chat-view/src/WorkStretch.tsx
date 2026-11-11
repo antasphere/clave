@@ -2,12 +2,14 @@ import { useContext, useMemo, useState, type CSSProperties, type ReactNode } fro
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { workDigestKey } from '../../../src/shared/work-digest'
 import { useDisclosure } from './disclosure'
-import { useWorkDigestState } from './digest'
+import { retryWorkDigest, useWorkDigestState } from './digest'
+import { DigestSlow, DigestUnread } from './DeliveryStack'
 import {
   countsLabel,
   noteCount,
   plainNote,
   spanLabel,
+  digestNotes,
   stretchNotes,
   stretchSpan,
   toolCount,
@@ -55,10 +57,12 @@ export function WorkStretch({
   const notes = useMemo(() => stretchNotes(stretch), [stretch])
   const tools = toolCount(stretch)
   const span = stretchSpan(stretch)
-  const key = useMemo(() => workDigestKey(notes), [notes])
+  // What the digest reads: the notes clipped as the host clips them.
+  const read = useMemo(() => digestNotes(stretch), [stretch])
+  const key = useMemo(() => workDigestKey(read.notes), [read])
   const digest = useWorkDigestState(sessionId, key, recent.has(id))
   const done = digest.state === 'done' ? digest.result : null
-  const flagged = done?.needsYou ? done.note : null
+  const flagged = done?.needsYou && done.note !== null ? done.note + read.offset : null
   const [fresh] = useState(() => Date.now() - span.to < FRESH_MS)
   const disclosure = useDisclosure(id)
   const [built, setBuilt] = useState(disclosure.initial)
@@ -105,6 +109,14 @@ export function WorkStretch({
                 {title || 'The agent worked'}
               </span>
             </span>
+            {digest.state === 'reading' && digest.slow && <DigestSlow />}
+            {digest.state === 'failed' && (
+              <DigestUnread
+                reason={digest.reason}
+                card="work"
+                onRetry={() => retryWorkDigest(sessionId, key)}
+              />
+            )}
             {flaggedStep?.note && (
               <span className="stretch-flag" aria-label="A note needs you">
                 <svg

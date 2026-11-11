@@ -64,8 +64,8 @@ import {
   type OnboardingInstallResult,
   type OnboardingState
 } from '../shared/onboarding'
-import type { DigestRequest } from '../shared/exchange-digest'
-import type { WorkDigestRequest } from '../shared/work-digest'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -247,6 +247,53 @@ const viaServer = <A extends unknown[], R>(
       }
       throw error
     }
+  }
+}
+/** How long a digest call waits for the window's own server before it is
+ *  told the server did not answer (PRDCT-4327): the bound the restore's
+ *  top-up waits for the same server (`listServerRestoreRecords`). */
+const DIGEST_SERVER_WAIT_MS = 15_000
+let digestsExternal: Promise<boolean> | null = null
+/** The server the window will have, or none within `ms`. */
+const serverWithin = (ms: number): Promise<Backing | null> =>
+  new Promise((resolve) => {
+    let settled = false
+    let withdraw: (() => void) | null = null
+    const finish = (value: Backing | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      withdraw?.()
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), ms)
+    withdraw = onServerAvailable((found) => finish(found))
+    if (settled) withdraw()
+  })
+/**
+ * The digests' road (PRDCT-4327). Inside the app (in-process) as every
+ * session call: main over IPC until it names its server, the server after,
+ * one process and one store either way. When the window's sessions live on a
+ * server of their own (separate, attached: `IPC_SERVER_EXTERNAL`, known from
+ * the launch), main is never asked: main does not hold the tab's record, the
+ * account list it belongs to, nor the helpers' settings. The call waits for
+ * that server, DIGEST_SERVER_WAIT_MS at most, and a server that never comes
+ * is a rejection the card says as "the server did not answer".
+ */
+const viaOwnServer = <A extends unknown[], R>(route: {
+  ipc: (...args: A) => Promise<R>
+  server: (backing: Backing, ...args: A) => Promise<R>
+}): ((...args: A) => Promise<R>) => {
+  const routed = viaServer<A, R>(route)
+  return async (...args) => {
+    digestsExternal ??= ipcRenderer.invoke(IPC_SERVER_EXTERNAL).then(
+      (external) => external === true,
+      () => false
+    )
+    if (!(await digestsExternal)) return routed(...args)
+    const backing = serverBacking ?? (await serverWithin(DIGEST_SERVER_WAIT_MS))
+    if (!backing) throw new Error('The server did not answer')
+    return route.server(backing, ...args)
   }
 }
 /** The wire subscriptions `sessionsSubscribe` holds on the server, per session. */
@@ -1837,14 +1884,35 @@ const electronAPI = {
     ipcRenderer.invoke('session:save-transcript', markdown, fileName),
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
-  // What the reader needs from a run of messages other tabs sent: a one-shot
-  // model call in main (src/main/exchange-digest.ts), answered as a result.
-  exchangeDigest: (request: DigestRequest) => ipcRenderer.invoke('exchanges:digest', request),
-  exchangeDigestsOf: (sessionId: string) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
-  // The title of a card of the agent's working notes (PRDCT-4212), the same
-  // one-shot runner, filed under the tab beside the exchange digests.
-  workDigest: (request: WorkDigestRequest) => ipcRenderer.invoke('work:digest', request),
-  workDigestsOf: (sessionId: string) => ipcRenderer.invoke('work:digests-of', sessionId),
+  // What the reader needs from a run of messages other tabs sent, and the
+  // title of a card of the agent's working notes (PRDCT-4212): one-shot model
+  // calls read by the server that runs the tab, as every session call is
+  // (PRDCT-4327): the server reads them on ITS record of the session (its
+  // account list, its helper settings) and files them in its own data
+  // folder. In-process, main reads them until it names its server
+  // (src/main/exchange-digest.ts); a window whose server is its own process
+  // never asks main (`viaOwnServer`). The launch the view sends is for
+  // main's arm only: the wire carries none.
+  exchangeDigest: viaOwnServer<[DigestRequest], DigestResult>({
+    ipc: (request) => ipcRenderer.invoke('exchanges:digest', request),
+    server: async ({ api }, { sessionId, key, messages }) =>
+      (await api.digests.exchange({ sessionId, key, messages })) as DigestResult
+  }),
+  exchangeDigestsOf: viaOwnServer<[string], Record<string, DigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.exchangesOf(sessionId)) as Record<string, DigestDone>
+  }),
+  workDigest: viaOwnServer<[WorkDigestRequest], WorkDigestResult>({
+    ipc: (request) => ipcRenderer.invoke('work:digest', request),
+    server: async ({ api }, { sessionId, key, notes, tools }) =>
+      (await api.digests.work({ sessionId, key, notes, tools })) as WorkDigestResult
+  }),
+  workDigestsOf: viaOwnServer<[string], Record<string, WorkDigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('work:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.workOf(sessionId)) as Record<string, WorkDigestDone>
+  }),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".

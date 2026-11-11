@@ -9,8 +9,8 @@
  * decided on the turn's shape (`stretches.ts`), never by this call.
  */
 
-import type { DigestLaunch } from './exchange-digest'
-import { asData, firstJsonObject, type HelperFailureReason } from './helper-prompt'
+import type { DigestFailureReason, DigestLaunch } from './exchange-digest'
+import { asData, firstJsonObject } from './helper-prompt'
 
 export interface WorkDigestRequest {
   /** The tab the stretch is in: the digests are filed under it. */
@@ -34,7 +34,7 @@ export type WorkDigestResult =
       /** That note, 0-based, when one did. */
       note: number | null
     }
-  | { ok: false; error: string; reason?: HelperFailureReason }
+  | { ok: false; error: string; reason?: DigestFailureReason }
 
 export type WorkDigestDone = Extract<WorkDigestResult, { ok: true }>
 

@@ -152,13 +152,13 @@ export async function run(t) {
       )
       // Filed under the tab, in a bucket of its own beside the exchange digests.
       const filed = await until(async () => {
-        const keys = await chat.app.evaluate(({ app }, id) => {
-          const fs = process.getBuiltinModule('fs')
-          const path = process.getBuiltinModule('path')
-          const file = path.join(app.getPath('userData'), 'exchange-digests.json')
-          if (!fs.existsSync(file)) return null
-          const data = JSON.parse(fs.readFileSync(file, 'utf-8'))
-          return { work: Object.keys(data[`${id}:work`] ?? {}), plain: Object.keys(data[id] ?? {}) }
+        // Read back through the window's road: titles are filed by the server
+        // that runs the tab (main's folder in-process, `userData/server`
+        // separate, PRDCT-4327), never read off one process's file.
+        const keys = await chat.win.evaluate(async (id) => {
+          const work = await window.electronAPI.workDigestsOf(id)
+          const plain = await window.electronAPI.exchangeDigestsOf(id)
+          return { work: Object.keys(work ?? {}), plain: Object.keys(plain ?? {}) }
         }, record.id)
         return keys && keys.work.length === 1 ? keys : null
       }, 8000)

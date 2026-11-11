@@ -208,10 +208,9 @@ describe('every member of the exposed API declares where it runs for a server ta
     expect(silent).toEqual([])
   })
 
-  it('the four digest members stay local until PRDCT-4327 routes them', () => {
+  it('the four digest members go to the server a tab runs on (PRDCT-4327)', () => {
     for (const name of ['exchangeDigest', 'exchangeDigestsOf', 'workDigest', 'workDigestsOf'])
-      expect(API_PLACEMENT[name]).toMatchObject({ placement: 'local', wrongForServerTab: true })
-    expect(API_PLACEMENT.exchangeDigest.why).toContain('PRDCT-4327')
+      expect(API_PLACEMENT[name]).toEqual({ placement: 'routed' })
   })
 })
 
@@ -367,6 +366,9 @@ describe('routed reaches the server a key names; refused never does', () => {
     ['subscriber', [F]],
     ['plugin', 'view', S],
     [{ path: F }],
+    // A request object naming its session (the digests, PRDCT-4327): the
+    // server must be handed the bare id of the key inside it.
+    [{ sessionId: S, key: 'k', launch: {}, messages: [], notes: [], tools: 0 }],
     ['/srv/a', { link: { kind: 'group-terminal', groupId: G, terminalId: 't' } }],
     [S, null],
     [{ path: resourceKey('file', 'x', ATTACHMENT) }]

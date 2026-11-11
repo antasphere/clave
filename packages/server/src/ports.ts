@@ -53,6 +53,10 @@ export { HistoryPort, type HistoryService } from './history/port'
 import { Routines, type RoutinesService } from './routines/port'
 
 export { Routines, type RoutinesService } from './routines/port'
+// ── PRDCT-4327: the digests ──
+import { DigestsPort, type DigestsService } from './digests/port'
+
+export { DigestsPort, type DigestsService } from './digests/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -89,6 +93,9 @@ export interface ServerPorts {
   // ── ADR 0004: the routines ──
   /** The scheduler and its runs. `Routines.none` when absent: nothing listed, every act refused as unavailable. */
   readonly routines?: RoutinesService
+  // ── PRDCT-4327: the digests ──
+  /** The one-shot digests a chat view shows, read on the server's own record of each session. `DigestsPort.none` when absent: every call refused as unavailable. */
+  readonly digests?: DigestsService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -113,6 +120,8 @@ export const PortsLive = (
   | HistoryPort
   // ── ADR 0004: the routines ──
   | Routines
+  // ── PRDCT-4327: the digests ──
+  | DigestsPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -133,5 +142,7 @@ export const PortsLive = (
     // ── PRDCT-4321: the server's History ──
     HistoryPort.layer(ports.history ?? HistoryPort.none),
     // ── ADR 0004: the routines ──
-    Routines.layer(ports.routines ?? Routines.none)
+    Routines.layer(ports.routines ?? Routines.none),
+    // ── PRDCT-4327: the digests ──
+    DigestsPort.layer(ports.digests ?? DigestsPort.none)
   )

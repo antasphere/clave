@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 type Callback = (err: Error | null, stdout: string, stderr: string) => void
 const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
-  calls: [] as Array<{ args: string[]; prompt: string; finish: Callback }>,
-  filed: new Map<string, unknown>()
+  calls: [] as Array<{ args: string[]; prompt: string; finish: Callback; done?: boolean }>,
+  filed: new Map<string, unknown>(),
+  accounts: [] as Array<string | undefined>
 }))
 vi.mock('electron', () => {
   throw new Error('the exchange digest imported electron')
@@ -16,7 +17,10 @@ vi.mock('child_process', () => ({ execFile: mocks.execFile }))
 vi.mock('./sessions/adapters/pty-backend', () => ({
   getLoginShellEnv: () => ({ PATH: '/bin' }),
   getUserShell: () => '/bin/zsh',
-  accountTokenForSpawn: async () => undefined
+  accountTokenForSpawn: async (_provider: string, accountId?: string) => {
+    mocks.accounts.push(accountId)
+    return undefined
+  }
 }))
 vi.mock('./launch-profile-manager', () => ({
   launchProfileManager: {
@@ -51,13 +55,22 @@ vi.mock('./exchange-digest-store', () => ({
   }
 }))
 
-import { cancelAll, requestDigest, requestWorkDigest } from './exchange-digest'
+import {
+  UNKNOWN_SESSION_ERROR,
+  cancelAll,
+  KEY_MISMATCH_ERROR,
+  MAX_WAITING_PER_SESSION,
+  hostDigests,
+  sessionLaunchOf,
+  requestDigest,
+  requestWorkDigest
+} from './exchange-digest'
 import { helperCliArgs } from './helpers/runner'
 import { exchangeDigestHelper } from './helpers/digests'
 
 const DIGEST_CLI_ARGS = helperCliArgs(exchangeDigestHelper.systemPrompt, exchangeDigestHelper)
-import { DIGEST_HELPER_MARKER } from '../shared/exchange-digest'
-import { WORK_DIGEST_MARKER } from '../shared/work-digest'
+import { DIGEST_HELPER_MARKER, clipDigestMessages, digestKey } from '../shared/exchange-digest'
+import { WORK_DIGEST_MARKER, clipNotes, workDigestKey } from '../shared/work-digest'
 import { resetShutdownForTests } from './helpers/runner'
 
 async function ticks(): Promise<void> {
@@ -66,6 +79,7 @@ async function ticks(): Promise<void> {
 
 beforeEach(() => {
   mocks.calls.length = 0
+  mocks.accounts.length = 0
   mocks.filed.clear()
   mocks.execFile.mockImplementation(
     (_file: string, args: string[], _opts: unknown, finish: Callback) => {
@@ -155,5 +169,204 @@ describe('the exchange digest on the helpers runner', () => {
       })
     ).resolves.toMatchObject({ ok: false, reason: 'cancelled' })
     expect(mocks.calls).toHaveLength(0)
+  })
+})
+
+describe("the host reads a digest on its own record's launch (PRDCT-4327)", () => {
+  const records: Record<string, { claudeProfileId?: string; configDir?: string }> = {
+    named: { claudeProfileId: 'server-account-7' },
+    plain: {}
+  }
+  const host = hostDigests((id) => records[id] ?? null)
+  // What a client may send: its OWN ids for the tab's launch. Never read.
+  const clientLaunch = { launch: { claudeProfileId: 'mac-account-1', configDir: '/mac/home' } }
+  const one = [{ from: 'x', text: 'y' }]
+
+  it("a tab on a named account is read on the record's account, not the client's", async () => {
+    const done = host.exchangeDigest({
+      sessionId: 'named',
+      key: digestKey(one),
+      messages: one,
+      ...clientLaunch
+    } as Parameters<typeof host.exchangeDigest>[0])
+    await ticks()
+    expect(mocks.accounts).toEqual(['server-account-7'])
+    mocks.calls[0].finish(
+      null,
+      '{"needs_you": false, "message": null, "summary": "Nothing for you."}',
+      ''
+    )
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Nothing for you.' })
+    expect(mocks.filed.get(`named|${digestKey(one)}`)).toMatchObject({ ok: true })
+  })
+
+  it('a tab on the Default is read on the machine login, whatever the client sent', async () => {
+    const done = host.workDigest({
+      sessionId: 'plain',
+      key: workDigestKey(['one']),
+      notes: ['one'],
+      tools: 1,
+      ...clientLaunch
+    } as Parameters<typeof host.workDigest>[0])
+    await ticks()
+    expect(mocks.accounts).toEqual([undefined])
+    mocks.calls[0].finish(null, '{"title": "One", "needs_you": false, "note": null}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, title: 'One' })
+    // Filed under the session it was asked for, in its work bucket.
+    expect([...mocks.filed.keys()]).toEqual([`plain:work|${workDigestKey(['one'])}`])
+  })
+
+  it('a session the host has no record of is refused without a call', async () => {
+    await expect(
+      host.exchangeDigest({
+        sessionId: 'nobody',
+        key: digestKey(one),
+        messages: one,
+        ...clientLaunch
+      } as Parameters<typeof host.exchangeDigest>[0])
+    ).resolves.toEqual({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'unknown-session' })
+    await expect(
+      host.workDigest({ sessionId: 'nobody', key: workDigestKey(['a']), notes: ['a'], tools: 0 })
+    ).resolves.toMatchObject({ ok: false, reason: 'unknown-session' })
+    await ticks()
+    expect(mocks.calls).toHaveLength(0)
+  })
+
+  it('refuses a key that is not the key of what was sent, without a call', async () => {
+    await expect(
+      host.exchangeDigest({
+        sessionId: 'named',
+        key: digestKey([{ from: 'x', text: 'z' }]),
+        messages: one
+      })
+    ).resolves.toEqual({ ok: false, error: KEY_MISMATCH_ERROR, reason: 'refused' })
+    await expect(
+      host.workDigest({ sessionId: 'named', key: workDigestKey(['b']), notes: ['a'], tools: 0 })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    await ticks()
+    expect(mocks.calls).toHaveLength(0)
+  })
+
+  it('lets a session have at most ten reads waiting; the same read asked twice is one', async () => {
+    const asks = Array.from({ length: MAX_WAITING_PER_SESSION }, (_, i) => {
+      const messages = [{ from: 'x', text: `cap ${i}` }]
+      return host.exchangeDigest({ sessionId: 'named', key: digestKey(messages), messages })
+    })
+    const again = [{ from: 'x', text: 'cap 0' }]
+    const shared = host.exchangeDigest({
+      sessionId: 'named',
+      key: digestKey(again),
+      messages: again
+    })
+    const extra = [{ from: 'x', text: 'one too many' }]
+    await expect(
+      host.exchangeDigest({ sessionId: 'named', key: digestKey(extra), messages: extra })
+    ).resolves.toMatchObject({ ok: false, reason: 'busy' })
+    // Another session is not held back by this one.
+    const other = host.workDigest({
+      sessionId: 'plain',
+      key: workDigestKey(['w']),
+      notes: ['w'],
+      tools: 0
+    })
+    // One answer frees one place.
+    await ticks()
+    const reply = '{"needs_you": false, "message": null, "summary": "Nothing for you."}'
+    mocks.calls[0].done = true
+    mocks.calls[0].finish(null, reply, '')
+    await expect(asks[0]).resolves.toMatchObject({ ok: true })
+    await expect(shared).resolves.toMatchObject({ ok: true })
+    const next = host.exchangeDigest({ sessionId: 'named', key: digestKey(extra), messages: extra })
+    await ticks()
+    for (let i = 0; i < 30; i++) {
+      for (const call of mocks.calls.filter((c) => !c.done)) {
+        call.done = true
+        call.finish(
+          null,
+          call.prompt.includes('<notes>')
+            ? '{"title": "W", "needs_you": false, "note": null}'
+            : reply,
+          ''
+        )
+      }
+      await ticks()
+    }
+    await expect(next).resolves.toMatchObject({ ok: true })
+    await expect(other).resolves.toMatchObject({ ok: true })
+    await Promise.all(asks)
+  })
+})
+
+describe('the launch both servers compose (PRDCT-4327)', () => {
+  const source = {
+    records: { switched: { claudeProfileId: 'record-account' } } as Record<string, object>,
+    spawns: {
+      switched: { claudeProfileId: 'old-spawn-account' },
+      recordless: { claudeProfileId: 'spawn-account' }
+    } as Record<string, object>,
+    getSessionRecord(id: string) {
+      return this.records[id] ?? null
+    },
+    spawnLaunchOf(id: string) {
+      return this.spawns[id] ?? null
+    }
+  }
+  const launchOf = sessionLaunchOf(source)
+
+  it("reads the record first, then the spawn's launch, then nothing", () => {
+    expect(launchOf('switched')).toEqual({ claudeProfileId: 'record-account' })
+    expect(launchOf('recordless')).toEqual({ claudeProfileId: 'spawn-account' })
+    expect(launchOf('nobody')).toBeNull()
+  })
+
+  it('a session known only by its record is read on the record’s account', async () => {
+    source.records.cold = { claudeProfileId: 'cold-account' }
+    const host = hostDigests(launchOf)
+    const messages = [{ from: 'x', text: 'cold' }]
+    const done = host.exchangeDigest({ sessionId: 'cold', key: digestKey(messages), messages })
+    await ticks()
+    expect(mocks.accounts).toEqual(['cold-account'])
+    mocks.calls[0].finish(null, '{"needs_you": false, "message": null, "summary": "Cold."}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Cold.' })
+  })
+
+  it('reads a message of 300,000 characters: the view’s key is the host’s, the model reads the clip', async () => {
+    const long = [{ from: 'Lane A', text: 'L'.repeat(300_000) }]
+    // What the view sends: the clip, keyed.
+    const sent = clipDigestMessages(long).messages
+    const host = hostDigests(() => ({}))
+    const done = host.exchangeDigest({ sessionId: 'long', key: digestKey(sent), messages: sent })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    const prompt = mocks.calls[0].prompt
+    expect(prompt).toContain(`${'L'.repeat(4_000)}…`)
+    expect(prompt).not.toContain('L'.repeat(4_001))
+    mocks.calls[0].finish(null, '{"needs_you": false, "message": null, "summary": "Long."}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Long.' })
+  })
+
+  it('clips what it receives before it checks the key, so an unclipped timeline keys as the view keys it', async () => {
+    const raw = Array.from({ length: 33 }, (_, i) => ({
+      from: 'Lane B',
+      text: `R${i}`.repeat(50_000)
+    }))
+    const key = digestKey(clipDigestMessages(raw).messages)
+    const host = hostDigests(() => ({}))
+    const done = host.exchangeDigest({ sessionId: 'raw', key, messages: raw })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '{"needs_you": true, "message": 1, "summary": "Raw."}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, summary: 'Raw.', message: 0 })
+  })
+
+  it('clips the notes it receives before it checks the key, so unclipped notes key as the view keys them', async () => {
+    const raw = Array.from({ length: 45 }, (_, i) => `N${i} `.repeat(400))
+    const key = workDigestKey(clipNotes(raw).notes)
+    const host = hostDigests(() => ({}))
+    const done = host.workDigest({ sessionId: 'raw-notes', key, notes: raw, tools: 3 })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '{"title": "Raw notes", "needs_you": false, "note": null}', '')
+    await expect(done).resolves.toMatchObject({ ok: true, title: 'Raw notes' })
   })
 })

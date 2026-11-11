@@ -31,6 +31,7 @@
     "./input-kinds": "./src/input-kinds.ts",
     "./sidebar/layout": "./src/sidebar/layout.ts",
     "./git": "./src/git.ts",
+    "./digests": "./src/digests.ts",
     "./server-info": "./src/server-info.ts",
     "./history": "./src/history.ts",
     "./release-version": "./src/release-version.ts",
