@@ -439,7 +439,9 @@ final class ConversationModel {
       attachNotice = nil
     case .rejected(_, let reason), .failed(_, let reason):
       sendError = reason
-    case .unknown:
+    case .unknown, .writeRefused:
+      // Still not known, a refused completion included: the bar shows, and what the send carried is
+      // remembered for its later delivery.
       carried = Carried(clientMessageId: clientMessageId, draftText: draftText, files: picked)
     }
     await refreshMark()

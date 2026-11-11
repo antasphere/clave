@@ -27,10 +27,13 @@ public struct UnknownSend: Codable, Sendable, Equatable {
   /// The person's choice on the bar (discard, send again), written before anything waits for the
   /// send, so a choice whose action ended before it could take the send out is still found.
   public let choice: PendingChoice?
+  /// The server's sentence when it refused this phone's attempt to complete the send under the same
+  /// id (401 or 403): no write of it happens again by itself, while its status may still be read.
+  public let writeRefused: String?
 
   public init(
     machineId: String, sessionId: String, clientMessageId: String, text: String, at: Double, draftText: String? = nil,
-    attachments: [Attachment]? = nil, files: [PickedFile]? = nil, choice: PendingChoice? = nil
+    attachments: [Attachment]? = nil, files: [PickedFile]? = nil, choice: PendingChoice? = nil, writeRefused: String? = nil
   ) {
     self.machineId = machineId
     self.sessionId = sessionId
@@ -41,6 +44,7 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     self.attachments = attachments
     self.files = files
     self.choice = choice
+    self.writeRefused = writeRefused
   }
 
   public init(from decoder: Decoder) throws {
@@ -56,6 +60,8 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     files = try? c.decodeIfPresent("files", [PickedFile].self)
     // A choice this build cannot read is no choice: the send is asked about as before.
     choice = try? c.decodeIfPresent("choice", PendingChoice.self)
+    // An unreadable refusal is none, as an unreadable choice is.
+    writeRefused = try? c.decodeIfPresent("writeRefused", String.self)
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -69,13 +75,21 @@ public struct UnknownSend: Codable, Sendable, Equatable {
     try c.encodeIfPresent(attachments, key: "attachments")
     try c.encodeIfPresent(files, key: "files")
     try c.encodeIfPresent(choice, key: "choice")
+    try c.encodeIfPresent(writeRefused, key: "writeRefused")
   }
 
   /// The same send with the person's choice on it.
   public func with(choice: PendingChoice?) -> UnknownSend {
     UnknownSend(
       machineId: machineId, sessionId: sessionId, clientMessageId: clientMessageId, text: text, at: at,
-      draftText: draftText, attachments: attachments, files: files, choice: choice)
+      draftText: draftText, attachments: attachments, files: files, choice: choice, writeRefused: writeRefused)
+  }
+
+  /// The same send with the server's refusal of a completion attempt on it.
+  public func with(writeRefused: String?) -> UnknownSend {
+    UnknownSend(
+      machineId: machineId, sessionId: sessionId, clientMessageId: clientMessageId, text: text, at: at,
+      draftText: draftText, attachments: attachments, files: files, choice: choice, writeRefused: writeRefused)
   }
 }
 
@@ -166,6 +180,19 @@ public actor UnknownSends {
       var sends = try await list()
       guard let index = sends.firstIndex(where: { $0.clientMessageId == clientMessageId }) else { return false }
       sends[index] = sends[index].with(choice: choice)
+      try await write(sends)
+      return true
+    }.value
+  }
+
+  /// Writes the server's refusal of a completion attempt into the record of this id, in its place in
+  /// the list; false, with nothing written, when the ledger holds no send of this id.
+  @discardableResult
+  public func recordWriteRefusal(_ clientMessageId: String, _ reason: String) async throws -> Bool {
+    try await queue.enqueue { [self] in
+      var sends = try await list()
+      guard let index = sends.firstIndex(where: { $0.clientMessageId == clientMessageId }) else { return false }
+      sends[index] = sends[index].with(writeRefused: reason)
       try await write(sends)
       return true
     }.value

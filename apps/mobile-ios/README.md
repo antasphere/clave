@@ -28,6 +28,9 @@ unknown (a failed write during that move, or a process end between two of a sett
 keeps the bar until the person chooses: Discard or Send again then clears the bar, says the
 phone cannot tell whether the message was delivered, and sends nothing; the draft and the
 picked files stay, and the person checks the conversation before sending it again.
+When the server refuses this phone's attempt to complete a send of unknown outcome (401 or
+403), the send stays unknown and the phone never writes it again by itself; a later status
+answer of accepted or rejected still settles it, and the person's choice on the bar ends it.
 
 ## The toolchain
 

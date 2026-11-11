@@ -41,6 +41,12 @@ public struct ReconnectPorts: Sendable {
   /// Told of a send the server has (its reconciliation answered sent), before the settle's writes,
   /// so a settle that ends part way still counts as seen.
   public var delivered: (@Sendable (UnknownSend) async -> Void)?
+  /// Told of a send whose completion attempt the server refused (401 or 403), before the settle's
+  /// writes, so this run writes it no more even when the record of the refusal cannot be written.
+  public var writeRefused: (@Sendable (UnknownSend) async -> Void)?
+  /// Whether the send's writes are held: the server refused this phone's attempt to complete it, in
+  /// this run or as its ledger record says. A held send's status is still read; nothing is written.
+  public var writesHeld: (@Sendable (UnknownSend) async -> Bool)?
 
   public init(
     sends: UnknownSends,
@@ -59,7 +65,9 @@ public struct ReconnectPorts: Sendable {
     choiceRecorded: (@Sendable (UnknownSend) async -> Bool)? = nil,
     leftoverChoice: (@Sendable (UnknownSend) async -> PendingChoice?)? = nil,
     carryOutChoice: (@Sendable (UnknownSend) async throws -> Void)? = nil,
-    delivered: (@Sendable (UnknownSend) async -> Void)? = nil
+    delivered: (@Sendable (UnknownSend) async -> Void)? = nil,
+    writeRefused: (@Sendable (UnknownSend) async -> Void)? = nil,
+    writesHeld: (@Sendable (UnknownSend) async -> Bool)? = nil
   ) {
     self.sends = sends
     self.marks = marks
@@ -78,6 +86,8 @@ public struct ReconnectPorts: Sendable {
     self.leftoverChoice = leftoverChoice
     self.carryOutChoice = carryOutChoice
     self.delivered = delivered
+    self.writeRefused = writeRefused
+    self.writesHeld = writesHeld
   }
 }
 
@@ -130,6 +140,12 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
               step.stop()
               throw ChoiceRecorded()
             }
+            // The server refused this phone's attempt to complete the send: nothing is written again
+            // by itself, and the send stays as it is for the person's choice.
+            if await ports.writesHeld?(send) ?? false {
+              step.stop()
+              throw WritesHeld()
+            }
             step.issue()
             return try await ports.write(send)
           },
@@ -155,6 +171,7 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
         } else {
           outcomes.append(.init(send: send, outcome: outcome))
           if case .sent = outcome { await ports.delivered?(send) }
+          if case .writeRefused = outcome { await ports.writeRefused?(send) }
           try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
         }
       } else {
@@ -166,6 +183,7 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
         if !yielded {
           outcomes.append(.init(send: send, outcome: outcome))
           if case .sent = outcome { await ports.delivered?(send) }
+          if case .writeRefused = outcome { await ports.writeRefused?(send) }
           try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
         }
       }
@@ -198,6 +216,10 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
 /// Thrown by a pass's port when the person's choice stopped it before a request.
 private struct ChoiceRecorded: Error {}
 
+/// Thrown by a pass's write port when the send's writes are held (the server refused this phone's
+/// attempt to complete it): the send is not settled, and its record, hold and mark stay.
+private struct WritesHeld: Error {}
+
 /// What one send's reconciliation in a pass did so far, set and read from its port closures.
 private final class PassStep: @unchecked Sendable {
   private let lock = NSLock()
@@ -213,10 +235,17 @@ private final class PassStep: @unchecked Sendable {
   func stop() { lock.withLock { halted = true } }
 }
 
+/// What the bar says once the server refused this phone's attempt to complete a send.
+func writeRefusedHold(_ reason: String) -> String {
+  "The server refused this phone's new attempt to send this message (\(reason)), so the phone will not try again by itself. Whether the message arrived is still unknown."
+}
+
 /// The ledger, the draft and the mark after one send's outcome: sent takes the send out of the
 /// ledger, keeps in the draft only what was added after the text sent, takes the files it carried
 /// off the attachment draft and clears the mark; rejected leaves the ledger and marks the reason;
-/// unknown stays in the ledger, marked; failed waits for the next pass.
+/// unknown stays in the ledger, marked; failed waits for the next pass; writeRefused stays in the
+/// ledger with the refusal in its record and, once that is written, marks the hold unless the mark
+/// names another send.
 public func settleSend(
   _ send: UnknownSend,
   _ outcome: SendOutcome,
@@ -242,6 +271,15 @@ public func settleSend(
   case .failed:
     // The machine is not reachable after all: the send waits for the next pass.
     break
+  case .writeRefused(_, let reason):
+    // The refusal is kept in the record first; a send no longer in the ledger claims no hold.
+    guard try await sends.recordWriteRefusal(send.clientMessageId, reason) else { return }
+    let mark = try await marks.get(send.machineId, send.sessionId)
+    // A mark naming another send is that send's, and stays as it is.
+    guard mark == nil || mark?.clientMessageId == send.clientMessageId else { return }
+    try await marks.set(
+      send.machineId, send.sessionId,
+      DeliveryMark(kind: .unknown, clientMessageId: send.clientMessageId, reason: writeRefusedHold(reason), at: now()))
   }
 }
 
@@ -314,6 +352,7 @@ public actor DeliveryController {
   private var choices: [String: [PendingChoice]] = [:]
   private var discarded: Set<String> = []
   private var delivered: Set<String> = []
+  private var writesHeld: Set<String> = []
 
   /// The controller over one owner's ledger, marks and drafts. Pass the composer's own `Drafts`:
   /// each instance caches, so a second one over the same store would not see the composer's edits.
@@ -440,6 +479,16 @@ public actor DeliveryController {
 
   private func noteDelivered(_ id: String) { delivered.insert(id) }
 
+  /// Whether the send's writes are held: the server refused this phone's attempt to complete it, as
+  /// this run saw, or as its ledger record, read again now, says.
+  func holdsWrites(of send: UnknownSend) async -> Bool {
+    if writesHeld.contains(send.clientMessageId) { return true }
+    let record = (try? await sends.list())?.first { $0.clientMessageId == send.clientMessageId }
+    return record?.writeRefused != nil
+  }
+
+  private func holdWrites(_ id: String) { writesHeld.insert(id) }
+
   /// The choice an ended run left on this send: the one in its ledger record, when no action of this
   /// run holds a choice on it (a choice made now is followed as it is made).
   func leftoverChoice(_ send: UnknownSend) async -> PendingChoice? {
@@ -489,6 +538,8 @@ public actor DeliveryController {
     defer { active.remove(send.clientMessageId) }
     // Seen before the settle's writes, so a settle that ends part way still counts as delivered.
     if case .sent = outcome { noteDelivered(send.clientMessageId) }
+    // And a refused completion holds this run's writes of the send even when its record cannot be written.
+    if case .writeRefused = outcome { holdWrites(send.clientMessageId) }
     let attachments = attachmentDrafts
     try await settleSend(send, outcome, sends: sends, marks: marks, drafts: drafts, now: now, clearAttachments: { send in
       try await attachments.removeSent(send.machineId, send.sessionId, files: send.files ?? [])
@@ -528,7 +579,9 @@ public actor DeliveryController {
       choiceRecorded: { [weak self] send in await self?.hasChoice(send.clientMessageId) ?? false },
       leftoverChoice: { [weak self] send in await self?.leftoverChoice(send) },
       carryOutChoice: { [weak self] send in try await self?.carryOutChoice(send) },
-      delivered: { [weak self] send in await self?.noteDelivered(send.clientMessageId) })
+      delivered: { [weak self] send in await self?.noteDelivered(send.clientMessageId) },
+      writeRefused: { [weak self] send in await self?.holdWrites(send.clientMessageId) },
+      writesHeld: { [weak self] send in await self?.holdsWrites(of: send) ?? true })
     let run = Task<Void, Error> {
       _ = try await reconnectPass(machineId: machineId, openConversations: openConversations, ports: ports, options: options)
     }

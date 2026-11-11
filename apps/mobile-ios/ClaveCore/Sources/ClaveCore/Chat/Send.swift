@@ -9,7 +9,9 @@ import Foundation
 // - accepted: the message counts as sent.
 // - pending: asked again with backoff for at most the budget, then unknown.
 // - rejected: the draft stays with the reason; a resend is a new id.
-// - absent: the same send is completed once with the same id; a second loss is unknown.
+// - absent: the same send is completed once with the same id; a second loss is unknown, and a
+//   completion the server refuses (401, 403) is writeRefused: still unknown, never written again by
+//   itself.
 // - unknown: nothing is sent by itself; the person chooses.
 //
 // Pure over its ports, so every branch runs in a test.
@@ -48,11 +50,15 @@ public enum SendOutcome: Sendable, Equatable {
   case unknown(clientMessageId: String, reason: String)
   /// Another kind of failure (the token refused, a scope that forbids it): the draft stays.
   case failed(clientMessageId: String, reason: String)
+  /// The outcome is still not known: the server refused this phone's attempt to complete the send
+  /// under the same id (401 or 403), and no write of it happens again by itself; its status may still
+  /// be read.
+  case writeRefused(clientMessageId: String, reason: String)
 
   /// The id the send went out under.
   public var clientMessageId: String {
     switch self {
-    case .sent(let id, _), .rejected(let id, _), .unknown(let id, _), .failed(let id, _): return id
+    case .sent(let id, _), .rejected(let id, _), .unknown(let id, _), .failed(let id, _), .writeRefused(let id, _): return id
     }
   }
 
@@ -60,7 +66,7 @@ public enum SendOutcome: Sendable, Equatable {
   public var reason: String? {
     switch self {
     case .sent: return nil
-    case .rejected(_, let reason), .unknown(_, let reason), .failed(_, let reason): return reason
+    case .rejected(_, let reason), .unknown(_, let reason), .failed(_, let reason), .writeRefused(_, let reason): return reason
     }
   }
 }
@@ -80,8 +86,11 @@ public struct SendOptions: Sendable, Equatable {
   }
 }
 
+/// Whether the write's outcome went unseen: no answer came back, or the write was cancelled after it
+/// may have left the phone.
 private func lost(_ error: Error) -> Bool {
-  (error as? ServerError)?.outcomeLost ?? false
+  if error is CancellationError { return true }
+  return (error as? ServerError)?.outcomeLost ?? false
 }
 
 /// The sentence an error carries: a server's own message, else the error as text.
@@ -149,6 +158,10 @@ public func reconcile(_ clientMessageId: String, ports: SendPorts, options: Send
         if answer.status == .accepted { return .sent(clientMessageId: clientMessageId, reconciled: true) }
         return await reconcile(clientMessageId, ports: ports, options: options, mayRetry: false)
       } catch {
+        // A 401 or 403 proves only that this attempt was refused: the first write may still land.
+        if let refused = error as? ServerError, refused.kind == .unauthenticated || refused.kind == .forbidden {
+          return .writeRefused(clientMessageId: clientMessageId, reason: refused.message)
+        }
         if !lost(error) { return refusal(clientMessageId, error) }
         return await reconcile(clientMessageId, ports: ports, options: options, mayRetry: false)
       }

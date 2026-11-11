@@ -19,6 +19,8 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
     case loseBeforeKept
     /// The write waits until the test lets it through (`releaseHeldWrites`), then is kept.
     case hold
+    /// The server answers the write with this status and a JSON body `{"message": …}`: nothing kept.
+    case refuse(status: Int, message: String)
   }
 
   enum Status: Equatable, Sendable {
@@ -136,6 +138,10 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
       return plan.isEmpty ? .accept : plan.removeFirst()
     }
     if fate == .loseBeforeKept { throw URLError(.networkConnectionLost) }
+    if case .refuse(let status, let message) = fate {
+      let refusal = try JSONSerialization.data(withJSONObject: ["message": message])
+      return HTTPAnswer(status: status, headers: ["Content-Type": "application/json"], body: refusal)
+    }
     if fate == .hold { await withCheckedContinuation { write in lock.withLock { heldWrites.append(write) } } }
     // The chat server keeps the message in its timeline and pushes it, as a server would.
     let answer = try await chat.perform(request)
