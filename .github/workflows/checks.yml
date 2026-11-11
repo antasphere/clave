@@ -95,12 +95,18 @@ jobs:
   # gate would be red on a healthy branch, which is a gate nobody reads.
   # The report step turns into a gate (drop continue-on-error) once the
   # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
-  # thread). Nothing here touches the release rail.
+  # thread). The report stops itself 85 minutes after the job began, so a
+  # slow runner cuts the report, never the job. Nothing here touches the
+  # release rail.
   e2e:
     name: End-to-end (the real app, macOS)
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
+      # When the job began: the report's budget counts from here.
+      - name: Note when the job began
+        run: echo "CLAVE_E2E_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -206,14 +212,62 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node tests/e2e/run.mjs mcp-fleet-sessions
 
+      # The job's 90 minutes hold the gates and this report together, and on a
+      # slow runner the whole suite outgrew what the gates leave: on 10
+      # November it was still running 72 minutes in, the gates done at 18, and
+      # the job was cancelled with every gate green and no summary written.
+      # So the suite runs in a process group of its own and is stopped 85
+      # minutes after the job began: SIGTERM to the group, SIGKILL 15 seconds
+      # later. What it started outside that group is stopped by the runner's
+      # own cleanup of orphan processes at the end of the job. A cut report
+      # writes where it stopped and exits 124, which continue-on-error keeps
+      # out of the job's verdict, like any other failure of the report.
       - name: Report, the whole suite with the server in-process
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
         run: |
           set +e
-          node tests/e2e/run.mjs | tee e2e-in-process.log
-          status=${PIPESTATUS[0]}
-          line=$(grep -E '^[0-9]+ passed, ' e2e-in-process.log | tail -1)
+          : "${CLAVE_E2E_JOB_START:?the first step of the job records when it began}"
+          budget=$((CLAVE_E2E_JOB_START + 85 * 60 - $(date +%s)))
+          rm -f e2e-in-process.status e2e-in-process.cut
+          : > e2e-in-process.log
+          if [ "$budget" -gt 60 ]; then
+            set -m
+            { node tests/e2e/run.mjs; echo $? > e2e-in-process.status; } | tee e2e-in-process.log &
+            tee_pid=$!
+            suite=$(ps -o pgid= -p "$tee_pid" | tr -d ' ')
+            own=$(ps -o pgid= -p $$ | tr -d ' ')
+            echo "report: the suite in process group $suite, this step in $own, ${budget} s of budget"
+            # A group shared with this step would make the cut stop the step
+            # itself: the report then runs without a budget, as it used to.
+            if [ "$suite" != "$own" ]; then
+              (sleep "$budget"; touch e2e-in-process.cut; kill -TERM -- "-$suite"; sleep 15; kill -KILL -- "-$suite") 2> /dev/null &
+              watchdog=$!
+            fi
+            wait "$tee_pid"
+            if [ -n "${watchdog:-}" ]; then
+              if [ -e e2e-in-process.cut ]; then wait "$watchdog"; else kill -- "-$watchdog" 2> /dev/null; fi
+            fi
+            set +m
+          else
+            touch e2e-in-process.cut
+          fi
+          if [ -e e2e-in-process.status ]; then
+            status=$(cat e2e-in-process.status)
+            line=$(grep -E '^[0-9]+ passed, ' e2e-in-process.log | tail -1)
+          elif [ -e e2e-in-process.cut ]; then
+            status=124
+            specs=(tests/e2e/*.spec.mjs)
+            line=$(SPECS=${#specs[@]} perl -ne '
+              s/\e\[[0-9;]*m//g;
+              $count{$1}++ if /^ *(PASS|FAIL|KNOWN|UNSTABLE)  /;
+              if (/^([\w.-]+\.spec\.mjs)$/) { $started++; $last = $1 }
+              END { printf "cut at its budget, 85 minutes after the job began: %d of %d specs started, the last %s; %d PASS, %d FAIL, %d KNOWN and %d UNSTABLE lines before the cut", $started, $ENV{SPECS}, $last // "none", $count{PASS}, $count{FAIL}, $count{KNOWN}, $count{UNSTABLE} }
+            ' e2e-in-process.log)
+          else
+            status=1
+            line=
+          fi
           {
             echo "## End-to-end, whole suite, server in-process"
             echo
