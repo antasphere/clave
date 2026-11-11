@@ -5,7 +5,7 @@ name: Checks
 # piled up unseen; release.yml and build-win.yml only build.
 #
 # Linux validation runs in parallel, with all files selected by Vitest divided
-# across four isolated runners. The named check waits for every validation job
+# across six isolated runners. The named check waits for every validation job
 # and verifies the unit reports against the collected file inventory.
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: [lint, typecheck, unit-1, unit-2, unit-3, unit-4]
+        task: [lint, typecheck, unit-1, unit-2, unit-3, unit-4, unit-5, unit-6]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-checks
@@ -76,7 +76,7 @@ jobs:
           if [ "$TASK" = unit-1 ]; then
             npx --no-install vitest list --config vitest.ci.config.mjs --filesOnly --json > unit-reports/inventory.json
           fi
-          npx --no-install vitest run --shard="${TASK#unit-}/4" \
+          npx --no-install vitest run --shard="${TASK#unit-}/6" \
             --config vitest.ci.config.mjs \
             --reporter=default --reporter=json --outputFile="unit-reports/shard-${TASK#unit-}.json"
 
@@ -106,7 +106,7 @@ jobs:
           path: unit-reports
           merge-multiple: true
       - name: Every unit test file completed exactly once
-        run: node scripts/merge-unit-reports.mjs unit-reports 4
+        run: node scripts/merge-unit-reports.mjs unit-reports 6
 
   # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
   # Electron on an isolated user-data directory, hidden (--test-no-activate),

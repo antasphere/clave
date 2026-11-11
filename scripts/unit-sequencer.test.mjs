@@ -28,7 +28,7 @@ describe('Linux unit placement', () => {
   }, 25_000)
 
   it('runs every file exactly once, including files without timing hints', () => {
-    for (const count of [1, 2, 4, 8, 600]) {
+    for (const count of [1, 2, 4, 6, 8, 600]) {
       const shards = partitionUnitFiles(files, count)
       expect(shards.flat().sort()).toEqual([...files].sort())
       expect(partitionUnitFiles([...files].reverse(), count)).toEqual(shards)
