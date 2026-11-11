@@ -4,7 +4,6 @@
 // PTYs — against an isolated `--user-data-dir`, so they never touch the user's
 // installed Clave. The regular `playwright` MCP opens the renderer in Chrome
 // where `window.electronAPI` is undefined and none of this works.
-import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright-core'
 import {
   mkdirSync,
@@ -1154,23 +1153,80 @@ export async function spawnAgentTabIn(app, page, dir, { until: untilFn = until }
   return { sessionId: cfg.claveId, token }
 }
 
-// A family becomes a submenu when chat/custom profiles are registered.
-// Follow the built-in leaf so the assertions still exercise the terminal CLI.
-export async function selectBuiltIn(win, label, profileName, family) {
-  const profiles = await win.evaluate(() => window.electronAPI.launchProfilesList())
-  // One terminal built-in always exists; registered chat profiles add a second.
-  const count = 1 + profiles.customProfiles.filter((p) => p.family === family).length
-  const entry = win
-    .locator('[role="menuitem"]')
-    .filter({ has: win.getByText(label, { exact: true }) })
-  const submenu = (await entry.getAttribute('aria-haspopup')) === 'menu'
-  assert.equal(
-    submenu,
-    count > 1,
-    `${label}: ${count} profiles must produce ${count > 1 ? 'a submenu' : 'a flat item'}`
+/** Every harness the launcher knows, in its menu's order (PRDCT-4423). */
+export const HARNESS_IDS = ['claude', 'codex', 'antigravity', 'pi']
+
+/**
+ * The launcher lists the harnesses the agent-updates check found on the PATH
+ * (PRDCT-4423). A test instance never runs that check on its own
+ * (`src/main/agent-updates/schedule.ts`), and main's status before a check
+ * says `installed: false`, so a spec that drives the menu tells the
+ * renderer's mirror which harnesses are there, through its test seam
+ * (`window.__claveAgentUpdatesStoreForTests`). `ids` not listed are marked
+ * missing, so a spec can draw the empty state too.
+ */
+export async function markHarnessesInstalled(win, ids = HARNESS_IDS) {
+  await win.evaluate((ids) => {
+    const store = window.__claveAgentUpdatesStoreForTests
+    if (!store) throw new Error('no agent-updates store seam: is --test-no-activate on?')
+    const agents = store.getState().agents
+    const known = new Set(agents.map((a) => a.id))
+    store.setState({
+      agents: [
+        ...agents.map((a) => ({ ...a, installed: ids.includes(a.id) })),
+        ...ids
+          .filter((id) => !known.has(id))
+          .map((id) => ({ id, name: id, command: id, installed: true, phase: 'idle' }))
+      ]
+    })
+  }, ids)
+}
+
+/**
+ * Launch a harness's BUILT-IN terminal profile from the open caret menu, so
+ * the assertions still exercise the terminal CLI (PRDCT-4423). `family` is a
+ * harness id, or `claude-agents` for Claude Code's "Agents…" item.
+ *
+ * A harness row launches on a click with the transport the interaction mode
+ * gives it; with saved profiles beside the built-in, its Advanced level names
+ * the built-in outright. With none, the row click is the built-in only in the
+ * Terminal mode, which this helper sets (the default mode, Chat, would open
+ * the family's chat).
+ */
+export async function selectBuiltIn(win, family) {
+  await markHarnessesInstalled(win)
+  const harness = family === 'claude-agents' ? 'claude' : family
+  const row = win.locator(`[data-harness-row="${harness}"]`).first()
+  await row.waitFor({ timeout: 10_000 })
+  if (family === 'claude-agents') {
+    await row.hover()
+    await win.locator('[data-harness-agents]').first().click()
+    return
+  }
+  // The Advanced level exists when saved profiles sit beside the built-in;
+  // the row's own submenu says so once it is open.
+  await row.hover()
+  const advanced = win.locator(`[role="menu"] [data-harness-advanced="${family}"]`).first()
+  const hasAdvanced = await advanced.waitFor({ timeout: 2_000 }).then(
+    () => true,
+    () => false
   )
-  await entry.click()
-  if (count > 1) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
+  if (hasAdvanced) {
+    await advanced.hover()
+    await win.locator(`[data-launch-profile-entry="builtin-${family}"]`).first().click()
+    return
+  }
+  const settings = await win.evaluate(() => window.electronAPI.launchSettingsGet())
+  if (settings.interactionMode !== 'terminal') {
+    await win.evaluate(() => window.electronAPI.launchSettingsSet({ interactionMode: 'terminal' }))
+    // The renderer's mirror follows on the change event; wait for it.
+    await until(async () => {
+      const now = await win.evaluate(() => window.electronAPI.launchSettingsGet())
+      return now.interactionMode === 'terminal' ? true : null
+    })
+    await win.waitForTimeout(300)
+  }
+  await row.click()
 }
 
 // ── The agent tools' road (wave 3, PRDCT-3294) ───────────────────────────────

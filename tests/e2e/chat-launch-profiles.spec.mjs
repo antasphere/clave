@@ -8,6 +8,7 @@ import {
   seedTrustedRoots,
   until,
   fixturePath,
+  markHarnessesInstalled,
   serverDataDirOf
 } from './harness.mjs'
 
@@ -109,6 +110,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     )
     for (const family of ['claude', 'codex']) {
       await win.locator('.launcher-caret').click()
+      await markHarnessesInstalled(win)
       // The harness row launches on a click (PRDCT-4423): the interaction
       // mode is Chat, so it opens the family's chat default, the saved
       // profile's chat form picked in Settings.

@@ -100,7 +100,7 @@ export async function run(t) {
     // spawn payload can be read from.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
+    await selectBuiltIn(win, 'codex')
     await win.waitForTimeout(4000)
 
     await win.click('button[aria-label="Add a group"]')

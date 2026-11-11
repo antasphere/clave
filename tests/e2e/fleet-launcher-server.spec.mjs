@@ -8,11 +8,16 @@
  * PRDCT-4151), a launch profile only the server has, another only the Mac
  * has.
  *
- * Fails if: the server section still hard-codes three rows (no chat, no
- * skip-permissions row, no saved profile), the server section shows the
- * Mac's profile or hides the server's, a Claude chat picked in the server
- * section starts anywhere but on the server with its chat profile, or the
- * server workspace's own launcher offers no chat.
+ * Since PRDCT-4423 a section has one row per harness the server exposes: a
+ * click launches it on the transport of the interaction mode (Chat by
+ * default, so the family's chat), its saved profiles sit under Advanced, and
+ * with more than one account a model offers the connections.
+ *
+ * Fails if: the server section is not the same row shape as this Mac's (no
+ * row per family, a permission-flag row, no saved profile under Advanced),
+ * the server section shows the Mac's profile or hides the server's, a Claude
+ * chat launched in the server section starts anywhere but on the server with
+ * its chat profile, or the server workspace's own launcher offers no chat.
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -25,14 +30,14 @@ import {
   clickReady,
   showServer
 } from './fixtures/fleet-world.mjs'
-import { fixturePath, REPO } from './harness.mjs'
+import { fixturePath, REPO, until } from './harness.mjs'
 
 const SERVER_ONLY = 'Server only recorder'
 const MAC_ONLY = 'Mac only recorder'
 
-/** The launch profile rows of the open submenu, by the name they show. */
+/** The launch profile rows of the open Advanced submenu, by the name they show. */
 async function profileRows(win) {
-  const rows = win.locator('[data-launch-profile-entry]')
+  const rows = win.locator('[role="menu"] [data-launch-profile-entry]')
   await rows.first().waitFor()
   return rows.evaluateAll((els) =>
     els.map((el) => ({
@@ -43,7 +48,12 @@ async function profileRows(win) {
 }
 
 export async function run(t) {
-  const world = await fleetWorld('launcher-server', { gitRepo: true })
+  // The server's usage reads stay off the network: the fixture token is never
+  // refused, so the menu offers the second account (it greys a dead one out).
+  const world = await fleetWorld('launcher-server', {
+    gitRepo: true,
+    env: { CLAVE_E2E_USAGE_OFFLINE: '1' }
+  })
   try {
     const [server, other] = world.servers
     const rootA = fixturePath(`${world.run}-local-a`)
@@ -84,6 +94,13 @@ export async function run(t) {
       serverProfiles.customProfiles.some((p) => p.id === 'claude-chat'),
       'the server lists its Claude chat profile'
     )
+    // The chat a Claude Code row opens there (interaction mode Chat): the
+    // server's default profile in its chat form, else its built-in chat.
+    const serverDefault = serverProfiles.globalDefaults?.claude
+    const serverChat =
+      serverProfiles.customProfiles.find((p) => p.sourceProfileId === serverDefault)?.id ??
+      'claude-chat'
+    assert.ok(serverChat.startsWith('chat:') || serverChat === 'claude-chat', serverChat)
 
     // The pairing: the server's repository as a server workspace, confirmed once.
     await win.evaluate(
@@ -111,37 +128,56 @@ export async function run(t) {
     await clickReady(win.locator('.launcher-caret'))
     const section = win.locator(`[data-run-on-server="${owner}"]`)
     await section.waitFor()
-    t.equal(
-      'the server section has a skip-permissions row',
-      await section.locator('[data-claude-entry="Claude Code (skip permissions)"]').count(),
-      1
+    const familyRows = await section
+      .locator('[data-harness-row]')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-harness-row')))
+    t.check(
+      'the server section has a row per harness family, Claude Code and Codex among them',
+      familyRows.includes('claude') && familyRows.includes('codex'),
+      familyRows
     )
-    t.equal(
-      'and a YOLO Codex row',
-      await section.locator('[data-codex-entry="Codex CLI (YOLO)"]').count(),
-      1
+    t.check(
+      'and no permission-flag row: the dangerous launch is the shortcut',
+      !/YOLO|skip permissions/.test(await section.innerText()),
+      await section.innerText()
     )
-    const claude = section.locator('[data-claude-entry="Claude Code"]')
+    const claude = section.locator('[data-harness-row="claude"]')
     t.equal(
-      'the server’s Claude Code row opens its launch profiles',
+      'the server’s Claude Code row opens a submenu',
       await claude.getAttribute('aria-haspopup'),
       'menu'
     )
     await claude.hover()
+    await win.locator('[role="menu"] [data-harness-advanced="claude"]').last().hover()
     const rows = await profileRows(win)
     const names = rows.map((r) => r.name)
-    t.check('the server section offers the Claude chat', names.includes('Claude (chat)'), names)
-    t.check('and the profile only the server has', names.includes(SERVER_ONLY), names)
-    t.check('and its chat form', names.includes(`${SERVER_ONLY} (chat)`), names)
+    t.check(
+      'the server section’s Advanced offers the profile only the server has',
+      names.includes(SERVER_ONLY),
+      names
+    )
+    t.check(
+      'and never a chat twin',
+      rows.every((r) => !r.id.startsWith('chat:') && r.id !== 'claude-chat'),
+      rows
+    )
     t.check('and not the profile only this Mac has', !names.includes(MAC_ONLY), names)
+    await win.keyboard.press('Escape')
+    await until(async () => (await win.locator('[role="menu"]').count()) === 0, {
+      tries: 30,
+      gapMs: 100
+    })
     const peerBefore = (await request(other, '/sessions')).length
     const macBefore = (await win.evaluate(() => window.electronAPI.listSessions())).length
-    await win.locator('[data-launch-profile-entry="claude-chat"]').click()
+    // The interaction mode is Chat (the default): the row's click is the chat.
+    await clickReady(win.locator('.launcher-caret'))
+    await section.waitFor()
+    await clickReady(section.locator('[data-harness-row="claude"]'))
     const chat = await startedOnServer()
     t.equal(
-      'a Claude chat picked there starts on the server with its chat profile',
+      'a Claude Code row clicked there starts on the server with its chat profile',
       chat.record?.launchProfileId,
-      'claude-chat'
+      serverChat
     )
     t.equal(
       'in the server workspace root',
@@ -159,10 +195,11 @@ export async function run(t) {
       macBefore
     )
 
-    // The server's own profile, picked there, runs the server's definition.
+    // The server's own profile, picked there under Advanced, runs the server's definition.
     await clickReady(win.locator('.launcher-caret'))
     await section.waitFor()
-    await section.locator('[data-claude-entry="Claude Code"]').hover()
+    await section.locator('[data-harness-row="claude"]').hover()
+    await win.locator('[role="menu"] [data-harness-advanced="claude"]').last().hover()
     await win.locator('[data-launch-profile-entry="server-only-recorder"]').click()
     const own = await startedOnServer()
     t.equal(
@@ -185,22 +222,27 @@ export async function run(t) {
       await win.locator(`[data-run-on-server="${owner}"]`).count(),
       0
     )
-    const topClaude = win.locator('[data-claude-entry="Claude Code"]').first()
+    const topClaude = win.locator('[data-harness-row="claude"]').first()
     await topClaude.hover()
+    await win.locator('[role="menu"] [data-harness-advanced="claude"]').first().hover()
     const topNames = (await profileRows(win)).map((r) => r.name)
     t.check(
-      'the server workspace’s launcher offers the server’s chat and profile, not the Mac’s',
-      topNames.includes('Claude (chat)') &&
-        topNames.includes(SERVER_ONLY) &&
-        !topNames.includes(MAC_ONLY),
+      'the server workspace’s launcher offers the server’s profile, not the Mac’s',
+      topNames.includes(SERVER_ONLY) && !topNames.includes(MAC_ONLY),
       topNames
     )
-    await win.locator('[data-launch-profile-entry="claude-chat"]').first().click()
+    await win.keyboard.press('Escape')
+    await until(async () => (await win.locator('[role="menu"]').count()) === 0, {
+      tries: 30,
+      gapMs: 100
+    })
+    await clickReady(win.locator('.launcher-caret'))
+    await clickReady(win.locator('[data-harness-row="claude"]').first())
     const second = await startedOnServer()
     t.equal(
-      'a chat picked in the server workspace starts on the server with its chat profile',
+      'the Claude Code row clicked in the server workspace starts the server’s chat',
       second.record?.launchProfileId,
-      'claude-chat'
+      serverChat
     )
 
     // ── A second account on the server: picked from the menu, then replayed by the main button ──
@@ -210,25 +252,36 @@ export async function run(t) {
       id: account.id,
       token: `sk-ant-oat01-${'x'.repeat(80)}`
     })
+    // With two accounts on the server, a model offers its connections.
     await eventually(async () => {
       await clickReady(win.locator('.launcher-caret'))
-      const entry = win.locator('[data-claude-entry="Claude Code"]').first()
+      const entry = win.locator('[data-harness-row="claude"]').first()
       await entry.hover()
-      const profile = win.locator('[data-launch-profile-entry="server-only-recorder"]').first()
-      await profile.waitFor()
-      if ((await profile.getAttribute('aria-haspopup')) !== 'menu') {
+      const model = win
+        .locator('[role="menu"] [data-harness-model]:not([data-harness-model="default"])')
+        .first()
+      await model.waitFor()
+      if ((await model.getAttribute('aria-haspopup')) !== 'menu') {
         await win.keyboard.press('Escape')
         return false
       }
-      await profile.hover()
-      await win.locator(`[data-claude-account="${account.id}"]`).first().click()
+      await model.hover()
+      // The server's token reaches this Mac's view of its pool on an event:
+      // until then the connection is drawn but not usable.
+      const connection = win.locator(`[data-harness-connection="${account.id}"]`).first()
+      await connection.waitFor()
+      if ((await connection.getAttribute('aria-disabled')) === 'true') {
+        await win.keyboard.press('Escape')
+        return false
+      }
+      await connection.click()
       return true
     }, 'the server’s accounts reach the menu')
     const picked = await startedOnServer()
     t.equal(
-      'a profile and an account picked on the server start the server’s own profile',
+      'a model and a connection picked on the server start on the server’s chat',
       picked.record?.launchProfileId,
-      'server-only-recorder'
+      serverChat
     )
     t.equal('on the server account picked', picked.record?.claudeProfileId, account.id)
     const button = win.locator('[data-launcher-agent]')
@@ -241,7 +294,7 @@ export async function run(t) {
     t.equal(
       'the main button starts the server’s profile it names',
       replayed.record?.launchProfileId,
-      'server-only-recorder'
+      serverChat
     )
     t.equal('on the server account it names', replayed.record?.claudeProfileId, account.id)
 

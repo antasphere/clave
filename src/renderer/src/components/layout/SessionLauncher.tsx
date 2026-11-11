@@ -202,10 +202,14 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const interactionMode = useLaunchSettingsStore((s) => s.interactionMode)
   const harnessSettings = useLaunchSettingsStore((s) => s.harnesses)
   const agentStatuses = useAgentUpdatesStore((s) => s.agents)
-  /** Installed unless a check said otherwise: a harness not checked yet
-   *  keeps its row, so the menu does not flicker at boot. */
-  const harnessInstalled = (id: HarnessId): boolean =>
-    agentStatuses.find((status) => status.id === id)?.installed !== false
+  /** Installed unless a CHECK said otherwise: before the first check main
+   *  reports every harness as not installed with no check time, so a harness
+   *  not checked yet keeps its row and the menu does not open empty at boot
+   *  (found by the end-to-end run of 11 November 2026). */
+  const harnessInstalled = (id: HarnessId): boolean => {
+    const status = agentStatuses.find((entry) => entry.id === id)
+    return !status || status.lastCheckedAt === null || status.installed
+  }
 
   const connectedRemoteLocations = locations.filter(
     (l) => l.type === 'remote' && l.status === 'connected'
@@ -813,7 +817,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                       }}
                     >
                       <AntigravityLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-                      <span className="flex-1">Antigravity CLI</span>
+                      <span className="flex-1">Antigravity</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => {
@@ -828,7 +832,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                       }}
                     >
                       <CodexLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-                      <span className="flex-1">Codex CLI</span>
+                      <span className="flex-1">Codex</span>
                     </DropdownMenuItem>
                   </div>
                 ))}

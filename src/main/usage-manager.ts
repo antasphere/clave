@@ -399,8 +399,15 @@ async function fetchWithTimeout(input: string, init: RequestInit): Promise<Respo
   }
 }
 
+/** The end-to-end runs keep the reads off the network (`CLAVE_E2E_USAGE_OFFLINE`):
+ *  a fixture token is then "unreachable", never refused, so the account it
+ *  names stays usable and the launcher can offer it (the menu greys a dead
+ *  connection out since 11 November 2026, PRDCT-4423). Never set outside tests. */
+const usageOffline = (): boolean => process.env.CLAVE_E2E_USAGE_OFFLINE === '1'
+
 /** The usage endpoint, with a login credential (keychain or config dir). */
 async function readFromEndpoint(token: string): Promise<UsageLimits | UsageError> {
+  if (usageOffline()) return { error: 'Could not reach the usage service. Check your connection.' }
   let res: Response
   try {
     res = await fetchWithTimeout(USAGE_ENDPOINT, {
@@ -444,6 +451,7 @@ async function readFromProbe(token: string): Promise<UsageLimits | UsageError> {
   let last: Response | null = null
   for (const model of PROBE_MODELS) {
     let res: Response
+    if (usageOffline()) return { error: 'Could not reach Anthropic. Check your connection.' }
     try {
       res = await fetchWithTimeout(MESSAGES_ENDPOINT, {
         method: 'POST',
