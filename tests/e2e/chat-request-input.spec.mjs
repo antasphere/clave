@@ -89,6 +89,11 @@ export async function run(t) {
       'only the first question of the form is open'
     )
     assert.equal(await card.locator('.chat-ask-end[data-ready="true"]').count(), 0)
+    assert.equal(
+      await card.locator('.chat-ask-owed').innerText(),
+      '3 answers to go',
+      'an Approve that is off says how many answers are owed'
+    )
     const [endSeat, approveBox] = await Promise.all([
       card.locator('.chat-ask-end > .chat-ask-seat').boundingBox(),
       card.getByRole('button', { name: /^Approve/ }).boundingBox()
@@ -120,9 +125,10 @@ export async function run(t) {
       'an empty field is not judged when the person leaves it for the composer'
     )
     await email.fill('luca@antasphere')
-    // Approve is off while an answer is owed (PRDCT-4418); ⌘Enter says what.
+    // Approve is off while an answer is owed (PRDCT-4418); the count beside
+    // it leads to the first one owed and says what is wrong there.
     assert.equal(await card.getByRole('button', { name: /^Approve/ }).isDisabled(), true)
-    await email.press('Meta+Enter')
+    await card.locator('.chat-ask-owed').click()
     await card.locator('.chat-field-problem').first().waitFor()
     assert.match(await card.locator('.chat-field-problem').first().innerText(), /not an e-mail/)
     assert.equal(await card.count(), 1, 'the card stays until the answers fit')

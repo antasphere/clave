@@ -30,8 +30,21 @@ export function revealed(previous: number | undefined, next: number): boolean {
 type Running = { finish: () => void } & Partial<{
   transitionProperty: string
   animationName: string
-  effect: { getComputedTiming?: () => { iterations?: number | null } } | null
+  effect: {
+    getComputedTiming?: () => { iterations?: number | null }
+    target?: Element | null
+  } | null
 }>
+
+/** Whether an animation was started on purpose as its pane came back and
+ *  must play (PRDCT-4422): its element says so with `--reveal-keep: 1` in
+ *  the stylesheet, beside the animation (the flash on a message jumped to,
+ *  which starts in the very frame the tab it is in is shown). */
+const keptOnReveal = (animation: Running): boolean => {
+  const target = animation.effect?.target
+  if (!target || typeof getComputedStyle !== 'function') return false
+  return getComputedStyle(target).getPropertyValue('--reveal-keep').trim() === '1'
+}
 
 /** Whether a CSS keyframe animation plays a set number of times: an entry,
  *  never a loop. */
@@ -42,12 +55,13 @@ const playsOnce = (animation: Running): boolean => {
 }
 
 /** Finish every CSS transition and every one-shot keyframe animation
- *  running in `root` and under it. */
+ *  running in `root` and under it, but one its element keeps. */
 export function settle(root: { getAnimations?: (o?: { subtree: boolean }) => Running[] }): number {
   const running = root.getAnimations?.({ subtree: true }) ?? []
   let finished = 0
   for (const animation of running) {
     if (typeof animation.transitionProperty !== 'string' && !playsOnce(animation)) continue
+    if (keptOnReveal(animation)) continue
     animation.finish()
     finished++
   }

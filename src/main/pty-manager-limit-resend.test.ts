@@ -291,4 +291,49 @@ describe('the report closes when the account serves again (PRDCT-4415)', () => {
     stop()
     expect(cleared).toEqual(['s9', 's9'])
   })
+
+  it('a subagent reply leaves the report open; the session model clears it', () => {
+    const cleared: string[] = []
+    const stop = ptyManager.onLimitCleared((id) => cleared.push(id))
+    const emit = attach('s8')
+    emit(rejected('seven_day_oi'))
+    emit({
+      kind: 'event',
+      event: {
+        type: 'provider_event',
+        provider: 'claude',
+        payload: {
+          type: 'assistant',
+          parent_tool_use_id: 'toolu_1',
+          message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'ok' }] }
+        }
+      }
+    })
+    expect(cleared).toEqual([])
+    emit(served())
+    stop()
+    expect(cleared).toEqual(['s8'])
+  })
+
+  it('a restart on the same tab keeps the report open: its first served turn clears it (PRDCT-4422)', async () => {
+    const cleared: string[] = []
+    const stop = ptyManager.onLimitCleared((id) => cleared.push(id))
+    const emit = attach('s7')
+    emit(rejected('seven_day_oi'))
+    ;(ptyManager as unknown as { spawns: Map<string, unknown> }).spawns.set('s7', {
+      cwd: '/tmp',
+      options: {}
+    })
+    ptyManager.restartSpawn('s7', {})
+    await ptyManager.kill('s7')
+    const again = attach('s7')
+    again(served())
+    expect(cleared).toEqual(['s7'])
+    // A close for good forgets it: a later session under the id clears nothing.
+    again(rejected('seven_day_oi'))
+    await ptyManager.kill('s7')
+    attach('s7')(served())
+    stop()
+    expect(cleared).toEqual(['s7'])
+  })
 })

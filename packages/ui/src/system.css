@@ -4491,7 +4491,25 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   min-height: var(--ask-end-h);
 }
 .chat-ask-end > .chat-ask-actions {
+  flex-wrap: nowrap;
   padding-top: 0;
+}
+/* Why Approve is off: the count of answers owed, a click away from the
+   first of them (PRDCT-4422). */
+.chat-ask-owed {
+  padding: 0 calc(var(--spacing) * 1);
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-ask-owed:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 .chat-ask-end > .chat-ask-seat {
   top: calc(var(--ask-end-h) / 2);
@@ -4892,7 +4910,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     opacity calc(var(--default-transition-duration) * 2),
     scale var(--default-transition-duration) var(--ease-out-expo);
 }
-.chat-ask-btn:hover {
+.chat-ask-btn:hover:not(:disabled) {
   background-color: var(--key-wash-strong);
 }
 .chat-ask-btn:active:not(:disabled) {
@@ -4903,7 +4921,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--color-action-foreground);
   padding: 0 calc(var(--control-px) * 2.75);
 }
-.chat-ask-btn[data-primary='true']:hover {
+.chat-ask-btn[data-primary='true']:hover:not(:disabled) {
   background-color: var(--color-action-hover);
 }
 .chat-ask-btn:disabled {
@@ -6647,6 +6665,9 @@ button.exchange-part-who:hover {
 [data-row-index][data-jump-flash] > .chat-row {
   border-radius: var(--radius-lg);
   animation: jump-flash calc(var(--default-transition-duration) * 16) var(--ease-out-expo);
+  /* Started in the frame its tab is shown: the reveal leaves it to play
+     (settle-on-reveal.ts, PRDCT-4422). */
+  --reveal-keep: 1;
 }
 @keyframes jump-flash {
   0%,

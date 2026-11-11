@@ -168,6 +168,9 @@ export function limitLiftedBy(provider: string, payload: unknown): boolean {
   const p = payload as Record<string, unknown>
   if (provider === 'claude') {
     if (p.type !== 'assistant') return false
+    // A subagent's reply runs on its own model: a family cap the session's
+    // model hit may still stand (PRDCT-4422).
+    if (p.parent_tool_use_id != null) return false
     const message = p.message as Record<string, unknown> | undefined
     return !!message && typeof message === 'object' && message.model !== '<synthetic>'
   }

@@ -131,6 +131,12 @@ class PtyManager {
    *  and no turn served since. The provider's next word that the account
    *  serves again closes it there, whatever closed `openReports` here. */
   private reported = new Set<string>()
+  /** A report the restart now under way carries across its kill (PRDCT-4422):
+   *  the window keeps a report through a restart on the same account (a
+   *  Resume once the cap is back, an agent update), so main must still know
+   *  it is open when the new process serves its first turn. One-shot: the
+   *  kill that follows consumes it. */
+  private carriedReports = new Set<string>()
   private clearedListeners = new Set<(sessionId: string) => void>()
   /** The message a chat session's account rejected, kept from the CLI's own
    *  report to the restart that resends it on the next account. */
@@ -571,7 +577,7 @@ class PtyManager {
       this.codexThreads.delete(id)
       this.rejected.delete(id)
       this.openReports.delete(id)
-      this.reported.delete(id)
+      if (!this.carriedReports.delete(id)) this.reported.delete(id)
       // Copy offers are surfaced in the tab's own header: once the tab is
       // gone they are unreachable, so their values leave memory with it.
       dismissSessionOffers(id)
@@ -633,6 +639,8 @@ class PtyManager {
     if (!spawn) return null
     // A restart closes the report: the resend, when one is owed, rides it.
     this.openReports.delete(id)
+    // The window's report stays open across it until a turn is served.
+    if (this.reported.has(id)) this.carriedReports.add(id)
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
     // `onlyIfStopped` is the lifecycle's precondition, never a spawn option;

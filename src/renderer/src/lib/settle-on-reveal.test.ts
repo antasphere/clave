@@ -30,6 +30,28 @@ describe('a pane that comes back (PRDCT-4419)', () => {
     expect(scripted.finish).not.toHaveBeenCalled()
   })
 
+  it('leaves an animation its element keeps on reveal (PRDCT-4422)', () => {
+    const kept = { id: 'flashed row' } as unknown as Element
+    vi.stubGlobal('getComputedStyle', (el: Element) => ({
+      getPropertyValue: (name: string) => (el === kept && name === '--reveal-keep' ? ' 1' : '')
+    }))
+    const once = { getComputedTiming: () => ({ iterations: 1 }) }
+    const flash = {
+      animationName: 'jump-flash',
+      effect: { ...once, target: kept },
+      finish: vi.fn()
+    }
+    const entry = {
+      animationName: 'chat-ask-field-in',
+      effect: { ...once, target: { id: 'row' } as unknown as Element },
+      finish: vi.fn()
+    }
+    expect(settle({ getAnimations: () => [flash, entry] })).toBe(1)
+    expect(flash.finish).not.toHaveBeenCalled()
+    expect(entry.finish).toHaveBeenCalledOnce()
+    vi.unstubAllGlobals()
+  })
+
   it('does nothing where no animation can be read', () => {
     expect(settle({})).toBe(0)
   })

@@ -661,6 +661,7 @@ export function InputPrompt({
     ) as Record<string, string | null>
   const problems = problemsOf(values)
   const valid = Object.values(problems).every((p) => p === null)
+  const owed = Object.values(problems).filter((p) => p !== null).length
   // A form opens one question at a time too (PRDCT-4416): every question up
   // to the first without a fitting answer stands open, an answered one
   // staying open so its answer is seen and changed where it stands; the
@@ -1253,6 +1254,19 @@ export function InputPrompt({
             >
               {steps && !last && !review ? 'Next' : approveLabel}
             </button>
+            {/* An Approve that is off says why, and its words lead to the
+                first answer owed (PRDCT-4422). */}
+            {owed > 0 && !(steps && !last && !review) && (
+              <button
+                type="button"
+                className="chat-ask-owed"
+                onMouseDown={keepFocus}
+                disabled={busy}
+                onClick={() => send()}
+              >
+                {owed === 1 ? '1 answer to go' : `${owed} answers to go`}
+              </button>
+            )}
             {steps && step > 0 && (
               <button
                 type="button"
