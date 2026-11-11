@@ -115,6 +115,28 @@ final class ChatLedgerTests: XCTestCase {
     XCTAssertNil(values[legacyUnknownSendsKey])
   }
 
+  /// C9: a move whose write of one machine's ledger is refused once throws and leaves the old list
+  /// as it was; a second move moves that machine's record, and each record is present once.
+  func testAMoveWhoseMachineLedgerWriteFailsKeepsTheOldListAndTheNextMoveMovesTheRecordOnce() async throws {
+    let legacy = [record("m1", "message-1"), record("m2", "message-2")]
+    let raw = try encodeStored(legacy)
+    let store = WriteFailingStore([legacyUnknownSendsKey: raw])
+    await store.failNextWrite(of: UnknownSends.key(for: "m2"))
+    do {
+      try await migrateLegacyUnknownSends(store)
+      XCTFail("m2's ledger write did not fail")
+    } catch is WriteRefused {}
+    let kept = await store.values[legacyUnknownSendsKey]
+    XCTAssertEqual(kept, raw, "the old list is unchanged")
+    try await migrateLegacyUnknownSends(store)
+    let one = try await UnknownSends(store: store, machineId: "m1").list()
+    let two = try await UnknownSends(store: store, machineId: "m2").list()
+    XCTAssertEqual(one, [legacy[0]], "m1's record, present once")
+    XCTAssertEqual(two, [legacy[1]], "m2's record moved, present once")
+    let values = await store.values
+    XCTAssertNil(values[legacyUnknownSendsKey], "the old list is gone")
+  }
+
   // MARK: - A move whose last write failed, then a second move (N1)
 
   private let legacyId = "m-legacy-0000000000000001"
