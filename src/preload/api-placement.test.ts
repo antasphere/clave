@@ -73,7 +73,6 @@ const members = (): Member[] => {
 const UNREADABLE_TAKES_PLACE = new Set([
   'sessionsControl',
   'sessionsChangeWork',
-  'setSessionClaudeSessionId',
   'windowMoveSessions',
   'windowMoveGroup',
   'pluginsInvokeAction',

@@ -167,21 +167,27 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   sessionsReportState: refused(
     "the state a pane reports is this Mac's server's: a server tab's is dropped"
   ),
-  historyStamp: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
-  historyRestamp: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
-  historyList: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
+  historyStamp: localBecause("this Mac's History ledger; a server keeps its own (PRDCT-4321)"),
+  historyRestamp: localBecause("this Mac's History ledger; a server keeps its own (PRDCT-4321)"),
+  historyList: localBecause(
+    "this Mac's History, with each connected server's own laid in by this Mac (PRDCT-4321)"
+  ),
   historyConversation: wrongForServerTab(
-    "reads a transcript under the cwd on this Mac's disk; PRDCT-4321, the History lane"
+    "reads a transcript under the cwd on this Mac's disk: a server tab's is on the server (PRDCT-4334)"
   ),
   scrollSessionToText: wrongForServerTab(
     "scrolls this Mac's pane by id: a server tab's pane is not found (PRDCT-4334)"
   ),
-  historySearch: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
-  historySearchCancel: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
-  onHistorySearchHits: localBecause("this Mac's History index; PRDCT-4321, the History lane"),
-  setSessionClaudeSessionId: wrongForServerTab(
-    "a server terminal's /clear is recorded on this Mac's record (PRDCT-4334)"
+  historySearch: localBecause(
+    "this Mac's transcripts, and each server asked for its own conversations (PRDCT-4321)"
   ),
+  historySearchCancel: localBecause(
+    'cancels a search this Mac runs, the parts a server runs included (PRDCT-4321)'
+  ),
+  onHistorySearchHits: localBecause(
+    "the hits of a search this Mac runs, a server's included (PRDCT-4321)"
+  ),
+  setSessionClaudeSessionId: routed,
   secretList: local,
   secretSubmit: local,
   secretDismiss: local,
