@@ -8,11 +8,15 @@ import { until } from './harness.mjs'
 
 /* Folio reads a page in the ElevenLabs voice of the server the tab runs on
    (PRDCT-4411), on the real app with the echo adapter:
-   - the key pasted and a voice chosen on this Mac's Integrations page, "Read
-     it to me" prepares the spoken version, asks the server for its audio and
-     plays it through an audio element; the control says "Reading with
-     ElevenLabs"; ElevenLabs was asked with the pasted key, in its header, for
-     the spoken text;
+   - no key yet: the system voice reads the page and the pane remembers the
+     server has no ElevenLabs, for NO_VOICE_MEMORY_MS (30 s) only: a key and a
+     voice set meanwhile (through the window's bridge, so the pane stays
+     mounted and the Integrations page's store never tells it) are used by
+     the first page read once the memory has run out;
+   - with the key and the voice set, "Read it to me" prepares the spoken
+     version, asks the server for its audio and plays it through an audio
+     element; the control says "Reading with ElevenLabs"; ElevenLabs was
+     asked with the key, in its header, for the spoken text;
    - ElevenLabs answering 402 (the credits spent): the system voice reads the
      page and the control says why.
    ElevenLabs is a stub on a local port (`CLAVE_ELEVENLABS_BASE_URL`) that
@@ -20,7 +24,8 @@ import { until } from './harness.mjs'
    playback is stubbed (`play` resolves and `ended` fires 100 ms later) and so
    is the system voice; both record what they were asked. The spoken
    rendering comes from CLAVE_E2E_SPOKEN_REPLY. Pinned in-process: the
-   Integrations page is this Mac's, the same process that speaks. */
+   integration set is this Mac's, the same process that speaks. The paste on
+   the Integrations page itself is settings-integrations.spec.mjs's. */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SILENCE = readFileSync(path.join(HERE, 'fixtures', 'silence-1s.mp3'))
@@ -125,44 +130,15 @@ async function stubPlayback(win) {
   })
 }
 
-async function pick(win, select, name) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await select.click()
-    const item = win.getByRole('menuitem', { name })
-    const offered = await item.waitFor({ state: 'visible', timeout: 1500 }).then(
-      () => true,
-      () => false
-    )
-    if (offered) {
-      await item.click({ timeout: 3000 }).catch(() => undefined)
-      return
-    }
-    await win.keyboard.press('Escape')
-  }
-  throw new Error(`the select never offered ${String(name)}`)
-}
-
-/** The key pasted and a voice chosen on this Mac's Integrations page. */
-async function setUpVoice(win) {
-  await win.locator('.sidebar-footer-btn[aria-label="Settings"]').click()
-  await win.locator('[data-settings-nav-row="integrations"]').click()
-  const card = win.locator('[data-settings-page="integrations"] [data-integration="elevenlabs"]')
-  await card.waitFor()
-  await card.locator('[data-testid="elevenlabs-key-input"]').fill(GOOD)
-  await card.locator('[data-testid="elevenlabs-key-save"]').click()
-  const select = card.locator('[data-settings-select="elevenlabs-voice"]')
-  await select.waitFor()
-  await until(async () => !(await select.isDisabled()))
-  await pick(win, select, /^Basil/)
-  await until(async () => (await select.getAttribute('data-value')) === 'voice-b')
-  await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
-}
-
 async function ask(view, text) {
   const input = view.locator('textarea[aria-label="Message"]')
   await input.fill(text)
   await input.press('Enter')
 }
+
+/** What the pane remembers of a server without ElevenLabs, in ms
+ *  (`NO_VOICE_MEMORY_MS` of plugins/chat-view/src/lab/read-aloud.ts). */
+const NO_VOICE_MEMORY_MS = 30_000
 
 export async function run(t) {
   const stub = await startStub()
@@ -179,10 +155,53 @@ export async function run(t) {
   )
   const { win } = chat
   try {
-    await setUpVoice(win)
     const view = win.locator('[data-testid="folio-view"]')
     await view.locator('textarea[aria-label="Message"]').waitFor()
     await stubPlayback(win)
+
+    // ── (0) No key: the system voice reads, and the pane remembers, briefly ──
+    await ask(view, 'what is the weather like in namur')
+    const first = view.locator('.folio-foot .folio-read')
+    await until(async () => ((await first.count()) ? true : null))
+    await view.getByRole('button', { name: 'Read it to me' }).click()
+    const unsetAt = Date.now()
+    const systemRead = await until(
+      async () => {
+        const said = await win.evaluate(() => window.__spoken)
+        return said.length ? said : null
+      },
+      { tries: 100, gapMs: 50 }
+    )
+    t.check(
+      'without a key the system voice reads the page',
+      JSON.stringify(systemRead) === '["Spoken text."]',
+      systemRead
+    )
+    const unsetLine = await until(async () => {
+      const seen = await win.evaluate(() => window.__titles)
+      return seen.find((line) => line.includes('no ElevenLabs on this server')) ?? null
+    })
+    t.check('the control says there is no ElevenLabs', !!unsetLine, unsetLine)
+    t.equal('ElevenLabs was not asked to speak', stub.seen.length, 0)
+    await until(async () => ((await first.getAttribute('data-phase')) === null ? true : null), {
+      tries: 100,
+      gapMs: 50
+    })
+    // A key pasted and a voice chosen, the pane still open; then the memory
+    // runs out.
+    await win.evaluate(
+      async ([key]) => {
+        await window.electronAPI.elevenLabsSetKey(key)
+        await window.electronAPI.elevenLabsSetVoice('voice-b', 'Basil', undefined)
+      },
+      [GOOD]
+    )
+    const left = NO_VOICE_MEMORY_MS + 1_000 - (Date.now() - unsetAt)
+    if (left > 0) await win.waitForTimeout(left)
+    await win.evaluate(() => {
+      window.__spoken = []
+      window.__titles = []
+    })
 
     // ── (a) The server's ElevenLabs voice reads the page ──
     await ask(view, 'tell me about the weather in brussels please')
@@ -217,7 +236,11 @@ export async function run(t) {
     const speaks = stub.seen.filter(
       (r) => r.method === 'POST' && r.pathname === '/v1/text-to-speech/voice-b'
     )
-    t.check('ElevenLabs was asked once, for the chosen voice', speaks.length === 1, stub.seen)
+    t.check(
+      'past the memory, ElevenLabs was asked once, for the chosen voice',
+      speaks.length === 1,
+      stub.seen
+    )
     t.equal('for the spoken text', speaks[0]?.body?.text, 'Spoken text.')
     t.equal('with the pasted key, in its header', speaks[0]?.key, GOOD)
     t.equal('on the chosen model', speaks[0]?.body?.model_id, 'eleven_flash_v2_5')

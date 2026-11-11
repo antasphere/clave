@@ -3,6 +3,7 @@ import {
   ELEVENLABS_REFUSED,
   ELEVENLABS_UNREACHABLE,
   elevenLabsBaseUrl,
+  elevenLabsBaseUrlOverride,
   elevenLabsIntegration
 } from './integrations/elevenlabs'
 import { isElevenLabsModelId, type ElevenLabsModelId } from '../shared/elevenlabs'
@@ -43,6 +44,10 @@ export interface SpeechIntegration {
 export interface HostSpeechOptions {
   integration?: SpeechIntegration
   baseUrl?: () => string
+  /** The stub the end-to-end harness put in place of the service, whose own
+   *  preview files are fetched too (`elevenLabsBaseUrlOverride`: null in any
+   *  other run). */
+  harnessBaseUrl?: () => string | null
   now?: () => number
 }
 
@@ -64,6 +69,28 @@ const not = (reason: SpeechFailureReason, error: string): SpeakResult => ({
 
 /** A voice id as the service names it; anything else never reaches a URL. */
 const VOICE_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/** The hosts a voice's preview sample is fetched from: the service's own,
+ *  and the public bucket its previews are kept in. */
+const PREVIEW_HOSTS = new Set(['api.elevenlabs.io', 'elevenlabs.io', 'storage.googleapis.com'])
+
+/** Whether a preview URL the voice answer names is one of the service's own
+ *  files: https, on its default port, without credentials, on an ElevenLabs
+ *  host (or a subdomain of elevenlabs.io) or the public preview bucket. Any
+ *  other (plain http, a loopback or private address, another host) is never
+ *  fetched. Pure. */
+export function allowedPreviewUrl(url: string): boolean {
+  let where: URL
+  try {
+    where = new URL(url)
+  } catch {
+    return false
+  }
+  if (where.protocol !== 'https:' || where.port !== '') return false
+  if (where.username || where.password) return false
+  const host = where.hostname.toLowerCase()
+  return PREVIEW_HOSTS.has(host) || host.endsWith('.elevenlabs.io')
+}
 
 /** Whether a refusal's body says the account's credits are spent. */
 function quotaExceeded(body: string): boolean {
@@ -117,6 +144,17 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
   const integration = options.integration ?? elevenLabsIntegration
   const base = (): string => (options.baseUrl ?? elevenLabsBaseUrl)().replace(/\/+$/, '')
   const now = options.now ?? Date.now
+  const harnessBase = options.harnessBaseUrl ?? elevenLabsBaseUrlOverride
+  /** A preview URL on the harness's stub, under the harness only. */
+  const onHarness = (where: URL): boolean => {
+    const stub = harnessBase()
+    if (!stub) return false
+    try {
+      return new URL(stub).origin === where.origin
+    } catch {
+      return false
+    }
+  }
   let refreshedAt = Number.NEGATIVE_INFINITY
   /** The Integrations card shows the credits spent: the account is read
    *  again after a speak, once a minute at most. */
@@ -201,12 +239,16 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
       } catch {
         return not('failed', SPEECH_NO_PREVIEW)
       }
-      if (where.protocol !== 'https:' && where.protocol !== 'http:')
+      if (!allowedPreviewUrl(where.toString()) && !onHarness(where))
         return not('failed', SPEECH_NO_PREVIEW)
       let sample: Answer
       try {
-        // The sample is the service's public file: the key is not sent.
-        sample = await timed(where.toString(), { headers: { accept: 'audio/mpeg' } })
+        // The sample is the service's public file: the key is not sent, and
+        // a redirect (to anywhere else) is a failure, never followed.
+        sample = await timed(where.toString(), {
+          headers: { accept: 'audio/mpeg' },
+          redirect: 'error'
+        })
       } catch {
         return not('unreachable', ELEVENLABS_UNREACHABLE)
       }

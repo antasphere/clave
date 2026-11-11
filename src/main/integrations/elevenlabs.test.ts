@@ -8,7 +8,12 @@ vi.mock('electron', () => {
 
 import { electronTestPorts, standaloneTestPorts } from '../ports/testing'
 import type { SettingsPorts } from '../ports/registry'
-import { ElevenLabsIntegration, INTEGRATIONS_FILE } from './elevenlabs'
+import {
+  ElevenLabsIntegration,
+  elevenLabsBaseUrl,
+  elevenLabsBaseUrlOverride,
+  INTEGRATIONS_FILE
+} from './elevenlabs'
 
 // The ElevenLabs integration on the host (PRDCT-4410): the key is sealed by
 // the machine's secret port and appears in no document and no status; the
@@ -18,7 +23,10 @@ import { ElevenLabsIntegration, INTEGRATIONS_FILE } from './elevenlabs'
 const KEY = 'xi-unit-test-key-0001'
 const BASE = 'http://elevenlabs.test'
 
-type Answer = { status: number; body?: unknown } | 'throw'
+type Answer =
+  | { status: number; body?: unknown }
+  | 'throw'
+  | Promise<{ status: number; body?: unknown }>
 let answers: Map<string, Answer[]>
 let requests: { url: string; key: string | null }[]
 
@@ -30,7 +38,8 @@ function stubFetch(): void {
       requests.push({ url: input, key: headers.get('xi-api-key') })
       const pathname = new URL(input).pathname
       const queue = answers.get(pathname) ?? []
-      const answer = queue.length > 1 ? queue.shift()! : queue[0]
+      const queued = queue.length > 1 ? queue.shift()! : queue[0]
+      const answer = queued instanceof Promise ? await queued : queued
       if (!answer || answer === 'throw') throw new TypeError('fetch failed')
       return new Response(JSON.stringify(answer.body ?? {}), {
         status: answer.status,
@@ -202,6 +211,146 @@ describe.each([
     expect(await integration.openKey()).toBe('xi-unit-test-key-0002')
   })
 
+  // ── A check in flight never undoes a Remove or a Replace (verifier round 2) ──
+
+  /** An account answer held until the test lets it go. */
+  function heldSubscription(): { release: () => void; asked: Promise<void> } {
+    let release!: () => void
+    const held = new Promise<{ status: number; body?: unknown }>((resolve) => {
+      release = () => resolve({ status: 200, body: { ...subscription.body, tier: 'held' } })
+    })
+    let asked!: () => void
+    const wasAsked = new Promise<void>((resolve) => (asked = resolve))
+    answers.set('/v1/user/subscription', [held])
+    const before = requests.length
+    const poll = setInterval(() => {
+      if (requests.length > before) {
+        clearInterval(poll)
+        asked()
+      }
+    }, 1)
+    return { release, asked: wasAsked }
+  }
+
+  const sealedOf = (): string | undefined => {
+    const text = fs.existsSync(path.join(ports.dir, INTEGRATIONS_FILE)) ? fileText(ports) : '{}'
+    return (JSON.parse(text) as { elevenLabs?: { sealed: string } }).elevenLabs?.sealed
+  }
+
+  it('Remove during a check leaves no entry, and the check writes nothing back', async () => {
+    const discard = vi.spyOn(ports.secrets, 'discard')
+    await integration.setKey(KEY)
+    const first = sealedOf()!
+    const hold = heldSubscription()
+    const checking = integration.check()
+    await hold.asked
+    const removed = await integration.removeKey()
+    expect(removed.configured).toBe(false)
+    hold.release()
+    const checked = await checking
+    expect(checked.configured).toBe(false)
+    expect(integration.status().configured).toBe(false)
+    expect(sealedOf()).toBeUndefined()
+    expect(await integration.openKey()).toBeNull()
+    expect(discard).toHaveBeenCalledWith(first)
+    if ('security' in ports)
+      expect((ports as { security: { items: Map<string, string> } }).security.items.size).toBe(0)
+  })
+
+  it('Replace during a check leaves the new key, the old handle discarded', async () => {
+    const discard = vi.spyOn(ports.secrets, 'discard')
+    await integration.setKey(KEY)
+    const first = sealedOf()!
+    const hold = heldSubscription()
+    const checking = integration.check()
+    await hold.asked
+    answers.set('/v1/user/subscription', [subscription])
+    await integration.setKey('xi-unit-test-key-0002')
+    const second = sealedOf()!
+    expect(second).not.toBe(first)
+    hold.release()
+    const checked = await checking
+    expect(checked.tier).toBe('creator')
+    expect(integration.status().tier).toBe('creator')
+    expect(sealedOf()).toBe(second)
+    expect(await integration.openKey()).toBe('xi-unit-test-key-0002')
+    expect(discard).toHaveBeenCalledWith(first)
+    expect(discard).not.toHaveBeenCalledWith(second)
+    if ('security' in ports)
+      expect((ports as { security: { items: Map<string, string> } }).security.items.size).toBe(1)
+  })
+
+  it('the key replaced during a setKey check: the first setKey answers the new entry', async () => {
+    const hold = heldSubscription()
+    const saving = integration.setKey(KEY)
+    await hold.asked
+    answers.set('/v1/user/subscription', [subscription])
+    await integration.setKey('xi-unit-test-key-0002')
+    hold.release()
+    await saving
+    expect(await integration.openKey()).toBe('xi-unit-test-key-0002')
+  })
+
+  it('a check that returns to an unchanged entry records its fields, and keeps a voice set meanwhile', async () => {
+    answers.set('/v1/user/subscription', [{ status: 500 }])
+    await integration.setKey(KEY)
+    expect(integration.status().lastError).toBe('ElevenLabs answered 500.')
+    const hold = heldSubscription()
+    const checking = integration.check()
+    await hold.asked
+    await integration.setVoice('v1', 'Voice 1')
+    hold.release()
+    const status = await checking
+    expect(status).toMatchObject({
+      configured: true,
+      tier: 'held',
+      charactersUsed: 1200,
+      charactersLimit: 100000,
+      lastError: null,
+      checkedAt: 1000,
+      voiceId: 'v1'
+    })
+    expect(integration.status()).toEqual(status)
+  })
+
+  it('writes one after the other: a write waits for the one before it to finish', async () => {
+    await integration.setKey(KEY)
+    const discard = ports.secrets.discard.bind(ports.secrets)
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.spyOn(ports.secrets, 'discard').mockImplementationOnce(async (sealed) => {
+      await held
+      await discard(sealed)
+    })
+    const removing = integration.removeKey()
+    const setting = integration.setKey('xi-unit-test-key-0002')
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0))
+    // The removal is still discarding: the new key is not written yet.
+    expect(sealedOf()).toBeUndefined()
+    release()
+    await removing
+    await setting
+    expect(await integration.openKey()).toBe('xi-unit-test-key-0002')
+  })
+
+  it('a save that fails after sealing discards the new handle and keeps the previous entry (I05)', async () => {
+    await integration.setKey(KEY)
+    const before = fileText(ports)
+    const discard = vi.spyOn(ports.secrets, 'discard')
+    const seal = vi.spyOn(ports.secrets, 'seal')
+    vi.spyOn(ports.storage, 'write').mockImplementation(() => {
+      throw new Error('disk full')
+    })
+    await expect(integration.setKey('xi-unit-test-key-0002')).rejects.toThrow('disk full')
+    const sealed = await seal.mock.results[0].value
+    expect(discard).toHaveBeenCalledWith(sealed)
+    expect(discard).toHaveBeenCalledTimes(1)
+    expect(fileText(ports)).toBe(before)
+    expect(await integration.openKey()).toBe(KEY)
+    if ('security' in ports)
+      expect((ports as { security: { items: Map<string, string> } }).security.items.size).toBe(1)
+  })
+
   it('emits the status after each write, never the key', async () => {
     const seen: string[] = []
     integration.onChange((status) => seen.push(JSON.stringify(status)))
@@ -243,12 +392,33 @@ describe('refusals', () => {
     })
   })
 
-  it('the base URL comes from the environment by default', async () => {
+  it('the base URL variable is ignored outside the test harness (verifier round 2)', async () => {
     vi.stubEnv('CLAVE_ELEVENLABS_BASE_URL', 'http://from-env.test/')
     try {
+      expect(elevenLabsBaseUrl()).toBe('https://api.elevenlabs.io')
       const integration = new ElevenLabsIntegration(electronTestPorts())
       await integration.setKey(KEY)
-      expect(requests[0].url).toBe('http://from-env.test/v1/user/subscription')
+      expect(requests[0].url).toBe('https://api.elevenlabs.io/v1/user/subscription')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('the base URL variable is honoured under the harness, or with the explicit allow', async () => {
+    const named = { CLAVE_ELEVENLABS_BASE_URL: ' http://from-env.test/ ' }
+    expect(elevenLabsBaseUrlOverride(named, false)).toBeNull()
+    expect(elevenLabsBaseUrlOverride(named, true)).toBe('http://from-env.test/')
+    expect(
+      elevenLabsBaseUrlOverride({ ...named, CLAVE_ELEVENLABS_ALLOW_BASE_URL: '1' }, false)
+    ).toBe('http://from-env.test/')
+    expect(
+      elevenLabsBaseUrlOverride({ ...named, CLAVE_ELEVENLABS_ALLOW_BASE_URL: 'true' }, false)
+    ).toBeNull()
+    expect(elevenLabsBaseUrlOverride({}, true)).toBeNull()
+    vi.stubEnv('CLAVE_ELEVENLABS_BASE_URL', 'http://from-env.test/')
+    vi.stubEnv('CLAVE_ELEVENLABS_ALLOW_BASE_URL', '1')
+    try {
+      expect(elevenLabsBaseUrl()).toBe('http://from-env.test/')
     } finally {
       vi.unstubAllEnvs()
     }

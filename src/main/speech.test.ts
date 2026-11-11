@@ -10,17 +10,25 @@ vi.mock('./exchange-digest', () => ({
   UNKNOWN_SESSION_ERROR: 'This server has no record of that session'
 }))
 
-import { hostSpeech, speechRefusal, type SpeechIntegration } from './speech'
+import {
+  allowedPreviewUrl,
+  hostSpeech,
+  SPEECH_NO_PREVIEW,
+  speechRefusal,
+  type SpeechIntegration
+} from './speech'
 
 const KEY = 'xi-invented-key-0000'
 const BASE = 'http://elevenlabs.test'
 const AUDIO = Buffer.from('ID3-fake-mp3-bytes')
+const PREVIEW = 'https://storage.googleapis.com/eleven-public-prod/voice-a.mp3'
 
 interface Seen {
   url: string
   method: string
   headers: Record<string, string>
   body: unknown
+  redirect?: RequestRedirect
 }
 
 let seen: Seen[]
@@ -45,11 +53,13 @@ function integration(
 
 const host = (
   over?: Parameters<typeof integration>[0],
-  known = true
+  known = true,
+  harness: string | null = null
 ): ReturnType<typeof hostSpeech> =>
   hostSpeech((id) => (known && id === 's1' ? {} : null), {
     integration: integration(over),
     baseUrl: () => `${BASE}/`,
+    harnessBaseUrl: () => harness,
     now: () => clock
   })
 
@@ -63,7 +73,8 @@ beforeEach(() => {
       url,
       method: init.method ?? 'GET',
       headers: { ...(init.headers as Record<string, string>) },
-      body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined
+      body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+      redirect: init.redirect
     })
     return answer(url)
   })
@@ -137,6 +148,14 @@ describe('speak', () => {
       expect(result).toMatchObject({ error: `ElevenLabs answered ${status}.` })
   })
 
+  it('a stored voice id that is not a voice id makes no request (verifier round 2, S02)', async () => {
+    for (const voiceId of ['../../v1/user voice', '../x', 'a/b', 'a b', 'x'.repeat(65)]) {
+      const result = await host({ voiceId }).speak({ sessionId: 's1', text: 'a' })
+      expect(result).toMatchObject({ ok: false, reason: 'failed' })
+    }
+    expect(seen).toEqual([])
+  })
+
   it('a thrown fetch is unreachable, without the key', async () => {
     vi.stubGlobal('fetch', async () => {
       throw new Error(`connect ECONNREFUSED with ${KEY}`)
@@ -173,7 +192,7 @@ describe('preview', () => {
   it("reads the voice's preview url with the key, then the sample without it", async () => {
     answer = (url) =>
       url.endsWith('/v1/voices/voice-a')
-        ? Response.json({ voice_id: 'voice-a', preview_url: 'https://cdn.test/a.mp3' })
+        ? Response.json({ voice_id: 'voice-a', preview_url: PREVIEW })
         : new Response(AUDIO, { status: 200 })
     const result = await host().preview('voice-a')
     expect(result).toEqual({
@@ -184,8 +203,46 @@ describe('preview', () => {
     })
     expect(seen.map((s) => [s.url, s.headers['xi-api-key']])).toEqual([
       [`${BASE}/v1/voices/voice-a`, KEY],
-      ['https://cdn.test/a.mp3', undefined]
+      [PREVIEW, undefined]
     ])
+    expect(seen[1].redirect).toBe('error')
+  })
+
+  it.each([
+    'http://127.0.0.1:1/admin/secret',
+    'https://10.0.0.1/x',
+    'https://evil.example/x',
+    'http://storage.googleapis.com/eleven-public-prod/x.mp3',
+    'https://localhost/x.mp3'
+  ])('never fetches a preview at %s (verifier round 2)', async (url) => {
+    answer = (at) =>
+      at.endsWith('/v1/voices/voice-a')
+        ? Response.json({ voice_id: 'voice-a', preview_url: url })
+        : new Response(AUDIO, { status: 200 })
+    expect(await host().preview('voice-a')).toEqual({
+      ok: false,
+      error: SPEECH_NO_PREVIEW,
+      reason: 'failed'
+    })
+    expect(seen.map((s) => s.url)).toEqual([`${BASE}/v1/voices/voice-a`])
+  })
+
+  it("fetches the harness stub's own preview, under the harness only", async () => {
+    const stubPreview = `${BASE}/previews/a.mp3`
+    answer = (at) =>
+      at.endsWith('/v1/voices/voice-a')
+        ? Response.json({ voice_id: 'voice-a', preview_url: stubPreview })
+        : new Response(AUDIO, { status: 200 })
+    expect(await host(undefined, true, BASE).preview('voice-a')).toMatchObject({ ok: true })
+    expect(seen.at(-1)?.url).toBe(stubPreview)
+    expect(await host(undefined, true, null).preview('voice-a')).toMatchObject({
+      ok: false,
+      error: SPEECH_NO_PREVIEW
+    })
+    expect(await host(undefined, true, 'http://other.test').preview('voice-a')).toMatchObject({
+      ok: false,
+      error: SPEECH_NO_PREVIEW
+    })
   })
 
   it('a voice with no preview is failed; no key is no-integration; a bad id never calls', async () => {
@@ -198,6 +255,28 @@ describe('preview', () => {
     const before = seen.length
     expect(await host().preview('../x')).toMatchObject({ ok: false, reason: 'failed' })
     expect(seen.length).toBe(before)
+  })
+})
+
+describe('allowedPreviewUrl', () => {
+  it.each([
+    ['http://127.0.0.1:1/admin/secret', false],
+    ['https://10.0.0.1/x', false],
+    ['https://evil.example/x', false],
+    ['https://storage.googleapis.com/eleven-public-prod/x.mp3', true],
+    ['https://api.elevenlabs.io/v1/x.mp3', true],
+    ['https://elevenlabs.io/x.mp3', true],
+    ['https://cdn.elevenlabs.io/x.mp3', true],
+    ['https://elevenlabs.io.evil.example/x.mp3', false],
+    ['https://notelevenlabs.io/x.mp3', false],
+    ['http://api.elevenlabs.io/x.mp3', false],
+    ['https://api.elevenlabs.io:8443/x.mp3', false],
+    ['https://user:pw@api.elevenlabs.io/x.mp3', false],
+    ['https://storage.googleapis.com.evil.example/x.mp3', false],
+    ['not a url', false],
+    ['', false]
+  ] as const)('%s → %s', (url, allowed) => {
+    expect(allowedPreviewUrl(url)).toBe(allowed)
   })
 })
 

@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { ElevenLabsIntegration } from '../src/main/integrations/elevenlabs'
+import { ELEVENLABS_API, ElevenLabsIntegration } from '../src/main/integrations/elevenlabs'
 import { fileSecrets } from '../src/main/ports/secrets'
 import { fileStorage } from '../src/main/ports/storage'
 import { hostSpeech } from '../src/main/speech'
@@ -42,10 +42,16 @@ if (model !== undefined && !isElevenLabsModelId(model)) {
 }
 const text = readFileSync(file, 'utf8').trim()
 const dir = mkdtempSync(path.join(tmpdir(), 'clave-speak-'))
-const integration = new ElevenLabsIntegration({
-  storage: fileStorage(dir),
-  secrets: fileSecrets({ directory: path.join(dir, 'secrets') })
-})
+// The real service, named here: the script never reads a base URL from the
+// environment (the integration honours one only under the test harness).
+const baseUrl = (): string => ELEVENLABS_API
+const integration = new ElevenLabsIntegration(
+  {
+    storage: fileStorage(dir),
+    secrets: fileSecrets({ directory: path.join(dir, 'secrets') })
+  },
+  { baseUrl }
+)
 
 async function main(): Promise<void> {
   const status = await integration.setKey(key!)
@@ -70,7 +76,7 @@ async function main(): Promise<void> {
   if (!voice) throw new Error('no voice to speak with')
   await integration.setVoice(voice.voiceId, voice.name, model)
   console.log(`speaking as ${voice.name} with ${model ?? integration.status().modelId}`)
-  const speech = hostSpeech(() => ({}), { integration })
+  const speech = hostSpeech(() => ({}), { integration, baseUrl })
   const parts = speechChunks(text, 2_400)
   const audio: Buffer[] = []
   let charged = 0

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
 import type { SpeakResult, SpeechFailureReason } from '../../../../src/shared/speech'
+import {
+  useIntegrationsStore,
+  type MachineIntegrations
+} from '../../../../src/renderer/src/store/integrations-store'
 import type { DigestFailure } from '../digest'
 import { AudioQueue, speechParts } from './audio'
 import { speechChunks } from './speech'
@@ -90,6 +94,49 @@ export function voiceNote(why: VoiceWhy, stopped = false): string {
     : `Read with the system voice: ${why.words}`
 }
 
+/** How long a pane remembers that its server has no ElevenLabs to offer (no
+ *  key, no voice): long enough that a page after page is not asked again
+ *  each time, short enough that a key pasted meanwhile is used soon. The
+ *  memory is dropped at once when this window sees the integrations change
+ *  (`useIntegrationsStore`, the Integrations page's). */
+export const NO_VOICE_MEMORY_MS = 30_000
+
+/** What a pane remembers of a server that had no ElevenLabs to offer. */
+export interface NoVoiceMemory {
+  reason: SpeechFailureReason
+  at: number
+}
+
+/** The answers a pane remembers: the server has nothing to offer yet. */
+export const rememberedReasons: ReadonlySet<SpeechFailureReason> = new Set([
+  'no-integration',
+  'no-voice'
+])
+
+/** The reason remembered for a tab's server, while the memory holds; null
+ *  when ElevenLabs is to be asked again. Pure. */
+export function rememberedVoiceReason(
+  memory: NoVoiceMemory | undefined,
+  now: number
+): SpeechFailureReason | null {
+  if (!memory) return null
+  const age = now - memory.at
+  return age >= 0 && age < NO_VOICE_MEMORY_MS ? memory.reason : null
+}
+
+/** Whether any machine's ElevenLabs status changed between two states of
+ *  the integrations store (a key saved or removed, a voice chosen). Pure. */
+export function integrationsChanged(
+  before: Record<string, MachineIntegrations>,
+  after: Record<string, MachineIntegrations>
+): boolean {
+  if (before === after) return false
+  const machines = new Set([...Object.keys(before), ...Object.keys(after)])
+  for (const machine of machines)
+    if ((before[machine]?.elevenLabs ?? null) !== (after[machine]?.elevenLabs ?? null)) return true
+  return false
+}
+
 /** Whose reading the one voice is speaking: a pane's own token, so a pane
  *  cancels the voice only while the reading is its own, never another
  *  pane's that took the voice over. `ownerStop` stops the owner's reading,
@@ -130,9 +177,18 @@ export function useReadAloud(source: ReadSource): {
   // This pane's token: the voice is ours while `voiceOwner` is it.
   const me = useRef<symbol>(Symbol('folio-voice'))
   const queue = useRef<AudioQueue | null>(null)
-  // The tabs whose server said it has no ElevenLabs, for the pane's life: a
-  // server without a key is not asked again on every page.
-  const unset = useRef(new Map<string, SpeechFailureReason>())
+  // The tabs whose server said it has no ElevenLabs (no key, no voice), for
+  // NO_VOICE_MEMORY_MS: a server without a key is not asked again on every
+  // page, and a key pasted meanwhile is used soon after.
+  const unset = useRef(new Map<string, NoVoiceMemory>())
+  // A key or a voice changed on the Integrations page: ask again at once.
+  useEffect(
+    () =>
+      useIntegrationsStore.subscribe((state, previous) => {
+        if (integrationsChanged(previous.byMachine, state.byMachine)) unset.current.clear()
+      }),
+    []
+  )
 
   const note = useCallback((key: string, line: string | null): void => {
     setNotes((now) => {
@@ -264,8 +320,9 @@ export function useReadAloud(source: ReadSource): {
           else delete next[key]
           return next
         })
-        const remembered = unset.current.get(sessionId)
+        const remembered = rememberedVoiceReason(unset.current.get(sessionId), Date.now())
         if (remembered) return speakSystem(text, fallback, voiceWhy(remembered))
+        unset.current.delete(sessionId)
         const parts = speechParts(text)
         if (!parts.length) return done()
         if (!audioVoice)
@@ -276,7 +333,8 @@ export function useReadAloud(source: ReadSource): {
         void first.then((spoken) => {
           if (!current()) return
           if (spoken.ok) return speakElevenLabs(parts, first, fallback)
-          if (spoken.reason === 'no-integration') unset.current.set(sessionId, spoken.reason)
+          if (spoken.reason && rememberedReasons.has(spoken.reason))
+            unset.current.set(sessionId, { reason: spoken.reason, at: Date.now() })
           speakSystem(text, fallback, voiceWhy(spoken.reason))
         })
       }

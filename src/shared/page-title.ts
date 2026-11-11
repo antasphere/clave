@@ -82,9 +82,14 @@ const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [
 ]
 /** Words a reply opens with when it is talking, not titling (the tab title's
  *  list, `src/main/helpers/title.ts`, less "The": a sentence-case title may
- *  open with it, "The login redirect loop"), and their French. */
+ *  open with it, "The login redirect loop"), the fillers a person's own
+ *  message opens with ("ok so fix the login"), and their French; in any
+ *  case. The price, accepted: a real title that opens with one of them is
+ *  refused too ("Okay to deploy on Friday", "So long, Berlin") and the page
+ *  keeps its fallback name. A word joined by a hyphen is not the filler
+ *  ("Well-known endpoints"). */
 const TALKING =
-  /^(?:I|I'm|I'll|I've|This|You|It|We|My|Let|Let's|Here|Sure|Okay|Je|J['’]ai|Je voudrais|Nous|Voici|Il faut|Peux-tu|Pouvez-vous|D['’]accord|Bien sûr)(?![\p{L}\p{N}_])/u
+  /^(?:I|I'm|I'll|I've|This|You|It|We|My|Let|Let's|Here|Sure|Ok|Okay|So|Well|Hmm|Yes|Yeah|Alright|Je|J['’]ai|Je voudrais|Nous|Voici|Il faut|Peux-tu|Pouvez-vous|D['’]accord|Bien sûr)(?![\p{L}\p{N}_-])/iu
 const MAX_PAGE_TITLE_WORDS = 12
 const MAX_PAGE_TITLE_CHARS = 72
 

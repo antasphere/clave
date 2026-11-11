@@ -41,9 +41,12 @@ const VOICES = [
   }
 ]
 
-/** The stub: the account for the good key, 401 for any other; two voices. */
+/** The stub: the account for the good key, 401 for any other; two voices.
+ *  While `held` is set, the account answers wait until `release()`. */
 function startStub() {
   const seen = []
+  const waiting = []
+  const state = { held: false }
   const server = createServer((req, res) => {
     const key = req.headers['xi-api-key']
     const { pathname } = new URL(req.url, 'http://stub')
@@ -51,13 +54,17 @@ function startStub() {
     const json = (status, body) =>
       res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
     if (key !== GOOD) return json(401, { detail: { status: 'invalid_api_key' } })
-    if (pathname === '/v1/user/subscription')
-      return json(200, {
-        tier: 'creator',
-        character_count: 1200,
-        character_limit: 100000,
-        status: 'active'
-      })
+    if (pathname === '/v1/user/subscription') {
+      const answer = () =>
+        json(200, {
+          tier: 'creator',
+          character_count: 1200,
+          character_limit: 100000,
+          status: 'active'
+        })
+      if (state.held) return waiting.push(answer)
+      return answer()
+    }
     if (pathname === '/v2/voices') return json(200, { voices: VOICES, has_more: false })
     return json(404, {})
   })
@@ -66,6 +73,12 @@ function startStub() {
       resolve({
         url: `http://127.0.0.1:${server.address().port}`,
         seen,
+        state,
+        waiting,
+        release: () => {
+          state.held = false
+          for (const answer of waiting.splice(0)) answer()
+        },
         close: () => new Promise((done) => server.close(() => done()))
       })
     )
@@ -181,6 +194,33 @@ export async function run(t) {
     )
     const afterRemove = JSON.parse(fileText() || '{}')
     t.check('the document has no ElevenLabs entry', !('elevenLabs' in afterRemove), afterRemove)
+
+    // ── Remove while the account is being checked: the Remove wins ──
+    // (verifier round 2: the check used to write its stale copy back, and
+    // the key came back configured.) The card waits on the save's check, so
+    // the Remove goes through the window's own bridge, as a second window
+    // or the speech's own check would race it.
+    stub.state.held = true
+    const asked = stub.seen.length
+    await paste(card, GOOD)
+    const holding = await until(
+      async () => (stub.waiting.length && stub.seen.length > asked ? true : null),
+      { tries: 100, gapMs: 50 }
+    )
+    t.check('the save is checking the account', holding === true, stub.seen.slice(asked))
+    const removedMidCheck = await win.evaluate(() => window.electronAPI.elevenLabsRemove())
+    t.equal('the Remove answers not configured', removedMidCheck?.elevenLabs?.configured, false)
+    stub.release()
+    await win.waitForTimeout(6000)
+    const raced = await win.evaluate(() => window.electronAPI.integrationsRead())
+    t.equal('6 s later the key is still removed', raced?.elevenLabs?.configured, false)
+    const raceFile = JSON.parse(fileText() || '{}')
+    t.check('the document still has no ElevenLabs entry', !('elevenLabs' in raceFile), raceFile)
+    t.equal(
+      'the card stays unconfigured: the field is there',
+      await card.locator('[data-testid="elevenlabs-key-input"]').count(),
+      1
+    )
 
     // ── A refused key: kept, said, Replace offered ──
     await paste(card, BAD)

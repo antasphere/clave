@@ -70,9 +70,11 @@ Reply with the spoken text between <spoken> and </spoken> and nothing else: your
  *  own, or on the first line before the text itself. */
 const SPOKEN_LABEL = /^(?:spoken\s+version|spoken\s+text|spoken|rendering)\s*[:：]\s*/i
 /** How a reply with no tags opens when the model is talking, not rendering:
- *  a refusal, an apology, or a preamble. Such a reply is never spoken. */
+ *  a refusal, an apology, or an assistant's opener. Such a reply is never
+ *  spoken. "Here is", "Here's" and "Here are" are not among them: a real
+ *  answer opens so ("Here are the steps: …"), and is read whole. */
 const SPOKEN_TALK =
-  /^(?:I can['’]t|I cannot|I['’]m sorry|I am sorry|Sorry|Sure|Here is|Here['’]s|Here are|Okay|As an AI|I['’]d be happy|Certainly)(?![\p{L}\p{N}_])/iu
+  /^(?:I can['’]t|I cannot|I['’]m sorry|I am sorry|Sorry|Sure|Okay|As an AI|I['’]d be happy|Certainly)(?![\p{L}\p{N}_])/iu
 
 /**
  * The spoken text in the CLI's reply: what sits between the first `<spoken>`
@@ -84,7 +86,7 @@ const SPOKEN_TALK =
  * its own line or before the text on the first) and that same footer: an
  * answer's own closing `Next: …` line is then lost, the price of not asking
  * twice. A reply with no tag that opens like talk ("I can't…", "Sure",
- * "Here is…") is the model answering, not rendering: null. Trimmed, runs of
+ * "Certainly") is the model answering, not rendering: null. Trimmed, runs of
  * blank lines made one; null when nothing is left.
  */
 export function parseSpokenReply(stdout: string): SpokenDone | null {

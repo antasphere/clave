@@ -112,9 +112,6 @@ describe('parseSpokenReply', () => {
       'I am sorry, no.',
       'Sorry, this is too long.',
       'Sure! The build is green.',
-      'Here is the spoken version.\nThe build is green.',
-      "Here's the text.",
-      'Here are the steps:\nOne, install.',
       'Okay. The build is green.',
       'As an AI, I cannot.',
       "I'd be happy to help.",
@@ -122,6 +119,18 @@ describe('parseSpokenReply', () => {
       'Spoken version:\nSure, here it is.'
     ])
       expect(parseSpokenReply(reply), reply).toBeNull()
+  })
+
+  it('reads a tagless reply opening with "Here is/are" whole: a real answer opens so (verifier round 2)', () => {
+    expect(parseSpokenReply('Here are the steps:\nStep one.')).toEqual({
+      ok: true,
+      text: 'Here are the steps:\nStep one.'
+    })
+    expect(parseSpokenReply("Here's what changed.\nThe build is green.")).toEqual({
+      ok: true,
+      text: "Here's what changed.\nThe build is green."
+    })
+    expect(parseSpokenReply('Here is the plan.')).toEqual({ ok: true, text: 'Here is the plan.' })
   })
 
   it('cuts a label off the first line, and drops a label line, never a real first line', () => {

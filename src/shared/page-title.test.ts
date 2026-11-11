@@ -84,6 +84,38 @@ describe('parsePageTitleReply', () => {
     expect(read('**Page title:** **Fix login**')).toBe('Fix login')
   })
 
+  it('refuses a talking reply in any case, fillers included (verifier round 2)', () => {
+    for (const reply of [
+      'ok so fix the login',
+      'Ok so fix the login',
+      'OK, fix the login',
+      'okay fix the login',
+      'so the login is broken',
+      'well the login is broken',
+      'hmm the login',
+      'yes fix the login',
+      'yeah fix the login',
+      'alright fix the login',
+      'sure, here is a title',
+      'i would fix the build',
+      'here is a title',
+      // Accepted losses: a real title opening with a filler is refused too.
+      'Okay to deploy on Friday',
+      'So long, Berlin'
+    ])
+      expect(parsePageTitleReply(reply), reply).toBeNull()
+    // A title that merely begins with those letters, or the word joined by a
+    // hyphen, is a title.
+    for (const title of [
+      'Sole trader invoices',
+      'Okta sign-in',
+      'Wellness page',
+      'Well-known endpoints',
+      'iOS build fails'
+    ])
+      expect(parsePageTitleReply(title)?.title, title).toBe(title)
+  })
+
   it('refuses a reply that talks in French', () => {
     for (const reply of [
       'Je voudrais corriger le build',

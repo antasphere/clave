@@ -1,5 +1,6 @@
 import { lazySettingsPorts, type SettingsPorts } from '../ports/registry'
 import { readJson, writeJson } from '../ports/storage'
+import { TEST_NO_ACTIVATE } from '../test-mode'
 import {
   DEFAULT_ELEVENLABS_MODEL,
   isElevenLabsModelId,
@@ -113,15 +114,30 @@ function statusOf(entry: StoredElevenLabs | undefined): ElevenLabsStatus {
  *  settings handlers answer as `SettingsRefused`. */
 const refusal = (message: string): Error => new Error(message)
 
-/** Where ElevenLabs is: the environment's `CLAVE_ELEVENLABS_BASE_URL`, read
- *  at each call (a test's stub), then the public API. The speech route
- *  (`../speech.ts`) speaks to the same place the store checks the key. */
-export const elevenLabsBaseUrl = (): string =>
-  process.env.CLAVE_ELEVENLABS_BASE_URL?.trim() || 'https://api.elevenlabs.io'
+export const ELEVENLABS_API = 'https://api.elevenlabs.io'
+
+/** The base URL the environment names in place of the service
+ *  (`CLAVE_ELEVENLABS_BASE_URL`, read at each call: a test's stub), honoured
+ *  only under the end-to-end harness (`--test-no-activate`) or with
+ *  `CLAVE_ELEVENLABS_ALLOW_BASE_URL=1` beside it. In any other run it is
+ *  ignored: whoever can set a server's environment must not be able to send
+ *  the key elsewhere. Null when there is none to honour. */
+export function elevenLabsBaseUrlOverride(
+  env: NodeJS.ProcessEnv = process.env,
+  testMode: boolean = TEST_NO_ACTIVATE
+): string | null {
+  const named = env.CLAVE_ELEVENLABS_BASE_URL?.trim()
+  if (!named) return null
+  return testMode || env.CLAVE_ELEVENLABS_ALLOW_BASE_URL === '1' ? named : null
+}
+
+/** Where ElevenLabs is: the harness's override (above), else the public API.
+ *  The speech route (`../speech.ts`) speaks to the same place the store
+ *  checks the key. */
+export const elevenLabsBaseUrl = (): string => elevenLabsBaseUrlOverride() ?? ELEVENLABS_API
 
 export interface ElevenLabsIntegrationOptions {
-  /** Where ElevenLabs is; the environment's `CLAVE_ELEVENLABS_BASE_URL`, read
-   *  at each call, then the public API. */
+  /** Where ElevenLabs is; `elevenLabsBaseUrl` by default. */
   baseUrl?: () => string
   now?: () => number
 }
@@ -130,6 +146,9 @@ export class ElevenLabsIntegration {
   private readonly listeners = new Set<(status: ElevenLabsStatus) => void>()
   private readonly baseUrl: () => string
   private readonly now: () => number
+  /** The writes, one after the other: a write never interleaves with
+   *  another's load and save in this process. */
+  private writes: Promise<unknown> = Promise.resolve()
 
   constructor(
     private readonly ports: SettingsPorts = lazySettingsPorts,
@@ -160,6 +179,13 @@ export class ElevenLabsIntegration {
     return status
   }
 
+  /** Run a write after every write before it, whatever became of them. */
+  private serial<T>(write: () => T | Promise<T>): Promise<T> {
+    const run = this.writes.then(write, write)
+    this.writes = run.catch(() => undefined)
+    return run
+  }
+
   /** Every change, after the write, with the status (never the key). */
   onChange(listener: (status: ElevenLabsStatus) => void): () => void {
     this.listeners.add(listener)
@@ -183,62 +209,81 @@ export class ElevenLabsIntegration {
     // Sealed first, the old one forgotten after: a seal that fails leaves the
     // working key in place.
     const sealed = await this.ports.secrets.seal(trimmed)
-    const document = this.load()
-    const previous = document.elevenLabs
-    document.elevenLabs = {
-      sealed,
-      setAt: this.now(),
-      voiceId: null,
-      voiceName: null,
-      modelId: previous?.modelId ?? DEFAULT_ELEVENLABS_MODEL,
-      checkedAt: null,
-      tier: null,
-      charactersUsed: null,
-      charactersLimit: null,
-      lastError: null
-    }
-    try {
-      this.save(document)
-    } catch (error) {
-      await this.ports.secrets.discard(sealed)
-      throw error
-    }
-    if (previous && previous.sealed !== sealed) await this.ports.secrets.discard(previous.sealed)
+    await this.serial(async () => {
+      const document = this.load()
+      const previous = document.elevenLabs
+      document.elevenLabs = {
+        sealed,
+        setAt: this.now(),
+        voiceId: null,
+        voiceName: null,
+        modelId: previous?.modelId ?? DEFAULT_ELEVENLABS_MODEL,
+        checkedAt: null,
+        tier: null,
+        charactersUsed: null,
+        charactersLimit: null,
+        lastError: null
+      }
+      try {
+        this.save(document)
+      } catch (error) {
+        await this.ports.secrets.discard(sealed)
+        throw error
+      }
+      if (previous && previous.sealed !== sealed) await this.ports.secrets.discard(previous.sealed)
+    })
     return this.check()
   }
 
-  /** Read the account the key belongs to; the outcome is stored either way. */
+  /** Read the account the key belongs to; the outcome is stored either way,
+   *  as long as the key checked is still the one stored. A Remove or a
+   *  Replace while the account is asked wins: the check then writes nothing
+   *  (it never writes back the entry it read before its call). */
   async check(): Promise<ElevenLabsStatus> {
-    const key = await this.openKey()
-    const document = this.load()
-    const entry = document.elevenLabs
-    if (!entry) return statusOf(undefined)
+    const opened = this.load().elevenLabs
+    if (!opened) return statusOf(undefined)
+    const { sealed } = opened
+    const key = await this.open(sealed)
     const checkedAt = this.now()
+    let outcome: Pick<
+      StoredElevenLabs,
+      'tier' | 'charactersUsed' | 'charactersLimit' | 'lastError'
+    > | null = null
+    let lastError: string | null
     if (!key) {
-      entry.lastError = 'The key stored on this machine could not be opened.'
-      entry.checkedAt = checkedAt
-      return this.save(document)
-    }
-    let res: Response
-    try {
-      res = await this.request('/v1/user/subscription', key)
-    } catch {
-      entry.lastError = ELEVENLABS_UNREACHABLE
-      entry.checkedAt = checkedAt
-      return this.save(document)
-    }
-    if (res.ok) {
-      const body = (await res.json().catch(() => null)) as Record<string, unknown> | null
-      entry.tier = stringOrNull(body?.tier)
-      entry.charactersUsed = numberOrNull(body?.character_count)
-      entry.charactersLimit = numberOrNull(body?.character_limit)
-      entry.lastError = null
+      lastError = 'The key stored on this machine could not be opened.'
     } else {
-      entry.lastError =
-        res.status === 401 || res.status === 403 ? ELEVENLABS_REFUSED : answered(res.status)
+      let res: Response | null = null
+      try {
+        res = await this.request('/v1/user/subscription', key)
+      } catch {
+        res = null
+      }
+      if (!res) lastError = ELEVENLABS_UNREACHABLE
+      else if (res.ok) {
+        const body = (await res.json().catch(() => null)) as Record<string, unknown> | null
+        outcome = {
+          tier: stringOrNull(body?.tier),
+          charactersUsed: numberOrNull(body?.character_count),
+          charactersLimit: numberOrNull(body?.character_limit),
+          lastError: null
+        }
+        lastError = null
+      } else
+        lastError =
+          res.status === 401 || res.status === 403 ? ELEVENLABS_REFUSED : answered(res.status)
     }
-    entry.checkedAt = checkedAt
-    return this.save(document)
+    return this.serial(() => {
+      // Read again after the call: only the check's own fields, only onto
+      // the entry whose key it checked.
+      const document = this.load()
+      const entry = document.elevenLabs
+      if (!entry || entry.sealed !== sealed) return statusOf(entry)
+      if (outcome) Object.assign(entry, outcome)
+      else entry.lastError = lastError
+      entry.checkedAt = checkedAt
+      return this.save(document)
+    })
   }
 
   /** The voices the account can speak with, paged until the service says
@@ -278,37 +323,44 @@ export class ElevenLabsIntegration {
     voiceName: string,
     modelId?: ElevenLabsModelId
   ): Promise<ElevenLabsStatus> {
-    const document = this.load()
-    const entry = document.elevenLabs
-    if (!entry) throw refusal(ELEVENLABS_NO_KEY)
-    if (typeof voiceId !== 'string' || typeof voiceName !== 'string')
-      throw refusal('That is not a voice.')
-    if (modelId !== undefined && !isElevenLabsModelId(modelId))
-      throw refusal('That is not an ElevenLabs model.')
-    entry.voiceId = voiceId.trim() || null
-    entry.voiceName = entry.voiceId ? voiceName.trim() || null : null
-    if (modelId !== undefined) entry.modelId = modelId
-    return this.save(document)
+    return this.serial(() => {
+      const document = this.load()
+      const entry = document.elevenLabs
+      if (!entry) throw refusal(ELEVENLABS_NO_KEY)
+      if (typeof voiceId !== 'string' || typeof voiceName !== 'string')
+        throw refusal('That is not a voice.')
+      if (modelId !== undefined && !isElevenLabsModelId(modelId))
+        throw refusal('That is not an ElevenLabs model.')
+      entry.voiceId = voiceId.trim() || null
+      entry.voiceName = entry.voiceId ? voiceName.trim() || null : null
+      if (modelId !== undefined) entry.modelId = modelId
+      return this.save(document)
+    })
   }
 
   /** Forget the key: its sealed handle discarded, the entry gone. */
   async removeKey(): Promise<ElevenLabsStatus> {
-    const document = this.load()
-    const entry = document.elevenLabs
-    if (!entry) return statusOf(undefined)
-    delete document.elevenLabs
-    const status = this.save(document)
-    await this.ports.secrets.discard(entry.sealed)
-    return status
+    return this.serial(async () => {
+      const document = this.load()
+      const entry = document.elevenLabs
+      if (!entry) return statusOf(undefined)
+      delete document.elevenLabs
+      const status = this.save(document)
+      await this.ports.secrets.discard(entry.sealed)
+      return status
+    })
   }
 
   /** The key, for a caller of this process only (the speech route). Null
    *  when there is none or the port cannot open it here. */
   async openKey(): Promise<string | null> {
     const entry = this.load().elevenLabs
-    if (!entry) return null
+    return entry ? this.open(entry.sealed) : null
+  }
+
+  private async open(sealed: string): Promise<string | null> {
     try {
-      return (await this.ports.secrets.open(entry.sealed)) ?? null
+      return (await this.ports.secrets.open(sealed)) ?? null
     } catch {
       return null
     }
