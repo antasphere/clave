@@ -81,11 +81,50 @@ process.stdin.on('end', () => {
       .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-helper-row')))
     t.check(
       'the page has a row per built-in helper',
-      ['commit-message', 'tab-title', 'push-summary', 'exchange-digest', 'work-digest'].every(
-        (id) => ids.includes(id)
-      ),
+      [
+        'commit-message',
+        'tab-title',
+        'push-summary',
+        'exchange-digest',
+        'work-digest',
+        'permission-explainer'
+      ].every((id) => ids.includes(id)),
       ids
     )
+    // ── The permission explainer (PRDCT-4331) has its row, its words, model and account ──
+    const explainer = page.locator('[data-helper-row="permission-explainer"]')
+    t.check(
+      'the permission explainer has its own plain description',
+      /permission card/.test(
+        (await explainer.locator('[data-helper-when-off]').textContent()) ?? ''
+      )
+    )
+    t.equal(
+      'the explainer starts on haiku',
+      await page
+        .locator('[data-settings-select="helper-model-permission-explainer"]')
+        .getAttribute('data-value'),
+      'haiku'
+    )
+    t.equal(
+      "the explainer starts on the tab's own account",
+      await page
+        .locator('[data-settings-select="helper-account-permission-explainer"]')
+        .getAttribute('data-value'),
+      'session'
+    )
+    const explainerSwitch = explainer.getByRole('switch', { name: 'Permission explanations' })
+    await explainerSwitch.click()
+    await until(async () => (await explainerSwitch.getAttribute('aria-checked')) === 'false')
+    t.check(
+      "switched off, the row says what the card shows instead, in the card's words",
+      /Could not read what this does/.test(
+        (await explainer.locator('[data-helper-when-off]').textContent()) ?? ''
+      )
+    )
+    await explainerSwitch.click()
+    await until(async () => (await explainerSwitch.getAttribute('aria-checked')) === 'true')
+
     const modelSelect = page.locator('[data-settings-select="helper-model-tab-title"]')
     t.equal('tab titles start on haiku', await modelSelect.getAttribute('data-value'), 'haiku')
 

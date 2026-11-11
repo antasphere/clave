@@ -118,7 +118,14 @@ describe('what a row offers', () => {
       'No title: titles are switched off in Settings.'
     )
     expect(store.helperDoes('tab-title')).toBe('Names a new tab from its first message.')
-    expect(store.helperDoes('permission-explainer')).toMatch(/short call/)
-    expect(store.helperWhenOff('permission-explainer')).toMatch(/goes without it/)
+    // The permission explainer (PRDCT-4331), in the card's own words: the
+    // rules' level alone, or "Not verified", and the failed reading's line.
+    expect(store.helperDoes('permission-explainer')).toMatch(/permission card/)
+    expect(store.helperWhenOff('permission-explainer')).toContain('the level the rules found')
+    expect(store.helperWhenOff('permission-explainer')).toContain('"Not verified"')
+    expect(store.helperWhenOff('permission-explainer')).toContain('"Could not read what this does"')
+    // A helper declared later and named nowhere here still says something true.
+    expect(store.helperDoes('zz-later-helper')).toMatch(/short call/)
+    expect(store.helperWhenOff('zz-later-helper')).toMatch(/goes without it/)
   })
 })

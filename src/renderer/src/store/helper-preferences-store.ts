@@ -157,7 +157,11 @@ const WHEN_OFF: Record<string, string> = {
   'work-digest':
     'Off: a work card keeps no title of its own and reads "No title: titles are switched off in Settings."',
   'commit-message': 'Off: the git panel writes no commit message for you.',
-  'push-summary': 'Off: the git panel writes no push summary for you.'
+  'push-summary': 'Off: the git panel writes no push summary for you.',
+  // The permission card's own words (`plugins/chat-view/src/PermissionReading.tsx`):
+  // the rules' level alone, "Not verified" where they cannot tell.
+  'permission-explainer':
+    'Off: a permission card shows only the level the rules found, or "Not verified", and reads "Could not read what this does".'
 }
 
 /** What the helper does, in plain words, for the line under its name. */
@@ -166,7 +170,8 @@ const WHAT_IT_DOES: Record<string, string> = {
   'exchange-digest': 'Sums up each exchange of a chat on its card.',
   'work-digest': 'Titles each stretch of an agent’s work on its card.',
   'commit-message': 'Writes the commit message in the git panel.',
-  'push-summary': 'Writes the summary of what a push sends.'
+  'push-summary': 'Writes the summary of what a push sends.',
+  'permission-explainer': 'Says in plain words, on a permission card, what allowing it would do.'
 }
 
 export function helperDoes(id: string): string {
