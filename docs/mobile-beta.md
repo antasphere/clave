@@ -2,7 +2,7 @@
 
 No beta candidate of the native apps is claimed here. What exists in this tree is what
 [mobile.md](mobile.md) describes: the two apps' sources, their checks on simulators and
-emulators, and the fixture stack each app runs those checks against.
+emulators, and the fixture stack each app runs its fixture checks against.
 
 ## What a beta needs from the team
 
