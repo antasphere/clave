@@ -110,6 +110,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const cleanup of h.cleanups.splice(0)) cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.useRealTimers()
   useIntegrationsStore.setState({ byMachine: {} })
 })
@@ -131,6 +132,45 @@ describe('one page spoken at a time (verifier rounds 1 and 2, M20)', () => {
     await flush()
     expect(spoken).toEqual(['Page one spoken.'])
     expect(speakCalls.map((c) => c.text)).toEqual(['Page one spoken.'])
+  })
+
+  it('page 2 answers while page 1, read after it, still prepares: exactly one page speaks (round 3, M20)', async () => {
+    // The voice holds every utterance (none ends by itself), so page 1's
+    // reading keeps the voice the whole time: only the generation guard
+    // can tell page 2's late rendering that it is no longer the reading.
+    window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
+    const voice = usePane()
+    voice.read('page-2', 'Page two.')
+    voice.read('page-1', 'Page one.')
+    expect(h.asked.map((a) => a.markdown)).toEqual(['Page two.', 'Page one.'])
+    // Page 2's rendering comes back first, while page 1 is still preparing.
+    h.asked[0].answer({ ok: true, text: 'Page two spoken.' })
+    await flush()
+    h.asked[1].answer({ ok: true, text: 'Page one spoken.' })
+    await flush()
+    expect(spoken).toEqual(['Page one spoken.'])
+    expect(speakCalls.map((c) => c.text)).toEqual(['Page one spoken.'])
+  })
+
+  it('page 1 read while page 2 waits on its first voice call: exactly one page speaks (round 3, M20)', async () => {
+    window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
+    // The server's first answer for page 2 is held until page 1 is read.
+    let release: (() => void) | undefined
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const answer = speakAnswer
+    speakAnswer = () =>
+      (speakCalls.length === 1 ? held.then(answer) : answer()) as unknown as SpeakResult
+    const voice = usePane()
+    voice.read('page-2', 'Page two.')
+    h.asked[0].answer({ ok: true, text: 'Page two spoken.' })
+    await flush()
+    expect(speakCalls.map((c) => c.text)).toEqual(['Page two spoken.'])
+    voice.read('page-1', 'Page one.')
+    h.asked[1].answer({ ok: true, text: 'Page one spoken.' })
+    await flush()
+    release!()
+    await flush()
+    expect(spoken).toEqual(['Page one spoken.'])
   })
 
   it('a stop while the page prepares speaks nothing', async () => {
@@ -222,6 +262,81 @@ describe('the "no ElevenLabs" memory (verifier round 2, R02)', () => {
     })
     await readPage(voice, 'Two.')
     expect(speakCalls).toHaveLength(2)
+  })
+})
+
+describe('the parts already spoken are kept for the pane (verifier round 3)', () => {
+  /** The server's voice: every part answered, the element a fake that
+   *  plays and never ends. */
+  const elevenLabs = (): void => {
+    speakAnswer = () => ({ ok: true, mime: 'audio/mpeg', audio: 'AAAA', characters: 4 })
+    vi.stubGlobal(
+      'Audio',
+      class {
+        src = ''
+        currentTime = 0
+        duration = Number.NaN
+        onended = null
+        onerror = null
+        ontimeupdate = null
+        ondurationchange = null
+        play = (): Promise<void> => Promise.resolve()
+        pause = (): void => undefined
+      }
+    )
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:part')
+    vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined)
+  }
+  const PAGE = 'Block one.\n\nBlock two.\n\nBlock three.'
+
+  it('Play after Stop asks the server for no part it answered before', async () => {
+    elevenLabs()
+    const voice = usePane()
+    voice.read('page', PAGE)
+    h.asked[0].answer(null)
+    await flush()
+    // Block one plays, block two is asked beside it.
+    expect(speakCalls.map((c) => c.text)).toEqual(['Block one.', 'Block two.'])
+    voice.stop()
+    voice.read('page', PAGE)
+    h.asked[1].answer(null)
+    await flush()
+    expect(speakCalls).toHaveLength(2)
+    // A seek to block three asks for it alone; a seek back asks nothing.
+    voice.seekBlock(3)
+    await flush()
+    voice.seekBlock(1)
+    await flush()
+    expect(speakCalls.map((c) => c.text)).toEqual(['Block one.', 'Block two.', 'Block three.'])
+  })
+
+  it('a voice chosen on the Integrations page asks again', async () => {
+    elevenLabs()
+    const voice = usePane()
+    voice.read('page', PAGE)
+    h.asked[0].answer(null)
+    await flush()
+    voice.stop()
+    useIntegrationsStore.setState({
+      byMachine: {
+        local: {
+          status: 'ready',
+          error: null,
+          elevenLabs: { configured: true, voiceId: 'other' } as never,
+          busy: false,
+          voices: { status: 'idle', error: null, voices: [] }
+        }
+      }
+    })
+    voice.read('page', PAGE)
+    h.asked[1].answer(null)
+    await flush()
+    expect(speakCalls.map((c) => c.text)).toEqual([
+      'Block one.',
+      'Block two.',
+      'Block one.',
+      'Block two.'
+    ])
   })
 })
 

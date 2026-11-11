@@ -118,17 +118,18 @@ export const ELEVENLABS_API = 'https://api.elevenlabs.io'
 
 /** The base URL the environment names in place of the service
  *  (`CLAVE_ELEVENLABS_BASE_URL`, read at each call: a test's stub), honoured
- *  only under the end-to-end harness (`--test-no-activate`) or with
- *  `CLAVE_ELEVENLABS_ALLOW_BASE_URL=1` beside it. In any other run it is
- *  ignored: whoever can set a server's environment must not be able to send
- *  the key elsewhere. Null when there is none to honour. */
+ *  only under the end-to-end harness (`--test-no-activate`). In any other run
+ *  it is ignored, with no escape hatch: whoever can set a server's
+ *  environment must not be able to send the key elsewhere. A script that
+ *  speaks to another place passes its own `baseUrl`. Null when there is none
+ *  to honour. */
 export function elevenLabsBaseUrlOverride(
   env: NodeJS.ProcessEnv = process.env,
   testMode: boolean = TEST_NO_ACTIVATE
 ): string | null {
   const named = env.CLAVE_ELEVENLABS_BASE_URL?.trim()
   if (!named) return null
-  return testMode || env.CLAVE_ELEVENLABS_ALLOW_BASE_URL === '1' ? named : null
+  return testMode ? named : null
 }
 
 /** Where ElevenLabs is: the harness's override (above), else the public API.

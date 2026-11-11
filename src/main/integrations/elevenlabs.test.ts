@@ -404,21 +404,20 @@ describe('refusals', () => {
     }
   })
 
-  it('the base URL variable is honoured under the harness, or with the explicit allow', async () => {
+  it('the base URL variable is honoured under the harness only, with no escape hatch (verifier round 3)', () => {
     const named = { CLAVE_ELEVENLABS_BASE_URL: ' http://from-env.test/ ' }
     expect(elevenLabsBaseUrlOverride(named, false)).toBeNull()
     expect(elevenLabsBaseUrlOverride(named, true)).toBe('http://from-env.test/')
-    expect(
-      elevenLabsBaseUrlOverride({ ...named, CLAVE_ELEVENLABS_ALLOW_BASE_URL: '1' }, false)
-    ).toBe('http://from-env.test/')
-    expect(
-      elevenLabsBaseUrlOverride({ ...named, CLAVE_ELEVENLABS_ALLOW_BASE_URL: 'true' }, false)
-    ).toBeNull()
+    // The old allow variable opens nothing any more.
+    for (const allow of ['1', 'true'])
+      expect(
+        elevenLabsBaseUrlOverride({ ...named, CLAVE_ELEVENLABS_ALLOW_BASE_URL: allow }, false)
+      ).toBeNull()
     expect(elevenLabsBaseUrlOverride({}, true)).toBeNull()
     vi.stubEnv('CLAVE_ELEVENLABS_BASE_URL', 'http://from-env.test/')
     vi.stubEnv('CLAVE_ELEVENLABS_ALLOW_BASE_URL', '1')
     try {
-      expect(elevenLabsBaseUrl()).toBe('http://from-env.test/')
+      expect(elevenLabsBaseUrl()).toBe('https://api.elevenlabs.io')
     } finally {
       vi.unstubAllEnvs()
     }

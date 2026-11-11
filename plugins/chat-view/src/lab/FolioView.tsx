@@ -85,7 +85,7 @@ import {
 } from './pages'
 import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
 import { fallbackLine, useSpokenRenderings } from './spoken'
-import { clockOf, scrubFill, tickAt } from './progress'
+import { clockOf, dragSeek, scrubShown, tickAt } from './progress'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
@@ -399,8 +399,10 @@ function readTitle(
 const READER_SCROLL_MS = 3_000
 
 /** The player at the page's foot (PRDCT-4430): the bar, one tick per block
- *  of the reading, the part read filled; a click or a drag goes to the block
- *  under the pointer; the time read and the whole, once known. */
+ *  of the reading, the part read filled; a click goes to the block under the
+ *  pointer, a drag moves the light with the pointer and goes to the block it
+ *  is let go on (one seek, one part asked: never one per tick crossed); the
+ *  time read and the whole, once known. */
 function Scrub({
   reading,
   onSeek
@@ -409,53 +411,66 @@ function Scrub({
   onSeek: (tick: number) => void
 }): React.JSX.Element {
   const bar = useRef<HTMLDivElement>(null)
-  const dragging = useRef(false)
-  const last = useRef<number | null>(null)
-  const seekAt = (clientX: number): void => {
+  // The tick under a press in progress (null with none): the ref for the
+  // handlers, the state for the light.
+  const pressed = useRef<number | null>(null)
+  const [drag, setDrag] = useState<number | null>(null)
+  const tickUnder = (clientX: number): number | null => {
     const rect = bar.current?.getBoundingClientRect()
-    if (!rect) return
-    const tick = tickAt(clientX - rect.left, rect.width, reading.blocks)
-    if (tick === last.current) return
-    last.current = tick
-    onSeek(tick)
+    if (!rect) return null
+    return tickAt(clientX - rect.left, rect.width, reading.blocks)
   }
-  const fill = scrubFill(reading.tick, reading.blocks, reading.fraction)
+  const follow = (clientX: number): void => {
+    const tick = tickUnder(clientX)
+    if (tick === null || tick === pressed.current) return
+    pressed.current = tick
+    setDrag(tick)
+  }
+  const letGo = (seek: boolean): void => {
+    const tick = pressed.current
+    pressed.current = null
+    setDrag(null)
+    const to = seek ? dragSeek(tick, reading.tick) : null
+    if (to !== null) onSeek(to)
+  }
+  const shown = scrubShown(reading.tick, reading.fraction, reading.blocks, drag)
   return (
     <div className="folio-player-bar">
       <div
         ref={bar}
         className="folio-scrub"
         data-testid="folio-scrub"
+        data-dragging={drag !== null ? 'true' : undefined}
         role="slider"
         aria-label="Block being read"
         aria-valuemin={1}
         aria-valuemax={reading.blocks}
-        aria-valuenow={reading.tick + 1}
-        aria-valuetext={`Block ${reading.tick + 1} of ${reading.blocks}`}
+        aria-valuenow={shown.tick + 1}
+        aria-valuetext={`Block ${shown.tick + 1} of ${reading.blocks}`}
         tabIndex={0}
         style={
           {
             '--ticks': reading.blocks,
-            '--fill': fill
+            '--fill': shown.fill
           } as React.CSSProperties
         }
         onPointerDown={(event) => {
           if (event.button !== 0) return
-          dragging.current = true
-          last.current = reading.tick
           event.currentTarget.setPointerCapture?.(event.pointerId)
-          seekAt(event.clientX)
+          pressed.current = null
+          follow(event.clientX)
         }}
         onPointerMove={(event) => {
-          if (dragging.current) seekAt(event.clientX)
+          if (pressed.current !== null) follow(event.clientX)
         }}
-        onPointerUp={() => {
-          dragging.current = false
-          last.current = null
+        onPointerUp={(event) => {
+          if (pressed.current === null) return
+          follow(event.clientX)
+          letGo(true)
         }}
-        onPointerCancel={() => {
-          dragging.current = false
-          last.current = null
+        onPointerCancel={() => letGo(false)}
+        onLostPointerCapture={() => {
+          if (pressed.current !== null) letGo(true)
         }}
       >
         <span className="folio-scrub-fill" aria-hidden="true" />
@@ -464,8 +479,8 @@ function Scrub({
             key={`${i}-${block}`}
             className="folio-scrub-tick"
             data-testid="folio-scrub-tick"
-            data-played={i < reading.tick ? 'true' : undefined}
-            data-current={i === reading.tick ? 'true' : undefined}
+            data-played={i < shown.tick ? 'true' : undefined}
+            data-current={i === shown.tick ? 'true' : undefined}
             aria-hidden="true"
           />
         ))}

@@ -18,7 +18,8 @@ import { until } from './harness.mjs'
      element; the control says "Reading with ElevenLabs"; ElevenLabs was
      asked with the key, in its header, for the spoken text;
    - ElevenLabs answering 402 (the credits spent): the system voice reads the
-     page and the control says why.
+     page and the control says why (a page with words not spoken before: the
+     pane keeps the parts it had, and plays those without asking).
    ElevenLabs is a stub on a local port (`CLAVE_ELEVENLABS_BASE_URL`) that
    answers a second of silence; every key is invented. In the page, audio
    playback is stubbed (`play` resolves and `ended` fires 100 ms later) and so
@@ -153,7 +154,7 @@ export async function run(t) {
     null,
     { server: 'in-process' }
   )
-  const { win } = chat
+  const { win, app } = chat
   try {
     const view = win.locator('[data-testid="folio-view"]')
     await view.locator('textarea[aria-label="Message"]').waitFor()
@@ -254,6 +255,12 @@ export async function run(t) {
 
     // ── (c) The credits spent: the system voice reads, and the control says why ──
     stub.state.quota = true
+    // New words for the new page: a pane keeps the parts it already had
+    // spoken (verifier round 3), so the same words would play from there
+    // without asking ElevenLabs. The harness reads the reply at each read.
+    await app.evaluate(() => {
+      process.env.CLAVE_E2E_SPOKEN_REPLY = '<spoken>Spoken text for tomorrow.</spoken>'
+    })
     await win.evaluate(() => {
       window.__titles = []
     })
@@ -270,7 +277,7 @@ export async function run(t) {
     )
     t.check(
       'the system voice read the spoken version',
-      JSON.stringify(spoken) === '["Spoken text."]',
+      JSON.stringify(spoken) === '["Spoken text for tomorrow."]',
       spoken
     )
     const why = await until(async () => {

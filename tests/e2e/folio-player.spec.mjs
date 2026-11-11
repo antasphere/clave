@@ -18,7 +18,13 @@ import { until } from './harness.mjs'
      on block 3 asks for block 3's words and lights block 3; the bar has one
      tick per block, and a click on its second tick moves the reading there;
    - with no key, the system voice reads block by block and the light
-     follows it; a click on block 4 speaks from block 4.
+     follows it; a click on block 4 speaks from block 4;
+   - on a twelve-block page (verifier round 3): a drag across the bar from
+     tick 1 to tick 12 moves the light with the pointer and asks ElevenLabs
+     once, where it is let go (never once per tick crossed); Pause, Stop and
+     Read again ask for no block already received; a click on a link inside
+     a block opens the link and leaves the reading where it is; a
+     drag-selection inside a block neither moves the reading nor asks.
    ElevenLabs is a stub on a local port (`CLAVE_ELEVENLABS_BASE_URL`) that
    answers a second of silence (the stub of folio-elevenlabs.spec.mjs); every
    key is invented. In the page, audio playback is stubbed: `play` records
@@ -40,6 +46,15 @@ const ANSWER = [
 ].join('\n\n')
 const SPOKEN = ['one', 'two', 'three', 'four'].map((w) => `Block ${w} spoken.`)
 const REPLY = `<spoken>${SPOKEN.map((text, i) => `<b n="${i + 1}">${text}</b>`).join('\n')}</spoken>`
+
+const LINK = 'https://example.com/folio-reference'
+const LONG = Array.from({ length: 12 }, (_, i) =>
+  i === 4
+    ? `Block ${i + 1} of the long answer, see [the reference](${LINK}) for more.`
+    : `Block ${i + 1} of the long answer, a sentence long enough to select across.`
+).join('\n\n')
+const LONG_SPOKEN = Array.from({ length: 12 }, (_, i) => `Long block ${i + 1} spoken.`)
+const LONG_REPLY = `<spoken>${LONG_SPOKEN.map((text, i) => `<b n="${i + 1}">${text}</b>`).join('\n')}</spoken>`
 
 function startStub() {
   const seen = []
@@ -148,14 +163,17 @@ async function waitLit(view, n, tries = 100) {
   return until(async () => ((await litBlock(view)) === n ? true : null), { tries, gapMs: 50 })
 }
 
-async function pageReady(view) {
+async function pageReady(view, blocks = 4) {
   const read = view.locator('.folio-foot .folio-read')
   await until(async () => ((await read.count()) ? true : null))
   return until(async () => {
     const n = await view.locator('.folio-page .folio-block').count()
-    return n === 4 ? true : null
+    return n === blocks ? true : null
   })
 }
+
+/** Nothing new for a moment: the asks a gesture made have all landed. */
+const settle = (ms = 700) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export async function run(t) {
   // ── The server's ElevenLabs voice ──
@@ -286,6 +304,143 @@ export async function run(t) {
         'and the control offers to read again',
         (await view.getByRole('button', { name: 'Read it to me' }).count()) === 1
       )
+    } finally {
+      await chat.close()
+      await stub.close()
+    }
+  }
+
+  // ── A twelve-block page: one ask per drag, parts kept, links and
+  //    selections leave the reading alone (verifier round 3) ──
+  {
+    const stub = await startStub()
+    const chat = await openChat(
+      'folio-player-long',
+      FOLIO,
+      READY,
+      { CLAVE_ELEVENLABS_BASE_URL: stub.url, CLAVE_E2E_SPOKEN_REPLY: LONG_REPLY },
+      null,
+      { server: 'in-process' }
+    )
+    const { win, app } = chat
+    try {
+      const view = win.locator('[data-testid="folio-view"]')
+      await view.locator('textarea[aria-label="Message"]').waitFor()
+      await stubPlayback(win, 600)
+      await win.evaluate(
+        async ([key]) => {
+          await window.electronAPI.elevenLabsSetKey(key)
+          await window.electronAPI.elevenLabsSetVoice('voice-a', 'Ada', undefined)
+        },
+        [GOOD]
+      )
+      await ask(view, LONG)
+      assert.ok(await pageReady(view, 12), 'the page shows its twelve blocks')
+      await view.getByRole('button', { name: 'Read it to me' }).click()
+      t.check('play lights block 1', !!(await waitLit(view, 1)), await litBlock(view))
+      await until(async () => (stub.speaks().length >= 2 ? true : null), { tries: 60, gapMs: 50 })
+      await settle()
+      t.equal(
+        'block 1 is asked, and block 2 beside it',
+        JSON.stringify(stub.speaks()),
+        JSON.stringify(LONG_SPOKEN.slice(0, 2))
+      )
+
+      // A drag from tick 1 to tick 12: the light follows, one ask at the end.
+      const bar = view.locator('[data-testid="folio-scrub"]')
+      const box = await bar.boundingBox()
+      assert.ok(box, 'the bar is on screen')
+      const tickX = (i) => box.x + (box.width * (i + 0.5)) / 12
+      const y = box.y + box.height / 2
+      const before = stub.speaks().length
+      await win.mouse.move(tickX(0), y)
+      await win.mouse.down()
+      for (let i = 1; i < 12; i++) await win.mouse.move(tickX(i), y, { steps: 3 })
+      const current = () =>
+        view
+          .locator('[data-testid="folio-scrub-tick"]')
+          .evaluateAll((els) => els.findIndex((el) => el.dataset.current === 'true'))
+      t.equal('mid-drag, the light is on the tick under the pointer', await current(), 11)
+      await settle(300)
+      t.equal('mid-drag, ElevenLabs is asked for nothing', stub.speaks().length, before)
+      t.equal('mid-drag, the page still reads block 1', await litBlock(view), 1)
+      await win.mouse.up()
+      t.check(
+        'let go on tick 12, block 12 is lit',
+        !!(await waitLit(view, 12)),
+        await litBlock(view)
+      )
+      await settle()
+      const dragged = stub.speaks().slice(before)
+      t.check(
+        'the drag made at most two asks: the landed part and its next',
+        dragged.length >= 1 && dragged.length <= 2 && dragged[0] === LONG_SPOKEN[11],
+        dragged
+      )
+
+      // Pause, Stop, Read again: the blocks already received are not asked.
+      const play = view.locator('[data-testid="folio-play"]')
+      await play.click()
+      await until(
+        async () => ((await play.getAttribute('data-state')) === 'paused' ? true : null),
+        { tries: 40, gapMs: 25 }
+      )
+      await view.locator('[data-testid="folio-stop"]').click()
+      await until(async () => ((await litBlock(view)) === null ? true : null), {
+        tries: 40,
+        gapMs: 25
+      })
+      const received = stub.speaks().length
+      const playedBefore = await win.evaluate(() => window.__played.length)
+      await view.getByRole('button', { name: 'Read it to me' }).click()
+      t.check('read again lights block 1', !!(await waitLit(view, 1)), await litBlock(view))
+      const replayed = await until(
+        async () =>
+          (await win.evaluate(() => window.__played.length)) > playedBefore ? true : null,
+        { tries: 60, gapMs: 50 }
+      )
+      t.check('and block 1 plays again', !!replayed)
+      await settle()
+      t.equal(
+        'Pause, Stop and Read again ask ElevenLabs for no block already received',
+        stub.speaks().length,
+        received
+      )
+
+      // A link inside a block opens the link; the reading stays where it is.
+      await app.evaluate(({ ipcMain }) => {
+        globalThis.__folioExternal = null
+        ipcMain.removeHandler('shell:openExternal')
+        ipcMain.handle('shell:openExternal', (_event, url) => {
+          globalThis.__folioExternal = url
+        })
+      })
+      const asked = stub.speaks().length
+      await view.locator('.folio-page .folio-block[data-block="5"] a').click()
+      const opened = await until(() => app.evaluate(() => globalThis.__folioExternal), {
+        tries: 60,
+        gapMs: 50
+      })
+      t.equal('a click on a link inside a block opens the link', opened, LINK)
+      await settle()
+      t.equal('and leaves the reading on block 1', await litBlock(view), 1)
+      t.equal('and asks ElevenLabs for nothing', stub.speaks().length, asked)
+
+      // A drag-selection inside a block: no seek, no ask.
+      const seventh = view.locator('.folio-page .folio-block[data-block="7"]')
+      await seventh.scrollIntoViewIfNeeded()
+      const words = await seventh.boundingBox()
+      assert.ok(words, 'block 7 is on screen')
+      const line = words.y + Math.min(words.height / 2, 10)
+      await win.mouse.move(words.x + 4, line)
+      await win.mouse.down()
+      await win.mouse.move(words.x + words.width * 0.6, line, { steps: 8 })
+      await win.mouse.up()
+      const selected = await win.evaluate(() => window.getSelection()?.toString() ?? '')
+      t.check('the drag selected words of block 7', selected.trim().length > 5, selected)
+      await settle()
+      t.equal('a drag-selection leaves the reading on block 1', await litBlock(view), 1)
+      t.equal('and asks ElevenLabs for nothing', stub.speaks().length, asked)
     } finally {
       await chat.close()
       await stub.close()

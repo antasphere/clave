@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { SpeakResult } from '../../../../src/shared/speech'
-import { AudioQueue, blockParts, mp3Ms, type AudioLike, type SpeechPart } from './audio'
+import {
+  AudioQueue,
+  PART_CACHE_MAX,
+  PartCache,
+  blockParts,
+  mp3Ms,
+  partKey,
+  type AudioLike,
+  type SpeechPart
+} from './audio'
 
 /** Parts of one block each, numbered 1, 2, …: what most pages are. */
 const parts = (...texts: string[]): SpeechPart[] => texts.map((text, i) => ({ block: i + 1, text }))
@@ -412,6 +421,69 @@ describe('AudioQueue: pause, resume, seek and time (PRDCT-4430)', () => {
     audio.duration = 4
     audio.ondurationchange?.()
     expect(times.at(-1)).toEqual([5500, 9000, 0.125])
+  })
+})
+
+describe('PartCache (verifier round 3)', () => {
+  const done = (text: string): SpeakResult => ({
+    ok: true,
+    mime: 'audio/mpeg',
+    audio: btoa(text),
+    characters: text.length
+  })
+
+  it('asks once per voice, model and words; another voice or model asks again', async () => {
+    const cache = new PartCache()
+    const asked: string[] = []
+    const ask = (text: string) => () => {
+      asked.push(text)
+      return Promise.resolve(done(text))
+    }
+    await cache.get(partKey('a', 'm', 'One.'), ask('One.'))
+    expect(await cache.get(partKey('a', 'm', 'One.'), ask('One.'))).toEqual(done('One.'))
+    await cache.get(partKey('b', 'm', 'One.'), ask('One.'))
+    await cache.get(partKey('a', 'n', 'One.'), ask('One.'))
+    expect(asked).toEqual(['One.', 'One.', 'One.'])
+  })
+
+  it('a part in flight is waited for, not asked twice; a failure is not kept', async () => {
+    const cache = new PartCache()
+    let calls = 0
+    let answer!: (result: SpeakResult) => void
+    const ask = (): Promise<SpeakResult> => {
+      calls += 1
+      return new Promise((resolve) => (answer = resolve))
+    }
+    const first = cache.get('k', ask)
+    const second = cache.get('k', ask)
+    expect(calls).toBe(1)
+    answer({ ok: false, error: 'no', reason: 'unreachable' })
+    expect((await first).ok).toBe(false)
+    expect((await second).ok).toBe(false)
+    expect(cache.size).toBe(0)
+    void cache.get('k', ask)
+    expect(calls).toBe(2)
+    const thrown = new PartCache()
+    await expect(thrown.get('k', () => Promise.reject(new Error('gone')))).rejects.toThrow('gone')
+    expect(thrown.size).toBe(0)
+  })
+
+  it(`keeps the last ${PART_CACHE_MAX} parts used, dropping the least recently used`, async () => {
+    const cache = new PartCache()
+    const asked: string[] = []
+    const ask = (key: string) => () => {
+      asked.push(key)
+      return Promise.resolve(done(key))
+    }
+    for (let i = 0; i < PART_CACHE_MAX; i++) await cache.get(`p${i}`, ask(`p${i}`))
+    // p0 used again: p1 is now the oldest, dropped by the next new part.
+    await cache.get('p0', ask('p0'))
+    await cache.get('new', ask('new'))
+    expect(cache.size).toBe(PART_CACHE_MAX)
+    asked.length = 0
+    await cache.get('p0', ask('p0'))
+    await cache.get('p1', ask('p1'))
+    expect(asked).toEqual(['p1'])
   })
 })
 

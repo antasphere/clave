@@ -113,7 +113,10 @@ export function splitBlocks(markdown: string): string[] {
   const push = (from: number, to: number, close?: string): void => {
     const taken = lines.slice(from, to)
     while (taken.length && isBlank(taken[taken.length - 1])) taken.pop()
-    const text = taken.map((line) => line.trimEnd()).join('\n')
+    // Only the block's end is trimmed: two spaces closing a line inside it
+    // are a markdown hard break, kept for the page.
+    if (taken.length) taken[taken.length - 1] = taken[taken.length - 1].trimEnd()
+    const text = taken.join('\n')
     if (text.trim()) blocks.push(close ? `${text}\n${close}` : text)
   }
   let i = 0
@@ -258,8 +261,9 @@ const SPOKEN_TALK =
  * page. With `expectedBlocks` (the count the prompt sent), the marks must be
  * exactly 1 to k, in order, or the reply is unreadable (null) and the runner
  * asks once more: a voice lit on the wrong block is worse than no light. A
- * reply with no mark at all is one block when one was sent. The text is the
- * blocks' texts joined by a blank line.
+ * reply with no mark at all is one block when one was sent. A block left
+ * empty makes the reply unreadable as well. The text is the blocks' texts
+ * joined by a blank line.
  */
 export function parseSpokenReply(stdout: string, expectedBlocks?: number): SpokenDone | null {
   const open = stdout.indexOf('<spoken>')
@@ -298,11 +302,12 @@ export function parseSpokenReply(stdout: string, expectedBlocks?: number): Spoke
   const blocks = marks.map((mark) => ({ n: Number(mark[1]), text: tidy(mark[2]) }))
   const count = expectedBlocks ?? blocks.length
   if (blocks.length !== count || blocks.some((block, i) => block.n !== i + 1)) return null
-  const text = blocks
-    .map((block) => block.text)
-    .filter(Boolean)
-    .join('\n\n')
-  return text ? { ok: true, text, blocks } : null
+  // A block left empty is unreadable too: the voice would skip it, and the
+  // bar's ticks and the page's blocks would disagree from there on. Every
+  // block the page sends has something to say (the split drops the empty).
+  if (blocks.some((block) => !block.text)) return null
+  const text = blocks.map((block) => block.text).join('\n\n')
+  return { ok: true, text, blocks }
 }
 
 /** A block's mark in a reply: its number, then its text up to its closing

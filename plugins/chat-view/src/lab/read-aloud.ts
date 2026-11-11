@@ -5,8 +5,9 @@ import {
   useIntegrationsStore,
   type MachineIntegrations
 } from '../../../../src/renderer/src/store/integrations-store'
+import { ownerOf } from '../../../../src/renderer/src/lib/fleet-identity'
 import type { DigestFailure } from '../digest'
-import { AudioQueue, blockParts, type SpeechPart } from './audio'
+import { AudioQueue, PartCache, blockParts, partKey, type SpeechPart } from './audio'
 import { partFor, partPlace, partTicks } from './progress'
 import { speechChunks } from './speech'
 import { requestSpokenRendering, spokenKeyOf, spokenSource, type SpokenAnswer } from './spoken'
@@ -265,14 +266,30 @@ export function useReadAloud(source: ReadSource): {
   // NO_VOICE_MEMORY_MS: a server without a key is not asked again on every
   // page, and a key pasted meanwhile is used soon after.
   const unset = useRef(new Map<string, NoVoiceMemory>())
+  // The parts already spoken, for the pane's life (Stop keeps them): a page
+  // played again, or sought back, is not paid for twice.
+  const spokenParts = useRef(new PartCache())
   // A key or a voice changed on the Integrations page: ask again at once.
   useEffect(
     () =>
       useIntegrationsStore.subscribe((state, previous) => {
-        if (integrationsChanged(previous.byMachine, state.byMachine)) unset.current.clear()
+        if (!integrationsChanged(previous.byMachine, state.byMachine)) return
+        unset.current.clear()
+        spokenParts.current.clear()
       }),
     []
   )
+  /** One part spoken by the tab's server, or the answer it gave before for
+   *  the same words in the same voice and model (as far as this window knows
+   *  them: the machine's status on the Integrations page). */
+  const speakCached = useCallback((sessionId: string, text: string): Promise<SpeakResult> => {
+    const machine = ownerOf(sessionId)
+    const status = useIntegrationsStore.getState().byMachine[machine]?.elevenLabs
+    const voice = `${machine}:${status?.voiceId ?? '?'}`
+    return spokenParts.current.get(partKey(voice, status?.modelId ?? '?', text), () =>
+      speakPart(sessionId, text)
+    )
+  }, [])
 
   const note = useCallback((key: string, line: string | null): void => {
     setNotes((now) => {
@@ -432,7 +449,7 @@ export function useReadAloud(source: ReadSource): {
           parts,
           start,
           first,
-          source: (text) => speakPart(sessionId, text),
+          source: (text) => speakCached(sessionId, text),
           onProgress: (n) =>
             patch((now) => ({
               ...readingAt(key, parts, n, extra),
@@ -486,7 +503,7 @@ export function useReadAloud(source: ReadSource): {
           })
         // The first part decides the voice: ElevenLabs when the server speaks
         // it, the system voice (and why) when it cannot.
-        const first = speakPart(sessionId, parts[start].text)
+        const first = speakCached(sessionId, parts[start].text)
         void first.then((spoken) => {
           if (!current()) return
           // A block clicked while the first part was asked: start there.
@@ -496,7 +513,7 @@ export function useReadAloud(source: ReadSource): {
             return speakElevenLabs(
               parts,
               begin,
-              begin === start ? first : speakPart(sessionId, parts[begin].text),
+              begin === start ? first : speakCached(sessionId, parts[begin].text),
               fallback
             )
           if (spoken.reason && rememberedReasons.has(spoken.reason))
@@ -508,7 +525,7 @@ export function useReadAloud(source: ReadSource): {
         speak(null)
       )
     },
-    [synth, supported, systemVoice, audioVoice, note, release]
+    [synth, supported, systemVoice, audioVoice, note, release, speakCached]
   )
   const seekBlock = useCallback((n: number): void => {
     const run = active.current

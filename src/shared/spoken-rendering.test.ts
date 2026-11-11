@@ -81,6 +81,14 @@ describe('splitBlocks (PRDCT-4430)', () => {
     expect(splitBlocks('\n\nOnly.  \n\n')).toEqual(['Only.'])
   })
 
+  it('keeps trailing spaces inside a block, a markdown hard break, and trims only its end (verifier round 3)', () => {
+    expect(splitBlocks('Line one  \nLine two')).toEqual(['Line one  \nLine two'])
+    expect(splitBlocks('Line one  \nLine two  \n\nNext.')).toEqual([
+      'Line one  \nLine two',
+      'Next.'
+    ])
+  })
+
   it('splits its own join back into the same blocks, even two lists in a row', () => {
     const blocks = [...splitBlocks(SAMPLE), '- a\n- b', '- c', '    indented', '```\nopen\n```']
     expect(splitBlocks(joinBlocks(blocks))).toEqual(blocks)
@@ -176,6 +184,20 @@ describe('parseSpokenReply with blocks (PRDCT-4430)', () => {
       ]
     })
     expect(parseSpokenReply('<spoken><b n="1">A.</b><b n="2">B, then', 3)).toBeNull()
+  })
+
+  it('is unreadable when a block is left empty; every block filled reads (verifier round 3)', () => {
+    const three = [1, 2, 3, 4, 5]
+      .map((n) => `<b n="${n}">${n === 1 || n === 5 ? `Block ${n}.` : ' \n '}</b>`)
+      .join('\n')
+    expect(parseSpokenReply(`<spoken>${three}</spoken>`, 5)).toBeNull()
+    expect(parseSpokenReply('<spoken><b n="1">A.</b><b n="2"></b></spoken>', 2)).toBeNull()
+    const filled = [1, 2, 3, 4, 5].map((n) => `<b n="${n}">Block ${n}.</b>`).join('\n')
+    expect(parseSpokenReply(`<spoken>${filled}</spoken>`, 5)).toEqual({
+      ok: true,
+      text: [1, 2, 3, 4, 5].map((n) => `Block ${n}.`).join('\n\n'),
+      blocks: [1, 2, 3, 4, 5].map((n) => ({ n, text: `Block ${n}.` }))
+    })
   })
 
   it('takes a mark with no closing tag, and unquoted numbers', () => {

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { clockOf, partFor, partPlace, partTicks, scrubFill, tickAt } from './progress'
+import {
+  clockOf,
+  dragSeek,
+  partFor,
+  partPlace,
+  partTicks,
+  scrubFill,
+  scrubShown,
+  tickAt
+} from './progress'
 
 /* The reading's place on its page (PRDCT-4430): parts to blocks, the
    bar's ticks and fill, the pointer's tick, the clock. */
@@ -48,6 +57,18 @@ describe('the reading on its page', () => {
     expect(tickAt(100, 200, 4)).toBe(2)
     expect(tickAt(250, 200, 4)).toBe(3)
     expect(tickAt(-10, 200, 4)).toBe(0)
+  })
+
+  it('a drag moves the light only; the bar shows the reading again once let go (verifier round 3)', () => {
+    expect(scrubShown(1, 0.5, 4, null)).toEqual({ tick: 1, fill: 0.375 })
+    expect(scrubShown(1, 0.5, 4, 3)).toEqual({ tick: 3, fill: 0.75 })
+    expect(scrubShown(1, 0.5, 4, 0)).toEqual({ tick: 0, fill: 0 })
+  })
+
+  it('a press seeks once, where it is let go, and never the tick in play (verifier round 3)', () => {
+    expect(dragSeek(11, 0)).toBe(11)
+    expect(dragSeek(0, 0)).toBeNull()
+    expect(dragSeek(null, 3)).toBeNull()
   })
 
   it('reads the clock as m:ss, and –:–– while unknown', () => {

@@ -34,6 +34,63 @@ export function blockParts(
   })
 }
 
+/** How many answered parts a pane keeps (`PartCache`). */
+export const PART_CACHE_MAX = 64
+
+/** A part's key in the cache: the voice and the model that speak it, and its
+ *  words. Pure. */
+export const partKey = (voice: string, model: string, text: string): string =>
+  `${voice}|${model}|${text}`
+
+/**
+ * The parts a pane already had spoken, so Play after Stop, a seek back, or
+ * the same page read again asks the server for nothing it answered before
+ * (each call is paid). Kept for the pane's life, across Stop, bounded to the
+ * last `max` parts used. A part being asked is kept too, so a second ask
+ * while the first is in flight waits for it; a failure is not kept, so the
+ * next ask goes to the server again.
+ */
+export class PartCache {
+  private readonly entries = new Map<string, Promise<SpeakResult>>()
+
+  constructor(private readonly max = PART_CACHE_MAX) {}
+
+  get size(): number {
+    return this.entries.size
+  }
+
+  /** The answer kept for `key`, else `ask()`'s, kept unless it fails. */
+  get(key: string, ask: () => Promise<SpeakResult>): Promise<SpeakResult> {
+    const kept = this.entries.get(key)
+    if (kept) {
+      // The most recently used part is the last one dropped.
+      this.entries.delete(key)
+      this.entries.set(key, kept)
+      return kept
+    }
+    const forget = (): void => {
+      if (this.entries.get(key) === asked) this.entries.delete(key)
+    }
+    const asked: Promise<SpeakResult> = ask().then(
+      (answer) => {
+        if (!answer.ok) forget()
+        return answer
+      },
+      (error: unknown) => {
+        forget()
+        throw error
+      }
+    )
+    this.entries.set(key, asked)
+    while (this.entries.size > this.max) this.entries.delete(this.entries.keys().next().value!)
+    return asked
+  }
+
+  clear(): void {
+    this.entries.clear()
+  }
+}
+
 /** What the queue needs of an audio element (an `HTMLAudioElement`). */
 export interface AudioLike {
   src: string

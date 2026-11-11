@@ -50,6 +50,28 @@ export function scrubFill(tick: number, ticks: number, fraction: number): number
   return Math.max(0, Math.min(1, (tick + Math.max(0, Math.min(1, fraction))) / ticks))
 }
 
+/** What the bar shows: the reading's own tick and fill, or, while a drag is
+ *  in progress, the tick under the pointer, filled to its start. A drag
+ *  moves only this light; the reading moves once, where the drag ends
+ *  (`dragSeek`). Pure. */
+export function scrubShown(
+  tick: number,
+  fraction: number,
+  ticks: number,
+  dragTick: number | null
+): { tick: number; fill: number } {
+  if (dragTick === null) return { tick, fill: scrubFill(tick, ticks, fraction) }
+  return { tick: dragTick, fill: scrubFill(dragTick, ticks, 0) }
+}
+
+/** The tick a press on the bar seeks once it is let go (a click, or the end
+ *  of a drag): the tick it ended on, or null for none (no press, or the tick
+ *  already in play). Each seek asks the server for a part, so a drag across
+ *  the bar seeks once, never once per tick crossed. Pure. */
+export function dragSeek(dragTick: number | null, current: number): number | null {
+  return dragTick === null || dragTick === current ? null : dragTick
+}
+
 /** The tick under the pointer, `x` pixels into a bar `width` wide. */
 export function tickAt(x: number, width: number, ticks: number): number {
   if (ticks <= 0 || width <= 0) return 0
