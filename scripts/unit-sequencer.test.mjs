@@ -37,7 +37,8 @@ describe('Linux unit placement', () => {
 
   it('starts the four expensive files on separate hosts', () => {
     const shards = partitionUnitFiles(files, 4)
-    expect(shards.map((shard) => shard[0])).toEqual(slow)
+    expect(new Set(shards.map((shard) => shard[0]))).toEqual(new Set(slow))
+    for (const shard of shards) expect(shard.filter((file) => slow.includes(file))).toHaveLength(1)
   })
 
   it('rejects invalid counts and duplicate input rather than omitting work', () => {
@@ -56,7 +57,7 @@ describe('Linux unit placement', () => {
       })
       const shard = await sequencer.shard(specs)
       const sorted = await sequencer.sort(shard)
-      expect(sorted[0].moduleId).toBe(`/checkout/${slow[index - 1]}`)
+      expect(slow.map((file) => `/checkout/${file}`)).toContain(sorted[0].moduleId)
       selected.push(...sorted)
     }
     expect(selected.map((spec) => spec.moduleId).sort()).toEqual(

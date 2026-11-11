@@ -2,17 +2,19 @@
 import { relative } from 'node:path'
 import { BaseSequencer } from 'vitest/node'
 
-// Seconds from Linux run 42996565358. These are placement hints, never a test
+// Seconds from Linux runs 42996565358 and 42997878943. Placement hints, never a test
 // allowlist. Unknown files still run. Vitest's hash partition put all four
 // expensive files on one host; starting them first on separate hosts avoids
 // adding two real-clock sign-in/Markdown tests to the tail of that job.
 const seconds = {
   'src/main/antasphere-account.test.ts': 46,
-  'src/renderer/src/views/markdown-parser-reuse-correctness.test.ts': 38,
+  'src/renderer/src/views/markdown-parser-reuse-correctness.test.ts': 48,
   'tests/e2e/runner-sharding.test.mjs': 15,
   'scripts/server-process.test.mjs': 11
 }
-const weight = (file) => seconds[file] ?? 1
+// Most files finish in milliseconds. A small allowance for collection and
+// worker startup leaves the real-clock and CPU-heavy files fewer companions.
+const weight = (file) => seconds[file] ?? 0.25
 const byWeight = (a, b) => weight(b) - weight(a) || (a < b ? -1 : a > b ? 1 : 0)
 
 export function partitionUnitFiles(files, count) {
