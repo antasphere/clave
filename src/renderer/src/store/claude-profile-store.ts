@@ -213,23 +213,9 @@ export function resolveClaudeProfile(
   return loose.length === 1 ? loose[0] : undefined
 }
 
-/** What a session says about its own account: the account as it is today, or
- *  the label the session was started with when the account has since been
- *  removed (the process keeps running on it; the readouts must not say
- *  Default). A session with no account field is the Default. */
-export function sessionAccount(session: {
-  claudeProfileId?: string
-  claudeProfileLabel?: string
-}): { id: string; label: string; removed: boolean } {
-  const { profiles } = useClaudeProfileStore.getState()
-  const live = profiles.find((p) => p.id === (session.claudeProfileId ?? DEFAULT_CLAUDE_PROFILE_ID))
-  if (live) return { id: live.id, label: live.label, removed: false }
-  return {
-    id: session.claudeProfileId ?? DEFAULT_CLAUDE_PROFILE_ID,
-    label: session.claudeProfileLabel ?? 'Removed account',
-    removed: true
-  }
-}
+/** What a session says about its own account lives in `lib/session-accounts.ts`
+ *  (`sessionOwnAccount`): a tab's account id is an id of its OWNER's list, this
+ *  Mac's or a server's, so it is never looked up here (PRDCT-4328). */
 
 /** The spawn fields a clone or a resume carries from its source session, so
  *  the new process runs on the same account: main reads the token by

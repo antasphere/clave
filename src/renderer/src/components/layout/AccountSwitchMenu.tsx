@@ -1,8 +1,6 @@
 import type { ReactElement } from 'react'
 import { SparklesIcon } from '@heroicons/react/24/outline'
 import {
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage,
   headroomWindow,
   capName,
   capLevel,
@@ -15,6 +13,7 @@ import {
 import { soonestWeeklyReset } from '../../lib/account-pool'
 import { useNow } from '../../lib/use-now'
 import type { SwitchTarget } from '../../lib/switch-account'
+import { useOwnerAccountView } from '../../lib/session-accounts'
 import { UsageColumn } from '../usage/UsageColumn'
 
 /**
@@ -29,9 +28,8 @@ import { UsageColumn } from '../usage/UsageColumn'
  */
 
 function useTargetSummary(target: SwitchTarget): AccountUsageSummary | undefined {
-  const claude = useClaudeAccountsUsage((s) => s.byAccount[target.id])
-  const codex = useCodexAccountsUsage((s) => s.byAccount[target.id])
-  const live = target.provider === 'codex' ? codex : claude
+  // The target's OWNER's usage: a server tab's targets are the server's.
+  const live = useOwnerAccountView(target.owner, target.provider).usage[target.id]
   return live ? claudeUsageForModel(live, target.model) : target.summary
 }
 

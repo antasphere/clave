@@ -253,6 +253,7 @@ export function loadServerSettings(serverId: string): Promise<void> {
         error: null,
         claude,
         codex,
+        listed: { claude: true, codex: true },
         migrated: [...accounts.migrated],
         profiles: launch.profiles,
         usage: {
@@ -316,12 +317,17 @@ export function applyServerSettingsEvent(event: FleetSettingsEvent): void {
       bumpListPush(event.serverId, 'claude')
       patch(event.serverId, (current) => ({
         ...current,
-        claude: claudeWithDefault(event.accounts)
+        claude: claudeWithDefault(event.accounts),
+        listed: { claude: true, codex: current.listed?.codex ?? false }
       }))
       return
     case 'codex-accounts':
       bumpListPush(event.serverId, 'codex')
-      patch(event.serverId, (current) => ({ ...current, codex: codexWithDefault(event.accounts) }))
+      patch(event.serverId, (current) => ({
+        ...current,
+        codex: codexWithDefault(event.accounts),
+        listed: { claude: current.listed?.claude ?? false, codex: true }
+      }))
       return
     case 'claude-usage':
     case 'codex-usage': {

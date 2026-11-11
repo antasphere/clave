@@ -101,7 +101,7 @@ export function useProviderSwitch({
       setState({
         target,
         plan: null,
-        landing: providerSwitchLanding(target),
+        landing: providerSwitchLanding(target, session.id),
         noteOffered: stored ? canWriteHandoffNote(stored) && !working() : false,
         busy: null,
         error: null
