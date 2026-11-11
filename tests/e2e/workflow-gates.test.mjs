@@ -56,7 +56,14 @@ describe('the required CI check cannot silently lose execution', () => {
   })
   it('schedules every existing gate exactly once in the normal matrix', () => {
     const job = jobs['e2e-run']
-    expect(job.if).toBeUndefined()
+    // The explicit manual Linux benchmark is the only path that omits Macs.
+    // Pull requests and pushes always retain every Electron gate.
+    expect(job.if).toBe("${{ github.event_name != 'workflow_dispatch' || !inputs.linux_only }}")
+    expect(workflow.on.workflow_dispatch.inputs.linux_only).toEqual({
+      description: 'Measure Linux validation without starting the Electron suite',
+      type: 'boolean',
+      default: false
+    })
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy['fail-fast']).toBe(false)
     // No exclude/include can remove the gate partition or duplicate a run.
@@ -85,7 +92,9 @@ describe('the required CI check cannot silently lose execution', () => {
   it('runs the aggregate even after failure and never swallows its checks', () => {
     const aggregate = jobs.e2e
     expect(aggregate.needs).toBe('e2e-run')
-    expect(aggregate.if).toBe('${{ always() }}')
+    expect(aggregate.if).toBe(
+      "${{ always() && (github.event_name != 'workflow_dispatch' || !inputs.linux_only) }}"
+    )
     expect(aggregate['continue-on-error']).toBeUndefined()
     for (const step of aggregate.steps) {
       expect(step.if, step.name || step.uses).toBeUndefined()

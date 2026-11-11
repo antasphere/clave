@@ -4,11 +4,9 @@ name: Checks
 # request. Nothing ran them before this workflow, which is how 175 lint errors
 # piled up unseen; release.yml and build-win.yml only build.
 #
-# Linux is enough here: none of the three builds the app. `npm ci` still runs
-# scripts/postinstall.cjs, whose `electron-builder install-app-deps` rebuilds
-# node-pty against Electron's headers with the runner's own toolchain; the
-# macOS-only pieces (the Swift helpers, signing, the private Synonym font) are
-# build steps, not install steps, and none of the checks reads them.
+# Linux validation runs in parallel, with all files selected by Vitest divided
+# across four isolated runners. The named check waits for every validation job
+# and verifies the unit reports against the collected file inventory.
 on:
   push:
     branches: [dev]
@@ -17,6 +15,10 @@ on:
     inputs:
       baseline:
         description: Run the original sequential schedule for a timing comparison
+        type: boolean
+        default: false
+      linux_only:
+        description: Measure Linux validation without starting the Electron suite
         type: boolean
         default: false
 
@@ -29,53 +31,81 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Lint, typecheck, unit tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  linux:
+    name: Linux (${{ matrix.task }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [lint, typecheck, unit-1, unit-2, unit-3, unit-4]
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-checks
 
-      - uses: actions/setup-node@v4
+      - uses: actions/cache@v4
+        if: matrix.task == 'lint'
         with:
-          node-version: '22'
-          cache: npm
-
-      # The unit tests of the server's own process (scripts/server-process.test.mjs)
-      # start it under Bun: the repository's own, from the `bun` dev dependency
-      # (1.4.1, the version the framework's gRPC package needs; ADR 0003, wave
-      # 3), which scripts/server-process.mjs prefers to any Bun on the PATH.
-      # This action pins the same version for anything else that calls `bun`.
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.4.1'
-
-      - name: Install dependencies
-        run: npm ci
-
-      # Since Electron 42 the npm package no longer downloads its binary on
-      # install (supply-chain hardening); the first run of the bin does. The
-      # steps below run the real app, so fetch it here, explicitly.
-      - name: Download the Electron binary
-        run: npx install-electron
-
-      - name: Build secure filesystem helper
-        run: npm run native:build
+          path: .eslintcache
+          key: eslint-v1-${{ runner.os }}-${{ hashFiles('package-lock.json', 'eslint.config.mjs') }}-${{ github.sha }}
+          restore-keys: |
+            eslint-v1-${{ runner.os }}-${{ hashFiles('package-lock.json', 'eslint.config.mjs') }}-
 
       - name: Lint
-        run: npm run lint
+        if: matrix.task == 'lint'
+        run: npm run lint -- --concurrency 4 --cache-strategy content
 
       - name: Typecheck
+        if: matrix.task == 'typecheck'
         run: npm run typecheck
 
-      # The generated protobuf code of the terminal service is checked in
-      # (packages/server/src/terminals/proto); a .proto edited without its
-      # generated file would fail only at runtime.
       - name: Generated code is current
+        if: matrix.task == 'typecheck'
         run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
+      - name: Build secure filesystem helper
+        if: startsWith(matrix.task, 'unit-')
+        run: npm run native:build
+
       - name: Unit tests
-        run: npx vitest run
+        if: startsWith(matrix.task, 'unit-')
+        env:
+          TASK: ${{ matrix.task }}
+        run: |
+          mkdir -p unit-reports
+          if [ "$TASK" = unit-1 ]; then
+            npx --no-install vitest list --filesOnly --json > unit-reports/inventory.json
+          fi
+          npx --no-install vitest run --shard="${TASK#unit-}/4" \
+            --reporter=default --reporter=json --outputFile="unit-reports/shard-${TASK#unit-}.json"
+
+      - name: Preserve unit reports
+        if: ${{ !cancelled() && startsWith(matrix.task, 'unit-') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-reports-${{ matrix.task }}
+          path: unit-reports/
+          if-no-files-found: error
+          retention-days: 14
+
+  checks:
+    name: Lint, typecheck, unit tests
+    needs: linux
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All Linux validations passed
+        env:
+          RESULT: ${{ needs.linux.result }}
+        run: test "$RESULT" = success
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unit-reports-*
+          path: unit-reports
+          merge-multiple: true
+      - name: Every unit test file completed exactly once
+        run: node scripts/merge-unit-reports.mjs unit-reports 4
 
   # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
   # Electron on an isolated user-data directory, hidden (--test-no-activate),
@@ -95,6 +125,7 @@ jobs:
   # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
   # thread). Nothing here touches the release rail.
   e2e-run:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.linux_only }}
     name: Electron (${{ matrix.task }})
     strategy:
       fail-fast: false
@@ -240,7 +271,7 @@ jobs:
   e2e:
     name: End-to-end (the real app, macOS)
     needs: e2e-run
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || !inputs.linux_only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
