@@ -133,7 +133,10 @@ export function setupSpawnFlags(
  * `claude agents` is a subcommand with no chat; a Claude chat is not offered
  * on Windows (`launch-profile-manager.ts`), where the terminal stays the
  * answer. A setup that names a profile (an Advanced pick, a remembered pin)
- * keeps it.
+ * keeps it. `chatDefault` answering nothing means the family's selected
+ * profile has no chat form of its own because it IS a chat-capable agent
+ * already (a plugin's adapter, `chatDefaultFor`): the launch then names no
+ * profile and main runs that selected profile as it is.
  */
 export function transportProfileFor(
   setup: AgentSetup | null,
@@ -146,8 +149,7 @@ export function transportProfileFor(
   if (!harness.chatAdapterId) return undefined
   if (useLaunchSettingsStore.getState().interactionMode === 'terminal') return undefined
   if (setup.kind === 'claude' && window.electronAPI?.platform === 'win32') return undefined
-  const family = setup.kind as 'claude' | 'codex'
-  return chatDefault(family) ?? CHAT_PROFILE_IDS[family]
+  return chatDefault(setup.kind as 'claude' | 'codex')
 }
 
 const NO_AGENT = {
@@ -238,8 +240,11 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
   // The transport from the mode, against the server's own profiles: its chat
   // default in chat form when the person launches in a chat view.
   const serverSettings = await serverSettingsReady(serverId)
+  // A server whose profiles are not known yet gets its built-in chat.
   const launchProfileId = transportProfileFor(req.setup, (family) =>
-    serverSettings?.profiles ? chatDefaultFor(serverSettings.profiles, family, null) : undefined
+    serverSettings?.profiles
+      ? chatDefaultFor(serverSettings.profiles, family, null)
+      : CHAT_PROFILE_IDS[family]
   )
   const setup = req.setup && launchProfileId ? { ...req.setup, launchProfileId } : req.setup
   const pick = setup ? await serverPick(serverId, setup) : {}

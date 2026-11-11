@@ -75,9 +75,11 @@ describe('the launch settings', () => {
     rememberChatModel('claude-chat', 'default')
     expect(await handler({}, 'claude-chat')).toBeNull()
   })
-  it('migrates an old chatView into the mode once, at registration', () => {
+  it('migrates an old chatView into the mode once, on the first read, never at registration', () => {
     prefs.set('chatView', 'clave.chat-view/lab')
+    // Registration reads nothing: the settings ports are installed later.
     registerLaunchSettingsHandlers()
+    expect(prefs.get('chatView')).toBe('clave.chat-view/lab')
     expect(getLaunchSettings().interactionMode).toBe('folio')
     expect(prefs.get('chatView')).toBeNull()
   })

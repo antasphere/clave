@@ -453,6 +453,20 @@ export async function waitForBoot(
  *  `app.close()`; in separate mode the app starts and stops its own and the
  *  harness only passes the flag; in every mode a stray `CLAVE_SERVER_URL` in
  *  the caller's shell is dropped, so the app never attaches by accident. */
+/** `preferences.json` with the Terminal interaction mode, when the folder has
+ *  no preference file yet (see `launchApp`). */
+export function seedInteractionMode(dir, mode = 'terminal') {
+  const file = path.join(dir, 'preferences.json')
+  if (existsSync(file)) return
+  try {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(file, JSON.stringify({ interactionMode: mode, onboarding: 'pending' }, null, 2))
+  } catch {
+    // A folder nobody can make (the harness's own unit test names one): the
+    // launch itself says so; the seed is not where that is found out.
+  }
+}
+
 export async function launchApp(
   dir,
   {
@@ -479,6 +493,14 @@ export async function launchApp(
       'waitForWindow: false requires waitForServer: false, beforeBoot: null and settleMs: 0'
     )
   }
+  // The shipped default opens a conversation as a Chat (PRDCT-4425); the specs
+  // were written when the agent button and the shortcuts opened the family's
+  // selected profile, a terminal unless a chat profile is the default. An
+  // instance therefore starts in Terminal mode, which keeps that reading (a
+  // chat profile selected as the default still opens its chat); a spec that
+  // proves the Chat mode sets it itself (`launchSettingsSet`). `onboarding`
+  // stays what a folder with no preference file decides on its own.
+  seedInteractionMode(dir)
   const base = { ...process.env }
   delete base.CLAVE_SERVER_URL
   delete base.CLAVE_SERVER_TOKEN

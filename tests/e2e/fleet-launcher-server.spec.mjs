@@ -62,6 +62,8 @@ export async function run(t) {
     await connectMac(mac, world.servers, { ui: false })
     const owner = mac.owners[0].id
     const { win } = mac
+    // This spec proves the Chat mode's road: a row click opens the server's chat.
+    await win.evaluate(() => window.electronAPI.launchSettingsSet({ interactionMode: 'chat' }))
 
     // One profile the server alone has, one this Mac alone has.
     const recorder = (suffix) => [

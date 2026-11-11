@@ -219,6 +219,9 @@ export async function run(t) {
 
     // ⌘U is the ordinary Codex launch — no profile named at the call site, so
     // the workspace default is what has to be found at the spawn boundary.
+    // The shortcut follows the interaction mode like every road (PRDCT-4425):
+    // Terminal here, so the argv of the wrapper is what is proven.
+    await win.evaluate(() => window.electronAPI.launchSettingsSet({ interactionMode: 'terminal' }))
     await win.keyboard.press('Meta+u')
     const argv = await until(
       () =>

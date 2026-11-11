@@ -540,13 +540,15 @@ describe('transportProfileFor', () => {
     useLaunchSettingsStore.setState({ interactionMode: 'chat' })
     vi.unstubAllGlobals()
   })
-  it('answers the chat default in a chat mode, the built-in chat when the family has none', () => {
+  it("answers the chat default in a chat mode, and nothing when the family's selected profile is a chat-capable agent of its own", () => {
     vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
     useLaunchSettingsStore.setState({ interactionMode: 'folio' })
     expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBe(
       'chat:claude:work'
     )
-    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBe('codex-chat')
+    // A plugin's adapter selected as the default has no chat form: main runs
+    // it as it is (the echo adapter of the chat-view specs).
+    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBeUndefined()
   })
   it('answers nothing in Terminal mode, for a harness with no chat, for claude agents, and for a Claude chat on Windows', () => {
     vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
@@ -561,7 +563,9 @@ describe('transportProfileFor', () => {
     expect(transportProfileFor(null, chat)).toBeUndefined()
     vi.stubGlobal('window', { electronAPI: { platform: 'win32' } })
     expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBeUndefined()
-    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBe('codex-chat')
+    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, () => 'codex-chat')).toBe(
+      'codex-chat'
+    )
   })
   it('keeps a profile the setup names, whatever the mode', () => {
     vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })

@@ -29,6 +29,12 @@ export const LAUNCH_SETTINGS_IPC = {
 } as const
 
 export function getLaunchSettings(): LaunchSettings {
+  // An old `chatView` becomes the interaction mode on the first read, once
+  // (the migration clears it; verifier, F5: Settings showed Chat until a chat
+  // opened). On a READ, never at registration: the handlers are registered
+  // before the app is ready, and a preference read there runs on a store
+  // the boot has not finished placing (round 2 of the e2e).
+  migrateChatView()
   const mode = preferencesManager.get('interactionMode')
   return {
     interactionMode: isInteractionMode(mode) ? mode : 'chat',
@@ -72,9 +78,6 @@ export function setLaunchSettings(patch: {
 }
 
 export function registerLaunchSettingsHandlers(): void {
-  // An old `chatView` becomes the interaction mode once, at boot, so Settings
-  // shows the person's real choice before any chat opens (verifier, F5).
-  migrateChatView()
   ipcMain.handle(LAUNCH_SETTINGS_IPC.get, () => getLaunchSettings())
   ipcMain.handle(LAUNCH_SETTINGS_IPC.set, (_event, patch: unknown) => {
     if (!patch || typeof patch !== 'object') throw new Error('Bad launch settings')
