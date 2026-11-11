@@ -71,8 +71,9 @@ nonisolated struct NotificationResponseInput: Sendable {
   @ObservationIgnored private var apnsToken: String?
   @ObservationIgnored private var launchURL: URL?
   /// The move of each owner's shared ledger to its machines' own, by owner namespace: one task,
-  /// which every connection of that owner waits for before it is built.
-  @ObservationIgnored private var ledgerMoves: [String: Task<Void, Never>] = [:]
+  /// which every connection of that owner waits for before it is built. A move that failed is
+  /// dropped once it ended, so the next connection made runs it again.
+  @ObservationIgnored private var ledgerMoves: [String: Task<Bool, Never>] = [:]
   /// The connection being made for a machine, at most one at a time: a caller arriving meanwhile
   /// waits for it rather than making a second one that would replace it.
   @ObservationIgnored private var connecting: [String: Task<MachineConnection?, Never>] = [:]
@@ -279,23 +280,28 @@ nonisolated struct NotificationResponseInput: Sendable {
   }
 
   /// Moves the sends of unknown outcome every machine of this owner once kept under one key to each
-  /// machine's own, once per owner: a caller arriving while the move runs waits for the same move,
-  /// and one arriving later finds it done. A move that fails leaves the records under the old key,
-  /// none dropped, for the next launch to move.
+  /// machine's own: a caller arriving while the move runs waits for the same move, and one arriving
+  /// after it succeeded finds it done. A move that fails leaves the old list and, once it ended, is
+  /// no longer the owner's answer: the next connection made runs it again, one move at a time. The
+  /// move adds nothing to a machine's ledger that exists, so running it again never brings back a
+  /// send settled or discarded since.
   private func moveSharedLedger(of owner: OwnerScopedKeyValueStore) async {
     if let move = ledgerMoves[owner.namespace] {
-      await move.value
+      _ = await move.value
       return
     }
-    let move = Task {
+    let move = Task { () -> Bool in
       do {
         try await migrateLegacyUnknownSends(owner)
+        return true
       } catch {
         AppLog.event("ledger.move.failed")
+        return false
       }
     }
     ledgerMoves[owner.namespace] = move
-    await move.value
+    let moved = await move.value
+    if !moved, ledgerMoves[owner.namespace] == move { ledgerMoves[owner.namespace] = nil }
   }
 
   /// The conversation of a session on a machine, made on first use over that machine's

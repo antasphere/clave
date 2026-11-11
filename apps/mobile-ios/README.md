@@ -18,7 +18,9 @@ The key-value store (one JSON file in the app's support folder, every key under 
 namespace) keeps each machine's sends of unknown outcome under a key of its own,
 `clave.unknown-sends:<machineId>`. The app has had development installs only; records still
 under the old shared key `clave.unknown-sends` are moved to their machine's key at the owner's
-first connection, exactly once, none dropped.
+first connection. A machine's records move only into a ledger that does not exist yet (a ledger
+emptied since keeps its key, holding an empty list); the old list is removed only after every
+machine's write succeeded; and a move that failed runs again at the next connection made.
 
 ## The toolchain
 
