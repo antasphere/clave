@@ -556,19 +556,26 @@ class DeliveryController(
      * next start. When the store refuses a write here, nothing has left yet: the entry is taken out
      * again before any answer ([Begun.NotSaved] once the ledger holds none of it), since a pass would
      * otherwise send what the person is told was not sent; when that undoing fails too and the entry
-     * stays, the answer is [Begun.KeptNotSaved]. A cancellation is thrown as it comes, the entry left
-     * as it is, like a send cancelled with its write out ([abandon]).
+     * stays, the answer is [Begun.KeptNotSaved]. Until that answer is decided the id stays in flight,
+     * so a pass that read the entry meanwhile leaves it and never sends its same-id completion. On
+     * every way out but [Begun.Recorded] the id is let go (a Recorded send is let go by [finish] or
+     * [abandon]). A cancellation is thrown as it comes, the entry left as it is, like a send cancelled
+     * with its write out, and never answered.
      */
     suspend fun begin(send: UnknownSend): Begun {
         active.add(send.clientMessageId)
-        try {
+        val failure = try {
             recordUnknownSend(send, "Delivery has not been confirmed.", sends, marks)
+            return Begun.Recorded
         } catch (error: Throwable) {
-            active.remove(send.clientMessageId)
-            if (error is CancellationException || error !is Exception) throw error
-            return if (undoBegin(send)) Begun.NotSaved else Begun.KeptNotSaved
+            error
         }
-        return Begun.Recorded
+        try {
+            if (failure is CancellationException || failure !is Exception) throw failure
+            return if (undoBegin(send)) Begun.NotSaved else Begun.KeptNotSaved
+        } finally {
+            active.remove(send.clientMessageId)
+        }
     }
 
     /** Takes a failed begin's entry out of the ledger; true once it holds none of it, read back when the removal fails. */
