@@ -4,8 +4,6 @@ import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync, utimesSync 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-vi.mock('./pty-manager', () => ({ getLoginShellEnv: () => process.env }))
-
 import { gitManager } from './git-manager'
 
 /**

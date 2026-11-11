@@ -1,9 +1,10 @@
 import simpleGit, { type StatusResult } from 'simple-git'
-import { execFile, spawn } from 'child_process'
+import { spawn } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
-import { getLoginShellEnv } from './pty-manager'
-import { oneShotEnv } from './claude-one-shot'
+import { runHelper } from './helpers/runner'
+import type { HelperDefinition } from './helpers/registry'
+import { commitMessageHelper, pushSummaryHelper } from './helpers/git'
 import { repoRootAsAsked } from './git-repo-root'
 import type {
   GitBatchOp,
@@ -1160,10 +1161,8 @@ class GitManager {
       if (!stat.trim()) throw new Error('No staged changes — stage files first')
       const fullDiff = await git.diff(['--cached'])
       console.log('[git] Staged diff length:', fullDiff.length)
-      // Truncate to ~12k chars to stay within reasonable prompt size
-      return fullDiff.length > 12000
-        ? fullDiff.slice(0, 12000) + '\n... (diff truncated)'
-        : fullDiff
+      // The helper clips it (COMMIT_DIFF_CHARS) and reads it as data.
+      return fullDiff
     })
 
     // Get recent commit messages for style context
@@ -1171,22 +1170,7 @@ class GitManager {
       entries.map((e) => e.message).join('\n')
     )
 
-    const prompt = `Write a git commit message for the staged diff below.
-
-Rules:
-- First line: conventional commit prefix (feat/fix/refactor/chore/docs/style/perf/test) + concise summary, max 72 chars
-- If the change is non-trivial, add a blank line then a body (1-3 bullet points) explaining WHAT was done and WHY — not which files were touched
-- Maximize information density: an agent reading git log should understand the intent and scope without reading the diff
-- No quotes around the message, no markdown formatting, no trailing explanation
-- Match the tone and style of recent commits if provided
-
-${recentMessages ? `Recent commits for style reference:\n${recentMessages}\n\n` : ''}Staged diff:
-${diff}`
-
-    const env = oneShotEnv(getLoginShellEnv())
-
-    console.log('[git] Spawning claude CLI for commit message generation...')
-    return runClaudePrompt(prompt, env, '[git]')
+    return runGitHelper(commitMessageHelper, { diff, recent: recentMessages })
   }
 
   /**
@@ -1559,27 +1543,8 @@ ${diff}`
     commitMessages: string[],
     diffStats: string
   ): Promise<{ title: string; description: string }> {
-    const prompt = `Summarize this group of git commits that were pushed together.
-
-Commit messages:
-${commitMessages.map((m) => `- ${m}`).join('\n')}
-
-Diff stats:
-${diffStats}
-
-Respond with exactly two lines:
-Line 1: A short title (max 60 chars) describing what was accomplished
-Line 2: A 1-2 sentence description explaining what changed and why
-
-No quotes, no markdown, no extra formatting. Just two lines of plain text.`
-
-    const env = oneShotEnv(getLoginShellEnv())
-
-    const stdout = await runClaudePrompt(prompt, env, '[git:group-summary]')
-    const lines = stdout.split('\n').filter(Boolean)
-    const title = lines[0] || 'Changes'
-    const description = lines.slice(1).join(' ').trim() || ''
-    return { title, description }
+    const summary = await runGitHelper(pushSummaryHelper, { commitMessages, diffStats })
+    return { title: summary.title || 'Changes', description: summary.description }
   }
 
   /** A repo's status for the panel: through the app-wide queue, where a read
@@ -1728,58 +1693,19 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
 
 export const gitManager = new GitManager()
 
-function runClaudeOnce(
-  prompt: string,
-  env: Record<string, string>,
-  logPrefix: string
-): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const child = execFile(
-      'claude',
-      ['-p', '--model', 'haiku', '--fallback-model', 'sonnet'],
-      {
-        env,
-        encoding: 'utf-8',
-        maxBuffer: 1024 * 1024,
-        timeout: 60000
-      },
-      (err, stdout, stderr) => {
-        if (err) {
-          const parts = [err.message, stderr?.trim()].filter(Boolean)
-          const detail = parts.join(' — ') || 'unknown error'
-          console.error(`${logPrefix} claude CLI error:`, detail)
-          reject(new Error(detail))
-          return
-        }
-        const out = stdout.trim()
-        if (!out) {
-          reject(new Error('Empty response from Claude'))
-          return
-        }
-        resolve(out)
-      }
-    )
-    // Swallow stdin EPIPE — if claude exits before we finish writing, the
-    // callback above will report the real error. An unhandled 'error' on
-    // stdin would crash the main process.
-    child.stdin?.on('error', (e) => {
-      console.warn(`${logPrefix} stdin error (ignored):`, (e as Error).message)
-    })
-    child.stdin?.write(prompt)
-    child.stdin?.end()
-  })
-}
-
-async function runClaudePrompt(
-  prompt: string,
-  env: Record<string, string>,
-  logPrefix: string
-): Promise<string> {
-  try {
-    return await runClaudeOnce(prompt, env, logPrefix)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`${logPrefix} first attempt failed, retrying once:`, msg)
-    return runClaudeOnce(prompt, env, logPrefix)
-  }
+/**
+ * One of the git panel's helpers (`helpers/git.ts`), run the way a session
+ * starts (the workspace's default launch profile, on its default account)
+ * by the helpers' runner, which retries once. Its failure reaches the panel
+ * as an error carrying what the CLI said (`describeClaudeFailure` in
+ * `server/git-port.ts` names the two ways a machine has no Claude).
+ */
+async function runGitHelper<Input, Output>(
+  helper: HelperDefinition<Input, Output>,
+  input: Input
+): Promise<Output> {
+  console.log(`[git] asking the ${helper.id} helper`)
+  const outcome = await runHelper(helper, input)
+  if (outcome.ok) return outcome.value
+  throw new Error(outcome.reason === 'unreadable' ? 'Empty response from Claude' : outcome.detail)
 }

@@ -1,12 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-
-// The manager reaches into pty-manager for the login shell's env, which pulls
-// in node-pty — a native module built for Electron's ABI, not this runner's.
-vi.mock('./pty-manager', () => ({ getLoginShellEnv: () => process.env }))
 
 import { gitManager, parseCreatedFrom, parseCreatedAt, parseCreation } from './git-manager'
 
