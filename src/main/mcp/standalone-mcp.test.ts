@@ -614,6 +614,22 @@ describe('standalone MCP session tools', () => {
     })
     expect(started[1].options).toMatchObject({ launchProfileId: 'codex-chat' })
   })
+  it.each([undefined, true, false])(
+    'a generic chat ID keeps the server default over HTTP with chat=%s',
+    async (chat) => {
+      const { client, started, directory } = await sessionFixture()
+      payload(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { cwd: directory, mode: 'codex', profile: 'codex-chat', chat }
+        })
+      )
+      expect(started[0].options).toMatchObject({
+        launchProfileId: 'chat:codex:yolo',
+        dangerousMode: false
+      })
+    }
+  )
   it('opens a Claude terminal instead of the chat view with chat: false', async () => {
     const { client, started, resized, directory } = await sessionFixture()
     payload(
@@ -1194,6 +1210,7 @@ describe('agent-sessions/delegation-group fixture', () => {
           cwd: directory,
           mode: 'codex',
           name: 'Lane lead',
+          profile: 'codex-chat',
           groupId,
           attachToParent: false
         }
@@ -1201,6 +1218,7 @@ describe('agent-sessions/delegation-group fixture', () => {
     )
     expect(started.find((s) => s.options?.spawnedBy === 'caller')).toBeDefined()
     expect(started.at(-1)?.options).not.toHaveProperty('spawnedBy')
+    expect(started.at(-1)?.options).toMatchObject({ launchProfileId: 'chat:codex:yolo' })
     expect(delegated.groupId).toBe(groupId)
     const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
       .sessions as Array<Record<string, unknown>>

@@ -394,7 +394,14 @@ function buildServer(
           .describe(
             "Claude and Codex open in the chat view unless this is false, on the chat form of this server's default profile for the family (profile names another chat profile by its id)"
           ),
-        profile: z.string().min(1).max(256).optional().describe('A launch profile id'),
+        profile: z
+          .string()
+          .min(1)
+          .max(256)
+          .optional()
+          .describe(
+            "A launch profile id. Generic claude-chat and codex-chat IDs use this server's configured chat default; name a custom profile to override it."
+          ),
         groupId: z.string().min(1).max(256).optional().describe('Group id from clave_create_group'),
         // Named so a desktop-shaped call fails clearly instead of being stripped.
         account: z.unknown().optional(),

@@ -93,17 +93,29 @@ describe('clave_open_session chat default', () => {
       'codex-chat'
     )
   })
-  it('lets an explicit chat profile win over the default, derived forms included', () => {
+  it('lets an explicit custom chat profile win over the default', () => {
     expect(
       resolveProfileRef(
         { mode: 'codex', chat: true, profile: 'chat:codex:strict' },
         'chat:codex:yolo'
       )
     ).toBe('chat:codex:strict')
-    expect(
-      resolveProfileRef({ mode: 'codex', chat: true, profile: 'codex-chat' }, 'chat:codex:yolo')
-    ).toBe('codex-chat')
   })
+  it.each(['claude', 'codex'] as const)(
+    'uses the configured %s chat for a built-in chat ID, even without chat: true',
+    (mode) => {
+      for (const chat of [undefined, true, false]) {
+        expect(
+          resolveProfileRef({ mode, chat, profile: `${mode}-chat` }, `chat:${mode}:custom`)
+        ).toBe(`chat:${mode}:custom`)
+        for (const fallback of [undefined, `builtin-${mode}`, 'chat:pi:other']) {
+          expect(resolveProfileRef({ mode, chat, profile: `${mode}-chat` }, fallback)).toBe(
+            `${mode}-chat`
+          )
+        }
+      }
+    }
+  )
   it('still refuses a terminal profile beside chat, whatever the default', () => {
     expect(() =>
       resolveProfileRef({ mode: 'codex', chat: true, profile: 'builtin-codex' }, 'chat:codex:yolo')
