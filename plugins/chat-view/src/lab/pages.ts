@@ -50,9 +50,13 @@ export interface Page {
   /** The key of the title a helper writes for the page (PRDCT-4412), null
    *  for a page with no question to title. */
   titleKey: string | null
+  /** The question sent for its title: the reader's words (`fullMessage`)
+   *  clipped as the host clips them, so what is sent is what is keyed and
+   *  the wire never refuses a long question. Empty with no question. */
+  message: string
   /** The question as the reader wrote it: its messages' bodies, delivery
    *  headers taken out, joined with a blank line. Empty with no question. */
-  message: string
+  fullMessage: string
   /** The question as the reader wrote it, without a delivery header; empty
    *  when the stand-in title already says all of it (`briefFor` says what
    *  shows under a written title). */
@@ -107,10 +111,13 @@ function briefOf(body: string, title: string): string {
  *  brief (empty when the first sentence was the whole message); under a
  *  title a helper wrote, the whole message, since the written title is not
  *  the reader's words — unless it happens to say exactly them. */
-export function briefFor(page: Pick<Page, 'title' | 'brief' | 'message'>, shown: string): string {
+export function briefFor(
+  page: Pick<Page, 'title' | 'brief' | 'fullMessage'>,
+  shown: string
+): string {
   if (shown === page.title) return page.brief
-  const full = flat(page.message)
-  return full === '' || full === flat(shown) ? '' : page.message.trim()
+  const full = flat(page.fullMessage)
+  return full === '' || full === flat(shown) ? '' : page.fullMessage.trim()
 }
 
 /** The key of a page's written title: the message clipped as the host clips
@@ -217,7 +224,8 @@ export function buildPages(
       from: parsed[0]?.from,
       title,
       titleKey: first && flat(body) ? titleKeyOf(body) : null,
-      message: first ? body : '',
+      message: first ? clipText(body, PAGE_TITLE_MESSAGE_CHARS) : '',
+      fullMessage: first ? body : '',
       brief: briefOf(body, title),
       rows: draft.rows,
       status: statusOf(draft.question, draft.rows, lastPage ? state : 'done'),

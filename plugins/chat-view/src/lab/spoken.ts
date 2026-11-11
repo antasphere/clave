@@ -98,7 +98,13 @@ export function requestSpokenRendering(
       if (known?.state === 'failed' && !canAskAgain(known.reason))
         return { ok: false, error: 'not asked again', reason: known.reason }
       useSpokenStore.getState().set(id, { state: 'preparing' })
-      const call = window.electronAPI?.spokenRendering?.({ sessionId, key, launch, markdown })
+      // Sent clipped as it is keyed: the wire refuses a longer text.
+      const call = window.electronAPI?.spokenRendering?.({
+        sessionId,
+        key,
+        launch,
+        markdown: clipText(markdown, SPOKEN_MAX_CHARS)
+      })
       const answer: SpokenAnswer = call
         ? await (call as Promise<SpokenResult>).catch(
             (error: unknown): SpokenAnswer => ({

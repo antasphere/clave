@@ -9,6 +9,27 @@ export const REVEAL_RUN = 4
 export const REVEAL_STEPS = 24
 /** How long a reveal plays, inside the 300 to 500 ms the motion allows. */
 export const REVEAL_MS = 420
+/** How long the head must have shown the stand-in with its loader before a
+ *  title is revealed in place: a title that comes sooner was filed on the
+ *  host already, and is just shown. */
+export const REVEAL_MIN_WAIT_MS = 400
+
+/**
+ * Whether a title that just arrived is revealed in place: only a title
+ * written now (`fresh`), after the head showed the stand-in with its loader
+ * since `pendingSince` for at least REVEAL_MIN_WAIT_MS, and never for a
+ * reader who asked for no motion. Pure.
+ */
+export function shouldReveal(
+  pendingSince: number | null,
+  now: number,
+  fresh: boolean,
+  reducedMotion: boolean
+): boolean {
+  return (
+    fresh && !reducedMotion && pendingSince !== null && now - pendingSince >= REVEAL_MIN_WAIT_MS
+  )
+}
 
 /** The marks an unsettled character shows: quiet, lowercase, never a word. */
 const UNSETTLED = 'aeosnrtlcdumxzvkq'

@@ -60,4 +60,44 @@ describe('parsePageTitleReply', () => {
     expect(parsePageTitleReply('First line\nSecond line')).toBeNull()
     expect(parsePageTitleReply('')).toBeNull()
   })
+
+  it('strips quotes only as a pair wrapping the whole title', () => {
+    const read = (reply: string): string | undefined => parsePageTitleReply(reply)?.title
+    expect(read('« Build » renommé')).toBe('« Build » renommé')
+    expect(read('Le mot « fix »')).toBe('Le mot « fix »')
+    expect(read('Renaming the "build"')).toBe('Renaming the "build"')
+    expect(read("The users'")).toBe("The users'")
+    expect(read('"Build" and "fix"')).toBe('"Build" and "fix"')
+    expect(read('« Le build renommé »')).toBe('Le build renommé')
+    expect(read('“Fix login”')).toBe('Fix login')
+    expect(read('‘Fix login’')).toBe('Fix login')
+    expect(read("'The user's page'")).toBe("The user's page")
+    expect(read('`Fix login`')).toBe('Fix login')
+    expect(read('"Fix login".')).toBe('Fix login')
+  })
+
+  it('reads a title past a label in bold, and out of its bold', () => {
+    const read = (reply: string): string | undefined => parsePageTitleReply(reply)?.title
+    expect(read('**Title:** Fix login')).toBe('Fix login')
+    expect(read('**Title**: Fix login')).toBe('Fix login')
+    expect(read('**Fix login**')).toBe('Fix login')
+    expect(read('**Page title:** **Fix login**')).toBe('Fix login')
+  })
+
+  it('refuses a reply that talks in French', () => {
+    for (const reply of [
+      'Je voudrais corriger le build',
+      "J'ai corrigé le build",
+      'Nous corrigeons le build',
+      'Voici un titre',
+      'Il faut corriger le build',
+      'Peux-tu corriger le build',
+      'Pouvez-vous corriger le build',
+      "D'accord, le build",
+      'Bien sûr, le build'
+    ])
+      expect(parsePageTitleReply(reply), reply).toBeNull()
+    // A title that merely begins with those letters is a title.
+    expect(parsePageTitleReply('Jest config cleanup')?.title).toBe('Jest config cleanup')
+  })
 })

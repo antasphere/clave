@@ -36,7 +36,10 @@ import type { DigestFailureReason } from '../../../src/shared/exchange-digest'
  *    again" asks at once, and a view that asks again (a remount, the tab
  *    reopened) re-asks a failure older than DIGEST_RETRY_AFTER_MS. A failure
  *    no ask can mend (the server needs an update, it no longer has the tab)
- *    offers no "Ask again" and is not re-asked (`canAskAgain`).
+ *    offers no "Ask again" and is not re-asked (`canAskAgain`);
+ *  - a read the host turned away because too many of its kind were waiting
+ *    (`busy`) is asked again by itself after DIGEST_BUSY_RETRY_MS, while its
+ *    card is still in view, without waiting for the view to ask.
  */
 
 /** How long a card must hold still before its digest is asked for: a burst
@@ -47,6 +50,9 @@ export const DIGEST_GIVE_UP_MS = 90_000
 /** How old a failure must be before a view asking again re-asks it on its
  *  own: a failing account is not asked once per render. */
 export const DIGEST_RETRY_AFTER_MS = 60_000
+/** How long a read the host found busy waits before it is asked again: the
+ *  reads ahead of it are a few seconds each, so a place frees soon. */
+export const DIGEST_BUSY_RETRY_MS = 4_000
 
 /** Why a read failed, as the card says it. */
 export type DigestFailure = DigestFailureReason | 'unanswered'
@@ -206,6 +212,14 @@ export function createDigests<Payload, Done>(api: {
   >()
   /** Each card's latest ask: an answer of an older one is not applied. */
   const asks = new Map<string, number>()
+  /** The busy reads waiting to be asked again, by card. */
+  const busyRetries = new Map<string, ReturnType<typeof setTimeout>>()
+  const clearBusyRetry = (id: string): void => {
+    const timer = busyRetries.get(id)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    busyRetries.delete(id)
+  }
   const failed = (reason?: DigestFailure): DigestStateOf<Done> => ({
     state: 'failed',
     reason,
@@ -229,10 +243,13 @@ export function createDigests<Payload, Done>(api: {
       !(
         state.state === 'failed' &&
         canAskAgain(state.reason) &&
-        (now || Date.now() - state.at >= DIGEST_RETRY_AFTER_MS)
+        (now ||
+          Date.now() - state.at >=
+            (state.reason === 'busy' ? DIGEST_BUSY_RETRY_MS : DIGEST_RETRY_AFTER_MS))
       )
     )
       return
+    clearBusyRetry(id)
     asked.set(id, { sessionId, item, launch })
     const generation = (asks.get(id) ?? 0) + 1
     asks.set(id, generation)
@@ -272,6 +289,15 @@ export function createDigests<Payload, Done>(api: {
                   ? { state: 'done', result: result as unknown as Done, fresh: true }
                   : failed(result.reason)
               )
+            // Turned away for a moment: asked again by itself, while in view.
+            if (!result.ok && result.reason === 'busy')
+              busyRetries.set(
+                id,
+                setTimeout(() => {
+                  busyRetries.delete(id)
+                  if (current.get(sessionId)?.has(item.key)) ask(sessionId, item, launch, true)
+                }, DIGEST_BUSY_RETRY_MS)
+              )
           })
       },
       now ? 0 : (api.settleMs ?? DIGEST_SETTLE_MS)
@@ -309,7 +335,11 @@ export function createDigests<Payload, Done>(api: {
     launch: DigestLaunch
   ): void => {
     watchServer()
-    current.set(sessionId, new Set(items.map((item) => item.key)))
+    const keys = new Set(items.map((item) => item.key))
+    // A card that left the view is not asked again by itself.
+    for (const key of current.get(sessionId) ?? [])
+      if (!keys.has(key)) clearBusyRetry(idOf(sessionId, key))
+    current.set(sessionId, keys)
     if (!useStore.getState().loaded[sessionId]) return
     for (const item of items) ask(sessionId, item, launch)
   }

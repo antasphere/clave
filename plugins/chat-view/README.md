@@ -223,8 +223,11 @@ reads the provider's side off the echo adapter's reply.
 
 `clave.chat-view/lab`, titled Folio (`src/lab/`, its name and one-line pitch in
 `src/lab/meta.ts`, which the first-run onboarding reads). The conversation is a
-book of pages, one per question: the reader's message is the page's title (its
-first sentence, `headline`), the agent's answer is written on the page as a
+book of pages, one per question: the page's title is the reader's message, its
+first sentence (`headline`) at once, then the title a helper wrote for it,
+rewritten in place over the first sentence (`PageTitle.tsx`, `reveal.ts`; a
+title already filed is just shown, and the whole message then sits under it),
+and the agent's answer is written on the page as a
 document, and what the agent did on the way (calls, approvals) sits in the
 margin beside the paragraph it led to; a call in the margin opens to the
 transcript's own `ToolPanel`. A message sent before any answer joins the
@@ -232,9 +235,13 @@ question it follows. The spine at the top has one tick per page, its height the
 length of the answer; the arrows (or Option and the arrows from an empty
 composer), the ticks and the contents turn pages, and the page being written is
 followed until the reader turns away, with a way back while they are elsewhere.
-A finished page can be read aloud through the system voice (Web Speech
-synthesis, `speech.ts` takes the markdown out and cuts the utterances), and the
-speaker toggle in the composer's footer reads each new answer as it finishes.
+A finished page can be read aloud: the reading first asks for the page's spoken
+rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
+markdown, no code read out, the lists said as sentences, filed so a page read
+before is spoken at once), and speaks it; when none comes, it reads the page as
+written (`speech.ts` takes the markdown out and cuts the utterances) and the read
+control says why. The speaker toggle in the composer's footer reads each new
+answer as it finishes.
 
 It keeps the same reducer, subscription order and composer as the Chat view
 (`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,

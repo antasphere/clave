@@ -86,4 +86,58 @@ describe('parseSpokenReply', () => {
     expect(parseSpokenReply('  \n')).toBeNull()
     expect(parseSpokenReply('')).toBeNull()
   })
+
+  it('stops at the first closing tag: a later one in a note stays out (M05)', () => {
+    expect(
+      parseSpokenReply('<spoken>One.</spoken>\nNote: I closed with </spoken> by mistake.')
+    ).toEqual({ ok: true, text: 'One.' })
+  })
+
+  it('takes a stray tag out of the text', () => {
+    expect(parseSpokenReply('<spoken><spoken>Hello.</spoken></spoken>')).toEqual({
+      ok: true,
+      text: 'Hello.'
+    })
+    expect(parseSpokenReply('<spoken>One <spoken>two.\nThree.')).toEqual({
+      ok: true,
+      text: 'One two.\nThree.'
+    })
+  })
+
+  it('refuses a reply with no tags that talks instead of rendering', () => {
+    for (const reply of [
+      "I can't help with that.",
+      'I cannot render this.',
+      "I'm sorry, I can't do that.",
+      'I am sorry, no.',
+      'Sorry, this is too long.',
+      'Sure! The build is green.',
+      'Here is the spoken version.\nThe build is green.',
+      "Here's the text.",
+      'Here are the steps:\nOne, install.',
+      'Okay. The build is green.',
+      'As an AI, I cannot.',
+      "I'd be happy to help.",
+      'Certainly. The build is green.',
+      'Spoken version:\nSure, here it is.'
+    ])
+      expect(parseSpokenReply(reply), reply).toBeNull()
+  })
+
+  it('cuts a label off the first line, and drops a label line, never a real first line', () => {
+    expect(parseSpokenReply('Spoken version: The build is green.')).toEqual({
+      ok: true,
+      text: 'The build is green.'
+    })
+    expect(parseSpokenReply('Spoken text: One.\nTwo.')).toEqual({ ok: true, text: 'One.\nTwo.' })
+    expect(parseSpokenReply('Rendering:\n\nThe build is green.')).toEqual({
+      ok: true,
+      text: 'The build is green.'
+    })
+    expect(parseSpokenReply('Spoken: Done.')).toEqual({ ok: true, text: 'Done.' })
+    expect(parseSpokenReply('The steps are these:\nOne, install.\nTwo, run.')).toEqual({
+      ok: true,
+      text: 'The steps are these:\nOne, install.\nTwo, run.'
+    })
+  })
 })

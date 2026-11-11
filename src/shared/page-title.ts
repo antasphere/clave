@@ -63,20 +63,50 @@ ${asData('message', message, PAGE_TITLE_MESSAGE_CHARS)}
 Reply with the title alone, one line, nothing else.`
 }
 
+/** The words of a label the model may put before the title. */
+const LABEL = String.raw`(?:the\s+)?(?:(?:page|chapter|short|suggested)\s+)*(?:title|label|name)`
 /** A label the model may put before the title on the same line. */
-const LEADING_LABEL =
-  /^(?:the\s+)?(?:(?:page|chapter|short|suggested)\s+)*(?:title|label|name)\s*[:：]\s*/i
+const LEADING_LABEL = new RegExp(String.raw`^${LABEL}\s*[:：]\s*`, 'i')
+/** The same label in bold, its colon inside or after the markup:
+ *  `**Title:** Fix login`, `**Title**: Fix login`. */
+const BOLD_LABEL = new RegExp(String.raw`^(\*\*|__)\s*${LABEL}\s*(?:[:：]\s*\1|\1\s*[:：])\s*`, 'i')
+/** The quotes a title may come wrapped in, as pairs: the same kind at both
+ *  ends, or a quote at one end only is the title's own (« Build » renommé). */
+const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['"', '"'],
+  ["'", "'"],
+  ['“', '”'],
+  ['‘', '’'],
+  ['«', '»'],
+  ['`', '`']
+]
 /** Words a reply opens with when it is talking, not titling (the tab title's
  *  list, `src/main/helpers/title.ts`, less "The": a sentence-case title may
- *  open with it, "The login redirect loop"). */
-const TALKING = /^(?:I|I'm|I'll|I've|This|You|It|We|My|Let|Let's|Here|Sure|Okay)\b/
+ *  open with it, "The login redirect loop"), and their French. */
+const TALKING =
+  /^(?:I|I'm|I'll|I've|This|You|It|We|My|Let|Let's|Here|Sure|Okay|Je|J['’]ai|Je voudrais|Nous|Voici|Il faut|Peux-tu|Pouvez-vous|D['’]accord|Bien sûr)(?![\p{L}\p{N}_])/u
 const MAX_PAGE_TITLE_WORDS = 12
 const MAX_PAGE_TITLE_CHARS = 72
 
+/** `text` out of one pair of quotes wrapping it whole, else as it is: the
+ *  opening and the closing are of one pair, and the opening is not met
+ *  again inside (`"Build" and "fix"` is two quoted words, not one wrapped
+ *  title; an apostrophe inside `'…'` or `‘…’` is the title's own). */
+function unquote(text: string): string {
+  for (const [open, close] of QUOTE_PAIRS) {
+    if (text.length < 2 || !text.startsWith(open) || !text.endsWith(close)) continue
+    const inner = text.slice(open.length, text.length - close.length)
+    const apostrophes = open === "'" || open === '‘'
+    if (!apostrophes && (inner.includes(open) || inner.includes(close))) continue
+    return inner.trim()
+  }
+  return text
+}
+
 /**
  * The title in the CLI's reply, or null when the reply is not one: read past
- * a label line before it, a label on the line itself, emphasis, quotes, a
- * final stop and a trailing `Next: …` line, as the tab title is read
+ * a label line before it, a label on the line itself (in bold or not),
+ * emphasis, one pair of quotes wrapping it whole, a final stop and a trailing `Next: …` line, as the tab title is read
  * (`parseTitleReply`). Several lines of content, a sentence, or a title past
  * twelve words or seventy-two characters is the model answering: null.
  */
@@ -84,13 +114,14 @@ export function parsePageTitleReply(stdout: string): PageTitleDone | null {
   const lines = replyLines(stdout)
   while (lines.length > 1 && lines[0].endsWith(':')) lines.shift()
   if (lines.length !== 1) return null
-  const title = lines[0]
+  const stop = (text: string): string => text.replace(/[.。]+$/, '').trim()
+  const bare = lines[0]
     .replace(/^#+\s*/, '')
-    .replace(/^\*\*(.*)\*\*$/, '$1')
+    .replace(BOLD_LABEL, '')
     .replace(LEADING_LABEL, '')
-    .replace(/^["'`“‘«]+\s*|\s*["'`”’»]+$/g, '')
-    .replace(/[.。]+$/, '')
+    .replace(/^\*\*(.*)\*\*$/, '$1')
     .trim()
+  const title = stop(unquote(stop(bare)))
   if (!title || title.endsWith(':')) return null
   if (title.length > MAX_PAGE_TITLE_CHARS) return null
   if (title.split(/\s+/).length > MAX_PAGE_TITLE_WORDS) return null

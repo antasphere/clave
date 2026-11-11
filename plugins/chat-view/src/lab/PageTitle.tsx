@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { usePageTitleState } from '../digest'
-import { frameAt, REVEAL_MS, revealFrames } from './reveal'
+import { frameAt, REVEAL_MS, revealFrames, shouldReveal } from './reveal'
 import { shownTitle, titlePending } from './title'
 import type { Page } from './pages'
 
@@ -37,21 +37,36 @@ export function PageTitle({
   const state = usePageTitleState(sessionId, page.titleKey ?? '', page.titleKey !== null)
   const final = shownTitle(page, state)
   const pending = page.titleKey !== null && titlePending(state)
-  // Whether this head showed the stand-in while the title was written: only
-  // then is the title revealed in place. A title found filed is just shown.
-  const [waited, setWaited] = useState(pending)
-  if (pending && !waited) setWaited(true)
   const fresh = state.state === 'done' && state.fresh === true
+  // Since when this head has shown the stand-in with its loader, for this
+  // page: only a title that kept it waiting (`shouldReveal`) is revealed in
+  // place. A title that comes at once was filed on the host: it is just shown.
+  const since = useRef<{ key: string; at: number } | null>(null)
+  useEffect(() => {
+    if (pending && page.titleKey !== null && since.current?.key !== page.titleKey)
+      since.current = { key: page.titleKey, at: Date.now() }
+  }, [pending, page.titleKey])
   // The reveal under way, and the frame of it on screen.
   const [reveal, setReveal] = useState<{ from: string; to: string } | null>(null)
   const [frame, setFrame] = useState<string | null>(null)
+  // A title that just took the head's place, until the clock says whether it
+  // is revealed (the layout effect below, before the change is painted).
+  const [arrival, setArrival] = useState<{ from: string; to: string } | null>(null)
   const [last, setLast] = useState(final)
   if (last !== final) {
     setLast(final)
-    const from = reveal ? (frame ?? reveal.from) : last
+    setArrival({ from: reveal ? (frame ?? reveal.from) : last, to: final })
     setFrame(null)
-    setReveal(waited && fresh && !reducedMotion() ? { from, to: final } : null)
+    setReveal(null)
   }
+  useLayoutEffect(() => {
+    if (!arrival) return
+    const pendingSince =
+      since.current !== null && since.current.key === page.titleKey ? since.current.at : null
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the reveal is decided on the clock at the title's arrival, which a render cannot read; a layout effect settles it before the change is painted
+    setReveal(shouldReveal(pendingSince, Date.now(), fresh, reducedMotion()) ? arrival : null)
+    setArrival(null)
+  }, [arrival, fresh, page.titleKey])
   useEffect(() => {
     if (!reveal) return
     const frames = revealFrames(reveal.from, reveal.to)

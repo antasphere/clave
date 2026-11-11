@@ -52,6 +52,16 @@ describe('requestSpokenRendering', () => {
     })
   })
 
+  it('sends a long answer clipped as it is keyed', async () => {
+    const spokenRendering = vi.fn(async () => ({ ok: true, text: 'Long.' }))
+    install({ spokenRendering, spokenRenderingsOf: vi.fn(async () => ({})) })
+    const markdown = 'x'.repeat(63_000)
+    await requestSpokenRendering('s', spokenKeyOf(markdown), {}, markdown)
+    const sent = (spokenRendering.mock.calls[0] as unknown as [{ markdown: string }])[0].markdown
+    expect(sent).toHaveLength(SPOKEN_MAX_CHARS + 1)
+    expect(spokenKey(sent)).toBe(spokenKeyOf(markdown))
+  })
+
   it('speaks a page read before at once: the filed renderings are loaded once per tab', async () => {
     const spokenRendering = vi.fn()
     const spokenRenderingsOf = vi.fn(async () => ({ k: { ok: true, text: 'Filed.' } }))

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { frameAt, REVEAL_MS, REVEAL_RUN, REVEAL_STEPS, revealFrames } from './reveal'
+import {
+  frameAt,
+  REVEAL_MIN_WAIT_MS,
+  REVEAL_MS,
+  REVEAL_RUN,
+  REVEAL_STEPS,
+  revealFrames,
+  shouldReveal
+} from './reveal'
 
 describe('revealFrames', () => {
   const from = 'tell me about the weather in brussels please'
@@ -57,5 +65,24 @@ describe('frameAt', () => {
     expect(frameAt(frames, REVEAL_MS * 2)).toBe('d')
     expect(REVEAL_MS).toBeGreaterThanOrEqual(300)
     expect(REVEAL_MS).toBeLessThanOrEqual(500)
+  })
+})
+
+describe('shouldReveal', () => {
+  it('reveals a title written while the head showed the loader long enough', () => {
+    expect(REVEAL_MIN_WAIT_MS).toBe(400)
+    expect(shouldReveal(1_000, 1_000 + REVEAL_MIN_WAIT_MS, true, false)).toBe(true)
+    expect(shouldReveal(1_000, 5_000, true, false)).toBe(true)
+  })
+
+  it('just shows a title that came at once: it was filed on the host', () => {
+    expect(shouldReveal(1_000, 1_000 + REVEAL_MIN_WAIT_MS - 1, true, false)).toBe(false)
+    expect(shouldReveal(1_000, 1_050, true, false)).toBe(false)
+  })
+
+  it('just shows a title the head never waited for, one not written now, or under reduced motion', () => {
+    expect(shouldReveal(null, 5_000, true, false)).toBe(false)
+    expect(shouldReveal(1_000, 5_000, false, false)).toBe(false)
+    expect(shouldReveal(1_000, 5_000, true, true)).toBe(false)
   })
 })

@@ -62,6 +62,7 @@ import {
   cancelAll,
   KEY_MISMATCH_ERROR,
   MAX_WAITING_PER_SESSION,
+  MAX_WAITING_SPOKEN,
   hostDigests,
   sessionLaunchOf,
   requestDigest,
@@ -451,22 +452,49 @@ describe('the host serves Folio’s reads on its own record (PRDCT-4327 terms)',
     await expect(titled).resolves.toEqual({ ok: true, title: 'A long question' })
   })
 
-  it('counts against the per-session cap with the digests', async () => {
-    const asks = Array.from({ length: MAX_WAITING_PER_SESSION }, (_, i) => {
-      const markdown = `answer ${i}`
-      return host.spoken({ sessionId: 'named', key: spokenKey(markdown), markdown })
-    })
-    await expect(
-      host.pageTitle({ sessionId: 'named', key: pageTitleKey('q'), message: 'q' })
-    ).resolves.toMatchObject({ ok: false, reason: 'busy' })
-    for (let i = 0; i < 10; i++) {
+  /** Answer every call still open until the asks settle. */
+  const drain = async (): Promise<void> => {
+    for (let i = 0; i < 30; i++) {
       await ticks()
       for (const call of mocks.calls.filter((c) => !c.done)) {
         call.done = true
-        call.finish(null, '<spoken>Done.</spoken>', '')
+        call.finish(null, 'Done', '')
       }
     }
-    await Promise.all(asks)
+  }
+
+  it('keeps a cap per kind of read: ten titles waiting never make a reading busy', async () => {
+    const titles = Array.from({ length: MAX_WAITING_PER_SESSION }, (_, i) => {
+      const message = `question ${i}`
+      return host.pageTitle({ sessionId: 'named', key: pageTitleKey(message), message })
+    })
+    // An eleventh title waits its turn…
+    await expect(
+      host.pageTitle({ sessionId: 'named', key: pageTitleKey('eleven'), message: 'eleven' })
+    ).resolves.toMatchObject({ ok: false, reason: 'busy' })
+    // …but the page read aloud, and a digest, are not held back by the titles.
+    const read = host.spoken({ sessionId: 'named', key: spokenKey('read me'), markdown: 'read me' })
+    const one = [{ from: 'x', text: 'beside the titles' }]
+    const digest = host.exchangeDigest({ sessionId: 'named', key: digestKey(one), messages: one })
+    await drain()
+    await expect(read).resolves.toMatchObject({ ok: true })
+    await expect(digest).resolves.not.toMatchObject({ reason: 'busy' })
+    await Promise.all(titles)
+  })
+
+  it('lets two spoken renderings wait at once, not a third', async () => {
+    expect(MAX_WAITING_SPOKEN).toBe(2)
+    const reads = ['first', 'second'].map((markdown) =>
+      host.spoken({ sessionId: 'named', key: spokenKey(markdown), markdown })
+    )
+    await expect(
+      host.spoken({ sessionId: 'named', key: spokenKey('third'), markdown: 'third' })
+    ).resolves.toMatchObject({ ok: false, reason: 'busy' })
+    // Another tab reads aloud all the same.
+    const other = host.spoken({ sessionId: 'plain', key: spokenKey('third'), markdown: 'third' })
+    await drain()
+    await expect(other).resolves.toMatchObject({ ok: true })
+    await Promise.all(reads)
   })
 })
 

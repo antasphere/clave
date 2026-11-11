@@ -259,10 +259,22 @@ describe('a page titled by a helper (PRDCT-4412)', () => {
     expect(titleKeyOf(long)).toBe(titleKeyOf(`${long}and more past the clip`))
   })
 
+  it('sends a long question clipped, so what is sent is what is keyed', () => {
+    const long = 'a'.repeat(2270)
+    const [page] = pagesOf([{ type: 'user_message', text: long }])
+    expect(page.message).toHaveLength(1501)
+    expect(page.titleKey).toBe(titleKeyOf(page.message))
+    expect(page.titleKey).toBe(pageTitleKey(page.message))
+    // The brief under a written title still reads the whole question.
+    expect(page.fullMessage).toBe(long)
+    expect(briefFor(page, 'A written title')).toBe(long)
+  })
+
   it('has no title to ask for a page with no question', () => {
     const [page] = pagesOf([{ type: 'assistant_text', delta: 'Before anything', final: true }])
     expect(page.titleKey).toBeNull()
     expect(page.message).toBe('')
+    expect(page.fullMessage).toBe('')
   })
 
   it('shows the whole message under a written title, the brief under the stand-in', () => {

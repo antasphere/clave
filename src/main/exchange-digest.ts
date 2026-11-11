@@ -527,10 +527,24 @@ export function sessionLaunchOf(source: DigestLaunchSource): DigestRecordOf {
   return (sessionId) => source.getSessionRecord(sessionId) ?? source.spawnLaunchOf(sessionId)
 }
 
-/** How many reads a session may have waiting on the host at once: a client
- *  asking for more is told to ask again in a moment, so no client can queue
- *  model calls without end, nor push a tab's real digests out of its store. */
+/** How many reads of one kind a session may have waiting on the host at
+ *  once: a client asking for more is told to ask again in a moment, so no
+ *  client can queue model calls without end, nor push a tab's real digests
+ *  out of its store. The two digests share one set; page titles have their
+ *  own, so a long book's titles never starve a digest or a reading. */
 export const MAX_WAITING_PER_SESSION = 10
+
+/** How many spoken renderings a session may have waiting at once: one page
+ *  is read aloud at a time, so two leaves room for a turn of the page. */
+export const MAX_WAITING_SPOKEN = 2
+
+/** The kinds of read a session's waiting count is kept by, with their cap. */
+const WAITING_CAP = {
+  digest: MAX_WAITING_PER_SESSION,
+  title: MAX_WAITING_PER_SESSION,
+  spoken: MAX_WAITING_SPOKEN
+} as const
+type WaitingKind = keyof typeof WAITING_CAP
 
 /** A key that is not the key of what it came with: a call would cost a model
  *  read for content the store files under a name it does not have. */
@@ -539,30 +553,35 @@ export const KEY_MISMATCH_ERROR = 'The key does not match what was sent'
 /** The digests as a host serves them to its clients. Every request is read
  *  on the launch of the host's own record of the session, under the key the
  *  host recomputes from the content (a key that does not match is refused),
- *  and at most MAX_WAITING_PER_SESSION distinct reads wait per session. */
+ *  and at most a kind's cap of distinct reads wait per session and kind
+ *  (`WAITING_CAP`). */
 export function hostDigests(recordOf: DigestRecordOf): HostDigests {
   const launchOf = (sessionId: string): DigestLaunch | null => {
     const record = recordOf(sessionId)
     return record ? launchFromRecord(record) : null
   }
+  /** The reads waiting, by `${sessionId}|${kind}`. */
   const waiting = new Map<string, Set<string>>()
-  /** Run a read, unless it is one more than the session may have waiting.
-   *  A read filed already, or one already waiting, costs nothing more. */
+  /** Run a read, unless it is one more than the session may have waiting of
+   *  its kind. A read filed already, or one already waiting, costs nothing
+   *  more. */
   const admit = <R>(
     sessionId: string,
+    kind: WaitingKind,
     id: string,
     filed: boolean,
     run: () => Promise<R>,
     busy: R
   ): Promise<R> => {
     if (filed) return run()
-    const pending = waiting.get(sessionId) ?? new Set<string>()
-    if (!pending.has(id) && pending.size >= MAX_WAITING_PER_SESSION) return Promise.resolve(busy)
+    const slot = `${sessionId}|${kind}`
+    const pending = waiting.get(slot) ?? new Set<string>()
+    if (!pending.has(id) && pending.size >= WAITING_CAP[kind]) return Promise.resolve(busy)
     pending.add(id)
-    waiting.set(sessionId, pending)
+    waiting.set(slot, pending)
     return run().finally(() => {
       pending.delete(id)
-      if (pending.size === 0 && waiting.get(sessionId) === pending) waiting.delete(sessionId)
+      if (pending.size === 0 && waiting.get(slot) === pending) waiting.delete(slot)
     })
   }
   const unknown = {
@@ -585,6 +604,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       if (!launch) return Promise.resolve(unknown)
       return admit<DigestResult>(
         request.sessionId,
+        'digest',
         request.key,
         digests().get(request.sessionId, request.key) !== undefined,
         () => requestDigest({ sessionId: request.sessionId, key: request.key, messages, launch }),
@@ -599,6 +619,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       if (!launch) return Promise.resolve(unknown)
       return admit<WorkDigestResult>(
         request.sessionId,
+        'digest',
         request.key,
         digests().get(workDigestBucket(request.sessionId), request.key) !== undefined,
         () =>
@@ -620,6 +641,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       if (!launch) return Promise.resolve(unknown)
       return admit<SpokenResult>(
         request.sessionId,
+        'spoken',
         request.key,
         digests().get(spokenBucket(request.sessionId), request.key) !== undefined,
         () => requestSpoken({ sessionId: request.sessionId, key: request.key, markdown, launch }),
@@ -634,6 +656,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       if (!launch) return Promise.resolve(unknown)
       return admit<PageTitleResult>(
         request.sessionId,
+        'title',
         request.key,
         digests().get(pageTitleBucket(request.sessionId), request.key) !== undefined,
         () => requestPageTitle({ sessionId: request.sessionId, key: request.key, message, launch }),
