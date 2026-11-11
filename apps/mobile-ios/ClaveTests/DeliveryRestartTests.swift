@@ -887,6 +887,43 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertEqual(restarted.pendingFiles, [], "the file the send carried leaves")
   }
 
+  /// The same send kept without its mark, in a conversation whose stored mark is the refusal notice of
+  /// an earlier send: that notice does not block Send, so the record's bar shows over it, now and after
+  /// a modelled restart, and nothing can be sent while the record waits.
+  func testASendKeptWithoutItsMarkShowsAsUnknownOverAnEarlierSendsRefusalNotice() async throws {
+    try await parts.delivery.marks.set(
+      "m1", "s1",
+      DeliveryMark(kind: .rejected, clientMessageId: "m-rejected-00000000000000001", reason: "The provider refused the message.", at: 1))
+    let model = try makeModel()
+    await model.appear()
+    XCTAssertEqual(model.deliveryMark?.kind, .rejected, "the earlier send's refusal notice shows")
+    model.attach(try file("kept-over-refusal.txt"))
+    model.draft = "Sent text."
+    await model.flushDraft()
+    XCTAssertTrue(model.canSend, "a refusal notice does not block Send")
+    await store.refuseOnce(deliveryMarkKey("m1", "s1"))
+    // The record's add goes through; the undo's removal after it is refused.
+    await store.refuseOnce(UnknownSends.key(for: "m1"), skipping: 1)
+    await model.send()
+    XCTAssertNil(model.sendError, "never said not sent")
+    let kept = try await ledger()
+    XCTAssertEqual(kept.count, 1, "the record stays")
+    let id = kept.first ?? ""
+    XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the record's bar shows over the refusal notice")
+    XCTAssertEqual(model.deliveryMark?.clientMessageId, id, "the bar names the record")
+    XCTAssertEqual(model.deliveryMark?.reason, ConversationModel.recordedWithoutMark)
+    XCTAssertFalse(model.canSend, "nothing can be sent while the record waits")
+    XCTAssertEqual(model.draft, "Sent text.", "the draft stays")
+    XCTAssertEqual(model.pendingFiles.map(\.name), ["kept-over-refusal.txt"], "the file stays")
+    XCTAssertEqual(server.attempts, [], "nothing written")
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    XCTAssertEqual(restarted.deliveryMark?.kind, .unknown, "after a restart too")
+    XCTAssertEqual(restarted.deliveryMark?.clientMessageId, id)
+    XCTAssertFalse(restarted.canSend)
+  }
+
   /// A Discard whose record removal failed leaves the record with its choice and no mark: the choice is
   /// being carried out, so no bar shows for it, now or after a modelled restart.
   func testARecordLeftWithItsChoiceByADiscardWhoseRemovalFailedShowsNoBar() async throws {

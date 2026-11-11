@@ -561,9 +561,11 @@ final class ConversationModel {
   private func readMark() async {
     let shown = deliveryMark
     let stored = try? await delivery.marks.get(machineId, sessionId)
-    // No mark stored: a record of this conversation kept without its mark still shows as unknown.
+    // No mark stored, or only the refusal notice of an earlier send (which does not block Send): a
+    // record of this conversation kept without its mark still shows as unknown, and blocks Send as any
+    // send of unknown outcome does.
     var current = stored
-    if current == nil { current = await recordWithoutMark() }
+    if current == nil || current?.kind == .rejected, let pending = await recordWithoutMark() { current = pending }
     deliveryMark = current
     if let current, current.kind == .unknown, carried?.clientMessageId != current.clientMessageId {
       await loadCarried(current.clientMessageId)
