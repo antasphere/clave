@@ -93,6 +93,14 @@ const isEmpty = (value: InputAnswer | undefined): boolean =>
 /** A private answer, wherever the card shows it. */
 const DOTS = '••••••'
 
+/** The questions in the order the card stands them (PRDCT-4429): the ones
+ *  owed an answer first, the optional ones after, each group in the agent's
+ *  order. The answers are keyed by question, so the order is the card's. */
+const requiredFirst = <Q extends { optional?: boolean }>(questions: readonly Q[]): Q[] => [
+  ...questions.filter((q) => !q.optional),
+  ...questions.filter((q) => q.optional)
+]
+
 /** Where the card goes on its own after the agent set the question it was
  *  on: the first question, from `from` on, that has no answer yet or whose
  *  answer does not fit (an optional one left empty included, since the
@@ -579,7 +587,11 @@ export function InputPrompt({
   const asked: AgentQuestion[] = request.questions ?? [
     { question: request.description, options: request.options.map((o) => ({ label: o.label })) }
   ]
-  const questions = asked.map((q) => cardQuestion(q, how))
+  // A form stands its optional questions last; the steps layout keeps the
+  // agent's own order, which paces it (PRDCT-4429).
+  const formLayout = !!meta && meta.layout !== 'steps'
+  const cardQuestions = asked.map((q) => cardQuestion(q, how))
+  const questions = formLayout ? requiredFirst(cardQuestions) : cardQuestions
   const keys = questions.map(questionKey)
   const secretOf = (question: AgentQuestion): boolean =>
     how !== 'hosted' && questionIsPrivate(question, request.input)
@@ -982,9 +994,13 @@ export function InputPrompt({
     const filled = !isEmpty(value)
     if (shownProblem(key) !== null) return 'problem'
     if (filled && problems[key] === null) return 'done'
-    const firstOpen = shown.findIndex((q) => {
+    // An optional question a form has moved past, left empty, is settled:
+    // the reader said there is nothing to say (PRDCT-4429).
+    const passed = (q: AgentQuestion, i: number): boolean =>
+      !steps && !!q.optional && i < reach && isEmpty(own(values, questionKey(q)))
+    const firstOpen = shown.findIndex((q, i) => {
       const k = questionKey(q)
-      return !(!isEmpty(own(values, k)) && problems[k] === null)
+      return !(!isEmpty(own(values, k)) && problems[k] === null) && !passed(q, i)
     })
     return firstOpen === index ? 'active' : 'open'
   }
@@ -1228,6 +1244,23 @@ export function InputPrompt({
                       {note}
                     </span>
                   )}
+                  {/* An optional question left empty holds the way on: the
+                      reader says there is nothing to say, and the next one
+                      opens (PRDCT-4429). */}
+                  {question.optional &&
+                    !filled &&
+                    index < questions.length - 1 &&
+                    (steps ? active : index === reach) && (
+                      <button
+                        type="button"
+                        className="chat-ask-pass"
+                        onMouseDown={keepFocus}
+                        disabled={busy}
+                        onClick={() => advance(steps ? step : index)}
+                      >
+                        Nothing to say
+                      </button>
+                    )}
                 </div>
               </div>
             </li>
@@ -1311,8 +1344,13 @@ export function ClosedForm({
   agent: string
 }): React.JSX.Element {
   const { request } = entry
-  const questions = request.questions ?? []
-  const hosted = inputRequestMeta(request.input) !== null
+  const meta = inputRequestMeta(request.input)
+  const hosted = meta !== null
+  // In the order the live card stood them: a form's optional questions last.
+  const questions =
+    hosted && meta.layout !== 'steps'
+      ? requiredFirst(request.questions ?? [])
+      : (request.questions ?? [])
   const skipped = entry.answer !== undefined && isDeny(entry.answer)
   const status = !entry.answer
     ? 'No longer awaiting an answer'
@@ -1324,6 +1362,18 @@ export function ClosedForm({
           ? 'Approved'
           : 'Answered'
   const ask = hosted ? request.description : nativeHeadline(request.description, questions)
+  // The accent runs to the end seat for answers that went, and only as far
+  // as the last question answered for a skip or a request no longer awaited
+  // (PRDCT-4429): measured, since the rows differ in height.
+  const sent = !!entry.answer && !skipped
+  const list = useRef<HTMLOListElement>(null)
+  useLayoutEffect(() => {
+    const el = list.current
+    if (!el || sent) return
+    const answered = el.querySelectorAll<HTMLElement>(':scope > [data-state="done"]')
+    const last = answered[answered.length - 1]
+    el.style.setProperty('--ask-progress', `${last ? last.offsetTop + 12 : 0}px`)
+  })
   return (
     <div className="chat-prompt-body" data-layout="steps" data-closed="true">
       <div className="chat-ask-head">
@@ -1342,8 +1392,13 @@ export function ClosedForm({
         </div>
       </div>
       <ol
+        ref={list}
         className="chat-ask-fields"
-        style={{ '--ask-progress': 'calc(100% - var(--ask-end-h) / 2)' } as React.CSSProperties}
+        style={
+          sent
+            ? ({ '--ask-progress': 'calc(100% - var(--ask-end-h) / 2)' } as React.CSSProperties)
+            : undefined
+        }
       >
         {questions.map((question) => {
           const key = questionKey(question)

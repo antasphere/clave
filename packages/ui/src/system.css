@@ -4494,6 +4494,23 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-wrap: nowrap;
   padding-top: 0;
 }
+/* An optional question's way on when there is nothing to say: quiet, under
+   its field, the next question opening on a click (PRDCT-4429). */
+.chat-ask-pass {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.chat-ask-pass:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
 /* Why Approve is off: the count of answers owed, a click away from the
    first of them (PRDCT-4422). */
 .chat-ask-owed {

@@ -145,9 +145,11 @@ export async function run(t) {
     assert.equal(await email.isVisible(), true, 'the answered question stays open')
     t.check('answering a question keeps it open and opens the next', true)
     await card.locator('.chat-field-wrap[data-kind="github-login"] input').fill('luca-a')
+    // The optional question stands last (PRDCT-4429): it opens once the
+    // link above it is confirmed.
+    await card.getByRole('button', { name: "I'm signed in" }).click()
     await card.getByRole('checkbox', { name: /reb/ }).click()
     await card.getByRole('checkbox', { name: /wat/ }).click()
-    await card.getByRole('button', { name: "I'm signed in" }).click()
     await card.locator('.chat-ask-end[data-ready="true"]').waitFor()
     t.check('every answer in, the rail ends on a filled seat', true)
     await card.getByRole('button', { name: /^Approve/ }).click()
@@ -578,6 +580,58 @@ export async function run(t) {
     )
     assert.equal(skipped.status, 'dismissed', JSON.stringify(skipped))
     t.check('a skipped request answers dismissed to the agent', true)
+
+    /* 5b. A form stands its optional questions last, an optional one left
+           empty says "Nothing to say" to open the next, and the record of a
+           skip runs its accent no further than its last answer (PRDCT-4429). */
+    const fourth = payload(
+      await mcp.call('clave_request_input', {
+        description: 'Two small things.',
+        questions: [
+          { id: 'note', label: 'Anything to add?', optional: true },
+          { id: 'nick', label: 'Your nickname' },
+          {
+            id: 'tone',
+            label: 'Which tone?',
+            kind: 'choice',
+            optional: true,
+            options: [{ label: 'Short' }, { label: 'Long' }]
+          }
+        ]
+      })
+    )
+    await card.waitFor()
+    assert.deepEqual(
+      await card.locator('.chat-ask-field .chat-field-question').allTextContents(),
+      ['Your nickname', 'Anything to add?', 'Which tone?'],
+      'the required question first, the optional ones after, in the order asked'
+    )
+    await card.locator('.chat-field-wrap input').first().fill('Lu')
+    const pass = card.getByRole('button', { name: 'Nothing to say' })
+    await pass.waitFor()
+    assert.equal(await card.locator('.chat-ask-field[data-folded="true"]').count(), 1)
+    await pass.click()
+    assert.ok(
+      await until(async () =>
+        (await card.locator('.chat-ask-field[data-folded="true"]').count()) === 0 ? true : null
+      ),
+      'the next question opened'
+    )
+    assert.equal(await pass.count(), 0, 'the last question has no way on to offer')
+    assert.equal(await card.getByRole('button', { name: /^Approve/ }).isDisabled(), false)
+    t.check('optional questions stand last and "Nothing to say" opens the next', true)
+    await card.getByRole('button', { name: 'Skip', exact: true }).click()
+    payload(await mcp.call('clave_input_result', { requestId: fourth.requestId, waitSeconds: 10 }))
+    const skippedRecord = view
+      .locator('.chat-permission-row[data-kind="question"]', { hasText: 'Two small things.' })
+      .last()
+    await skippedRecord.waitFor()
+    const rail = await skippedRecord.locator('.chat-ask-fields').evaluate((ol) => ({
+      accent: parseFloat(getComputedStyle(ol, '::after').height),
+      line: parseFloat(getComputedStyle(ol, '::before').height)
+    }))
+    assert.ok(rail.accent < rail.line / 2, `the skip's accent stops short: ${JSON.stringify(rail)}`)
+    t.check("a skipped record's accent runs no further than its last answer", true)
     await view.locator('.chat-scroll').evaluate((el) => {
       el.scrollTop = el.scrollHeight
     })
