@@ -21,7 +21,7 @@ export default defineConfig({
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs',
       'packages/skins/scripts/*.test.mjs',
-      'packages/{contract,server,client}/src/**/*.test.ts',
+      'packages/{contract,server,client,ui}/src/**/*.test.ts',
       'plugins/*/src/**/*.test.ts',
       'packages/session-bridge/src/**/*.test.ts'
     ],

@@ -1,5 +1,5 @@
 import * as React from 'react'
-import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenuPrimitive from '../primitives/dropdown-menu'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../lib/utils'
 

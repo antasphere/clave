@@ -1,5 +1,5 @@
 import * as React from 'react'
-import * as PopoverPrimitive from '@radix-ui/react-popover'
+import * as PopoverPrimitive from '../primitives/popover'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../lib/utils'
 

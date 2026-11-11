@@ -1,9 +1,9 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
 import { useSessionStore } from '../../store/session-store'
-import { cn } from '@clave/ui/components'
+import { cn, POPOVER_EDGE_GAP } from '@clave/ui/components'
 import { CheckIcon } from '@heroicons/react/24/outline'
 
 const statusColors: Record<string, string> = {
@@ -97,20 +97,41 @@ export function AgentPickerPopover({
     }
   }
 
+  // The popover measures its own width, so that one hung from an anchor near
+  // the window's right edge slides left and keeps its gap from that edge.
+  const empty = agents.length === 0
+  const [menuWidth, setMenuWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = menuRef.current
+    if (!el) return
+    const measure = (): void => setMenuWidth(el.offsetWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [empty])
+
   // The popover is placed under its anchor, which the parent laid out before
   // mounting it; the anchor is measured on every render, as it always was.
   // eslint-disable-next-line react-hooks/refs -- a DOM measurement of an already-mounted anchor, read to position a portal
   const anchorRect = anchorRef.current?.getBoundingClientRect()
+  const position = {
+    top: (anchorRect?.bottom ?? 0) + 4,
+    left: Math.max(
+      POPOVER_EDGE_GAP,
+      Math.min(
+        anchorRect?.left ?? 0,
+        document.documentElement.clientWidth - menuWidth - POPOVER_EDGE_GAP
+      )
+    )
+  }
 
-  if (agents.length === 0) {
+  if (empty) {
     return createPortal(
       <div
         ref={menuRef}
         className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] py-3 px-3"
-        style={{
-          top: (anchorRect?.bottom ?? 0) + 4,
-          left: anchorRect?.left ?? 0
-        }}
+        style={position}
       >
         <p className="text-control text-text-tertiary text-center">
           No connected locations have agents.
@@ -126,10 +147,7 @@ export function AgentPickerPopover({
     <div
       ref={menuRef}
       className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] flex flex-col p-1"
-      style={{
-        top: (anchorRect?.bottom ?? 0) + 4,
-        left: anchorRect?.left ?? 0
-      }}
+      style={position}
     >
       <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
         {locationGroups.map((group) => {

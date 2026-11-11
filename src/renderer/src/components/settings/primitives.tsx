@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenuPrimitive from '@clave/ui/primitives/dropdown-menu'
 import { CheckIcon, ChevronUpDownIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 

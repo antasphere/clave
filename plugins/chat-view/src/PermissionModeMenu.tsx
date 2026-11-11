@@ -1,4 +1,4 @@
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { PermissionModeOption } from '../../../src/shared/session-model'
 
