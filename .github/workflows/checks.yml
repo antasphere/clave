@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p unit-reports
           if [ "$TASK" = unit-1 ]; then
-            npx --no-install vitest list --config vitest.ci.config.mjs --filesOnly --json > unit-reports/inventory.json
+            npx --no-install vitest list --filesOnly --json > unit-reports/inventory.json
           fi
           npx --no-install vitest run --shard="${TASK#unit-}/8" \
             --config vitest.ci.config.mjs \

@@ -11,7 +11,7 @@ runs:
         path: |
           node_modules
           packages/*/node_modules
-        key: linux-checks-v1-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json', '**/package.json', 'scripts/postinstall.cjs', 'electron-builder.yml') }}
+        key: linux-checks-v1-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json', '**/package.json', 'scripts/postinstall.cjs', 'electron-builder.yml', '.npmrc', '.github/actions/setup-checks/action.yml') }}
     - uses: actions/setup-node@v4
       with:
         node-version: '22'

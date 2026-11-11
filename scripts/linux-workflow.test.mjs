@@ -36,7 +36,7 @@ describe('the required Linux check cannot silently lose execution', () => {
     expect(units.length).toBeGreaterThan(0)
     const run = linux.steps.find((step) => step.name === 'Unit tests').run
     expect(run.split('\n').map((line) => line.trim())).toContain(
-      'npx --no-install vitest list --config vitest.ci.config.mjs --filesOnly --json > unit-reports/inventory.json'
+      'npx --no-install vitest list --filesOnly --json > unit-reports/inventory.json'
     )
     expect(run).toContain(`--shard="\${TASK#unit-}/${units.length}"`)
     expect(run).toContain('--config vitest.ci.config.mjs')
@@ -57,13 +57,29 @@ describe('the required Linux check cannot silently lose execution', () => {
       ['Unit tests', "startsWith(matrix.task, 'unit-')"]
     ])
       expect(steps.find((step) => step.name === name).if).toBe(condition)
-    expect(steps.find((step) => step.name === 'Lint').run).toMatch(/^npm run lint\b/)
+    expect(steps.find((step) => step.name === 'Lint').run).toBe(
+      'npm run lint -- --concurrency 4 --cache-strategy content'
+    )
     expect(steps.find((step) => step.name === 'Typecheck').run).toBe('npm run typecheck')
     expect(steps.find((step) => step.name === 'Generated code is current').run).toBe(
       'npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto'
     )
     expect(steps.find((step) => step.name === 'Build secure filesystem helper').run).toBe(
       'npm run native:build'
+    )
+  })
+
+  it('invalidates dependency reuse when any install input changes', () => {
+    const setup = parse(
+      readFileSync(new URL('../.github/actions/setup-checks/action.yml', import.meta.url), 'utf8')
+    )
+    const cache = setup.runs.steps.find((step) => step.id === 'dependencies')
+    expect(cache.with.key).toBe(
+      "linux-checks-v1-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json', '**/package.json', 'scripts/postinstall.cjs', 'electron-builder.yml', '.npmrc', '.github/actions/setup-checks/action.yml') }}"
+    )
+    expect(cache.with['restore-keys']).toBeUndefined()
+    expect(setup.runs.steps.find((step) => step.name === 'Install dependencies').if).toBe(
+      "steps.dependencies.outputs.cache-hit != 'true'"
     )
   })
 })

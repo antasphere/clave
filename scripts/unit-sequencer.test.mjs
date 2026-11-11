@@ -11,6 +11,22 @@ const slow = [
 const files = [...slow, ...Array.from({ length: 500 }, (_, i) => `src/new-${i}.test.ts`)]
 
 describe('Linux unit placement', () => {
+  it('selects the same files as the full local suite', () => {
+    const inventories = [[], ['--config', 'vitest.ci.config.mjs']].map((args) =>
+      JSON.parse(
+        execFileSync(
+          process.execPath,
+          ['node_modules/vitest/vitest.mjs', 'list', '--filesOnly', '--json', ...args],
+          { encoding: 'utf8', timeout: 20_000, env: { ...process.env, NO_COLOR: '1' } }
+        )
+      )
+        .map(({ file }) => file)
+        .sort()
+    )
+    expect(inventories[0].length).toBeGreaterThan(0)
+    expect(inventories[1]).toEqual(inventories[0])
+  }, 45_000)
+
   it('loads the real CI config and executes a shard through the Vitest CLI', () => {
     const output = execFileSync(
       process.execPath,
