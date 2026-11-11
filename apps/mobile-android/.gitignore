@@ -1,0 +1,25 @@
+# Gradle and Android build outputs of the Android companion (apps/mobile-android)
+.gradle/
+build/
+*/build/
+**/build/
+local.properties
+.kotlin/
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+# The Firebase project file the team does not have yet: never committed when it exists
+app/google-services.json
+# Signing material: never in the tree
+*.jks
+*.keystore
+keystore.properties
+# Fixture runs
+.fixture/

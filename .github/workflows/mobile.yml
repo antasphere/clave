@@ -13,8 +13,11 @@ name: Mobile
 #    desktop's sources, and the fixture test boots this checkout's server as a
 #    daemon with the Echo adapter, a local relay and the local OpenID Connect
 #    provider, then runs the pairing proof against them.
-#  - `ios`, on macos-26 with Xcode 26.0.1 (build 17A400) pinned through
-#    DEVELOPER_DIR: the iOS app's own entry.
+#  - `ios`, on macos-26: the iOS app's own entry. Its core package's Swift
+#    tests run on Xcode 26.0.1 (build 17A400), pinned through DEVELOPER_DIR;
+#    the app is built and tested with Xcode 26.2 (build 17C52), named by
+#    CLAVE_IOS_SIMULATOR_DEVELOPER_DIR: the image has no iOS 26.0 runtime,
+#    which Xcode 26.0.1 needs to build the app, and 26.2's is installed.
 #  - `android`, on Linux with Temurin JDK 21 and Gradle's cache: the Android
 #    app's own entry; the SDK platform and build tools the app pins are what
 #    its entry installs into the runner's ANDROID_HOME through sdkmanager.
@@ -23,7 +26,8 @@ name: Mobile
 # `apps/mobile-ios/ci.sh` and `apps/mobile-android/ci.sh`, owned by the app
 # (lane A and lane B of the wave): the workflow runs `bash apps/mobile-<platform>/ci.sh`
 # from the repository root with the toolchain environment set (DEVELOPER_DIR
-# on the Mac; JAVA_HOME and ANDROID_HOME on Linux, sdkmanager on the PATH),
+# and CLAVE_IOS_SIMULATOR_DEVELOPER_DIR on the Mac; JAVA_HOME and ANDROID_HOME
+# on Linux, sdkmanager on the PATH),
 # and the script's exit code is the verdict. The script builds and tests the
 # app and prints its counts; nothing here names a scheme, a module or a test
 # target, so a rename inside an app is no edit here. While an app folder is
@@ -146,15 +150,22 @@ jobs:
         run: npx eslint packages/mobile-native && npm run typecheck:node
 
   ios:
-    name: iOS app (Xcode 26.0.1, macOS 26)
+    name: iOS app (core on Xcode 26.0.1, app built and tested on Xcode 26.2, macOS 26)
     needs: apps
     if: needs.apps.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 60
     env:
-      # The runner image carries several Xcode releases; the app is built with
-      # the one the team runs (Xcode 26.0.1, Swift 6.2), by its path.
+      # The runner image carries several Xcode releases; the core package's
+      # Swift tests run on the one the team runs (Xcode 26.0.1, Swift 6.2), by
+      # its path.
       DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+      # Every xcodebuild step of the entry (the app's builds, its tests on a
+      # simulator, the release build) runs with Xcode 26.2, by its path: the
+      # image carries the iOS 26.2, 26.4.1 and 26.5 runtimes and no 26.0 one,
+      # which Xcode 26.0.1 needs for a simulator and for its asset compiler.
+      # Nothing is installed and nothing falls back to another Xcode.
+      CLAVE_IOS_SIMULATOR_DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
 
@@ -162,6 +173,7 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+          DEVELOPER_DIR="$CLAVE_IOS_SIMULATOR_DEVELOPER_DIR" xcodebuild -version
 
       - name: Build and test the app through its own entry
         run: bash apps/mobile-ios/ci.sh
