@@ -31,7 +31,9 @@ picked files stay, and the person checks the conversation before sending it agai
 When the server refuses this phone's attempt to complete a send of unknown outcome (401, 403,
 or a 422 that says the session refused the write or does not exist), the send stays unknown and
 the phone never writes it again by itself; a later status answer of accepted or rejected still
-settles it, and the person's choice on the bar ends it.
+settles it, and the person's choice on the bar ends it. A send whose record was kept but whose
+mark could not be written is shown as unknown, never as not sent, until a pass settles it or the
+person chooses.
 
 ## The toolchain
 

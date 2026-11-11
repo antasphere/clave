@@ -415,6 +415,13 @@ final class ConversationModel {
     settlingHere.insert(clientMessageId)
     do {
       try await delivery.begin(record)
+    } catch is SendRecordedWithoutMark {
+      // The record stays, so a pass may still complete the send: it shows as unknown, never as not
+      // sent, and the draft and the files stay with it.
+      carried = Carried(clientMessageId: clientMessageId, draftText: draftText, files: picked)
+      await refreshMark()
+      settlingHere.remove(clientMessageId)
+      return
     } catch {
       settlingHere.remove(clientMessageId)
       sendError = "This phone could not keep a record of the message, so it was not sent."
@@ -457,6 +464,9 @@ final class ConversationModel {
   static let lostTrack = "This phone lost its record of this message, so it cannot tell whether it was delivered. Check the conversation before you send it again."
   /// The same after Send again on such a send: nothing was sent, under the old id or a new one.
   static let lostTrackNotSent = "This phone lost its record of this message, so it cannot tell whether it was delivered, and did not send it again. Check the conversation before you send it."
+  /// The bar of a send whose record the phone kept but whose mark it could not write: shown from the
+  /// record, never written.
+  static let recordedWithoutMark = "This phone kept this message but could not finish recording it, so it may still be sent when the connection comes back."
 
   /// The person's choice on the bar's send, through the machine's controller; nil when it failed. A
   /// choice the phone could not write down is said in the composer, and the bar stays.
@@ -551,11 +561,14 @@ final class ConversationModel {
   private func readMark() async {
     let shown = deliveryMark
     let stored = try? await delivery.marks.get(machineId, sessionId)
-    deliveryMark = stored
-    if let stored, stored.kind == .unknown, carried?.clientMessageId != stored.clientMessageId {
-      await loadCarried(stored.clientMessageId)
+    // No mark stored: a record of this conversation kept without its mark still shows as unknown.
+    var current = stored
+    if current == nil { current = await recordWithoutMark() }
+    deliveryMark = current
+    if let current, current.kind == .unknown, carried?.clientMessageId != current.clientMessageId {
+      await loadCarried(current.clientMessageId)
     }
-    guard let shown, shown.kind == .unknown, stored == nil, !settlingHere.contains(shown.clientMessageId) else { return }
+    guard let shown, shown.kind == .unknown, current == nil, !settlingHere.contains(shown.clientMessageId) else { return }
     // Gone from the ledger with its mark: discarded, delivered, or its record lost (a pass that
     // refuses a send leaves a rejected mark).
     let listed = (try? await delivery.sends.list().contains { $0.clientMessageId == shown.clientMessageId }) ?? true
@@ -574,6 +587,21 @@ final class ConversationModel {
     }
     await resync(shown.clientMessageId)
     deliveryNotice = "This message was delivered when the connection came back."
+  }
+
+  /// The bar of a send this conversation's ledger holds without a mark (its mark write failed, or the
+  /// process ended between the two writes): the newest such record that carries no choice and that no
+  /// composer is sending, shown as unknown and never written.
+  private func recordWithoutMark() async -> DeliveryMark? {
+    guard let records = try? await delivery.sends.forSession(machineId, sessionId) else { return nil }
+    var newest: UnknownSend?
+    for record in records where record.choice == nil {
+      if await delivery.isActive(record.clientMessageId) { continue }
+      if let found = newest, found.at > record.at { continue }
+      newest = record
+    }
+    guard let newest else { return nil }
+    return DeliveryMark(kind: .unknown, clientMessageId: newest.clientMessageId, reason: Self.recordedWithoutMark, at: newest.at)
   }
 
   /// What a send of unknown outcome carried, read back from the ledger (after a restart, or for a

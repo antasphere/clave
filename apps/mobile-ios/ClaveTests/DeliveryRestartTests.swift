@@ -47,6 +47,21 @@ actor RestartStore: KeyValueStore {
   /// Refuses every write of `key` from now on.
   func refuseWrites(of key: String) { refusing = key }
 
+  private var refusingOnce: [String: Int] = [:]
+
+  /// Refuses one write of `key`: the one that comes after the next `skipping` writes of it.
+  func refuseOnce(_ key: String, skipping: Int = 0) { refusingOnce[key] = skipping }
+
+  private func checkOnce(_ key: String) throws {
+    guard let skip = refusingOnce[key] else { return }
+    if skip > 0 {
+      refusingOnce[key] = skip - 1
+      return
+    }
+    refusingOnce[key] = nil
+    throw LedgerWriteRefused()
+  }
+
   func get(_ key: String) async throws -> String? {
     if key == holdingReads {
       if readsToPass > 0 {
@@ -59,11 +74,13 @@ actor RestartStore: KeyValueStore {
   }
 
   func set(_ key: String, _ value: String) async throws {
+    try checkOnce(key)
     if key == refusing { throw LedgerWriteRefused() }
     try await inner.set(key, value)
   }
 
   func remove(_ key: String) async throws {
+    try checkOnce(key)
     if key == refusing { throw LedgerWriteRefused() }
     try await inner.remove(key)
   }
@@ -797,5 +814,98 @@ final class DeliveryRestartTests: XCTestCase {
     try await aLateOriginalIsSettledDeliveredAfterARefusedCompletion(
       .refuseDeclared(tag: "SessionWriteRefused", message: "The provider refused the message."),
       message: "The provider refused the message.", file: "refused-422.txt")
+  }
+
+  // MARK: - A send whose mark could not be written (Addendum G)
+
+  /// The first red proof: the conversation's mark write refused once inside the send's begin. The
+  /// composer says the message was not sent and keeps the draft and the file; after a modelled restart,
+  /// a pass that would find any send absent never reads or writes it, and the ledger is empty.
+  func testASendWhoseMarkCannotBeWrittenIsUndoneSoNoPassEverCompletesIt() async throws {
+    let model = try makeModel()
+    await model.appear()
+    model.attach(try file("not-recorded.txt"))
+    model.draft = "Sent text."
+    await model.flushDraft()
+    await store.refuseOnce(deliveryMarkKey("m1", "s1"))
+    await model.send()
+    XCTAssertEqual(model.sendError, "This phone could not keep a record of the message, so it was not sent.")
+    XCTAssertEqual(model.draft, "Sent text.", "the draft stays")
+    XCTAssertEqual(model.pendingFiles.map(\.name), ["not-recorded.txt"], "the file stays")
+    XCTAssertEqual(server.attempts, [], "nothing written")
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    // Any send the later pass asks about is found absent, so a record left behind would be written.
+    server.answerStatusByDefault(.answer("absent"))
+    try await laterPass()
+    XCTAssertEqual(server.attempts, [], "the later pass writes nothing")
+    XCTAssertEqual(server.asks.filter { $0 != sentinelId }, [], "and reads no status but the sentinel's")
+    let ledgerAfter = try await ledger()
+    XCTAssertEqual(ledgerAfter, [], "the ledger is empty")
+  }
+
+  /// The second proof: the mark write refused and the undo refused too. The composer does not say the
+  /// message was not sent: it shows the bar of a record kept without its mark, keeps the draft and the
+  /// file, and nothing can be sent; after a modelled restart the new composer shows the same bar; a pass
+  /// then completes the send under its id, and the composer says so, keeping only what was added since.
+  func testASendKeptWithoutItsMarkShowsAsUnknownAndAPassCompletesItUnderItsId() async throws {
+    let model = try makeModel()
+    await model.appear()
+    model.attach(try file("kept-without-mark.txt"))
+    model.draft = "Sent text."
+    await model.flushDraft()
+    await store.refuseOnce(deliveryMarkKey("m1", "s1"))
+    // The record's add goes through; the undo's removal after it is refused.
+    await store.refuseOnce(UnknownSends.key(for: "m1"), skipping: 1)
+    await model.send()
+    XCTAssertNil(model.sendError, "never said not sent")
+    XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the bar shows")
+    XCTAssertEqual(model.deliveryMark?.reason, ConversationModel.recordedWithoutMark)
+    XCTAssertEqual(model.draft, "Sent text.", "the draft stays")
+    XCTAssertEqual(model.pendingFiles.map(\.name), ["kept-without-mark.txt"], "the file stays")
+    XCTAssertFalse(model.canSend, "the bar stands")
+    XCTAssertEqual(server.attempts, [], "nothing written yet")
+    let kept = try await ledger()
+    XCTAssertEqual(kept.count, 1, "the record stays")
+    let id = kept.first ?? ""
+    XCTAssertEqual(model.deliveryMark?.clientMessageId, id, "the bar names it")
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    XCTAssertEqual(restarted.deliveryMark?.clientMessageId, id, "the restarted composer shows the same bar")
+    XCTAssertEqual(restarted.deliveryMark?.reason, ConversationModel.recordedWithoutMark)
+    restarted.draft = "Sent text. And more."
+    await restarted.flushDraft()
+    server.answerStatus(.answer("absent"), for: id)
+    try await laterPass()
+    await until("the composer follows the delivery") { restarted.deliveryNotice != nil }
+    XCTAssertEqual(server.kept, [id], "completed once, under its id")
+    XCTAssertNil(restarted.deliveryMark, "the bar goes")
+    XCTAssertEqual(restarted.deliveryNotice, "This message was delivered when the connection came back.")
+    XCTAssertEqual(restarted.draft, "And more.", "the field keeps only what was added since")
+    XCTAssertEqual(restarted.pendingFiles, [], "the file the send carried leaves")
+  }
+
+  /// A Discard whose record removal failed leaves the record with its choice and no mark: the choice is
+  /// being carried out, so no bar shows for it, now or after a modelled restart.
+  func testARecordLeftWithItsChoiceByADiscardWhoseRemovalFailedShowsNoBar() async throws {
+    let model = try makeModel()
+    await model.appear()
+    let old = await unknownSend(model, "Discard, its removal refused.")
+    // The choice's write into the record goes through; the record's removal after the mark's clear is refused.
+    await store.refuseOnce(UnknownSends.key(for: "m1"), skipping: 1)
+    await model.discardUnknownSend()
+    let records = try await parts.delivery.sends.list()
+    XCTAssertEqual(records.map(\.clientMessageId), [old], "the record stays")
+    XCTAssertEqual(records.first?.choice, .discard, "with its choice")
+    let mark = try await parts.delivery.marks.get("m1", "s1")
+    XCTAssertNil(mark, "the mark was cleared")
+    XCTAssertNil(model.deliveryMark, "no bar")
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    XCTAssertNil(restarted.deliveryMark, "no bar after a restart either")
+    XCTAssertEqual(server.attempts, [old], "nothing written beyond the lost original")
   }
 }

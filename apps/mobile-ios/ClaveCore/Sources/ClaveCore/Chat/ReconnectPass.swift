@@ -318,6 +318,33 @@ public struct ChoiceNotKept: Error, Sendable, Equatable, CustomStringConvertible
   public var description: String { "The choice could not be kept: \(reason)" }
 }
 
+/// The send could not be kept on the device, so nothing of it was written, and nothing will be: the
+/// composer says it was not sent, and the person sends again.
+public struct SendNotRecorded: Error, Sendable, Equatable, CustomStringConvertible {
+  /// What the store said.
+  public let reason: String
+
+  public init(reason: String) {
+    self.reason = reason
+  }
+
+  public var description: String { "The send could not be recorded: \(reason)" }
+}
+
+/// The send's record was kept but its mark could not be written, and taking the record out again
+/// failed too: the record stays, so a pass may still complete the send under its id. The composer
+/// shows it as unknown, never as not sent.
+public struct SendRecordedWithoutMark: Error, Sendable, Equatable, CustomStringConvertible {
+  /// What the store said when the record could not be taken out.
+  public let reason: String
+
+  public init(reason: String) {
+    self.reason = reason
+  }
+
+  public var description: String { "The send was recorded without its mark: \(reason)" }
+}
+
 /// How the person's explicit choice on a send of unknown outcome ended.
 public enum PendingResolution: Sendable, Equatable {
   /// The send left the ledger and its mark was cleared, or a pass had refused it and its refusal
@@ -523,13 +550,32 @@ public actor DeliveryController {
   }
 
   /// Before the write leaves: the send in the ledger and marked, so a crash mid-send is found again.
+  /// A record that cannot be added throws `SendNotRecorded`. A record added whose mark cannot be
+  /// written is taken out again while the send is still held as the composer's, so no pass meets it
+  /// meanwhile: `SendNotRecorded` once that succeeded, `SendRecordedWithoutMark` when it failed.
   public func begin(_ send: UnknownSend) async throws {
-    active.insert(send.clientMessageId)
+    let id = send.clientMessageId
+    active.insert(id)
     do {
-      try await recordUnknownSend(send, reason: "Delivery has not been confirmed.", sends: sends, marks: marks)
+      try await sends.add(send)
     } catch {
-      active.remove(send.clientMessageId)
-      throw error
+      active.remove(id)
+      throw SendNotRecorded(reason: reasonOf(error))
+    }
+    do {
+      try await marks.set(
+        send.machineId, send.sessionId,
+        DeliveryMark(kind: .unknown, clientMessageId: id, reason: "Delivery has not been confirmed.", at: send.at))
+    } catch {
+      let markFailure = reasonOf(error)
+      do {
+        try await sends.remove(id)
+      } catch {
+        active.remove(id)
+        throw SendRecordedWithoutMark(reason: reasonOf(error))
+      }
+      active.remove(id)
+      throw SendNotRecorded(reason: markFailure)
     }
   }
 
