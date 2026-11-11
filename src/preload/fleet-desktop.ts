@@ -21,6 +21,7 @@ import type { RoutinesListing } from '@clave/contract/routines/model'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
+import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
@@ -1545,6 +1546,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.onSessionModelChanged(cb),
         eventListener('session.model_changed', (event, owner) =>
           cb({ id: key(owner, event.id), model: event.model })
+        )
+      ),
+    // A server tab's CLI reported its limit (PRDCT-4329): the server pushes
+    // it to every client, and the chat draws its limit card from it rather
+    // than the "server ended" pane.
+    onSessionLimitReported: (cb) =>
+      both(
+        local.onSessionLimitReported(cb),
+        eventListener('session.limit_reported', (event, owner) =>
+          cb({ id: key(owner, event.id), report: reportFromWire(event) })
         )
       ),
     onSessionRestarted: (cb) =>

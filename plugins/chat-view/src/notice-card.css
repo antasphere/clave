@@ -1,0 +1,117 @@
+/* The notice card (NoticeCard.tsx): the drawing on the left, the words
+   beside it (the tone's icon and word, the title, one or two sentences, the
+   actions), the X in the corner. The tone's ink colours the icon and, for a
+   warning or an error, a quiet tint of the edge; the icon's shape and the
+   word carry the tone, so the colour never has to. Every value is a token:
+   the four themes restate them. Selectors that override `.chat-prompt` (the
+   docked card wears it) carry the placement too, so they win on
+   specificity whatever order the two stylesheets load in. */
+.notice-card {
+  --notice-ink: var(--text-secondary);
+  display: flex;
+  min-width: 0;
+  font-family: var(--font-sans);
+  font-size: var(--chat-code-size);
+}
+.notice-card[data-tone='warning'] {
+  --notice-ink: var(--color-warning);
+}
+.notice-card[data-tone='error'] {
+  --notice-ink: var(--color-destructive);
+}
+
+/* Docked: the prompt dock's surface and rise (.chat-prompt), as a row. */
+.notice-card[data-placement='docked'] {
+  flex-direction: row;
+  align-items: center;
+  gap: calc(var(--ask-gap) * 1.25);
+}
+
+/* Inline: the compact form, in the transcript's column. No lift: it belongs
+   to the history, not to the moment; a breath of ground, the link card's
+   corner and air. */
+.notice-card[data-placement='inline'] {
+  align-self: stretch;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-xl);
+  background-color: color-mix(in oklab, var(--surface-100) 60%, transparent);
+}
+.notice-card[data-placement]:is([data-tone='warning'], [data-tone='error']) {
+  border-color: color-mix(in oklab, var(--notice-ink) 35%, var(--border-subtle-color));
+}
+
+/* The drawing gives way to the words as the pane narrows: a quarter of the
+   card at most, less inline. */
+.notice-card-drawing {
+  display: flex;
+  flex-shrink: 0;
+  width: min(calc(var(--ask-field-h) * 3), 24%);
+}
+.notice-card[data-placement='inline'] .notice-card-drawing {
+  width: min(calc(var(--ask-field-h) * 2), 18%);
+}
+.notice-card-drawing > .chat-drawing {
+  width: 100%;
+  height: auto;
+}
+
+.notice-card-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice-card-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.notice-card-eyebrow svg {
+  flex-shrink: 0;
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  color: var(--notice-ink);
+}
+.notice-card-tone {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+.notice-card-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+.notice-card-body {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.notice-card-problem {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+}
+.notice-card-progress {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.notice-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  margin-top: var(--spacing);
+}
+.notice-card-dismiss {
+  flex-shrink: 0;
+  align-self: flex-start;
+}

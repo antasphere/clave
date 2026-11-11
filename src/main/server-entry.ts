@@ -93,7 +93,11 @@ import { fileStorage } from './ports/storage'
 import { lazyTerminalPorts } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
-import { publishSessionStates, setServerEventPublisher } from './server/session-events'
+import {
+  publishSessionStates,
+  sessionLimitReported,
+  setServerEventPublisher
+} from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { rememberedSpawnModel } from './sessions/spawn-model'
@@ -520,6 +524,10 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
+  // this in its IPC handlers, which a daemon never registers, so until now a
+  // server's limit reached no client and its chat drew "server ended".
+  const stopLimits = ptyManager.onLimitReported((id, report) => sessionLimitReported(id, report))
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
@@ -595,6 +603,7 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    stopLimits()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
     plugins.close()

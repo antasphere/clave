@@ -1570,11 +1570,22 @@ export function Sidebar(): React.JSX.Element {
             icon: <ClipboardDocumentIcon className="w-3.5 h-3.5" />,
             onClick: () => navigator.clipboard.writeText(fileTab.filePath)
           },
-          {
-            label: 'Reveal in Finder',
-            icon: <MagnifyingGlassIcon className="w-3.5 h-3.5" />,
-            onClick: () => window.electronAPI?.showItemInFolder(fileTab.filePath)
-          },
+          // A server's file is not in this Mac's Finder (PRDCT-4329): not
+          // offered, and a refusal of this Mac's own is said, never thrown.
+          ...(isRemoteKey(fileTab.filePath)
+            ? []
+            : [
+                {
+                  label: 'Reveal in Finder',
+                  icon: <MagnifyingGlassIcon className="w-3.5 h-3.5" />,
+                  onClick: () =>
+                    void window.electronAPI
+                      ?.showItemInFolder(fileTab.filePath)
+                      .catch((error: unknown) =>
+                        console.warn('[clave] reveal in Finder failed', error)
+                      )
+                }
+              ]),
           {
             label: 'Close',
             icon: <XMarkIcon className="w-3.5 h-3.5" />,
@@ -2338,6 +2349,7 @@ export function Sidebar(): React.JSX.Element {
       {/* Group terminal configuration dialog */}
       <GroupCommandDialog
         isOpen={terminalDialogState !== null}
+        owner={ownerOf(terminalDialogState?.groupId)}
         initialCommand={
           terminalDialogState?.terminalId
             ? groups

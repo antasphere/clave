@@ -1,4 +1,5 @@
-import { parseResourceKey } from '@clave/contract/fleet'
+import { LOCAL_SERVER_ID, parseResourceKey } from '@clave/contract/fleet'
+import { isRemoteKey, ownerOf } from './fleet-identity'
 /**
  * The file paths a drop carries, whichever way they arrived: Finder hands
  * real File objects, VS Code and friends a text/uri-list, Clave's own file and
@@ -66,4 +67,18 @@ export function pathForMessage(p: string): string {
 export function failureText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   return message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim()
+}
+
+/** What a dropped path that could not be attached leaves behind
+ *  (PRDCT-4329). On this Mac's tab, the path in the message, so the agent
+ *  can still reach it. On a server's tab, nothing, unless the path is that
+ *  same server's own file, dragged in by its key: a path of this Mac (or of
+ *  another server) means nothing to the agent there. A folder always lands
+ *  here for a server tab: the transfer carries one file's bytes, and the
+ *  upload (`localAttachmentUpload` -> `readBounded`,
+ *  `packages/server/src/files/binary.ts`) refuses a directory. */
+export function droppedPathFallback(sessionId: string, path: string): 'insert' | 'refuse' {
+  const tab = ownerOf(sessionId)
+  if (tab === LOCAL_SERVER_ID) return 'insert'
+  return isRemoteKey(path) && ownerOf(path) === tab ? 'insert' : 'refuse'
 }
