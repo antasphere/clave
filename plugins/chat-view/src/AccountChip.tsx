@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { BoltIcon, ExclamationTriangleIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
@@ -140,7 +140,6 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
             side="top"
             align="start"
             sideOffset={6}
-            collisionPadding={8}
             className="menu-surface menu-pop term-account-menu z-50"
             aria-label="Account"
           >

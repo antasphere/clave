@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import {
   ArrowDownTrayIcon,
   CheckIcon,
@@ -147,7 +147,6 @@ export function SessionMenu({
           side="bottom"
           align="end"
           sideOffset={6}
-          collisionPadding={8}
           className="menu-surface menu-pop session-menu z-50 p-1"
           aria-label="Session menu"
         >

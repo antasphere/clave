@@ -1,4 +1,4 @@
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { useRef, useState } from 'react'
 import { CheckIcon, ChevronDownIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 import type { Session } from '../../store/session-types'

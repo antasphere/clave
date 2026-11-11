@@ -89,6 +89,8 @@ export {
   serverInfoHandlers,
   ServerInfoEventsLive
 } from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran ──
+export { HistoryPort, type HistoryService, historyHandlers } from './history'
 export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
 export { RequestsPort, type RequestsService } from './requests/port'
 

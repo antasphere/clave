@@ -53,6 +53,8 @@ import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
 import { GitEventsLive, GitPort, gitHandlers } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran ──
+import { HistoryPort, historyHandlers } from './history'
 // ── ADR 0004: the routines ──
 import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
 
@@ -98,6 +100,8 @@ export type ServerServices =
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── PRDCT-4321: the server's History ──
+  | HistoryPort
   // ── ADR 0004: the routines ──
   | Routines
 
@@ -201,6 +205,8 @@ export const BusesLive = busesLayer.pipe(
       ...gitHandlers,
       // ── Issue #266: the server domain ──
       ...serverInfoHandlers,
+      // ── PRDCT-4321: the server's History ──
+      ...historyHandlers,
       // ── ADR 0004: the routines ──
       ...routineHandlers
       // ── Lane B: ...terminalHandlers ──

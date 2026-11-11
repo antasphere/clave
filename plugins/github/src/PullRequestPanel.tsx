@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,

@@ -14,6 +14,7 @@ import {
   historyResumeLaunch,
   encodeProjectDir,
   resumeTargetGroup,
+  serverRowVisible,
   tabSessions,
   visibleInWorkspace,
   type LayoutState
@@ -390,5 +391,95 @@ describe('historyResumeLaunch: a reopen from the History comes back as it was la
     expect(
       historyResumeLaunch({ provider: 'pi', model: null, launch: { dangerous: true } }, true, known)
     ).toEqual({ dangerousMode: false })
+  })
+})
+
+describe('serverRowVisible: a server’s row in the active workspace (PRDCT-4321)', () => {
+  // The rows below are server A's ('srv-a'); the active workspace is a
+  // workspace of server A unless a case says otherwise.
+  const paired = [
+    { workspaceId: 'srv-ws-paired', rootDir: '/srv/paired', serverId: 'srv-a' },
+    { workspaceId: 'srv-ws-rootless', rootDir: null, serverId: 'srv-a' }
+  ]
+  const row = (
+    workspaceId: string | null,
+    cwd = '/elsewhere',
+    serverId = 'srv-a'
+  ): {
+    workspaceId: string | null
+    cwd: string
+    serverId: string
+  } => ({ workspaceId, cwd, serverId })
+
+  it('shows every row when no workspace is active', () => {
+    expect(serverRowVisible(row('srv-ws-other'), null, null, 'local', [])).toBe(true)
+    expect(serverRowVisible(row(null), null, '/a/b', 'local', paired)).toBe(true)
+  })
+
+  it('shows a row of the active workspace or of a paired one, and no other', () => {
+    expect(serverRowVisible(row('ws-active'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(true)
+    expect(serverRowVisible(row('srv-ws-paired'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(true)
+    expect(serverRowVisible(row('srv-ws-other'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(false)
+    // A row naming a workspace is judged by it, whatever its folder.
+    expect(
+      serverRowVisible(row('srv-ws-other', '/a/b/x'), 'ws-active', '/a/b', 'srv-a', paired)
+    ).toBe(false)
+  })
+
+  it('places a row with no workspace by its folder: under the active root or a paired root', () => {
+    expect(serverRowVisible(row(null, '/a/b'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(true)
+    expect(serverRowVisible(row(null, '/a/b/repo'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(
+      true
+    )
+    expect(
+      serverRowVisible(row(null, '/srv/paired/repo'), 'ws-active', '/a/b', 'srv-a', paired)
+    ).toBe(true)
+    expect(serverRowVisible(row(null, '/srv/other'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(
+      false
+    )
+    expect(serverRowVisible(row(null, ''), 'ws-active', '/a/b', 'srv-a', paired)).toBe(false)
+    expect(serverRowVisible(row(null, '/a/b/repo'), 'ws-active', null, 'srv-a', [])).toBe(false)
+  })
+
+  it('places a row with no workspace only under the roots of its own server', () => {
+    // Two servers with the same layout: server B's row under server A's
+    // active root is not A's.
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-a', '/root/app', 'srv-a', [])
+    ).toBe(false)
+    // Under its own server's active root, it is.
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-b', '/root/app', 'srv-b', [])
+    ).toBe(true)
+    // A Mac workspace's root never places a server's row by itself.
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-mac', '/root/app', 'local', [])
+    ).toBe(false)
+    // A paired root of another server does not either; one of its own does.
+    const pairs = [
+      { workspaceId: 'ws-a-paired', rootDir: '/root/app', serverId: 'srv-a' },
+      { workspaceId: 'ws-b-paired', rootDir: '/home/ubuntu/app', serverId: 'srv-b' }
+    ]
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-mac', '/Users/me', 'local', pairs)
+    ).toBe(false)
+    expect(
+      serverRowVisible(
+        row(null, '/home/ubuntu/app/x', 'srv-b'),
+        'ws-mac',
+        '/Users/me',
+        'local',
+        pairs
+      )
+    ).toBe(true)
+  })
+
+  it('never takes a root prefix that stops inside a folder name', () => {
+    expect(serverRowVisible(row(null, '/a/bc'), 'ws-active', '/a/b', 'srv-a', [])).toBe(false)
+    expect(
+      serverRowVisible(row(null, '/srv/paired-two'), 'ws-active', null, 'srv-a', [
+        { workspaceId: 'p', rootDir: '/srv/paired', serverId: 'srv-a' }
+      ])
+    ).toBe(false)
   })
 })

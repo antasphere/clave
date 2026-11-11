@@ -1,5 +1,5 @@
 import * as React from 'react'
-import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
+import * as ContextMenuPrimitive from '../primitives/context-menu'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../lib/utils'
 

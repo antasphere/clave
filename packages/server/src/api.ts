@@ -73,6 +73,8 @@ import { GitLive } from './git/api'
 import { RoutinesLive } from './routines/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade, SetServerName } from '@clave/contract/server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran ──
+import { ListServerHistory, SearchServerHistory } from '@clave/contract/history'
 import {
   CreatePendingRequest,
   ReadPendingRequestResult,
@@ -227,6 +229,13 @@ export const ServerInfoLive = HttpApiBuilder.group(ClaveApi, 'server', (handlers
     .handle('name', HttpCqrs.command(SetServerName))
 )
 
+// ── PRDCT-4321: the server's History, under the bearer token like every route ──
+export const HistoryLive = HttpApiBuilder.group(ClaveApi, 'history', (handlers) =>
+  handlers
+    .handle('list', HttpCqrs.query(ListServerHistory))
+    .handle('search', HttpCqrs.query(SearchServerHistory))
+)
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -251,6 +260,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       GitLive,
       // ── Issue #266: the server domain ──
       ServerInfoLive,
+      // ── PRDCT-4321: the server's History ──
+      HistoryLive,
       // ── ADR 0004: the routines ──
       RoutinesLive,
       HealthLive

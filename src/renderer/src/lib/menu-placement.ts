@@ -1,5 +1,8 @@
-// The gap a menu always keeps from the window's edges.
-export const MENU_EDGE_PADDING = 8
+import { POPOVER_EDGE_GAP } from '@clave/ui/primitives/edge-gap'
+
+// The gap a menu always keeps from the window's edges: the one every
+// floating surface keeps (`@clave/ui`'s `POPOVER_EDGE_GAP`).
+export const MENU_EDGE_PADDING = POPOVER_EDGE_GAP
 
 /** Where a menu of size w×h opens for a click at (x, y): below and to the
  *  right of the cursor (raised by `lift`), flipped left or up when that side
