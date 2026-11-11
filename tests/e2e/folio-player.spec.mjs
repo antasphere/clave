@@ -378,6 +378,23 @@ export async function run(t) {
         dragged
       )
 
+      // Five quick arrow presses: the light moves five ticks at once, the
+      // server is asked once, for the tick they end on (verifier round 4).
+      const player = view.locator('.folio-player')
+      await player.locator('[data-testid="folio-scrub"]').focus()
+      const beforeKeys = stub.speaks().length
+      for (let i = 0; i < 5; i++) await win.keyboard.press('ArrowLeft', { delay: 20 })
+      t.equal('after five quick presses the light is five ticks back', await current(), 6)
+      t.equal('and ElevenLabs is not asked yet', stub.speaks().length, beforeKeys)
+      t.check('the keys land on block 7', !!(await waitLit(view, 7)), await litBlock(view))
+      await settle()
+      const keyed = stub.speaks().slice(beforeKeys)
+      t.check(
+        'five presses made at most two asks: the landed part and its next',
+        keyed.length >= 1 && keyed.length <= 2 && keyed[0] === LONG_SPOKEN[6],
+        keyed
+      )
+
       // Pause, Stop, Read again: the blocks already received are not asked.
       const play = view.locator('[data-testid="folio-play"]')
       await play.click()

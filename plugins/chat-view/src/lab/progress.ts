@@ -72,6 +72,24 @@ export function dragSeek(dragTick: number | null, current: number): number | nul
   return dragTick === null || dragTick === current ? null : dragTick
 }
 
+/** How long after the last arrow key the player seeks: five quick presses
+ *  move the light five ticks and ask the server once, for the tick they end
+ *  on, never once per press (each seek is a paid call). */
+export const KEY_SEEK_MS = 300
+
+/** The tick an arrow key moves the light to: one step from the tick the keys
+ *  already moved it to (`pending`), else from the tick in play, held within
+ *  the bar. Pure. */
+export function keySeekTarget(
+  pending: number | null,
+  current: number,
+  key: 'ArrowLeft' | 'ArrowRight',
+  ticks: number
+): number {
+  const from = pending ?? current
+  return Math.max(0, Math.min(ticks - 1, from + (key === 'ArrowLeft' ? -1 : 1)))
+}
+
 /** The tick under the pointer, `x` pixels into a bar `width` wide. */
 export function tickAt(x: number, width: number, ticks: number): number {
   if (ticks <= 0 || width <= 0) return 0

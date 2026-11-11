@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clockOf,
   dragSeek,
+  keySeekTarget,
   partFor,
   partPlace,
   partTicks,
@@ -76,5 +77,21 @@ describe('the reading on its page', () => {
     expect(clockOf(0)).toBe('0:00')
     expect(clockOf(65_400)).toBe('1:05')
     expect(clockOf(600_000)).toBe('10:00')
+  })
+})
+
+describe('keySeekTarget', () => {
+  it('moves one tick from the tick in play when no key moved it yet', () => {
+    expect(keySeekTarget(null, 4, 'ArrowLeft', 12)).toBe(3)
+    expect(keySeekTarget(null, 4, 'ArrowRight', 12)).toBe(5)
+  })
+  it('moves on from the tick the keys already reached, so five presses are five ticks and one seek', () => {
+    let pending: number | null = null
+    for (let i = 0; i < 5; i++) pending = keySeekTarget(pending, 11, 'ArrowLeft', 12)
+    expect(pending).toBe(6)
+  })
+  it('stays inside the bar', () => {
+    expect(keySeekTarget(null, 0, 'ArrowLeft', 12)).toBe(0)
+    expect(keySeekTarget(11, 11, 'ArrowRight', 12)).toBe(11)
   })
 })

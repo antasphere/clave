@@ -85,7 +85,7 @@ import {
 } from './pages'
 import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
 import { fallbackLine, useSpokenRenderings } from './spoken'
-import { clockOf, dragSeek, scrubShown, tickAt } from './progress'
+import { clockOf, dragSeek, KEY_SEEK_MS, keySeekTarget, scrubShown, tickAt } from './progress'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
@@ -405,9 +405,12 @@ const READER_SCROLL_MS = 3_000
  *  time read and the whole, once known. */
 function Scrub({
   reading,
+  pending,
   onSeek
 }: {
   reading: Reading
+  /** The tick the arrow keys moved the light to, before their seek. */
+  pending: number | null
   onSeek: (tick: number) => void
 }): React.JSX.Element {
   const bar = useRef<HTMLDivElement>(null)
@@ -433,7 +436,7 @@ function Scrub({
     const to = seek ? dragSeek(tick, reading.tick) : null
     if (to !== null) onSeek(to)
   }
-  const shown = scrubShown(reading.tick, reading.fraction, reading.blocks, drag)
+  const shown = scrubShown(reading.tick, reading.fraction, reading.blocks, drag ?? pending)
   return (
     <div className="folio-player-bar">
       <div
@@ -586,7 +589,25 @@ function PageView({
     if (reading.state === 'paused') voice.resume()
     else voice.pause()
   }
-  // The player's keys: Space plays or pauses, the arrows move a block.
+  // The player's keys: Space plays or pauses, the arrows move a block. A run
+  // of arrow presses moves the light at once and seeks once, KEY_SEEK_MS
+  // after the last press (each seek is a paid call, verifier round 4).
+  const [keyTick, setKeyTick] = useState<number | null>(null)
+  const keyPending = useRef<number | null>(null)
+  const keyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearKeySeek = (): void => {
+    if (keyTimer.current) clearTimeout(keyTimer.current)
+    keyTimer.current = null
+    keyPending.current = null
+    setKeyTick(null)
+  }
+  useEffect(() => {
+    if (!reading) clearKeySeek()
+    return () => {
+      if (keyTimer.current) clearTimeout(keyTimer.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cleared when the reading ends
+  }, [reading === null])
   const onPlayerKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (!reading || reading.state === 'preparing') return
     const onButton = (event.target as HTMLElement).closest('button')
@@ -595,12 +616,16 @@ function PageView({
       toggle()
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
-      seekTick(
-        Math.max(
-          0,
-          Math.min(reading.blocks - 1, reading.tick + (event.key === 'ArrowLeft' ? -1 : 1))
-        )
-      )
+      const next = keySeekTarget(keyPending.current, reading.tick, event.key, reading.blocks)
+      keyPending.current = next
+      setKeyTick(next)
+      if (keyTimer.current) clearTimeout(keyTimer.current)
+      keyTimer.current = setTimeout(() => {
+        keyTimer.current = null
+        keyPending.current = null
+        setKeyTick(null)
+        if (next !== reading.tick) seekTick(next)
+      }, KEY_SEEK_MS)
     }
   }
 
@@ -689,7 +714,7 @@ function PageView({
                   >
                     <StopIcon aria-hidden="true" />
                   </button>
-                  <Scrub reading={reading} onSeek={seekTick} />
+                  <Scrub reading={reading} pending={keyTick} onSeek={seekTick} />
                 </>
               ) : (
                 <button
