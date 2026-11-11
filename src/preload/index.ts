@@ -1654,6 +1654,13 @@ const electronAPI = {
     id: event.id,
     report: reportFromWire(event)
   })),
+  // The account served the session a turn again (PRDCT-4415): the report the
+  // window holds closes. Both transports, as the report.
+  onSessionLimitCleared: viaServerEvent<'session.limit_cleared', { id: string }>(
+    'session:limit-cleared',
+    'session.limit_cleared',
+    (event) => ({ id: event.id })
+  ),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
     onBothTransports(
       createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),

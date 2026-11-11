@@ -154,6 +154,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onSessionAutoTitle: routed,
   onPlanDetected: routed,
   onSessionLimitReported: routed,
+  onSessionLimitCleared: routed,
   onClearDetected: routed,
   onAgentState: routed,
   onMcpCommand: local,

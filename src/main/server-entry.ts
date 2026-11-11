@@ -97,6 +97,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
   publishSessionStates,
+  sessionLimitCleared,
   sessionLimitReported,
   setServerEventPublisher
 } from './server/session-events'
@@ -542,6 +543,8 @@ async function main(): Promise<void> {
   // this in its IPC handlers, which a daemon never registers, so until now a
   // server's limit reached no client and its chat drew "server ended".
   const stopLimits = ptyManager.onLimitReported((id, report) => sessionLimitReported(id, report))
+  // The account served a turn again (PRDCT-4415): the clients close the report.
+  const stopCleared = ptyManager.onLimitCleared((id) => sessionLimitCleared(id))
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
@@ -618,6 +621,7 @@ async function main(): Promise<void> {
     selfUpgrade?.close()
     stopStates()
     stopLimits()
+    stopCleared()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
     plugins.close()

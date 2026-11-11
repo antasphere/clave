@@ -22,14 +22,22 @@ const flush = async (): Promise<void> => {
 function fixture(): {
   api: ElectronAPI
   emit: (owner: string, event: ServerEvent) => void
-  local: { deliver: (payload: Heard) => void; released: number }
+  local: {
+    deliver: (payload: Heard) => void
+    clear: (payload: { id: string }) => void
+    released: number
+  }
 } {
   const events = new Map<string, (e: ServerEventEnvelope) => void>()
   const localListeners: Array<(payload: Heard) => void> = []
+  const clearedListeners: Array<(payload: { id: string }) => void> = []
   const local = {
     released: 0,
     deliver: (payload: Heard): void => {
       for (const cb of localListeners) cb(payload)
+    },
+    clear: (payload: { id: string }): void => {
+      for (const cb of clearedListeners) cb(payload)
     }
   }
   const localApi = {
@@ -37,6 +45,13 @@ function fixture(): {
       localListeners.push(cb)
       return () => {
         localListeners.splice(localListeners.indexOf(cb), 1)
+        local.released++
+      }
+    },
+    onSessionLimitCleared: (cb: (payload: { id: string }) => void) => {
+      clearedListeners.push(cb)
+      return () => {
+        clearedListeners.splice(clearedListeners.indexOf(cb), 1)
         local.released++
       }
     }
@@ -121,5 +136,27 @@ describe('a session’s limit report on the fleet road', () => {
     expect(h.local.released).toBe(1)
     h.emit('x', { _tag: 'session.limit_reported', id: 's1', scope: 'shared' })
     expect(heard).toHaveLength(3)
+  })
+})
+
+describe('a session’s limit report closing on the fleet road (PRDCT-4415)', () => {
+  it('a connected server’s cleared word arrives keyed by that server; the local bridge’s as it came', async () => {
+    h = fixture()
+    const heard: { id: string }[] = []
+    const off = h.api.onSessionLimitCleared((payload) => heard.push(payload))
+    await h.api.fleetList()
+    await flush()
+    h.emit('x', { _tag: 'session.limit_cleared', id: 's1' })
+    h.local.clear({ id: 'local-1' })
+    // A report of the same server is no clearing.
+    h.emit('x', { _tag: 'session.limit_reported', id: 's1', scope: 'shared' })
+    expect(heard).toEqual([
+      { id: sessionKey({ serverId: 'x', sessionId: 's1' }) },
+      { id: 'local-1' }
+    ])
+    off()
+    expect(h.local.released).toBe(1)
+    h.emit('x', { _tag: 'session.limit_cleared', id: 's1' })
+    expect(heard).toHaveLength(2)
   })
 })

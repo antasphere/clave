@@ -1016,6 +1016,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionLimitReported: (
     callback: (payload: { id: string; report: LimitReport }) => void
   ) => () => void
+  /** The account served that session a turn again after its limit report
+   *  (PRDCT-4415): the report is closed; both transports. */
+  onSessionLimitCleared: (callback: (payload: { id: string }) => void) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (

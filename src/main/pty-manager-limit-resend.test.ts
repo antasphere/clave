@@ -253,3 +253,42 @@ describe('a restart or a kill closes the report (round 1, M6, M7)', () => {
     expect(fake.writes).toEqual([])
   })
 })
+
+/**
+ * The window's report closes once the account serves the session again
+ * (PRDCT-4415): a reply the model wrote after the report, on this Mac or on a
+ * server, since a server tab is never moved by the window's policy and so
+ * never settled there. Once per report; the CLI's own synthetic refusal is
+ * no reply; a turn refused again reports again and the next reply clears it.
+ */
+const served = (model = 'claude-opus-5-5'): unknown => ({
+  kind: 'event',
+  event: {
+    type: 'provider_event',
+    provider: 'claude',
+    payload: { type: 'assistant', message: { model, content: [{ type: 'text', text: 'ok' }] } }
+  }
+})
+
+describe('the report closes when the account serves again (PRDCT-4415)', () => {
+  it('a real reply after a report clears it once; a synthetic one does not', () => {
+    const cleared: string[] = []
+    const stop = ptyManager.onLimitCleared((id) => cleared.push(id))
+    const emit = attach('s9')
+    fake.lastUserMessage.set('s9', ask)
+    // No report open: a reply clears nothing.
+    emit(served())
+    expect(cleared).toEqual([])
+    emit(rejected('seven_day_oi'))
+    emit(synthetic('No response requested.'))
+    expect(cleared).toEqual([])
+    emit(served())
+    emit(served())
+    expect(cleared).toEqual(['s9'])
+    // Refused again, then served: cleared again.
+    emit(synthetic('Fable limit reached'))
+    emit(served())
+    stop()
+    expect(cleared).toEqual(['s9', 's9'])
+  })
+})

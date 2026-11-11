@@ -501,6 +501,11 @@ describe('the sessions’ server events', () => {
       Either.isLeft(decode(ServerEvent, { _tag: 'session.model_changed', id: 's1', model: null }))
     ).toBe(true)
   })
+  it('carries a session’s limit report closing with its id alone (PRDCT-4415)', () => {
+    const event = { _tag: 'session.limit_cleared', id: 's1' }
+    expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
+    expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.limit_cleared' }))).toBe(true)
+  })
 })
 
 describe('restart correlation contract', () => {

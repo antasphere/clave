@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { limitReportOf, providerEventReportsLimit } from './limit-report'
+import { limitLiftedBy, limitReportOf, providerEventReportsLimit } from './limit-report'
 
 /**
  * The CLI's own word on its account's limit, and WHICH cap it hit (ADR 0002,
@@ -247,5 +247,55 @@ describe('limitReportOf, Codex and the rest', () => {
   it('providerEventReportsLimit is the yes of a report', () => {
     expect(providerEventReportsLimit('claude', rejected({ rateLimitType: 'five_hour' }))).toBe(true)
     expect(providerEventReportsLimit('claude', { type: 'system' })).toBe(false)
+  })
+})
+
+/**
+ * The provider's word that the account serves again (PRDCT-4415), which
+ * closes the report a window holds. A refusal read as served would hide the
+ * cap; a reply missed would leave "Out" on an account with headroom.
+ */
+describe('limitLiftedBy', () => {
+  const assistant = (model: string): unknown => ({
+    type: 'assistant',
+    message: { model, content: [{ type: 'text', text: 'hello' }] }
+  })
+  it("Claude: a reply the model wrote, never the CLI's synthetic stand-in", () => {
+    expect(limitLiftedBy('claude', assistant('claude-opus-5-5'))).toBe(true)
+    expect(limitLiftedBy('claude', assistant('<synthetic>'))).toBe(false)
+    expect(limitLiftedBy('claude', { type: 'assistant' })).toBe(false)
+    expect(
+      limitLiftedBy('claude', {
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'allowed' }
+      })
+    ).toBe(false)
+    expect(limitLiftedBy('claude', { type: 'result' })).toBe(false)
+  })
+  it('Codex: a rate-limits update with buckets and none at its cap', () => {
+    const frame = (params: unknown): unknown => ({
+      method: 'account/rateLimits/updated',
+      params
+    })
+    expect(limitLiftedBy('codex', frame({ rateLimits: { primary: { usedPercent: 40 } } }))).toBe(
+      true
+    )
+    expect(
+      limitLiftedBy(
+        'codex',
+        frame({
+          rateLimitsByLimitId: {
+            codex: { primary: { usedPercent: 40 } },
+            spark: { limitName: 'Spark', primary: { usedPercent: 99 } }
+          }
+        })
+      )
+    ).toBe(false)
+    expect(limitLiftedBy('codex', frame({ rateLimits: { primary: { usedPercent: 96 } } }))).toBe(
+      false
+    )
+    expect(limitLiftedBy('codex', frame({}))).toBe(false)
+    expect(limitLiftedBy('codex', { method: 'turn/completed', params: {} })).toBe(false)
+    expect(limitLiftedBy('other', assistant('m'))).toBe(false)
   })
 })

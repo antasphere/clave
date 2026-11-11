@@ -60,6 +60,11 @@ export const ServerEvent = Schema.Union(
     ),
     resetsAt: Schema.optional(Schema.Number)
   }),
+  /** The account served a turn again after the session's limit report
+   *  (PRDCT-4415): the report is closed, and the window's chip and proposal
+   *  with it. A turn refused again reports again. Sent over the window's IPC
+   *  too while no server runs. */
+  Schema.TaggedStruct('session.limit_cleared', { id: Schema.String }),
   // ── Lane D: settings (accounts, usage, workspaces) ──
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──

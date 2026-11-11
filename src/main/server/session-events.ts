@@ -101,6 +101,18 @@ export function sessionLimitReported(id: string, report: LimitReport): void {
     )
 }
 
+/** The account served the session a turn again after its limit report
+ *  (PRDCT-4415): the window closes the report. Both transports, as the
+ *  report goes. */
+export function sessionLimitCleared(id: string): void {
+  const windows = sessionWindows()
+  windows.send(windows.windowOf(id), 'session:limit-cleared', { id })
+  if (publisher)
+    void publisher({ _tag: 'session.limit_cleared', id }).catch((error) =>
+      console.error('[clave-server] session.limit_cleared not published', error)
+    )
+}
+
 /** The conversation was cleared; the tab follows `providerSessionId` now. */
 export function sessionCleared(
   id: string,

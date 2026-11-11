@@ -3,6 +3,7 @@ import {
   hasServerEventPublisher,
   publishOrSend,
   sessionCleared,
+  sessionLimitCleared,
   sessionLimitReported,
   sessionModelChanged,
   sessionPlanDetected,
@@ -157,5 +158,27 @@ describe('a session’s limit report travels on both transports, with its scope 
     await Promise.resolve()
     expect(sent).toEqual([['session:limit-reported', { id: 's1', report: { scope: 'shared' } }]])
     expect(published).toEqual([{ _tag: 'session.limit_reported', id: 's1', scope: 'shared' }])
+  })
+})
+
+describe('a session’s limit report closes on both transports (PRDCT-4415)', () => {
+  afterEach(() => setServerEventPublisher(null))
+  it('reaches the session’s window over IPC while no server runs', () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    sessionLimitCleared('s1')
+    expect(sent).toEqual([['session:limit-cleared', { id: 's1' }]])
+  })
+  it('reaches the window over IPC AND the server once a publisher is set', async () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    const published: unknown[] = []
+    setServerEventPublisher(async (event) => {
+      published.push(event)
+    })
+    sessionLimitCleared('s1')
+    await Promise.resolve()
+    expect(sent).toEqual([['session:limit-cleared', { id: 's1' }]])
+    expect(published).toEqual([{ _tag: 'session.limit_cleared', id: 's1' }])
   })
 })

@@ -1613,6 +1613,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           cb({ id: key(owner, event.id), report: reportFromWire(event) })
         )
       ),
+    // The account served that tab a turn again (PRDCT-4415): keyed by its
+    // server, as the report was.
+    onSessionLimitCleared: (cb) =>
+      both(
+        local.onSessionLimitCleared(cb),
+        eventListener('session.limit_cleared', (event, owner) => cb({ id: key(owner, event.id) }))
+      ),
     onSessionRestarted: (cb) =>
       both(
         local.onSessionRestarted(cb),

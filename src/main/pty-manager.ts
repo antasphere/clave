@@ -16,7 +16,7 @@ import {
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
 import { lineageOf } from './sessions/lineage'
-import { limitReportOf } from './sessions/limit-report'
+import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
 import { runtimeChoices } from '../shared/runtime-choices'
 
@@ -127,6 +127,11 @@ class PtyManager {
    *  the person writes something else. While it is open, the next model the
    *  provider confirms resends that one message. */
   private openReports = new Map<string, UserMessageInput>()
+  /** The sessions whose window holds a limit report (PRDCT-4415): reported,
+   *  and no turn served since. The provider's next word that the account
+   *  serves again closes it there, whatever closed `openReports` here. */
+  private reported = new Set<string>()
+  private clearedListeners = new Set<(sessionId: string) => void>()
   /** The message a chat session's account rejected, kept from the CLI's own
    *  report to the restart that resends it on the next account. */
   private rejected = new Map<string, UserMessageInput>()
@@ -136,6 +141,13 @@ class PtyManager {
   onLimitReported(listener: (sessionId: string, report: LimitReport) => void): () => void {
     this.limitListeners.add(listener)
     return () => this.limitListeners.delete(listener)
+  }
+
+  /** The account served a session a turn again after its limit report
+   *  (PRDCT-4415): the window closes the report it holds. */
+  onLimitCleared(listener: (sessionId: string) => void): () => void {
+    this.clearedListeners.add(listener)
+    return () => this.clearedListeners.delete(listener)
   }
 
   async spawn(cwd: string, options?: PtySpawnOptions): Promise<PtySession> {
@@ -477,7 +489,14 @@ class PtyManager {
           // window takes: the account rung's restart carries it, a model
           // change resends it.
           if (last) this.openReports.set(id, last)
+          this.reported.add(id)
           for (const listener of this.limitListeners) listener(id, report)
+        } else if (
+          this.reported.has(id) &&
+          limitLiftedBy(stream.event.provider, stream.event.payload)
+        ) {
+          this.reported.delete(id)
+          for (const listener of this.clearedListeners) listener(id)
         }
       }
       if (stream.kind === 'pty') onData(decoder.decode(stream.data, { stream: true }))
@@ -552,6 +571,7 @@ class PtyManager {
       this.codexThreads.delete(id)
       this.rejected.delete(id)
       this.openReports.delete(id)
+      this.reported.delete(id)
       // Copy offers are surfaced in the tab's own header: once the tab is
       // gone they are unreachable, so their values leave memory with it.
       dismissSessionOffers(id)
