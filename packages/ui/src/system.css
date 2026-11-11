@@ -4801,11 +4801,14 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 /* The answer line under a choice's options (PRDCT-4322): the option picked
    lands in it to be edited in place, or the person writes their own words.
-   One line that grows with what is typed and wraps it, then scrolls. */
+   One line that grows with what is typed and wraps it, then scrolls. A
+   textarea sets its text at the top, so the padding is what centres one line
+   in the field's minimum height: the space the line leaves, split in two. */
 .chat-field--answer {
   display: block;
   max-height: calc(var(--spacing) * 40);
-  padding: calc(var(--spacing) * 1.5) calc(var(--control-px) * 1.75);
+  padding: max(calc(var(--spacing) * 1.5), calc((var(--ask-field-h) - 1lh) / 2))
+    calc(var(--control-px) * 1.75);
   resize: none;
   field-sizing: content;
   overflow-y: auto;
