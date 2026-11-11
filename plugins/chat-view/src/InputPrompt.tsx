@@ -14,7 +14,7 @@ import {
   type InputAnswer
 } from '@clave/contract/input-kinds'
 import type { AgentQuestion } from '../../../src/shared/session-model'
-import { questionKey } from '../../../src/renderer/src/lib/question-identity'
+import { questionIsPrivate, questionKey } from '../../../src/renderer/src/lib/question-identity'
 import { openLink } from '../../../src/renderer/src/lib/open-link'
 import type { Entry, Permission } from './reducer'
 import type { Answer } from './question-context'
@@ -30,6 +30,17 @@ import {
 } from './input-request'
 import { own } from '@clave/contract/input-kinds'
 import { AskDrawing, LinkDrawing } from './AskDrawing'
+import {
+  cardQuestion,
+  nativeAnswers,
+  nativeHeadline,
+  ownWordsOf,
+  pickedOption,
+  picksOf,
+  takesOwnWords,
+  togglePick,
+  withOwnWords
+} from './question-answers'
 
 /* The card an agent asks the person with through clave_request_input
    (PRDCT-4157): what it asks, in its own words, then one field per question
@@ -38,9 +49,16 @@ import { AskDrawing, LinkDrawing } from './AskDrawing'
    come back from), every field checked where it is typed, one Send. Drawn
    inline in the transcript under the agent's turn (`InlineQuestion`), in the
    paper of the composer. A `form` lays every field out at once, which is how
-   an onboarding asks everything up front; `steps` takes one question per
-   page, the native question's motion. The provider's own question
-   (AskUserQuestion, Codex's request_user_input) keeps `QuestionPrompt`.
+   an onboarding asks everything up front; `steps` stands the questions one
+   below another, the one being answered open, the others folded to a line.
+
+   The same card asks what an agent asked with its own tool (PRDCT-4322):
+   Claude's AskUserQuestion, Codex's request for input, a plugin's question,
+   a server's clarification. Each is a choice among its options with the
+   person's own words allowed (`cardQuestion`), several questions take the
+   steps layout, and the answer goes back as the provider takes it. A choice
+   that takes own words carries an answer line under its options: the option
+   picked lands there and the person edits it in place, or writes their own.
 
    The form lives across the agent's turns: the person may answer in the chat
    instead, the agent sets the fields from what was said (clave_input_set),
@@ -69,7 +87,11 @@ const focused = new Set<string>()
 const keepFocus = (event: React.MouseEvent): void => event.preventDefault()
 
 const isEmpty = (value: InputAnswer | undefined): boolean =>
-  value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
+  value === undefined ||
+  (typeof value === 'string' ? value.trim() === '' : value.every((entry) => entry.trim() === ''))
+
+/** A private answer, wherever the card shows it. */
+const DOTS = '••••••'
 
 /** Where the card goes on its own after the agent set the question it was
  *  on: the first question, from `from` on, that has no answer yet or whose
@@ -91,7 +113,11 @@ const nextUnanswered = (
  *  will see it in the record row; an optional question left empty says so. */
 const shownValue = (question: AgentQuestion, value: InputAnswer | undefined): string => {
   if (isEmpty(value)) return 'Left empty'
-  if (Array.isArray(value)) return value.join(', ')
+  if (Array.isArray(value))
+    return value
+      .map((entry: string) => entry.trim())
+      .filter(Boolean)
+      .join(', ')
   if (question.kind === 'link') return question.confirm ?? "I'm back"
   return String(value)
 }
@@ -102,7 +128,12 @@ function Field({
   problem,
   busy,
   remote,
+  secret = false,
+  enterMoves = false,
+  ownLine = '',
+  onOwnLine,
   autoFocus,
+  focusToken = 0,
   onChange,
   onTouch,
   onEnter,
@@ -113,7 +144,19 @@ function Field({
   problem: string | null
   busy: boolean
   remote: boolean
+  /** A private answer (a native question marked secret): typed unseen. */
+  secret?: boolean
+  /** The agent's own question asked in words alone: its field is one line
+   *  that grows, where Enter moves on and Shift+Enter is a new line. */
+  enterMoves?: boolean
+  /** A multi-select's line of own words as the person typed it, kept by the
+   *  card (`lineOf`), and where a change of it goes. */
+  ownLine?: string
+  onOwnLine?: (text: string) => void
   autoFocus: boolean
+  /** Changes when the reader reopens this question from its folded line:
+   *  the field takes the caret at the end of the answer, to edit it. */
+  focusToken?: number
   onChange: (value: InputAnswer) => void
   onTouch: () => void
   /** Enter in a one-line field: the next field, or the answer on the last. */
@@ -127,9 +170,27 @@ function Field({
   const id = `chat-field-${key.replace(/[^a-z0-9_-]/gi, '-')}`
   const [opened, setOpened] = useState(false)
   const field = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+  const change = onChange
   useEffect(() => {
     if (autoFocus) field.current?.focus({ preventScroll: true })
   }, [autoFocus])
+  useEffect(() => {
+    const el = field.current
+    if (!focusToken || !el) return
+    el.focus({ preventScroll: true })
+    // The caret at the end of what is there: the answer is edited, not retyped.
+    if (el instanceof HTMLTextAreaElement || el.type === 'text' || el.type === 'password')
+      el.setSelectionRange(el.value.length, el.value.length)
+  }, [focusToken])
+  /** Enter moves on, Shift+Enter is a new line in a field that takes several. */
+  const enterMovesOn = (event: React.KeyboardEvent): void => {
+    // ⌘Enter is the card's (one answer, sent once), never the field's too.
+    if (event.metaKey || event.ctrlKey) return
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      onEnter()
+    }
+  }
   const invalid = problem !== null
   const describedBy = [question.hint ? `${id}-hint` : '', invalid ? `${id}-problem` : '']
     .filter(Boolean)
@@ -160,17 +221,44 @@ function Field({
     </span>
   )
   if (kind === 'choice') {
-    const picked = typeof value === 'string' ? [value] : [...((value as readonly string[]) ?? [])]
+    const words = takesOwnWords(question)
+    const answer = typeof value === 'string' ? value : ''
+    // A single choice's option is the one its answer starts from, the answer
+    // edited or not; a closed choice's answer IS the option.
+    // A private answer ticks an option only when it IS that option: a tick
+    // on what it starts with would show how the private value starts.
+    const chosen = question.multiSelect
+      ? null
+      : words && !secret
+        ? pickedOption(question, answer)
+        : question.options.some((o) => o.label === answer)
+          ? answer
+          : null
+    const picks = question.multiSelect ? picksOf(question, value, words ? ownLine : undefined) : []
+    const isPicked = (label: string): boolean =>
+      question.multiSelect ? picks.includes(label) : chosen === label
     const pick = (label: string): void => {
       if (question.multiSelect) {
-        onChange(picked.includes(label) ? picked.filter((l) => l !== label) : [...picked, label])
+        change(togglePick(question, value, label, words ? ownLine : undefined))
         onTouch()
         return
       }
-      onChange(label)
+      change(label)
       onTouch()
       onPick?.(label)
     }
+    // The answer line: a single choice's whole answer, the option picked
+    // landing in it to be edited; a multi-select's own words beside its picks.
+    const line = question.multiSelect ? ownLine : answer
+    const write = (text: string): void => {
+      if (!question.multiSelect) return change(text)
+      change(withOwnWords(question, value, ownLine, text))
+      onOwnLine?.(text)
+    }
+    const lineLabel = question.multiSelect ? 'Your own words' : 'Your answer'
+    const linePlaceholder = question.multiSelect
+      ? 'Add your own words'
+      : 'Pick an option, or write your own answer'
     return (
       <div className="chat-field-wrap" data-kind={kind}>
         <div className="chat-field-label" id={`${id}-label`}>
@@ -186,7 +274,7 @@ function Field({
           aria-labelledby={`${id}-label`}
         >
           {question.options.map((option, index) => {
-            const selected = picked.includes(option.label)
+            const selected = isPicked(option.label)
             return (
               <button
                 key={option.label}
@@ -219,6 +307,31 @@ function Field({
             )
           })}
         </div>
+        {words &&
+          (secret ? (
+            <input
+              {...common}
+              type="password"
+              autoComplete="off"
+              className="chat-field chat-field--answer"
+              aria-label={lineLabel}
+              placeholder={linePlaceholder}
+              value={line}
+              onChange={(event) => write(event.target.value)}
+              onKeyDown={enterMovesOn}
+            />
+          ) : (
+            <textarea
+              {...common}
+              rows={1}
+              className="chat-field chat-field--answer"
+              aria-label={lineLabel}
+              placeholder={linePlaceholder}
+              value={line}
+              onChange={(event) => write(event.target.value)}
+              onKeyDown={enterMovesOn}
+            />
+          ))}
         {trouble}
       </div>
     )
@@ -262,7 +375,7 @@ function Field({
                   data-primary={opened ? 'true' : undefined}
                   disabled={busy}
                   onClick={() => {
-                    onChange('done')
+                    change('done')
                     onTouch()
                     onPick?.('done')
                   }}
@@ -277,22 +390,51 @@ function Field({
       </div>
     )
   }
-  if (kind === 'long-text')
+  if (kind === 'long-text') {
+    // The agent's own question in words alone keeps the name it gave the
+    // field (its header, else its question), as its answer always had.
+    const named = enterMoves ? { 'aria-label': question.header ?? question.question } : {}
     return (
       <div className="chat-field-wrap" data-kind={kind}>
         {label}
         {hint}
-        <textarea
-          {...common}
-          className="chat-field chat-field--long"
-          rows={3}
-          placeholder={question.placeholder}
-          value={typeof value === 'string' ? value : ''}
-          onChange={(event) => onChange(event.target.value)}
-        />
+        {secret ? (
+          <input
+            {...common}
+            {...named}
+            type="password"
+            autoComplete="off"
+            className="chat-field"
+            placeholder={question.placeholder}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(event) => change(event.target.value)}
+            onKeyDown={enterMovesOn}
+          />
+        ) : enterMoves ? (
+          <textarea
+            {...common}
+            {...named}
+            rows={1}
+            className="chat-field chat-field--answer"
+            placeholder={question.placeholder ?? 'Write your answer'}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(event) => change(event.target.value)}
+            onKeyDown={enterMovesOn}
+          />
+        ) : (
+          <textarea
+            {...common}
+            className="chat-field chat-field--long"
+            rows={3}
+            placeholder={question.placeholder}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(event) => change(event.target.value)}
+          />
+        )}
         {trouble}
       </div>
     )
+  }
   if (isPathKind(kind)) {
     const pick = async (): Promise<void> => {
       const current = typeof value === 'string' && value ? value : undefined
@@ -301,7 +443,7 @@ function Field({
           ? await window.electronAPI.openFileDialog(current)
           : await window.electronAPI.openFolderDialog(current)
       if (path) {
-        onChange(path)
+        change(path)
         onTouch()
       }
     }
@@ -320,8 +462,9 @@ function Field({
               question.placeholder ?? (kind === 'file' ? '/path/to/file' : '/path/to/folder')
             }
             value={typeof value === 'string' ? value : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => change(event.target.value)}
             onKeyDown={(event) => {
+              if (event.metaKey || event.ctrlKey) return
               if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 onEnter()
@@ -368,8 +511,9 @@ function Field({
         spellCheck={typed === 'text'}
         placeholder={question.placeholder}
         value={typeof value === 'string' ? value : ''}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => change(event.target.value)}
         onKeyDown={(event) => {
+          if (event.metaKey || event.ctrlKey) return
           if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
             event.preventDefault()
             onEnter()
@@ -424,8 +568,21 @@ export function InputPrompt({
   onType?: (id: string, answers: Record<string, string | string[]>) => void
 }): React.JSX.Element {
   const meta = inputRequestMeta(request.input)
-  const questions = request.questions ?? []
+  /* What asks: a form (clave_request_input), the agent's own question, or a
+     plugin's question, whose choice IS the answer and which carries no
+     questions of its own, only its description and its options. */
+  const how: 'hosted' | 'native' | 'plugin' = meta
+    ? 'hosted'
+    : request.questions
+      ? 'native'
+      : 'plugin'
+  const asked: AgentQuestion[] = request.questions ?? [
+    { question: request.description, options: request.options.map((o) => ({ label: o.label })) }
+  ]
+  const questions = asked.map((q) => cardQuestion(q, how))
   const keys = questions.map(questionKey)
+  const secretOf = (question: AgentQuestion): boolean =>
+    how !== 'hosted' && questionIsPrivate(question, request.input)
   // A card with nothing of its view's own (a view mounted again) starts from
   // what the server's draft holds: the agent's fields, then the reader's
   // typing over them (verifier round 1, Major 2).
@@ -441,6 +598,23 @@ export function InputPrompt({
   const [direction, setDirectionState] = useState<'forward' | 'back'>(kept.direction)
   /** Per field, how many times the agent set it: each landing flashes once. */
   const [landed, setLandedState] = useState<Record<string, number>>(kept.landed)
+  /* Each multi-select's line of own words, as the person typed it (round 2):
+     kept by the card and remembered across a remount, so the field, the
+     digit keys and a row mounted again all read the same line, and words on
+     their way that read like an option ("No" on the way to "No idea") are
+     never taken for it. A field set by someone else (the agent's fill, the
+     typing the server kept) is read again from its answer. */
+  const [lines, setLinesState] = useState<Record<string, string>>(kept.lines)
+  const setLines = (update: (current: Record<string, string>) => Record<string, string>): void =>
+    setLinesState((current) => {
+      const next = update(current)
+      remember(request.id, { lines: next })
+      return next
+    })
+  const forgetLines = (gone: readonly string[]): void =>
+    setLines((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => !gone.includes(key)))
+    )
   /** The notes the reader typed over: gone until a new one arrives. */
   const [dismissed, setDismissed] = useState<Record<string, string>>({})
   // Every change of standing is remembered as it is made (CardMemory).
@@ -471,9 +645,11 @@ export function InputPrompt({
       return next
     })
   const body = useRef<HTMLDivElement>(null)
-  const steps = meta?.layout === 'steps' && questions.length > 1
-  // In the steps layout `step` runs from 0 to the count: the count is the
-  // review page, every question folded into its line and Approve under them.
+  // Several questions the agent asked with its own tool stand one below
+  // another, as a form asked in steps does.
+  const steps = (meta ? meta.layout === 'steps' : true) && questions.length > 1
+  // In the steps layout `step` runs from 0 to the count: at the count every
+  // question is folded into its line, with the answer button under them.
   const review = steps && step >= questions.length
   const shown = steps ? (review ? [] : [questions[step]]) : questions
   const firstKind = shown[0]?.kind
@@ -560,6 +736,11 @@ export function InputPrompt({
     typing.current = setTimeout(() => flushRef.current(), TYPING_SYNC_MS)
   }
   const touch = (key: string): void => setTouched((current) => ({ ...current, [key]: true }))
+  /** A multi-select's line of own words: as typed, else read off its answer. */
+  const lineOf = (question: AgentQuestion): string => {
+    const key = questionKey(question)
+    return Object.hasOwn(lines, key) ? lines[key] : ownWordsOf(question, own(values, key))
+  }
   const shownProblem = (key: string): string | null =>
     attempted || touched[key] ? problems[key] : null
   const noteFor = (key: string): string | undefined => {
@@ -570,6 +751,34 @@ export function InputPrompt({
     const id = `chat-field-${key.replace(/[^a-z0-9_-]/gi, '-')}`
     body.current?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)?.focus()
   }
+  // The step that opens keeps the reader's keys in the card: the click that
+  // moved on (an option picked) left the focus on a row that has just folded,
+  // and a digit pressed next must pick on the new question. Only when the
+  // focus was the card's, or nobody's: an agent's fill moving the card on
+  // never takes the caret from the composer. Not on mount, which has its own
+  // rule (`takeFocus`).
+  const stepSeen = useRef(step)
+  const [firstStep] = useState(step)
+  useEffect(() => {
+    if (!steps || stepSeen.current === step) return
+    stepSeen.current = step
+    const card = body.current
+    const active = document.activeElement
+    if (!card || (active && active !== document.body && !card.contains(active))) return
+    // A field of the open step already has the caret (a folded line reopened
+    // hands it to its answer): leave it there.
+    if (
+      (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
+      !active.closest('[inert]')
+    )
+      return
+    const question = questions[step]
+    if (!question || question.kind === 'choice' || question.kind === 'link')
+      card.focus({ preventScroll: true })
+    else focusField(keys[step])
+    // The questions and their keys are the request's, fixed for the card's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, steps])
   // The agent's writes land here: a field it set takes the value (over what
   // the reader typed there, since the agent speaks for what the reader just
   // said), ticks, flashes once, and in the steps layout the card moves on to
@@ -596,6 +805,7 @@ export function InputPrompt({
         keys.includes(key) && JSON.stringify(applied.current[key]) !== JSON.stringify(value)
     )
     if (!changed.length) return
+    forgetLines(changed.map(([key]) => key))
     applied.current = { ...applied.current, ...Object.fromEntries(changed) }
     // The server holds what the agent set: the reader's typing is told
     // apart from it (PRDCT-4210).
@@ -641,6 +851,7 @@ export function InputPrompt({
     )
     synced.current = { ...typed, ...synced.current }
     if (!fresh.length) return
+    forgetLines(fresh.map(([key]) => key))
     setValues((current) => {
       const next = { ...current, ...Object.fromEntries(fresh) }
       drafts?.set(request.id, next)
@@ -669,7 +880,14 @@ export function InputPrompt({
     dropTyping()
     drafts?.delete(request.id)
     forgetCard(request.id)
-    onAnswer(request.id, 'answer', answersOf(questions, vals))
+    if (how === 'plugin') {
+      // A plugin's question is answered by its option's own id.
+      const option = request.options.find((o) => o.label === own(vals, keys[0]))
+      if (option) onAnswer(request.id, option.id)
+      return
+    }
+    const answers = answersOf(questions, vals)
+    onAnswer(request.id, 'answer', how === 'native' ? nativeAnswers(answers) : answers)
   }
   /** One step on: the next page in `steps` (the review page past the last),
    *  the next field in a form, the answer itself on the last. */
@@ -693,14 +911,33 @@ export function InputPrompt({
     if (next === undefined) send(vals)
     else focusField(next)
   }
+  /** A pick moves on and never sends: to the next question still open, or,
+   *  every one answered, to the stack folded whole, each answer in sight
+   *  above the button that sends them (the stack is the review, no page of
+   *  its own). A question reopened and picked again goes back there, not to
+   *  the next one already answered. Takes the values with the pick in them,
+   *  which the click has not yet rendered. */
+  const pickOn = (vals: Values): void => {
+    if (busy || !steps) return
+    const judged = problemsOf(vals)
+    if (judged[keys[step]] !== null) return
+    setDirection('forward')
+    setStep(nextUnanswered(keys, vals, judged, step + 1))
+  }
   const back = (): void => {
     setDirection('back')
     setStep(Math.min(step, questions.length) - 1)
   }
+  /** Which field takes the caret after a reopen, and a count so the same
+   *  question reopened twice takes it twice. */
+  const [reopened, setReopened] = useState<{ key: string; n: number }>({ key: '', n: 0 })
+  /** Open a question from its folded line, its field taking the caret: an
+   *  answer is changed where it stands, written over or added to. */
   const goTo = (index: number): void => {
     if (busy) return
     setDirection(index < step ? 'back' : 'forward')
     setStep(index)
+    setReopened((current) => ({ key: keys[index], n: current.n + 1 }))
   }
   const doSkip = (): void => {
     if (!skip || busy) return
@@ -755,8 +992,15 @@ export function InputPrompt({
   // reader is on has a row of its own, keyed by its question, so a row
   // already there is never drawn again: the step that closes folds its field
   // away and its answer in, the step that opens arrives, the rest stand.
-  const rows = steps ? questions.slice(0, Math.min(step + 1, questions.length)) : questions
-  const approveLabel = 'Approve'
+  // In the steps layout every question has its row from the start, keyed by
+  // the question, so a row is never drawn again: the step that closes folds
+  // its field away and its answer in, the step that opens unfolds, and the
+  // ones to come wait below as their question alone.
+  const rows = questions
+  // A form is approved; the agent's own question is answered, and sent.
+  const approveLabel = how === 'hosted' ? 'Approve' : 'Send'
+  // A form says what it asks; the agent's own question says it in its fields.
+  const ask = how === 'hosted' ? request.description : nativeHeadline(request.description, asked)
   return (
     <div
       ref={body}
@@ -769,7 +1013,14 @@ export function InputPrompt({
         if (event.key === 'Escape' && skip) {
           event.preventDefault()
           event.stopPropagation()
-          doSkip()
+          // Escape in a field the person writes in leaves the field, never
+          // their words: the card keeps the keys, a second Escape skips.
+          if (
+            event.target instanceof HTMLTextAreaElement ||
+            event.target instanceof HTMLInputElement
+          )
+            body.current?.focus({ preventScroll: true })
+          else doSkip()
           return
         }
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -791,15 +1042,12 @@ export function InputPrompt({
           event.preventDefault()
           const key = questionKey(current)
           const label = current.options[n - 1].label
-          if (current.multiSelect) {
-            const picked = [...((own(values, key) as readonly string[] | undefined) ?? [])]
-            set(
-              key,
-              picked.includes(label) ? picked.filter((l) => l !== label) : [...picked, label]
-            )
-          } else {
+          if (current.multiSelect)
+            set(key, togglePick(current, own(values, key), label, lineOf(current)))
+          else {
             set(key, label)
-            if (steps) advance(step, { ...values, [key]: label })
+            if (how === 'plugin') send({ ...values, [key]: label })
+            else if (steps) pickOn({ ...values, [key]: label })
           }
         } else if (event.key === 'Enter') {
           event.preventDefault()
@@ -833,7 +1081,7 @@ export function InputPrompt({
               </button>
             )}
           </div>
-          <p className="chat-prompt-ask">{request.description}</p>
+          {ask && <p className="chat-prompt-ask">{ask}</p>}
           {byAgent && (
             <p className="chat-ask-note" role="status">
               {agent.charAt(0).toUpperCase() + agent.slice(1)} filled in what you said. Approve, or
@@ -845,13 +1093,22 @@ export function InputPrompt({
       <ol ref={list} className="chat-ask-fields" data-direction={direction}>
         {rows.map((question, index) => {
           const key = questionKey(question)
-          const folded = steps && index < step
           const active = !steps || index === step
-          const state = folded
-            ? problems[key] === null
+          // Every row but the one being answered is folded to its line: the
+          // ones answered above, the ones to come below.
+          const folded = steps && !active
+          const ahead = steps && index > step
+          const secret = secretOf(question)
+          const filled = !isEmpty(own(values, key))
+          const state = ahead
+            ? filled && problems[key] === null
               ? 'done'
-              : 'problem'
-            : stateOf(key, steps ? 0 : index)
+              : 'upcoming'
+            : folded
+              ? problems[key] === null
+                ? 'done'
+                : 'problem'
+              : stateOf(key, steps ? 0 : index)
           const note = noteFor(key)
           return (
             <li
@@ -860,7 +1117,7 @@ export function InputPrompt({
               data-state={state}
               data-folded={folded ? 'true' : undefined}
               data-working={working && active && state !== 'done' ? 'true' : undefined}
-              style={{ '--i': steps ? 0 : index } as React.CSSProperties}
+              style={{ '--i': index } as React.CSSProperties}
             >
               <span className="chat-ask-seat" aria-hidden="true">
                 {state === 'done' && <CheckIcon />}
@@ -875,15 +1132,19 @@ export function InputPrompt({
                       type="button"
                       className="chat-ask-folded"
                       disabled={busy}
-                      title="Change this answer"
+                      title={state === 'upcoming' ? 'Answer this question' : 'Change this answer'}
                       onMouseDown={keepFocus}
                       onClick={() => goTo(index)}
                     >
                       <span className="chat-ask-folded-question">{question.question}</span>
                       <span className="chat-ask-folded-answer">
-                        {problems[key] === null
-                          ? answerText(question, own(values, key))
-                          : (problems[key] ?? '')}
+                        {state === 'upcoming'
+                          ? ''
+                          : problems[key] !== null
+                            ? (problems[key] ?? '')
+                            : secret
+                              ? DOTS
+                              : answerText(question, own(values, key))}
                       </span>
                     </button>
                   </div>
@@ -897,7 +1158,19 @@ export function InputPrompt({
                     problem={shownProblem(key)}
                     busy={busy}
                     remote={remote}
-                    autoFocus={takeFocus && index === 0}
+                    secret={secret}
+                    enterMoves={how !== 'hosted'}
+                    ownLine={lineOf(question)}
+                    onOwnLine={(text) => setLines((current) => ({ ...current, [key]: text }))}
+                    // The card's first caret, once, on the question it opens
+                    // on; a choice and a link leave it to the card's keys.
+                    autoFocus={
+                      takeFocus &&
+                      index === (steps ? firstStep : 0) &&
+                      question.kind !== 'choice' &&
+                      question.kind !== 'link'
+                    }
+                    focusToken={reopened.key === key ? reopened.n : 0}
                     onChange={(value) => set(key, value)}
                     // Leaving a field one has written in judges it; leaving
                     // it empty (to answer in the chat, say) does not.
@@ -906,9 +1179,11 @@ export function InputPrompt({
                     }}
                     onEnter={() => advance(steps ? step : index)}
                     onPick={
-                      steps && !question.multiSelect
-                        ? (value) => advance(step, { ...values, [key]: value })
-                        : undefined
+                      how === 'plugin'
+                        ? (value) => send({ ...values, [key]: value })
+                        : steps && !question.multiSelect
+                          ? (value) => pickOn({ ...values, [key]: value })
+                          : undefined
                     }
                   />
                   {note && !folded && (
@@ -963,10 +1238,12 @@ export function InputPrompt({
   )
 }
 
-/** The form once it settled, where it stood: the same head, every step
- *  folded with its answer beside it, no buttons; {{Approved}}, {{Revised}}
- *  once the agent set a field again, {{Skipped}}, or the word that it is no
- *  longer awaited. The record of what was asked and said, read in place. */
+/** The card once it settled, where it stood: the same head, every step
+ *  folded with its answer beside it, no buttons; {{Approved}} for a form
+ *  ({{Answered}} for the agent's own question), {{Revised}} once the agent
+ *  set a field again, {{Skipped}}, or the word that it is no longer awaited.
+ *  The record of what was asked and said, read in place. A private answer
+ *  is never in the record: its line says it was given, as dots. */
 export function ClosedForm({
   entry,
   agent
@@ -976,6 +1253,7 @@ export function ClosedForm({
 }): React.JSX.Element {
   const { request } = entry
   const questions = request.questions ?? []
+  const hosted = inputRequestMeta(request.input) !== null
   const skipped = entry.answer !== undefined && isDeny(entry.answer)
   const status = !entry.answer
     ? 'No longer awaiting an answer'
@@ -983,7 +1261,10 @@ export function ClosedForm({
       ? 'Skipped'
       : entry.revised
         ? 'Revised'
-        : 'Approved'
+        : hosted
+          ? 'Approved'
+          : 'Answered'
+  const ask = hosted ? request.description : nativeHeadline(request.description, questions)
   return (
     <div className="chat-prompt-body" data-layout="steps" data-closed="true">
       <div className="chat-ask-head">
@@ -998,14 +1279,16 @@ export function ClosedForm({
               {status}
             </span>
           </div>
-          <p className="chat-prompt-ask">{request.description}</p>
+          {ask && <p className="chat-prompt-ask">{ask}</p>}
         </div>
       </div>
       <ol className="chat-ask-fields" style={{ '--ask-progress': '100%' } as React.CSSProperties}>
         {questions.map((question) => {
           const key = questionKey(question)
           const value = entry.answers?.[key]
-          const answered = value !== undefined && !isEmpty(value)
+          const secret = !hosted && questionIsPrivate(question, request.input)
+          const given = !!entry.answer && !skipped
+          const answered = (value !== undefined && !isEmpty(value)) || (secret && given)
           return (
             <li
               key={key}
@@ -1022,7 +1305,7 @@ export function ClosedForm({
                   <span className="chat-ask-folded" data-static="true">
                     <span className="chat-ask-folded-question">{question.question}</span>
                     <span className="chat-ask-folded-answer">
-                      {skipped || !entry.answer ? '' : answerText(question, value)}
+                      {!given ? '' : secret ? DOTS : answerText(question, value)}
                     </span>
                   </span>
                 </div>

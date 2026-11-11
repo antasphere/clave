@@ -93,7 +93,7 @@ export async function run(t) {
           the chat). */
     const email = card.locator('input[inputmode="email"]')
     await email.focus()
-    await view.locator('textarea').focus()
+    await view.getByRole('textbox', { name: 'Message', exact: true }).focus()
     await win.waitForTimeout(150)
     assert.equal(
       await card.locator('.chat-field-problem').count(),
@@ -173,8 +173,8 @@ export async function run(t) {
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '1/3')
     // A message typed while the form is open: the echo agent answers it and
     // ends its turn, and the card is still there, still live.
-    await view.locator('textarea').fill('hello there')
-    await view.locator('textarea').press('Enter')
+    await view.getByRole('textbox', { name: 'Message', exact: true }).fill('hello there')
+    await view.getByRole('textbox', { name: 'Message', exact: true }).press('Enter')
     await until(async () => ((await view.innerText()).includes('hello there') ? true : null))
     await win.waitForTimeout(300)
     assert.equal(await card.count(), 1, 'the card survives the turn')
@@ -226,8 +226,14 @@ export async function run(t) {
     await until(async () =>
       (await card.locator('.chat-prompt-step').innerText()) === '2/3' ? true : null
     )
-    const foldedLine = card.locator('.chat-ask-field[data-folded="true"]')
+    const foldedLine = card.locator('.chat-ask-field[data-folded="true"][data-state="done"]')
     assert.equal(await foldedLine.count(), 1, 'the answered step folded into one line')
+    // The step still to come stands below, its question alone (PRDCT-4322).
+    assert.equal(
+      await card.locator('.chat-ask-field[data-folded="true"][data-state="upcoming"]').count(),
+      1,
+      'the third step waits below, folded to its question'
+    )
     assert.match(await foldedLine.innerText(), /How should we call you\?/)
     assert.match(await foldedLine.innerText(), /Luca/)
     assert.match(await card.innerText(), /filled in what you said/)
@@ -249,9 +255,9 @@ export async function run(t) {
     // virtualised rows.
     for (let i = 0; i < 6; i++) {
       await view
-        .locator('textarea')
+        .getByRole('textbox', { name: 'Message', exact: true })
         .fill(`filler ${i}: a long line so the transcript grows above the form while it is open`)
-      await view.locator('textarea').press('Enter')
+      await view.getByRole('textbox', { name: 'Message', exact: true }).press('Enter')
       await win.waitForTimeout(150)
     }
     await until(async () => ((await view.innerText()).includes('filler 5') ? true : null))
@@ -506,11 +512,11 @@ export async function run(t) {
     assert.equal(await card.locator('.chat-prompt-step').innerText(), '2/2')
     for (let i = 0; i < 6; i++) {
       await view
-        .locator('textarea')
+        .getByRole('textbox', { name: 'Message', exact: true })
         .fill(
           `filler ${i} again: a long line so the transcript grows under the form and the card leaves the view`
         )
-      await view.locator('textarea').press('Enter')
+      await view.getByRole('textbox', { name: 'Message', exact: true }).press('Enter')
       await win.waitForTimeout(150)
     }
     await until(async () => ((await view.innerText()).includes('filler 5 again') ? true : null))

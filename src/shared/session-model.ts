@@ -149,6 +149,8 @@ export const AgentQuestionSchema = z.object({
   header: z.string().optional(),
   options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
   multiSelect: z.boolean().optional(),
+  /** A hosted choice closed to its options (PRDCT-4322): no own words. */
+  optionsOnly: z.boolean().optional(),
   /** A hosted input request's question (clave_request_input, PRDCT-4157):
    *  the kind of value asked for and the field's own words; absent on a
    *  provider's native question. Mirrors `packages/contract/src/sessions.ts`;

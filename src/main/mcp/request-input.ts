@@ -57,6 +57,12 @@ export const inputQuestionSchema = z
       .optional()
       .describe('choice only: the options, shown as buttons'),
     multiSelect: z.boolean().optional().describe('choice only: several may be picked'),
+    optionsOnly: z
+      .boolean()
+      .optional()
+      .describe(
+        'choice only: the answer is one of the options (an account, a server). Default false: the person may edit the option they picked or write their own words'
+      ),
     url: z.string().url().optional().describe('link only: the https address to open'),
     confirm: z
       .string()
@@ -141,7 +147,7 @@ export type InputSetArgs = {
 }
 
 export const REQUEST_INPUT_DESCRIPTION =
-  'Ask the person for a plain value, a choice, a yes or no, a file, a link to open and come back from, or several of those at once, in a form drawn in the chat under your turn (the plain counterpart of clave_request_secret: the answers ARE returned to you, so never ask for a secret here). Use it for anything the person must type or pick (an e-mail, a GitHub login, a project name, a path, a date); typed answers are checked as they are typed (email, url, github-login, number, date). Ask everything you will need at once, as one form, so a long run is never interrupted later. The form LIVES ACROSS YOUR TURNS: the call returns {status:"pending", requestId} at once and the form is drawn where you called it, ABOVE whatever you say next; say in one sentence that the form is there (never "below") and that the person may fill it in or just tell you, then END YOUR TURN. The person either fills the fields and approves, or answers in the chat: then set the fields from what they said with clave_input_set (the card follows, the person sees each field land) and end your turn again, saying what is still open. Their Approve comes back to you as their next message, listing every answer; {status:"dismissed"} means they skipped. Later corrections ("actually, call it X") are clave_input_set on the same requestId, on the approved form too. clave_input_result reads where the form stands at any time. A bare multiple choice of one to four questions can also go through your own question tool.'
+  'Ask the person for a plain value, a choice, a yes or no, a file, a link to open and come back from, or several of those at once, in a form drawn in the chat under your turn (the plain counterpart of clave_request_secret: the answers ARE returned to you, so never ask for a secret here). Use it for anything the person must type or pick (an e-mail, a GitHub login, a project name, a path, a date); typed answers are checked as they are typed (email, url, github-login, number, date). Ask everything you will need at once, as one form, so a long run is never interrupted later. The form LIVES ACROSS YOUR TURNS: the call returns {status:"pending", requestId} at once and the form is drawn where you called it, ABOVE whatever you say next; say in one sentence that the form is there (never "below") and that the person may fill it in or just tell you, then END YOUR TURN. The person either fills the fields and approves, or answers in the chat: then set the fields from what they said with clave_input_set (the card follows, the person sees each field land) and end your turn again, saying what is still open. Their Approve comes back to you as their next message, listing every answer; {status:"dismissed"} means they skipped. Later corrections ("actually, call it X") are clave_input_set on the same requestId, on the approved form too. clave_input_result reads where the form stands at any time. Ask every question through this form, a choice included, never through your own question tool (AskUserQuestion, request_user_input): that tool holds you until it is answered, so the person cannot ask you about a question first. A choice takes the person\'s own words too (they may edit the option they picked or write their own); optionsOnly:true keeps it to the options.'
 
 export const INPUT_SET_DESCRIPTION =
   'Write to a form you asked with clave_request_input: set fields from what the person said in the chat ("my login is luca-a" -> {login: "luca-a"}), on the form still open or on one already approved (a later correction). The card updates in place and the person sees it. Each value is checked by the question\'s kind; one that does not fit is refused with the reason, and when what the person said does not fit a field, leave it unset and put a short note under it (notes: {<id>: "..."}) while you say so in the chat. With submit:true the open form is approved with what it holds, what the person typed into the card included, only when the person told you to go ahead. Returns {status, answers} as clave_input_result does.'
@@ -158,6 +164,7 @@ export function toHostedInput(args: RequestInputArgs, sessionId: string): Hosted
     kind: q.kind,
     options: (q.options ?? []).map((o) => ({ ...o })),
     ...(q.multiSelect !== undefined && { multiSelect: q.multiSelect }),
+    ...(q.optionsOnly !== undefined && { optionsOnly: q.optionsOnly }),
     ...(q.hint !== undefined && { hint: q.hint }),
     ...(q.placeholder !== undefined && { placeholder: q.placeholder }),
     ...(q.default !== undefined && { default: q.default }),

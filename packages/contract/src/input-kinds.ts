@@ -8,7 +8,8 @@
  * A question's `kind` is optional on the wire: a question without one is a
  * provider's own (Claude's AskUserQuestion, Codex's request_user_input), a
  * choice among its options with the reader's own words allowed, exactly as
- * before this file existed.
+ * before this file existed. A hosted choice takes the person's own words too
+ * (PRDCT-4322), unless the agent closed it to its options (`optionsOnly`).
  */
 
 export const INPUT_KINDS = [
@@ -53,6 +54,9 @@ export interface InputQuestion {
   kind?: InputKind
   optional?: boolean
   multiSelect?: boolean
+  /** choice only: the answer is one of the options, never the person's own
+   *  words (PRDCT-4322); absent, they may edit the option or write their own. */
+  optionsOnly?: boolean
   options: readonly { label: string }[]
   min?: number
   max?: number
@@ -82,14 +86,17 @@ export function answerProblem(
 ): string | null {
   const kind = question.kind
   const empty =
-    value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
+    value === undefined ||
+    (typeof value === 'string' ? value.trim() === '' : value.every((entry) => entry.trim() === ''))
   if (empty) return question.optional ? null : 'An answer is needed'
   if (kind === 'choice' || kind === undefined) {
     if (kind === undefined) return null
-    // A choice is one of the options, or several when the question allows it;
-    // a hosted choice offers no free words (a text field asks for those).
+    // A choice is one of the options, or several when the question allows
+    // it, with the person's own words beside or instead of them (PRDCT-4322);
+    // a choice the agent closed to its options (`optionsOnly`) takes those alone.
     const picked = typeof value === 'string' ? [value] : [...value]
     if (!question.multiSelect && picked.length > 1) return 'Choose one'
+    if (!question.optionsOnly) return null
     const labels = new Set(question.options.map((o) => o.label))
     return picked.every((label) => labels.has(label)) ? null : 'Choose among the options'
   }
@@ -168,6 +175,8 @@ export function questionShapeProblem(
   }
   if (kind !== 'choice' && (has || q.multiSelect))
     return `"${q.id}": options belong to a choice; use kind "choice".`
+  if (kind !== 'choice' && q.optionsOnly !== undefined)
+    return `"${q.id}": optionsOnly belongs to a choice.`
   if (kind === 'link') {
     if (!q.url) return `"${q.id}": a link needs its url.`
     try {
