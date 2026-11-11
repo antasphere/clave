@@ -212,16 +212,31 @@ export function modelChoices(): Choice[] {
 
 const count = (n: number): string => n.toLocaleString('en-US')
 
+/** The account under the key, as the card draws it: the tier (a chip), the
+ *  characters of the period in words, and how much of it is spent (0 to 1,
+ *  the meter), as far as the check read it; null before a check passed. */
+export function accountFigure(status: ElevenLabsStatus): {
+  tier: string | null
+  credits: string | null
+  spent: number | null
+} | null {
+  if (status.lastError || status.checkedAt === null) return null
+  const used = status.charactersUsed
+  const limit = status.charactersLimit
+  const known = used !== null && limit !== null
+  return {
+    tier: status.tier,
+    credits: known ? `${count(used)} of ${count(limit)} characters this period` : null,
+    spent: known && limit > 0 ? Math.max(0, Math.min(1, used / limit)) : null
+  }
+}
+
 /** The account line under the key: `<tier> · <used> of <limit> characters
  *  this period`, as far as the check read it. */
 export function accountLine(status: ElevenLabsStatus): string | null {
-  if (status.lastError || status.checkedAt === null) return null
-  const parts: string[] = []
-  if (status.tier) parts.push(status.tier)
-  if (status.charactersUsed !== null && status.charactersLimit !== null)
-    parts.push(
-      `${count(status.charactersUsed)} of ${count(status.charactersLimit)} characters this period`
-    )
+  const figure = accountFigure(status)
+  if (!figure) return null
+  const parts = [figure.tier, figure.credits].filter((part): part is string => !!part)
   return parts.length ? parts.join(' · ') : 'Checked: the account answered.'
 }
 

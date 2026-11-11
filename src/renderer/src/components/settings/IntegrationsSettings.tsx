@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+  type ReactNode
+} from 'react'
+import { SpeakerWaveIcon } from '@heroicons/react/24/outline'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
   INTEGRATIONS_NEED_UPDATE,
@@ -7,7 +15,7 @@ import {
 } from '../../../../shared/elevenlabs'
 import {
   EMPTY_MACHINE_INTEGRATIONS,
-  accountLine,
+  accountFigure,
   checkElevenLabs,
   loadElevenLabsVoices,
   loadIntegrations,
@@ -27,6 +35,7 @@ import {
   SettingsSection,
   SettingsSelect
 } from './primitives'
+import { PlayingGlyph, VoiceDrawing } from './VoiceDrawing'
 
 /**
  * The Integrations page of the Agents group (PRDCT-4410): what a machine can
@@ -36,15 +45,21 @@ import {
  * model chosen are the ones the agents' speech uses. The field never shows a
  * stored key: the machine never sends one back. The same component serves
  * this Mac and a server (`ServerPages.tsx` wraps it with the server's notice).
+ * The card carries its figure (`VoiceDrawing`): drawn in full beside the
+ * field while there is no key, small and still beside the account once there
+ * is one.
  */
 
 function KeyField({
   machine,
+  machineName,
   busy,
   onCancel
 }: {
   machine: string
+  machineName: string
   busy: boolean
+  /** Set when the field replaces a key already there: no figure then. */
   onCancel?: () => void
 }): ReactElement {
   const [value, setValue] = useState('')
@@ -58,12 +73,17 @@ function KeyField({
     }
   }
   return (
-    <div className="settings-row">
+    <div
+      className="settings-row integration-row"
+      data-integration-empty={onCancel ? undefined : ''}
+    >
+      {!onCancel && <VoiceDrawing />}
       <div className="min-w-0 flex-1">
-        <p className="settings-row-title">API key</p>
+        <p className="settings-row-title">{onCancel ? 'New key' : 'API key'}</p>
         <p className="settings-row-description">
-          The key stays on this machine, sealed, and is never shown again. The account is checked at
-          once.
+          {onCancel
+            ? `Takes the place of the key on ${machineName} once ElevenLabs accepts it.`
+            : `Folio reads its pages aloud in the voice you choose. The key is sealed on ${machineName} and never shown again.`}
         </p>
         <input
           className="input-compact mt-2 w-full max-w-md"
@@ -116,9 +136,10 @@ function KeyRow({
   busy: boolean
   onReplace: () => void
 }): ReactElement {
-  const line = accountLine(status)
+  const figure = accountFigure(status)
   return (
-    <div className="settings-row" data-elevenlabs-key="set">
+    <div className="settings-row integration-row" data-elevenlabs-key="set">
+      <VoiceDrawing quiet />
       <div className="min-w-0 flex-1">
         <p className="settings-row-title">Key</p>
         <p className="settings-row-description" data-testid="elevenlabs-key-set-on">
@@ -129,9 +150,29 @@ function KeyRow({
             {status.lastError}
           </p>
         ) : (
-          <p className="settings-row-description" data-testid="elevenlabs-account">
-            {line ?? 'Not checked yet.'}
-          </p>
+          <div className="integration-account" data-testid="elevenlabs-account">
+            {!figure ? (
+              <span>Not checked yet.</span>
+            ) : !figure.tier && !figure.credits ? (
+              <span>Checked: the account answered.</span>
+            ) : (
+              <>
+                {figure.tier && (
+                  <span className="badge badge-muted integration-tier" title="Plan">
+                    {figure.tier}
+                  </span>
+                )}
+                {figure.spent !== null && (
+                  <span
+                    className="integration-meter"
+                    style={{ '--spent': figure.spent } as CSSProperties}
+                    aria-hidden="true"
+                  />
+                )}
+                {figure.credits && <span className="integration-credits">{figure.credits}</span>}
+              </>
+            )}
+          </div>
         )}
       </div>
       <div className="settings-row-controls">
@@ -262,7 +303,9 @@ function VoiceRow({
   else
     description = (
       <p className="settings-row-description">
-        {status.voiceName ? `Folio speaks as ${status.voiceName}.` : 'No voice chosen yet.'}
+        {status.voiceName
+          ? `Folio reads aloud as ${status.voiceName}.`
+          : 'Choose the voice Folio reads aloud with.'}
       </p>
     )
   const previewError = preview.error && (
@@ -270,10 +313,6 @@ function VoiceRow({
       {preview.error}
     </p>
   )
-  // The model is stored beside the voice: with none chosen yet, the voice
-  // stays empty and the model is kept for when one is.
-  const setModel = (modelId: ElevenLabsModelId): void =>
-    void setElevenLabsVoice(machine, status.voiceId ?? '', status.voiceName ?? '', modelId)
   return (
     <div className="settings-row" data-elevenlabs-voice-row>
       <div className="min-w-0 flex-1">
@@ -306,17 +345,52 @@ function VoiceRow({
         />
         <button
           type="button"
-          className="btn-secondary"
+          className="btn-secondary integration-preview"
           disabled={!status.voiceId}
           aria-pressed={preview.playing}
+          data-playing={preview.playing ? 'true' : undefined}
+          title={preview.playing ? 'Stop the sample' : 'Play this voice’s sample'}
           onClick={() => status.voiceId && preview.toggle(status.voiceId)}
           data-testid="elevenlabs-preview"
         >
+          {preview.playing ? <PlayingGlyph /> : <SpeakerWaveIcon aria-hidden="true" />}
           {preview.playing ? 'Stop' : 'Preview'}
         </button>
+      </div>
+    </div>
+  )
+}
+
+/** The model the voice speaks on, and what it costs, under its name. */
+function ModelRow({
+  machine,
+  state,
+  status
+}: {
+  machine: string
+  state: MachineIntegrations
+  status: ElevenLabsStatus
+}): ReactElement {
+  const choices = modelChoices() as { value: ElevenLabsModelId; label: string; hint?: string }[]
+  const chosen = choices.find((choice) => choice.value === status.modelId)
+  // The model is stored beside the voice: with none chosen yet, the voice
+  // stays empty and the model is kept for when one is.
+  const setModel = (modelId: ElevenLabsModelId): void =>
+    void setElevenLabsVoice(machine, status.voiceId ?? '', status.voiceName ?? '', modelId)
+  return (
+    <div className="settings-row" data-elevenlabs-model-row>
+      <div className="min-w-0 flex-1">
+        <p className="settings-row-title">Model</p>
+        {chosen?.hint && (
+          <p className="settings-row-description">
+            {chosen.hint.charAt(0).toUpperCase() + chosen.hint.slice(1)}.
+          </p>
+        )}
+      </div>
+      <div className="settings-row-controls">
         <SettingsSelect
           value={status.modelId}
-          options={modelChoices() as { value: ElevenLabsModelId; label: string; hint?: string }[]}
+          options={choices}
           onChange={setModel}
           ariaLabel="ElevenLabs model"
           disabled={state.busy}
@@ -380,7 +454,7 @@ export function IntegrationsList({
             <p className="settings-row-description">Reading…</p>
           </div>
         ) : !status.configured ? (
-          <KeyField machine={machine} busy={state.busy} />
+          <KeyField machine={machine} machineName={machineName} busy={state.busy} />
         ) : (
           <>
             <KeyRow
@@ -390,9 +464,15 @@ export function IntegrationsList({
               onReplace={() => setReplacing(true)}
             />
             {replacing && (
-              <KeyField machine={machine} busy={state.busy} onCancel={() => setReplacing(false)} />
+              <KeyField
+                machine={machine}
+                machineName={machineName}
+                busy={state.busy}
+                onCancel={() => setReplacing(false)}
+              />
             )}
             {checked && <VoiceRow machine={machine} state={state} status={status} />}
+            {checked && <ModelRow machine={machine} state={state} status={status} />}
           </>
         )}
       </SettingsCard>
@@ -400,7 +480,7 @@ export function IntegrationsList({
   return (
     <SettingsSection
       title="ElevenLabs"
-      description={`The voice the agents speak with on ${machineName}. One key per machine, read only by ${machineName}.`}
+      description={`The voice Folio reads aloud with on ${machineName}. Each machine holds its own key.`}
     >
       {body}
       {state.status !== 'error' && state.error && (
@@ -415,7 +495,7 @@ export function IntegrationsSettings(): ReactElement {
   return (
     <SettingsPage
       title="Integrations"
-      description="What this Mac can reach on your behalf: the ElevenLabs voice its Folio pages speak with. The key is sealed on this Mac."
+      description="The services this Mac uses on your behalf, each with your own key."
       testId="integrations"
     >
       <IntegrationsList machine={LOCAL_SERVER_ID} machineName="this Mac" />

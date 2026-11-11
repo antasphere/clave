@@ -1,24 +1,39 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { usePageTitleState } from '../digest'
-import { frameAt, REVEAL_MS, revealFrames, shouldReveal } from './reveal'
+import {
+  frameAt,
+  frameText,
+  REVEAL_MS,
+  revealFrames,
+  shouldReveal,
+  type RevealFrame
+} from './reveal'
 import { shownTitle, titlePending } from './title'
 import type { Page } from './pages'
 
 /* A page's title (PRDCT-4412): the first sentence of the question at once,
    then the title a helper wrote for it, rewritten in place over the stand-in
-   (`reveal.ts`). While the title is being written, a quiet loader sits after
-   the text; a title that does not come leaves the stand-in, and says
+   (`reveal.ts`: the pen inks the new title in over the old, left to right).
+   While the title is being written, a quiet loader sits after the text; a title that does not come leaves the stand-in, and says
    nothing. */
 
-/** The quiet loader of the folio: three dots breathing in turn, in the hand
- *  of the pen (`.folio-pen`). Still for a reader who asked for no motion. */
+/** The quiet loader of the folio, in the hand of its drawings
+ *  (`FolioDrawing`, the `.chat-drawing` rules): a short ruled line, and the
+ *  pen going back over it, the accent stroke written left to right and lifted
+ *  off from the left, over and over, at the pace of the pen at the foot of a
+ *  page being written (`.folio-pen`). Said after a title being written and in
+ *  the read control while the spoken version is prepared. For a reader who
+ *  asked for no motion, the stroke stands still, half written. */
 export function FolioLoader(): React.JSX.Element {
   return (
-    <span className="folio-loader" aria-hidden="true">
-      <i />
-      <i />
-      <i />
-    </span>
+    <svg className="chat-drawing folio-loader" viewBox="0 0 20 8" aria-hidden="true">
+      <line className="ln ln--thin" x1="1" y1="6.5" x2="19" y2="6.5" />
+      <path
+        className="ln ln--c folio-loader-stroke"
+        pathLength={1}
+        d="M1.5,4.5 C3.5,2 5,6 7.5,4 S11.5,2 13.5,4.25 S17,5 18.5,3"
+      />
+    </svg>
   )
 }
 
@@ -48,14 +63,14 @@ export function PageTitle({
   }, [pending, page.titleKey])
   // The reveal under way, and the frame of it on screen.
   const [reveal, setReveal] = useState<{ from: string; to: string } | null>(null)
-  const [frame, setFrame] = useState<string | null>(null)
+  const [frame, setFrame] = useState<RevealFrame | null>(null)
   // A title that just took the head's place, until the clock says whether it
   // is revealed (the layout effect below, before the change is painted).
   const [arrival, setArrival] = useState<{ from: string; to: string } | null>(null)
   const [last, setLast] = useState(final)
   if (last !== final) {
     setLast(final)
-    setArrival({ from: reveal ? (frame ?? reveal.from) : last, to: final })
+    setArrival({ from: reveal ? (frame ? frameText(frame) : reveal.from) : last, to: final })
     setFrame(null)
     setReveal(null)
   }
@@ -85,7 +100,7 @@ export function PageTitle({
     id = requestAnimationFrame(step)
     return () => cancelAnimationFrame(id)
   }, [reveal])
-  const shown = reveal ? (frame ?? reveal.from) : final
+  const shown = reveal ? (frame ? frameText(frame) : reveal.from) : final
   const revealing = shown !== final
   return (
     <h2
@@ -94,7 +109,18 @@ export function PageTitle({
       data-revealing={revealing ? 'true' : undefined}
       aria-label={revealing ? final : undefined}
     >
-      {shown}
+      {revealing && frame ? (
+        <>
+          {frame.settled}
+          {/* the pen: the new characters still wet behind it, its line under them */}
+          <span className="folio-title-pen" data-testid="folio-title-pen">
+            <span className="folio-title-wet">{frame.wet}</span>
+          </span>
+          {frame.old && <span style={{ opacity: frame.fade }}>{frame.old}</span>}
+        </>
+      ) : (
+        shown
+      )}
       {pending && <FolioLoader />}
     </h2>
   )

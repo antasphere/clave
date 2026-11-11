@@ -487,6 +487,7 @@ function Scrub({
             aria-hidden="true"
           />
         ))}
+        <span className="folio-scrub-head" data-testid="folio-scrub-head" aria-hidden="true" />
       </div>
       {reading.voice === 'elevenlabs' && (
         <span className="folio-player-time" data-testid="folio-player-time">
@@ -725,7 +726,7 @@ function PageView({
                   onClick={() => voice.read(page.key, page.spoken)}
                 >
                   <SpeakerWaveIcon aria-hidden="true" />
-                  Read it to me
+                  Read aloud
                 </button>
               )}
             </div>

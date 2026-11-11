@@ -185,7 +185,7 @@ export function ServerIntegrationsSettings({ serverId }: { serverId: string }): 
   return (
     <SettingsPage
       title="Integrations"
-      description={`What ${name} can reach on the person's behalf: the ElevenLabs voice its Folio pages speak with. The key is sealed on the server itself.`}
+      description={`The services ${name} uses on your behalf, each with your own key.`}
       testId="integrations"
     >
       <div className="settings-page-sections" data-server-settings={serverId}>

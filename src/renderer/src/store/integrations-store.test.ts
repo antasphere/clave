@@ -135,6 +135,27 @@ describe('what the card says', () => {
       )
     ).toBe('creator · 1,200 of 100,000 characters this period')
     expect(store.accountLine(status({ configured: true, checkedAt: 1, lastError: 'x' }))).toBeNull()
+    // The same account as the card draws it: the tier as a chip, the words,
+    // and the share spent for the meter.
+    expect(
+      store.accountFigure(
+        status({
+          configured: true,
+          checkedAt: 1,
+          tier: 'creator',
+          charactersUsed: 1200,
+          charactersLimit: 100000
+        })
+      )
+    ).toEqual({
+      tier: 'creator',
+      credits: '1,200 of 100,000 characters this period',
+      spent: 0.012
+    })
+    expect(
+      store.accountFigure(status({ configured: true, checkedAt: 1, charactersLimit: 0 }))
+    ).toEqual({ tier: null, credits: null, spent: null })
+    expect(store.accountFigure(status({ configured: true, checkedAt: null }))).toBeNull()
     expect(store.setOnLine(Date.UTC(2026, 10, 11, 12))).toBe('Set on 11 November 2026')
     expect(
       store.voiceChoices(

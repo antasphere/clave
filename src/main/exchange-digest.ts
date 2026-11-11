@@ -201,6 +201,16 @@ const pageTitleInflight = new Map<string, Promise<PageTitleResult>>()
 const harnessReplies = (): boolean =>
   TEST_NO_ACTIVATE && process.env.CLAVE_E2E_DIGEST_RUNNER !== '1'
 
+/** How long the harness's canned reply takes to come back: 600 ms, the beat
+ *  every spec is written against, or CLAVE_E2E_READ_BEAT_MS for the Folio
+ *  reads (the title, the spoken version) when a visual pass needs the head's
+ *  loader or the read control's Preparing on screen long enough to shoot it
+ *  (tests/visual/folio-voice.mjs). */
+const folioBeat = (): number => {
+  const asked = Number(process.env.CLAVE_E2E_READ_BEAT_MS)
+  return Number.isFinite(asked) && asked > 0 ? asked : 600
+}
+
 /** A helper that is off never reaches the harness's reply either: the
  *  preference is read first, as the runner reads it. */
 function switchedOff(
@@ -328,7 +338,7 @@ async function readSpoken(request: SpokenRequest): Promise<SpokenResult> {
                     splitBlocks(clipText(request.markdown, SPOKEN_MAX_CHARS)).length
                   ) ?? { ok: false, error: 'Unreadable test reply' }
               ),
-            600
+            folioBeat()
           )
         )
     )
@@ -366,7 +376,7 @@ async function readPageTitle(request: PageTitleRequest): Promise<PageTitleResult
                 testFailure(reply) ??
                   parsePageTitleReply(reply) ?? { ok: false, error: 'Unreadable test reply' }
               ),
-            600
+            folioBeat()
           )
         )
     )

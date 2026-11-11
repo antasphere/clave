@@ -2714,6 +2714,97 @@ canvas[data-orb-state] {
   margin-top: 0.375rem;
 }
 
+/* An integration's card (Settings → Integrations, IntegrationsSettings.tsx):
+   its figure beside the row's words, in the `.chat-drawing` hand
+   (VoiceDrawing.tsx). In full beside the key field while there is no key;
+   small and still beside the account once a key is set. Under the figure's
+   own rules, so every theme and skin restates it. */
+.integration-row {
+  gap: 1.25rem;
+}
+.integration-row > .voice-drawing {
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 30);
+  height: auto;
+}
+.integration-row > .voice-drawing[data-quiet='true'] {
+  align-self: flex-start;
+  width: calc(var(--spacing) * 14);
+  margin-top: 0.125rem;
+}
+/* The account the key answers for: the plan as a chip, the period's
+   characters as a meter (the spent share in the accent over a ruled line),
+   and the same in words, tabular. */
+.integration-account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.integration-tier {
+  text-transform: capitalize;
+}
+.integration-meter {
+  position: relative;
+  display: inline-block;
+  width: calc(var(--spacing) * 16);
+  height: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--text-primary) 14%, transparent);
+  overflow: hidden;
+}
+.integration-meter::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: max(calc(var(--spacing) * 0.5), calc(var(--spent, 0) * 100%));
+  border-radius: inherit;
+  background-color: var(--color-accent);
+}
+/* The Preview button: a speaker at rest; while the sample plays, three of
+   the spine's ticks breathe in turn (PlayingGlyph), the middle in the accent. */
+.integration-preview > svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+  flex-shrink: 0;
+}
+.integration-preview .playing-glyph .ln {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.integration-preview .playing-glyph .ln.ln--c {
+  stroke: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .integration-preview .playing-glyph .ln {
+    animation: playing-glyph-breathe 900ms ease-in-out infinite;
+  }
+  .integration-preview .playing-glyph .ln:nth-child(2) {
+    animation-delay: 150ms;
+  }
+  .integration-preview .playing-glyph .ln:nth-child(3) {
+    animation-delay: 300ms;
+  }
+}
+@keyframes playing-glyph-breathe {
+  0%,
+  100% {
+    scale: 1 1;
+    opacity: 1;
+  }
+  50% {
+    scale: 1 0.45;
+    opacity: 0.55;
+  }
+}
+
 /* A form field's label above its input, in a dialog or a form row. */
 .field-label {
   display: block;

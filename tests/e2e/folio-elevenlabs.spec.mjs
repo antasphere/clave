@@ -13,7 +13,7 @@ import { until } from './harness.mjs'
      voice set meanwhile (through the window's bridge, so the pane stays
      mounted and the Integrations page's store never tells it) are used by
      the first page read once the memory has run out;
-   - with the key and the voice set, "Read it to me" prepares the spoken
+   - with the key and the voice set, "Read aloud" prepares the spoken
      version, asks the server for its audio and plays it through an audio
      element; the control says "Reading with ElevenLabs"; ElevenLabs was
      asked with the key, in its header, for the spoken text;
@@ -164,7 +164,7 @@ export async function run(t) {
     await ask(view, 'what is the weather like in namur')
     const first = view.locator('.folio-foot .folio-read')
     await until(async () => ((await first.count()) ? true : null))
-    await view.getByRole('button', { name: 'Read it to me' }).click()
+    await view.getByRole('button', { name: 'Read aloud' }).click()
     const unsetAt = Date.now()
     const systemRead = await until(
       async () => {
@@ -206,7 +206,7 @@ export async function run(t) {
 
     // ── (a) The server's ElevenLabs voice reads the page ──
     await ask(view, 'tell me about the weather in brussels please')
-    await view.getByRole('button', { name: 'Read it to me' }).click()
+    await view.getByRole('button', { name: 'Read aloud' }).click()
     const played = await until(
       async () => {
         const urls = await win.evaluate(() => window.__played)
@@ -267,7 +267,7 @@ export async function run(t) {
     await ask(view, 'and what about tomorrow in ghent')
     const second = view.locator('.folio-foot .folio-read')
     await until(async () => ((await second.count()) ? true : null))
-    await view.getByRole('button', { name: 'Read it to me' }).click()
+    await view.getByRole('button', { name: 'Read aloud' }).click()
     const spoken = await until(
       async () => {
         const said = await win.evaluate(() => window.__spoken)

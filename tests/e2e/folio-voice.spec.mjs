@@ -7,7 +7,7 @@ import { until } from './harness.mjs'
    - a page's head shows the first sentence of the question at once, then
      the title a helper wrote in its place (PRDCT-4412); the contents list
      shows the same;
-   - "Read it to me" prepares the spoken version first, then speaks it, never
+   - "Read aloud" prepares the spoken version first, then speaks it, never
      the page as written (PRDCT-4409);
    - a spoken version that cannot be had (switched off) reads the page as
      written, and the control says why on hover;
@@ -101,7 +101,7 @@ export async function run(t) {
 
       // Read aloud: the spoken version is prepared, then spoken.
       const read = view.locator('.folio-foot .folio-read')
-      await view.getByRole('button', { name: 'Read it to me' }).click()
+      await view.getByRole('button', { name: 'Read aloud' }).click()
       const preparing = await until(
         async () =>
           (await read.getAttribute('data-phase')) === 'preparing'
@@ -145,7 +145,7 @@ export async function run(t) {
       const view = win.locator('[data-testid="folio-view"]')
       await stubVoice(win)
       await ask(view, 'read this one as it is written')
-      await view.getByRole('button', { name: 'Read it to me' }).click()
+      await view.getByRole('button', { name: 'Read aloud' }).click()
       const spoken = await until(async () => {
         const said = await win.evaluate(() => window.__spoken)
         return said.length ? said : null

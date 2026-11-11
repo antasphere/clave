@@ -211,7 +211,7 @@ export async function run(t) {
         '["1","2","3","4"]'
       )
 
-      await view.getByRole('button', { name: 'Read it to me' }).click()
+      await view.getByRole('button', { name: 'Read aloud' }).click()
       const played = await until(
         async () => {
           const urls = await win.evaluate(() => window.__played)
@@ -302,7 +302,7 @@ export async function run(t) {
       t.equal('stop lights nothing', await litBlock(view), null)
       t.check(
         'and the control offers to read again',
-        (await view.getByRole('button', { name: 'Read it to me' }).count()) === 1
+        (await view.getByRole('button', { name: 'Read aloud' }).count()) === 1
       )
     } finally {
       await chat.close()
@@ -336,7 +336,7 @@ export async function run(t) {
       )
       await ask(view, LONG)
       assert.ok(await pageReady(view, 12), 'the page shows its twelve blocks')
-      await view.getByRole('button', { name: 'Read it to me' }).click()
+      await view.getByRole('button', { name: 'Read aloud' }).click()
       t.check('play lights block 1', !!(await waitLit(view, 1)), await litBlock(view))
       await until(async () => (stub.speaks().length >= 2 ? true : null), { tries: 60, gapMs: 50 })
       await settle()
@@ -409,7 +409,7 @@ export async function run(t) {
       })
       const received = stub.speaks().length
       const playedBefore = await win.evaluate(() => window.__played.length)
-      await view.getByRole('button', { name: 'Read it to me' }).click()
+      await view.getByRole('button', { name: 'Read aloud' }).click()
       t.check('read again lights block 1', !!(await waitLit(view, 1)), await litBlock(view))
       const replayed = await until(
         async () =>
@@ -476,7 +476,7 @@ export async function run(t) {
       await stubPlayback(win, 900)
       await ask(view, ANSWER)
       assert.ok(await pageReady(view), 'the page shows its four blocks')
-      await view.getByRole('button', { name: 'Read it to me' }).click()
+      await view.getByRole('button', { name: 'Read aloud' }).click()
       const spoken = await until(
         async () => {
           const said = await win.evaluate(() => window.__spoken)

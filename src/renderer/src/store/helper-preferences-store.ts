@@ -174,8 +174,7 @@ const WHAT_IT_DOES: Record<string, string> = {
   'commit-message': 'Writes the commit message in the git panel.',
   'push-summary': 'Writes the summary of what a push sends.',
   'permission-explainer': 'Says in plain words, on a permission card, what allowing it would do.',
-  'spoken-rendering':
-    'Rewrites an answer for the ear before Folio reads it aloud: a table row by row, a code block named, nothing summarised.',
+  'spoken-rendering': 'Rewrites an answer for the ear before Folio reads it aloud.',
   'page-title': 'Titles each Folio page from the question it holds.'
 }
 

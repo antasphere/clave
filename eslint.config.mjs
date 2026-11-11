@@ -49,6 +49,8 @@ export default defineConfig(
     // do not apply — there are no types to annotate.
     files: [
       'tests/e2e/**/*.mjs',
+      // The visual passes drive the same built app, the same way.
+      'tests/visual/**/*.mjs',
       'scripts/website-shots/*.{mjs,cjs}',
       // The skins' generator and its test: plain node over postcss, no types.
       'packages/skins/scripts/*.mjs'
