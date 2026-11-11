@@ -10,8 +10,8 @@ import Foundation
 // - pending: asked again with backoff for at most the budget, then unknown.
 // - rejected: the draft stays with the reason; a resend is a new id.
 // - absent: the same send is completed once with the same id; a second loss is unknown, and a
-//   completion the server refuses (401, 403) is writeRefused: still unknown, never written again by
-//   itself.
+//   completion the server refuses (401, 403, or a 422 SessionWriteRefused or SessionNotFound) is
+//   writeRefused: still unknown, never written again by itself.
 // - unknown: nothing is sent by itself; the person chooses.
 //
 // Pure over its ports, so every branch runs in a test.
@@ -51,8 +51,8 @@ public enum SendOutcome: Sendable, Equatable {
   /// Another kind of failure (the token refused, a scope that forbids it): the draft stays.
   case failed(clientMessageId: String, reason: String)
   /// The outcome is still not known: the server refused this phone's attempt to complete the send
-  /// under the same id (401 or 403), and no write of it happens again by itself; its status may still
-  /// be read.
+  /// under the same id (401, 403, or a 422 SessionWriteRefused or SessionNotFound), and no write of it
+  /// happens again by itself; its status may still be read.
   case writeRefused(clientMessageId: String, reason: String)
 
   /// The id the send went out under.
@@ -161,6 +161,12 @@ public func reconcile(_ clientMessageId: String, ports: SendPorts, options: Send
         // A 401 or 403 proves only that this attempt was refused: the first write may still land.
         if let refused = error as? ServerError, refused.kind == .unauthenticated || refused.kind == .forbidden {
           return .writeRefused(clientMessageId: clientMessageId, reason: refused.message)
+        }
+        // So does a 422 saying the session refused the write or does not exist.
+        if let declared = error as? ServerError, declared.kind == .refused,
+          declared.failure?.tag == "SessionWriteRefused" || declared.failure?.tag == "SessionNotFound"
+        {
+          return .writeRefused(clientMessageId: clientMessageId, reason: declared.message)
         }
         if !lost(error) { return refusal(clientMessageId, error) }
         return await reconcile(clientMessageId, ports: ports, options: options, mayRetry: false)

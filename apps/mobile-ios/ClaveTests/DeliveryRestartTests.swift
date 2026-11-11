@@ -683,16 +683,18 @@ final class DeliveryRestartTests: XCTestCase {
   }
 
   /// One file attached and a send of unknown outcome; a pass held at the old id's status read; the
-  /// next write planned refused with `status` and `message`; the held read answers absent, so the
-  /// pass's same-id write is refused. The bar then says the phone will not try again, the draft and
-  /// the file stay, and nothing can be sent; after a restart the new model shows the same bar.
-  /// Returns the restarted model and the old id.
-  private func refusedCompletionThenRestart(status: Int, message: String) async throws -> (ConversationModel, String) {
+  /// next write planned refused as `refusal` says, with the server's sentence `message`; the held
+  /// read answers absent, so the pass's same-id write is refused. The bar then says the phone will
+  /// not try again, the draft and the file stay, and nothing can be sent; after a restart the new
+  /// model shows the same bar. Returns the restarted model and the old id.
+  private func refusedCompletionThenRestart(
+    _ refusal: DeliveryChatServer.Write, message: String, file name: String
+  ) async throws -> (ConversationModel, String) {
     let model = try makeModel()
     await model.appear()
-    model.attach(try file("refused-\(status).txt"))
+    model.attach(try file(name))
     let (old, asked) = try await unknownSendWithAPassHoldingIt(model, "Sent text.")
-    server.planWrites(.refuse(status: status, message: message))
+    server.planWrites(refusal)
     server.answerHeldStatus(of: old, .answer("absent"))
     await passFinished(asked)
     XCTAssertEqual(server.attempts, [old, old], "the lost original and the refused completion")
@@ -701,7 +703,7 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the send stays unknown")
     XCTAssertEqual(model.deliveryMark?.reason, holdSentence(message))
     XCTAssertEqual(model.draft, "Sent text.", "the draft stays")
-    XCTAssertEqual(model.pendingFiles.map(\.name), ["refused-\(status).txt"], "the file stays")
+    XCTAssertEqual(model.pendingFiles.map(\.name), [name], "the file stays")
     XCTAssertFalse(model.canSend, "the bar stands")
     await modelledRestart()
     let restarted = try makeModel()
@@ -711,11 +713,18 @@ final class DeliveryRestartTests: XCTestCase {
     return (restarted, old)
   }
 
+  /// The same, the write refused with an HTTP status and a body `{"message": …}`.
+  private func refusedCompletionThenRestart(status: Int, message: String) async throws -> (ConversationModel, String) {
+    try await refusedCompletionThenRestart(.refuse(status: status, message: message), message: message, file: "refused-\(status).txt")
+  }
+
   /// After the restart, a later pass finds the old id absent and the server would now accept a
   /// write: the pass writes nothing for the old id, nothing says delivered, and the bar, the draft
   /// and the file stay.
-  private func aLaterPassWritesNothingAfterARefusedCompletion(status: Int, message: String) async throws {
-    let (restarted, old) = try await refusedCompletionThenRestart(status: status, message: message)
+  private func aLaterPassWritesNothingAfterARefusedCompletion(
+    _ refusal: DeliveryChatServer.Write, message: String, file name: String
+  ) async throws {
+    let (restarted, old) = try await refusedCompletionThenRestart(refusal, message: message, file: name)
     server.answerStatus(.answer("absent"), for: old)
     let writes = server.attempts.filter { $0 == old }.count
     try await laterPass()
@@ -725,7 +734,34 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertNil(restarted.deliveryNotice, "nothing says delivered")
     XCTAssertEqual(restarted.deliveryMark?.reason, holdSentence(message), "the bar stays")
     XCTAssertEqual(restarted.draft, "Sent text.", "the draft stays")
-    XCTAssertEqual(restarted.pendingFiles.map(\.name), ["refused-\(status).txt"], "the file stays")
+    XCTAssertEqual(restarted.pendingFiles.map(\.name), [name], "the file stays")
+  }
+
+  /// The same, the write refused with an HTTP status and a body `{"message": …}`.
+  private func aLaterPassWritesNothingAfterARefusedCompletion(status: Int, message: String) async throws {
+    try await aLaterPassWritesNothingAfterARefusedCompletion(
+      .refuse(status: status, message: message), message: message, file: "refused-\(status).txt")
+  }
+
+  /// The countercase, a late original: after the same refused completion and restart, the later
+  /// pass's status answers accepted (the first write landed late). The send is settled delivered with
+  /// no write in that pass: the bar goes, the composer says so, the field keeps only what was added
+  /// since, and the carried file leaves.
+  private func aLateOriginalIsSettledDeliveredAfterARefusedCompletion(
+    _ refusal: DeliveryChatServer.Write, message: String, file name: String
+  ) async throws {
+    let (restarted, old) = try await refusedCompletionThenRestart(refusal, message: message, file: name)
+    restarted.draft = "Sent text. And more."
+    await restarted.flushDraft()
+    server.answerStatus(.answer("accepted"), for: old)
+    let writes = server.attempts
+    try await laterPass()
+    await until("the composer follows the delivery") { restarted.deliveryNotice != nil }
+    XCTAssertEqual(server.attempts, writes, "no write in that pass")
+    XCTAssertNil(restarted.deliveryMark, "the bar goes")
+    XCTAssertEqual(restarted.deliveryNotice, "This message was delivered when the connection came back.")
+    XCTAssertEqual(restarted.draft, "And more.", "the field keeps only what was added since")
+    XCTAssertEqual(restarted.pendingFiles, [], "the carried file leaves")
   }
 
   /// A pass's same-id write refused with 403: no write of the send happens again by itself, after a
@@ -739,22 +775,27 @@ final class DeliveryRestartTests: XCTestCase {
     try await aLaterPassWritesNothingAfterARefusedCompletion(status: 401, message: "The server refused the token.")
   }
 
-  /// The countercase, a late original: after the same refused completion and restart, the later
-  /// pass's status answers accepted (the first write landed late). The send is settled delivered with
-  /// no write in that pass: the bar goes, the composer says so, the field keeps only what was added
-  /// since, and the carried file leaves.
+  /// The countercase after a 403: the late original found accepted is settled delivered with no write.
   func testAfterARefusedCompletionALateOriginalFoundAcceptedIsSettledDeliveredWithNoWrite() async throws {
-    let (restarted, old) = try await refusedCompletionThenRestart(status: 403, message: "A phone may not do this.")
-    restarted.draft = "Sent text. And more."
-    await restarted.flushDraft()
-    server.answerStatus(.answer("accepted"), for: old)
-    let writes = server.attempts
-    try await laterPass()
-    await until("the composer follows the delivery") { restarted.deliveryNotice != nil }
-    XCTAssertEqual(server.attempts, writes, "no write in that pass")
-    XCTAssertNil(restarted.deliveryMark, "the bar goes")
-    XCTAssertEqual(restarted.deliveryNotice, "This message was delivered when the connection came back.")
-    XCTAssertEqual(restarted.draft, "And more.", "the field keeps only what was added since")
-    XCTAssertEqual(restarted.pendingFiles, [], "the carried file leaves")
+    try await aLateOriginalIsSettledDeliveredAfterARefusedCompletion(
+      .refuse(status: 403, message: "A phone may not do this."), message: "A phone may not do this.", file: "refused-403.txt")
+  }
+
+  // MARK: - A refusal the server declares (Addendum F)
+
+  /// A pass's same-id write answered 422 SessionWriteRefused, with the contract's failure body: held
+  /// as a 403 is, so no write of the send happens again by itself, after a restart too.
+  func testAfterTheServerDeclaresTheCompletionRefusedWith422APassWritesTheSendNoMoreAfterARestart() async throws {
+    try await aLaterPassWritesNothingAfterARefusedCompletion(
+      .refuseDeclared(tag: "SessionWriteRefused", message: "The provider refused the message."),
+      message: "The provider refused the message.", file: "refused-422.txt")
+  }
+
+  /// Its countercase: the late original found accepted after the restart is settled delivered with
+  /// no write.
+  func testAfterADeclaredRefusalOfTheCompletionALateOriginalFoundAcceptedIsSettledDeliveredWithNoWrite() async throws {
+    try await aLateOriginalIsSettledDeliveredAfterARefusedCompletion(
+      .refuseDeclared(tag: "SessionWriteRefused", message: "The provider refused the message."),
+      message: "The provider refused the message.", file: "refused-422.txt")
   }
 }

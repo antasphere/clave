@@ -28,7 +28,8 @@ public struct UnknownSend: Codable, Sendable, Equatable {
   /// send, so a choice whose action ended before it could take the send out is still found.
   public let choice: PendingChoice?
   /// The server's sentence when it refused this phone's attempt to complete the send under the same
-  /// id (401 or 403): no write of it happens again by itself, while its status may still be read.
+  /// id (401, 403, or a 422 SessionWriteRefused or SessionNotFound): no write of it happens again by
+  /// itself, while its status may still be read.
   public let writeRefused: String?
 
   public init(

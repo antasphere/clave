@@ -21,6 +21,9 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
     case hold
     /// The server answers the write with this status and a JSON body `{"message": …}`: nothing kept.
     case refuse(status: Int, message: String)
+    /// The server answers the write 422 with the contract's failure body `{"_tag": …, "message": …}`:
+    /// nothing kept.
+    case refuseDeclared(tag: String, message: String)
   }
 
   enum Status: Equatable, Sendable {
@@ -141,6 +144,10 @@ final class DeliveryChatServer: HTTPTransport, WebSocketTransport, @unchecked Se
     if case .refuse(let status, let message) = fate {
       let refusal = try JSONSerialization.data(withJSONObject: ["message": message])
       return HTTPAnswer(status: status, headers: ["Content-Type": "application/json"], body: refusal)
+    }
+    if case .refuseDeclared(let tag, let message) = fate {
+      let failure = try JSONSerialization.data(withJSONObject: ["_tag": tag, "message": message])
+      return HTTPAnswer(status: 422, headers: ["Content-Type": "application/json"], body: failure)
     }
     if fate == .hold { await withCheckedContinuation { write in lock.withLock { heldWrites.append(write) } } }
     // The chat server keeps the message in its timeline and pushes it, as a server would.

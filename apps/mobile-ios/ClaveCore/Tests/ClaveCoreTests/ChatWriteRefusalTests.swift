@@ -1,11 +1,12 @@
 import XCTest
 @testable import ClaveCore
 
-// A completion attempt the server refuses (lane A's Addendum E). A same-id write of a send of
-// unknown outcome answered 401 or 403 proves only that this attempt was refused: the first write,
-// whose answer was lost, may still land. The send stays unknown, its record carries the refusal, and
-// no write of it happens again by itself until the person chooses; a status answer of accepted or
-// rejected still settles it. A FIRST write refused with 401 or 403 stays failed. The passes run over
+// A completion attempt the server refuses (lane A's Addendums E and F). A same-id write of a send of
+// unknown outcome answered 401 or 403, or 422 SessionWriteRefused or SessionNotFound, proves only
+// that this attempt was refused: the first write, whose answer was lost, may still land. The send
+// stays unknown, its record carries the refusal, and no write of it happens again by itself until the
+// person chooses; a status answer of accepted or rejected still settles it. A FIRST write refused
+// with 401 or 403 stays failed, and with those 422 tags rejected. The passes run over
 // the production store, a FileKeyValueStore seen through an owner's namespace as AppModel builds it,
 // in a temporary folder; a second store over the same folder reads the file, so what it finds is what
 // a RELOAD of the file finds, and a controller built over it is a recreated one. No test here ends a
@@ -17,6 +18,11 @@ private let text = "The message the server refused to complete."
 private let forbidden = ServerError(.forbidden, "A phone may not do this.", status: 403)
 private let unauthenticated = ServerError(.unauthenticated, "The server refused the token.", status: 401)
 private let unreachable = ServerError(.network, "The server could not be reached.")
+
+/// A refusal the server declares, as a 422 with the contract's failure carries it.
+private func declared(_ tag: String, _ message: String = "The provider refused the message.") -> ServerError {
+  ServerError(.refused, message, status: 422, failure: ServerFailure(tag: tag, message: message))
+}
 
 /// What the bar says once the server refused this phone's attempt to complete the send.
 private func hold(_ reason: String) -> String {
@@ -191,23 +197,71 @@ final class ChatWriteRefusalTests: XCTestCase {
     XCTAssertEqual(probe.statusReads.value, 1, "its status was asked")
   }
 
+  /// The first write lost, the status absent, the same-id write answered 422 SessionWriteRefused or
+  /// SessionNotFound (a refusal the server declared, of this attempt only): writeRefused, with the
+  /// server's sentence.
+  func testASameIdWriteDeclaredRefusedWith422AfterALostFirstWriteIsWriteRefused() async {
+    for tag in ["SessionWriteRefused", "SessionNotFound"] {
+      let id = "m-completion-422-\(tag)"
+      let probe = SendProbe(first: .failure(unreachable), status: .absent, then: .failure(declared(tag)))
+      let outcome = await sendMessage(id, ports: probe.ports)
+      XCTAssertEqual(outcome, .writeRefused(clientMessageId: id, reason: "The provider refused the message."), tag)
+      XCTAssertEqual(probe.writes.value, 2, "the lost first write and the refused completion")
+    }
+  }
+
+  /// A control: a FIRST write answered 422 SessionWriteRefused or SessionNotFound (nothing was
+  /// pending before) stays rejected, and is never asked about.
+  func testAFirstWriteDeclaredRefusedWith422StaysRejected() async {
+    for tag in ["SessionWriteRefused", "SessionNotFound"] {
+      let id = "m-first-422-\(tag)"
+      let probe = SendProbe(first: .failure(declared(tag)), status: .absent)
+      let outcome = await sendMessage(id, ports: probe.ports)
+      XCTAssertEqual(outcome, .rejected(clientMessageId: id, reason: "The provider refused the message."), tag)
+      XCTAssertEqual(probe.writes.value, 1, "one write")
+      XCTAssertEqual(probe.statusReads.value, 0, "never asked about")
+    }
+  }
+
+  /// A control: the first write lost and the status answered rejected (the server's own answer about
+  /// the id) stays rejected, with nothing written again.
+  func testAStatusAnsweredRejectedStaysRejected() async {
+    let id = "m-status-rejected-000001"
+    let probe = SendProbe(first: .failure(unreachable), status: .rejected)
+    let outcome = await sendMessage(id, ports: probe.ports)
+    XCTAssertEqual(outcome, .rejected(clientMessageId: id, reason: "The server refused the message."))
+    XCTAssertEqual(probe.writes.value, 1, "no same-id write")
+  }
+
+  /// A control: the first write lost, the status absent, the same-id write answered 422 with another
+  /// tag (SessionWriteUnknown included): still unknown.
+  func testASameIdWriteRefusedWith422UnderAnotherTagStaysUnknown() async {
+    for tag in ["SessionWriteUnknown", "GatewayFailed"] {
+      let id = "m-completion-422-\(tag)"
+      let probe = SendProbe(first: .failure(unreachable), status: .absent, then: .failure(declared(tag, "Refused.")))
+      let outcome = await sendMessage(id, ports: probe.ports)
+      XCTAssertEqual(outcome, .unknown(clientMessageId: id, reason: "Refused."), tag)
+      XCTAssertEqual(probe.writes.value, 2)
+    }
+  }
+
   // MARK: - A pass whose same-id write is refused
 
   /// The send recorded unknown, then a pass that finds it absent and whose same-id write the server
-  /// refuses: the send is held. Asserts the hold (the record stays and carries the refusal, the mark
-  /// says unknown for it with the hold's sentence) and returns the controller.
-  private func heldSend(_ id: String) async throws -> DeliveryController {
+  /// refuses with `refusal`: the send is held. Asserts the hold (the record stays and carries the
+  /// refusal, the mark says unknown for it with the hold's sentence) and returns the controller.
+  private func heldSend(_ id: String, refusing refusal: ServerError = forbidden) async throws -> DeliveryController {
     let first = controller(over: ownerStore(directory))
     try await recordUnknownSend(unknownSend(id), reason: "lost", sends: first.sends, marks: first.marks)
-    let probe = PassProbe(.absent, refusing: forbidden)
+    let probe = PassProbe(.absent, refusing: refusal)
     try await probe.run(first)
     XCTAssertEqual(probe.writes.value, [id], "one same-id write, refused")
     let found = try await reloaded()
     XCTAssertEqual(found.ledger.map(\.clientMessageId), [id], "the record stays")
-    XCTAssertEqual(found.ledger.first?.writeRefused, forbidden.message, "and carries the refusal")
+    XCTAssertEqual(found.ledger.first?.writeRefused, refusal.message, "and carries the refusal")
     XCTAssertEqual(found.mark?.kind, .unknown, "the send stays unknown")
     XCTAssertEqual(found.mark?.clientMessageId, id, "the mark names it")
-    XCTAssertEqual(found.mark?.reason, hold(forbidden.message), "with the hold's sentence")
+    XCTAssertEqual(found.mark?.reason, hold(refusal.message), "with the hold's sentence")
     return first
   }
 
@@ -253,6 +307,26 @@ final class ChatWriteRefusalTests: XCTestCase {
     XCTAssertEqual(found.ledger, [], "the record out")
     XCTAssertEqual(found.mark?.kind, .rejected, "marked rejected")
     XCTAssertEqual(found.mark?.reason, "The provider refused the message.")
+  }
+
+  /// A pass whose same-id write the server answers 422 SessionWriteRefused holds the send as a 403
+  /// does. After a reload, a pass that finds it absent reads its status and writes nothing; a later
+  /// pass that finds it accepted (the first write landed late) settles it delivered.
+  func testAPassWhoseCompletionIsDeclaredRefusedHoldsTheSendUntilTheLateOriginalSettlesIt() async throws {
+    let id = "m-held-422-0000000000001"
+    _ = try await heldSend(id, refusing: declared("SessionWriteRefused"))
+    let absent = PassProbe(.absent)
+    try await absent.run(controller(over: ownerStore(directory)))
+    XCTAssertEqual(absent.statusReads.value, 1, "its status is read")
+    XCTAssertEqual(absent.writes.value, [], "and nothing written")
+    let held = try await reloaded()
+    XCTAssertEqual(held.ledger.first?.writeRefused, "The provider refused the message.", "the hold stays")
+    let accepted = PassProbe(.accepted)
+    try await accepted.run(controller(over: ownerStore(directory)))
+    XCTAssertEqual(accepted.writes.value, [], "nothing written")
+    let found = try await reloaded()
+    XCTAssertEqual(found.ledger, [], "the late original settled delivered: the record out")
+    XCTAssertNil(found.mark, "the mark cleared")
   }
 
   /// The record write of the hold refused once: the settle throws, the mark keeps its reason (no hold

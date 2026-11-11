@@ -41,8 +41,9 @@ public struct ReconnectPorts: Sendable {
   /// Told of a send the server has (its reconciliation answered sent), before the settle's writes,
   /// so a settle that ends part way still counts as seen.
   public var delivered: (@Sendable (UnknownSend) async -> Void)?
-  /// Told of a send whose completion attempt the server refused (401 or 403), before the settle's
-  /// writes, so this run writes it no more even when the record of the refusal cannot be written.
+  /// Told of a send whose completion attempt the server refused (401, 403, or a 422 SessionWriteRefused
+  /// or SessionNotFound), before the settle's writes, so this run writes it no more even when the
+  /// record of the refusal cannot be written.
   public var writeRefused: (@Sendable (UnknownSend) async -> Void)?
   /// Whether the send's writes are held: the server refused this phone's attempt to complete it, in
   /// this run or as its ledger record says. A held send's status is still read; nothing is written.
