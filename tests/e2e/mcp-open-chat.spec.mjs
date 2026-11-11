@@ -130,9 +130,49 @@ export async function run(t) {
       })
     )
     t.check(
-      'an explicit chat profile still wins over the default',
-      explicit?.sessionId ? (await storedProfile(explicit.sessionId)) === 'codex-chat' : false,
+      'the generic chat ID keeps the configured default with chat: true',
+      explicit?.sessionId
+        ? (await storedProfile(explicit.sessionId)) === 'chat:codex:yolo-e2e'
+        : false,
       explicit
+    )
+    const successor = toolPayload(
+      await client.call('clave_open_session', {
+        cwd: ROOT,
+        mode: 'codex',
+        profile: 'codex-chat'
+      })
+    )
+    t.check(
+      'a successor opened with only the generic chat ID keeps the configured default',
+      successor?.sessionId
+        ? (await storedProfile(successor.sessionId)) === 'chat:codex:yolo-e2e'
+        : false,
+      successor
+    )
+    await win.evaluate(() =>
+      window.electronAPI.launchProfileUpsert({
+        id: 'strict-e2e',
+        name: 'strict codex e2e',
+        family: 'codex',
+        command: ['codex', '-s', 'read-only', '-a', 'untrusted'],
+        additionalArgs: []
+      })
+    )
+    const custom = toolPayload(
+      await client.call('clave_open_session', {
+        cwd: ROOT,
+        mode: 'codex',
+        chat: true,
+        profile: 'chat:codex:strict-e2e'
+      })
+    )
+    t.check(
+      'an explicitly named custom chat profile remains selectable',
+      custom?.sessionId
+        ? (await storedProfile(custom.sessionId)) === 'chat:codex:strict-e2e'
+        : false,
+      custom
     )
     await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('codex', null))
 
