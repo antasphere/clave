@@ -248,10 +248,13 @@ describe('the gates that run the check', () => {
         /^ {10}node scripts\/check-packaged-requires\.mjs dist\/mac-arm64\/Clave\.app$/.test(l)
       )
     ).toBe(true)
-    // ...and it sits in the macOS job, which nothing turns off either.
+    // Pull requests and pushes always run this job. Only the explicit manual
+    // Linux timing run omits Macs, as covered by workflow-gates.test.mjs.
     const jobStart = lines.slice(0, start).findLastIndex((l) => /^ {2}\S+:$/.test(l))
     expect(lines[jobStart]).toBe('  e2e-run:')
     const jobKeys = lines.slice(jobStart + 1, start).filter((l) => /^ {4}\S/.test(l))
-    expect(jobKeys.filter((l) => key('if|continue-on-error').test(l))).toEqual([])
+    expect(jobKeys.filter((l) => key('if|continue-on-error').test(l))).toEqual([
+      "    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.linux_only }}"
+    ])
   })
 })
