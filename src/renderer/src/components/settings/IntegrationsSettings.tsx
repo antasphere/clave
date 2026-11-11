@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
   INTEGRATIONS_NEED_UPDATE,
@@ -169,6 +169,75 @@ function KeyRow({
   )
 }
 
+/** The chosen voice's own preview sample, fetched by the machine (its key
+ *  never leaves it) and played from a Blob URL; a second click stops it
+ *  (PRDCT-4411). */
+function usePreview(machine: string): {
+  playing: boolean
+  error: string | null
+  toggle: (voiceId: string) => void
+} {
+  const [playing, setPlaying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const url = useRef<string | null>(null)
+  const generation = useRef(0)
+  const halt = (): void => {
+    generation.current += 1
+    if (audio.current) {
+      audio.current.onended = null
+      audio.current.onerror = null
+      audio.current.pause()
+    }
+    if (url.current) URL.revokeObjectURL(url.current)
+    url.current = null
+    setPlaying(false)
+  }
+  const haltRef = useRef(halt)
+  haltRef.current = halt
+  // The page closed, or another machine shown: the sample stops.
+  useEffect(() => () => haltRef.current(), [machine])
+  const toggle = (voiceId: string): void => {
+    if (playing) return halt()
+    halt()
+    const mine = generation.current
+    setPlaying(true)
+    setError(null)
+    void window.electronAPI.fleetElevenLabsPreview(machine, voiceId).then(
+      (answer) => {
+        if (generation.current !== mine) return
+        if (!answer.ok) {
+          setPlaying(false)
+          setError(answer.error || 'The preview could not be played.')
+          return
+        }
+        const binary = atob(answer.audio)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: answer.mime }))
+        url.current = blobUrl
+        const player = (audio.current ??= new Audio())
+        player.onended = () => halt()
+        player.onerror = () => {
+          halt()
+          setError('The preview could not be played.')
+        }
+        player.src = blobUrl
+        player.play().catch(() => {
+          halt()
+          setError('The preview could not be played.')
+        })
+      },
+      () => {
+        if (generation.current !== mine) return
+        setPlaying(false)
+        setError('The machine did not answer.')
+      }
+    )
+  }
+  return { playing, error, toggle }
+}
+
 function VoiceRow({
   machine,
   state,
@@ -180,6 +249,7 @@ function VoiceRow({
 }): ReactElement {
   const { voices } = state
   const choices = voiceChoices(voices.voices, status)
+  const preview = usePreview(machine)
   let description: ReactNode
   if (voices.status === 'loading' || voices.status === 'idle')
     description = <p className="settings-row-description">Reading the voices…</p>
@@ -195,6 +265,11 @@ function VoiceRow({
         {status.voiceName ? `Folio speaks as ${status.voiceName}.` : 'No voice chosen yet.'}
       </p>
     )
+  const previewError = preview.error && (
+    <p className="text-xs text-destructive" role="alert" data-testid="elevenlabs-preview-error">
+      {preview.error}
+    </p>
+  )
   // The model is stored beside the voice: with none chosen yet, the voice
   // stays empty and the model is kept for when one is.
   const setModel = (modelId: ElevenLabsModelId): void =>
@@ -204,6 +279,7 @@ function VoiceRow({
       <div className="min-w-0 flex-1">
         <p className="settings-row-title">Voice</p>
         {description}
+        {previewError}
       </div>
       <div className="settings-row-controls">
         {voices.status === 'error' && (
@@ -228,6 +304,16 @@ function VoiceRow({
           disabled={state.busy || choices.length === 0}
           testId="elevenlabs-voice"
         />
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={!status.voiceId}
+          aria-pressed={preview.playing}
+          onClick={() => status.voiceId && preview.toggle(status.voiceId)}
+          data-testid="elevenlabs-preview"
+        >
+          {preview.playing ? 'Stop' : 'Preview'}
+        </button>
         <SettingsSelect
           value={status.modelId}
           options={modelChoices() as { value: ElevenLabsModelId; label: string; hint?: string }[]}

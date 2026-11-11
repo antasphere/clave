@@ -65,6 +65,8 @@ import { historyGroup } from './history'
 import { routinesGroup } from './routines/api'
 // ── PRDCT-4327: the digests read by the server a tab runs on (`digests.ts`) ──
 import { digestsGroup } from './digests'
+// ── PRDCT-4411: the speech of the server a tab runs on (`speech.ts`) ──
+import { speechGroup } from './speech'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -155,6 +157,8 @@ export { historyGroup }
 export { routinesGroup }
 // ── PRDCT-4327: the digests ──
 export { digestsGroup }
+// ── PRDCT-4411: the speech ──
+export { speechGroup }
 
 // ── Lane B: terminals ──
 
@@ -182,6 +186,8 @@ export const ClaveApi = Api.make('clave')
   .add(routinesGroup)
   // ── PRDCT-4327: the digests ──
   .add(digestsGroup)
+  // ── PRDCT-4411: the speech ──
+  .add(speechGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

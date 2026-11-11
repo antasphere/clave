@@ -320,16 +320,27 @@ function CopyAnswer({ text }: { text: string }): React.JSX.Element {
   )
 }
 
-/** What the read control says on hover: preparing, reading, or why the page
- *  was read as written. */
+/** What the read control says on hover: preparing; reading, and with which
+ *  voice (the server's ElevenLabs voice, or the system voice and why,
+ *  PRDCT-4411); once read, why the page was read as written, or by the
+ *  system voice, or why the ElevenLabs voice stopped. */
 function readTitle(
   reading: Reading | null,
-  fallback: DigestFailure | 'missing' | undefined
+  fallback: DigestFailure | 'missing' | undefined,
+  note?: string
 ): string | undefined {
   if (reading?.phase === 'preparing') return 'Preparing the spoken version…'
-  const why = reading?.fallback ?? fallback
-  if (why) return fallbackLine(why)
-  return reading ? 'Reading' : undefined
+  if (reading) {
+    const voice =
+      reading.voice === 'elevenlabs'
+        ? 'Reading with ElevenLabs'
+        : reading.voice === 'system' && reading.why
+          ? `Reading with the system voice: ${reading.why}`
+          : 'Reading'
+    return reading.fallback ? `${voice}. ${fallbackLine(reading.fallback)}` : voice
+  }
+  if (fallback) return fallbackLine(fallback)
+  return note
 }
 
 /** The page on screen. Keyed by its page by the caller, so turning to another
@@ -413,7 +424,7 @@ function PageView({
               <button
                 type="button"
                 className="folio-action folio-read"
-                title={readTitle(null, voice.fallbacks[page.key])}
+                title={readTitle(null, voice.fallbacks[page.key], voice.notes[page.key])}
                 onClick={() => voice.read(page.key, page.answer)}
               >
                 <SpeakerWaveIcon aria-hidden="true" />

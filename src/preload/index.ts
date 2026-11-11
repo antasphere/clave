@@ -73,6 +73,7 @@ import {
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { SpeakRequest, SpeakResult } from '../shared/speech'
 import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
 import type {
   ServerInstallProgress,
@@ -1389,6 +1390,11 @@ const electronAPI = {
     server: async ({ api }) =>
       loose<{ voices: ElevenLabsVoice[] }>(await api.settings.integrations.listElevenLabsVoices())
   }),
+  // A voice's preview sample (PRDCT-4411), fetched by this Mac's server.
+  elevenLabsPreview: viaServer<[string], SpeakResult>({
+    ipc: (voiceId) => ipcRenderer.invoke('speech:preview', voiceId),
+    server: async ({ api }, voiceId) => (await api.speech.preview({ voiceId })) as SpeakResult
+  }),
   spawnSession: viaServer<
     [
       string,
@@ -2022,6 +2028,14 @@ const electronAPI = {
     ipc: (sessionId) => ipcRenderer.invoke('spoken:renderings-of', sessionId),
     server: async ({ api }, sessionId) =>
       (await api.digests.spokenOf(sessionId)) as Record<string, SpokenDone>
+  }),
+  // Folio's speech (PRDCT-4411): a part of a page's spoken rendering in the
+  // ElevenLabs voice of the server the tab runs on, with that server's key;
+  // the same road as the digests.
+  speakText: viaOwnServer<[SpeakRequest], SpeakResult>({
+    ipc: (request) => ipcRenderer.invoke('speech:speak', request),
+    server: async ({ api }, { sessionId, text }) =>
+      (await api.speech.speak({ sessionId, text })) as SpeakResult
   }),
   pageTitle: viaOwnServer<[PageTitleRequest], PageTitleResult>({
     ipc: (request) => ipcRenderer.invoke('pages:title', request),

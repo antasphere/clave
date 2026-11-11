@@ -26,6 +26,7 @@ import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
 import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { SpeakResult } from '../shared/speech'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type {
   FleetDesktopAPI,
@@ -1159,6 +1160,11 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const { voices } = await api.settings.integrations.listElevenLabsVoices()
       return { voices: voices.map((v) => ({ ...v, labels: { ...v.labels } })) as ElevenLabsVoice[] }
     },
+    fleetElevenLabsPreview: async (serverId, voiceId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.elevenLabsPreview(voiceId)
+      const { api } = await backing(serverId)
+      return (await api.speech.preview({ voiceId })) as SpeakResult
+    },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)
       const result = await b.api.sidebar.saveLayout({
@@ -1337,6 +1343,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   type SpokenAnswer = Awaited<ReturnType<ElectronAPI['spokenRendering']>>
   type SpokenFiled = Awaited<ReturnType<ElectronAPI['spokenRenderingsOf']>>
   type PageTitleAnswer = Awaited<ReturnType<ElectronAPI['pageTitle']>>
+  // ── PRDCT-4411: the speech's answer ──
+  type SpeakAnswer = Awaited<ReturnType<ElectronAPI['speakText']>>
   type PageTitlesFiled = Awaited<ReturnType<ElectronAPI['pageTitlesOf']>>
   const api: ElectronAPI = {
     ...local,
@@ -1432,6 +1440,15 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         id,
         () => local.spokenRenderingsOf(id),
         async (b, wireId) => (await b.api.digests.spokenOf(wireId)) as SpokenFiled
+      ),
+    // Folio's speech (PRDCT-4411): spoken by the server the tab runs on, with
+    // its ElevenLabs key and voice.
+    speakText: (request) =>
+      route(
+        request.sessionId,
+        () => local.speakText(request),
+        async (b, wireId) =>
+          (await b.api.speech.speak({ sessionId: wireId, text: request.text })) as SpeakAnswer
       ),
     pageTitle: (request) =>
       route(

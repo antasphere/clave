@@ -113,6 +113,12 @@ function statusOf(entry: StoredElevenLabs | undefined): ElevenLabsStatus {
  *  settings handlers answer as `SettingsRefused`. */
 const refusal = (message: string): Error => new Error(message)
 
+/** Where ElevenLabs is: the environment's `CLAVE_ELEVENLABS_BASE_URL`, read
+ *  at each call (a test's stub), then the public API. The speech route
+ *  (`../speech.ts`) speaks to the same place the store checks the key. */
+export const elevenLabsBaseUrl = (): string =>
+  process.env.CLAVE_ELEVENLABS_BASE_URL?.trim() || 'https://api.elevenlabs.io'
+
 export interface ElevenLabsIntegrationOptions {
   /** Where ElevenLabs is; the environment's `CLAVE_ELEVENLABS_BASE_URL`, read
    *  at each call, then the public API. */
@@ -129,9 +135,7 @@ export class ElevenLabsIntegration {
     private readonly ports: SettingsPorts = lazySettingsPorts,
     options: ElevenLabsIntegrationOptions = {}
   ) {
-    this.baseUrl =
-      options.baseUrl ??
-      (() => process.env.CLAVE_ELEVENLABS_BASE_URL?.trim() || 'https://api.elevenlabs.io')
+    this.baseUrl = options.baseUrl ?? elevenLabsBaseUrl
     this.now = options.now ?? Date.now
   }
 

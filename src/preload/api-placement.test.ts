@@ -101,6 +101,7 @@ const UNREADABLE_NO_PLACE = new Set([
   'elevenLabsRemove',
   'elevenLabsSetVoice',
   'elevenLabsVoices',
+  'elevenLabsPreview',
   'routinesList',
   'routinesRunNow',
   'routinesDismiss',

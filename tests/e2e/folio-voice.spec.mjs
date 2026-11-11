@@ -10,7 +10,10 @@ import { until } from './harness.mjs'
    - "Read it to me" prepares the spoken version first, then speaks it, never
      the page as written (PRDCT-4409);
    - a spoken version that cannot be had (switched off) reads the page as
-     written, and the control says why on hover.
+     written, and the control says why on hover;
+   - with no ElevenLabs key on the server, the system voice reads the page,
+     and the control says so (PRDCT-4411; the ElevenLabs voice itself is
+     folio-elevenlabs.spec.mjs).
    Under the harness no model runs: the helpers' replies come from
    CLAVE_E2E_PAGE_TITLE_REPLY and CLAVE_E2E_SPOKEN_REPLY, after a beat, read
    by the real parsers. The system voice is stubbed in the page: it records
@@ -114,10 +117,21 @@ export async function run(t) {
             : null,
         { tries: 50, gapMs: 50 }
       )
-      assert.equal(speaking, 'Reading')
+      // No ElevenLabs key on this server (PRDCT-4411): the system voice reads
+      // it, and the control says so.
+      assert.equal(speaking, 'Reading with the system voice: no ElevenLabs on this server')
       const spoken = await win.evaluate(() => window.__spoken)
       assert.deepEqual(spoken, ['Spoken text.'])
       t.check('reading a page aloud prepares its spoken version, then speaks it', true)
+      const once = await until(async () => {
+        const line = await read.getAttribute('title')
+        return line?.startsWith('System voice') ? line : null
+      })
+      t.equal(
+        'with no ElevenLabs on the server, the system voice reads, and the control says why',
+        once,
+        'System voice: no ElevenLabs on this server'
+      )
     } finally {
       await chat.close()
     }

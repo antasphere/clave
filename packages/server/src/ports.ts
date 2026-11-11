@@ -57,6 +57,10 @@ export { Routines, type RoutinesService } from './routines/port'
 import { DigestsPort, type DigestsService } from './digests/port'
 
 export { DigestsPort, type DigestsService } from './digests/port'
+// ── PRDCT-4411: the speech ──
+import { SpeechPort, type SpeechService } from './speech/port'
+
+export { SpeechPort, type SpeechService } from './speech/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -96,6 +100,9 @@ export interface ServerPorts {
   // ── PRDCT-4327: the digests ──
   /** The one-shot digests a chat view shows, read on the server's own record of each session. `DigestsPort.none` when absent: every call refused as unavailable. */
   readonly digests?: DigestsService
+  // ── PRDCT-4411: the speech ──
+  /** Text spoken with the machine's ElevenLabs voice, for a session the server has a record of. `SpeechPort.none` when absent: every call refused as unavailable. */
+  readonly speech?: SpeechService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -122,6 +129,8 @@ export const PortsLive = (
   | Routines
   // ── PRDCT-4327: the digests ──
   | DigestsPort
+  // ── PRDCT-4411: the speech ──
+  | SpeechPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -144,5 +153,7 @@ export const PortsLive = (
     // ── ADR 0004: the routines ──
     Routines.layer(ports.routines ?? Routines.none),
     // ── PRDCT-4327: the digests ──
-    DigestsPort.layer(ports.digests ?? DigestsPort.none)
+    DigestsPort.layer(ports.digests ?? DigestsPort.none),
+    // ── PRDCT-4411: the speech ──
+    SpeechPort.layer(ports.speech ?? SpeechPort.none)
   )

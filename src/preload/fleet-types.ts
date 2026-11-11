@@ -19,6 +19,7 @@ import type {
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { SpeakResult } from '../shared/speech'
 import type { InputKind } from '@clave/contract/input-kinds'
 import type {
   RoutineCreateInput,
@@ -162,6 +163,8 @@ export interface FleetDesktopAPI {
     modelId?: ElevenLabsModelId
   ): Promise<IntegrationsStatus>
   fleetElevenLabsVoices(serverId: string): Promise<{ voices: ElevenLabsVoice[] }>
+  /** A voice's preview sample, fetched by that server (PRDCT-4411). */
+  fleetElevenLabsPreview(serverId: string, voiceId: string): Promise<SpeakResult>
   /** A server's settings as they change, from its live push socket: delivered while the connection is open; a page reads the lists again when the server (re)connects. */
   onFleetSettingsEvent(callback: (event: FleetSettingsEvent) => void): () => void
   // ── PRDCT-4149: the routines a connected server runs, read and driven from the Mac ──

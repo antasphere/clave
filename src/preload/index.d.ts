@@ -739,6 +739,7 @@ import type {
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { SpeakRequest, SpeakResult } from '../shared/speech'
 import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
 import type {
   ServerInstallProgress,
@@ -910,6 +911,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
     modelId: ElevenLabsModelId | undefined
   ) => Promise<IntegrationsStatus>
   elevenLabsVoices: () => Promise<{ voices: ElevenLabsVoice[] }>
+  /** A voice's preview sample, fetched by this Mac's server (PRDCT-4411).
+   *  A failure is a result, never a rejection. */
+  elevenLabsPreview: (voiceId: string) => Promise<SpeakResult>
   spawnSession: (
     cwd: string,
     options?: {
@@ -1205,6 +1209,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   spokenRenderingsOf: (sessionId: string) => Promise<Record<string, SpokenDone>>
   /** Folio: the title of a page, from the reader's clipped message
    *  (`pageTitleKey`). A failure is a result, never a rejection. */
+  /** Folio: a part of a page's spoken rendering in the ElevenLabs voice of
+   *  the server the tab runs on (PRDCT-4411). A failure is a result with its
+   *  reason (no key, no voice, refused, credits spent…), never a rejection. */
+  speakText: (request: SpeakRequest) => Promise<SpeakResult>
   pageTitle: (request: PageTitleRequest) => Promise<PageTitleResult>
   /** Every page title already read for a tab, by key. */
   pageTitlesOf: (sessionId: string) => Promise<Record<string, PageTitleDone>>

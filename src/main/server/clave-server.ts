@@ -79,13 +79,16 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const { startEmbedded, ServerInfoPort } = await import('@clave/server')
   // PRDCT-4327: the digests a client of this server asks for, read on this
   // process's own record of the session and filed in its own data folder.
-  const [{ hostDigests, sessionLaunchOf }, { ptyManager }] = await Promise.all([
+  // PRDCT-4411: its speech, with this process's ElevenLabs key and voice.
+  const [{ hostDigests, sessionLaunchOf }, { ptyManager }, { hostSpeech }] = await Promise.all([
     import('../exchange-digest'),
-    import('../pty-manager')
+    import('../pty-manager'),
+    import('../speech')
   ])
   const server = await startEmbedded({
     ports: {
       digests: hostDigests(sessionLaunchOf(ptyManager)),
+      speech: hostSpeech(sessionLaunchOf(ptyManager)),
       ...(options.appVersion !== undefined && {
         serverInfo: ServerInfoPort.appRun(
           options.appVersion,
