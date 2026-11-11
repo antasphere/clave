@@ -155,7 +155,6 @@
     "packages/contract",
     "packages/server",
     "packages/client",
-    "apps/mobile",
     "apps/desktop",
     "apps/server",
     "apps/terminals",

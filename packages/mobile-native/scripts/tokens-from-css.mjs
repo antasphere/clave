@@ -2,7 +2,8 @@
 // The native phones' design tokens, read from the desktop's own token file
 // (packages/ui/src/tokens.css) rather than restated by hand. Two readings:
 //
-// - the colour roles, as apps/mobile's prototype reads them: the four theme
+// - the colour roles, as the React Native prototype read them (on the branch
+//   mobile-react-native-baseline-20261109): the four theme
 //   blocks (dark on :root, light, coffee, charcoal) and the cross-theme roles
 //   of the @theme block, each normalised to a lowercase hex or an
 //   `rgba(r, g, b, a)` both Swift and Kotlin parse;

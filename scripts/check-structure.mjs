@@ -11,7 +11,6 @@ const required = [
   'apps/desktop/src/main/index.ts',
   'apps/desktop/src/preload/index.ts',
   'apps/desktop/src/renderer/index.html',
-  'apps/mobile/index.ts',
   'apps/server/src/main.ts',
   'apps/terminals/src/main.ts',
   'apps/terminals/src/probe.ts',
@@ -77,7 +76,13 @@ const legacyGenerated = [
   'packages/mobile/android',
   'packages/mobile/.expo',
   'packages/mobile/expo-env.d.ts',
-  'packages/mobile/e2e/.output'
+  'packages/mobile/e2e/.output',
+  // The React Native app's own generated output, after its retirement from apps/mobile.
+  'apps/mobile/ios',
+  'apps/mobile/android',
+  'apps/mobile/.expo',
+  'apps/mobile/expo-env.d.ts',
+  'apps/mobile/e2e/.output'
 ].map((file) => path.join(root, file))
 
 function* files(dir) {
@@ -96,14 +101,29 @@ function* files(dir) {
   }
 }
 
-for (const home of [
+const obsoleteHomes = [
   'src',
   'native',
   'plugins',
   'packages/mobile',
+  // The React Native app, retired for the two native apps: kept on the branch
+  // mobile-react-native-baseline-20261109, never to come back here.
+  'apps/mobile',
   'packages/server/src/relay/main.ts',
   'packages/clave-channel/bin'
-]) {
+]
+// A generated path that covered a whole obsolete home would let any source
+// back into it, every file of it then read as generated output.
+for (const home of obsoleteHomes) {
+  const directory = path.join(root, home)
+  assert(
+    !legacyGenerated.some(
+      (generated) => directory === generated || directory.startsWith(generated + path.sep)
+    ),
+    `Obsolete source home listed as generated output: ${home}`
+  )
+}
+for (const home of obsoleteHomes) {
   const directory = path.join(root, home)
   if (!existsSync(directory)) continue
   const entries = statSync(directory).isDirectory() ? files(directory) : [directory]

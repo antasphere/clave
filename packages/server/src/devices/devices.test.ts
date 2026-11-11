@@ -25,8 +25,9 @@ import { FakeSettingsSource } from '../settings/test-support'
 import { PendingRequests } from '../requests/service'
 import { createServerFiles } from '../files/service'
 import { ensureFileHelper } from '../files/test-support'
-import { ClaveServerClient } from '../../../../apps/mobile/src/api/client'
-import { AttachmentClient } from '../../../../apps/mobile/src/attachments/client'
+import type { FileAttachment } from '@clave/contract/files'
+import type { RequestSnapshot } from '@clave/contract/requests'
+import type { SessionInfo } from '@clave/contract/sessions'
 import type { TimelinePage } from '@clave/contract/timeline'
 
 type Provider = Awaited<ReturnType<typeof startOidcProvider>>
@@ -683,6 +684,14 @@ describe('the scope, as a table', () => {
   })
 })
 
+/** The paired phone's two kinds of call, on fetch. */
+interface PhoneClient {
+  /** A GET with its payload in the query string. */
+  query<T = unknown>(path: string, params?: Record<string, string | number>): Promise<T>
+  /** A POST with a JSON body. */
+  command<T = unknown>(path: string, body: unknown): Promise<T>
+}
+
 describe('the paired phone mobile boundary', () => {
   const knownId = 'phone-known-001'
   const uncertainId = 'phone-uncertain-001'
@@ -703,8 +712,46 @@ describe('the paired phone mobile boundary', () => {
     )
     return storage
   }
-  const phoneClient = (w: World, token: string): ClaveServerClient =>
-    new ClaveServerClient({ serverUrl: w.server.url, bearer: token }, { build: 'development' })
+  /**
+   * The phone as the retired React Native app's `ClaveServerClient` and
+   * `AttachmentClient` spoke to the server (last at 00e16111): every call
+   * under the paired bearer and `Accept: application/json`, a command's body
+   * as JSON. What they threw on, a status outside 2xx or a 2xx answer that is
+   * not JSON, fails the test. Their decoders named the very fields the server
+   * encodes, so an answer is read as it came; the one record the phone sends
+   * back, an attachment, is narrowed where the test takes it.
+   */
+  const phoneClient = (w: World, token: string): PhoneClient => {
+    const send = async <T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> => {
+      const request = new Request(`${w.server.url}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {})
+      })
+      // The phone's own paired bearer, never the owner's, held on the very request
+      // that is sent: under the owner's, every call here would pass as well, the
+      // phone's scope never tried.
+      expect(request.headers.get('authorization')).toBe(`Bearer ${token}`)
+      expect(request.headers.get('authorization')).not.toBe(`Bearer ${w.server.token}`)
+      const response = await fetch(request)
+      const text = await response.text()
+      expect(response.ok, `${method} ${path}: ${response.status} ${text}`).toBe(true)
+      return (text.length > 0 ? JSON.parse(text) : undefined) as T
+    }
+    return {
+      query: <T>(path: string, params: Record<string, string | number> = {}): Promise<T> => {
+        const query = new URLSearchParams(
+          Object.entries(params).map(([key, value]) => [key, String(value)])
+        ).toString()
+        return send<T>('GET', query ? `${path}?${query}` : path)
+      },
+      command: <T>(path: string, body: unknown): Promise<T> => send<T>('POST', path, body)
+    }
+  }
 
   it.each([
     [knownId, { status: 'accepted', at: 42 }],
@@ -723,7 +770,9 @@ describe('the paired phone mobile boundary', () => {
       const phone = await w.json('GET', path, { token })
       expect(phone.status, JSON.stringify(phone.body)).toBe(200)
       expect(phone.body).toEqual(owner.body)
-      expect(await phoneClient(w, token).sessions.writeStatus('s1', id)).toEqual(owner.body)
+      expect(
+        await phoneClient(w, token).query('/sessions/writes', { id: 's1', clientMessageId: id })
+      ).toEqual(owner.body)
       expect((await w.json('GET', path, { token })).body).toEqual(owner.body)
       expect(w.source.writes).toEqual([])
     }
@@ -789,16 +838,20 @@ describe('the paired phone mobile boundary', () => {
     try {
       const { token, deviceId } = await w.device()
       const client = phoneClient(w, token)
-      expect(await client.sessions.list()).toEqual([aSession('s1')])
-      expect(await client.sessions.get('s1')).toEqual(aSession('s1'))
-      expect(await client.sessions.capabilities('s1')).toEqual({ images: true })
-      expect(await client.sessions.history('s1', 20, 5)).toEqual(source.historyOf)
+      expect(await client.query('/sessions')).toEqual([aSession('s1')])
+      expect(await client.query('/sessions/by-id', { id: 's1' })).toEqual(aSession('s1'))
+      expect(await client.query('/sessions/capabilities', { id: 's1' })).toEqual({ images: true })
+      expect(await client.query('/sessions/history', { id: 's1', before: 20, limit: 5 })).toEqual(
+        source.historyOf
+      )
       expect(source.historyAsked).toEqual([{ id: 's1', before: 20, limit: 5 }])
-      expect(await client.sessions.timeline('s1', 8, 5)).toEqual(timeline)
+      expect(await client.query('/sessions/timeline', { id: 's1', before: 8, limit: 5 })).toEqual(
+        timeline
+      )
       expect(timelineAsked).toEqual([{ id: 's1', before: 8, limit: 5 }])
-      expect(await client.launchProfiles.list()).toEqual(settings.profiles)
-      expect(await client.workspaces.load()).toEqual(settings.state)
-      expect(await client.requests.list()).toEqual({ revision: 1, pending: [pending] })
+      expect(await client.query('/launch-profiles')).toEqual(settings.profiles)
+      expect(await client.query('/workspaces')).toEqual(settings.state)
+      expect(await client.query('/requests/pending')).toEqual({ revision: 1, pending: [pending] })
       expect((await w.json('GET', '/devices/me', { token })).body).toMatchObject({
         id: deviceId,
         ...PHONE
@@ -850,7 +903,7 @@ describe('the paired phone mobile boundary', () => {
           }
         }
       }
-      const started = await client.sessions.start(startInput)
+      const started = await client.command<SessionInfo>('/sessions/start', startInput)
       expect(started).toEqual({
         id: 'started-1',
         cwd: '/work/phone-start',
@@ -866,10 +919,12 @@ describe('the paired phone mobile boundary', () => {
         text: 'One fixture reply',
         clientMessageId: 'phone-send-001'
       }
-      const written = await client.sessions.write('s1', input)
+      const written = await client.command('/sessions/write', { id: 's1', input })
       expect(written).toMatchObject({ status: 'accepted', at: expect.any(Number) })
-      expect(await client.sessions.write('s1', input)).toEqual(written)
-      expect(await client.sessions.writeStatus('s1', input.clientMessageId)).toEqual(written)
+      expect(await client.command('/sessions/write', { id: 's1', input })).toEqual(written)
+      expect(
+        await client.query('/sessions/writes', { id: 's1', clientMessageId: input.clientMessageId })
+      ).toEqual(written)
       expect(w.source.writes).toEqual([{ id: 's1', input }])
       expect(
         (
@@ -891,13 +946,17 @@ describe('the paired phone mobile boundary', () => {
         (await w.json('POST', '/sessions/view', { token, body: { id: 's1', viewId: null } })).body
       ).not.toHaveProperty('viewId')
       expect(w.source.views.at(-1)).toEqual({ id: 's1', viewId: null })
-      expect(await client.sessions.restart('s1')).toMatchObject({ id: 's1', alive: true })
+      expect(await client.command('/sessions/restart', { id: 's1', account: {} })).toMatchObject({
+        id: 's1',
+        alive: true
+      })
       expect(w.source.restarts).toEqual([{ id: 's1', account: {}, resendRejected: false }])
       const response = { type: 'permission' as const, optionId: 'allow' }
-      expect(await client.requests.resolve(pending.id, response)).toEqual({ accepted: true })
-      expect(await client.requests.resolve(pending.id, response)).toEqual({ accepted: false })
+      const resolve = { requestId: pending.id, response }
+      expect(await client.command('/requests/resolve', resolve)).toEqual({ accepted: true })
+      expect(await client.command('/requests/resolve', resolve)).toEqual({ accepted: false })
       expect(answers).toEqual([response])
-      expect((await client.requests.list()).pending).toEqual([])
+      expect((await client.query<RequestSnapshot>('/requests/pending')).pending).toEqual([])
       expect(requests.result(pending.id, 's1').status).toBe('completed')
       const other = await w.device()
       expect(
@@ -928,7 +987,7 @@ describe('the paired phone mobile boundary', () => {
       expect(await runList(freshService(w))).toEqual([
         { deviceId: other.deviceId, platform: 'ios', token: 'other-fixture-apns' }
       ])
-      await client.sessions.stop(started.id)
+      await client.command('/sessions/stop', { id: started.id })
       expect(w.source.stops).toEqual(['started-1'])
       expect(w.source.sessions.has(started.id)).toBe(false)
     } finally {
@@ -947,17 +1006,33 @@ describe('the paired phone mobile boundary', () => {
     try {
       w = await start({ ports: { files, writeLedger: seededLedger() } })
       const { token } = await w.device()
-      expect(await phoneClient(w, token).files.read(root, 'document.md')).toEqual({
+      const client = phoneClient(w, token)
+      expect(await client.query('/files/read', { root, path: 'document.md' })).toEqual({
         content,
         size: Buffer.byteLength(content),
         binary: false,
         truncated: false
       })
       const bytes = Buffer.from('A bounded fixture attachment.\n')
-      const attachment = await new AttachmentClient(
-        { serverUrl: w.server.url, bearer: token },
-        { build: 'development' }
-      ).prepareUpload('s1', { name: 'Fixture.txt', image: false, base64: bytes.toString('base64') })
+      const prepared = await client.command<FileAttachment>('/files/attachments/prepare', {
+        sessionId: 's1',
+        source: {
+          kind: 'upload',
+          name: 'Fixture.txt',
+          base64: bytes.toString('base64'),
+          image: false
+        }
+      })
+      // The record as the app kept it (its `decodeFileAttachment`), the one the message carries.
+      const attachment = {
+        id: prepared.id,
+        path: prepared.path,
+        name: prepared.name,
+        mimeType: prepared.mimeType,
+        size: prepared.size,
+        delivery: prepared.delivery,
+        ...(typeof prepared.entries === 'number' && { entries: prepared.entries })
+      }
       expect(attachment).toMatchObject({
         name: 'Fixture.txt',
         mimeType: 'text/plain',
@@ -972,9 +1047,9 @@ describe('the paired phone mobile boundary', () => {
         clientMessageId: 'phone-attached-001',
         attachments: [attachment]
       }
-      expect(await phoneClient(w, token).sessions.write('s1', attachedInput)).toMatchObject({
-        status: 'accepted'
-      })
+      expect(
+        await client.command('/sessions/write', { id: 's1', input: attachedInput })
+      ).toMatchObject({ status: 'accepted' })
       expect(w.source.writes).toEqual([{ id: 's1', input: attachedInput }])
       for (const path of [
         '/files/write',

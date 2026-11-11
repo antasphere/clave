@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from 'vitest/config'
+import { defineConfig } from 'vitest/config'
 
 /**
  * The unit tests: pure logic only. Nothing here boots Electron or renders a
@@ -9,8 +9,7 @@ import { configDefaults, defineConfig } from 'vitest/config'
  * since an untrusted file whose prompt is neither disclosed nor stripped looks
  * exactly like one that is.
  *
- * Every app folder is included, including workers and CLI entrypoints. The
- * mobile app keeps its separate suite and platform-specific configuration.
+ * Every app folder is included, including workers and CLI entrypoints.
  * A new .test.ts or .test.tsx runs by existing. Tests needing a DOM declare
  * `// @vitest-environment jsdom` in their own file.
  */
@@ -22,7 +21,6 @@ export default defineConfig({
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs'
     ],
-    exclude: [...configDefaults.exclude, 'apps/mobile/**'],
     environment: 'node',
     // The framework ships TypeScript source, not compiled output, so Node
     // cannot load it from node_modules on its own: vite transforms it instead.

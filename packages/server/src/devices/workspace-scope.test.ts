@@ -14,17 +14,6 @@ import { EchoAdapter } from '../../../host/src/sessions/adapters/echo-adapter'
 import { SessionManager } from '../../../host/src/sessions/session-manager'
 import { serverOwnedSessionHost } from '../../../host/src/sessions/server-owned-host'
 import { standaloneSidebar } from '../../../host/src/server/standalone-sidebar'
-import { Drafts, MemoryKeyValueStore } from '../../../../apps/mobile/src/chat/drafts'
-import {
-  MemorySecureStore,
-  SecureCredentialStore
-} from '../../../../apps/mobile/src/machines/credentials'
-import type { Machine } from '../../../../apps/mobile/src/machines/types'
-import type { PushSocketConstructor } from '../../../../apps/mobile/src/api/push'
-import type {
-  ClaveServerClient,
-  ClaveServerClientOptions
-} from '../../../../apps/mobile/src/api/client'
 
 // Metadata reads use the real manager, producer, contract, router and device auth.
 // The unused process ports refuse to reach a desktop or a provider.
@@ -58,29 +47,6 @@ vi.mock('../../../host/src/sessions/records', () => ({ sessionRecords: {} }))
 import { createSessionHost } from '../../../host/src/sessions/host'
 
 type Issuer = Awaited<ReturnType<typeof startOidcProvider>>
-interface MobileState {
-  loadMachines(): Promise<void>
-  loadSessions(machineId: string): Promise<void>
-  connect(machineId: string): Promise<{ client: ClaveServerClient }>
-  disconnectAll(): void
-  sessions: Readonly<Record<string, readonly Session[]>>
-  stamps: Readonly<Record<string, Readonly<Record<string, string | undefined>>>>
-  sessionsError: Readonly<Record<string, string | null>>
-}
-interface MobileStore {
-  getState(): MobileState
-  setState(state: Pick<MobileState, 'stamps'>): void
-}
-interface ConsumerServices {
-  build: 'development'
-  credentials: SecureCredentialStore
-  sources: { relay: { list(): Promise<Machine[]> }; developer: null }
-  kv: MemoryKeyValueStore
-  drafts: Drafts
-  clientName: string
-  clientOptions: Pick<ClaveServerClientOptions, 'fetch'>
-  pushOptions: { WebSocket: PushSocketConstructor; build: 'development' }
-}
 
 async function mintIdentity(provider: Issuer): Promise<{ idToken: string; clientId: string }> {
   const redirect = 'clave://oauth/callback'
@@ -176,22 +142,6 @@ const privateRecord = (id: string, workspaceId?: string): PrivateFixtureRecord =
   ...(workspaceId !== undefined && { workspaceId })
 })
 
-// This fixture exercises HTTP and the real mobile store, without starting a
-// push/reconnect workflow. Existing paired push fixtures cover that transport.
-const DormantSocket = class {
-  readyState = 0
-  onopen = null
-  onmessage = null
-  onclose = null
-  onerror = null
-  send(): void {
-    /* No push transport in this HTTP fixture. */
-  }
-  close(): void {
-    /* No socket was opened. */
-  }
-} as unknown as PushSocketConstructor
-
 it('serves authoritative live and stopped workspace stamps to a real paired phone without exposing desktop records', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'clave-paired-workspace-'))
   const manager = new SessionManager()
@@ -200,7 +150,6 @@ it('serves authoritative live and stopped workspace stamps to a real paired phon
   let owned: ReturnType<typeof serverOwnedSessionHost> | undefined
   let requests: PendingRequests | undefined
   let server: EmbeddedServer | undefined
-  let store: MobileStore | undefined
   let testFailure: unknown
   let testFailed = false
   const cleanupErrors: unknown[] = []
@@ -331,96 +280,74 @@ it('serves authoritative live and stopped workspace stamps to a real paired phon
     expect(stampReads).toContain('live-a')
     expect(stampReads).toContain('live-legacy')
 
-    const machine: Machine = {
-      id: 'paired-fixture',
-      name: 'Paired fixture',
-      platform: 'macos',
-      version: 'fixture',
-      online: true,
-      lastSeen: null,
-      baseUrl,
-      pushUrl: baseUrl.replace('http:', 'ws:') + '/push'
+    // The phone's reads as the retired React Native app's `ClaveServerClient` sent
+    // them (last at 00e16111): a GET under the paired bearer, `Accept:
+    // application/json`. That client threw on a status outside 2xx and on an answer
+    // that is not JSON; either fails the test here. Its bearer is held on the very
+    // request that is sent: the paired session's token, never the owner's, under
+    // which every read below would pass as well.
+    const ownerToken = server.token
+    const phone = async (path: string): Promise<unknown> => {
+      const request = new Request(`${baseUrl}${path}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      })
+      expect(request.headers.get('authorization')).toBe(`Bearer ${deviceSession.token}`)
+      expect(request.headers.get('authorization')).not.toBe(`Bearer ${ownerToken}`)
+      const response = await fetch(request)
+      const text = await response.text()
+      expect(response.ok, `GET ${path}: ${response.status} ${text}`).toBe(true)
+      return JSON.parse(text)
     }
-    const credentials = new SecureCredentialStore(new MemorySecureStore())
-    await credentials.set(machine.id, { serverUrl: baseUrl, bearer: token })
-    const kv = new MemoryKeyValueStore()
-    const paths: string[] = []
-    // Load the actual browser consumer through Vitest, keeping its React Native
-    // ambient declarations out of the server's Node TypeScript compilation.
-    const { createStore } = await vi.importActual<{
-      createStore(services: ConsumerServices): MobileStore
-    }>('../../../../apps/mobile/src/state/store')
-    store = createStore({
-      build: 'development',
-      credentials,
-      sources: { relay: { list: async () => [machine] }, developer: null },
-      kv,
-      drafts: new Drafts(kv),
-      clientName: 'paired-workspace-fixture',
-      clientOptions: {
-        fetch: async (url, init) => {
-          expect(init.headers.Authorization).toBe(`Bearer ${token}`)
-          paths.push(new URL(url).pathname)
-          return fetch(url, init)
-        }
-      },
-      pushOptions: { WebSocket: DormantSocket, build: 'development' }
-    })
-    await store.getState().loadMachines()
-    store.setState({
-      stamps: { [machine.id]: { 'live-a': 'old', 'live-legacy': 'old', removed: 'old' } }
-    })
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().sessionsError[machine.id], JSON.stringify(paths)).toBeNull()
-    expect(store.getState().sessions[machine.id]).toEqual(expected)
-    expect(store.getState().stamps[machine.id]?.['live-a']).toBe('workspace-a')
-    expect(store.getState().stamps[machine.id]?.['live-legacy']).toBeUndefined()
-    expect(store.getState().stamps[machine.id]?.['stopped-b']).toBe('workspace-b')
-    expect(store.getState().stamps[machine.id]).not.toHaveProperty('removed')
-    const { client } = await store.getState().connect(machine.id)
-    expect(await client.sessions.get('live-a')).toEqual(expected[0])
-    expect(await client.sessions.get('stopped-b')).toEqual(expectedStopped)
+    // The app store's `loadSessions`, reduced to what it derived from the answer:
+    // the sessions `GET /sessions` lists, and each one's stamp by id from that list
+    // alone, nothing kept from an earlier one. A read that fails in `phone` is what
+    // the store kept as its `sessionsError`; every load here asserts there is none.
+    const loadSessions = async (): Promise<{
+      sessions: Session[]
+      stamps: Record<string, string | undefined>
+    }> => {
+      const sessions = (await phone('/sessions')) as Session[]
+      const stamps: Record<string, string | undefined> = {}
+      for (const session of sessions) stamps[session.id] = session.workspaceId
+      return { sessions, stamps }
+    }
+    const loaded = await loadSessions()
+    expect(loaded.sessions).toEqual(expected)
+    expect(loaded.stamps['live-a']).toBe('workspace-a')
+    expect(loaded.stamps['live-legacy']).toBeUndefined()
+    expect(loaded.stamps['stopped-b']).toBe('workspace-b')
+    expect(loaded.stamps).not.toHaveProperty('removed')
+    expect(await phone('/sessions/by-id?id=live-a')).toEqual(expected[0])
+    expect(await phone('/sessions/by-id?id=stopped-b')).toEqual(expectedStopped)
 
     records.set('live-a', privateRecord('live-a', 'workspace-moved'))
-    expect(await client.sessions.get('live-a')).toEqual({
+    expect(await phone('/sessions/by-id?id=live-a')).toEqual({
       ...liveSession('live-a'),
       workspaceId: 'workspace-moved'
     })
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().stamps[machine.id]?.['live-a']).toBe('workspace-moved')
+    expect((await loadSessions()).stamps['live-a']).toBe('workspace-moved')
     records.set('live-a', privateRecord('live-a'))
-    expect(await client.sessions.get('live-a')).not.toHaveProperty('workspaceId')
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().sessionsError[machine.id]).toBeNull()
-    expect(store.getState().stamps[machine.id]?.['live-a']).toBeUndefined()
+    expect(await phone('/sessions/by-id?id=live-a')).not.toHaveProperty('workspaceId')
+    expect((await loadSessions()).stamps['live-a']).toBeUndefined()
     records.delete('live-a')
-    expect(await client.sessions.get('live-a')).not.toHaveProperty('workspaceId')
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().sessionsError[machine.id]).toBeNull()
-    expect(store.getState().stamps[machine.id]?.['live-a']).toBeUndefined()
+    expect(await phone('/sessions/by-id?id=live-a')).not.toHaveProperty('workspaceId')
+    expect((await loadSessions()).stamps['live-a']).toBeUndefined()
     records.set('live-a', privateRecord('live-a', 'workspace-restamped'))
-    expect(await client.sessions.get('live-a')).toEqual({
+    expect(await phone('/sessions/by-id?id=live-a')).toEqual({
       ...liveSession('live-a'),
       workspaceId: 'workspace-restamped'
     })
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().sessionsError[machine.id]).toBeNull()
-    expect(store.getState().stamps[machine.id]?.['live-a']).toBe('workspace-restamped')
+    expect((await loadSessions()).stamps['live-a']).toBe('workspace-restamped')
     records.set('live-a', privateRecord('live-a', ''))
-    expect(await client.sessions.get('live-a')).toEqual({
+    expect(await phone('/sessions/by-id?id=live-a')).toEqual({
       ...liveSession('live-a'),
       workspaceId: ''
     })
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().sessionsError[machine.id]).toBeNull()
-    expect(store.getState().stamps[machine.id]?.['live-a']).toBe('')
+    expect((await loadSessions()).stamps['live-a']).toBe('')
     records.set('stopped-b', privateRecord('stopped-b'))
-    expect(await client.sessions.get('stopped-b')).not.toHaveProperty('workspaceId')
-    await store.getState().loadSessions(machine.id)
-    expect(store.getState().sessionsError[machine.id]).toBeNull()
-    expect(store.getState().stamps[machine.id]?.['stopped-b']).toBeUndefined()
-    expect(paths).not.toContain('/sessions/records')
-    expect(new Set(paths)).toEqual(new Set(['/sessions', '/sessions/by-id']))
+    expect(await phone('/sessions/by-id?id=stopped-b')).not.toHaveProperty('workspaceId')
+    expect((await loadSessions()).stamps['stopped-b']).toBeUndefined()
     for (const path of ['/sessions/records', '/sessions/records?ids=live-a,stopped-b']) {
       const denied = await call('GET', path, token)
       expect(denied.status).toBe(403)
@@ -442,7 +369,6 @@ it('serves authoritative live and stopped workspace stamps to a real paired phon
     testFailure = error
   } finally {
     const cleanup = [
-      () => store?.getState().disconnectAll(),
       () => server?.stop(),
       () => requests?.close(),
       () => owned?.close(),

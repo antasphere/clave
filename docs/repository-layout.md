@@ -7,7 +7,8 @@ startup, or at a package to find the implementation shared by clients.
 ```text
 apps/
   desktop/          Electron main entry, preload and React renderer
-  mobile/           Expo app, platform adapters and phone screens
+  mobile-ios/       The iPhone app, native in SwiftUI, with its own Xcode project
+  mobile-android/   The Android app, native in Kotlin and Jetpack Compose, with its own Gradle build
   server/           Standalone server bootstrap
   terminals/        Node process that owns terminal PTYs
   plugin-runner/    Isolated plugin process bootstrap
@@ -27,7 +28,14 @@ packages/
   ui/               Shared design tokens, styles and components
   skins/            Skin definitions and validation
   plugin-sdk/       Plugin authoring contracts
+  mobile-native/    Fixture vectors, generated assets and a fixture server for the phone apps
 ```
+
+The two phone apps have no npm manifest of their own: each builds with its
+platform's toolchain, and its README documents its commands; their few Node
+scripts (fixture stacks, generators) run on the root install. The React Native
+prototype they replaced is kept on the branch
+`mobile-react-native-baseline-20261109`.
 
 `packages/host` includes Electron integrations as well as Node services. Only
 the Electron app calls those integrations; a standalone server does not load
@@ -61,34 +69,36 @@ installs the binary explicitly. Existing root commands remain available.
 | `npm run dev` | Desktop development app |
 | `npm run dev:attached` | Desktop connected to a separate local server |
 | `npm run dev:server` | Standalone local server |
-| `npm start --workspace @clave/mobile` | Mobile Metro development server |
 | `npm run build` | Native helpers, typechecks and desktop bundles |
 | `npm run build --workspace @codika-io/clave-channel` | Publishable channel output and CLI |
 | `npm run check:structure` | App/package placement and dependency direction |
 | `npm test` | Structure, style-token audit and desktop/shared unit tests |
-| `npm test --workspace @clave/mobile` | Mobile unit tests |
-| `npm run typecheck --workspace @clave/mobile` | Mobile TypeScript check |
+| `npm run vectors:check --workspace @clave/mobile-native` | The phones' fixture vectors match the contract |
+| `npm run assets:check --workspace @clave/mobile-native` | The phones' generated assets match the desktop's sources |
+| `bash apps/mobile-ios/ci.sh` | The iPhone app's build and tests, as CI runs them |
+| `bash apps/mobile-android/ci.sh` | The Android app's build and tests, as CI runs them |
 | `npm run test:e2e` | Electron integration tests |
 
 Electron build configuration stays at the root because it builds several
 processes together. Its output remains `out/main/`, `out/preload/` and
 `out/renderer/`, including the standalone server and worker bundles. Those
 runtime paths are independent of the source layout. Signing, release
-promotion, relay deployment and mobile native builds still use their
-existing documented procedures.
+promotion and relay deployment still use their existing documented
+procedures; the phone apps' builds are in their own READMEs.
 
 ## Existing checkouts
 
 Ignored build output can remain at the old paths after switching branches.
 The legacy private-font, Analytics output and generated mobile-project paths
-remain ignored and are accepted by the structure guard. Rebuild from the new
-paths before removing those old generated files. The guard still rejects
-source code in the old homes; it never deletes files.
+(under `packages/mobile/` and, since the React Native app's retirement,
+`apps/mobile/`) remain ignored and are accepted by the structure guard.
+Rebuild from the new paths before removing those old generated files. The
+guard still rejects source code in the old homes; it never deletes files.
 
 The guard checks relative and app-workspace imports, the renderer alias,
 manifest entrypoints and JavaScript/TypeScript shebang programs. It is a static
 layout check; new language-specific entrypoints also need review.
 
 The existing root `npm test` wrapper currently stops in the style-token audit
-on `--delivery-layers`. CI's complete unit command is `npx vitest run`; the
-mobile suite has its own command above. This refactor keeps styles unchanged.
+on `--delivery-layers`. CI's complete unit command is `npx vitest run`. This
+refactor keeps styles unchanged.

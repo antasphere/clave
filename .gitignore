@@ -63,6 +63,12 @@ packages/mobile/android/
 packages/mobile/.expo/
 packages/mobile/expo-env.d.ts
 packages/mobile/e2e/.output/
+# The React Native app's generated output, after its retirement from apps/mobile.
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.expo/
+apps/mobile/expo-env.d.ts
+apps/mobile/e2e/.output/
 
 # Pi extension copied from apps/pi-state during the build
 resources/pi-clave-state.js
