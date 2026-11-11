@@ -661,6 +661,18 @@ export function InputPrompt({
     ) as Record<string, string | null>
   const problems = problemsOf(values)
   const valid = Object.values(problems).every((p) => p === null)
+  // A form opens one question at a time too (PRDCT-4416): every question up
+  // to the first without a fitting answer stands open, an answered one
+  // staying open so its answer is seen and changed where it stands; the
+  // ones after wait folded to their line. `step` is the furthest the reader
+  // has opened (a form has no page of its own to keep there), so a question
+  // opened stays open when an answer above it is cleared.
+  const reach = steps ? step : Math.max(step, nextUnanswered(keys, values, problems, 0))
+  useEffect(() => {
+    if (!steps && reach > step) setStep(reach)
+    // `setStep` remembers as it sets; only a reach that grew is kept.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reach])
   const byAgent = Object.keys(landed).length > 0
   // The first card for this request takes the caret, once; the body itself
   // takes it when the first field is a choice or a link.
@@ -872,8 +884,12 @@ export function InputPrompt({
         if (steps) {
           setDirection('back')
           setStep(keys.indexOf(first))
+          focusField(first)
+        } else {
+          // A form opens down to the first answer owed, the caret in it.
+          setStep(Math.max(step, keys.indexOf(first)))
+          takeCaret(first)
         }
-        focusField(first)
       }
       return
     }
@@ -908,8 +924,13 @@ export function InputPrompt({
       return
     }
     const next = keys[from + 1]
-    if (next === undefined) send(vals)
-    else focusField(next)
+    if (next === undefined) return send(vals)
+    // The next question of a form may still be folded: opened first, its
+    // field takes the caret once it stands.
+    if (from + 1 > reach) {
+      setStep(from + 1)
+      takeCaret(next)
+    } else focusField(next)
   }
   /** A pick moves on and never sends: to the next question still open, or,
    *  every one answered, to the stack folded whole, each answer in sight
@@ -933,8 +954,14 @@ export function InputPrompt({
   const [reopened, setReopened] = useState<{ key: string; n: number }>({ key: '', n: 0 })
   /** Open a question from its folded line, its field taking the caret: an
    *  answer is changed where it stands, written over or added to. */
+  const takeCaret = (key: string): void => setReopened((current) => ({ key, n: current.n + 1 }))
   const goTo = (index: number): void => {
     if (busy) return
+    if (!steps) {
+      setStep(Math.max(step, index))
+      takeCaret(keys[index])
+      return
+    }
     setDirection(index < step ? 'back' : 'forward')
     setStep(index)
     setReopened((current) => ({ key: keys[index], n: current.n + 1 }))
@@ -970,7 +997,13 @@ export function InputPrompt({
     const active =
       el.querySelector<HTMLElement>('[data-state="active"]') ??
       el.querySelector<HTMLElement>('[data-state="problem"]')
-    el.style.setProperty('--ask-progress', `${active ? active.offsetTop + 12 : el.offsetHeight}px`)
+    const end = el.querySelector<HTMLElement>('.chat-ask-end')
+    const reached = active
+      ? active.offsetTop + 12
+      : end
+        ? end.offsetTop + end.offsetHeight / 2
+        : el.offsetHeight
+    el.style.setProperty('--ask-progress', `${reached}px`)
   }
   useLayoutEffect(measureRail)
   // The rows fold and arrive over a few hundred milliseconds: a length taken
@@ -1031,7 +1064,9 @@ export function InputPrompt({
         }
         if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)
           return
-        const current = shown[0]
+        // The digits pick on the question being answered: a form's is the
+        // last one it has opened.
+        const current = steps ? shown[0] : questions[Math.min(reach, questions.length - 1)]
         const n = Number(event.key)
         if (
           current?.kind === 'choice' &&
@@ -1094,10 +1129,11 @@ export function InputPrompt({
         {rows.map((question, index) => {
           const key = questionKey(question)
           const active = !steps || index === step
-          // Every row but the one being answered is folded to its line: the
-          // ones answered above, the ones to come below.
-          const folded = steps && !active
-          const ahead = steps && index > step
+          // In steps every row but the one being answered is folded to its
+          // line: the ones answered above, the ones to come below. A form
+          // folds only the ones past its reach.
+          const ahead = index > reach
+          const folded = steps ? !active : ahead
           const secret = secretOf(question)
           const filled = !isEmpty(own(values, key))
           const state = ahead
@@ -1125,7 +1161,7 @@ export function InputPrompt({
               {landed[key] ? (
                 <span key={landed[key]} className="chat-ask-flash" aria-hidden="true" />
               ) : null}
-              {steps && (
+              {questions.length > 1 && (
                 <div className="chat-ask-fold" inert={!folded}>
                   <div>
                     <button
@@ -1196,44 +1232,50 @@ export function InputPrompt({
             </li>
           )
         })}
+        {/* The rail's last stop, level with the buttons that answer: an
+            empty seat while an answer is owed, filled once every one fits
+            (PRDCT-4417). */}
+        <li className="chat-ask-end" role="none" data-ready={valid ? 'true' : undefined}>
+          <span className="chat-ask-seat" aria-hidden="true" />
+          <div className="chat-ask-actions">
+            {steps && step > 0 && (
+              <button
+                type="button"
+                className="chat-ask-btn"
+                onMouseDown={keepFocus}
+                disabled={busy}
+                onClick={back}
+              >
+                Back
+              </button>
+            )}
+            <span className="chat-prompt-spacer" />
+            {skip && (
+              <button
+                type="button"
+                className="chat-ask-btn"
+                onMouseDown={keepFocus}
+                title="Skip (Esc)"
+                disabled={busy}
+                onClick={doSkip}
+              >
+                Skip
+              </button>
+            )}
+            <button
+              type="button"
+              className="chat-ask-btn"
+              onMouseDown={keepFocus}
+              data-primary="true"
+              title={steps && !last && !review ? 'Next (Enter)' : `${approveLabel} (⌘ Enter)`}
+              disabled={busy || (attempted && !valid)}
+              onClick={() => (steps ? advance(step) : send())}
+            >
+              {steps && !last && !review ? 'Next' : approveLabel}
+            </button>
+          </div>
+        </li>
       </ol>
-      <div className="chat-ask-actions">
-        {steps && step > 0 && (
-          <button
-            type="button"
-            className="chat-ask-btn"
-            onMouseDown={keepFocus}
-            disabled={busy}
-            onClick={back}
-          >
-            Back
-          </button>
-        )}
-        <span className="chat-prompt-spacer" />
-        {skip && (
-          <button
-            type="button"
-            className="chat-ask-btn"
-            onMouseDown={keepFocus}
-            title="Skip (Esc)"
-            disabled={busy}
-            onClick={doSkip}
-          >
-            Skip
-          </button>
-        )}
-        <button
-          type="button"
-          className="chat-ask-btn"
-          onMouseDown={keepFocus}
-          data-primary="true"
-          title={steps && !last && !review ? 'Next (Enter)' : `${approveLabel} (⌘ Enter)`}
-          disabled={busy || (attempted && !valid)}
-          onClick={() => (steps ? advance(step) : send())}
-        >
-          {steps && !last && !review ? 'Next' : approveLabel}
-        </button>
-      </div>
     </div>
   )
 }

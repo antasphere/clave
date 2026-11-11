@@ -4468,6 +4468,34 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-ask-field[data-state='done'] .chat-ask-seat::after {
   display: none;
 }
+/* The rail's last stop (PRDCT-4417): the row of the buttons that answer,
+   its seat centred on them and the hairline ending there. Empty while an
+   answer is owed, filled in the accent the rail reaches it with once every
+   answer fits. */
+.chat-ask-fields:has(> .chat-ask-end)::before {
+  bottom: calc(var(--ask-btn-h) / 2);
+}
+.chat-ask-end {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--ask-btn-h);
+}
+.chat-ask-end > .chat-ask-actions {
+  padding-top: 0;
+}
+.chat-ask-end > .chat-ask-seat {
+  top: calc(var(--ask-btn-h) / 2);
+  translate: 0 -50%;
+}
+.chat-ask-end > .chat-ask-seat::after {
+  scale: 0;
+}
+.chat-ask-end[data-ready='true'] > .chat-ask-seat {
+  background-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
 .chat-ask-seat svg {
   width: calc(var(--spacing) * 2.5);
   height: calc(var(--spacing) * 2.5);

@@ -81,6 +81,25 @@ export async function run(t) {
     assert.match(await card.locator('.chat-prompt-eyebrow').innerText(), /asks/i)
     assert.match(await card.innerText(), /Three things before this machine is set up\./)
     assert.equal(await card.locator('.chat-field-wrap').count(), 4, 'one field per question')
+    // One question open at a time (PRDCT-4416): the first, the rest folded to
+    // their line; the rail ends on an empty seat level with the buttons.
+    assert.equal(
+      await card.locator('.chat-ask-field[data-folded="true"][data-state="upcoming"]').count(),
+      3,
+      'only the first question of the form is open'
+    )
+    assert.equal(await card.locator('.chat-ask-end[data-ready="true"]').count(), 0)
+    const [endSeat, approveBox] = await Promise.all([
+      card.locator('.chat-ask-end > .chat-ask-seat').boundingBox(),
+      card.getByRole('button', { name: /^Approve/ }).boundingBox()
+    ])
+    assert.ok(
+      endSeat &&
+        approveBox &&
+        Math.abs(endSeat.y + endSeat.height / 2 - (approveBox.y + approveBox.height / 2)) <= 1,
+      `the rail's end seat is level with the buttons: ${JSON.stringify({ endSeat, approveBox })}`
+    )
+    t.check('the form opens on its first question, the rail ending level with Approve', true)
     const first = payload(await asked)
     t.check(
       'the call returned pending with its request id once the timeout passed',
@@ -109,10 +128,20 @@ export async function run(t) {
 
     /* 3. The answers, sent, reach the agent keyed by id. */
     await email.fill('luca@antasphere.com')
+    // The answer stays open, and the next question opens under it.
+    const folds = await until(async () => {
+      const n = await card.locator('.chat-ask-field[data-folded="true"]').count()
+      return n === 2 ? n : null
+    })
+    assert.equal(folds, 2, 'the question after the answered one opened, the others still folded')
+    assert.equal(await email.isVisible(), true, 'the answered question stays open')
+    t.check('answering a question keeps it open and opens the next', true)
     await card.locator('.chat-field-wrap[data-kind="github-login"] input').fill('luca-a')
     await card.getByRole('checkbox', { name: /reb/ }).click()
     await card.getByRole('checkbox', { name: /wat/ }).click()
     await card.getByRole('button', { name: "I'm signed in" }).click()
+    await card.locator('.chat-ask-end[data-ready="true"]').waitFor()
+    t.check('every answer in, the rail ends on a filled seat', true)
     await card.getByRole('button', { name: /^Approve/ }).click()
     const result = payload(
       await mcp.call('clave_input_result', { requestId: first.requestId, waitSeconds: 10 })
