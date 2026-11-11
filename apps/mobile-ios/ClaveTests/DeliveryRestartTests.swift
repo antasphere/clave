@@ -455,6 +455,34 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertEqual(restarted.draft, "")
   }
 
+  /// A9: a send of unknown outcome that carried a picked file (the server kept it, its answer lost);
+  /// the controller recreated over a copy of the store; the restarted conversation open, showing the
+  /// bar, the file back on its composer. A pass then delivers the send live: the file leaves the
+  /// composer, nothing can be sent from the emptied field, and a further Send writes nothing.
+  func testAfterARestartAPassThatDeliversLiveTakesTheCarriedFilesOffTheOpenComposer() async throws {
+    let model = try makeModel()
+    await model.appear()
+    model.attach(try file("carried-a9.txt"))
+    let old = await unknownSend(model, "The message that carried a file.", kept: true)
+    await model.flushDraft()
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    XCTAssertEqual(restarted.deliveryMark?.kind, .unknown, "the restarted conversation shows the bar")
+    XCTAssertEqual(restarted.pendingFiles.map(\.name), ["carried-a9.txt"], "with the carried file on its composer")
+    server.answerStatus(.answer("accepted"), for: old)
+    let asked = try await addSentinel()
+    await dropSocket()
+    await passFinished(asked)
+    await until("the composer follows the delivery") { restarted.deliveryNotice != nil }
+    XCTAssertEqual(server.attempts, [old], "found accepted: the pass wrote nothing")
+    XCTAssertEqual(restarted.pendingFiles, [], "the carried file left the composer")
+    XCTAssertEqual(restarted.draft, "", "and the text sent left the field")
+    XCTAssertFalse(restarted.canSend, "nothing to send from the empty field")
+    await restarted.send()
+    XCTAssertEqual(server.attempts.count, 1, "a further Send writes nothing")
+  }
+
   // MARK: - Another conversation's send while this pass is held
 
   /// N2a: A's pass held at A's status read; B (same machine) sends and is accepted; A discards; A's
