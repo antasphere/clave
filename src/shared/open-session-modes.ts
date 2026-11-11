@@ -4,6 +4,7 @@ import {
   type LaunchProfilePreferences,
   type LauncherFamily
 } from './agent-launch'
+import type { InteractionMode } from './harness'
 
 /** The modes `clave_open_session` takes; 'gemini' is the retired CLI's name,
  *  kept as an alias for antigravity. */
@@ -111,6 +112,24 @@ export function chatDefaultFor(
 }
 
 /**
+ * Whether a `clave_open_session` call opens a chat view: its own `chat` when
+ * it says, else (no `profile` named either) what the person's launcher does,
+ * their interaction mode (PRDCT-4425): a chat view for a family that has one
+ * unless the mode is `terminal`. Undefined when nothing decides it: a named
+ * profile decides for itself, and a family with no chat view opens its
+ * terminal profile.
+ */
+export function chatOfInteractionMode(
+  payload: { mode?: OpenSessionMode; chat?: boolean; profile?: string },
+  interactionMode: InteractionMode
+): boolean | undefined {
+  if (payload.chat !== undefined) return payload.chat
+  if (payload.profile) return undefined
+  if (!CHAT_PROFILE_IDS[payload.mode ?? 'claude']) return undefined
+  return interactionMode !== 'terminal'
+}
+
+/**
  * The launch profile a `clave_open_session` call names, with `chat: true`
  * turned into a chat profile of the family. The chat view IS a launch profile,
  * so before `chat` existed an agent could only reach it by knowing the
@@ -124,14 +143,35 @@ export function chatDefaultFor(
  * command. An explicit chat profile still wins. Refuses what cannot be
  * honoured rather than quietly opening a terminal: chat on a mode that has no
  * chat view, or chat beside a profile that is not a chat profile.
+ *
+ * Until 11 November 2026 an omitted `chat` meant the terminal, so an agent
+ * that did not say opened a terminal tab for a person whose launcher opens
+ * chats (PRDCT-4175, PRDCT-4425). An omitted `chat` with no `profile` now
+ * follows `interactionMode`, the person's launcher: the chat default for a
+ * family with a chat view unless the mode is `terminal`, the family's
+ * selected terminal profile (undefined) otherwise. `chat: true` and
+ * `chat: false` keep their meaning, and an explicit `profile` is honoured as
+ * is. A caller that passes no mode keeps the old meaning (`terminal`):
+ * `mcp-server.ts` turns an omitted `chat` into an explicit one from the
+ * person's mode before any road (`chatOfInteractionMode`), so the window
+ * road, the fleet road and the served tools only see an omitted `chat` where
+ * the mode decides nothing (a named profile, a family with no chat view) or
+ * where a chat cannot open (Claude on Windows).
  */
 export function resolveProfileRef(
   payload: { mode?: OpenSessionMode; chat?: boolean; profile?: string },
-  chatDefault?: string
+  chatDefault?: string,
+  interactionMode: InteractionMode = 'terminal'
 ): string | undefined {
-  if (!payload.chat) return payload.profile
   const mode = payload.mode ?? 'claude'
   const chatProfile = CHAT_PROFILE_IDS[mode]
+  if (payload.chat === undefined && !payload.profile) {
+    if (!chatProfile || interactionMode === 'terminal') return undefined
+    return chatDefault !== undefined && isChatProfileRef(mode as ChatFamily, chatDefault)
+      ? chatDefault
+      : chatProfile
+  }
+  if (!payload.chat) return payload.profile
   if (!chatProfile) {
     throw new Error(`chat: true needs mode "claude" or "codex"; "${mode}" has no chat view`)
   }

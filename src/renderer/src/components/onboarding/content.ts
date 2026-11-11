@@ -1,4 +1,4 @@
-import { LAB_VIEW } from '../../../../../plugins/chat-view/src/lab/meta'
+import { INTERACTION_MODES, type InteractionMode } from '../../../../shared/harness'
 
 /* The walk's words and the few pure rules under it (Onboarding.tsx). */
 
@@ -11,28 +11,35 @@ Start by telling me, in a few short sentences and without jargon, what you can d
 
 If anything needs to be installed or set up on this Mac along the way, tell me what it is and why, and ask me before you do it.`
 
-export const CHAT_VIEWS = [
-  {
-    id: 'clave.chat-view/chat',
-    title: 'Chat',
-    tagline:
-      'A conversation, like a messaging app: your messages on one side, the answers flowing in.',
-    preview: 'chat'
-  },
-  {
-    id: 'clave.chat-view/terminal',
-    title: 'Enclave',
-    tagline: 'Dense and calm, every step the assistant takes laid out in one column.',
-    preview: 'enclave'
-  },
-  {
-    id: 'clave.chat-view/lab',
-    title: LAB_VIEW.title,
-    tagline:
-      'Each question gets a page of its own, written like a document. It can read the answer aloud.',
-    preview: 'lab'
-  }
-] as const
+/** How each interaction mode is drawn in the walk's step. */
+const PREVIEWS: Record<InteractionMode, 'chat' | 'enclave' | 'lab' | 'terminal'> = {
+  chat: 'chat',
+  enclave: 'enclave',
+  folio: 'lab',
+  terminal: 'terminal'
+}
+
+/**
+ * The walk's choice of how a conversation opens: the interaction modes
+ * (`shared/harness.ts`, PRDCT-4425), the three chat views then the terminal.
+ * `id` is the chat view's id, or `terminal`; `mode` is what the walk writes.
+ */
+export const CHAT_VIEWS: readonly {
+  id: string
+  mode: InteractionMode
+  title: string
+  tagline: string
+  preview: 'chat' | 'enclave' | 'lab' | 'terminal'
+}[] = [
+  ...INTERACTION_MODES.filter((mode) => mode.viewId !== null),
+  ...INTERACTION_MODES.filter((mode) => mode.viewId === null)
+].map((mode) => ({
+  id: mode.viewId ?? 'terminal',
+  mode: mode.id,
+  title: mode.title,
+  tagline: mode.tagline,
+  preview: PREVIEWS[mode.id]
+}))
 
 /** The folder the walk will create, as the reader reads a path: under ~ when it is. */
 export function folderPreview(home: string, parent: string, name: string): string {

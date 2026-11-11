@@ -941,6 +941,33 @@ describe('Codex chat permissions', () => {
       )
     ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
   })
+  it("starts on the person's rung, which replaces the profile's flags (PRDCT-4424)", async () => {
+    expect(
+      await threadParams(
+        { permissionRung: 'read-only' },
+        profile('--sandbox', 'danger-full-access', '--approve-for-me')
+      )
+    ).toMatchObject({
+      sandbox: 'read-only',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user'
+    })
+    expect(await threadParams({ permissionRung: 'danger-full-access' }, profile())).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never'
+    })
+    expect(
+      await threadParams({ permissionRung: 'plan' }, profile('-s', 'workspace-write'))
+    ).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'on-request' })
+  })
+  it('lets dangerous mode win over the rung', async () => {
+    expect(
+      await threadParams(
+        { permissionMode: 'never', sandbox: 'danger-full-access', permissionRung: 'read-only' },
+        profile()
+      )
+    ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
+  })
   /* The thread's binding to this tab's own Clave tool server, by its fresh
      name. Codex asks before every tool of a server left on its default mode
      (auto: any tool not annotated read-only, and Clave's carry no

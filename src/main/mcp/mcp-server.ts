@@ -21,7 +21,8 @@ import { ptyManager } from '../pty-manager'
 import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
 import { launchProfileManager } from '../launch-profile-manager'
 import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
-import { chatDefaultFor } from '../../shared/open-session-modes'
+import { chatDefaultFor, chatOfInteractionMode } from '../../shared/open-session-modes'
+import { getLaunchSettings } from '../launch-settings'
 import { getPreference } from '../ipc-handlers/clave-file-handlers'
 import { initLineage, parentOf, setParent } from '../sessions/lineage'
 import { publishOrSend } from '../server/session-events'
@@ -542,6 +543,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
       .map(({ id, name }) => ({ id, name })),
   chatDefault: (family, workspaceId) =>
     chatDefaultFor(launchProfileManager.getPreferences(), family, workspaceId),
+  interactionMode: () => getLaunchSettings().interactionMode,
   launchModel: (family, launchProfileId, workspaceId) =>
     rememberedSpawnModel(family, launchProfileId, workspaceId),
   pins: () => workspaceManager.load().pins as PinnedBlueprint[],
@@ -670,6 +672,24 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
         p = prepared.payload
       } else if (typeof p.cwd !== 'string' || !p.cwd) {
         throw new Error('cwd is required unless resume names a conversation to reopen.')
+      }
+      // An omitted `chat` opens the way the person's launcher does, their
+      // interaction mode (PRDCT-4175, PRDCT-4425): decided here, once, so
+      // every road after this one (served, window, fleet) receives an
+      // explicit flag. A named profile decides for itself; a Claude chat
+      // is not offered on Windows, where its terminal stays the answer.
+      if (p.chat === undefined) {
+        const mode = typeof p.mode === 'string' ? p.mode : undefined
+        const chat = chatOfInteractionMode(
+          {
+            ...(mode ? { mode: mode as Parameters<typeof chatOfInteractionMode>[0]['mode'] } : {}),
+            ...(typeof p.profile === 'string' ? { profile: p.profile } : {})
+          },
+          getLaunchSettings().interactionMode
+        )
+        const claudeOnWindows =
+          process.platform === 'win32' && (mode === undefined || mode === 'claude')
+        if (chat !== undefined && !(chat && claudeOnWindows)) p = { ...p, chat }
       }
     }
     if (command === 'openWindow') {
@@ -937,7 +957,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_session',
     {
       description:
-        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch.',
+        "Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex open in Clave's CHAT VIEW — the conversation interface with message bubbles and a composer — or in the terminal. Omit `chat` to open the way the person's launcher does (their interaction mode: a chat view or the terminal); `chat: true` forces a chat view, `chat: false` the terminal. Optionally place it in a group — pass a groupId, an exact group name, or \"mine\" for the calling tab's own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch.",
       inputSchema: {
         attachToParent: z
           .boolean()
@@ -984,7 +1004,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .boolean()
           .optional()
           .describe(
-            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.'
+            'true forces Clave\'s chat view ("chat", "chat mode", "chat session", "the chat UI"), false the terminal; omit it to open the way the person\'s launcher does (their interaction mode). true is for claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.'
           ),
         dangerous: z
           .boolean()

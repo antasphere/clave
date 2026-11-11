@@ -91,6 +91,12 @@ vi.mock('./sessions/chat-model-default', () => ({
   rememberedChatModel: () => undefined,
   rememberedChatEffort: () => undefined
 }))
+vi.mock('./preferences-manager', () => ({
+  preferencesManager: {
+    get: (key: string) => (key === 'harnessSettings' ? {} : undefined),
+    set: () => {}
+  }
+}))
 vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))

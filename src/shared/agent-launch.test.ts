@@ -3,6 +3,7 @@ import {
   AGENT_CAPABILITIES,
   buildAgentArgv,
   codexProfilePolicy,
+  codexRungPolicy,
   resolveLaunchProfile,
   sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
@@ -335,5 +336,134 @@ describe('Codex profile policy', () => {
   it('asks for nothing when the profile names no permission, or an unknown value', () => {
     expect(codexProfilePolicy(codex(['env', '-u', 'OPENAI_API_KEY', 'codex']))).toEqual({})
     expect(codexProfilePolicy(codex(['codex', '-s', 'everything', '-a']))).toEqual({})
+  })
+})
+
+describe('the permission default reaches the argv (PRDCT-4424)', () => {
+  const TITLE = 'tui.terminal_title=["app-name","status","spinner"]'
+  const profileOf = (family: LaunchProfile['family'], command: string): LaunchProfile => ({
+    id: `builtin-${family}`,
+    name: family,
+    family,
+    command: [command],
+    additionalArgs: []
+  })
+  const claude = profileOf('claude', 'claude')
+  const codex = profileOf('codex', 'codex')
+  const agy = profileOf('antigravity', 'agy')
+  const pi = profileOf('pi', 'pi')
+
+  it('claude: a rung is --permission-mode, bypass is the skip flag and never a mode', () => {
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'acceptEdits' })
+    ).toEqual(['claude', '--permission-mode', 'acceptEdits'])
+    expect(buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'default' })).toEqual([
+      'claude',
+      '--permission-mode',
+      'manual'
+    ])
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'bypassPermissions' })
+    ).toEqual(['claude', '--dangerously-skip-permissions'])
+    expect(
+      buildAgentArgv({
+        kind: 'claude',
+        profile: claude,
+        permissionMode: 'plan',
+        dangerousMode: true
+      })
+    ).toEqual(['claude', '--dangerously-skip-permissions'])
+  })
+
+  it('codex: a rung is --sandbox, full access turns approvals off too', () => {
+    expect(buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'read-only' })).toEqual([
+      'codex',
+      '--sandbox',
+      'read-only',
+      '-c',
+      TITLE
+    ])
+    expect(
+      buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'danger-full-access' })
+    ).toEqual([
+      'codex',
+      '--sandbox',
+      'danger-full-access',
+      '--ask-for-approval',
+      'never',
+      '-c',
+      TITLE
+    ])
+  })
+
+  it('codex: on a resume the rung goes before the thread id, as the approvals flag does', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'codex',
+        profile: codex,
+        resumeSessionId: 'thread-1',
+        permissionMode: 'workspace-write',
+        model: 'gpt-5.5'
+      })
+    ).toEqual([
+      'codex',
+      'resume',
+      '--sandbox',
+      'workspace-write',
+      '-m',
+      'gpt-5.5',
+      '-c',
+      TITLE,
+      'thread-1'
+    ])
+  })
+
+  it('codex: dangerous mode keeps its own flag and ignores the rung; a non-rung is dropped', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'codex',
+        profile: codex,
+        permissionMode: 'read-only',
+        dangerousMode: true
+      })
+    ).toEqual(['codex', '--yolo', '-c', TITLE])
+    expect(
+      buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'acceptEdits' })
+    ).toEqual(['codex', '-c', TITLE])
+  })
+
+  it('antigravity: a rung of its ladder is --mode, anything else is dropped', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'antigravity',
+        profile: agy,
+        permissionMode: 'plan',
+        initialPrompt: 'hi'
+      })
+    ).toEqual(['agy', '--mode', 'plan', '-i', 'hi'])
+    expect(
+      buildAgentArgv({ kind: 'antigravity', profile: agy, permissionMode: 'read-only' })
+    ).toEqual(['agy'])
+  })
+
+  it('pi: ignores it', () => {
+    expect(
+      buildAgentArgv({ kind: 'pi', profile: pi, sessionId: 'pi-1', permissionMode: 'acceptEdits' })
+    ).toEqual(['pi', '--session-id', 'pi-1'])
+  })
+
+  it("codex chat: a rung's thread policy", () => {
+    expect(codexRungPolicy('read-only')).toEqual({
+      sandbox: 'read-only',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user'
+    })
+    expect(codexRungPolicy('workspace-write')?.approvalPolicy).toBe('on-request')
+    expect(codexRungPolicy('danger-full-access')).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never'
+    })
+    expect(codexRungPolicy('never')).toBeUndefined()
+    expect(codexRungPolicy(undefined)).toBeUndefined()
   })
 })

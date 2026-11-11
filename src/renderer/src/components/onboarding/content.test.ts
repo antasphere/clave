@@ -16,12 +16,15 @@ describe('the first-run walk', () => {
     expect(words).not.toMatch(/antasphere|team hub|steward|\bhub\b/i)
   })
 
-  it('offers the three chat views by their plugin ids', () => {
+  it('offers the three chat views by their plugin ids, then the terminal', () => {
     expect(CHAT_VIEWS.map((v) => v.id)).toEqual([
       'clave.chat-view/chat',
       'clave.chat-view/terminal',
-      'clave.chat-view/lab'
+      'clave.chat-view/lab',
+      'terminal'
     ])
+    expect(CHAT_VIEWS.map((v) => v.mode)).toEqual(['chat', 'enclave', 'folio', 'terminal'])
+    expect(CHAT_VIEWS.map((v) => v.preview)).toEqual(['chat', 'enclave', 'lab', 'terminal'])
   })
 
   it('shows the folder to be made under ~ when it is under home', () => {

@@ -1,4 +1,5 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
+import { HARNESS_BY_ID } from './harness'
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi'
 export type AgentKind = LauncherFamily | 'claude-agents'
@@ -270,9 +271,12 @@ export function buildAgentArgv(input: {
   claudeSettings?: string
   mcpConfigPath?: string
   piStateExtensionPath?: string
-  // ── ADR 0004: a routine run's own flags, Claude only ──
+  // ── ADR 0004: a routine run's own flags ──
   effort?: string
-  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+  /** The rung of the harness's own ladder the launch starts on (PRDCT-4424):
+   *  Claude's `--permission-mode`, Codex's `--sandbox`, Antigravity's
+   *  `--mode`; Pi has none. `dangerousMode` wins over it. */
+  permissionMode?: string
   pluginDir?: string
   appendSystemPrompt?: string
 }): string[] {
@@ -287,17 +291,22 @@ export function buildAgentArgv(input: {
   }
   const argv = [...input.profile.command, ...input.profile.additionalArgs]
   if (input.kind === 'claude-agents') return [...argv, 'agents']
+  // Bypass is the skip flag, never a mode passed as such: a rung of
+  // `bypassPermissions` launches as `dangerousMode` does.
+  const dangerous =
+    input.dangerousMode === true ||
+    (input.kind === 'claude' && input.permissionMode === 'bypassPermissions')
   if (input.kind === 'claude') {
     if (input.resumeSessionId) argv.push('--resume', input.resumeSessionId)
     else if (input.sessionId) argv.push('--session-id', input.sessionId)
-    if (input.dangerousMode) argv.push('--dangerously-skip-permissions')
+    if (dangerous) argv.push('--dangerously-skip-permissions')
     if (input.model) argv.push('--model', input.model)
     if (input.claudeSettings) argv.push('--settings', input.claudeSettings)
     if (input.mcpConfigPath) argv.push('--mcp-config', input.mcpConfigPath)
     // ADR 0004: a routine run's own flags. The CLI names the ask-every-time
     // mode `manual` on its command line; `default` is its running name.
     if (input.effort) argv.push('--effort', input.effort)
-    if (input.permissionMode && !input.dangerousMode)
+    if (input.permissionMode && !dangerous)
       argv.push(
         '--permission-mode',
         input.permissionMode === 'default' ? 'manual' : input.permissionMode
@@ -310,11 +319,22 @@ export function buildAgentArgv(input: {
     if (input.resumeSessionId) argv.push('resume')
     if (input.dangerousMode) {
       argv.push(input.resumeSessionId ? '--dangerously-bypass-approvals-and-sandbox' : '--yolo')
+    } else if (isCodexRung(input.permissionMode)) {
+      // The person's rung (PRDCT-4424): the sandbox, and for full access the
+      // approvals off too, which is what the rung promises. Before the thread
+      // id on a resume, as the approvals flag is.
+      argv.push('--sandbox', input.permissionMode)
+      if (input.permissionMode === 'danger-full-access') argv.push('--ask-for-approval', 'never')
     }
     if (input.model) argv.push('-m', input.model)
     argv.push('-c', CODEX_TITLE_CONFIG)
     if (input.resumeSessionId) argv.push(input.resumeSessionId)
   } else if (input.kind === 'antigravity') {
+    if (
+      input.permissionMode &&
+      HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === input.permissionMode)
+    )
+      argv.push('--mode', input.permissionMode)
     if (input.initialPrompt) argv.push('-i', input.initialPrompt)
     return argv
   } else {
@@ -342,6 +362,27 @@ export interface CodexThreadPolicy {
 }
 const CODEX_SANDBOX_VALUES = new Set<string>(['read-only', 'workspace-write', 'danger-full-access'])
 const CODEX_APPROVAL_VALUES = new Set<string>(['untrusted', 'on-request', 'never'])
+
+/** Is this a rung of Codex's ladder (`shared/harness.ts`): its sandbox modes. */
+export function isCodexRung(value: unknown): value is CodexSandboxMode {
+  return typeof value === 'string' && CODEX_SANDBOX_VALUES.has(value)
+}
+
+/**
+ * The thread settings a Codex rung stands for (PRDCT-4424), the same three
+ * presets Codex's own TUI offers: read only and workspace ask on request,
+ * full access never asks. A chat thread takes them as thread/start
+ * parameters, where a terminal takes `--sandbox`. Undefined for anything
+ * that is not a rung.
+ */
+export function codexRungPolicy(rung: unknown): CodexThreadPolicy | undefined {
+  if (!isCodexRung(rung)) return undefined
+  return {
+    sandbox: rung,
+    approvalPolicy: rung === 'danger-full-access' ? 'never' : 'on-request',
+    approvalsReviewer: 'user'
+  }
+}
 
 /**
  * The permissions a Codex profile's own flags ask for, as a chat thread's
