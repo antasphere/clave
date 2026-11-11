@@ -61,6 +61,9 @@ export interface HelperConfig {
   model: string
   fallbackModel?: string
   claudeProfileId?: string | null
+  /** PRDCT-4330: this process runs no helper (a server of its own backs the
+   *  window and runs them all); the sentence the refusal carries. */
+  refused?: string
 }
 
 /** Where overrides come from (the Settings page, PRDCT-4330): a partial
@@ -107,7 +110,9 @@ export function helperConfig(definition: AnyHelper): HelperConfig {
     enabled: override.enabled ?? true,
     model: override.model || definition.model,
     fallbackModel: 'fallbackModel' in override ? override.fallbackModel : definition.fallbackModel,
-    claudeProfileId: override.claudeProfileId
+    claudeProfileId: override.claudeProfileId,
+    // PRDCT-4330: passed through, so the runner refuses before any spawn.
+    ...(override.refused && { refused: override.refused })
   }
 }
 

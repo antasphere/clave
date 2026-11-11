@@ -22,10 +22,11 @@ import { useNow } from '../../lib/use-now'
 import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { QuotaOverview, ToolToggle, type QuotaProvider, type Tool } from '../usage/UsagePanel'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
+import { HelpersList } from './HelpersSettings'
 import { SettingsPage, SettingsSection, SettingsCard, SettingsCallout } from './primitives'
 
 /**
- * The four pages of the Agents group when the machine picker names a saved
+ * The pages of the Agents group when the machine picker names a saved
  * Clave server (PRDCT-4152): the same pages as this Mac's, read from the
  * server's own settings over its connection. Accounts are read-only here,
  * since an account is signed in on the server itself; the launch profiles
@@ -147,6 +148,29 @@ export function ServerAgentsSettings({ serverId }: { serverId: string }): ReactE
         description={`The command each agent family launches with on ${page.name}. Keep passwords and API keys out of it: profiles are stored in plain text on the server.`}
       />
     </div>
+  )
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** The helpers of a server (PRDCT-4330): read and written on the server,
+ *  whose runner reads them at each call; its own Claude accounts to pick. */
+export function ServerHelpersSettings({ serverId }: { serverId: string }): ReactElement {
+  const page = useServerPage(serverId)
+  const { settings, name } = page
+  return (
+    <SettingsPage
+      title="Helpers"
+      description={`The short model calls Clave makes on its own on ${name}: tab titles, digests, commit messages. Turn one off, or move it to another model or account of the server.`}
+      testId="helpers"
+    >
+      <div className="settings-page-sections" data-server-settings={serverId}>
+        <ServerNotice serverId={serverId} {...page} />
+        {page.connected && settings.status !== 'error' && (
+          <HelpersList machine={serverId} machineName={name} accounts={settings.claude} />
+        )}
+      </div>
+    </SettingsPage>
   )
 }
 

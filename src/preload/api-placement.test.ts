@@ -94,6 +94,8 @@ const UNREADABLE_NO_PLACE = new Set([
   'launchProfileDelete',
   'launchProfileSetGlobal',
   'launchProfileSetWorkspace',
+  'helpersList',
+  'helperSet',
   'routinesList',
   'routinesRunNow',
   'routinesDismiss',

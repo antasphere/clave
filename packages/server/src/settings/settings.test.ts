@@ -176,6 +176,53 @@ describe('the settings group of the HTTP API', () => {
   })
 })
 
+describe('the helpers on the server (PRDCT-4330)', () => {
+  it('lists the host’s helpers and writes one field, passing only what was sent', async () => {
+    const listed = await get('/helpers')
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toEqual({ helpers: fake.helperList })
+    const set = await post('/helpers', { helperId: 'tab-title', model: 'sonnet' })
+    expect(set.status).toBe(200)
+    expect(await set.json()).toEqual({
+      helpers: [expect.objectContaining({ id: 'tab-title', model: 'sonnet', enabled: true })]
+    })
+    expect(fake.calls.filter((c) => c.method === 'helpers.set')).toEqual([
+      { method: 'helpers.set', args: ['tab-title', { model: 'sonnet' }] }
+    ])
+    const off = await post('/helpers', {
+      helperId: 'tab-title',
+      enabled: false,
+      model: null,
+      account: { kind: 'account', accountId: 'helpers' }
+    })
+    expect(await off.json()).toEqual({
+      helpers: [
+        expect.objectContaining({
+          enabled: false,
+          model: 'haiku',
+          account: { kind: 'account', accountId: 'helpers' }
+        })
+      ]
+    })
+    expect(fake.calls.at(-1)?.args).toEqual([
+      'tab-title',
+      { enabled: false, model: null, account: { kind: 'account', accountId: 'helpers' } }
+    ])
+  })
+
+  it('refuses an unknown helper with its sentence, and an account it cannot decode', async () => {
+    const unknown = await post('/helpers', { helperId: 'nope', enabled: false })
+    expect(unknown.status).toBe(422)
+    expect(await unknown.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'There is no helper "nope" on this machine.'
+    })
+    expect(
+      (await post('/helpers', { helperId: 'tab-title', account: { kind: 'someone' } })).status
+    ).toBe(400)
+  })
+})
+
 describe('the settings events on the push channel', () => {
   const welcomed = async (): Promise<Peer> => {
     const peer = new Peer(server.url.replace('http', 'ws') + '/push')

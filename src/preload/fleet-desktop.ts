@@ -24,6 +24,7 @@ import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
+import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type {
   FleetDesktopAPI,
@@ -1107,6 +1108,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         family,
         profileId
       )) as LaunchSettings['profiles']
+    },
+    // The helpers live on the machine that runs them: a server's are read
+    // and written there, never on this Mac (PRDCT-4330).
+    fleetHelpers: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.helpersList()
+      const { api } = await backing(serverId)
+      return [...(await api.settings.helpers.list())] as HelperPreference[]
+    },
+    fleetHelperSet: async (serverId, helperId, patch) => {
+      if (serverId === LOCAL_SERVER_ID) return local.helperSet(helperId, patch)
+      const { api } = await backing(serverId)
+      return [...(await api.settings.helpers.set(helperId, patch))] as HelperPreference[]
     },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)

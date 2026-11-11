@@ -36,6 +36,8 @@ export const SettingsLive = HttpApiBuilder.group(ClaveApi, 'settings', (handlers
     .handle('deleteLaunchProfile', HttpCqrs.command(S.DeleteLaunchProfile))
     .handle('setGlobalLaunchProfile', HttpCqrs.command(S.SetGlobalLaunchProfile))
     .handle('setWorkspaceLaunchProfile', HttpCqrs.command(S.SetWorkspaceLaunchProfile))
+    .handle('listHelperPreferences', HttpCqrs.query(S.ListHelperPreferences))
+    .handle('setHelperPreference', HttpCqrs.command(S.SetHelperPreference))
     .handle('setAppIcon', HttpCqrs.command(S.SetAppIcon))
     .handle('readAntasphereAccount', HttpCqrs.query(S.ReadAntasphereAccount))
     .handle('signInWithAntasphere', HttpCqrs.command(S.SignInWithAntasphere))

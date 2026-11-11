@@ -27,6 +27,7 @@ import {
   ClearCodexAccountCredential,
   DeleteLaunchProfile,
   ListAccountLogins,
+  ListHelperPreferences,
   ListClaudeAccounts,
   ListCodexAccounts,
   ListLaunchProfiles,
@@ -47,6 +48,7 @@ import {
   SetAppIcon,
   SetClaudeAccountToken,
   SetGlobalLaunchProfile,
+  SetHelperPreference,
   SetLastActiveWorkspace,
   SetWorkspaceLaunchProfile,
   SettingsRefused,
@@ -175,6 +177,19 @@ export const settingsHandlers = [
   ),
   CommandHandler.make(SetWorkspaceLaunchProfile, (p) =>
     must((s) => s.launchProfiles.setWorkspace(p.workspaceId, p.family, p.profileId))
+  ),
+  // The helpers (PRDCT-4330): the host's preference, whole list each way.
+  QueryHandler.make(ListHelperPreferences, () =>
+    ask(async (s) => ({ helpers: await s.helpers.list() }))
+  ),
+  CommandHandler.make(SetHelperPreference, (p) =>
+    must(async (s) => ({
+      helpers: await s.helpers.set(p.helperId, {
+        ...(p.enabled !== undefined && { enabled: p.enabled }),
+        ...(p.model !== undefined && { model: p.model }),
+        ...(p.account !== undefined && { account: p.account })
+      })
+    }))
   ),
   // Preferences: the icon needs a Dock, which this server may not have.
   CommandHandler.make(SetAppIcon, (p) => call((s) => s.preferences.setAppIcon(p.icon))),

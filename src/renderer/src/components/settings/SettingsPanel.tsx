@@ -61,6 +61,7 @@ import {
 } from './primitives'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { HelpersSettings } from './HelpersSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
 import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
@@ -73,6 +74,7 @@ import {
   ServerAccountsSettings,
   ServerActivitySettings,
   ServerAgentsSettings,
+  ServerHelpersSettings,
   ServerUsageSettings
 } from './ServerPages'
 
@@ -231,6 +233,8 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' &&
           (server ? <ServerAgentsSettings serverId={server} /> : <AgentsSettings />)}
+        {settingsSection === 'helpers' &&
+          (server ? <ServerHelpersSettings serverId={server} /> : <HelpersSettings />)}
         {settingsSection === 'appearance' && <AppearanceSettings />}
         {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}

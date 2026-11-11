@@ -109,12 +109,38 @@ export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDiges
 }
 const workInflight = new Map<string, Promise<WorkDigestResult>>()
 
-function read(request: DigestRequest): Promise<DigestResult> {
+// ── PRDCT-4330 (helpers-settings lane) ──
+/** Whether the harness's canned reply stands in for the model. A spec that
+ *  puts a stub `claude` on the PATH sets CLAVE_E2E_DIGEST_RUNNER=1 to send the
+ *  digests through the runner, so their arguments can be read. */
+const harnessReplies = (): boolean =>
+  TEST_NO_ACTIVATE && process.env.CLAVE_E2E_DIGEST_RUNNER !== '1'
+
+/** A helper that is off never reaches the harness's reply either: the
+ *  preference is read first, as the runner reads it. */
+function switchedOff(
+  helper: typeof exchangeDigestHelper | typeof workDigestHelper
+): { ok: false; error: string; reason: 'disabled' } | null {
+  return helperConfig(helper).enabled
+    ? null
+    : {
+        ok: false,
+        error: `Switched off in Settings › Helpers (${helper.label}).`,
+        reason: 'disabled'
+      }
+}
+// ── end PRDCT-4330 ──
+
+async function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
   if (TEST_NO_ACTIVATE) {
+    const off = switchedOff(exchangeDigestHelper)
+    if (off) return off
     journalRead('exchange', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
     const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return testAccount(exchangeDigestHelper, request.launch).then(
@@ -149,10 +175,14 @@ function read(request: DigestRequest): Promise<DigestResult> {
     })
 }
 
-function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
+async function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   // Under the harness, the reply comes from CLAVE_E2E_WORK_DIGEST_REPLY.
   if (TEST_NO_ACTIVATE) {
+    const off = switchedOff(workDigestHelper)
+    if (off) return off
     journalRead('work', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
     const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
     return testAccount(workDigestHelper, request.launch).then(
@@ -209,19 +239,16 @@ function testReply(reply: string | undefined, launch: DigestLaunch): string | un
 
 /** Under the harness, a read stands in for the run up to the model call:
  *  the helper's own config (`helperConfig`, the seam the Settings page sets)
- *  decides whether it runs and on which account (`helperAccountId`), and that
- *  account resolves as a spawn resolves it (`accountTokenForSpawn`): a helper
- *  switched off answers `disabled`, an account this process does not know
- *  fails as the CLI would be refused, `auth`. */
+ *  decides on which account it runs (`helperAccountId`), and that account
+ *  resolves as a spawn resolves it (`accountTokenForSpawn`): an account this
+ *  process does not know fails as the CLI would be refused, `auth`. Whether
+ *  the helper runs at all was read before (`switchedOff`). */
 async function testAccount(
   definition: Parameters<typeof helperConfig>[0],
   launch: DigestLaunch
-): Promise<{ ok: false; error: string; reason: 'auth' | 'disabled' } | null> {
-  const config = helperConfig(definition)
-  if (!config.enabled)
-    return { ok: false, error: `${definition.label} is switched off`, reason: 'disabled' }
+): Promise<{ ok: false; error: string; reason: 'auth' } | null> {
   try {
-    await accountTokenForSpawn('claude', helperAccountId(config, launch))
+    await accountTokenForSpawn('claude', helperAccountId(helperConfig(definition), launch))
     return null
   } catch (error) {
     return {

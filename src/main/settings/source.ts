@@ -55,6 +55,11 @@ import type {
 } from '../../shared/antasphere-account-types'
 import type { Workspace } from '../../shared/workspace-types'
 import type { LaunchProfile } from '../../shared/agent-launch'
+import type {
+  HelperAccount,
+  HelperPreferencePatch,
+  HelperPreferenceView
+} from '../helpers/preferences'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -88,6 +93,14 @@ export interface SettingsManagers {
   launchProfiles: LaunchProfileManager
   preferences: PreferencesManager
   workspaces: WorkspaceManager
+  /** The helpers' preference on this host (PRDCT-4330); absent, refused. */
+  helpers?: {
+    list(): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+    set(
+      id: string,
+      patch: HelperPreferencePatch
+    ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+  }
   /** Where the process has a PTY for a login (the shell); absent, a login is
    *  refused. Loaded on the first call, not at construction: the login
    *  manager pulls the PTY backend in, which the shell must not load from
@@ -284,6 +297,17 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       setGlobal: (family, profileId) => m.launchProfiles.setGlobalDefault(family, profileId),
       setWorkspace: (workspaceId, family, profileId) =>
         m.launchProfiles.setWorkspaceDefault(workspaceId, family, profileId)
+    },
+    helpers: {
+      list: () =>
+        m.helpers ? m.helpers.list() : refuse('helpers', 'This server runs no helpers.'),
+      set: (helperId, patch) =>
+        m.helpers
+          ? m.helpers.set(helperId, {
+              ...patch,
+              ...(patch.account && { account: mutable<HelperAccount>(patch.account) })
+            })
+          : refuse('helpers', 'This server runs no helpers.')
     },
     preferences: {
       setAppIcon: (icon) => {
