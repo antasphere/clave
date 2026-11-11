@@ -171,22 +171,20 @@ public actor UnknownSends {
     }.value
   }
 
-  /// Keeps each of `sends` whose id the ledger does not hold yet; one the ledger holds stays as it
-  /// is.
-  func addMissing(_ sends: [UnknownSend]) async throws {
+  /// Keeps `sends` as this machine's ledger when the machine has none yet. A ledger that exists, even
+  /// an empty one, was made by a move that ran before or by this machine's own sends since, and is
+  /// left as it is.
+  func moveIn(_ sends: [UnknownSend]) async throws {
     try await queue.enqueue { [self] in
-      let current = try await list()
-      let missing = sends.filter { send in !current.contains { $0.clientMessageId == send.clientMessageId } }
-      if !missing.isEmpty { try await write(current + missing) }
+      guard try await store.get(key) == nil else { return }
+      try await write(sends)
     }.value
   }
 
+  /// An emptied ledger keeps its key with an empty list, so the key still says that this machine's
+  /// ledger exists.
   private func write(_ sends: [UnknownSend]) async throws {
-    if sends.isEmpty {
-      try await store.remove(key)
-    } else {
-      try await store.set(key, encodeStored(sends))
-    }
+    try await store.set(key, encodeStored(sends))
   }
 }
 
@@ -201,10 +199,11 @@ private func decodeLedger(_ raw: String) -> [UnknownSend] {
 public let legacyUnknownSendsKey = "clave.unknown-sends"
 
 /// Moves the records of the list every machine of an owner once shared to their machine's own
-/// ledger: each record under its machine's key unless a record of its id is already there, none
-/// copied to another machine and none dropped, then the old list removed. Run once per owner store
-/// before its first connection, while nothing else writes these ledgers; once the old list is gone,
-/// a run changes nothing.
+/// ledger: a machine's records go only into a ledger that does not exist yet (its key absent), none
+/// copied to another machine; the old list is removed only once every machine's write succeeded. A
+/// move that fails part way can therefore run again: a ledger it made, settled or emptied since,
+/// gets nothing back. Run per owner store before its first connection, while nothing else writes
+/// these ledgers; once the old list is gone, a run changes nothing.
 public func migrateLegacyUnknownSends(_ store: any KeyValueStore) async throws {
   guard let raw = try await store.get(legacyUnknownSendsKey) else { return }
   var machines: [String] = []
@@ -214,7 +213,7 @@ public func migrateLegacyUnknownSends(_ store: any KeyValueStore) async throws {
     records[record.machineId, default: []].append(record)
   }
   for machineId in machines {
-    try await UnknownSends(store: store, machineId: machineId).addMissing(records[machineId] ?? [])
+    try await UnknownSends(store: store, machineId: machineId).moveIn(records[machineId] ?? [])
   }
   try await store.remove(legacyUnknownSendsKey)
 }
