@@ -61,6 +61,7 @@
     "chat-turn-copy.spec.mjs": 8,
     "chat-turn-foot.spec.mjs": 14,
     "chat-view.spec.mjs": 11,
+    "chat-work-cards-reveal.spec.mjs": 23,
     "chat-work-stretch.spec.mjs": 45,
     "claude-accounts.spec.mjs": 26,
     "claude-chat-adapter.spec.mjs": 11,

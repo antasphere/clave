@@ -19,6 +19,7 @@ import { EmptyState } from '../ui/EmptyState'
 import { GroupViewPanel } from './GroupViewPanel'
 import { SessionViewPanel } from './SessionViewPanel'
 import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
+import { settleOnReveal } from '../../lib/settle-on-reveal'
 
 /**
  * The ids this pane has shown at least once, in order of first appearance.
@@ -356,6 +357,9 @@ export function TerminalGrid(): React.JSX.Element {
           return (
             <div
               key={session.id}
+              // A chat tab chosen again leaves `display: none`, which starts
+              // every entering transition in it over (PRDCT-4419).
+              ref={settleOnReveal}
               data-terminal-tile={session.id}
               className={
                 linkedActive
