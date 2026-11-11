@@ -18,14 +18,20 @@ const LOGOS: Record<AgentUpdateId, (p: { className?: string }) => React.JSX.Elem
   pi: PiLogo
 }
 
-function AgentRow({
+/** One agent CLI's row: logo, name and version, how it was installed, its
+ *  update state and the Update button. Shared by Software Update and
+ *  Settings → Harnesses; `action` is a control of the caller's beside it
+ *  (the Harnesses page's Install). */
+export function AgentRow({
   agent,
   autoUpdate,
-  onUpdate
+  onUpdate,
+  action
 }: {
   agent: AgentUpdateStatus
   autoUpdate: boolean
   onUpdate: () => void
+  action?: React.ReactNode
 }): React.JSX.Element {
   const Logo = LOGOS[agent.id]
   const badge = installLabel(agent.install)
@@ -63,6 +69,7 @@ function AgentRow({
           {agent.phase === 'updating' ? 'Updating…' : 'Update'}
         </button>
       )}
+      {action}
     </SettingsRow>
   )
 }

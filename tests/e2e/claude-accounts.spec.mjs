@@ -171,12 +171,13 @@ export async function run(t) {
     await win.locator('[data-settings-nav-row="accounts"]').click()
     const accountsPage = win.locator('[data-settings-page="accounts"]')
     await accountsPage.waitFor()
-    await accountsPage.getByRole('button', { name: 'Add with a token', exact: true }).click()
+    await accountsPage.locator('[data-connect]').click()
+    await win.locator('[data-connect-secondary="anthropic"]').click()
     const form = accountsPage.locator('[data-claude-token-form]')
     await form.waitFor()
-    await form.getByLabel('Account name').fill('Work')
+    await form.getByLabel('Connection name').fill('Work')
     await form.getByLabel('Claude Code token').fill(WORK_TOKEN)
-    await form.getByRole('button', { name: 'Add account', exact: true }).click()
+    await form.getByRole('button', { name: 'Add connection', exact: true }).click()
     await form.locator('[data-claude-token-note]').waitFor()
     const note = await form.locator('[data-claude-token-note]').textContent()
     t.equal(
@@ -248,10 +249,11 @@ export async function run(t) {
     // A refused token leaves no half-account behind.
     await win.locator('[data-settings-nav-row="accounts"]').click()
     await accountsPage.waitFor()
-    await accountsPage.getByRole('button', { name: 'Add with a token', exact: true }).click()
-    await form.getByLabel('Account name').fill('Broken')
+    await accountsPage.locator('[data-connect]').click()
+    await win.locator('[data-connect-secondary="anthropic"]').click()
+    await form.getByLabel('Connection name').fill('Broken')
     await form.getByLabel('Claude Code token').fill('not-a-token')
-    await form.getByRole('button', { name: 'Add account', exact: true }).click()
+    await form.getByRole('button', { name: 'Add connection', exact: true }).click()
     await form.locator('[data-claude-token-note="error"]').waitFor()
     t.check(
       'a value that is not a token is refused with a reason',

@@ -535,6 +535,15 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onRecommendedAccountChanged: localBecause(
     "this Mac's launch choice, on purpose; a server tab's account is its server's, read by the seam (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
+  // The launch settings are this Mac's (PRDCT-4423, PRDCT-4425): the
+  // interaction mode and the per-harness defaults the launcher reads; a
+  // server's launcher reads its own, through the fleet's settings.
+  launchSettingsGet: local,
+  launchSettingsSet: local,
+  onLaunchSettingsChanged: local,
+  launchRememberedModel: localBecause(
+    "this Mac's composer pick, by adapter id; a server tab's model is judged by its server (PRDCT-4420)"
+  ),
   getMicAccess: local,
   requestMicAccess: local,
   openMicPrivacySettings: local,

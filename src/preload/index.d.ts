@@ -732,7 +732,7 @@ import type { MicAccessState } from '../shared/mic'
 import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
 import type {
   OnboardingAgent,
-  OnboardingAgentId,
+  InstallableAgentId,
   OnboardingInstallResult,
   OnboardingState
 } from '../shared/onboarding'
@@ -1255,7 +1255,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onOpenTriage: (callback: () => void) => () => void
   onboardingGetState: () => Promise<OnboardingState>
   onboardingAgents: (fresh?: boolean) => Promise<OnboardingAgent[]>
-  onboardingInstall: (id: OnboardingAgentId) => Promise<OnboardingInstallResult>
+  onboardingInstall: (id: InstallableAgentId) => Promise<OnboardingInstallResult>
   onboardingComplete: () => Promise<void>
   onboardingSetChatView: (viewId: string) => Promise<void>
   onboardingCreateFolder: (parent: string, name: string) => Promise<string>

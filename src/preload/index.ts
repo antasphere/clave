@@ -66,7 +66,7 @@ import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../sh
 import {
   ONBOARDING_IPC,
   type OnboardingAgent,
-  type OnboardingAgentId,
+  type InstallableAgentId,
   type OnboardingInstallResult,
   type OnboardingState
 } from '../shared/onboarding'
@@ -2113,7 +2113,7 @@ const electronAPI = {
   onboardingGetState: () => ipcRenderer.invoke(ONBOARDING_IPC.getState) as Promise<OnboardingState>,
   onboardingAgents: (fresh?: boolean) =>
     ipcRenderer.invoke(ONBOARDING_IPC.agents, fresh === true) as Promise<OnboardingAgent[]>,
-  onboardingInstall: (id: OnboardingAgentId) =>
+  onboardingInstall: (id: InstallableAgentId) =>
     ipcRenderer.invoke(ONBOARDING_IPC.install, id) as Promise<OnboardingInstallResult>,
   onboardingComplete: () => ipcRenderer.invoke(ONBOARDING_IPC.complete) as Promise<void>,
   onboardingSetChatView: (viewId: string) =>

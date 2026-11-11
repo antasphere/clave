@@ -7,9 +7,10 @@ import { loginShellEnvAsync, refreshLoginShellEnv } from './sessions/adapters/pt
 import { agentUpdateManager } from './agent-updates'
 import { TEST_NO_ACTIVATE, TEST_ONBOARDING } from './test-mode'
 import { rememberChatView } from './sessions/chat-view-default'
+import { HARNESS_BY_ID } from '../shared/harness'
 import type {
+  InstallableAgentId,
   OnboardingAgent,
-  OnboardingAgentId,
   OnboardingInstallResult,
   OnboardingState
 } from '../shared/onboarding'
@@ -27,18 +28,27 @@ import type {
  *  - Codex installs with npm when npm is on the PATH, else the Homebrew cask;
  *    with neither, the walk links to its install page instead of guessing.
  *
+ *  - Antigravity and Pi (Settings → Harnesses only) take the harness table's
+ *    own line (`HARNESS_BY_ID[id].install`); Pi's is an npm install, so it
+ *    needs npm on the PATH like Codex.
+ *
  * After an install the login environment is read again, so the session the
  * walk ends on finds the new command without a restart.
  */
 
-const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
+const CLAUDE_INSTALL = HARNESS_BY_ID.claude.install as string
 const CODEX_HELP = 'https://developers.openai.com/codex/cli'
 /** An install that has not finished by then is not going to. */
 const INSTALL_TIMEOUT_MS = 10 * 60_000
 /** How much of a failed install's output is told back, from the end. */
 const OUTPUT_TAIL = 600
 
-const COMMANDS: Record<OnboardingAgentId, string> = { claude: 'claude', codex: 'codex' }
+const COMMANDS: Record<InstallableAgentId, string> = {
+  claude: HARNESS_BY_ID.claude.command,
+  codex: HARNESS_BY_ID.codex.command,
+  antigravity: HARNESS_BY_ID.antigravity.command,
+  pi: HARNESS_BY_ID.pi.command
+}
 
 function executable(file: string): boolean {
   try {
@@ -66,9 +76,32 @@ export function codexInstallCommand(pathValue: string | undefined): string | nul
   return null
 }
 
+/** The shell line that installs a harness here, or null when this Mac has
+ *  nothing to run it with: Claude's native installer, Codex by npm or the
+ *  Homebrew cask, Antigravity and Pi by the harness table's line (Pi's is an
+ *  npm install, so it needs npm on the PATH). */
+export function installCommandFor(
+  id: InstallableAgentId,
+  pathValue: string | undefined
+): string | null {
+  if (id === 'claude') return CLAUDE_INSTALL
+  if (id === 'codex') return codexInstallCommand(pathValue)
+  const line = HARNESS_BY_ID[id].install
+  if (!line) return null
+  if (/^npm\s/.test(line) && !findOnPath('npm', pathValue)) return null
+  return line
+}
+
+/** Why there is no install command, said to the person. */
+function noInstallerMessage(id: InstallableAgentId): string {
+  if (id === 'codex') return 'Codex needs npm or Homebrew to install from here.'
+  if (HARNESS_BY_ID[id].install) return `${HARNESS_BY_ID[id].name} needs npm to install from here.`
+  return `${HARNESS_BY_ID[id].name} installs from its own page.`
+}
+
 /** The agents whose installer is running, claimed before the first await so
  *  two clicks can never start the same install twice. */
-const installing = new Set<OnboardingAgentId>()
+const installing = new Set<InstallableAgentId>()
 
 /** The two agents as the walk shows them. `fresh` reads the login shell
  *  again (after an install, or on "Check again"); otherwise the cached copy.
@@ -167,28 +200,35 @@ export function runInstaller(
   })
 }
 
-/** Run the agent's installer, then look again. */
-export async function installAgent(id: OnboardingAgentId): Promise<OnboardingInstallResult> {
+/** Whether a harness's command is on the login PATH now (read fresh). */
+async function installedNow(id: InstallableAgentId): Promise<boolean> {
+  const env = await loginShellEnvAsync()
+  return findOnPath(COMMANDS[id], env.PATH) !== null
+}
+
+/** Run the agent's installer, then look again. `agents` stays the walk's
+ *  two; for Antigravity and Pi the outcome is read off the PATH directly. */
+export async function installAgent(id: InstallableAgentId): Promise<OnboardingInstallResult> {
   if (installing.has(id)) {
     return { ok: false, message: 'Already installing.', agents: await describeAgents() }
   }
   installing.add(id)
   try {
     const env = await refreshLoginShellEnv()
-    const command = id === 'claude' ? CLAUDE_INSTALL : codexInstallCommand(env.PATH)
+    const command = installCommandFor(id, env.PATH)
     if (!command) {
-      return {
-        ok: false,
-        message: 'Codex needs npm or Homebrew to install from here.',
-        agents: await describeAgents()
-      }
+      return { ok: false, message: noInstallerMessage(id), agents: await describeAgents() }
     }
     const outcome = await runInstaller(command, env)
     installing.delete(id)
     const agents = await describeAgents(true)
-    // The agent updater's view (Settings → Agents) catches up in the background.
+    // The agent updater's view (Settings → Harnesses) catches up in the background.
     void agentUpdateManager.checkAll().catch(() => undefined)
-    if (agents.find((a) => a.id === id)?.installed) return { ok: true, message: null, agents }
+    const found =
+      id === 'claude' || id === 'codex'
+        ? agents.find((a) => a.id === id)?.installed === true
+        : await installedNow(id)
+    if (found) return { ok: true, message: null, agents }
     const tail = outcome.output.trim().slice(-OUTPUT_TAIL)
     return {
       ok: false,

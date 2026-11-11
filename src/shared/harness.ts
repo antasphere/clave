@@ -276,7 +276,8 @@ export interface LaunchSettingsPatch {
 }
 
 const HARNESS_IDS = new Set<HarnessId>(HARNESSES.map((harness) => harness.id))
-const SHORT = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
+/** A model id as a CLI takes it, the `[1m]` context suffix included. */
+const SHORT = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,199}$/
 
 /** A harness settings table off the wire or the file: unknown harnesses and
  *  malformed values dropped, never thrown. */
