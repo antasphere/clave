@@ -90,10 +90,19 @@
 // stand-in shell runs, as the daemon would run it). `--json` prints one
 // JSON object instead of the lines. A port of 0 takes a free one; without
 // `--tmpdir` a fresh folder under the system temp directory is used. Exit
-// codes: 2 a refused boot or a refused run folder, 3 the recorder caught an
-// attempt while running or its log could not be read (also when that is
-// reported while a stop is under way, exitLatch), 1 a failed proof or an
-// error.
+// codes: 2 a refused boot (the checks, or the daemon's start refusing its
+// TMUX_TMPDIR) or a refused run folder, 3 the recorder caught an attempt
+// while running or its log could not be read (also when that is reported
+// while a stop is under way, exitLatch), 1 a failed proof, the daemon
+// exiting by itself whatever its own code, or an error. Under `--check`, a
+// SIGINT or a SIGTERM before the summary line stops everything and exits 130
+// or 143, never the 0 of a passed proof, and no summary line is written;
+// running, a signal is the way out and exits 0 (superviseFixture). One that
+// comes during the boot is kept until the boot ends, then the fixture that
+// came up is stopped before anything is proven or printed, and a boot that
+// failed after it exits as that signal does; the first signal is the one
+// kept, and a second does not shorten a hung boot, which its own time limits
+// bound (runCommand).
 //
 // No real agent, no real login. The daemon names every fresh chat by its
 // first message with a `claude -p` one-shot (packages/host/src/title-generator.ts),
@@ -175,7 +184,9 @@
 //     aborts before any daemon, relay or provider; nor does
 //     `drop-tmux-tmpdir`, which takes TMUX_TMPDIR out of the daemon's
 //     environment: the second check aborts first. No mutation ever starts
-//     a daemon without TMUX_TMPDIR.
+//     a daemon without TMUX_TMPDIR, and the daemon's start itself refuses,
+//     before it makes or starts anything, a TMUX_TMPDIR in the environment
+//     it is handed that tmux would not take as it is (startDaemon).
 //
 // Secrets: the daemon's token is in the token file (mode 0600) and in the
 // discovery file under the data folder, never on stdout; on macOS the
@@ -909,8 +920,27 @@ async function startRelay({ bun, port, dataDir, issuer, env, log, timeoutMs }) {
 
 /** The daemon: this checkout's server entry under Bun, in the environment
  *  the preflight checked, ready once it has written `clave-server.json`
- *  with its own pid. */
-async function startDaemon({ bun, port, dataDir, tokenFile, relay, env, flags, log, timeoutMs }) {
+ *  with its own pid. A TMUX_TMPDIR tmux would not take as it is, in the
+ *  environment handed here, is refused before anything is made or started:
+ *  tmux would drop it and take /tmp, where the person's own sockets are. The
+ *  checks before the boot read the environment they were given; this holds
+ *  the one the daemon gets, a mutation's decoy included. */
+export async function startDaemon({
+  bun,
+  port,
+  dataDir,
+  tokenFile,
+  relay,
+  env,
+  flags,
+  log,
+  timeoutMs
+}) {
+  const tmuxProblem = tmuxTmpdirProblem(env.TMUX_TMPDIR)
+  if (tmuxProblem !== null)
+    throw Object.assign(new Error(`refused to start the daemon: ${tmuxProblem}`), {
+      refusedBoot: true
+    })
   mkdirSync(dataDir, { recursive: true, mode: 0o700 })
   chmodSync(dataDir, 0o700)
   if (env.CLAVE_KEYCHAIN_FILE) ensureKeychain(env.CLAVE_KEYCHAIN_FILE)
@@ -1137,8 +1167,10 @@ export async function preflight({ flags, stubs, env, log }) {
  * through its test hooks (`observed`): what its title one-shot would start,
  * where its cached login PATH finds `codex`, what its own PATH starts with,
  * the keys of its environment, and where its home and its tmux folder are.
+ * `ask` runs a function inside the daemon, its test fixture route by default;
+ * a test hands it a stand-in process whose environment it chose.
  */
-export async function bootChecks({ server, stubs, log }) {
+export async function bootChecks({ server, stubs, log, ask = evaluate }) {
   const results = []
   const check = checker('boot', results, log)
   const discovery = server.discovery
@@ -1162,7 +1194,7 @@ export async function bootChecks({ server, stubs, log }) {
         discovery.machineUsage === false,
         `machineUsage ${JSON.stringify(discovery.machineUsage)}`
       )
-      const one = await evaluate(server, '() => 1')
+      const one = await ask(server, '() => 1')
       expect(one === 1, `the fixture route answered ${JSON.stringify(one)}`)
       return 'testMode: true, machineUsage: false, /e2e/evaluate answers'
     }
@@ -1174,7 +1206,7 @@ export async function bootChecks({ server, stubs, log }) {
       // The daemon's own PATH is compared inside it, a yes or a no: its
       // cached login PATH comes from the stand-in, which answers the same
       // whatever the daemon was handed, so a divergent PATH shows only here.
-      const inside = await evaluate(
+      const inside = await ask(
         server,
         `async () => {
           const titles = globalThis.__claveE2E?.titles
@@ -1210,7 +1242,7 @@ export async function bootChecks({ server, stubs, log }) {
     async () => {
       // Names compared, never values: the daemon answers the sorted keys of
       // its process.env, and they must be exactly the keys it was handed.
-      const inside = await evaluate(server, '() => Object.keys(process.env).sort()')
+      const inside = await ask(server, '() => Object.keys(process.env).sort()')
       const handed = Object.keys(server.env).sort()
       const extra = inside.filter((k) => !handed.includes(k))
       const missing = handed.filter((k) => !inside.includes(k))
@@ -1228,7 +1260,7 @@ export async function bootChecks({ server, stubs, log }) {
       // Compared inside the daemon, which answers yes or no: no path of its
       // leaves it, so a home or a tmux folder that is not the fixture's is
       // never printed.
-      const inside = await evaluate(
+      const inside = await ask(
         server,
         `async () => {
           const os = await import('node:os')
@@ -2171,9 +2203,180 @@ export async function proveFixture(fixture, { log = stderr } = {}) {
   return results
 }
 
+/** What a signal that stops a `--check` before its summary line exits with:
+ *  128 and the signal's number, as a shell reports a process a signal stopped. */
+export const INTERRUPTED_CHECK_EXIT = { SIGINT: 130, SIGTERM: 143 }
+
+/**
+ * The CLI once the fixture runs: its ways out, then the proof under `--check`
+ * or the recorder's watch. Every way out goes through one exitLatch, so the
+ * fixture is stopped once and a recorder failure reported during that stop
+ * still exits 3. Running, a signal is the way out and exits 0. Under
+ * `--check`, a signal before the summary line is an interrupted proof: it
+ * exits 130 or 143 and no summary line is written, so it never reads as the
+ * 0 of a passed proof. The daemon exiting by itself, not stopped by the
+ * fixture, is a failure, exit 1, whatever its own code: its own stop on a
+ * signal or a gone parent exits 0. `bootSignal` is a signal the command kept
+ * during the boot (runCommand): the fixture is then stopped before anything
+ * is proven or printed, with the code that signal has here. The process hooks
+ * are parameters, so a test drives this with a fixture of its own and starts
+ * nothing.
+ */
+export async function superviseFixture(
+  fixture,
+  { check = false, json = false, mutate = null, approve = false } = {},
+  {
+    prove = proveFixture,
+    watch = watchRecorder,
+    on = (signal, handler) => process.on(signal, handler),
+    exitProcess = (code) => process.exit(code),
+    out = (text) => process.stdout.write(text),
+    log = stderr,
+    bootSignal = null
+  } = {}
+) {
+  const exit = exitLatch(() => fixture.stop(), exitProcess)
+  for (const [signal, interrupted] of Object.entries(INTERRUPTED_CHECK_EXIT))
+    on(signal, () => {
+      if (check && !exit.stopping())
+        log(`${signal} before the proof's summary line; stopping, exit ${interrupted}`)
+      void exit(check ? interrupted : 0)
+    })
+  fixture.server.child.once('exit', (code) => {
+    if (exit.stopping()) return
+    log(`the server exited by itself (${code ?? 'signal'}); stopping, exit 1`)
+    void exit(1)
+  })
+  if (bootSignal !== null) {
+    const code = check ? INTERRUPTED_CHECK_EXIT[bootSignal] : 0
+    log(`${bootSignal} during the boot; stopping, exit ${code}`)
+    await exit(code)
+    return
+  }
+  if (check) {
+    let results
+    try {
+      results = await prove(fixture, { log })
+    } catch (error) {
+      // A proof cut short by a stop under way exits with that stop's code;
+      // one that fails by itself stops the fixture and exits 1.
+      if (exit.stopping()) return
+      log(error.stack ?? String(error))
+      await exit(1)
+      return
+    }
+    // Interrupted, or the daemon gone: the stop under way exits non-zero, and
+    // a proof that did not run to its end writes no summary line.
+    if (exit.stopping()) return
+    const checks = [...fixture.checks, ...results]
+    const failed = checks.filter((r) => !r.ok)
+    if (json) out(`${JSON.stringify({ ...fixture.lines(), mutation: mutate, checks }, null, 2)}\n`)
+    else
+      out(
+        `${checks.length} checks, ${failed.length} failed${mutate ? ` (mutation ${mutate})` : ''}\n`
+      )
+    await exit(failed.length ? 1 : 0)
+    return
+  }
+  // Running: the recorder is watched for as long as the fixture lives, and
+  // the first line it writes stops everything with exit code 3.
+  watch(fixture.stubs, (lines, error) => {
+    if (error)
+      log(
+        `the recorder log could not be read (${error.message}); stopping: a read that fails is a failure, never "no calls"`
+      )
+    else log(`the recorder caught an attempt while running; stopping: ${lines.join(' | ')}`)
+    void exit(3)
+  })
+  const lines = fixture.lines()
+  if (json) out(`${JSON.stringify({ ...lines, checks: fixture.checks }, null, 2)}\n`)
+  else {
+    for (const [key, value] of Object.entries(lines)) out(`${key}=${value}\n`)
+    out(
+      `fixture: running${approve ? ', approving every pairing' : ''}, watching ${path.basename(fixture.stubs.log)}; Ctrl-C stops it. Android emulator: adb reverse the server, relay and issuer ports.\n`
+    )
+  }
+}
+
+/**
+ * The command once its arguments are read and it is no dry run: the boot,
+ * its refusals, then superviseFixture with the same options. A SIGINT or a
+ * SIGTERM during the boot is kept, never acted on in its middle, where a
+ * started relay or daemon would be left running: a fixture that came up is
+ * stopped as soon as the boot ends, before anything is proven or printed,
+ * and a boot that failed has already stopped what it started, then exits as
+ * that signal does (a terminal's Ctrl-C reaches the relay and the daemon
+ * too, which stop and fail the boot). The first signal is the one kept. One
+ * pair of handlers serves the whole command and is never taken off: during
+ * the boot it keeps the signal, then it hands every signal to
+ * superviseFixture's handlers, so none is dropped between the two and the
+ * default action never comes back. A second signal does not shorten a hung
+ * boot: the boot's own time limits bound the wait. A refused run folder,
+ * refused checks and the daemon's start refusing its TMUX_TMPDIR exit 2.
+ * The hooks are parameters, as superviseFixture's.
+ */
+export async function runCommand(
+  options,
+  {
+    start = startFixture,
+    prove = proveFixture,
+    watch = watchRecorder,
+    on = (signal, handler) => process.on(signal, handler),
+    exitProcess = (code) => process.exit(code),
+    out = (text) => process.stdout.write(text),
+    log = stderr
+  } = {}
+) {
+  let bootSignal = null
+  /** superviseFixture's handlers, once it runs. */
+  const running = {}
+  for (const signal of Object.keys(INTERRUPTED_CHECK_EXIT))
+    on(signal, () => {
+      if (running[signal]) running[signal]()
+      else bootSignal ??= signal
+    })
+  let fixture
+  try {
+    fixture = await start({ ...options, log: options.json && !options.check ? () => {} : log })
+  } catch (error) {
+    if (bootSignal !== null) {
+      const code = options.check ? INTERRUPTED_CHECK_EXIT[bootSignal] : 0
+      log(`${bootSignal} during the boot, which then failed (${error.message}); exit ${code}`)
+      return exitProcess(code)
+    }
+    if (error.refusedFolder) {
+      log(error.message)
+      out('refused: the run folder\n')
+      return exitProcess(2)
+    }
+    if (error.checks || error.refusedBoot) {
+      log(error.message)
+      const refused = error.checks ? { checks: error.checks } : { reason: error.message }
+      if (options.json) out(`${JSON.stringify({ refused: true, ...refused }, null, 2)}\n`)
+      else if (error.checks)
+        out(
+          `refused to boot: ${error.checks.filter((c) => !c.ok).length} of ${error.checks.length} checks failed\n`
+        )
+      else out("refused to boot: the daemon's TMUX_TMPDIR\n")
+      return exitProcess(2)
+    }
+    throw error
+  }
+  await superviseFixture(fixture, options, {
+    prove,
+    watch,
+    exitProcess,
+    out,
+    log,
+    bootSignal,
+    on: (signal, handler) => {
+      running[signal] = handler
+    }
+  })
+}
+
 async function main(argv) {
   const options = parseArgs(argv)
-  const log = options.json && !options.check ? () => {} : stderr
   if (options.preflight) {
     // The two pre-boot checks alone, on this folder's stubs and the
     // environment the daemon would get; no provider, no relay, no daemon.
@@ -2206,72 +2409,7 @@ async function main(argv) {
     else process.stdout.write(`preflight: ${checks.length} checks, ${failed} failed\n`)
     process.exit(failed ? 2 : 0)
   }
-  let fixture
-  try {
-    fixture = await startFixture({ ...options, log })
-  } catch (error) {
-    if (error.refusedFolder) {
-      stderr(error.message)
-      process.stdout.write('refused: the run folder\n')
-      process.exit(2)
-    }
-    if (error.checks) {
-      stderr(error.message)
-      if (options.json)
-        process.stdout.write(
-          `${JSON.stringify({ refused: true, checks: error.checks }, null, 2)}\n`
-        )
-      else
-        process.stdout.write(
-          `refused to boot: ${error.checks.filter((c) => !c.ok).length} of ${error.checks.length} checks failed\n`
-        )
-      process.exit(2)
-    }
-    throw error
-  }
-  const exit = exitLatch(() => fixture.stop())
-  process.on('SIGINT', () => void exit(0))
-  process.on('SIGTERM', () => void exit(0))
-  fixture.server.child.once('exit', (code) => {
-    if (!exit.stopping()) {
-      stderr(`the server exited (${code ?? 'signal'})`)
-      void exit(code ?? 1)
-    }
-  })
-  if (options.check) {
-    const results = await proveFixture(fixture, { log })
-    const checks = [...fixture.checks, ...results]
-    const failed = checks.filter((r) => !r.ok)
-    if (options.json)
-      process.stdout.write(
-        `${JSON.stringify({ ...fixture.lines(), mutation: options.mutate, checks }, null, 2)}\n`
-      )
-    else
-      process.stdout.write(
-        `${checks.length} checks, ${failed.length} failed${options.mutate ? ` (mutation ${options.mutate})` : ''}\n`
-      )
-    await exit(failed.length ? 1 : 0)
-    return
-  }
-  // Running: the recorder is watched for as long as the fixture lives, and
-  // the first line it writes stops everything with exit code 3.
-  watchRecorder(fixture.stubs, (lines, error) => {
-    if (error)
-      stderr(
-        `the recorder log could not be read (${error.message}); stopping: a read that fails is a failure, never "no calls"`
-      )
-    else stderr(`the recorder caught an attempt while running; stopping: ${lines.join(' | ')}`)
-    void exit(3)
-  })
-  const lines = fixture.lines()
-  if (options.json)
-    process.stdout.write(`${JSON.stringify({ ...lines, checks: fixture.checks }, null, 2)}\n`)
-  else {
-    for (const [key, value] of Object.entries(lines)) process.stdout.write(`${key}=${value}\n`)
-    process.stdout.write(
-      `fixture: running${options.approve ? ', approving every pairing' : ''}, watching ${path.basename(fixture.stubs.log)}; Ctrl-C stops it. Android emulator: adb reverse the server, relay and issuer ports.\n`
-    )
-  }
+  await runCommand(options)
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
