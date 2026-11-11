@@ -55,8 +55,9 @@ final class ConversationModel {
   /// The sentence of the last other write that failed (an answer, an interrupt, an older page).
   private(set) var actionError: String?
   /// What the composer says about a send of unknown outcome that was delivered while the person
-  /// was not driving it: by a reconnection, or before a choice on the bar could act. Cleared by the
-  /// next edit of the draft and the next send.
+  /// was not driving it (by a reconnection, or before a choice on the bar could act), or whose
+  /// record the phone lost before the person's choice. Cleared by the next edit of the draft and the
+  /// next send.
   private(set) var deliveryNotice: String?
 
   /// Whether the machine's server takes files from the phone. The Mac app's own server has no
@@ -448,6 +449,12 @@ final class ConversationModel {
   /// What the composer says when the phone could not write the person's choice down: the choice
   /// claimed nothing, and the bar stays for it.
   static let choiceNotKept = "This phone could not keep your choice, so nothing changed."
+  /// What the composer says after Discard on a send whose record the phone lost (it left the ledger
+  /// while the mark still said its outcome was unknown): nothing here can tell whether it arrived,
+  /// and the draft it keeps may hold a text the server already accepted.
+  static let lostTrack = "This phone lost its record of this message, so it cannot tell whether it was delivered. Check the conversation before you send it again."
+  /// The same after Send again on such a send: nothing was sent, under the old id or a new one.
+  static let lostTrackNotSent = "This phone lost its record of this message, so it cannot tell whether it was delivered, and did not send it again. Check the conversation before you send it."
 
   /// The person's choice on the bar's send, through the machine's controller; nil when it failed. A
   /// choice the phone could not write down is said in the composer, and the bar stays.
@@ -465,7 +472,8 @@ final class ConversationModel {
 
   /// The person chose to send again after an unknown outcome: a new id, which may duplicate. The
   /// first send is discarded once a pass reconciling it has let go; when that pass settled it
-  /// meanwhile (it landed, or was refused), nothing is sent and the mark says what happened.
+  /// meanwhile (it landed, or was refused), nothing is sent and the mark says what happened; when the
+  /// phone lost its record of the send, nothing is sent and the composer says it cannot tell.
   func resendUnderNewId() async {
     if let mark = deliveryMark, mark.kind == .unknown {
       let id = mark.clientMessageId
@@ -480,6 +488,14 @@ final class ConversationModel {
         deliveryNotice = "This message had already been delivered, so it was not sent again."
         await refreshMark()
         return
+      case .outcomeUnknown?:
+        // Nobody can tell whether it arrived: nothing goes out by itself, and the draft and the
+        // picked files stay for the person to check and send.
+        deliveryMark = nil
+        carried = nil
+        deliveryNotice = Self.lostTrackNotSent
+        await refreshMark()
+        return
       case nil:
         await refreshMark()
         return
@@ -490,7 +506,8 @@ final class ConversationModel {
   }
 
   /// The person chose to give up on a send of unknown outcome; the draft stays to edit. A pass
-  /// reconciling the send finishes first; when it settled the send meanwhile, the mark says how.
+  /// reconciling the send finishes first; when it settled the send meanwhile, the mark says how; when
+  /// the phone lost its record of the send, the bar goes and the composer says it cannot tell.
   func discardUnknownSend() async {
     guard let mark = deliveryMark else { return }
     let id = mark.clientMessageId
@@ -504,6 +521,12 @@ final class ConversationModel {
     case .settledMeanwhile?:
       await resync(id)
       deliveryNotice = "This message was delivered before it could be discarded."
+    case .outcomeUnknown?:
+      // Not known to be delivered: the draft and the picked files stay exactly as they are.
+      deliveryMark = nil
+      sendError = nil
+      carried = nil
+      deliveryNotice = Self.lostTrack
     case nil:
       break
     }
@@ -531,13 +554,19 @@ final class ConversationModel {
       await loadCarried(stored.clientMessageId)
     }
     guard let shown, shown.kind == .unknown, stored == nil, !settlingHere.contains(shown.clientMessageId) else { return }
-    // Gone from the ledger with its mark: delivered (a discard is this model's own act, and a pass
-    // that refuses a send leaves a rejected mark).
+    // Gone from the ledger with its mark: discarded, delivered, or its record lost (a pass that
+    // refuses a send leaves a rejected mark).
     let listed = (try? await delivery.sends.list().contains { $0.clientMessageId == shown.clientMessageId }) ?? true
     guard !listed else { return }
     // Taken out by the person's choice (here, or one an ended run left that a pass carried out):
     // nothing was delivered, and the draft and the files stay as a Discard leaves them.
     if await delivery.wasDiscarded(shown.clientMessageId) {
+      carried = nil
+      return
+    }
+    // Said delivered only when this run saw the server accept it: a mark that went otherwise
+    // leaves the draft and the files as they are, and says nothing.
+    guard await delivery.wasDelivered(shown.clientMessageId) else {
       carried = nil
       return
     }

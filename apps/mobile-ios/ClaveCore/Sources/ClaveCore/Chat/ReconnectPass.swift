@@ -38,6 +38,9 @@ public struct ReconnectPorts: Sendable {
   /// Carries out a choice an ended run left: the send out of the ledger, its mark cleared when the
   /// mark names it. Nothing reaches the server.
   public var carryOutChoice: (@Sendable (UnknownSend) async throws -> Void)?
+  /// Told of a send the server has (its reconciliation answered sent), before the settle's writes,
+  /// so a settle that ends part way still counts as seen.
+  public var delivered: (@Sendable (UnknownSend) async -> Void)?
 
   public init(
     sends: UnknownSends,
@@ -55,7 +58,8 @@ public struct ReconnectPorts: Sendable {
     release: (@Sendable (UnknownSend) async -> Void)? = nil,
     choiceRecorded: (@Sendable (UnknownSend) async -> Bool)? = nil,
     leftoverChoice: (@Sendable (UnknownSend) async -> PendingChoice?)? = nil,
-    carryOutChoice: (@Sendable (UnknownSend) async throws -> Void)? = nil
+    carryOutChoice: (@Sendable (UnknownSend) async throws -> Void)? = nil,
+    delivered: (@Sendable (UnknownSend) async -> Void)? = nil
   ) {
     self.sends = sends
     self.marks = marks
@@ -73,6 +77,7 @@ public struct ReconnectPorts: Sendable {
     self.choiceRecorded = choiceRecorded
     self.leftoverChoice = leftoverChoice
     self.carryOutChoice = carryOutChoice
+    self.delivered = delivered
   }
 }
 
@@ -149,6 +154,7 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
           try await ports.carryOutChoice?(send)
         } else {
           outcomes.append(.init(send: send, outcome: outcome))
+          if case .sent = outcome { await ports.delivered?(send) }
           try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
         }
       } else {
@@ -159,6 +165,7 @@ public func reconnectPass(machineId: String, openConversations: [String], ports:
         }
         if !yielded {
           outcomes.append(.init(send: send, outcome: outcome))
+          if case .sent = outcome { await ports.delivered?(send) }
           try await settleSend(send, outcome, sends: ports.sends, marks: ports.marks, drafts: ports.drafts, now: ports.now, clearAttachments: ports.clearAttachments)
         }
       }
@@ -277,11 +284,16 @@ public enum PendingResolution: Sendable, Equatable {
   /// The send left the ledger and its mark was cleared, or a pass had refused it and its refusal
   /// mark was cleared: nothing writes it again.
   case discarded
-  /// The send was delivered while the choice waited: the original had already been accepted, or a
-  /// pass's same-id write, under way before the choice was made, landed. Nothing was changed. A
-  /// send leaves the ledger otherwise only when the person discards it or a pass refuses it, and
-  /// both answer `discarded`.
+  /// This run saw the server accept the send (a pass's reconciliation, or the composer's own send,
+  /// answered sent) while the choice waited or before it. Nothing is written; a mark that still says
+  /// unknown for the send, left by a settle that ended before its clear, is cleared.
   case settledMeanwhile
+  /// The send had left the ledger without this run seeing it delivered, refused or discarded (a
+  /// record lost to a failed write during the ledger's move, or a process end between two of a
+  /// settle's writes), while its conversation's mark still said its outcome was unknown: nobody on
+  /// the phone can tell whether it arrived. The mark was cleared when it still named the send, and
+  /// nothing was written.
+  case outcomeUnknown
 }
 
 /// One machine's owner of the ledger, shared by every conversation of the machine: a send is
@@ -301,6 +313,7 @@ public actor DeliveryController {
   private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
   private var choices: [String: [PendingChoice]] = [:]
   private var discarded: Set<String> = []
+  private var delivered: Set<String> = []
 
   /// The controller over one owner's ledger, marks and drafts. Pass the composer's own `Drafts`:
   /// each instance caches, so a second one over the same store would not see the composer's edits.
@@ -374,9 +387,16 @@ public actor DeliveryController {
   /// The person chose to discard a send of unknown outcome, or to send its text again under a new
   /// id. The choice is recorded first, in memory and then in the send's ledger record, so a pass
   /// holding the send stops before its next request unless its same-id write is already under way,
-  /// and a pass after a reload finds the choice; once the send is held here, its mark is cleared and
-  /// it leaves the ledger, unless it was delivered meanwhile. A choice the ledger cannot keep throws
-  /// `ChoiceNotKept` before anything waits, with nothing changed.
+  /// and a pass after a reload finds the choice; once the send is held here, a send still in the
+  /// ledger has its mark cleared and leaves it (`discarded`). A send already out of the ledger is
+  /// answered from what this run saw, the conversation's mark read once: one an earlier choice took
+  /// out is `discarded`; one a pass refused, its refusal mark naming it, has that mark cleared and is
+  /// `discarded`; one this run saw the server accept is `settledMeanwhile`, its mark cleared when it
+  /// still says unknown for it (a settle that ended before its clear); any other is
+  /// `outcomeUnknown`, its mark cleared when it still says unknown for it, and a mark that names
+  /// another send, or none, is left as it is. Nothing else is written for a send out of the ledger:
+  /// not the ledger, the drafts or the attachment drafts, and nothing reaches the server. A choice
+  /// the ledger cannot keep throws `ChoiceNotKept` before anything waits, with nothing changed.
   public func discardPending(
     machineId: String, sessionId: String, clientMessageId: String, choice: PendingChoice
   ) async throws -> PendingResolution {
@@ -393,19 +413,32 @@ public actor DeliveryController {
       try await takeOut(clientMessageId, machineId: machineId, sessionId: sessionId)
       return .discarded
     }
-    // Out of the ledger: delivered, unless an earlier choice discarded it or a pass refused it.
+    // Out of the ledger: an earlier choice discarded it, a pass refused it, this run saw it
+    // delivered, or nobody on the phone can tell.
     if discarded.contains(clientMessageId) { return .discarded }
-    if let mark = try await marks.get(machineId, sessionId), mark.kind == .rejected, mark.clientMessageId == clientMessageId {
+    let mark = try await marks.get(machineId, sessionId)
+    let named = mark?.clientMessageId == clientMessageId
+    if named, mark?.kind == .rejected {
       try await marks.clear(machineId, sessionId)
       return .discarded
     }
-    return .settledMeanwhile
+    if delivered.contains(clientMessageId) {
+      if named, mark?.kind == .unknown { try await marks.clear(machineId, sessionId) }
+      return .settledMeanwhile
+    }
+    if named, mark?.kind == .unknown { try await marks.clear(machineId, sessionId) }
+    return .outcomeUnknown
   }
 
   /// Whether the person's choice took the send of this id out of the ledger: a choice made here, or
   /// one an ended run left that a pass carried out. A composer that sees such a send's mark go does
   /// not take it for delivered.
   public func wasDiscarded(_ clientMessageId: String) -> Bool { discarded.contains(clientMessageId) }
+
+  /// Whether this run saw the server accept the send of this id.
+  public func wasDelivered(_ clientMessageId: String) -> Bool { delivered.contains(clientMessageId) }
+
+  private func noteDelivered(_ id: String) { delivered.insert(id) }
 
   /// The choice an ended run left on this send: the one in its ledger record, when no action of this
   /// run holds a choice on it (a choice made now is followed as it is made).
@@ -454,6 +487,8 @@ public actor DeliveryController {
   /// composer keeps its draft and the person sends again.
   public func finish(_ send: UnknownSend, _ outcome: SendOutcome) async throws {
     defer { active.remove(send.clientMessageId) }
+    // Seen before the settle's writes, so a settle that ends part way still counts as delivered.
+    if case .sent = outcome { noteDelivered(send.clientMessageId) }
     let attachments = attachmentDrafts
     try await settleSend(send, outcome, sends: sends, marks: marks, drafts: drafts, now: now, clearAttachments: { send in
       try await attachments.removeSent(send.machineId, send.sessionId, files: send.files ?? [])
@@ -492,7 +527,8 @@ public actor DeliveryController {
       release: { [weak self] send in await self?.release(send.clientMessageId) },
       choiceRecorded: { [weak self] send in await self?.hasChoice(send.clientMessageId) ?? false },
       leftoverChoice: { [weak self] send in await self?.leftoverChoice(send) },
-      carryOutChoice: { [weak self] send in try await self?.carryOutChoice(send) })
+      carryOutChoice: { [weak self] send in try await self?.carryOutChoice(send) },
+      delivered: { [weak self] send in await self?.noteDelivered(send.clientMessageId) })
     let run = Task<Void, Error> {
       _ = try await reconnectPass(machineId: machineId, openConversations: openConversations, ports: ports, options: options)
     }

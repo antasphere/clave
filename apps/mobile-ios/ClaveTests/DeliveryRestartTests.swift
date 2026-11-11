@@ -7,7 +7,8 @@ import XCTest
 // id's status read. A restart here is MODELLED: every model closed, then new controllers, drafts and
 // attachment drafts over a copy of what the store held (the controller is recreated), or over the
 // same file read again by a fresh FileKeyValueStore (a reload of the file). No test ends a process.
-// From the verifier's round-5 probes A1, A2, A3, N1a, N1b, N1c, N2a and N2b.
+// From the verifier's round-5 probes A1, A2, A3, N1a, N1b, N1c, N2a and N2b, and round 5c's N2 (a
+// send no ledger holds).
 
 private struct LedgerWriteRefused: Error {}
 
@@ -541,5 +542,136 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertEqual(server.attempts.filter { $0 == oldA }.count, 1, "A's id only its lost original")
     XCTAssertEqual(server.kept.filter { $0 == idB }.count, 1, "B delivered once")
     XCTAssertFalse(server.kept.contains(oldA))
+  }
+
+  // MARK: - A send no ledger holds (round 5c's N2)
+
+  private let orphanId = "m-orphan-00000000000000001"
+
+  /// The conversation's mark says unknown for a send no ledger holds (its record dropped by a rerun
+  /// of the move, or removed by a settle that ended before it cleared the mark), seeded as the round
+  /// 5c app probe seeds it: the conversation open on it showing the bar, and a new draft typed.
+  private func orphanBar(draft: String = "A new message after the restart.") async throws -> ConversationModel {
+    try await parts.delivery.marks.set(
+      "m1", "s1", DeliveryMark(kind: .unknown, clientMessageId: orphanId, reason: "Delivery has not been confirmed.", at: 1))
+    let model = try makeModel()
+    await model.appear()
+    XCTAssertEqual(model.deliveryMark?.kind, .unknown, "the bar shows")
+    model.draft = draft
+    await model.flushDraft()
+    return model
+  }
+
+  /// Discard on the bar of a send no ledger holds: the bar goes, the composer says the phone cannot
+  /// tell whether the message was delivered, nothing is written, the draft stays and the stored mark
+  /// is gone; the person's next Send is one write.
+  func testADiscardOnASendNoLedgerHoldsClearsTheBarSaysTheOutcomeCannotBeKnownAndSendsNothing() async throws {
+    let draft = "A new message after the restart."
+    let model = try await orphanBar(draft: draft)
+    await model.discardUnknownSend()
+    XCTAssertNil(model.deliveryMark, "the bar goes")
+    XCTAssertEqual(model.deliveryNotice, ConversationModel.lostTrack)
+    XCTAssertNil(model.sendError)
+    XCTAssertTrue(model.canSend, "the person can send")
+    XCTAssertEqual(model.draft, draft, "the draft is unchanged")
+    XCTAssertEqual(server.attempts.count, 0, "nothing written")
+    let stored = try await parts.delivery.marks.get("m1", "s1")
+    XCTAssertNil(stored, "the stored mark is gone")
+    await model.send()
+    XCTAssertEqual(server.attempts.count, 1, "exactly one write: the person's own send")
+  }
+
+  /// Send again on the bar of a send no ledger holds: nothing is written under any id, the bar goes,
+  /// the composer says the phone did not send it again, and the draft and the picked file stay.
+  func testASendAgainOnASendNoLedgerHoldsWritesNothingAndKeepsTheDraftAndTheFile() async throws {
+    let draft = "A new message after the restart."
+    let model = try await orphanBar(draft: draft)
+    model.attach(try file("orphan-send-again.txt"))
+    await model.flushDraft()
+    let picked = model.pendingFiles
+    XCTAssertEqual(picked.map(\.name), ["orphan-send-again.txt"], "one file picked")
+    await model.resendUnderNewId()
+    XCTAssertEqual(server.attempts.count, 0, "nothing written, under the old id or a new one")
+    XCTAssertNil(model.deliveryMark, "the bar goes")
+    XCTAssertEqual(model.deliveryNotice, ConversationModel.lostTrackNotSent)
+    XCTAssertEqual(model.draft, draft, "the draft is unchanged")
+    XCTAssertEqual(model.pendingFiles, picked, "the picked file stays")
+    XCTAssertTrue(model.canSend, "the person can send")
+  }
+
+  /// Two Send again taps on that bar, back to back: nothing is written, and the composer says the
+  /// phone did not send it again.
+  func testTwoSendAgainTapsOnASendNoLedgerHoldsWriteNothing() async throws {
+    let model = try await orphanBar()
+    let first = Task { await model.resendUnderNewId() }
+    let second = Task { await model.resendUnderNewId() }
+    await first.value
+    await second.value
+    XCTAssertEqual(server.attempts.count, 0, "nothing written")
+    XCTAssertEqual(model.deliveryNotice, ConversationModel.lostTrackNotSent)
+  }
+
+  /// One file attached and a send of unknown outcome; then the draft extended and a second file
+  /// attached, both on the device; then the send's record taken out of the ledger (the residual's
+  /// effect), its mark kept. Returns the model that sent it.
+  private func sendWhoseRecordLeftTheLedger() async throws -> ConversationModel {
+    let model = try makeModel()
+    await model.appear()
+    model.attach(try file("orphan-first.txt"))
+    let old = await unknownSend(model, "Sent text.")
+    model.attach(try file("orphan-second.txt"))
+    model.draft = "Sent text. And more."
+    await model.flushDraft()
+    try await parts.delivery.sends.remove(old)
+    let ledgerAfter = try await ledger()
+    XCTAssertEqual(ledgerAfter, [], "the record left the ledger")
+    let mark = try await parts.delivery.marks.get("m1", "s1")
+    XCTAssertEqual(mark?.clientMessageId, old, "its mark is kept")
+    return model
+  }
+
+  /// What was typed and picked since the send stays after a restart: the restarted conversation
+  /// shows the bar, and a Discard leaves the draft and both files exactly as they are, writes nothing,
+  /// and says the phone cannot tell whether the message was delivered.
+  func testWhatWasTypedAndPickedSinceStaysWhenADiscardAfterARestartFindsTheSendInNoLedger() async throws {
+    _ = try await sendWhoseRecordLeftTheLedger()
+    await modelledRestart()
+    let restarted = try makeModel()
+    await restarted.appear()
+    XCTAssertEqual(restarted.deliveryMark?.kind, .unknown, "the restarted conversation shows the bar")
+    let writes = server.attempts
+    await restarted.discardUnknownSend()
+    XCTAssertNil(restarted.deliveryMark, "the bar goes")
+    XCTAssertEqual(restarted.draft, "Sent text. And more.", "the draft exactly as it was")
+    XCTAssertEqual(restarted.pendingFiles.map(\.name), ["orphan-first.txt", "orphan-second.txt"], "both files stay")
+    XCTAssertEqual(restarted.deliveryNotice, ConversationModel.lostTrack)
+    XCTAssertEqual(server.attempts, writes, "nothing written")
+  }
+
+  /// The same in one run: the model whose own send set what it carried. A Discard still leaves the
+  /// draft and both files.
+  func testWhatWasTypedAndPickedSinceStaysWhenADiscardInTheSameRunFindsTheSendInNoLedger() async throws {
+    let model = try await sendWhoseRecordLeftTheLedger()
+    let writes = server.attempts
+    await model.discardUnknownSend()
+    XCTAssertNil(model.deliveryMark, "the bar goes")
+    XCTAssertEqual(model.draft, "Sent text. And more.", "the draft exactly as it was")
+    XCTAssertEqual(model.pendingFiles.map(\.name), ["orphan-first.txt", "orphan-second.txt"], "both files stay")
+    XCTAssertEqual(model.deliveryNotice, ConversationModel.lostTrack)
+    XCTAssertEqual(server.attempts, writes, "nothing written")
+  }
+
+  /// A mark that goes without a delivery this run saw (neither a choice nor a pass of this run took
+  /// it) is never said delivered: once the bar is gone, the composer says nothing, and the draft is
+  /// unchanged.
+  func testAMarkThatGoesWithoutADeliveryThisRunSawIsNeverSaidDelivered() async throws {
+    let draft = "A new message after the restart."
+    let model = try await orphanBar(draft: draft)
+    try await parts.delivery.marks.clear("m1", "s1")
+    await until("the bar gone") { model.deliveryMark == nil }
+    // Whatever the mark's read leads to has run.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    XCTAssertNil(model.deliveryNotice, "nothing says delivered")
+    XCTAssertEqual(model.draft, draft, "the draft is unchanged")
   }
 }
