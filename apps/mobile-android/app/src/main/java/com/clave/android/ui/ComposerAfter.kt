@@ -56,7 +56,19 @@ internal fun composerAfterDiscard(
     DeliveryController.DiscardResult.InFlight -> ComposerAfter(draft, attachments, STILL_SENDING, clearsStored = false)
     DeliveryController.DiscardResult.NothingToDiscard -> ComposerAfter(draft, attachments, null, clearsStored = false)
     DeliveryController.DiscardResult.NotSaved -> ComposerAfter(draft, attachments, CHOICE_NOT_SAVED, clearsStored = false)
+    // A notice an older build left without its send: that mark alone went; whether the message
+    // arrived is not known, so the draft and its files stay as they are.
+    DeliveryController.DiscardResult.OrphanCleared -> ComposerAfter(draft, attachments, null, clearsStored = false)
 }
+
+/**
+ * A notice of unknown delivery a build before this one left without its send
+ * ([DeliveryController.orphan]), as the "Delivery unknown" card shows it: that mark's id, and the
+ * draft kept as the text, since what went under that id is not known. Nothing of it is recorded,
+ * and it carries no files, so nothing it stands for is ever taken out of the composer.
+ */
+internal fun orphanCard(machineId: String, sessionId: String, mark: DeliveryMark, storedDraft: String): UnknownSend =
+    UnknownSend(machineId, sessionId, mark.clientMessageId, text = storedDraft, at = mark.at)
 
 /** The sentence after a send: a Send again answered with the FIRST id as sent says that message had arrived and nothing more went. */
 internal fun sentenceAfterSent(sentClientMessageId: String, unknownAtStart: String?): String? =

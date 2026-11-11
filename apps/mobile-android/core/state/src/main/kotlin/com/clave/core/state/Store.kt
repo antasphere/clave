@@ -694,6 +694,10 @@ public class ClaveStore(private val services: Services) {
                 val reason = if (delivery.inFlight(pending.clientMessageId)) STILL_SENDING else DELIVERY_UNKNOWN_FIRST
                 return SendOutcome.Failed(pending.clientMessageId, reason)
             }
+            // A notice of unknown delivery a build before this one left without its send: nobody knows
+            // whether that message arrived, so the person chooses (Send again or Discard) first.
+            val orphan = delivery.orphan(machineId, sessionId)
+            if (orphan != null) return SendOutcome.Failed(orphan.clientMessageId, DELIVERY_UNKNOWN_FIRST)
             return sendAdmitted(machineId, sessionId, text, clientMessageId, attachments, delivery)
         } finally {
             delivery.release(machineId, sessionId)
@@ -751,11 +755,12 @@ public class ClaveStore(private val services: Services) {
             throw e
         }
         if (outcome is SendOutcome.Failed) log.event("store.send_failed", mapOf("machine" to machineId))
-        delivery?.finish(send, outcome)
-        if (outcome is SendOutcome.Sent && services.drafts.get(machineId, sessionId) == text) {
+        // What the controller could record: an end it failed to save is answered unknown, never settled.
+        val reported = delivery?.finish(send, outcome) ?: outcome
+        if (reported is SendOutcome.Sent && services.drafts.get(machineId, sessionId) == text) {
             services.drafts.clear(machineId, sessionId)
         }
-        return outcome
+        return reported
     }
 
     /**
@@ -775,7 +780,8 @@ public class ClaveStore(private val services: Services) {
         val delivery = services.delivery
         if (delivery != null) {
             when (delivery.discard(machineId, sessionId, unknownId)) {
-                DeliveryController.DiscardResult.Discarded -> Unit
+                // A notice left without its send: cleared, the draft goes under a new id as the person chose.
+                DeliveryController.DiscardResult.Discarded, DeliveryController.DiscardResult.OrphanCleared -> Unit
                 // It arrived before the choice: the first id is the message, nothing more goes.
                 DeliveryController.DiscardResult.AlreadyDelivered -> return SendOutcome.Sent(unknownId, reconciled = true)
                 DeliveryController.DiscardResult.AlreadyRejected ->

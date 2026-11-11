@@ -83,4 +83,20 @@ class ComposerAfterTest {
         assertNull(composerAfterDelivered(unknown, unknown, null, storedDraft = "", draft = "hello", attachments = listOf(file)))
         assertNull(composerAfterDelivered(null, null, null, storedDraft = "", draft = "hello", attachments = listOf(file)))
     }
+
+    @Test
+    fun `a notice an older build left without its send is the card over the kept draft, and its Discard keeps the draft and files`() {
+        val orphan = DeliveryMark(DeliveryMark.Kind.Unknown, "m-old", "Delivery has not been confirmed.", 7)
+        val card = orphanCard("m", "s", orphan, storedDraft = "hello")
+        assertEquals(UnknownSend("m", "s", "m-old", text = "hello", at = 7), card)
+        assertEquals(
+            "that mark alone goes",
+            ComposerAfter("hello", listOf(file), null, clearsStored = false),
+            composerAfterDiscard(DiscardResult.OrphanCleared, "hello", listOf(file), card),
+        )
+        // Cleared, the card leaves without a mark: nothing it stands for leaves the composer.
+        assertNull(composerAfterDelivered(card, null, null, storedDraft = "hello", draft = "hello", attachments = listOf(file)))
+        val fileOnly = orphanCard("m", "s", orphan, storedDraft = "")
+        assertEquals("" to listOf(file), composerAfterDelivered(fileOnly, null, null, storedDraft = "", draft = "", attachments = listOf(file)))
+    }
 }

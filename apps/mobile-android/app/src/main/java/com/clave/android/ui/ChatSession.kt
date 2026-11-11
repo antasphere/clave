@@ -69,6 +69,7 @@ class ChatSession(
     @Volatile private var closed = false
     private var closeChat: (() -> Unit)? = null
     private var offMarks: (() -> Unit)? = null
+    private var offSends: (() -> Unit)? = null
     private var draftWrite: Job? = null
     private val attaching = Mutex()
 
@@ -77,6 +78,8 @@ class ChatSession(
         if (opened) return
         opened = true
         offMarks = delivery.marks.subscribe { scope.launch { readDelivery() } }
+        // A settled send's entry leaves the ledger after its mark's write: the card goes then.
+        offSends = delivery.sends.subscribe { scope.launch { readDelivery() } }
         scope.launch {
             val text = drafts.get(machineId, sessionId)
             val restored = owner.kv.get(attachmentKey)?.let(::decodeAttachments).orEmpty()
@@ -105,6 +108,7 @@ class ChatSession(
         if (closed) return
         closed = true
         offMarks?.invoke()
+        offSends?.invoke()
         closeChat?.invoke()
         closeChat = null
         val text = _state.value.draft
@@ -125,8 +129,10 @@ class ChatSession(
 
     private suspend fun readDelivery() {
         val mark = delivery.marks.get(machineId, sessionId)
-        val unknown = delivery.sends.forSession(machineId, sessionId).lastOrNull()
         val stored = drafts.get(machineId, sessionId)
+        // A notice an older build left without its send is shown as the same choice, over the draft kept.
+        val unknown = delivery.sends.forSession(machineId, sessionId).lastOrNull()
+            ?: delivery.orphan(machineId, sessionId)?.let { orphanCard(machineId, sessionId, it, stored) }
         _state.update {
             // Delivered meanwhile (the pass, a completion that landed): the composer's copy goes too.
             val delivered = composerAfterDelivered(it.unknownSend, unknown, mark, stored, it.draft, it.attachments)
