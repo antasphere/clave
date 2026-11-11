@@ -76,6 +76,8 @@ jobs:
         with:
           name: unit-reports-${{ matrix.task }}
           path: unit-reports/
+          # A rerun replaces this worker's earlier report, never another shard's.
+          overwrite: true
           if-no-files-found: error
           retention-days: 14
 

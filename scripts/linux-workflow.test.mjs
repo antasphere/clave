@@ -82,4 +82,12 @@ describe('the required Linux check cannot silently lose execution', () => {
       "steps.dependencies.outputs.cache-hit != 'true'"
     )
   })
+
+  it('replaces only the rerun worker report without allowing absent results', () => {
+    const upload = jobs.linux.steps.find((step) => step.name === 'Preserve unit reports')
+    expect(upload.with.name).toBe('unit-reports-${{ matrix.task }}')
+    expect(upload.with.overwrite).toBe(true)
+    expect(upload.with['if-no-files-found']).toBe('error')
+    expect(upload['continue-on-error']).toBeUndefined()
+  })
 })
