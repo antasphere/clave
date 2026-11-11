@@ -21,8 +21,10 @@ import type { RoutinesListing } from '@clave/contract/routines/model'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
+import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
+import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type {
   FleetDesktopAPI,
@@ -1107,6 +1109,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         profileId
       )) as LaunchSettings['profiles']
     },
+    // The helpers live on the machine that runs them: a server's are read
+    // and written there, never on this Mac (PRDCT-4330).
+    fleetHelpers: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.helpersList()
+      const { api } = await backing(serverId)
+      return [...(await api.settings.helpers.list())] as HelperPreference[]
+    },
+    fleetHelperSet: async (serverId, helperId, patch) => {
+      if (serverId === LOCAL_SERVER_ID) return local.helperSet(helperId, patch)
+      const { api } = await backing(serverId)
+      return [...(await api.settings.helpers.set(helperId, patch))] as HelperPreference[]
+    },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)
       const result = await b.api.sidebar.saveLayout({
@@ -1277,6 +1291,11 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
   type UsageAnswer = Awaited<ReturnType<FleetDesktopAPI['fleetUsage']>>
+  // ── PRDCT-4327: the digests' answers, as the bridge types them ──
+  type DigestAnswer = Awaited<ReturnType<ElectronAPI['exchangeDigest']>>
+  type DigestsFiled = Awaited<ReturnType<ElectronAPI['exchangeDigestsOf']>>
+  type WorkDigestAnswer = Awaited<ReturnType<ElectronAPI['workDigest']>>
+  type WorkDigestsFiled = Awaited<ReturnType<ElectronAPI['workDigestsOf']>>
   const api: ElectronAPI = {
     ...local,
     ...shared,
@@ -1317,6 +1336,43 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ),
     sessionsCapabilities: (id) =>
       route(id, local.sessionsCapabilities, (b, wireId) => b.api.sessions.capabilities(wireId)),
+    // ── PRDCT-4327: a digest is read by the server the tab runs on, on its own
+    // record of the session; the launch the view read off the tab stays here ──
+    exchangeDigest: (request) =>
+      route(
+        request.sessionId,
+        () => local.exchangeDigest(request),
+        async (b, wireId) =>
+          (await b.api.digests.exchange({
+            sessionId: wireId,
+            key: request.key,
+            messages: request.messages
+          })) as DigestAnswer
+      ),
+    exchangeDigestsOf: (id) =>
+      route(
+        id,
+        () => local.exchangeDigestsOf(id),
+        async (b, wireId) => (await b.api.digests.exchangesOf(wireId)) as DigestsFiled
+      ),
+    workDigest: (request) =>
+      route(
+        request.sessionId,
+        () => local.workDigest(request),
+        async (b, wireId) =>
+          (await b.api.digests.work({
+            sessionId: wireId,
+            key: request.key,
+            notes: request.notes,
+            tools: request.tools
+          })) as WorkDigestAnswer
+      ),
+    workDigestsOf: (id) =>
+      route(
+        id,
+        () => local.workDigestsOf(id),
+        async (b, wireId) => (await b.api.digests.workOf(wireId)) as WorkDigestsFiled
+      ),
     sessionsSetView: (id, viewId) =>
       route(
         id,
@@ -1364,6 +1420,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         id,
         (wireId) => local.setSessionViewRecord(wireId, view),
         (b, wireId) => b.api.sessions.keepOnRecord(wireId, { page: view })
+      ),
+    // A `/clear` in a server's tab reaches that server's record, never this
+    // Mac's own server, which holds no such tab (PRDCT-4321): the server's
+    // History then lists the conversation the tab runs after the clear.
+    setSessionClaudeSessionId: (id, claudeSessionId) =>
+      route(
+        id,
+        (wireId) => local.setSessionClaudeSessionId(wireId, claudeSessionId),
+        async (b, wireId) => {
+          if (!claudeSessionId) return
+          await b.api.sessions.keepOnRecord(wireId, { claudeSessionId })
+        }
       ),
     setSessionWorkspace: (id, workspaceId) =>
       route(
@@ -1533,6 +1601,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.onSessionModelChanged(cb),
         eventListener('session.model_changed', (event, owner) =>
           cb({ id: key(owner, event.id), model: event.model })
+        )
+      ),
+    // A server tab's CLI reported its limit (PRDCT-4329): the server pushes
+    // it to every client, and the chat draws its limit card from it rather
+    // than the "server ended" pane.
+    onSessionLimitReported: (cb) =>
+      both(
+        local.onSessionLimitReported(cb),
+        eventListener('session.limit_reported', (event, owner) =>
+          cb({ id: key(owner, event.id), report: reportFromWire(event) })
         )
       ),
     onSessionRestarted: (cb) =>

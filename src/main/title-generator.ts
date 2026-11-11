@@ -1,4 +1,3 @@
-import { execFile, type ChildProcess } from 'child_process'
 import {
   existsSync,
   watchFile,
@@ -10,14 +9,9 @@ import {
 } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import {
-  accountTokenForSpawn,
-  getLoginShellEnv,
-  getUserShell
-} from './sessions/adapters/pty-backend'
-import { launchProfileManager } from './launch-profile-manager'
-import { buildOneShotLaunch, type OneShotLaunch } from './claude-one-shot'
-import { TITLE_HELPER_MARKER } from './session-history'
+import * as helperRunner from './helpers/runner'
+import { HELPER_CANCEL_GRACE_MS } from './helpers/runner'
+import { TITLE_TIMEOUT_MS, titleHelper } from './helpers/title'
 import { sessionCleared, sessionPlanDetected, sessionTitleChanged } from './server/session-events'
 
 // --- Session tracking ---
@@ -61,95 +55,39 @@ const sessions = new Map<string, SessionEntry>()
  *  and keeps the name it was saved under. */
 const chatAwaitingTitle = new Map<string, TitleLaunchContext>()
 
-// --- Title generation queue (prevent concurrent CLI spawns) ---
+// --- Title generation: the tab-title helper (`helpers/title.ts`) ---
+//
+// The queue, the cap of one title at a time, the kill on quit and the door
+// shut on shutdown (PRDCT-3375) are the helpers' runner's now
+// (`helpers/runner.ts`): these keep the names the sessions' shutdown and the
+// tests call.
 
-interface TitleJob {
-  sessionId: string
-  userMessage: string
-  launch: TitleLaunchContext
-  resolve: (title: string) => void
-  reject: (err: Error) => void
-}
-
-const titleQueue: TitleJob[] = []
-let activeTitleJobs = 0
-const MAX_CONCURRENT_TITLES = 1
-
-/** The one-shot CLI children running right now, and the ones `cancelAll`
- *  ended. A `claude -p` is a child of this process in its own process
- *  group, so nothing of the sessions' shutdown reached it: wave 3's
- *  verifier found one alive after the server had stopped (PRDCT-3375). The
- *  handle is held here so the quit ends it with the rest. */
-const activeChildren = new Set<ChildProcess>()
-const cancelled = new WeakSet<ChildProcess>()
-/** Set by `shutdown`, the quit's call: from then on no title job starts (a
- *  tab named during the quit would spawn a CLI nothing kills; round 1 of
- *  the verifier). `cancelAll` alone leaves the door open: the sessions'
- *  shutdown also runs when the last window closes on macOS, which is not a
- *  quit, and the tabs reopened from the Dock must still be named (round 2). */
-let closed = false
 /** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
-export const TITLE_CANCEL_GRACE_MS = 1000
+export const TITLE_CANCEL_GRACE_MS = HELPER_CANCEL_GRACE_MS
 
-/** End every title job: the queued ones are refused, the running CLI is
- *  signalled (SIGTERM, then SIGKILL after the grace), and its answer, if one
- *  still comes, names no tab. Called by the sessions' shutdown
- *  (`pty-manager.ts` killAll), in the app's quit and the standalone
- *  server's stop alike, and when the last window closes. The door stays
- *  open: a title asked for afterwards runs. */
+/** End every helper job (titles among them): the queued ones refused, the
+ *  running CLI signalled, its late answer naming no tab. Called by the
+ *  sessions' shutdown (`pty-manager.ts` killAll), in the app's quit and the
+ *  standalone server's stop alike, and when the last window closes. The
+ *  door stays open: a title asked for afterwards runs. */
 export function cancelAll(): void {
-  for (const job of titleQueue.splice(0)) job.reject(new Error('Title generation cancelled'))
-  for (const child of [...activeChildren]) {
-    cancelled.add(child)
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      /* already gone */
-    }
-    const hard = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        /* already gone */
-      }
-    }, TITLE_CANCEL_GRACE_MS)
-    child.once('exit', () => clearTimeout(hard))
-  }
+  helperRunner.cancelAll()
 }
 
-/** The quit's call (`pty-manager.ts` killAll with `quit: true`): every job
- *  ended as `cancelAll` does, and the door shut, so a tab named during the
- *  quit spawns no CLI nothing kills. Never called on a window's close. */
+/** The quit's call: every job ended as `cancelAll` does, and the door shut,
+ *  so a tab named during the quit spawns no CLI nothing kills. */
 export function shutdown(): void {
-  closed = true
-  cancelAll()
+  helperRunner.shutdown()
 }
 
-/** The CLI children running right now (test seam). */
+/** The title CLIs running right now (test seam). */
 export function runningTitleJobs(): number {
-  return activeChildren.size
+  return helperRunner.runningHelpers(titleHelper.id)
 }
 
 /** Open the door again (test seam: the module is one per process). */
 export function resetShutdownForTests(): void {
-  closed = false
-}
-
-function processNextTitle(): void {
-  if (activeTitleJobs >= MAX_CONCURRENT_TITLES || titleQueue.length === 0) return
-  const job = titleQueue.shift()!
-  activeTitleJobs++
-  // Launch preparation can refuse an account synchronously. Keep it inside
-  // the promise so rejection always releases the slot and drains the queue.
-  new Promise<string>((resolve) => {
-    resolve(runTitleGeneration(job.sessionId, job.userMessage, job.launch))
-  })
-    .then(job.resolve)
-    .catch(job.reject)
-    .finally(() => {
-      activeTitleJobs--
-      processNextTitle()
-    })
+  helperRunner.resetShutdownForTests()
 }
 
 // --- Helpers (shared) ---
@@ -293,12 +231,8 @@ export function cleanup(sessionId: string): void {
     }
   }
   sessions.delete(sessionId)
-  // Remove any queued title jobs for this session
-  const queueIdx = titleQueue.findIndex((j) => j.sessionId === sessionId)
-  if (queueIdx !== -1) {
-    titleQueue[queueIdx].reject(new Error('Session cleaned up'))
-    titleQueue.splice(queueIdx, 1)
-  }
+  // Refuse any title job this session still has waiting.
+  helperRunner.cancelQueued(sessionId)
 }
 
 /** Mark a session as expecting a /clear — called when PTY input contains /clear */
@@ -431,153 +365,39 @@ function extractPlanPath(entry: Record<string, unknown>): string | null {
 
 // --- Title generation ---
 
-/** A cold CLI boot is 5–9s on a laptop with nothing else running; 15s lost
- *  the model to the heuristic under load, and nothing said so. */
-export const TITLE_TIMEOUT_MS = 30_000
-
-/** A title is one short Haiku turn that needs no tool, no skill and no MCP
- *  server: the CLI is told so, or it connects every server the user has
- *  configured and offers every skill before it can answer — a second full
- *  boot beside the session the reader is actually waiting on. The user's
- *  settings stay in force (an auth helper lives there); the prompt goes on
- *  stdin, since `--tools` is variadic and would swallow a positional one. */
-export const TITLE_CLI_ARGS = [
-  '-p',
-  '--model',
-  'haiku',
-  '--strict-mcp-config',
-  '--mcp-config',
-  '{"mcpServers":{}}',
-  '--disable-slash-commands',
-  '--tools',
-  ''
-]
-
-function generateTitle(
-  sessionId: string,
-  userMessage: string,
-  launch: TitleLaunchContext
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (closed) return reject(new Error('Title generation cancelled'))
-    titleQueue.push({ sessionId, userMessage, launch, resolve, reject })
-    processNextTitle()
-  })
-}
+export { TITLE_TIMEOUT_MS }
 
 /**
- * The agent the session runs, ready to answer one prompt: its launch profile's
- * command (a custom binary, a wrapper, a version manager's shim), on its
- * account. The manager answers with a profile that starts the Claude CLI —
- * the session's own, the workspace's default, or the built-in — so a Codex
- * chat, a plugin's agent or the echo fixture is still named by Claude.
+ * The tab's title: the helper's, run as the session runs (its launch
+ * profile's command, on its account), once more if the first reply was not a
+ * title; the message's own first words when there is still none. Every
+ * fallback says why on stderr: the server's stdout is not kept, and a tab
+ * named by its first four words looked like a choice for weeks.
  */
-async function titleLaunch(context: TitleLaunchContext): Promise<OneShotLaunch> {
-  return buildOneShotLaunch({
-    profile: launchProfileManager.resolveClaudeCli(context.workspaceId, context.launchProfileId),
-    args: TITLE_CLI_ARGS,
-    loginEnv: getLoginShellEnv(),
-    account: {
-      configDir: context.configDir,
-      oauthToken: await accountTokenForSpawn('claude', context.claudeProfileId)
-    },
-    userShell: getUserShell()
-  })
-}
-
-async function runTitleGeneration(
+async function generateTitle(
   sessionId: string,
   userMessage: string,
   context: TitleLaunchContext
 ): Promise<string> {
-  const prompt = `${TITLE_HELPER_MARKER} based on what the user asked.
-Rules:
-- Return ONLY the title, no quotes, no explanation
-- Be specific about what the user is working on
-- Lowercase, like an IDE tab title
-- Examples: "fix auth middleware", "add dark mode", "refactor store", "debug api"
-
-User's message:
-${userMessage}`
-
-  const launch = await titleLaunch(context)
-
-  return new Promise<string>((resolve, reject) => {
-    const child = execFile(
-      launch.file,
-      launch.args,
-      { env: launch.env, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: TITLE_TIMEOUT_MS },
-      (err, stdout, stderr) => {
-        activeChildren.delete(child)
-        if (cancelled.has(child)) {
-          // Ended by the quit: no heuristic, no title for a tab that is going.
-          reject(new Error('Title generation cancelled'))
-          return
-        }
-        if (err) {
-          console.error('[title-gen] claude CLI error:', err.message, stderr)
-          const fallback = heuristicTitle(userMessage)
-          if (fallback) {
-            console.log(`[title-gen] Session ${sessionId} (heuristic): "${fallback}"`)
-            resolve(fallback)
-          } else {
-            reject(new Error(stderr || err.message))
-          }
-          return
-        }
-        const title = titleFromReply(stdout)
-        if (!title) {
-          const fallback = heuristicTitle(userMessage)
-          if (fallback) {
-            console.log(`[title-gen] Session ${sessionId} (heuristic): "${fallback}"`)
-            resolve(fallback)
-          } else {
-            reject(new Error('Empty response from Claude'))
-          }
-          return
-        }
-        const wordCount = title.split(/\s+/).length
-        if (
-          wordCount > 6 ||
-          title.includes(':') ||
-          /^(I |I'm |I'll |The |This |You |It |We |My |Let )/.test(title)
-        ) {
-          console.warn(`[title-gen] Rejected bad title for ${sessionId}: "${title}"`)
-          const fallback = heuristicTitle(userMessage)
-          if (fallback) {
-            console.log(`[title-gen] Session ${sessionId} (heuristic): "${fallback}"`)
-            resolve(fallback)
-          } else {
-            reject(new Error('Response is not a valid title'))
-          }
-          return
-        }
-        console.log(`[title-gen] Session ${sessionId}: "${title}"`)
-        resolve(title)
-      }
-    )
-    activeChildren.add(child)
-    child.stdin?.write(prompt)
-    child.stdin?.end()
+  const outcome = await helperRunner.runHelper(titleHelper, userMessage, context, {
+    owner: sessionId
   })
+  if (outcome.ok) {
+    console.log(`[title-gen] Session ${sessionId}: "${outcome.value}"`)
+    return outcome.value
+  }
+  // Ended by the quit or a closed tab: no heuristic, no title for a tab that is going.
+  if (outcome.reason === 'cancelled') throw new Error('Title generation cancelled')
+  const fallback = heuristicTitle(userMessage)
+  console.warn(
+    `[title-gen] Session ${sessionId}: no title from the model (${outcome.reason}: ${outcome.detail.slice(0, 200)}); ` +
+      (fallback ? `using the message's first words "${fallback}"` : 'no fallback either')
+  )
+  if (fallback) return fallback
+  throw new Error(outcome.detail)
 }
 
 // --- Helpers ---
-
-/** The title in the CLI's reply. Haiku sometimes heads it with a label of
- *  its own ("lowercase title, 2-4 words:" on one line, the title on the
- *  next): every line before the last ending in a colon is such a label and
- *  is dropped. Any other reply on several lines is not a title (null), and
- *  the caller falls back to the message's own words. */
-function titleFromReply(stdout: string): string | null {
-  const lines = stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-  if (lines.length === 0) return null
-  const title = lines[lines.length - 1]
-  return lines.slice(0, -1).every((line) => line.endsWith(':')) ? title : null
-}
 
 function isValidMessage(msg: string): boolean {
   if (msg.length < 5) return false

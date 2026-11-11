@@ -58,6 +58,24 @@ export default defineConfig(
     }
   },
   {
+    // Radix positions a popover, a menu or a tooltip flush against the window's
+    // edge when it runs out of room. @clave/ui's primitives give every one of
+    // them a gap from the edges; importing Radix directly would skip it.
+    files: ['**/*.{ts,tsx}'],
+    ignores: ['packages/ui/src/primitives/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['popover', 'dropdown-menu', 'context-menu', 'tooltip'].map((name) => ({
+            name: `@radix-ui/react-${name}`,
+            message: `Import '@clave/ui/primitives/${name}' instead: it keeps the surface off the window's edges.`
+          }))
+        }
+      ]
+    }
+  },
+  {
     // The website shots' stand-in CLIs run as plain CommonJS under node.
     files: ['scripts/website-shots/*.cjs'],
     rules: {

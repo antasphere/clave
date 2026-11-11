@@ -21,7 +21,7 @@ export default defineConfig({
       'scripts/**/*.test.mjs',
       'tests/e2e/**/*.test.mjs',
       'packages/skins/scripts/*.test.mjs',
-      'packages/{contract,server,client}/src/**/*.test.ts',
+      'packages/{contract,server,client,ui}/src/**/*.test.ts',
       'plugins/*/src/**/*.test.ts',
       'packages/session-bridge/src/**/*.test.ts'
     ],
@@ -29,5 +29,10 @@ export default defineConfig({
     // The framework ships TypeScript source, not compiled output, so Node
     // cannot load it from node_modules on its own: vite transforms it instead.
     server: { deps: { inline: [/@structure-ai\//] } }
-  }
+  },
+  // The app's JSX runtime for every file a test loads. The plugins' components
+  // (plugins/chat-view) sit outside tsconfig.web.json's include, so without
+  // this esbuild compiled them to the classic `React.createElement` and a
+  // test rendering one failed on `React is not defined`.
+  esbuild: { jsx: 'automatic' }
 })

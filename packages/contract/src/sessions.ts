@@ -220,6 +220,8 @@ export const AgentQuestion = Schema.Struct({
     Schema.Struct({ label: Schema.String, description: Schema.optional(Schema.String) })
   ),
   multiSelect: Schema.optional(Schema.Boolean),
+  /** A hosted choice closed to its options (PRDCT-4322): no own words. */
+  optionsOnly: Schema.optional(Schema.Boolean),
   /** A hosted input request's question (clave_request_input, PRDCT-4157):
    *  the kind of value asked for, and the field's own words. Absent on a
    *  provider's native question, which is a choice among its options. The
@@ -359,6 +361,17 @@ export const SessionEvent = Schema.Union(
     typed: Schema.optional(Schema.Boolean),
     /** The agent's word under a field it could not fill, by the question's key. */
     notes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+  }),
+  /** What a permission request does, read where the session runs
+   *  (PRDCT-4331): the level, the plain sentence, whether it matches the
+   *  person's ask, or why no sentence came. Keyed by the request's id. */
+  Schema.Struct({
+    type: Schema.Literal('permission_explained'),
+    id: Schema.String,
+    level: Schema.optional(Schema.Literal('reads', 'project', 'outside', 'irreversible')),
+    sentence: Schema.optional(Schema.String),
+    asked: Schema.optional(Schema.Literal('yes', 'no', 'unclear')),
+    failed: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),

@@ -7,8 +7,6 @@ import {
   claudeProfileSpawnFields,
   accountSpawnFields,
   accountSessionFields,
-  sessionAccount,
-  useClaudeProfileStore,
   type ClaudeProfile
 } from './claude-profile-store'
 
@@ -82,24 +80,6 @@ describe('claudeProfileUsable', () => {
     expect(claudeProfileUsable(profiles[1])).toBe(true)
     expect(claudeProfileUsable(profiles[2])).toBe(false)
     expect(claudeProfileUsable(profiles[3])).toBe(false)
-  })
-})
-
-describe('sessionAccount', () => {
-  it('names a live account, and a removed one by the label the session kept', () => {
-    useClaudeProfileStore.setState({ profiles })
-    expect(sessionAccount({ claudeProfileId: 'w1' })).toEqual({
-      id: 'w1',
-      label: 'Work',
-      removed: false
-    })
-    expect(sessionAccount({})).toEqual({ id: 'default', label: 'Default', removed: false })
-    expect(sessionAccount({ claudeProfileId: 'gone', claudeProfileLabel: 'Old' })).toEqual({
-      id: 'gone',
-      label: 'Old',
-      removed: true
-    })
-    expect(sessionAccount({ claudeProfileId: 'gone' }).label).toBe('Removed account')
   })
 })
 

@@ -59,8 +59,12 @@ import { requestsGroup } from './requests'
 import { gitGroup } from './git'
 // ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
 import { serverInfoGroup } from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran (`history.ts`) ──
+import { historyGroup } from './history'
 // ── ADR 0004: the routines (`routines.ts`) ──
 import { routinesGroup } from './routines/api'
+// ── PRDCT-4327: the digests read by the server a tab runs on (`digests.ts`) ──
+import { digestsGroup } from './digests'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -145,8 +149,12 @@ export { gitGroup }
 
 // ── Issue #266: the server domain (`server-info.ts`) ──
 export { serverInfoGroup }
+// ── PRDCT-4321: the server's History (`history.ts`) ──
+export { historyGroup }
 // ── ADR 0004: the routines ──
 export { routinesGroup }
+// ── PRDCT-4327: the digests ──
+export { digestsGroup }
 
 // ── Lane B: terminals ──
 
@@ -168,8 +176,12 @@ export const ClaveApi = Api.make('clave')
   .add(gitGroup)
   // ── Issue #266: the server domain ──
   .add(serverInfoGroup)
+  // ── PRDCT-4321: the server's History ──
+  .add(historyGroup)
   // ── ADR 0004: the routines ──
   .add(routinesGroup)
+  // ── PRDCT-4327: the digests ──
+  .add(digestsGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

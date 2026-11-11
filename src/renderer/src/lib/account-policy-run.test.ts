@@ -16,6 +16,7 @@ const fake = vi.hoisted(() => ({
   reports: [] as [string, unknown][],
   writes: [] as [string, unknown][],
   reads: [] as [string, unknown][],
+  refreshed: [] as [string, string][],
   mode: 'propose' as 'propose' | 'automatic',
   onFamilyLimit: 'switch-model' as 'switch-model' | 'switch-account',
   exhausted: false,
@@ -64,6 +65,26 @@ vi.mock('../store/account-policy-store', () => ({
   useAccountPolicyStore: fake.noopStore,
   effectiveSwitchMode: () => fake.mode,
   effectiveFamilyLimitRule: () => fake.onFamilyLimit
+}))
+vi.mock('./session-accounts', () => ({
+  sessionAccountView: (_s: Session, provider: string) => ({
+    usage: { work: fake.account },
+    accounts:
+      provider === 'codex'
+        ? [{ id: 'work', label: 'work' }]
+        : [
+            { id: 'work', label: 'Work' },
+            { id: 'play', label: 'Play' }
+          ]
+  }),
+  // The seam reads the tab's OWNER: main for this Mac's tab, as the real
+  // seam sends it; the server for a server tab (nothing of this Mac's).
+  refreshSessionAccountUsage: (s: Session, provider: string) => {
+    fake.refreshed.push([s.id, provider])
+    if (s.id.startsWith('clave-owner:')) return
+    if (provider === 'codex') void window.electronAPI.getCodexUsageLimits('work', { force: true })
+    else void window.electronAPI.getUsageLimits('work', { force: true })
+  }
 }))
 vi.mock('./switch-account', () => ({
   accountProviderOf: (s: Session) => (s.claudeMode ? 'claude' : s.codexMode ? 'codex' : null),
@@ -148,6 +169,7 @@ beforeEach(() => {
   fake.sessions = []
   fake.proposals = []
   fake.reports = []
+  fake.refreshed = []
   fake.writes = []
   fake.reads = []
   fake.switched = []
@@ -611,5 +633,16 @@ describe('startAccountPolicy', () => {
     // A report for a tab this window does not hold is dropped.
     fake.limitListener!({ id: 'nope', report: { scope: 'shared' } })
     expect(fake.reports).toHaveLength(1)
+  })
+
+  it('a report on a server tab reads the SERVER’s usage, never this Mac’s with a server id (PRDCT-4328)', () => {
+    const remote = 'clave-owner:session:srv-b:abc'
+    fake.sessions = [chat({ id: remote })]
+    startAccountPolicy()
+    fake.limitListener!({ id: remote, report: { scope: 'shared', resetsAt: 5 } })
+    expect(fake.reports).toEqual([[remote, { scope: 'shared', resetsAt: 5 }]])
+    // Handed to the owner-aware seam, and no read of this Mac's usage.
+    expect(fake.refreshed).toEqual([[remote, 'claude']])
+    expect(fake.reads).toEqual([])
   })
 })

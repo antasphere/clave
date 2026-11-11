@@ -1,13 +1,10 @@
 import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import type { LimitRung } from '../store/session-types'
-import {
-  accountsUsageFor,
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage
-} from '../store/usage-store'
-import { useClaudeProfileStore, getClaudeProfile } from '../store/claude-profile-store'
-import { useCodexAccountStore, getCodexAccount } from '../store/codex-account-store'
+import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
+import { useClaudeProfileStore } from '../store/claude-profile-store'
+import { useCodexAccountStore } from '../store/codex-account-store'
+import { refreshSessionAccountUsage, sessionAccountView } from './session-accounts'
 import {
   effectiveFamilyLimitRule,
   effectiveSwitchMode,
@@ -71,10 +68,13 @@ function isWorking(session: Session): boolean {
   return session.agentState === 'working' || session.activityStatus === 'active'
 }
 
+/** A rung's account named in the tab's OWNER's list. */
 function accountLabelOf(session: Session, accountId: string): string {
-  return accountProviderOf(session) === 'codex'
-    ? getCodexAccount(accountId).label
-    : getClaudeProfile(accountId).label
+  const provider = accountProviderOf(session) ?? 'claude'
+  return (
+    sessionAccountView(session, provider).accounts.find((a) => a.id === accountId)?.label ??
+    accountId
+  )
 }
 
 /** The road to another provider (lane D's `switch-provider.ts`): which
@@ -209,7 +209,9 @@ export function runAccountPolicy(): void {
     // The rung comes from the Claude model table: a Codex tab has no model
     // rung yet (integration round 1, F6 and G4). A model the CLI refused
     // while this report was open is not offered again.
-    const accountView = accountsUsageFor(provider)[sessionAccountId(session, provider)]
+    const accountView = sessionAccountView(session, provider).usage[
+      sessionAccountId(session, provider)
+    ]
     const candidate =
       family && provider === 'claude' && isChatSession(session, provider)
         ? modelRungFor(family, accountView)
@@ -355,14 +357,7 @@ export function startAccountPolicy(): void {
     // The poll may not have seen it yet: read the account now. The read is
     // what settles a report the CLI typed as a plain week (`limit-scope.ts`).
     const provider = accountProviderOf(session)
-    if (provider) {
-      const accountId = sessionAccountId(session, provider)
-      if (provider === 'codex') {
-        void window.electronAPI.getCodexUsageLimits(accountId, { force: true })
-      } else {
-        void window.electronAPI.getUsageLimits(accountId, { force: true })
-      }
-    }
+    if (provider) refreshSessionAccountUsage(session, provider)
     schedule()
   })
 }

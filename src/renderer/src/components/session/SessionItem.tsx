@@ -1,4 +1,3 @@
-import { isRemoteKey } from '../../lib/fleet-identity'
 import { FleetBadge } from '../fleet/FleetControls'
 import { memo } from 'react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
@@ -13,14 +12,9 @@ import {
 } from '@heroicons/react/24/outline'
 import { ClaudeVariantGlyph } from '../icons/cli-logos'
 import { SidebarTabItem } from './SidebarTabItem'
-import {
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage,
-  claudeUsageForModel,
-  capOutLabel,
-  capStatus
-} from '../../store/usage-store'
+import { claudeUsageForModel, capOutLabel, capStatus } from '../../store/usage-store'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
+import { useSessionAccountSummary } from '../../lib/session-accounts'
 import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 import { useMarkPack } from '../plugins/native-marks'
@@ -31,16 +25,16 @@ import { SubagentMenu, type SessionMenuEvent } from './SubagentMenu'
  *  the next turn fails. Hovering shows the account card the tab's context menu
  *  opens with. Its own component, subscribed to the usage mirror, because the
  *  row itself only re-renders on its session object. */
-function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
+export function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
   const provider = accountProviderOf(session)
+  // The tab's OWNER's account's usage, that one entry alone: a read of
+  // another account does not redraw the row's badge. A tab on a server
+  // reads the server's (PRDCT-4328), loaded as the row draws.
+  const read = useSessionAccountSummary(session, provider)
   const accountId = provider ? sessionAccountId(session, provider) : ''
-  const claude = useClaudeAccountsUsage((s) => s.byAccount[accountId])
-  const codex = useCodexAccountsUsage((s) => s.byAccount[accountId])
-  const summary = provider
-    ? claudeUsageForModel(provider === 'codex' ? codex : claude, session.model)
-    : undefined
+  const summary = provider ? claudeUsageForModel(read, session.model) : undefined
   const stopping = capStatus(summary)?.stopping ?? null
-  if (isRemoteKey(session.id) || !provider || !session.alive || !stopping) return null
+  if (!provider || !session.alive || !stopping) return null
   // The cap that stops THIS tab, named with its return (PRDCT-4254).
   const words = capOutLabel(stopping)
   return (

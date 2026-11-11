@@ -53,8 +53,12 @@ import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
 import { GitEventsLive, GitPort, gitHandlers } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran ──
+import { HistoryPort, historyHandlers } from './history'
 // ── ADR 0004: the routines ──
 import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
+// ── PRDCT-4327: the digests ──
+import { DigestsPort, digestHandlers } from './digests'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -98,8 +102,12 @@ export type ServerServices =
   | GitPort
   // ── Issue #266: the server domain ──
   | ServerInfoPort
+  // ── PRDCT-4321: the server's History ──
+  | HistoryPort
   // ── ADR 0004: the routines ──
   | Routines
+  // ── PRDCT-4327: the digests ──
+  | DigestsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -201,8 +209,12 @@ export const BusesLive = busesLayer.pipe(
       ...gitHandlers,
       // ── Issue #266: the server domain ──
       ...serverInfoHandlers,
+      // ── PRDCT-4321: the server's History ──
+      ...historyHandlers,
       // ── ADR 0004: the routines ──
-      ...routineHandlers
+      ...routineHandlers,
+      // ── PRDCT-4327: the digests ──
+      ...digestHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )
@@ -247,6 +259,9 @@ export const ServerLive = (
   )
 }
 
+/** The largest body a digest command may send (PRDCT-4327). */
+export const DIGEST_BODY_LIMIT = 3 * 1024 * 1024
+
 /** Bound transfer and sensitive resolution bodies before JSON decoding.
  * Authentication runs first; oversized secret inputs are never echoed. */
 const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
@@ -256,7 +271,12 @@ const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
         ? 64 * 1024
         : request.url.startsWith('/files/')
           ? 7 * 1024 * 1024
-          : undefined
+          : // PRDCT-4327: a digest read carries a clipped timeline (30
+            // messages of at most 4,096 characters each field, about 2.3 MB
+            // in the worst JSON escaping): nothing bigger is read or parsed.
+            request.url.startsWith('/digests/')
+            ? DIGEST_BODY_LIMIT
+            : undefined
     if (limit === undefined) return app
     const length = Number(request.headers['content-length'])
     if (Number.isFinite(length) && length > limit)

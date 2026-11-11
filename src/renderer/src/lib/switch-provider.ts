@@ -3,10 +3,10 @@ import { handoffBudgetChars } from './handoff-budget'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
 import { isChatSession, registerProviderSwitchRoad } from './account-policy'
 import { useSessionStore, type Session } from '../store/session-store'
-import { accountsUsageFor, claudeUsageForModel, headroomLabel } from '../store/usage-store'
+import { headroomLabel } from '../store/usage-store'
 import {
-  accountForLaunch,
   accountProviderOf,
+  landingForSession,
   restartSessionProcess,
   sessionAccountExhausted,
   type SwitchResult
@@ -32,10 +32,16 @@ export interface ProviderSwitchTarget {
   model: ModelOption
 }
 
-/** Where the move lands: the pool's pick for the target's model, with the
- *  account's headroom as its menu row would read it. A provider with no
- *  account pool (the echo fixture, a plugin) lands nowhere in particular. */
-export function providerSwitchLanding(target: Pick<ProviderSwitchTarget, 'provider' | 'model'>): {
+/** Where the move lands: the pool's pick for the target's model with the
+ *  account's headroom as its menu row would read it, in the tab's OWNER's
+ *  pool: a tab on a server lands on one of that server's accounts, never on
+ *  this Mac's (PRDCT-4328); `refused` says why when the server's accounts are
+ *  not read yet. A provider with no account pool (the echo fixture, a
+ *  plugin) lands nowhere in particular. */
+export function providerSwitchLanding(
+  target: Pick<ProviderSwitchTarget, 'provider' | 'model'>,
+  sessionId?: string
+): {
   account: { id: string; label: string } | null
   headroom: string | null
   overrides: {
@@ -44,26 +50,28 @@ export function providerSwitchLanding(target: Pick<ProviderSwitchTarget, 'provid
     codexAccountId?: string
     codexAccountLabel?: string
   }
+  refused?: string
 } {
-  if (target.provider === 'claude') {
-    const profile = accountForLaunch('claude', undefined, target.model.id)
-    const summary = claudeUsageForModel(accountsUsageFor('claude')[profile.id], target.model.id)
+  if (target.provider !== 'claude' && target.provider !== 'codex')
+    return { account: null, headroom: null, overrides: {} }
+  const session = sessionId ? sessionById(sessionId) : undefined
+  const landing = landingForSession(session, target.provider, target.model.id)
+  if (!landing)
     return {
-      account: { id: profile.id, label: profile.label },
-      headroom: headroomLabel(summary),
-      overrides: { claudeProfileId: profile.id, claudeProfileLabel: profile.label }
+      account: null,
+      headroom: null,
+      overrides: {},
+      refused: "The server's accounts are not read yet; try the move again in a moment."
     }
+  const { account, summary } = landing
+  return {
+    account: { id: account.id, label: account.label },
+    headroom: headroomLabel(summary),
+    overrides:
+      target.provider === 'claude'
+        ? { claudeProfileId: account.id, claudeProfileLabel: account.label }
+        : { codexAccountId: account.id, codexAccountLabel: account.label }
   }
-  if (target.provider === 'codex') {
-    const account = accountForLaunch('codex', undefined, target.model.id)
-    const summary = claudeUsageForModel(accountsUsageFor('codex')[account.id], target.model.id)
-    return {
-      account: { id: account.id, label: account.label },
-      headroom: headroomLabel(summary),
-      overrides: { codexAccountId: account.id, codexAccountLabel: account.label }
-    }
-  }
-  return { account: null, headroom: null, overrides: {} }
 }
 
 /** Which road the move would take, from the host, before anything is written. */
@@ -160,7 +168,8 @@ export async function switchSessionProvider(
   input: ProviderSwitchInput
 ): Promise<ProviderSwitchResult> {
   const { target } = input
-  const landing = providerSwitchLanding(target)
+  const landing = providerSwitchLanding(target, sessionId)
+  if (landing.refused) return { ok: false, resumed: false, error: landing.refused, road: 'handoff' }
   let resume: string | undefined
   let fallback: string | undefined
   if (input.road === 'convert') {

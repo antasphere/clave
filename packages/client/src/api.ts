@@ -29,8 +29,13 @@ import { requestsClient, type RequestsClient } from './requests'
 import { gitClient, type GitClient } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { serverInfoClient, type ServerInfoClient } from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran (aliased: `historyClient`
+// below is the derived client under the history deadline) ──
+import { historyClient as serverHistoryClient, type HistoryClient } from './history'
 // ── ADR 0004: the routines ──
 import { routinesClient, type RoutinesClient } from './routines'
+// ── PRDCT-4327: the digests ──
+import { digestsClient, type DigestsClient } from './digests'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -83,8 +88,12 @@ export interface ClaveApiClient {
   readonly git: GitClient
   // ── Issue #266: the server domain (`./server-info.ts`) ──
   readonly server: ServerInfoClient
+  // ── PRDCT-4321: the server's History (./history.ts) ──
+  readonly history: HistoryClient
   // ── ADR 0004: the routines (`./routines.ts`) ──
   readonly routines: RoutinesClient
+  // ── PRDCT-4327: the digests (`./digests.ts`) ──
+  readonly digests: DigestsClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -165,8 +174,12 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     git: gitClient(call, patientCall),
     // ── Issue #266: the server domain ──
     server: serverInfoClient(call, options.url),
+    // ── PRDCT-4321: the server's History ──
+    history: serverHistoryClient(call, options.url, historyCall),
     // ── ADR 0004: the routines ──
     routines: routinesClient(call),
+    // ── PRDCT-4327: the digests ──
+    digests: digestsClient(call, patientCall),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

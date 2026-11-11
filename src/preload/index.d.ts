@@ -61,6 +61,11 @@ import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { SlidelessAPI } from '../shared/slideless'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
+  HelperAccount,
+  HelperPreference,
+  HelperPreferencePatch
+} from '../shared/helper-preferences'
+import type {
   LaunchProfile,
   LaunchProfilePreferences,
   LauncherFamily,
@@ -69,6 +74,7 @@ import type {
 
 export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
+export type { HelperAccount, HelperPreference, HelperPreferencePatch }
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -160,8 +166,27 @@ export interface RestartOverridesInput {
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
 }
 
+/** The server a History row's conversation ran on (PRDCT-4321): absent for
+ *  this Mac's own. `online` is whether it answered this list; an offline
+ *  server's rows are its last answer, kept, and cannot be resumed. `held`
+ *  is what the server said of the conversation (a tab runs it, a stopped tab
+ *  holds it, no tab does); null when the row comes from this Mac's own
+ *  record of a server tab and the server's answer does not list it (a
+ *  server older than its History, a tab it ran before it kept one) or the
+ *  server did not answer. */
+export interface HistoryServerRef {
+  id: string
+  name: string
+  online: boolean
+  held: 'running' | 'stopped' | 'closed' | null
+}
+
 export interface HistoryListEntry {
-  source: 'ledger' | 'transcript'
+  /** `server`: a conversation a server's own History listed (PRDCT-4321). */
+  source: 'ledger' | 'transcript' | 'server'
+  server?: HistoryServerRef
+  /** The launch profile a server's conversation ran on (PRDCT-4321). */
+  launchProfileId?: string
   /** Which CLI's conversation this is; resume exists for claude only. */
   provider: 'claude' | 'codex' | 'pi' | 'antigravity'
   agentProvider?: string | null
@@ -862,6 +887,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
     family: LauncherFamily,
     profileId: string | null
   ) => Promise<LaunchProfilePreferences>
+  /** This Mac's helpers (PRDCT-4330): every declared one with its switch,
+   *  model and account; a write answers the whole list. A server's are
+   *  `fleetHelpers` / `fleetHelperSet`. */
+  helpersList: () => Promise<HelperPreference[]>
+  helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
   spawnSession: (
     cwd: string,
     options?: {

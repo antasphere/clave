@@ -37,6 +37,10 @@ export interface ServerSettings {
   /** The server's list as it answered, the Default first. */
   codex: CodexAccount[]
   migrated: string[]
+  /** Which account lists the server has answered or pushed: until then the
+   *  list holds the Default alone, which says nothing of a tab's account
+   *  (PRDCT-4328). Absent reads as not answered. */
+  listed?: { claude: boolean; codex: boolean }
   profiles: LaunchProfilePreferences | null
   usage: {
     claude: Record<string, AccountUsageSummary>

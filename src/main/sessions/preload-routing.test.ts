@@ -310,6 +310,114 @@ describe('the preload routes the other session calls', () => {
   })
 })
 
+describe('the preload routes a tab’s digests to the server that runs it (PRDCT-4327)', () => {
+  const launch = { claudeProfileId: 'main-account' }
+  const messages = [{ from: 'Lane A', text: 'done' }]
+  const digests = (): Record<string, ReturnType<typeof vi.fn>> => ({
+    exchange: vi.fn(async () => ({ ok: true, needsYou: false, summary: 'server', message: null })),
+    exchangesOf: vi.fn(async () => ({})),
+    work: vi.fn(async () => ({ ok: true, title: 'server', needsYou: false, note: null })),
+    workOf: vi.fn(async () => ({}))
+  })
+
+  it('reads them in main over IPC, launch and all, while main names no server', async () => {
+    answer({ 'server:endpoint': null })
+    await api.exchangeDigest({ sessionId: 's1', key: 'k', launch, messages })
+    await api.exchangeDigestsOf('s1')
+    await api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 })
+    await api.workDigestsOf('s1')
+    expect(
+      mocks.invoke.mock.calls.filter(([c]) => c !== 'server:endpoint' && c !== 'server:external')
+    ).toEqual([
+      ['exchanges:digest', { sessionId: 's1', key: 'k', launch, messages }],
+      ['exchanges:digests-of', 's1'],
+      ['work:digest', { sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 }],
+      ['work:digests-of', 's1']
+    ])
+  })
+
+  for (const mode of ['separate', 'attached'] as const)
+    it(`asks the ${mode} server once main names it, without the launch, never main`, async () => {
+      const server = digests()
+      mocks.createApiClient.mockImplementation(() => ({
+        sessions: mocks.sessions,
+        digests: server
+      }))
+      answer({ ...onServer, 'server:endpoint': { ...endpoint, mode } })
+      expect(
+        await api.exchangeDigest({ sessionId: 's1', key: 'k', launch, messages })
+      ).toMatchObject({ summary: 'server' })
+      await api.exchangeDigestsOf('s1')
+      expect(
+        await api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 })
+      ).toMatchObject({ title: 'server' })
+      await api.workDigestsOf('s1')
+      expect(server.exchange).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'k',
+        messages
+      })
+      expect(server.exchangesOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(server.work).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'w',
+        notes: ['n'],
+        tools: 1
+      })
+      expect(server.workOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(channels().filter((c) => /digest/.test(c))).toEqual([])
+    })
+})
+
+describe('a window whose server is its own process never reads a digest in main (PRDCT-4327)', () => {
+  const launch = { claudeProfileId: 'main-account' }
+  const messages = [{ from: 'Lane A', text: 'done' }]
+
+  it('waits for the server main has not named yet, then asks it, never main', async () => {
+    const exchange = vi.fn(async () => ({
+      ok: true,
+      needsYou: false,
+      summary: 'server',
+      message: null
+    }))
+    const exchangesOf = vi.fn(async () => ({ k: { ok: true } }))
+    mocks.createApiClient.mockImplementation(() => ({
+      sessions: mocks.sessions,
+      digests: { exchange, exchangesOf, work: vi.fn(), workOf: vi.fn() }
+    }))
+    answer({ 'server:external': true, 'server:endpoint': null })
+    const read = api.exchangeDigest({ sessionId: 's1', key: 'k', launch, messages })
+    const filed = api.exchangeDigestsOf('s1')
+    await settle()
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(exchange).not.toHaveBeenCalled()
+    // Main names its server: the waiting calls go to it.
+    answer({
+      ...onServer,
+      'server:external': true,
+      'server:endpoint': { ...endpoint, mode: 'attached' }
+    })
+    await vi.advanceTimersByTimeAsync(2_100)
+    await settle()
+    await expect(read).resolves.toMatchObject({ summary: 'server' })
+    await expect(filed).resolves.toEqual({ k: { ok: true } })
+    expect(exchange).toHaveBeenCalledExactlyOnceWith({ sessionId: 's1', key: 'k', messages })
+    expect(channels().filter((c) => /digest/.test(c))).toEqual([])
+  })
+
+  it('a server that never comes is a rejection after the wait, still never main', async () => {
+    answer({ 'server:external': true, 'server:endpoint': null })
+    const read = api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 0 })
+    const settled = read.then(
+      () => 'resolved',
+      (error: Error) => error.message
+    )
+    await vi.advanceTimersByTimeAsync(15_100)
+    await expect(settled).resolves.toBe('The server did not answer')
+    expect(channels().filter((c) => /digest/.test(c))).toEqual([])
+  })
+})
+
 describe('the terminal pane’s road', () => {
   const ipcSends = (): unknown[][] => mocks.send.mock.calls
   it('stays on IPC inside the app, with the server named and in-process', async () => {

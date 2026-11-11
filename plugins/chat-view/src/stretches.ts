@@ -1,4 +1,5 @@
 import type { Entry } from './reducer'
+import { clipNotes } from '../../../src/shared/work-digest'
 import { isQuestion } from './approvals'
 import { isInputRequest } from './input-request'
 import { blockKey, type Block } from './tools'
@@ -43,7 +44,8 @@ const startsTurn = (block: Block): boolean =>
 /** Words to the reader, or a failure: never inside a card. A permission the
  *  agent asked to use a tool is not one; a question or a form is. */
 export function isBoundary(block: Block): boolean {
-  if (block.kind === 'error') return true
+  // A change of permission mode is said to the reader (PRDCT-4331).
+  if (block.kind === 'error' || block.kind === 'mode') return true
   if (block.kind === 'permission') return isQuestion(block.request) || isInputRequest(block.request)
   return false
 }
@@ -87,6 +89,13 @@ export function stretchSpan(stretch: WorkStretch): { from: number; to: number } 
 /** The notes' texts, in order, for the digest. */
 export const stretchNotes = (stretch: WorkStretch): string[] =>
   stretch.steps.flatMap((step) => (step.note && step.work.length ? [step.note.text] : []))
+
+/** What the digest reads of a stretch (PRDCT-4327): its notes clipped as
+ *  the host clips them (`clipNotes`, idempotent), keyed and sent as they
+ *  are, and how many were left out in front, so the note the digest flags is
+ *  put back in the stretch's own count. */
+export const digestNotes = (stretch: WorkStretch): { notes: string[]; offset: number } =>
+  clipNotes(stretchNotes(stretch))
 
 /** The last block of a stretch, whose key is the stretch's. */
 function lastBlock(stretch: WorkStretch): Block {

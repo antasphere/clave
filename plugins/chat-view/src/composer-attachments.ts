@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useReducer,
   useRef,
   useState,
   type RefObject,
@@ -21,7 +22,16 @@ import {
   type SessionAttachment
 } from '../../../src/shared/attachments'
 import { onSessionsDrag } from '../../../src/renderer/src/lib/session-drag'
-import { failureText, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
+import {
+  droppedPathFallback,
+  failureText,
+  pathForMessage
+} from '../../../src/renderer/src/lib/dropped-paths'
+import {
+  reduceDropRefusal,
+  refusedOnThisMac,
+  type DropRefusalState
+} from '../../../src/renderer/src/lib/drop-refusal'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import type { Session } from '../../../src/renderer/src/store/session-types'
@@ -48,6 +58,15 @@ function caretAfter(text: string, marker: string): number {
   if (index === -1) return text.length
   const end = index + marker.length
   return text[end] === ' ' ? end + 1 : end
+}
+
+/** One drop, paste or pick, as the refusal card counts them (PRDCT-4329). */
+export interface DropOutcome {
+  /** A path the drop could not carry: on a server's tab, a path of this Mac
+   *  goes on the card. True when it did; false leaves the caller's fallback. */
+  refuse: (path: string, failure: unknown, name: string) => boolean
+  /** Something of this drop landed: an earlier drop's card goes. */
+  landed: () => void
 }
 
 /** The agent in a tab, in the reader's words, for the record the agent reads. */
@@ -90,6 +109,12 @@ export function useComposerAttachments(opts: {
   clearSent: (files: Attachment[]) => void
   /** A message taken back: its records return with its text. */
   restore: (files: Attachment[]) => void
+  /** What the last drop on a server's tab left on this Mac, for the card. */
+  refusal: DropRefusalState | null
+  /** The card's X and Esc. */
+  dismissRefusal: () => void
+  /** A drop of paths the view carries itself (dragged as text). */
+  startDrop: () => DropOutcome
 } {
   const { sessionId, closed, setDraft, textarea, pane, report } = opts
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -108,6 +133,21 @@ export function useComposerAttachments(opts: {
   // yet (several files of one pick land in one tick): the next one goes right
   // after it, never on top of it. Typing clears it: the caret rules again.
   const pendingMarker = useRef<string | null>(null)
+  // The refusal card, and the drops numbered as they come (`reduceDropRefusal`).
+  const [refusal, dispatchRefusal] = useReducer(reduceDropRefusal, null)
+  const drops = useRef(0)
+  const startDrop = useCallback((): DropOutcome => {
+    const batch = ++drops.current
+    return {
+      refuse: (path, failure, name) => {
+        const item = refusedOnThisMac(sessionId, path, failure, name)
+        if (item) dispatchRefusal({ type: 'refused', batch, item })
+        return item !== null
+      },
+      landed: () => dispatchRefusal({ type: 'landed', batch })
+    }
+  }, [sessionId])
+  const dismissRefusal = useCallback((): void => dispatchRefusal({ type: 'dismissed' }), [])
 
   /** Label a record, add it, and write its marker into the text at the caret. */
   const attach = useCallback(
@@ -169,9 +209,12 @@ export function useComposerAttachments(opts: {
      What main refuses that arrived as a path — a folder from an app that
      names no entry, a socket, a file it cannot read — lands in the text as
      that path, the reason reported beside it: a drop never fails, it has a
-     worst case. Bytes with no path keep the error on their chip. */
+     worst case. On a server's tab a path of this Mac means nothing to the
+     agent: the refusal card says what stayed here instead (PRDCT-4329).
+     Bytes with no path keep the error on their chip. */
   const addFiles = async (sources: (File | string)[]): Promise<void> => {
     if (closed) return
+    const drop = startDrop()
     const queued: { source: File | string; key: string; name: string; path: string }[] = []
     let room = MAX_ATTACHMENTS - latest.current.length - preparations.length
     for (const source of sources) {
@@ -203,10 +246,17 @@ export function useComposerAttachments(opts: {
         if (withdrawn.current.has(key)) continue
         if (!latest.current.some((f) => f.delivery !== 'session' && f.path === file.path))
           attach(file)
+        drop.landed()
         setPreparations((current) => current.filter((p) => p.id !== key))
       } catch (failure) {
         if (withdrawn.current.has(key)) continue
-        if (path) {
+        if (path && drop.refuse(path, failure, name)) {
+          setPreparations((current) => current.filter((p) => p.id !== key))
+        } else if (path && droppedPathFallback(sessionId, path) === 'refuse') {
+          // Another server's file, dragged by its key: not this Mac's either.
+          setPreparations((current) => current.filter((p) => p.id !== key))
+          report(`${failureText(failure)} ${name} was not added to the message.`)
+        } else if (path) {
           setPreparations((current) => current.filter((p) => p.id !== key))
           insertAtCaret(pathForMessage(path) + ' ')
           report(`${failureText(failure)} ${name} is in the message as a path.`)
@@ -226,6 +276,7 @@ export function useComposerAttachments(opts: {
   const addSessions = useCallback(
     (sessionIds: string[]): void => {
       if (closed) return
+      const drop = startDrop()
       const sessions = useViewSessionStore.getState().sessions
       for (const id of sessionIds) {
         if (latest.current.some((f) => f.delivery === 'session' && f.sessionId === id)) continue
@@ -251,9 +302,10 @@ export function useComposerAttachments(opts: {
           })
         }
         attach(record)
+        drop.landed()
       }
     },
-    [attach, closed, preparations.length, report, sessionId]
+    [attach, closed, preparations.length, report, sessionId, startDrop]
   )
 
   const withdraw = (key: string): void => {
@@ -283,6 +335,8 @@ export function useComposerAttachments(opts: {
 
   const clearSent = (files: Attachment[]): void => {
     if (latest.current === files) commit([])
+    // The message went: what the last drop left on this Mac is old news.
+    dispatchRefusal({ type: 'dismissed' })
   }
 
   // The pane takes sidebar tabs for as long as it is mounted.
@@ -303,6 +357,9 @@ export function useComposerAttachments(opts: {
     changeAttachments,
     onDraftChange,
     clearSent,
-    restore: commit
+    restore: commit,
+    refusal,
+    dismissRefusal,
+    startDrop
   }
 }

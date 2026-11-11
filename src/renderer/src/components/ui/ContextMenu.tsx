@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenuPrimitive from '@clave/ui/primitives/dropdown-menu'
 import { ChevronRightIcon } from '@heroicons/react/24/outline'
 import { cn, SUBMENU_ALIGN_OFFSET, SUBMENU_SIDE_OFFSET } from '@clave/ui/components'
 import { MENU_EDGE_PADDING, placeMenu } from '../../lib/menu-placement'
@@ -236,7 +236,6 @@ function SubmenuContent({
         sideOffset={SUBMENU_SIDE_OFFSET}
         alignOffset={SUBMENU_ALIGN_OFFSET}
         avoidCollisions
-        collisionPadding={8}
         className={cn('menu-surface menu-pop z-50 min-w-[180px] p-1', className)}
       >
         {children.map((child) => (

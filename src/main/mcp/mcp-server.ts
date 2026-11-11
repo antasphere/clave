@@ -38,7 +38,7 @@ import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
 import { type RoutineMachine, registerRoutineTools } from './routine-tools'
 import {
-  historyWithLiveLaunch,
+  historyWithServers,
   hostRecords,
   restampSessionLaunch
 } from '../session-history/host-reads'
@@ -92,7 +92,7 @@ const MCP_PATH = '/mcp'
 // 2026-09-08, when this block ran to 4242 chars and half the tools were unreachable.
 // KEEP THIS STRING UNDER 2000 CHARACTERS, and put the tool an agent must not miss
 // near the top. Anything longer belongs in a tool description, not here.
-const INSTRUCTIONS = `You are running inside Clave, which runs agent sessions as tabs in sidebar groups; you are one of them. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
+const INSTRUCTIONS = `You run inside Clave, which runs agent sessions as tabs in sidebar groups; you are one of them. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
 - the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it beside your tab ("the panel"); clave_side_panel reads it back; you send an email yourself, never from the panel. An HTML page or deck is a folder with index.html: open the folder ONCE, then edit its files; it reloads itself and keeps a version per turn.
@@ -100,8 +100,8 @@ Reach for a clave_* tool when:
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
 - work could run in parallel -> clave_open_session (an agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
 - a PAST conversation ("reopen it") -> clave_history lists them; clave_open_session with resume: <id> reopens one.
-- a secret -> clave_request_secret; any other value to type or pick -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; answers go in via clave_input_set. Never ask in prose.
-- the user must copy something you produced -> clave_offer_copy.
+- a secret -> clave_request_secret; any question or value -> clave_request_input, a form in the chat that outlives your turn: ask, end the turn; answers go in via clave_input_set. Never ask in prose or with your own question tool.
+- the user must copy something -> clave_offer_copy.
 - long work done -> clave_notify.
 - a job on a schedule -> clave_routine_create, never cron or launchd.
 - tabs must talk -> clave_send_to_session ("parent" reports back to the tab that opened yours; your own id logs a checkpoint) and clave_read_session (recent output).
@@ -607,7 +607,9 @@ function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): Hist
   return {
     // The ledger's memory with the live record of every held conversation
     // laid over it (round 5 F1): what the tab's own Resume reads.
-    history: async () => (await historyWithLiveLaunch(api, records)).entries,
+    // PRDCT-4321: every connected server's conversations too, each tagged
+    // with its server, so an agent reopens a server's conversation there.
+    history: async () => (await historyWithServers(api)).entries,
     records,
     sessions: () => api.sessions.list(),
     workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))

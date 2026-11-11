@@ -75,3 +75,24 @@ describe('the server domain of the client', () => {
     await expect(api.server.info()).rejects.toBeInstanceOf(ServerUnreachable)
   })
 })
+
+describe('the helpers of an older server (PRDCT-4330)', () => {
+  it('a router 404 on the helpers routes is said as an update the server needs', async () => {
+    const { HelperPreferencesMissing, HELPERS_NEED_UPDATE } = await import('./settings')
+    old = createServer((_request, response) => {
+      response
+        .writeHead(404, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ error: 'NotFound', message: 'route not found', correlationId: 'c' }))
+    })
+    await new Promise<void>((resolve) => old!.listen(0, '127.0.0.1', resolve))
+    const { port } = old.address() as { port: number }
+    api = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
+    await expect(api.settings.helpers.list()).rejects.toBeInstanceOf(HelperPreferencesMissing)
+    await expect(api.settings.helpers.set('tab-title', { enabled: false })).rejects.toThrow(
+      HELPERS_NEED_UPDATE
+    )
+    // The window reads the same words to say it (it cannot load the client).
+    const shared = await import('../../../src/shared/helper-preferences')
+    expect(HELPERS_NEED_UPDATE).toBe(shared.HELPERS_NEED_UPDATE)
+  })
+})

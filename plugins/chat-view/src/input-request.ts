@@ -10,24 +10,28 @@ import type { Permission } from './reducer'
 export type Values = Record<string, InputAnswer>
 
 const empty = (value: InputAnswer | undefined): boolean =>
-  value === undefined || (typeof value === 'string' ? value.trim() === '' : value.length === 0)
+  value === undefined ||
+  (typeof value === 'string' ? value.trim() === '' : value.every((entry) => entry.trim() === ''))
 
 /** The answers as sent: every question answered, trimmed, a multi-select's
- *  labels as an array; an optional question left empty is left out. */
+ *  labels as an array with the person's own words last, each trimmed, an
+ *  empty one dropped and a repeated one said once; a question left empty is
+ *  left out. */
 export function answersOf(
   questions: readonly AgentQuestion[],
   values: Values
 ): Record<string, string | string[]> {
   return Object.fromEntries(
-    questions.flatMap((q) => {
+    questions.flatMap((q): [string, string | string[]][] => {
       const value = own(values, questionKey(q))
       if (empty(value)) return []
-      return [
-        [
-          questionKey(q),
-          typeof value === 'string' ? value.trim() : [...(value as readonly string[])]
-        ]
+      if (typeof value === 'string') return [[questionKey(q), value.trim()]]
+      // Trimmed, blanks dropped, and each said once: own words that read like
+      // a ticked option are that option.
+      const list = [
+        ...new Set((value as readonly string[]).map((entry) => entry.trim()).filter(Boolean))
       ]
+      return list.length ? [[questionKey(q), list]] : []
     })
   )
 }
@@ -70,6 +74,8 @@ export interface CardMemory {
    *  (PRDCT-4210): what the agent set and what the reader's typing already
    *  sent. The typing is sent as it differs from this, never the agent's. */
   synced: Values
+  /** Each multi-select's line of own words as the person typed it (round 2). */
+  lines: Record<string, string>
 }
 const memory = new Map<string, CardMemory>()
 export const recalled = (id: string): CardMemory =>
@@ -80,7 +86,8 @@ export const recalled = (id: string): CardMemory =>
     applied: {},
     touched: {},
     attempted: false,
-    synced: {}
+    synced: {},
+    lines: {}
   }
 /** Written on a change of state, never on a render: a second instance of
  *  the same card (a hidden view of the session) must not write its own

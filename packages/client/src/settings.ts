@@ -5,11 +5,29 @@
  * token and the API key go out as the plain strings the wire carries (the
  * encoded side of the contract's redacted fields) and come back in nothing.
  */
-import type { Effect } from 'effect'
+import { Schema, type Effect } from 'effect'
+import { NotFoundProblem } from '@structure-ai/http'
 import type * as S from '@clave/contract/settings'
 import type { Call, DerivedClient } from './call'
 
 export type ClaudeAccount = typeof S.ClaudeAccountView.Type
+
+/** A server released before the helpers' settings (PRDCT-4330): its router
+ *  answers their routes with its own 404. Said as the fix, an update. */
+export const HELPERS_NEED_UPDATE = 'This server needs an update to show its helpers.'
+export class HelperPreferencesMissing extends Error {
+  readonly _tag = 'HelperPreferencesMissing'
+  constructor() {
+    super(HELPERS_NEED_UPDATE)
+    this.name = 'HelperPreferencesMissing'
+  }
+}
+const helpersMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new HelperPreferencesMissing()
+      : error
+  })
 export type CodexAccount = typeof S.CodexAccountView.Type
 export type CodexAccountKind = typeof S.CodexAccountKind.Type
 export type AccountProvider = typeof S.AccountProvider.Type
@@ -22,6 +40,13 @@ export type LaunchProfile = typeof S.LaunchProfileView.Type
 export type LauncherFamily = typeof S.LauncherFamily.Type
 export type LaunchProfilePreferences = typeof S.LaunchProfilePreferencesView.Type
 export type AppIcon = typeof S.AppIconSchema.Type
+export type HelperPreference = typeof S.HelperPreferenceView.Type
+export type HelperAccount = typeof S.HelperAccountView.Type
+export interface HelperPreferencePatch {
+  readonly enabled?: boolean
+  readonly model?: string | null
+  readonly account?: HelperAccount
+}
 export type Workspace = typeof S.WorkspaceView.Type
 export type WorkspaceState = typeof S.WorkspaceStateView.Type
 export type RegistryWriteResult = typeof S.UpdateWorkspaceRegistry.success.Type
@@ -76,6 +101,14 @@ export interface SettingsClient {
       family: LauncherFamily,
       profileId: string | null
     ) => Promise<LaunchProfilePreferences>
+  }
+  /** The helpers' preference on that server (PRDCT-4330); both answer the list. */
+  readonly helpers: {
+    readonly list: () => Promise<ReadonlyArray<HelperPreference>>
+    readonly set: (
+      helperId: string,
+      patch: HelperPreferencePatch
+    ) => Promise<ReadonlyArray<HelperPreference>>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
@@ -179,6 +212,16 @@ export function settingsClient(callApi: Call): SettingsClient {
         call((g) => g.setGlobalLaunchProfile({ payload: { family, profileId } })),
       setWorkspace: (workspaceId, family, profileId) =>
         call((g) => g.setWorkspaceLaunchProfile({ payload: { workspaceId, family, profileId } }))
+    },
+    helpers: {
+      list: () =>
+        helpersMissing(call((g) => g.listHelperPreferences({ payload: {} }))).then(
+          (v) => v.helpers
+        ),
+      set: (helperId, patch) =>
+        helpersMissing(
+          call((g) => g.setHelperPreference({ payload: { helperId, ...patch } }))
+        ).then((v) => v.helpers)
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)

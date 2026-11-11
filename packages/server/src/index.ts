@@ -79,6 +79,8 @@ export {
 } from './plugins'
 
 export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesService } from './files'
+// ── PRDCT-4327: the digests read by the server a tab runs on ──
+export { DigestsPort, type DigestsService, digestHandlers } from './digests'
 // ── Wave wcs1023, lane C: the git domain ──
 export { GitPort, type GitService, type GitEvent, gitHandlers, GitEventsLive } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
@@ -89,6 +91,8 @@ export {
   serverInfoHandlers,
   ServerInfoEventsLive
 } from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran ──
+export { HistoryPort, type HistoryService, historyHandlers } from './history'
 export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
 export { RequestsPort, type RequestsService } from './requests/port'
 

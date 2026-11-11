@@ -27,6 +27,23 @@ describe('MCP server instructions', () => {
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(2048)
   })
 
+  it("sends every question through the form, never the agent's own question tool (PRDCT-4322)", () => {
+    const text = instructions()
+    expect(text).toMatch(/any question or value -> clave_request_input/)
+    expect(text).toMatch(/Never ask in prose or with your own question tool\./)
+  })
+
+  it("tells a server's agents the same: every question through the form (PRDCT-4322)", () => {
+    const src = readFileSync(join(__dirname, 'standalone-mcp.ts'), 'utf8')
+    const at = src.indexOf("'Your Clave tools run on this server")
+    expect(at).toBeGreaterThanOrEqual(0)
+    const head = src.slice(at, src.indexOf('\n', at))
+    expect(head).toMatch(
+      /every question, value, choice, file or link to open with clave_request_input/
+    )
+    expect(head).toMatch(/never with your own question tool/)
+  })
+
   it('names the side panel early enough to survive any plausible cut', () => {
     // Whatever else gets trimmed, the tool users ask for by name ("open the
     // panel") must sit in the first quarter of the block.

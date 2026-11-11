@@ -12,6 +12,7 @@ import { PiUsageManager } from '../pi-usage'
 import { LaunchProfileManager } from '../launch-profile-manager'
 import { PreferencesManager } from '../preferences-manager'
 import { WorkspaceManager } from '../workspace-manager'
+import { HelperPreferences } from '../helpers/preferences'
 import type { LoginJob } from '../account-login'
 import { electronTestPorts, tempDataDir } from '../ports/testing'
 import {
@@ -155,6 +156,31 @@ describe('the settings source over the real managers', () => {
     expect(applyAppIcon).toHaveBeenCalledWith('light')
     // The second build shares the directory: a fresh manager reads what was written.
     expect(new PreferencesManager(electronTestPorts(dir)).get('appIcon')).toBe('light')
+  })
+
+  it('refuses the helpers without a store, and writes them to this host’s with one (PRDCT-4330)', async () => {
+    const bare = settingsSourceFromManagers(managers)
+    await expect(Promise.resolve().then(() => bare.helpers.list())).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'helpers'
+    })
+    const source = settingsSourceFromManagers({
+      ...build(),
+      helpers: new HelperPreferences(electronTestPorts(dir))
+    })
+    const after = await source.helpers.set('tab-title', {
+      enabled: false,
+      account: { kind: 'machine' }
+    })
+    expect(after.find((h) => h.id === 'tab-title')).toMatchObject({
+      enabled: false,
+      account: { kind: 'machine' }
+    })
+    // On this host's disk: the runner of either process reads it there.
+    expect(new HelperPreferences(electronTestPorts(dir)).configFor('tab-title')).toEqual({
+      enabled: false,
+      claudeProfileId: null
+    })
   })
 
   it('loads the login manager once, and emits its progress', async () => {

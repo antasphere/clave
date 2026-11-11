@@ -35,9 +35,12 @@ export * as Plugins from './plugins'
 export * as Git from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 export * as ServerInfo from './server-info'
+export * as History from './history'
 // ── PRDCT-4123: which work a session does ──
 export * as Work from './work'
 // ── ADR 0004: the routines ──
 export * as Routines from './routines'
+// ── PRDCT-4327: the digests read by the server a tab runs on ──
+export * as Digests from './digests'
 
 // ── Lane B: terminals · Lane D: settings served ──

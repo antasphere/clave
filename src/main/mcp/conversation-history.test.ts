@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Session, SessionRecord } from '@clave/contract/sessions'
-import type { HistoryListEntry } from '../session-history/service'
+import { sessionKey } from '@clave/contract/fleet'
+import type { HistoryListEntry, HistoryServerRef } from '../session-history/service'
 import {
   holdersOf,
   listConversations,
@@ -396,6 +397,22 @@ describe('openResumed: what the open does with a resume', () => {
     expect(h.focused).toEqual(['tab'])
   })
 
+  it('an account named with resume never moves the tab that holds the conversation: a pinned tab stays put (PRDCT-4328)', async () => {
+    const h = io()
+    const stopped = lookups(history, [record('tab', { claudeSessionId: 'c1', running: false })])
+    // The holder is resumed in place on the account it runs on: the restart
+    // takes the tab's id alone, so `account` cannot reach it, pinned or not.
+    const out = await openResumed(stopped, { resume: 'c1', account: 'Play' }, 'caller', h)
+    expect(out).toMatchObject({ result: { sessionId: 'tab', alreadyOpen: true, resumed: true } })
+    expect(out).not.toHaveProperty('payload')
+    expect(h.restarted).toEqual(['tab'])
+    // A tab on a Clave server is not this Mac's History's: refused, never
+    // reopened elsewhere on another account.
+    await expect(
+      openResumed(stopped, { resume: 'c1', server: 'srv-b', account: 'Play' }, 'caller', h)
+    ).rejects.toThrow(/omit server/)
+  })
+
   it('a conversation nobody holds becomes a start with its own provider, directory, model and title (F1: no mode needed)', async () => {
     const out = await openResumed(lookups(history), { resume: 'x1', chat: true }, 'caller', io())
     expect(out).toEqual({
@@ -595,5 +612,314 @@ describe('recordsWithStopped: the listing plus the stopped holders, by id, a chu
     )
     expect(calls).toEqual([undefined])
     expect(out).toBe(listed)
+  })
+})
+
+/**
+ * PRDCT-4321: a server's conversation in the History. Its row says the
+ * server and whether a tab of that server holds it; it resumes only while
+ * the server is online, on that server, never on this Mac, and its folder is
+ * the server's, never checked on this disk.
+ */
+describe('a server’s conversation in the agent tools (PRDCT-4321)', () => {
+  const TAB_KEY = sessionKey({ serverId: 'srv', sessionId: 'tab-1' })
+  const onServer = (
+    online: boolean,
+    held: HistoryServerRef['held'],
+    over: Partial<HistoryListEntry> = {}
+  ): HistoryListEntry =>
+    entry({
+      claudeSessionId: 'sc1',
+      source: 'server',
+      sessionId: TAB_KEY,
+      cwd: '/srv/odoo',
+      workspaceId: null,
+      title: 'Studio research',
+      server: { id: 'srv', name: 'Studio', online, held },
+      ...over
+    })
+  const gone = (e: HistoryListEntry): HistoryListEntry => ({
+    ...e,
+    transcript: { ...e.transcript, exists: false }
+  })
+  const io = (): ResumeOpenIo & { restarted: string[]; focused: string[] } => {
+    const restarted: string[] = []
+    const focused: string[] = []
+    return {
+      restarted,
+      focused,
+      // Nothing of the server's disk is a folder of this Mac.
+      isDirectory: () => false,
+      isRegisteredWorkspace: () => false,
+      restart: async (id) => {
+        restarted.push(id)
+        return { resumed: true }
+      },
+      focus: async (id) => {
+        focused.push(id)
+      },
+      isKnownAccount: () => false
+    }
+  }
+
+  describe('listConversations', () => {
+    it('reports the server, the tab of the server that holds it, and resumable only online', async () => {
+      const row = async (e: HistoryListEntry): Promise<Record<string, unknown>> =>
+        (await listConversations(lookups([e]))).rows[0] as unknown as Record<string, unknown>
+      expect(await row(onServer(true, 'running'))).toMatchObject({
+        server: { id: 'srv', name: 'Studio', online: true },
+        open: { sessionId: TAB_KEY, alive: true },
+        resumable: true
+      })
+      expect(await row(onServer(true, 'stopped'))).toMatchObject({
+        open: { sessionId: TAB_KEY, alive: false }
+      })
+      expect(await row(onServer(true, 'closed'))).toMatchObject({ open: null, resumable: true })
+      expect(await row(onServer(true, null))).toMatchObject({ open: null })
+      // A row the server does not list is tried there while it is online,
+      // whatever this Mac's disk says of its transcript; offline, never.
+      expect(await row(gone(onServer(true, null)))).toMatchObject({ resumable: true })
+      expect(await row(gone(onServer(false, null)))).toMatchObject({ resumable: false })
+      expect(await row(gone(onServer(true, 'closed')))).toMatchObject({ resumable: false })
+      expect(await row(onServer(false, 'closed'))).toMatchObject({
+        server: { id: 'srv', name: 'Studio', online: false },
+        resumable: false
+      })
+      // The server row carries no `held` of its own.
+      expect((await row(onServer(true, 'running'))).server).toEqual({
+        id: 'srv',
+        name: 'Studio',
+        online: true
+      })
+    })
+
+    it('never takes one of this Mac’s records as the holder of a server’s conversation', async () => {
+      const { rows } = await listConversations(
+        lookups(
+          [onServer(true, 'closed')],
+          [record('mac-tab', { claudeSessionId: 'sc1', running: true })],
+          [session('mac-tab', 'idle')]
+        )
+      )
+      expect(rows[0].open).toBeNull()
+    })
+  })
+
+  describe('planResume', () => {
+    const dirExists = (): boolean => false
+
+    it('refuses an offline server’s conversation, naming the server', async () => {
+      await expect(
+        planResume(lookups([onServer(false, 'closed')]), 'sc1', dirExists)
+      ).rejects.toThrow(
+        'Conversation "sc1" ("Studio research") ran on the server "Studio", which is offline'
+      )
+      await expect(
+        planResume(lookups([onServer(false, 'running')]), 'sc1', dirExists)
+      ).rejects.toBeInstanceOf(ResumeRefused)
+    })
+
+    it('answers the tab of the server that holds it, running or stopped, whatever its transcript', async () => {
+      expect(await planResume(lookups([onServer(true, 'running')]), 'sc1', dirExists)).toEqual({
+        kind: 'server-held',
+        sessionId: TAB_KEY,
+        alive: true,
+        server: { id: 'srv', name: 'Studio' }
+      })
+      expect(
+        await planResume(lookups([gone(onServer(true, 'stopped'))]), 'sc1', dirExists)
+      ).toEqual({
+        kind: 'server-held',
+        sessionId: TAB_KEY,
+        alive: false,
+        server: { id: 'srv', name: 'Studio' }
+      })
+    })
+
+    it('refuses a closed conversation whose transcript left the server, naming the server', async () => {
+      await expect(
+        planResume(lookups([gone(onServer(true, 'closed'))]), 'sc1', dirExists)
+      ).rejects.toThrow(
+        'The transcript of conversation "sc1" ("Studio research") is no longer on the server "Studio"'
+      )
+    })
+
+    it('starts a conversation its online server does not list there, its transcript unchecked', async () => {
+      const exists = (p: string): boolean => {
+        throw new Error(`dirExists asked for ${p}`)
+      }
+      // This Mac sees no transcript: it is on the server's disk, if anywhere.
+      expect(await planResume(lookups([gone(onServer(true, null))]), 'sc1', exists)).toMatchObject({
+        kind: 'start',
+        cwd: '/srv/odoo',
+        server: { id: 'srv', name: 'Studio' }
+      })
+      await expect(
+        planResume(lookups([onServer(true, null, { cwd: '' })]), 'sc1', exists)
+      ).rejects.toThrow('names no working directory')
+    })
+
+    it('refuses a conversation an offline server does not list, naming the server', async () => {
+      await expect(planResume(lookups([onServer(false, null)]), 'sc1', dirExists)).rejects.toThrow(
+        'ran on the server "Studio", which is offline'
+      )
+    })
+
+    it('starts a closed conversation on its server, its folder never checked on this Mac', async () => {
+      const exists = (p: string): boolean => {
+        throw new Error(`dirExists asked for ${p}`)
+      }
+      expect(await planResume(lookups([onServer(true, 'closed')]), 'sc1', exists)).toEqual({
+        kind: 'start',
+        cwd: '/srv/odoo',
+        provider: 'claude',
+        title: 'Studio research',
+        model: 'claude-opus-5-5',
+        workspaceId: null,
+        piProvider: null,
+        piThinking: null,
+        launch: null,
+        server: { id: 'srv', name: 'Studio' }
+      })
+      expect(await planResume(lookups([onServer(true, 'closed')]), 'sc1', dirExists)).toMatchObject(
+        { kind: 'start', server: { id: 'srv', name: 'Studio' } }
+      )
+    })
+  })
+
+  describe('openResumed', () => {
+    it('refuses a server conversation asked of another server or of this Mac', async () => {
+      const h = lookups([onServer(true, 'closed')])
+      for (const server of ['other', 'local']) {
+        await expect(openResumed(h, { resume: 'sc1', server }, 'caller', io())).rejects.toThrow(
+          'Conversation "sc1" ran on the server "Studio" and reopens there; omit server or name that one.'
+        )
+      }
+    })
+
+    it('accepts its server by id or by name, in any case, and the start goes there', async () => {
+      const h = lookups([onServer(true, 'closed')])
+      for (const server of [undefined, 'srv', 'SRV', 'Studio', 'studio', ' STUDIO ']) {
+        const out = await openResumed(
+          h,
+          { resume: 'sc1', ...(server !== undefined ? { server } : {}) },
+          'caller',
+          io()
+        )
+        expect(out).toMatchObject({
+          payload: {
+            mode: 'claude',
+            cwd: '/srv/odoo',
+            server: 'srv',
+            resumeSessionId: 'sc1'
+          }
+        })
+      }
+    })
+
+    it('answers the tab of the server that holds it, restarting nothing', async () => {
+      for (const held of ['running', 'stopped'] as const) {
+        const h = io()
+        const out = await openResumed(
+          lookups([onServer(true, held)]),
+          { resume: 'sc1', server: 'Studio' },
+          'caller',
+          h
+        )
+        expect(out).toMatchObject({
+          result: {
+            sessionId: TAB_KEY,
+            conversation: 'sc1',
+            alreadyOpen: true,
+            resumed: false,
+            server: 'Studio'
+          }
+        })
+        expect(h.restarted).toEqual([])
+        expect(h.focused).toEqual([])
+      }
+    })
+
+    it('reopens a server’s conversation on the profile and the server account it ran on', async () => {
+      const ranOn = onServer(true, 'closed', {
+        launchProfileId: 'chat:claude:mine',
+        launch: { accountId: 'srv-acct', accountLabel: 'Studio work' }
+      })
+      const h = io()
+      const asked: string[] = []
+      h.isKnownAccount = (_provider, id) => {
+        asked.push(id)
+        return true
+      }
+      const out = (await openResumed(lookups([ranOn]), { resume: 'sc1' }, 'caller', h)) as {
+        payload: Record<string, unknown>
+      }
+      expect(out.payload).toMatchObject({
+        server: 'srv',
+        resumeSessionId: 'sc1',
+        resumeLaunchProfileId: 'chat:claude:mine',
+        resumeAccount: { id: 'srv-acct', label: 'Studio work' }
+      })
+      // The server's account is never looked up among this Mac's, nor sent
+      // as one of this Mac's.
+      expect(asked).toEqual([])
+      expect(out.payload.account).toBeUndefined()
+    })
+
+    it('lets the caller’s own profile, chat or account win over the remembered ones', async () => {
+      const ranOn = onServer(true, 'closed', {
+        launchProfileId: 'chat:claude:mine',
+        launch: { accountId: 'srv-acct', accountLabel: 'Studio work' }
+      })
+      for (const own of [{ profile: 'claude-chat' }, { chat: false }, { chat: true }]) {
+        const out = (await openResumed(
+          lookups([ranOn]),
+          { resume: 'sc1', ...own },
+          'caller',
+          io()
+        )) as { payload: Record<string, unknown> }
+        expect(out.payload.resumeLaunchProfileId).toBeUndefined()
+        expect(out.payload.resumeAccount).toEqual({ id: 'srv-acct', label: 'Studio work' })
+      }
+      const out = (await openResumed(
+        lookups([ranOn]),
+        { resume: 'sc1', account: 'other' },
+        'caller',
+        io()
+      )) as { payload: Record<string, unknown> }
+      expect(out.payload.resumeAccount).toBeUndefined()
+      expect(out.payload.account).toBe('other')
+      expect(out.payload.resumeLaunchProfileId).toBe('chat:claude:mine')
+    })
+
+    it('carries no remembered profile nor account for this Mac’s own conversation', async () => {
+      const mine = lookups([
+        entry({
+          claudeSessionId: 'c1',
+          launchProfileId: 'chat:claude:mine',
+          launch: { accountId: 'mac-acct' }
+        })
+      ])
+      const here = { ...io(), isDirectory: () => true, isKnownAccount: () => true }
+      const out = (await openResumed(mine, { resume: 'c1' }, 'caller', here)) as {
+        payload: Record<string, unknown>
+      }
+      expect(out.payload.resumeLaunchProfileId).toBeUndefined()
+      expect(out.payload.resumeAccount).toBeUndefined()
+      // This Mac's account is still named when it exists here.
+      expect(out.payload.account).toBe('mac-acct')
+    })
+
+    it('accepts local for this Mac’s own conversation and refuses a server', async () => {
+      const mine = lookups([entry({ claudeSessionId: 'c1' })])
+      const here = { ...io(), isDirectory: (p: string) => p === '/work/odoo' }
+      const out = await openResumed(mine, { resume: 'c1', server: 'local' }, 'caller', here)
+      expect(out).toMatchObject({ payload: { cwd: '/work/odoo', resumeSessionId: 'c1' } })
+      // The caller's own `local` rides through; no server is named for it.
+      expect((out as { payload: Record<string, unknown> }).payload.server ?? 'local').toBe('local')
+      await expect(
+        openResumed(mine, { resume: 'c1', server: 'srv' }, 'caller', here)
+      ).rejects.toThrow('Conversation "c1" is this Mac\'s and reopens here; omit server.')
+    })
   })
 })

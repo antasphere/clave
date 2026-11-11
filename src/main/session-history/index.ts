@@ -1,6 +1,8 @@
 import type { LedgerLaunch, LedgerRow } from './ledger'
 import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { GIT_HELPER_MARKER } from '../../shared/helper-prompt'
+import { PERMISSION_EXPLAINER_MARKER } from '../../shared/permission-explainer'
 import { LAUNCH_KEYS } from '../../shared/runtime-choices'
 
 /**
@@ -46,6 +48,11 @@ export interface HistoryEntry {
    *  effort, account, field by field from the latest row that knew it.
    *  Absent when no row ever carried one. */
   launch?: LedgerLaunch
+  /** The account directory the latest row that knew one named
+   *  (PRDCT-4321): where the transcript lives instead of the shared root. */
+  configDir?: string
+  /** The launch profile the latest row that knew one named (PRDCT-4321). */
+  launchProfileId?: string
 }
 
 /** A row's launch fields over the entry's: a field the row carries wins, a
@@ -161,6 +168,8 @@ export function foldHistory(rows: LedgerRow[]): HistoryEntry[] {
       else entry.groups.push({ id: row.groupId, name: row.groupName ?? '', firstAt: row.ts })
     }
     entry.closedAt = row.kind === 'closed' ? row.ts : null
+    if (row.configDir) entry.configDir = row.configDir
+    if (row.launchProfileId) entry.launchProfileId = row.launchProfileId
     foldLaunch(entry, row)
   }
   return [...byId.values()]
@@ -179,11 +188,15 @@ export const TITLE_HELPER_MARKER =
 export function isTitleHelperConversation(lastPrompt: string | null): boolean {
   if (lastPrompt === null) return false
   const prompt = lastPrompt.trimStart()
-  // The exchange and work digests' one-shots too (src/main/exchange-digest.ts).
+  // The exchange and work digests' one-shots too (src/main/exchange-digest.ts),
+  // the git panel's commit message and push summary (src/main/helpers/git.ts),
+  // and the permission explainer (src/main/helpers/explainer.ts).
   return (
     prompt.startsWith(TITLE_HELPER_MARKER) ||
     prompt.startsWith(DIGEST_HELPER_MARKER) ||
-    prompt.startsWith(WORK_DIGEST_MARKER)
+    prompt.startsWith(WORK_DIGEST_MARKER) ||
+    prompt.startsWith(GIT_HELPER_MARKER) ||
+    prompt.startsWith(PERMISSION_EXPLAINER_MARKER)
   )
 }
 

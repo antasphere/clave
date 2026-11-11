@@ -89,10 +89,9 @@ export async function request(server, route, body) {
 /**
  * A server root as a git repository (wave wcs1023, lane C, #242): one commit
  * on `main`, a bare origin beside it (`server.origin`) the branch tracks, so a
- * push from the panel lands somewhere the spec can read. `claude` on the
- * daemon's PATH is a stub that refuses as a signed-out Claude Code does, so a
- * commit message asked of the server answers the one sentence about its
- * login, whatever this machine has installed (`server.claudeStub`).
+ * push from the panel lands somewhere the spec can read. A commit message
+ * asked of the server starts on the daemons' default Claude profile
+ * (`fleet-title.mjs`), which refuses as a signed-out Claude Code does.
  */
 const git = (cwd, ...args) =>
   execFileSync('git', ['-C', cwd, ...args], {
@@ -113,17 +112,6 @@ function seedGitRepo(server) {
   git(repo, 'push', '-q', '-u', 'origin', 'main')
   server.origin = origin
 }
-function seedClaudeStub(dir) {
-  mkdirSync(dir, { recursive: true, mode: 0o755 })
-  const file = path.join(dir, 'claude')
-  writeFileSync(
-    file,
-    '#!/bin/sh\n/bin/cat >/dev/null\necho "Not logged in · Please run /login" >&2\nexit 1\n'
-  )
-  chmodSync(file, 0o755)
-  return dir
-}
-
 /** A `codex` on the daemon's PATH that takes an API key on stdin and writes
  *  the credential file Codex would write into `CODEX_HOME`, and nothing
  *  else: the login a server takes from its own shell, without a provider. */
@@ -152,10 +140,12 @@ function seedCodexStub(dir) {
 
 /**
  * `count` daemons (two by default), each started with the fleet flags plus
- * `serverArgs`; `world.mac(label, { args })` adds app flags to a Mac's launch
- * (the server upgrade spec's `--test-version`, issue #266). `codexStub` puts
- * a stand-in `codex` on the daemons' PATH for the API-key login. `env` adds
- * variables to the daemons' environment (a spec's own transcripts root).
+ * `serverArgs`; `world.mac(label, { args, env })` adds app flags to a Mac's
+ * launch (the server upgrade spec's `--test-version`, issue #266) and
+ * variables to its environment (a Mac's own transcripts root, distinct from
+ * the daemons'). `codexStub` puts a stand-in `codex` on the daemons' PATH for
+ * the API-key login. `env` adds variables to the daemons' environment (a
+ * spec's own transcripts root).
  */
 export async function fleetWorld(
   label,
@@ -196,14 +186,12 @@ export async function fleetWorld(
       ? runKeychain(fixturePath(`${run}-keychain/e2e.keychain-db`))
       : null
   keychain?.create()
-  const claudeStub = gitRepo ? seedClaudeStub(fixturePath(`${run}-claude-stub`)) : null
   const codexStubDir = codexStub ? seedCodexStub(fixturePath(`${run}-codex-stub`)) : null
-  const stubs = [claudeStub, codexStubDir].filter(Boolean)
   const options = {
     env: {
       SHELL: '/bin/sh',
       ...(keychain && { CLAVE_KEYCHAIN_FILE: keychain.file }),
-      ...(stubs.length && { PATH: `${stubs.join(':')}:${process.env.PATH ?? ''}` }),
+      ...(codexStubDir && { PATH: `${codexStubDir}:${process.env.PATH ?? ''}` }),
       ...env
     },
     seedFrom: seed,
@@ -284,7 +272,7 @@ export async function fleetWorld(
       )
       return report
     },
-    async mac(label, { reuse = null, args = [] } = {}) {
+    async mac(label, { reuse = null, args = [], env: macEnv = {} } = {}) {
       const dir = reuse ?? fixturePath(`${run}-mac-${label}`)
       const root = fixturePath(`${run}-local-${label}`)
       mkdirSync(root, { recursive: true })
@@ -307,7 +295,7 @@ export async function fleetWorld(
       }
       const launched = await launchApp(dir, {
         server: 'in-process',
-        env: { SHELL: '/bin/sh' },
+        env: { SHELL: '/bin/sh', ...macEnv },
         args: ['--dev-echo-adapter', ...args]
       })
       const mac = { ...launched, label, dir, root, servers, owners: [], errors: [] }
@@ -347,10 +335,7 @@ export async function fleetWorld(
       servers.push(server)
       server.root = path.join(server.dataDir, 'repo')
       mkdirSync(server.root, { recursive: true })
-      if (gitRepo) {
-        seedGitRepo(server)
-        server.claudeStub = claudeStub
-      }
+      if (gitRepo) seedGitRepo(server)
       server.fixture = serverFixture(server.url, server.token)
     }
     return world

@@ -53,6 +53,8 @@ import {
   sendToTarget
 } from './session-targets'
 import { planResumeFromRecords } from './conversation-history'
+import type { ServerConversations } from '../session-history/server-conversations'
+import type { HistoryConversation } from '@clave/contract/history'
 
 export interface StandaloneMcpOptions {
   readonly sessions: SessionHostService
@@ -83,6 +85,27 @@ export interface StandaloneMcpOptions {
   /** The chat profile this server's launcher would open a family's chat on
    *  (its default's chat form, `chatDefaultFor`); absent, the built-in chat. */
   readonly chatDefault?: ((family: LauncherFamily) => string | undefined) | undefined
+  /** PRDCT-4321: this server's own History, the conversations its tabs ran.
+   *  A resume of one no tab holds any more finds its folder, its model and
+   *  its bypass there, so a deleted tab comes back with no `cwd` passed;
+   *  `clave_history` lists it. Absent, a resume needs `cwd`. */
+  readonly conversations?: ServerConversations | undefined
+}
+/** The conversation this server's History remembers by its id, with its
+ *  transcript still on the disk (PRDCT-4321); undefined otherwise, or when the
+ *  History cannot be read. */
+export function rememberedConversation(
+  conversations: ServerConversations | undefined,
+  id: string
+): HistoryConversation | undefined {
+  if (!conversations) return undefined
+  try {
+    return conversations
+      .list()
+      .conversations.find((c) => c.conversationId === id && c.transcript === 'present')
+  } catch {
+    return undefined
+  }
 }
 /** The profiles every server offers: the terminal built-ins and the chat views. */
 export const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
@@ -210,10 +233,58 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person for a plain value, a choice, a file, a link to open or a small form with clave_request_input (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. ' +
+        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. ' +
         ROUTINE_TOOLS_INSTRUCTION.slice(2)
     }
   )
+  // PRDCT-4321: this server's own History, the conversations its tabs ran,
+  // deleted tabs included.
+  const conversations = options.conversations
+  if (conversations)
+    server.registerTool(
+      'clave_history',
+      {
+        description:
+          'List the past Claude conversations this server\'s tabs ran ("what was I working on", "find the conversation about", "reopen the tab I deleted"), newest first: deleted tabs included, as long as the server ran them. Each row: id, title, the tab\'s name, directory, model, group, last activity, whether the transcript is still on this server\'s disk, and whether a tab of this server holds it (running, stopped or closed). Read-only. Reopen one with clave_open_session and resume: <id>; its directory, model and bypass come back with it. Filters: query (a substring of the title, the tab name or the directory), open (only conversations a tab holds), limit (50 by default, 200 at most).',
+        inputSchema: {
+          query: z.string().min(1).max(500).optional(),
+          open: z.boolean().optional(),
+          limit: z.number().int().min(1).max(200).optional()
+        }
+      },
+      async ({ query, open, limit }) => {
+        const needle = query?.trim().toLowerCase()
+        const rows = conversations
+          .list()
+          .conversations.filter(
+            (c) =>
+              !needle ||
+              (c.title ?? '').toLowerCase().includes(needle) ||
+              c.name.toLowerCase().includes(needle) ||
+              c.cwd.toLowerCase().includes(needle)
+          )
+          .filter((c) => open !== true || c.held !== 'closed')
+          .sort((a, b) =>
+            a.lastHumanAt < b.lastHumanAt ? 1 : a.lastHumanAt > b.lastHumanAt ? -1 : 0
+          )
+          .map((c) => ({
+            conversationId: c.conversationId,
+            title: c.title ?? c.name,
+            name: c.name,
+            cwd: c.cwd,
+            model: c.model,
+            group: c.groupName,
+            lastActivity: c.lastHumanAt,
+            transcriptExists: c.transcript === 'present',
+            held: c.held,
+            sessionId: c.held === 'closed' ? null : c.sessionId,
+            resumable: c.transcript === 'present',
+            ...(c.launch ? { launch: c.launch } : {})
+          }))
+        const shown = rows.slice(0, Math.min(Math.max(limit ?? 50, 1), 200))
+        return text({ conversations: shown, shown: shown.length, total: rows.length })
+      }
+    )
   server.registerTool(
     'clave_request_approval',
     {
@@ -377,7 +448,7 @@ function buildServer(
           .max(200)
           .optional()
           .describe(
-            'Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id): the new agent tab continues it, in cwd. A tab of this server that already runs the conversation is answered as it is (alreadyOpen: true), nothing started; a stopped tab that still holds it is resumed in place. This server keeps no History of its own: a conversation it never held needs cwd, and starts fresh on the id when no transcript is found there. Agent modes only.'
+            "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id): the new agent tab continues it, in cwd. A tab of this server that already runs the conversation is answered as it is (alreadyOpen: true), nothing started; a stopped tab that still holds it is resumed in place. A Claude conversation this server's History remembers (clave_history), its tab deleted, reopens in its own folder with no cwd. Any other conversation needs cwd, and starts fresh on the id when no transcript is found there. Agent modes only."
           ),
         mode: z.enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'terminal']).optional(),
         model: z.string().min(1).max(256).optional(),
@@ -402,7 +473,8 @@ function buildServer(
         workspace: z.unknown().optional()
       }
     },
-    async (args) => {
+    async (input) => {
+      let args = input
       const unsupported = DESKTOP_ONLY.filter((key) => args[key] !== undefined)
       if (unsupported.length > 0)
         throw new Error(
@@ -445,9 +517,32 @@ function buildServer(
             'resume continues an agent conversation: pass an agent mode, not terminal.'
           )
       }
+      // A conversation the server's History remembers (PRDCT-4321), its tab
+      // deleted: its folder, its model and its bypass, unless the call says.
+      const remembered =
+        resume !== undefined && mode === 'claude'
+          ? rememberedConversation(options.conversations, resume)
+          : undefined
+      if (remembered) {
+        args = {
+          ...args,
+          cwd: args.cwd ?? remembered.cwd,
+          ...(args.model === undefined && remembered.model ? { model: remembered.model } : {}),
+          // The profile it ran on (its chat view), unless the call picks one.
+          ...(args.profile === undefined &&
+          args.chat === undefined &&
+          remembered.launchProfileId &&
+          profileFamily(remembered.launchProfileId) === 'claude'
+            ? { profile: remembered.launchProfileId }
+            : {}),
+          ...(args.dangerous === undefined && remembered.launch?.dangerous !== undefined
+            ? { dangerous: remembered.launch.dangerous }
+            : {})
+        }
+      }
       if (args.cwd === undefined)
         throw new Error(
-          'cwd is required unless resume names a conversation a tab of this server still holds.'
+          "cwd is required unless resume names a conversation this server's History remembers or a tab of this server still holds."
         )
       if (!isAbsolute(args.cwd)) throw new Error('cwd must be an absolute path.')
       const directory = await stat(args.cwd).catch(() => undefined)

@@ -57,7 +57,7 @@ function SwitchPolicySection(): ReactElement {
   return (
     <SettingsSection
       title="When an account hits its limit"
-      description="What a tab does when the account it runs on is about to stop it, or its agent reports the limit. A tab pinned from its menu never moves; a tab can also carry a mode of its own."
+      description="What a tab does when the account it runs on is about to stop it, or its agent reports the limit. A tab pinned from its menu never moves; a tab can also carry a mode of its own. On a tab running on a Clave server the mode governs only an agent's switch: Switch automatically lets agents move it without asking, and a server tab at its limit is never moved by itself."
     >
       <SettingsCard data-account-policy>
         {choices.map((choice) => (

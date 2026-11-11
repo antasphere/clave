@@ -30,8 +30,16 @@ export async function run(t) {
           id: 'private-local',
           description: 'Private local question',
           toolName: 'item/tool/requestUserInput',
-          input: { questions: [{ question: 'Local private answer', isSecret: true }] },
-          questions: [{ question: 'Local private answer', options: [] }],
+          input: {
+            questions: [
+              { question: 'Local private answer', isSecret: true },
+              { question: 'Keep it local?' }
+            ]
+          },
+          questions: [
+            { question: 'Local private answer', options: [] },
+            { question: 'Keep it local?', options: [{ label: 'Yes' }, { label: 'No' }] }
+          ],
           options: [
             { id: 'answer', label: 'Answer' },
             { id: 'deny', label: 'Deny' }
@@ -40,14 +48,24 @@ export async function run(t) {
       ])
       const view = win.locator(selector)
       const dock = view.locator('.chat-prompt')
-      const input = dock.locator('.chat-prompt-other')
+      const input = dock.locator('input[type="password"]')
       await input.waitFor()
-      assert.equal(await input.getAttribute('type'), 'password')
+      assert.equal(await input.getAttribute('aria-label'), 'Local private answer')
       await input.fill('synthetic-local-private-answer')
       await input.press('End')
       await input.pressSequentially('123')
       assert.equal(await input.inputValue(), 'synthetic-local-private-answer123')
-      await dock.getByRole('button', { name: 'Review', exact: true }).click()
+      // Enter moves on; the private answer folds into its line as dots
+      // (PRDCT-4322), the one shown above the next question and the stack.
+      await input.press('Enter')
+      await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
+      const folded = dock.locator('.chat-ask-field').first()
+      assert.match(await folded.innerText(), /Local private answer\s*••••••/)
+      assert.equal((await dock.innerText()).includes('synthetic-local-private-answer'), false)
+      await dock.getByRole('radio', { name: /Yes/ }).click()
+      await until(
+        async () => (await dock.locator('.chat-ask-field[data-folded="true"]').count()) === 2
+      )
       assert.equal((await dock.innerText()).includes('synthetic-local-private-answer'), false)
       await dock.getByRole('button', { name: 'Send', exact: true }).click()
       assert.ok(
@@ -58,12 +76,12 @@ export async function run(t) {
       )
       assert.deepEqual(
         (await fixture.evaluate(() => globalThis.__privateQuestionWrites))[0].answers,
-        { 'Local private answer': 'synthetic-local-private-answer123' }
+        { 'Local private answer': 'synthetic-local-private-answer123', 'Keep it local?': 'Yes' }
       )
       await until(async () => (await dock.count()) === 0)
       assert.equal((await view.innerText()).includes('synthetic-local-private-answer'), false)
       t.check(
-        `${terminal ? 'terminal' : 'chat'} local private input is masked, reaches its host once and stays out of review/transcript`,
+        `${terminal ? 'terminal' : 'chat'} local private input is masked, folds as dots, reaches its host once and stays out of the transcript`,
         true
       )
     } finally {

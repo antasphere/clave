@@ -521,6 +521,38 @@ body.reorder-dragging * {
   background-color: var(--color-status-waiting);
 }
 
+/* A server's conversation (PRDCT-4321): the sidebar's server badge, the
+   server's name in its colour, with a dot for its connection: green while
+   connected, a grey ring while it is not (its rows are its last answer).
+   A server with no colour on this Mac wears the group pill's fill
+   (.history-row-group, its neighbour on the title line). */
+.history-server {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 1 auto;
+  max-width: 9rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-md);
+  font-size: 10px;
+  line-height: 1rem;
+  color: var(--text-secondary);
+  background-color: var(--surface-200);
+}
+.history-server-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+}
+.history-server-dot[data-online='true'] {
+  background-color: var(--color-status-ready);
+}
+.history-server-dot[data-online='false'] {
+  border: 1px solid var(--text-tertiary);
+  opacity: 0.7;
+}
+
 /* A search hit under its row: the excerpt around the match, in the tone of
    the prompt line, indented the same. */
 .history-hit {
