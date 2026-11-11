@@ -7,6 +7,7 @@ import type {
   DigestResult
 } from '../../../src/shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestResult } from '../../../src/shared/work-digest'
+import type { PageTitleDone, PageTitleResult } from '../../../src/shared/page-title'
 import type { DigestFailureReason } from '../../../src/shared/exchange-digest'
 
 /**
@@ -82,7 +83,7 @@ export const DIGEST_SLOW_LINE = 'Still reading: this is taking long.'
 export type DigestCard = 'exchange' | 'work'
 
 /** What a failure says after its opening, in words for anyone. */
-function failureWords(reason: DigestFailure | undefined): string {
+export function digestFailureWords(reason: DigestFailure | undefined): string {
   switch (reason) {
     case 'limit':
       return 'this account is at its limit.'
@@ -119,7 +120,7 @@ export function digestFailureLine(
     return card === 'work'
       ? 'No title: titles are switched off in Settings.'
       : 'Not read: digests are switched off in Settings.'
-  return `${card === 'work' ? 'No title' : 'Not read'}: ${failureWords(reason)}`
+  return `${card === 'work' ? 'No title' : 'Not read'}: ${digestFailureWords(reason)}`
 }
 
 export type DigestStateOf<Done> =
@@ -148,7 +149,9 @@ export interface DigestItem<Payload> {
   payload: Payload
 }
 
-const idOf = (sessionId: string, key: string): string => `${sessionId}|${key}`
+/** Where a card's state is kept in its family's store: by tab and key. */
+export const digestIdOf = (sessionId: string, key: string): string => `${sessionId}|${key}`
+const idOf = digestIdOf
 
 /** One family of digests: how to load what is filed for a tab, and how to
  *  ask for one. The `useDigests` hook is the view's, `useState` the card's. */
@@ -162,6 +165,9 @@ export function createDigests<Payload, Done>(api: {
   ) =>
     | Promise<{ ok: true } | { ok: false; error: string; reason?: DigestFailureReason }>
     | undefined
+  /** How long a card holds still before its read is asked: DIGEST_SETTLE_MS
+   *  unless the family says otherwise (a page's title is asked at once). */
+  settleMs?: number
 }): {
   useStore: UseBoundStore<StoreApi<DigestStore<Done>>>
   useState: (sessionId: string, key: string, enabled: boolean) => DigestStateOf<Done>
@@ -268,7 +274,7 @@ export function createDigests<Payload, Done>(api: {
               )
           })
       },
-      now ? 0 : DIGEST_SETTLE_MS
+      now ? 0 : (api.settleMs ?? DIGEST_SETTLE_MS)
     )
   }
 
@@ -409,6 +415,48 @@ export function useStretchDigests(
   stretches.useDigests(
     sessionId,
     items.map((s) => ({ key: s.key, payload: { notes: s.notes, tools: s.tools } })),
+    launch
+  )
+}
+
+/* The page titles: Folio's page heads (PRDCT-4412). A page shows the first
+   sentence of its question at once, and a title a helper wrote in its place
+   once it is read (`lab/PageTitle.tsx`). Asked the moment the page exists:
+   a question does not change once it is sent, so there is no burst to wait
+   out. */
+
+/** One page the view wants titled: its title's key (`Page.titleKey`) and
+ *  the question, as the reader wrote it. */
+export interface TitlePage {
+  key: string
+  message: string
+}
+
+const titles = createDigests<{ message: string }, PageTitleDone>({
+  filed: (sessionId) => window.electronAPI?.pageTitlesOf?.(sessionId),
+  read: (sessionId, key, launch, payload): Promise<PageTitleResult> | undefined =>
+    window.electronAPI?.pageTitle?.({ sessionId, key, launch, message: payload.message }),
+  settleMs: 0
+})
+
+export const usePageTitleStore = titles.useStore
+
+/** Where a page's title stands, for its head. */
+export const usePageTitleState = titles.useState
+
+/** Ask a page's failed title again. */
+export const retryPageTitle = titles.retry
+
+/** The view's side of the page titles: every page with a question is
+ *  titled, whether or not it is the page on screen. */
+export function usePageTitles(
+  sessionId: string,
+  items: readonly TitlePage[],
+  launch: DigestLaunch
+): void {
+  titles.useDigests(
+    sessionId,
+    items.map((item) => ({ key: item.key, payload: { message: item.message } })),
     launch
   )
 }

@@ -736,6 +736,8 @@ import type {
 } from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
+import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -1179,6 +1181,17 @@ export interface ElectronAPI extends FleetDesktopAPI {
   workDigest: (request: WorkDigestRequest) => Promise<WorkDigestResult>
   /** Every work digest already read for a tab, by the key of its notes. */
   workDigestsOf: (sessionId: string) => Promise<Record<string, WorkDigestDone>>
+  /** Folio: a finished answer written for the ear, to be read aloud, keyed
+   *  by its clipped markdown (`spokenKey`). A failure is a result, never a
+   *  rejection. */
+  spokenRendering: (request: SpokenRequest) => Promise<SpokenResult>
+  /** Every spoken rendering already read for a tab, by key. */
+  spokenRenderingsOf: (sessionId: string) => Promise<Record<string, SpokenDone>>
+  /** Folio: the title of a page, from the reader's clipped message
+   *  (`pageTitleKey`). A failure is a result, never a rejection. */
+  pageTitle: (request: PageTitleRequest) => Promise<PageTitleResult>
+  /** Every page title already read for a tab, by key. */
+  pageTitlesOf: (sessionId: string) => Promise<Record<string, PageTitleDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>

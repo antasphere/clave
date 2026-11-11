@@ -161,7 +161,9 @@ const WHEN_OFF: Record<string, string> = {
   // The permission card's own words (`plugins/chat-view/src/PermissionReading.tsx`):
   // the rules' level alone, "Not verified" where they cannot tell.
   'permission-explainer':
-    'Off: a permission card shows only the level the rules found, or "Not verified", and reads "Could not read what this does".'
+    'Off: a permission card shows only the level the rules found, or "Not verified", and reads "Could not read what this does".',
+  'spoken-rendering': 'Off: Folio reads the answer as written, markdown stripped.',
+  'page-title': 'Off: a page is titled by the first sentence of the message.'
 }
 
 /** What the helper does, in plain words, for the line under its name. */
@@ -171,7 +173,10 @@ const WHAT_IT_DOES: Record<string, string> = {
   'work-digest': 'Titles each stretch of an agent’s work on its card.',
   'commit-message': 'Writes the commit message in the git panel.',
   'push-summary': 'Writes the summary of what a push sends.',
-  'permission-explainer': 'Says in plain words, on a permission card, what allowing it would do.'
+  'permission-explainer': 'Says in plain words, on a permission card, what allowing it would do.',
+  'spoken-rendering':
+    'Rewrites an answer for the ear before Folio reads it aloud: a table row by row, a code block named, nothing summarised.',
+  'page-title': 'Titles each Folio page from the question it holds.'
 }
 
 export function helperDoes(id: string): string {

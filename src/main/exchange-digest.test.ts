@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
   calls: [] as Array<{ args: string[]; prompt: string; finish: Callback; done?: boolean }>,
   filed: new Map<string, unknown>(),
+  caps: new Map<string, number>(),
   accounts: [] as Array<string | undefined>
 }))
 vi.mock('electron', () => {
@@ -46,8 +47,9 @@ vi.mock('./exchange-digest-store', () => ({
     get(session: string, key: string): unknown {
       return mocks.filed.get(`${session}|${key}`)
     }
-    put(session: string, key: string, value: unknown): void {
+    put(session: string, key: string, value: unknown, cap?: number): void {
       mocks.filed.set(`${session}|${key}`, value)
+      if (cap !== undefined) mocks.caps.set(session, cap)
     }
     flush(): void {
       /* nothing buffered */
@@ -63,8 +65,14 @@ import {
   hostDigests,
   sessionLaunchOf,
   requestDigest,
+  requestPageTitle,
+  requestSpoken,
   requestWorkDigest
 } from './exchange-digest'
+import { clipText } from '../shared/helper-prompt'
+import { SPOKEN_MARKER, SPOKEN_MAX_CHARS, spokenKey } from '../shared/spoken-rendering'
+import { PAGE_TITLE_MARKER, PAGE_TITLE_MESSAGE_CHARS, pageTitleKey } from '../shared/page-title'
+import { pageTitleHelper, spokenRenderingHelper } from './helpers/folio'
 import { helperCliArgs } from './helpers/runner'
 import { exchangeDigestHelper } from './helpers/digests'
 
@@ -81,6 +89,7 @@ beforeEach(() => {
   mocks.calls.length = 0
   mocks.accounts.length = 0
   mocks.filed.clear()
+  mocks.caps.clear()
   mocks.execFile.mockImplementation(
     (_file: string, args: string[], _opts: unknown, finish: Callback) => {
       const call = { args, prompt: '', finish }
@@ -169,6 +178,84 @@ describe('the exchange digest on the helpers runner', () => {
       })
     ).resolves.toMatchObject({ ok: false, reason: 'cancelled' })
     expect(mocks.calls).toHaveLength(0)
+  })
+})
+
+describe('Folio’s reads on the helpers runner', () => {
+  it('the spoken rendering asks Haiku, Sonnet behind it, the answer as data, and files it under its cap', async () => {
+    expect(
+      helperCliArgs(spokenRenderingHelper.systemPrompt, spokenRenderingHelper).slice(0, 5)
+    ).toEqual(['-p', '--model', 'haiku', '--fallback-model', 'sonnet'])
+    const markdown = '# Result\n\n| a | b |\n|---|---|\n| 1 | 2 |'
+    const done = requestSpoken({ sessionId: 'f1', key: spokenKey(markdown), launch: {}, markdown })
+    await ticks()
+    const [call] = mocks.calls
+    expect(call.args[call.args.indexOf('--system-prompt') + 1]).toMatch(/spoken by a voice/)
+    expect(call.prompt.startsWith(SPOKEN_MARKER)).toBe(true)
+    expect(call.prompt).toContain(`<answer>\n${markdown}\n</answer>`)
+    call.finish(null, '<spoken>\nResult. Row one: a 1, b 2.\n</spoken>\nNext: nothing.', '')
+    await expect(done).resolves.toEqual({ ok: true, text: 'Result. Row one: a 1, b 2.' })
+    expect(mocks.filed.get(`f1:spoken|${spokenKey(markdown)}`)).toEqual({
+      ok: true,
+      text: 'Result. Row one: a 1, b 2.'
+    })
+    expect(mocks.caps.get('f1:spoken')).toBe(40)
+  })
+
+  it('the spoken rendering clips an answer past its bound before the call', async () => {
+    const markdown = 'M'.repeat(SPOKEN_MAX_CHARS + 500)
+    const done = requestSpoken({ sessionId: 'f2', key: 'k', launch: {}, markdown })
+    await ticks()
+    expect(mocks.calls[0].prompt).toContain(`${'M'.repeat(SPOKEN_MAX_CHARS)}…`)
+    expect(mocks.calls[0].prompt).not.toContain('M'.repeat(SPOKEN_MAX_CHARS + 1))
+    mocks.calls[0].finish(null, '<spoken>Long.</spoken>', '')
+    await expect(done).resolves.toEqual({ ok: true, text: 'Long.' })
+  })
+
+  it('the page title asks Haiku with the message as data, retries an unreadable reply, files under its cap', async () => {
+    expect(pageTitleHelper.model).toBe('haiku')
+    const message = 'Ok so why does the staging build fail since this morning?'
+    const done = requestPageTitle({
+      sessionId: 'f3',
+      key: pageTitleKey(message),
+      launch: {},
+      message
+    })
+    await ticks()
+    expect(mocks.calls[0].prompt.startsWith(PAGE_TITLE_MARKER)).toBe(true)
+    expect(mocks.calls[0].prompt).toContain(`<message>\n${message}\n</message>`)
+    mocks.calls[0].finish(null, 'I think the build fails because of the cache.', '')
+    await ticks()
+    expect(mocks.calls).toHaveLength(2)
+    mocks.calls[1].finish(null, 'Why the staging build fails', '')
+    await expect(done).resolves.toEqual({ ok: true, title: 'Why the staging build fails' })
+    expect(mocks.filed.get(`f3:title|${pageTitleKey(message)}`)).toMatchObject({ ok: true })
+    expect(mocks.caps.get('f3:title')).toBe(200)
+  })
+
+  it('refuses an empty answer or message without a call, and a filed one costs none', async () => {
+    await expect(
+      requestSpoken({ sessionId: 'f4', key: spokenKey(''), launch: {}, markdown: '  ' })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    await expect(
+      requestPageTitle({ sessionId: 'f4', key: pageTitleKey(''), launch: {}, message: '' })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    mocks.filed.set('f4:title|t', { ok: true, title: 'Filed' })
+    await expect(
+      requestPageTitle({ sessionId: 'f4', key: 't', launch: {}, message: 'x' })
+    ).resolves.toEqual({ ok: true, title: 'Filed' })
+    await ticks()
+    expect(mocks.calls).toHaveLength(0)
+  })
+
+  it('the same answer asked twice at once is one call', async () => {
+    const request = { sessionId: 'f5', key: spokenKey('Twice.'), launch: {}, markdown: 'Twice.' }
+    const a = requestSpoken(request)
+    const b = requestSpoken(request)
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '<spoken>Twice.</spoken>', '')
+    expect(await a).toEqual(await b)
   })
 })
 
@@ -293,6 +380,92 @@ describe("the host reads a digest on its own record's launch (PRDCT-4327)", () =
     }
     await expect(next).resolves.toMatchObject({ ok: true })
     await expect(other).resolves.toMatchObject({ ok: true })
+    await Promise.all(asks)
+  })
+})
+
+describe('the host serves Folio’s reads on its own record (PRDCT-4327 terms)', () => {
+  const host = hostDigests((id) =>
+    id === 'named' ? { claudeProfileId: 'server-account-7' } : id === 'plain' ? {} : null
+  )
+
+  it("a spoken rendering is read on the record's account and filed in its bucket", async () => {
+    const markdown = 'All green.'
+    const done = host.spoken({
+      sessionId: 'named',
+      key: spokenKey(markdown),
+      markdown,
+      launch: { claudeProfileId: 'mac-account-1' }
+    } as Parameters<typeof host.spoken>[0])
+    await ticks()
+    expect(mocks.accounts).toEqual(['server-account-7'])
+    mocks.calls[0].finish(null, '<spoken>All green.</spoken>', '')
+    await expect(done).resolves.toEqual({ ok: true, text: 'All green.' })
+    expect([...mocks.filed.keys()]).toEqual([`named:spoken|${spokenKey(markdown)}`])
+  })
+
+  it('a page title is read on the machine login for a tab on the Default', async () => {
+    const message = 'Why does it fail?'
+    const done = host.pageTitle({ sessionId: 'plain', key: pageTitleKey(message), message })
+    await ticks()
+    expect(mocks.accounts).toEqual([undefined])
+    mocks.calls[0].finish(null, 'Why it fails', '')
+    await expect(done).resolves.toEqual({ ok: true, title: 'Why it fails' })
+    expect([...mocks.filed.keys()]).toEqual([`plain:title|${pageTitleKey(message)}`])
+  })
+
+  it('refuses a foreign key and an unknown session without a call', async () => {
+    await expect(
+      host.spoken({ sessionId: 'named', key: spokenKey('other'), markdown: 'this' })
+    ).resolves.toEqual({ ok: false, error: KEY_MISMATCH_ERROR, reason: 'refused' })
+    await expect(
+      host.pageTitle({ sessionId: 'named', key: pageTitleKey('other'), message: 'this' })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    await expect(
+      host.spoken({ sessionId: 'nobody', key: spokenKey('a'), markdown: 'a' })
+    ).resolves.toEqual({ ok: false, error: UNKNOWN_SESSION_ERROR, reason: 'unknown-session' })
+    await expect(
+      host.pageTitle({ sessionId: 'nobody', key: pageTitleKey('a'), message: 'a' })
+    ).resolves.toMatchObject({ ok: false, reason: 'unknown-session' })
+    await ticks()
+    expect(mocks.calls).toHaveLength(0)
+  })
+
+  it('clips what it receives before the key check, so an unclipped answer keys as the view keys it', async () => {
+    const raw = 'R'.repeat(SPOKEN_MAX_CHARS * 2)
+    const key = spokenKey(clipText(raw, SPOKEN_MAX_CHARS))
+    const done = host.spoken({ sessionId: 'plain', key, markdown: raw })
+    await ticks()
+    expect(mocks.calls).toHaveLength(1)
+    mocks.calls[0].finish(null, '<spoken>Raw.</spoken>', '')
+    await expect(done).resolves.toEqual({ ok: true, text: 'Raw.' })
+    const message = 'Q'.repeat(PAGE_TITLE_MESSAGE_CHARS * 3)
+    const titled = host.pageTitle({
+      sessionId: 'plain',
+      key: pageTitleKey(clipText(message, PAGE_TITLE_MESSAGE_CHARS)),
+      message
+    })
+    await ticks()
+    expect(mocks.calls).toHaveLength(2)
+    mocks.calls[1].finish(null, 'A long question', '')
+    await expect(titled).resolves.toEqual({ ok: true, title: 'A long question' })
+  })
+
+  it('counts against the per-session cap with the digests', async () => {
+    const asks = Array.from({ length: MAX_WAITING_PER_SESSION }, (_, i) => {
+      const markdown = `answer ${i}`
+      return host.spoken({ sessionId: 'named', key: spokenKey(markdown), markdown })
+    })
+    await expect(
+      host.pageTitle({ sessionId: 'named', key: pageTitleKey('q'), message: 'q' })
+    ).resolves.toMatchObject({ ok: false, reason: 'busy' })
+    for (let i = 0; i < 10; i++) {
+      await ticks()
+      for (const call of mocks.calls.filter((c) => !c.done)) {
+        call.done = true
+        call.finish(null, '<spoken>Done.</spoken>', '')
+      }
+    }
     await Promise.all(asks)
   })
 })

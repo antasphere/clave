@@ -58,6 +58,9 @@ import { ContinuedFromCard, ProviderSwitch } from '../ProviderSwitch'
 import { midTurn, noteAgentName, useProviderSwitch } from '../use-provider-switch'
 import { providerLabel } from '../models'
 import { useViewSessionStore } from '../../../../src/renderer/src/views/session-store'
+import { useSessionStore } from '../../../../src/renderer/src/store/session-store'
+import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
+import { digestIdOf, usePageTitles, usePageTitleStore, type DigestFailure } from '../digest'
 import { EffortMenu } from '../EffortMenu'
 import { ContextMeter } from '../TerminalStatus'
 import { WorkCards } from '../WorkCards'
@@ -67,6 +70,7 @@ import { PastFailed } from '../EarlierLoading'
 import { pastHead } from '../past'
 import { FolioDrawing } from './FolioDrawing'
 import {
+  briefFor,
   buildPages,
   currentPage,
   STATUS_WORDS,
@@ -76,6 +80,9 @@ import {
   type PageRow
 } from './pages'
 import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
+import { fallbackLine, useSpokenRenderings } from './spoken'
+import { FolioLoader, PageTitle } from './PageTitle'
+import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
 import { LAB_VIEW } from './meta'
 
@@ -247,8 +254,20 @@ function Line({
 
 /** The question at the head of a page: who asked when it was another tab, the
  *  title, and the whole message under it when it says more than the title. */
-function PageHead({ page, of }: { page: Page; of: number }): React.JSX.Element {
+function PageHead({
+  page,
+  of,
+  title,
+  sessionId
+}: {
+  page: Page
+  of: number
+  /** The title the page has now: the written one once it is done. */
+  title: string
+  sessionId: string
+}): React.JSX.Element {
   const [whole, setWhole] = useState(false)
+  const brief = briefFor(page, title)
   const files = page.question.flatMap((q) => q.attachments ?? [])
   const status = STATUS_WORDS[page.status]
   return (
@@ -265,11 +284,11 @@ function PageHead({ page, of }: { page: Page; of: number }): React.JSX.Element {
         )}
       </p>
       {page.from !== undefined && <SenderChip sender={page.from} />}
-      <h2 className="folio-title">{page.title}</h2>
-      {page.brief && (
+      <PageTitle sessionId={sessionId} page={page} />
+      {brief && (
         <div className="folio-brief" data-whole={whole ? 'true' : undefined}>
-          <p>{page.brief}</p>
-          {page.brief.length > 280 && (
+          <p>{brief}</p>
+          {brief.length > 280 && (
             <button type="button" className="folio-link" onClick={() => setWhole((w) => !w)}>
               {whole ? 'Show less' : 'Show the whole message'}
             </button>
@@ -301,24 +320,35 @@ function CopyAnswer({ text }: { text: string }): React.JSX.Element {
   )
 }
 
+/** What the read control says on hover: preparing, reading, or why the page
+ *  was read as written. */
+function readTitle(
+  reading: Reading | null,
+  fallback: DigestFailure | 'missing' | undefined
+): string | undefined {
+  if (reading?.phase === 'preparing') return 'Preparing the spoken version…'
+  const why = reading?.fallback ?? fallback
+  if (why) return fallbackLine(why)
+  return reading ? 'Reading' : undefined
+}
+
 /** The page on screen. Keyed by its page by the caller, so turning to another
  *  plays the turn once; growing in place plays nothing. */
 function PageView({
   page,
   of,
+  title,
+  sessionId,
   direction,
   voice,
   onError
 }: {
   page: Page
   of: number
+  title: string
+  sessionId: string
   direction: number
-  voice: {
-    supported: boolean
-    reading: Reading | null
-    read: (key: string, markdown: string) => void
-    stop: () => void
-  }
+  voice: ReturnType<typeof useReadAloud>
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const live = page.status === 'writing' || page.status === 'working'
@@ -330,9 +360,9 @@ function PageView({
       className="folio-page"
       data-direction={direction < 0 ? 'back' : 'forward'}
       data-status={page.status}
-      aria-label={`Page ${page.number}: ${page.title}`}
+      aria-label={`Page ${page.number}: ${title}`}
     >
-      <PageHead page={page} of={of} />
+      <PageHead page={page} of={of} title={title} sessionId={sessionId} />
       <div className="folio-body">
         {page.rows.map((row) => (
           <Line key={row.key} row={row} pen={penOnLast && row === lastRow} onError={onError} />
@@ -351,8 +381,28 @@ function PageView({
       {!live && page.answer && (
         <footer className="folio-foot">
           {voice.supported &&
-            (reading ? (
-              <button type="button" className="folio-action" data-on="true" onClick={voice.stop}>
+            (reading?.phase === 'preparing' ? (
+              <button
+                type="button"
+                className="folio-action folio-read"
+                data-on="true"
+                data-phase="preparing"
+                title={readTitle(reading, undefined)}
+                onClick={voice.stop}
+              >
+                <StopIcon aria-hidden="true" />
+                Preparing
+                <FolioLoader />
+              </button>
+            ) : reading ? (
+              <button
+                type="button"
+                className="folio-action folio-read"
+                data-on="true"
+                data-phase="speaking"
+                title={readTitle(reading, undefined)}
+                onClick={voice.stop}
+              >
                 <StopIcon aria-hidden="true" />
                 Stop reading
                 <span className="folio-action-count">
@@ -362,7 +412,8 @@ function PageView({
             ) : (
               <button
                 type="button"
-                className="folio-action"
+                className="folio-action folio-read"
+                title={readTitle(null, voice.fallbacks[page.key])}
                 onClick={() => voice.read(page.key, page.answer)}
               >
                 <SpeakerWaveIcon aria-hidden="true" />
@@ -391,12 +442,15 @@ const tickHeight = (page: Page): number =>
 function Spine({
   pages,
   current,
+  titleOf,
   more,
   onTurn,
   onEarlier
 }: {
   pages: Page[]
   current: Page
+  /** A page's title now: the written one once done, else the stand-in. */
+  titleOf: (page: Page) => string
   more: boolean
   onTurn: (key: string) => void
   onEarlier: () => void
@@ -453,8 +507,8 @@ function Spine({
             className="folio-tick"
             data-status={page.status}
             aria-current={page === current ? 'page' : undefined}
-            aria-label={`Page ${page.number}: ${page.title}`}
-            title={`${page.number}. ${page.title}`}
+            aria-label={`Page ${page.number}: ${titleOf(page)}`}
+            title={`${page.number}. ${titleOf(page)}`}
             style={{ '--tick': `${tickHeight(page)}%` } as React.CSSProperties}
             onClick={() => onTurn(page.key)}
           >
@@ -518,7 +572,7 @@ function Spine({
                   }}
                 >
                   <span className="folio-contents-number">{page.number}</span>
-                  <span className="folio-contents-title">{page.title}</span>
+                  <span className="folio-contents-title">{titleOf(page)}</span>
                   {STATUS_WORDS[page.status] && (
                     <span className="folio-status" data-status={page.status}>
                       {STATUS_WORDS[page.status]}
@@ -666,9 +720,44 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   const live = page?.status === 'writing' || page?.status === 'working'
   const scroll = usePageScroll(page?.key ?? null, live, page, visible)
 
+  // The helpers (a page's title, its spoken rendering) run the agent the tab
+  // runs, on its account, as the Chat view's digests do: the store's record
+  // of the tab carries what the view's session does not.
+  const workspaceId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.workspaceId
+  )
+  const launchProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.launchProfileId
+  )
+  const claudeProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeProfileId
+  )
+  const configDir = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeConfigDir
+  )
+  const launch = useMemo<DigestLaunch>(
+    () => ({ workspaceId, launchProfileId, claudeProfileId, configDir }),
+    [workspaceId, launchProfileId, claudeProfileId, configDir]
+  )
+  // Every page with a question is titled by a helper (PRDCT-4412), whether or
+  // not it is the page on screen; the head shows the first sentence until then.
+  const titleItems = useMemo(
+    () => pages.flatMap((p) => (p.titleKey ? [{ key: p.titleKey, message: p.message }] : [])),
+    [pages]
+  )
+  usePageTitles(session.id, titleItems, launch)
+  const titleStates = usePageTitleStore((s) => s.states)
+  const titleOf = useCallback(
+    (p: Page): string =>
+      shownTitle(p, p.titleKey ? titleStates[digestIdOf(session.id, p.titleKey)] : undefined),
+    [titleStates, session.id]
+  )
+
   // Reading aloud: on the reader's ask, and, when they asked for it, each new
-  // answer as it is finished while this pane is on screen.
-  const voice = useReadAloud()
+  // answer as it is finished while this pane is on screen, from its spoken
+  // rendering (PRDCT-4409), as written when none can be had.
+  useSpokenRenderings(session.id)
+  const voice = useReadAloud({ sessionId: session.id, launch })
   const [autoRead, setAutoRead] = useAutoRead()
   // Switched to another view, the pane stops reading: a voice nobody can see
   // the source of, or stop, is not a reading.
@@ -901,6 +990,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
         <Spine
           pages={pages}
           current={page}
+          titleOf={titleOf}
           more={!!earlier}
           onTurn={turn}
           onEarlier={() => void earlier?.().catch(report)}
@@ -923,6 +1013,8 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
                 key={page.key}
                 page={page}
                 of={pages.length}
+                title={titleOf(page)}
+                sessionId={session.id}
                 direction={turned.direction}
                 voice={voice}
                 onError={report}
@@ -1106,14 +1198,19 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
                 className="chat-composer-tool folio-voice-toggle"
                 aria-pressed={autoRead}
                 aria-label="Read new answers aloud"
-                title={autoRead ? 'New answers are read aloud' : 'Read new answers aloud'}
+                title={
+                  readTitle(voice.reading, undefined) ??
+                  (autoRead ? 'New answers are read aloud' : 'Read new answers aloud')
+                }
                 data-on={autoRead ? 'true' : undefined}
+                data-phase={voice.reading?.phase}
                 onClick={() => {
                   if (autoRead) voice.stop()
                   setAutoRead(!autoRead)
                 }}
               >
                 <SpeakerWaveIcon />
+                {voice.reading?.phase === 'preparing' && <FolioLoader />}
               </button>
             )}
             <ContextMeter

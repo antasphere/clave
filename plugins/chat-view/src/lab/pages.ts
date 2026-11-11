@@ -3,6 +3,8 @@ import { parseDelivery, type ProvenanceSender } from '../../../../src/shared/exc
 import type { Entry } from '../reducer'
 import { visibleEntries, type ToolEntry } from '../tools'
 import type { PermissionEntry } from '../approvals'
+import { clipText } from '../../../../src/shared/helper-prompt'
+import { PAGE_TITLE_MESSAGE_CHARS, pageTitleKey } from '../../../../src/shared/page-title'
 
 /* Folio reads the conversation as a book of pages, one per question: the
    reader's message is the page's title, the agent's answer is its text, and
@@ -42,9 +44,18 @@ export interface Page {
   question: UserEntry[]
   /** Another tab, when the message came from one (`clave_send_to_session`). */
   from: ProvenanceSender | null | undefined
+  /** The stand-in title: the question's first sentence (`headline`), shown
+   *  at once and kept when no written title comes (`PageTitle`). */
   title: string
+  /** The key of the title a helper writes for the page (PRDCT-4412), null
+   *  for a page with no question to title. */
+  titleKey: string | null
+  /** The question as the reader wrote it: its messages' bodies, delivery
+   *  headers taken out, joined with a blank line. Empty with no question. */
+  message: string
   /** The question as the reader wrote it, without a delivery header; empty
-   *  when the title already says all of it. */
+   *  when the stand-in title already says all of it (`briefFor` says what
+   *  shows under a written title). */
   brief: string
   rows: PageRow[]
   status: PageStatus
@@ -84,11 +95,28 @@ export function headline(text: string): string {
   return `${(space > TITLE_MAX * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, '')}…`
 }
 
+const flat = (s: string): string => s.replace(MARKER, '').replace(/\s+/g, ' ').trim()
+
 /** Whether the message says more than its title: the brief is shown under it. */
 function briefOf(body: string, title: string): string {
-  const flat = (s: string): string => s.replace(MARKER, '').replace(/\s+/g, ' ').trim()
   const full = flat(body)
   return full === '' || full === title || full === title.replace(/…$/, '') ? '' : body.trim()
+}
+
+/** What shows under the title on screen: under the stand-in, the page's own
+ *  brief (empty when the first sentence was the whole message); under a
+ *  title a helper wrote, the whole message, since the written title is not
+ *  the reader's words — unless it happens to say exactly them. */
+export function briefFor(page: Pick<Page, 'title' | 'brief' | 'message'>, shown: string): string {
+  if (shown === page.title) return page.brief
+  const full = flat(page.message)
+  return full === '' || full === flat(shown) ? '' : page.message.trim()
+}
+
+/** The key of a page's written title: the message clipped as the host clips
+ *  it before keying, so both sides name the same text. */
+export function titleKeyOf(message: string): string {
+  return pageTitleKey(clipText(message, PAGE_TITLE_MESSAGE_CHARS))
 }
 
 function bodyOf(entry: UserEntry): { body: string; from: ProvenanceSender | null | undefined } {
@@ -188,6 +216,8 @@ export function buildPages(
       question: draft.question,
       from: parsed[0]?.from,
       title,
+      titleKey: first && flat(body) ? titleKeyOf(body) : null,
+      message: first ? body : '',
       brief: briefOf(body, title),
       rows: draft.rows,
       status: statusOf(draft.question, draft.rows, lastPage ? state : 'done'),

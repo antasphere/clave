@@ -9,8 +9,12 @@ import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
   GetExchangeDigests,
+  GetPageTitles,
+  GetSpokenRenderings,
   GetWorkDigests,
   ReadExchangeDigest,
+  ReadPageTitle,
+  ReadSpokenRendering,
   ReadWorkDigest
 } from '@clave/contract/digests'
 import { DigestsPort, type DigestsService } from './port'
@@ -40,5 +44,13 @@ export const digestHandlers = [
       d.workDigest({ sessionId: p.sessionId, key: p.key, notes: p.notes, tools: p.tools })
     )
   ),
-  QueryHandler.make(GetWorkDigests, (p) => call((d) => d.workDigestsOf(p.sessionId)))
+  QueryHandler.make(GetWorkDigests, (p) => call((d) => d.workDigestsOf(p.sessionId))),
+  CommandHandler.make(ReadSpokenRendering, (p) =>
+    call((d) => d.spoken({ sessionId: p.sessionId, key: p.key, markdown: p.markdown }))
+  ),
+  QueryHandler.make(GetSpokenRenderings, (p) => call((d) => d.spokenOf(p.sessionId))),
+  CommandHandler.make(ReadPageTitle, (p) =>
+    call((d) => d.pageTitle({ sessionId: p.sessionId, key: p.key, message: p.message }))
+  ),
+  QueryHandler.make(GetPageTitles, (p) => call((d) => d.pageTitlesOf(p.sessionId)))
 ] as const

@@ -1296,6 +1296,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   type DigestsFiled = Awaited<ReturnType<ElectronAPI['exchangeDigestsOf']>>
   type WorkDigestAnswer = Awaited<ReturnType<ElectronAPI['workDigest']>>
   type WorkDigestsFiled = Awaited<ReturnType<ElectronAPI['workDigestsOf']>>
+  type SpokenAnswer = Awaited<ReturnType<ElectronAPI['spokenRendering']>>
+  type SpokenFiled = Awaited<ReturnType<ElectronAPI['spokenRenderingsOf']>>
+  type PageTitleAnswer = Awaited<ReturnType<ElectronAPI['pageTitle']>>
+  type PageTitlesFiled = Awaited<ReturnType<ElectronAPI['pageTitlesOf']>>
   const api: ElectronAPI = {
     ...local,
     ...shared,
@@ -1372,6 +1376,41 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         id,
         () => local.workDigestsOf(id),
         async (b, wireId) => (await b.api.digests.workOf(wireId)) as WorkDigestsFiled
+      ),
+    // Folio's two reads, routed the same way.
+    spokenRendering: (request) =>
+      route(
+        request.sessionId,
+        () => local.spokenRendering(request),
+        async (b, wireId) =>
+          (await b.api.digests.spoken({
+            sessionId: wireId,
+            key: request.key,
+            markdown: request.markdown
+          })) as SpokenAnswer
+      ),
+    spokenRenderingsOf: (id) =>
+      route(
+        id,
+        () => local.spokenRenderingsOf(id),
+        async (b, wireId) => (await b.api.digests.spokenOf(wireId)) as SpokenFiled
+      ),
+    pageTitle: (request) =>
+      route(
+        request.sessionId,
+        () => local.pageTitle(request),
+        async (b, wireId) =>
+          (await b.api.digests.title({
+            sessionId: wireId,
+            key: request.key,
+            message: request.message
+          })) as PageTitleAnswer
+      ),
+    pageTitlesOf: (id) =>
+      route(
+        id,
+        () => local.pageTitlesOf(id),
+        async (b, wireId) => (await b.api.digests.titleOf(wireId)) as PageTitlesFiled
       ),
     sessionsSetView: (id, viewId) =>
       route(

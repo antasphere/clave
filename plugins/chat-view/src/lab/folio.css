@@ -307,6 +307,49 @@
   letter-spacing: -0.01em;
   text-wrap: balance;
 }
+/* A title being rewritten in place (PageTitle, reveal.ts): the characters
+   keep their width while they change, so the line does not jitter. */
+.folio-title[data-revealing='true'] {
+  font-variant-numeric: tabular-nums;
+}
+/* The quiet loader: three dots after the title while it is being written,
+   and in the read control while the spoken version is prepared. */
+.folio-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 0.75);
+  margin-left: calc(var(--spacing) * 2);
+  vertical-align: middle;
+}
+.folio-loader > i {
+  display: block;
+  width: calc(var(--spacing) * 1);
+  height: calc(var(--spacing) * 1);
+  border-radius: var(--radius-full);
+  background-color: var(--text-tertiary);
+}
+.folio-action .folio-loader {
+  margin-left: 0;
+}
+.folio-action .folio-loader > i,
+.folio-voice-toggle .folio-loader > i {
+  background-color: var(--color-accent);
+}
+.folio-voice-toggle .folio-loader {
+  position: absolute;
+  bottom: calc(var(--spacing) * 0.5);
+  left: 50%;
+  translate: -50% 0;
+  margin-left: 0;
+  gap: calc(var(--spacing) * 0.5);
+}
+.folio-voice-toggle .folio-loader > i {
+  width: calc(var(--spacing) * 0.5);
+  height: calc(var(--spacing) * 0.5);
+}
+.folio-voice-toggle {
+  position: relative;
+}
 .folio-brief {
   width: 100%;
   color: var(--text-secondary);
@@ -491,6 +534,15 @@
   .folio-note[data-state='running'] .folio-note-icon {
     animation: folio-breathe 1.4s ease-in-out infinite;
   }
+  .folio-loader > i {
+    animation: folio-breathe 1.2s ease-in-out infinite;
+  }
+  .folio-loader > i:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .folio-loader > i:nth-child(3) {
+    animation-delay: 0.4s;
+  }
 }
 @keyframes folio-pen {
   0% {
@@ -516,6 +568,9 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .folio-loader > i {
+    animation: none;
+  }
   .folio-page,
   .folio-page[data-direction='back'],
   .folio-line,

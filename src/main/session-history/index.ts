@@ -3,6 +3,8 @@ import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
 import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
 import { GIT_HELPER_MARKER } from '../../shared/helper-prompt'
 import { PERMISSION_EXPLAINER_MARKER } from '../../shared/permission-explainer'
+import { SPOKEN_MARKER } from '../../shared/spoken-rendering'
+import { PAGE_TITLE_MARKER } from '../../shared/page-title'
 import { LAUNCH_KEYS } from '../../shared/runtime-choices'
 
 /**
@@ -190,13 +192,16 @@ export function isTitleHelperConversation(lastPrompt: string | null): boolean {
   const prompt = lastPrompt.trimStart()
   // The exchange and work digests' one-shots too (src/main/exchange-digest.ts),
   // the git panel's commit message and push summary (src/main/helpers/git.ts),
-  // and the permission explainer (src/main/helpers/explainer.ts).
+  // the permission explainer (src/main/helpers/explainer.ts), and Folio's
+  // spoken renderings and page titles (src/main/helpers/folio.ts).
   return (
     prompt.startsWith(TITLE_HELPER_MARKER) ||
     prompt.startsWith(DIGEST_HELPER_MARKER) ||
     prompt.startsWith(WORK_DIGEST_MARKER) ||
     prompt.startsWith(GIT_HELPER_MARKER) ||
-    prompt.startsWith(PERMISSION_EXPLAINER_MARKER)
+    prompt.startsWith(PERMISSION_EXPLAINER_MARKER) ||
+    prompt.startsWith(SPOKEN_MARKER) ||
+    prompt.startsWith(PAGE_TITLE_MARKER)
   )
 }
 

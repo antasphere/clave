@@ -3,8 +3,12 @@ import { HttpCqrs } from '@structure-ai/http'
 import { ClaveApi } from '@clave/contract/api'
 import {
   GetExchangeDigests,
+  GetPageTitles,
+  GetSpokenRenderings,
   GetWorkDigests,
   ReadExchangeDigest,
+  ReadPageTitle,
+  ReadSpokenRendering,
   ReadWorkDigest
 } from '@clave/contract/digests'
 
@@ -15,4 +19,8 @@ export const DigestsLive = HttpApiBuilder.group(ClaveApi, 'digests', (handlers) 
     .handle('exchangesOf', HttpCqrs.query(GetExchangeDigests))
     .handle('work', HttpCqrs.command(ReadWorkDigest))
     .handle('workOf', HttpCqrs.query(GetWorkDigests))
+    .handle('spoken', HttpCqrs.command(ReadSpokenRendering))
+    .handle('spokenOf', HttpCqrs.query(GetSpokenRenderings))
+    .handle('title', HttpCqrs.command(ReadPageTitle))
+    .handle('titleOf', HttpCqrs.query(GetPageTitles))
 )

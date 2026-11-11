@@ -249,3 +249,32 @@ describe('a digest that could not be read', () => {
     expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done' })
   })
 })
+
+describe('a family that asks at once', () => {
+  it('reads a card with no settle wait when its family says so (the page titles)', async () => {
+    const d = createDigests<string, { ok: true; title: string }>({
+      filed: () => Promise.resolve({}),
+      read,
+      settleMs: 0
+    })
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: true, title: 'Now' })
+    d.view('s', [{ key: 'k', payload: 'q' }], {})
+    await vi.advanceTimersByTimeAsync(0)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
+  })
+
+  it('waits DIGEST_SETTLE_MS by default', async () => {
+    const d = digests()
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: true, title: 'Later' })
+    d.view('s', [{ key: 'k', payload: 'q' }], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS - 1)
+    expect(read).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+})

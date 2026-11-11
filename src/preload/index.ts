@@ -71,6 +71,8 @@ import {
 } from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
+import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -1970,6 +1972,28 @@ const electronAPI = {
     ipc: (sessionId) => ipcRenderer.invoke('work:digests-of', sessionId),
     server: async ({ api }, sessionId) =>
       (await api.digests.workOf(sessionId)) as Record<string, WorkDigestDone>
+  }),
+  // Folio's two reads, on the same road: an answer written for the ear (read
+  // aloud), and the title of a page from the reader's message.
+  spokenRendering: viaOwnServer<[SpokenRequest], SpokenResult>({
+    ipc: (request) => ipcRenderer.invoke('spoken:rendering', request),
+    server: async ({ api }, { sessionId, key, markdown }) =>
+      (await api.digests.spoken({ sessionId, key, markdown })) as SpokenResult
+  }),
+  spokenRenderingsOf: viaOwnServer<[string], Record<string, SpokenDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('spoken:renderings-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.spokenOf(sessionId)) as Record<string, SpokenDone>
+  }),
+  pageTitle: viaOwnServer<[PageTitleRequest], PageTitleResult>({
+    ipc: (request) => ipcRenderer.invoke('pages:title', request),
+    server: async ({ api }, { sessionId, key, message }) =>
+      (await api.digests.title({ sessionId, key, message })) as PageTitleResult
+  }),
+  pageTitlesOf: viaOwnServer<[string], Record<string, PageTitleDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('pages:titles-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.titleOf(sessionId)) as Record<string, PageTitleDone>
   }),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
