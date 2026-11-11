@@ -190,11 +190,13 @@ suspend fun endSend(
 
 /**
  * The cleanup of a send whose end or discard its entry records, each write anchored to that record
- * and safe to run again. Sent: the draft while it is still the text sent, the records sent out of the
- * attachment draft (a file added since stays), the mark. Rejected: the Rejected mark. Failed, or a
- * discard: the mark, the drafts staying. The conversation has one mark: it is cleared or set only
- * while it is this send's own (or, to set, absent), so a newer send's is never touched. The entry
- * leaves last, so a process that ends midway leaves the record for the next start or pass to finish.
+ * and safe to run again. Sent, and a Discard: what the message carried leaves the composer's stores,
+ * the draft while it is still the text sent and the records sent out of the attachment draft (an edit
+ * and a file added since stay), then the mark. Rejected: the Rejected mark. Failed, a Send again (its
+ * text is being sent anew) and a discard an older build recorded without its choice: the mark, the
+ * drafts staying. The conversation has one mark: it is cleared or set only while it is this send's
+ * own (or, to set, absent), so a newer send's is never touched. The entry leaves last, so a process
+ * that ends midway leaves the record for the next start or pass to finish.
  */
 suspend fun finishEnd(
     entry: UnknownSend,
@@ -206,19 +208,27 @@ suspend fun finishEnd(
     val end = entry.end
     when {
         end?.kind == SendEnd.Kind.Sent -> {
-            // A draft edited since the send is the person's new text, never cleared.
-            if (drafts.get(entry.machineId, entry.sessionId) == (entry.draftText ?: entry.text)) {
-                drafts.clear(entry.machineId, entry.sessionId)
-            }
-            clearAttachments?.invoke(entry)
+            clearWhatItCarried(entry, drafts, clearAttachments)
             clearOwnMark(entry, marks)
         }
         end?.kind == SendEnd.Kind.Rejected ->
             setOwnMark(entry, marks, DeliveryMark(DeliveryMark.Kind.Rejected, entry.clientMessageId, end.reason, end.at))
+        end == null && entry.discarded && entry.choice == DiscardChoice.Discard -> {
+            clearWhatItCarried(entry, drafts, clearAttachments)
+            clearOwnMark(entry, marks)
+        }
         entry.decided -> clearOwnMark(entry, marks)
         else -> return
     }
     sends.remove(entry.clientMessageId)
+}
+
+/** The draft while it is still the text sent (an edit since is the person's new text, never cleared), and the records sent. */
+private suspend fun clearWhatItCarried(entry: UnknownSend, drafts: Drafts, clearAttachments: (suspend (UnknownSend) -> Unit)?) {
+    if (drafts.get(entry.machineId, entry.sessionId) == (entry.draftText ?: entry.text)) {
+        drafts.clear(entry.machineId, entry.sessionId)
+    }
+    clearAttachments?.invoke(entry)
 }
 
 /** [finishEnd], a failure of which leaves the entry recorded for the next start or pass. */
@@ -386,15 +396,22 @@ class DeliveryController(
      * The person's explicit choice on a send of unknown outcome ("Send again" or "Discard"),
      * decided at once and without waiting: a reconnection pass that has not sent the same-id
      * completion yet will not send it, and a pass that has not reached the send leaves it alone.
-     * The decision is written into the send's ledger entry, and awaited, before the wait, so a
-     * controller built again over the same stores after the process ended (while a pass held this
-     * send) finds it and carries the discard out instead of completing the send ([finishRecordedDiscards]).
-     * Then, once the pass has let go of the ledger, the send leaves it and its mark is cleared.
-     * What the server answered before the discard stands and is said: accepted (it arrived),
-     * rejected, or a completion already on its way. A record the store failed to write discards
-     * nothing ([DiscardResult.NotSaved]), once the pass has let go.
+     * The decision, with the person's [choice], is written into the send's ledger entry, and awaited,
+     * before the wait, so a controller built again over the same stores after the process ended
+     * (while a pass held this send) finds it and carries it out instead of completing the send
+     * ([finishRecordedEnds]). Then, once the pass has let go of the ledger, it is carried out from
+     * that record ([finishEnd]): a Discard takes out of the composer's stores what the message
+     * carried (the draft while still its text, its files), a Send again keeps them for its new id;
+     * the mark is cleared and the entry leaves last. What the server answered before the discard
+     * stands and is said: accepted (it arrived), rejected, or a completion already on its way. A
+     * record the store failed to write discards nothing ([DiscardResult.NotSaved]), once the pass has let go.
      */
-    suspend fun discard(machineId: String, sessionId: String, clientMessageId: String): DiscardResult {
+    suspend fun discard(
+        machineId: String,
+        sessionId: String,
+        clientMessageId: String,
+        choice: DiscardChoice = DiscardChoice.Discard,
+    ): DiscardResult {
         if (inFlight(clientMessageId)) return DiscardResult.InFlight
         if (decisions.putIfAbsent(clientMessageId, Decision.Discarded) == Decision.Completing) return DiscardResult.BeingCompleted
         // Once decided, the discard is carried through even when its caller is cancelled meanwhile (a
@@ -404,7 +421,7 @@ class DeliveryController(
             // during the wait below, not a power loss. The entry, its mark and the draft are separate
             // writes, not one transaction.
             val recorded = try {
-                sends.markDiscarded(clientMessageId)
+                sends.markDiscarded(clientMessageId, choice)
             } catch (_: Exception) {
                 // Whatever the store threw, a cancellation of its own included: the claim is let go
                 // only by discardDecided, under the lock, and the answer says nothing was discarded.
@@ -434,8 +451,9 @@ class DeliveryController(
                         }
                     }
                     entry != null -> {
-                        if (recorded) {
-                            discardUnknownSend(machineId, sessionId, clientMessageId, sends, marks)
+                        if (recorded && entry.discarded) {
+                            // Carried out from its record; a cleanup the store refuses midway stays recorded for the next start or pass.
+                            finishQuietly(entry, sends, marks, drafts, clearAttachments)
                             DiscardResult.Discarded
                         } else {
                             DiscardResult.NotSaved
@@ -479,7 +497,8 @@ class DeliveryController(
      * no settle or Discard of this controller is still carrying out: what a process leaves when it ends
      * midway through a cleanup (or a Discard waiting for a pass), and what a failed store write left.
      * Each is finished by its record ([finishEnd]) and never reconciled; one that fails stays recorded.
-     * A Discard's drafts stay as they are: it may have been a Send again, whose text was never sent.
+     * A Discard takes out what its message carried; a Send again, and a discard an older build recorded
+     * without its choice, keep the drafts: that text may be the one being sent anew.
      */
     private suspend fun finishRecorded(machineId: String) {
         for (send in sends.forMachine(machineId)) {

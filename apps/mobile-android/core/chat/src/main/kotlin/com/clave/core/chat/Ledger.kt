@@ -42,6 +42,13 @@ data class UnknownSend(
      */
     val discarded: Boolean = false,
     /**
+     * With [discarded], which choice it was. Discard: the message is dropped, so its cleanup takes out
+     * of the composer's stores what it carried (the draft while still its text, its files). Send again:
+     * its text is being sent anew under a new id, so the drafts stay. Null when a build before this one
+     * recorded the discard without saying which: the drafts stay, as that build left them.
+     */
+    val choice: DiscardChoice? = null,
+    /**
      * How the send ended (sent, rejected, failed), written into the entry before any cleanup of it.
      * From then on the entry is decided: no pass asks about it, completes it or writes it, and a
      * controller built again over these stores only finishes its cleanup, by this kind, the entry's
@@ -64,6 +71,12 @@ data class UnknownSend(
         text = text,
         attachments = attachments?.takeIf { it.isNotEmpty() },
     )
+}
+
+/** The person's choice on a send of unknown outcome, as its ledger entry records it. */
+enum class DiscardChoice(val wire: String) {
+    Discard("discard"), SendAgain("send-again");
+    companion object { fun of(wire: String?): DiscardChoice? = entries.firstOrNull { it.wire == wire } }
 }
 
 /** A send's terminal end as its ledger entry records it; [reason] and [at] are the Rejected mark's. */
@@ -91,6 +104,7 @@ private fun encodeSend(send: UnknownSend): JsonObject = buildJsonObject {
     send.draftText?.let { put("draftText", it) }
     send.attachments?.let { list -> put("attachments", JsonArray(list.map(AttachmentJson::encode))) }
     if (send.discarded) put("discarded", true)
+    send.choice?.let { put("choice", it.wire) }
     send.end?.let { end ->
         put(
             "end",
@@ -125,6 +139,7 @@ private fun decodeSend(value: JsonElement): UnknownSend? {
         draftText = stringOf(o["draftText"]),
         attachments = (o["attachments"] as? JsonArray)?.mapNotNull(AttachmentJson::decode),
         discarded = flagOf(o["discarded"]),
+        choice = DiscardChoice.of(stringOf(o["choice"])),
         end = decodeEnd(o["end"]),
         completionRefused = flagOf(o["completionRefused"]),
     )
@@ -165,10 +180,10 @@ class UnknownSends(private val store: KeyValueStore) {
     /** Records the person's discard in the send's entry, awaited until the store has it; false when
      *  the send is no longer waiting (out of the ledger, or its end recorded meanwhile), and then
      *  nothing is written. */
-    suspend fun markDiscarded(clientMessageId: String): Boolean = writing.withLock {
+    suspend fun markDiscarded(clientMessageId: String, choice: DiscardChoice = DiscardChoice.Discard): Boolean = writing.withLock {
         val sends = list()
         if (sends.none { it.clientMessageId == clientMessageId && it.end == null }) return@withLock false
-        write(sends.map { if (it.clientMessageId == clientMessageId) it.copy(discarded = true) else it })
+        write(sends.map { if (it.clientMessageId == clientMessageId) it.copy(discarded = true, choice = choice) else it })
         true
     }
 

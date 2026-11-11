@@ -13,7 +13,8 @@ import com.clave.core.state.STILL_SENDING
 /**
  * What the composer shows after the person's choice on a send of unknown outcome, decided apart
  * from the screen so ComposerAfterTest holds each case. [clearsStored]: the stored draft, the
- * attachment draft and the mark go too (only a real discard).
+ * attachment draft and the mark go too (only a discard with no delivery ledger behind it; with one,
+ * the ledger's own cleanup took out of the stores what the discarded message carried).
  */
 internal data class ComposerAfter(
     val draft: String,
@@ -32,11 +33,13 @@ private fun withoutSent(attachments: List<Attachment>, unknown: UnknownSend): Li
     sentFiles(unknown).let { sent -> attachments.filterNot { it in sent } }
 
 /**
- * After a Discard, by what it did. Discarded: everything of it goes. Already delivered: the
- * delivered text and files leave the composer (left there, one tap would send them again under a
- * new id) and it says so. Already rejected: the rejection's mark says why, the draft stays.
- * Being completed, in flight, the choice not saved: nothing changes and it says why. Nothing to
- * discard: nothing changes.
+ * After a Discard, by what it did. Discarded: what the discarded message carried goes, the text
+ * while the field still holds it and its files; an edit and a file added since are the person's
+ * and stay, as the ledger's cleanup kept them in the stores. With no ledger behind it, everything
+ * goes. Already delivered: the delivered text and files leave the composer (left there, one tap
+ * would send them again under a new id) and it says so. Already rejected: the rejection's mark says
+ * why, the draft stays. Being completed, in flight, the choice not saved: nothing changes and it
+ * says why. Nothing to discard: nothing changes.
  */
 internal fun composerAfterDiscard(
     result: DeliveryController.DiscardResult?,
@@ -44,7 +47,13 @@ internal fun composerAfterDiscard(
     attachments: List<Attachment>,
     unknown: UnknownSend,
 ): ComposerAfter = when (result) {
-    DeliveryController.DiscardResult.Discarded, null -> ComposerAfter("", emptyList(), null, clearsStored = true)
+    DeliveryController.DiscardResult.Discarded -> ComposerAfter(
+        draft = if (draft == sentText(unknown)) "" else draft,
+        attachments = withoutSent(attachments, unknown),
+        error = null,
+        clearsStored = false,
+    )
+    null -> ComposerAfter("", emptyList(), null, clearsStored = true)
     DeliveryController.DiscardResult.AlreadyDelivered -> ComposerAfter(
         draft = if (draft == sentText(unknown)) "" else draft,
         attachments = withoutSent(attachments, unknown),
@@ -74,21 +83,65 @@ internal fun orphanCard(machineId: String, sessionId: String, mark: DeliveryMark
 internal fun sentenceAfterSent(sentClientMessageId: String, unknownAtStart: String?): String? =
     if (sentClientMessageId == unknownAtStart) ARRIVED_NOTHING_SENT else null
 
+/** What the composer holds after a send answered Sent. [clearsStoredFiles]: the stored attachment draft goes too. */
+internal data class ComposerAfterSent(
+    val draft: String,
+    val attachments: List<Attachment>,
+    val error: String?,
+    val clearsStoredFiles: Boolean,
+)
+
+/**
+ * After a send answered Sent. Its own write: what it sent leaves the field, the text while the field
+ * still holds it and its files, the stored attachment draft with them. A Send again answered with
+ * the FIRST id (it had arrived, nothing was sent now): only what that first message carried goes,
+ * the text while the field still holds it and its files; an edit and a file added since were never
+ * sent and stay, in the field and in the stores, which the first message's own end already settled.
+ */
+internal fun composerAfterSent(
+    sentClientMessageId: String,
+    unknownAtStart: UnknownSend?,
+    text: String,
+    files: List<Attachment>,
+    draft: String,
+    attachments: List<Attachment>,
+): ComposerAfterSent {
+    val error = sentenceAfterSent(sentClientMessageId, unknownAtStart?.clientMessageId)
+    if (unknownAtStart != null && error != null) {
+        return ComposerAfterSent(
+            draft = if (draft == sentText(unknownAtStart)) "" else draft,
+            attachments = withoutSent(attachments, unknownAtStart),
+            error = error,
+            clearsStoredFiles = false,
+        )
+    }
+    return ComposerAfterSent(
+        draft = if (draft == text) "" else draft,
+        attachments = if (attachments == files) emptyList() else attachments,
+        error = error,
+        clearsStoredFiles = true,
+    )
+}
+
 /**
  * When the conversation's unknown send has left the ledger without a mark (delivered: by the pass,
  * a completion that landed, or its own write), the composer's copy of it goes too, provided the
- * store's own draft went with it and the field still holds that text: of the files, the records sent
- * go and the ones added since stay. Null when nothing changes (an edited text keeps everything).
+ * store's own draft went with it, the store's attachment draft holds none of the records sent (a
+ * send refused or failed keeps them there, to be sent again) and the field still holds that text:
+ * of the files, the records sent go and the ones added since stay. Null when nothing changes (an
+ * edited text keeps everything).
  */
 internal fun composerAfterDelivered(
     previous: UnknownSend?,
     now: UnknownSend?,
     mark: DeliveryMark?,
     storedDraft: String,
+    storedFiles: List<Attachment>,
     draft: String,
     attachments: List<Attachment>,
 ): Pair<String, List<Attachment>>? {
     if (previous == null || now != null || mark != null) return null
     if (storedDraft.isNotEmpty() || draft != sentText(previous)) return null
+    if (sentFiles(previous).any { it in storedFiles }) return null
     return "" to withoutSent(attachments, previous)
 }

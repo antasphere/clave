@@ -340,7 +340,10 @@ class SettleRecordedEndTest {
         assertEquals("the discard was recorded", JsonPrimitive(true), entryIn(left)?.get("discarded"))
         nextFinishesAtStart { seen ->
             assertNull(seen.mark)
-            assertEquals("a Discard's draft stays as it is", TEXT, seen.draft)
+            // Ruled in round three (finding 5): a Discard's record says it was a Discard, and its
+            // cleanup took the discarded text and file out before the mark's clear.
+            assertEquals("the discarded text left the draft", "", seen.draft)
+            assertNull("and its file", seen.attachmentDraft)
         }
     }
 

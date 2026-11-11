@@ -4,6 +4,7 @@ import com.clave.core.chat.Action
 import com.clave.core.chat.BufferedItem
 import com.clave.core.chat.Conversation
 import com.clave.core.chat.DeliveryController
+import com.clave.core.chat.DiscardChoice
 import com.clave.core.chat.HistoryCursor
 import com.clave.core.chat.Reachability
 import com.clave.core.chat.SendFailure
@@ -786,7 +787,8 @@ public class ClaveStore(private val services: Services) {
     ): SendOutcome {
         val delivery = services.delivery
         if (delivery != null) {
-            when (delivery.discard(machineId, sessionId, unknownId)) {
+            // Recorded as a Send again: the text being sent anew stays in the composer's stores.
+            when (delivery.discard(machineId, sessionId, unknownId, DiscardChoice.SendAgain)) {
                 // A notice left without its send: cleared, the draft goes under a new id as the person chose.
                 DeliveryController.DiscardResult.Discarded, DeliveryController.DiscardResult.OrphanCleared -> Unit
                 // It arrived before the choice: the first id is the message, nothing more goes.
