@@ -27,7 +27,19 @@ toolchains (a trace names the Xcode each xcodebuild action ran under): unset, ev
 under the job's own Xcode and no other is named; on the runner as its run of 10 November listed
 it (the Mac and the two placeholders only) the gate fails for want of an iPhone; with an
 installed Xcode named, the listing, the build and the tests run under the named one; and a
-named folder that is missing or holds no Xcode fails before any xcodebuild step. `--against <file>` and `--release-check <file>` run the scenarios on
+named folder that is missing or holds no Xcode fails before any xcodebuild step. On the runner
+as its run at 5d176d40 listed it (the named Xcode offering no iPhone, though the iOS 26.2 runtime
+of its SDK is installed), with an xcrun stand-in that answers every simctl call itself and
+records each create and delete, the gate makes exactly one iPhone 17 Pro on that runtime, runs
+on it and deletes it last, and no other device; it makes nothing and fails with a sentence when
+no runtime matches the SDK (as under the job's own Xcode 26.0.1, SDK 26.0), fails and still
+deletes the one it made when the scheme does not list it, keeps simctl's devices, device types
+and runtimes and the Xcode's version and SDKs under `build/reports`, and makes nothing on a
+runner that lists an iPhone; the ci.sh at 5d176d40 fails every one of these checks but the three
+that ask for nothing to be made, a copy whose trap deletes nothing fails the deletes, one without
+the validation listing reads green on a simulator the scheme does not list, one taking the first
+runtime whatever the SDK makes one where none matches, and one making a simulator beside a listed
+iPhone makes one it does not need. `--against <file>` and `--release-check <file>` run the scenarios on
 other copies: the copies at df0332c9 read green with no Release output and with a Release
 carrying the Debug identifier, the ci.sh at ca3f0f35 read green on a failed build and on
 failed tests, and the ci.sh at 9a78df7f, whose pick kept to runtimes no newer than the

@@ -92,7 +92,16 @@ and xcrun and proves it exits non-zero, without printing `ci: green`, when any o
 four steps fails, that the real release check fails on a Release output that is missing or
 carries a development-only marker, and that a runner's simulator pick takes the newest
 iPhone its Xcode lists, never an ineligible one, and fails when there is none or the list
-cannot be read.
+cannot be read. An installed runtime is not a created device: under the named Xcode the hosted
+run at 9b675556 picked iPhone 17 on iOS 26.5, while the one at 5d176d40 was offered only the Mac
+and the two placeholders though the iOS 26.2, 26.4.1 and 26.5 runtimes were installed, so the
+gate also keeps simctl's devices, device types and runtimes (JSON) and the Xcode's version and
+SDKs under `build/reports`, and when no iPhone is listed it makes one of its own,
+`clave-ci-<epoch>-<pid>`, on the installed, available iOS runtime of the simulator SDK (26.2 or
+26.2.x for the SDK 26.2), as that runtime's first iPhone device type, which its log names
+(`ci: made simulator …`), checks that the scheme lists it, runs every step on it and deletes it,
+and no other device, on every exit, failing with a sentence and making nothing only when no
+runtime matches the SDK.
 
 ## The fixture check
 
