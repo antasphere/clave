@@ -50,6 +50,13 @@ const routine = (
 })
 
 describe('resolveLaunch', () => {
+  it.each(['claude-chat', 'builtin-claude', 'Claude'])(
+    'keeps the explicitly configured routine profile %s instead of the chat default',
+    (profile) => {
+      const result = resolveLaunch(routine({ profile, form: 'chat' }), facts())
+      expect(result.ok && result.spawn.launchProfileId).toBe('claude-chat')
+    }
+  )
   it('judges the pool’s account for the model the routine runs: a spent Fable week skips the account on Fable only', () => {
     const week = { kind: 'weekly_all', scope: null, usedPercentage: 40, severity: 'normal' }
     const fable = {

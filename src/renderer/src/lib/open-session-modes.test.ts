@@ -124,6 +124,16 @@ describe('clave_open_session chat default', () => {
       resolveProfileRef({ mode: 'codex', chat: true, profile: 'chat:claude:no-key' })
     ).toThrow(/drop profile/)
   })
+  it.each([
+    ['claude', 'codex-chat'],
+    ['codex', 'claude-chat']
+  ] as const)('does not replace a mismatched %s profile with its default', (mode, profile) => {
+    const chatDefault = `chat:${mode}:custom`
+    expect(resolveProfileRef({ mode, profile }, chatDefault)).toBe(profile)
+    expect(() => resolveProfileRef({ mode, profile, chat: true }, chatDefault)).toThrow(
+      /drop profile/
+    )
+  })
   const prefs = (over: Partial<LaunchProfilePreferences>): LaunchProfilePreferences => ({
     version: 1,
     customProfiles: [
