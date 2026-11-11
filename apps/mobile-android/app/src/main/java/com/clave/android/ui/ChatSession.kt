@@ -5,6 +5,7 @@ import com.clave.android.OwnerSession
 import com.clave.core.chat.Admission
 import com.clave.core.chat.AdmissionContext
 import com.clave.core.chat.AttachmentJson
+import com.clave.core.chat.DeliveryController
 import com.clave.core.chat.MAX_TRANSFER_BYTES
 import com.clave.core.chat.NO_FILES_ROUTE
 import com.clave.core.chat.PickedKind
@@ -69,6 +70,7 @@ class ChatSession(
     @Volatile private var closed = false
     private var closeChat: (() -> Unit)? = null
     private var offMarks: (() -> Unit)? = null
+    private var offSends: (() -> Unit)? = null
     private var draftWrite: Job? = null
     private val attaching = Mutex()
 
@@ -77,6 +79,8 @@ class ChatSession(
         if (opened) return
         opened = true
         offMarks = delivery.marks.subscribe { scope.launch { readDelivery() } }
+        // A settled send's entry leaves the ledger after its mark's write: the card goes then.
+        offSends = delivery.sends.subscribe { scope.launch { readDelivery() } }
         scope.launch {
             val text = drafts.get(machineId, sessionId)
             val restored = owner.kv.get(attachmentKey)?.let(::decodeAttachments).orEmpty()
@@ -105,6 +109,7 @@ class ChatSession(
         if (closed) return
         closed = true
         offMarks?.invoke()
+        offSends?.invoke()
         closeChat?.invoke()
         closeChat = null
         val text = _state.value.draft
@@ -125,11 +130,14 @@ class ChatSession(
 
     private suspend fun readDelivery() {
         val mark = delivery.marks.get(machineId, sessionId)
-        val unknown = delivery.sends.forSession(machineId, sessionId).lastOrNull()
         val stored = drafts.get(machineId, sessionId)
+        // A notice an older build left without its send is shown as the same choice, over the draft kept.
+        val unknown = delivery.sends.forSession(machineId, sessionId).lastOrNull()
+            ?: delivery.orphan(machineId, sessionId)?.let { orphanCard(machineId, sessionId, it, stored) }
+        val storedFiles = owner.kv.get(attachmentKey)?.let(::decodeAttachments).orEmpty()
         _state.update {
             // Delivered meanwhile (the pass, a completion that landed): the composer's copy goes too.
-            val delivered = composerAfterDelivered(it.unknownSend, unknown, mark, stored, it.draft, it.attachments)
+            val delivered = composerAfterDelivered(it.unknownSend, unknown, mark, stored, storedFiles, it.draft, it.attachments)
             if (delivered == null) {
                 it.copy(deliveryMark = mark, unknownSend = unknown)
             } else {
@@ -182,7 +190,7 @@ class ChatSession(
         val current = _state.value
         if ((current.draft.isBlank() && current.attachments.isEmpty()) || current.sending || current.attaching) return
         // A Send again answered with the first id as sent: that message had arrived, none went now.
-        val unknownAtStart = current.unknownSend?.clientMessageId
+        val unknownAtStart = current.unknownSend
         _state.update { it.copy(sending = true, error = null) }
         scope.launch {
             val text = current.draft
@@ -193,14 +201,14 @@ class ChatSession(
                 drafts.set(machineId, sessionId, text)
                 when (val outcome = call(text, attachments)) {
                     is SendOutcome.Sent -> {
-                        owner.kv.remove(attachmentKey)
+                        // Its own write: what it sent leaves. "It had arrived": only what the first message carried.
+                        var clearsStoredFiles = false
                         _state.update {
-                            it.copy(
-                                draft = if (it.draft == text) "" else it.draft,
-                                attachments = if (it.attachments == attachments) emptyList() else it.attachments,
-                                error = sentenceAfterSent(outcome.clientMessageId, unknownAtStart),
-                            )
+                            val after = composerAfterSent(outcome.clientMessageId, unknownAtStart, text, attachments, it.draft, it.attachments)
+                            clearsStoredFiles = after.clearsStoredFiles
+                            it.copy(draft = after.draft, attachments = after.attachments, error = after.error)
                         }
+                        if (clearsStoredFiles) owner.kv.remove(attachmentKey)
                         if (_state.value.draft.isEmpty()) drafts.clear(machineId, sessionId)
                     }
                     // The rejection's mark says why above the draft, and stays through a restart.
@@ -223,8 +231,9 @@ class ChatSession(
 
     /**
      * "Discard", decided at once against any reconnection pass of the machine; what the server
-     * had answered before stands and is said. Discarded, the send, its mark, the draft and the
-     * attachments go. Arrived before the choice, the delivered text leaves the composer and it
+     * had answered before stands and is said. Discarded, the send and its mark go, and what it
+     * carried: its text while the field still holds it, its files; an edit and a file added since
+     * stay. Arrived before the choice, the delivered text leaves the composer and it
      * says so. Refused, the rejection's mark stays with the draft. A completion already on its
      * way, or the send's own write still out, changes nothing and says why.
      */
@@ -242,6 +251,12 @@ class ChatSession(
                     draftWrite?.cancel()
                     drafts.clear(machineId, sessionId)
                     owner.kv.remove(attachmentKey)
+                } else if (result == DeliveryController.DiscardResult.Discarded) {
+                    // The ledger took out of the stores what the discarded message carried; the field's own
+                    // copy follows, and a text typed just now and not yet written lands as it now reads.
+                    draftWrite?.cancel()
+                    drafts.set(machineId, sessionId, after.draft)
+                    if (after.attachments.isEmpty()) owner.kv.remove(attachmentKey) else owner.kv.set(attachmentKey, AttachmentJson.encodeList(after.attachments))
                 }
                 _state.update { it.copy(draft = after.draft, attachments = after.attachments, error = after.error) }
             } finally {

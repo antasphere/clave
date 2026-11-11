@@ -41,13 +41,50 @@ data class UnknownSend(
      * and it carries the discard out. In the entry itself, the record cannot outlive the send or miss it.
      */
     val discarded: Boolean = false,
+    /**
+     * With [discarded], which choice it was. Discard: the message is dropped, so its cleanup takes out
+     * of the composer's stores what it carried (the draft while still its text, its files). Send again:
+     * its text is being sent anew under a new id, so the drafts stay. Null when a build before this one
+     * recorded the discard without saying which: the drafts stay, as that build left them.
+     */
+    val choice: DiscardChoice? = null,
+    /**
+     * How the send ended (sent, rejected, failed), written into the entry before any cleanup of it.
+     * From then on the entry is decided: no pass asks about it, completes it or writes it, and a
+     * controller built again over these stores only finishes its cleanup, by this kind, the entry's
+     * removal last.
+     */
+    val end: SendEnd? = null,
+    /**
+     * A same-id completion of this send was refused (401, 403, a declared 422). That says nothing of the first
+     * write, which may still arrive, so the send stays unknown; but no pass sends the completion
+     * again, in this process or the next: the person decides (Send again, or Discard).
+     */
+    val completionRefused: Boolean = false,
 ) {
+    /** Discarded or ended: what is left is the cleanup, never a question to the server or a write. */
+    val decided: Boolean get() = discarded || end != null
+
     /** The same message under the same id, the write a reconnection completes. */
     fun toUserMessage(): SessionEvent.UserMessage = SessionEvent.UserMessage(
         clientMessageId = clientMessageId,
         text = text,
         attachments = attachments?.takeIf { it.isNotEmpty() },
     )
+}
+
+/** The person's choice on a send of unknown outcome, as its ledger entry records it. */
+enum class DiscardChoice(val wire: String) {
+    Discard("discard"), SendAgain("send-again");
+    companion object { fun of(wire: String?): DiscardChoice? = entries.firstOrNull { it.wire == wire } }
+}
+
+/** A send's terminal end as its ledger entry records it; [reason] and [at] are the Rejected mark's. */
+data class SendEnd(val kind: Kind, val reason: String = "", val at: Long = 0) {
+    enum class Kind(val wire: String) {
+        Sent("sent"), Rejected("rejected"), Failed("failed");
+        companion object { fun of(wire: String?): Kind? = entries.firstOrNull { it.wire == wire } }
+    }
 }
 
 const val UNKNOWN_SENDS_KEY: String = "clave.unknown-sends"
@@ -67,8 +104,30 @@ private fun encodeSend(send: UnknownSend): JsonObject = buildJsonObject {
     send.draftText?.let { put("draftText", it) }
     send.attachments?.let { list -> put("attachments", JsonArray(list.map(AttachmentJson::encode))) }
     if (send.discarded) put("discarded", true)
+    send.choice?.let { put("choice", it.wire) }
+    send.end?.let { end ->
+        put(
+            "end",
+            buildJsonObject {
+                put("kind", end.kind.wire)
+                put("reason", end.reason)
+                put("at", end.at)
+            },
+        )
+    }
+    if (send.completionRefused) put("completionRefused", true)
 }
 
+private fun flagOf(value: JsonElement?): Boolean = (value as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull == true
+
+/** An entry written before the end existed has none; an end of a kind this build does not know is none. */
+private fun decodeEnd(value: JsonElement?): SendEnd? {
+    val o = value as? JsonObject ?: return null
+    val kind = SendEnd.Kind.of(stringOf(o["kind"])) ?: return null
+    return SendEnd(kind, stringOf(o["reason"]) ?: "", numberOf(o["at"])?.toLong() ?: 0)
+}
+
+/** Fields this build does not know are ignored; the ones it knows and does not find take their defaults. */
 private fun decodeSend(value: JsonElement): UnknownSend? {
     val o = value as? JsonObject ?: return null
     return UnknownSend(
@@ -79,13 +138,23 @@ private fun decodeSend(value: JsonElement): UnknownSend? {
         at = numberOf(o["at"])?.toLong() ?: 0,
         draftText = stringOf(o["draftText"]),
         attachments = (o["attachments"] as? JsonArray)?.mapNotNull(AttachmentJson::decode),
-        discarded = (o["discarded"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull == true,
+        discarded = flagOf(o["discarded"]),
+        choice = DiscardChoice.of(stringOf(o["choice"])),
+        end = decodeEnd(o["end"]),
+        completionRefused = flagOf(o["completionRefused"]),
     )
 }
 
 class UnknownSends(private val store: KeyValueStore) {
     /** Every change is a read-modify-write of one key: two at once must not drop an id. */
     private val writing = Mutex()
+    private val listeners = CopyOnWriteArraySet<() -> Unit>()
+
+    /** Called after every write of the ledger (a send's entry in, changed or out); answers the unsubscribe. */
+    fun subscribe(listener: () -> Unit): () -> Unit {
+        listeners.add(listener)
+        return { listeners.remove(listener) }
+    }
 
     suspend fun list(): List<UnknownSend> {
         val raw = store.get(UNKNOWN_SENDS_KEY)
@@ -109,17 +178,45 @@ class UnknownSends(private val store: KeyValueStore) {
     }
 
     /** Records the person's discard in the send's entry, awaited until the store has it; false when
-     *  the send is no longer in the ledger (settled meanwhile), and then nothing is written. */
-    suspend fun markDiscarded(clientMessageId: String): Boolean = writing.withLock {
+     *  the send is no longer waiting (out of the ledger, or its end recorded meanwhile), and then
+     *  nothing is written. */
+    suspend fun markDiscarded(clientMessageId: String, choice: DiscardChoice = DiscardChoice.Discard): Boolean = writing.withLock {
         val sends = list()
-        if (sends.none { it.clientMessageId == clientMessageId }) return@withLock false
-        write(sends.map { if (it.clientMessageId == clientMessageId) it.copy(discarded = true) else it })
+        if (sends.none { it.clientMessageId == clientMessageId && it.end == null }) return@withLock false
+        write(sends.map { if (it.clientMessageId == clientMessageId) it.copy(discarded = true, choice = choice) else it })
+        true
+    }
+
+    /**
+     * Records how the send ended in its entry, awaited until the store has it, before any cleanup of
+     * it; what the server answered stands over a discard recorded since. An end already recorded
+     * stays (the first is the one finished). Answers the entry as it now stands, or null when the
+     * send is no longer in the ledger, and then nothing is written. Throws what the store throws,
+     * and then nothing is recorded.
+     */
+    suspend fun markEnded(clientMessageId: String, end: SendEnd): UnknownSend? = writing.withLock {
+        val sends = list()
+        val entry = sends.firstOrNull { it.clientMessageId == clientMessageId } ?: return@withLock null
+        if (entry.end != null) return@withLock entry
+        val ended = entry.copy(end = end)
+        write(sends.map { if (it.clientMessageId == clientMessageId) ended else it })
+        ended
+    }
+
+    /** Records that a same-id completion of this send was refused; false when it is no longer waiting. */
+    suspend fun markCompletionRefused(clientMessageId: String): Boolean = writing.withLock {
+        val sends = list()
+        val entry = sends.firstOrNull { it.clientMessageId == clientMessageId && !it.decided } ?: return@withLock false
+        if (!entry.completionRefused) {
+            write(sends.map { if (it.clientMessageId == clientMessageId) it.copy(completionRefused = true) else it })
+        }
         true
     }
 
     private suspend fun write(sends: List<UnknownSend>) {
         if (sends.isEmpty()) store.remove(UNKNOWN_SENDS_KEY)
         else store.set(UNKNOWN_SENDS_KEY, JsonArray(sends.map(::encodeSend)).toString())
+        for (listener in listeners) listener()
     }
 }
 

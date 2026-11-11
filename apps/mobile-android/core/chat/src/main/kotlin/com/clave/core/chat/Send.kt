@@ -68,7 +68,18 @@ interface SendPorts {
 
     /** Whether the person has discarded this send: a pass stops waiting on its status then. */
     suspend fun discarded(clientMessageId: String): Boolean = false
+
+    /** Whether a same-id completion of this send was refused before: it is not sent again by itself. */
+    suspend fun completionRefused(clientMessageId: String): Boolean = false
 }
+
+/** Why a send whose same-id completion was refused before is not completed again by a pass. */
+const val COMPLETION_REFUSED: String =
+    "The machine refused this message when it was sent again, so it is not sent again by itself. Whether the first one arrived is not known."
+
+/** The reason a refused same-id completion leaves on the send: the server's own words, then what it does not prove. */
+fun completionRefusedReason(refusal: String): String =
+    "The machine refused this message when it was sent again ($refusal). Whether the first one arrived is not known."
 
 sealed interface SendOutcome {
     val clientMessageId: String
@@ -77,8 +88,12 @@ sealed interface SendOutcome {
     data class Sent(override val clientMessageId: String, val reconciled: Boolean) : SendOutcome
     /** The server refused the write or recorded it rejected: the draft stays. */
     data class Rejected(override val clientMessageId: String, val reason: String) : SendOutcome
-    /** Nobody can tell: the draft stays, nothing was sent by itself. */
-    data class Unknown(override val clientMessageId: String, val reason: String) : SendOutcome
+    /**
+     * Nobody can tell: the draft stays, nothing was sent by itself. [completionRefused]: the same-id
+     * completion of a send whose first write was not seen was refused (401, 403, a declared 422); the
+     * first may still arrive, so it stays unknown, and no pass sends the completion again.
+     */
+    data class Unknown(override val clientMessageId: String, val reason: String, val completionRefused: Boolean = false) : SendOutcome
     /** Another kind of failure (the token refused, a policy refusal): the draft stays. */
     data class Failed(override val clientMessageId: String, val reason: String) : SendOutcome
 }
@@ -164,6 +179,10 @@ suspend fun reconcile(
                         "The message was sent again once and its outcome is still not known.",
                     )
                 }
+                // Refused once, the completion is never sent again by itself: the person decides.
+                if (ports.completionRefused(clientMessageId)) {
+                    return SendOutcome.Unknown(clientMessageId, COMPLETION_REFUSED, completionRefused = true)
+                }
                 // The person's discard and this completion: whichever comes first decides.
                 if (!ports.mayComplete(clientMessageId)) return SendOutcome.Unknown(clientMessageId, DISCARDED_FIRST)
                 try {
@@ -172,7 +191,13 @@ suspend fun reconcile(
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    if (!outcomeLost(error)) return refusal(clientMessageId, error)
+                    // Every answer but a lost one refuses the completion alone: a 401, a 403, a policy, or a
+                    // declared 422 (SessionWriteRefused, SessionNotFound, SessionWriteUnknown). None proves
+                    // the first write absent, which may still arrive: unknown, never completed again by a
+                    // pass. Only a status read settles it then (accepted, or rejected through its end).
+                    if (!outcomeLost(error)) {
+                        return SendOutcome.Unknown(clientMessageId, completionRefusedReason(reasonOf(error)), completionRefused = true)
+                    }
                 }
                 return reconcile(clientMessageId, ports, options, mayRetry = false)
             }

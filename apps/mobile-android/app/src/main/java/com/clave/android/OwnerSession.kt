@@ -182,6 +182,16 @@ class OwnerSession private constructor(
                     delivery = services.delivery,
                 ),
             )
+            // What a previous process recorded of its sends' ends and did not finish is finished first,
+            // with no server, so no screen reads a stale notice or a delivered draft. A store that fails
+            // here leaves the records for the first pass, which finishes them under the machine's lock.
+            try {
+                services.delivery.finishRecordedEnds()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                app.log.event("delivery.finish_failed", mapOf("error" to e::class.simpleName))
+            }
             val session = OwnerSession(auth, ownerKeyOf(status), stores, services, store, scope, app.http, app.build, app.log)
             if (status.account != null) session.syncPushTokens()
             return session

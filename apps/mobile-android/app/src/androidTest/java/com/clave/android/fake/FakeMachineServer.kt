@@ -3,6 +3,8 @@ package com.clave.android.fake
 import java.io.Closeable
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -82,6 +84,36 @@ class FakeMachineServer(private val token: String) : Closeable {
     /** When true, `GET /push` answers 503 instead of upgrading. */
     @Volatile var pushDown = false
 
+    /** When set, `POST /sessions/write` answers this status (a 403: the device-session boundary) with its sentence. */
+    @Volatile var refuseWritesWith: Int? = null
+
+    /** A status ask the test holds until [releaseStatus]: it answers whatever the id's state is then. */
+    private class HeldStatus(val clientMessageId: String) {
+        val asked = CountDownLatch(1)
+        val released = CountDownLatch(1)
+    }
+
+    @Volatile private var heldStatus: HeldStatus? = null
+
+    /** The status route says `accepted` for [clientMessageId] from now on: its first write arrived after all. */
+    fun accept(clientMessageId: String) = synchronized(lock) {
+        failed -= clientMessageId
+        written += clientMessageId
+    }
+
+    /** The next status ask of [clientMessageId] waits until [releaseStatus]. */
+    fun holdStatusOf(clientMessageId: String) {
+        heldStatus = HeldStatus(clientMessageId)
+    }
+
+    /** Whether the held status ask arrived within [timeoutMs]. */
+    fun statusHeld(timeoutMs: Long): Boolean = heldStatus?.asked?.await(timeoutMs, TimeUnit.MILLISECONDS) ?: false
+
+    fun releaseStatus() {
+        heldStatus?.released?.countDown()
+        heldStatus = null
+    }
+
     /** How many push sockets are subscribed to the echo session right now. */
     val subscribers: Int get() = subscribed.size
 
@@ -112,6 +144,7 @@ class FakeMachineServer(private val token: String) : Closeable {
     val url: String = "http://127.0.0.1:${server.port}"
 
     override fun close() {
+        releaseStatus()
         for (socket in subscribed) socket.close(1001, "stand-in stopping")
         server.shutdown()
     }
@@ -141,15 +174,14 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /sessions/by-id" -> if (id == SESSION_ID) json(200, session()) else unknownSession()
             "GET /sessions/capabilities" -> if (id == SESSION_ID) json(200, """{"images":false}""") else unknownSession()
             "GET /sessions/timeline" -> if (id == SESSION_ID) json(200, page(url?.queryParameter("before")?.toLongOrNull())) else unknownSession()
-            "GET /sessions/writes" -> synchronized(lock) {
+            "GET /sessions/writes" -> {
                 val asked = url?.queryParameter("clientMessageId")
-                if (asked in written) {
-                    json(200, """{"status":"accepted","at":$AT}""")
-                } else if (asked in failed) {
-                    json(200, """{"status":"unknown"}""")
-                } else {
-                    json(200, """{"status":"absent"}""")
+                // Held outside the lock, so every other route goes on answering meanwhile.
+                heldStatus?.takeIf { it.clientMessageId == asked }?.let { held ->
+                    held.asked.countDown()
+                    held.released.await(60, TimeUnit.SECONDS)
                 }
+                statusOf(asked)
             }
             "POST /sessions/write" -> write(body)
             "GET /requests/pending" -> json(200, synchronized(lock) { if (resolved) NO_REQUESTS else ONE_REQUEST })
@@ -158,6 +190,17 @@ class FakeMachineServer(private val token: String) : Closeable {
                 json(200, """{"accepted":true}""")
             }
             else -> json(500, """{"message":"Unreachable."}""")
+        }
+    }
+
+    /** What the status route answers for [asked]: accepted once written, unknown once a failed write's, else absent. */
+    private fun statusOf(asked: String?): MockResponse = synchronized(lock) {
+        if (asked in written) {
+            json(200, """{"status":"accepted","at":$AT}""")
+        } else if (asked in failed) {
+            json(200, """{"status":"unknown"}""")
+        } else {
+            json(200, """{"status":"absent"}""")
         }
     }
 
@@ -176,6 +219,7 @@ class FakeMachineServer(private val token: String) : Closeable {
      */
     private fun write(body: String): MockResponse {
         val input = JSONObject(body).optJSONObject("input")
+        refuseWritesWith?.let { status -> return json(status, """{"message":"This device may not write to that session."}""") }
         if (failWrites) {
             input?.optString("clientMessageId")?.takeIf { it.isNotEmpty() }?.let { synchronized(lock) { failed += it } }
             return json(500, """{"message":"The stand-in is failing writes on purpose."}""")
