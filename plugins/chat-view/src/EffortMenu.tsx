@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { ModelOption } from '../../../src/shared/session-model'
 import { effortChoice } from './models'

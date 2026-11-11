@@ -11,6 +11,7 @@
     "./styles.css": "./src/styles.css",
     "./tokens.css": "./src/tokens.css",
     "./components": "./src/components/index.ts",
+    "./primitives/*": "./src/primitives/*.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
