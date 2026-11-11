@@ -28,6 +28,14 @@ lists the owner's machines through that relay and asks to pair with the chosen o
 the named phone in Settings → Mobile on the Mac; a refusal or an expiry shows on the phone.
 Revoking it there ends its access.
 
+## Account separation
+
+Each app keeps the signed-in person's credentials in the platform's protected store under one
+namespace per owner, the issuer and the subject together, apart from settings and drafts
+([mobile.md](mobile.md)), so a second person signing in on the same phone gets a namespace of
+their own. The prototype's account of separation and sign-out, written for the React Native
+app, is this page as it stood on the branch `mobile-react-native-baseline-20261109`.
+
 ## The prototype's beta
 
 The React Native beta's records (its saved iOS run, its reviews, its build scripts and their

@@ -41,6 +41,14 @@ ordered history in [mobile-timeline.md](mobile-timeline.md), the account in
 [antasphere-account.md](antasphere-account.md) and the agents' requests in
 [server-requests.md](server-requests.md).
 
+## Launch
+
+Both apps start a chat from the saved launch profiles of a paired machine, chat profiles
+first. A start carries the agent family, the profile by its id and its full definition, and
+the workspace, never an account: the machine's accounts stay its own. The prototype's Launch
+screen, which this launch was ported from, is described in this page as it stood on the
+branch `mobile-react-native-baseline-20261109`.
+
 ## What `packages/mobile-native` holds for the phones
 
 `packages/mobile-native/README.md` is the reference. Neither app reads these files at its
