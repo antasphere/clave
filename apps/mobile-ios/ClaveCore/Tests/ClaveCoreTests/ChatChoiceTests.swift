@@ -94,6 +94,47 @@ private actor FailingLedgerStore: KeyValueStore {
   }
 }
 
+/// The owner's store that, once told, holds one read of the ledger: the read that comes after the
+/// next `skipping` ones waits, before it reads, until released, so it returns what the ledger holds
+/// by then.
+private actor LedgerReadHoldingStore: KeyValueStore {
+  private let inner: any KeyValueStore
+  private let ledgerKey: String
+  private var readsToPass: Int?
+  private var held: [CheckedContinuation<Void, Never>] = []
+
+  init(_ inner: any KeyValueStore, ledgerKey: String) {
+    self.inner = inner
+    self.ledgerKey = ledgerKey
+  }
+
+  /// Holds the read of the ledger that comes after the next `skipping` ones, once.
+  func holdLedgerRead(skipping: Int) { readsToPass = skipping }
+  /// How many reads wait.
+  var waiting: Int { held.count }
+  /// Lets the waiting read go on.
+  func release() {
+    let waiting = held
+    held = []
+    for read in waiting { read.resume() }
+  }
+
+  func get(_ key: String) async throws -> String? {
+    if key == ledgerKey, let passing = readsToPass {
+      if passing > 0 {
+        readsToPass = passing - 1
+      } else {
+        readsToPass = nil
+        await withCheckedContinuation { held.append($0) }
+      }
+    }
+    return try await inner.get(key)
+  }
+
+  func set(_ key: String, _ value: String) async throws { try await inner.set(key, value) }
+  func remove(_ key: String) async throws { try await inner.remove(key) }
+}
+
 final class ChatChoiceTests: XCTestCase {
   private var directory: URL!
 
@@ -221,6 +262,41 @@ final class ChatChoiceTests: XCTestCase {
     XCTAssertEqual(after.ledger, [])
     XCTAssertNil(after.mark)
     await finish(first, id, waiting)
+  }
+
+  // MARK: - A choice made while the pass reads the ledger (gap C7)
+
+  /// The pass holding the send reads the ledger for a choice an ended run left, and that read is held
+  /// after the check of this run's choices; a Discard is made meanwhile, its choice in memory and in
+  /// the record. Released, the pass follows the choice as it is made: it makes no status read for the
+  /// send and writes nothing, and the Discard resolves discarded.
+  func testAChoiceMadeWhileThePassReadsTheLedgerForALeftoverIsFollowedAsItIsMade() async throws {
+    let id = "message-c7-hold"
+    let store = LedgerReadHoldingStore(ownerStore(directory), ledgerKey: UnknownSends.key(for: machine))
+    let first = controller(over: store)
+    try await recordUnknownSend(unknownSend(id), reason: "lost", sends: first.sends, marks: first.marks)
+    try await Drafts(store: store).set(machine, session, text)
+    // The pass reads the ledger for the machine's sends, then in its claim, then for a leftover
+    // choice: that third read is held.
+    await store.holdLedgerRead(skipping: 2)
+    let probe = PassProbe(.accepted)
+    let pass = Task { try await probe.run(first) }
+    await eventually("the pass holds at its read for a leftover choice") { await store.waiting == 1 }
+    let state = await first.claimState(id)
+    XCTAssertTrue(state.held, "the pass holds the send")
+    let discard = Task {
+      try await first.discardPending(machineId: machine, sessionId: session, clientMessageId: id, choice: .discard)
+    }
+    await eventually("the Discard waits for the pass") { await first.claimState(id).waiting == 1 }
+    await store.release()
+    try await pass.value
+    let resolution = try await discard.value
+    XCTAssertEqual(probe.statusReads.value, 0, "no status read for the send")
+    XCTAssertEqual(probe.writes.value, [], "nothing written")
+    XCTAssertEqual(resolution, .discarded, "the Discard is carried out")
+    let found = try await reloaded()
+    XCTAssertEqual(found.ledger, [])
+    XCTAssertNil(found.mark)
   }
 
   // MARK: - c7: the record's encoding
