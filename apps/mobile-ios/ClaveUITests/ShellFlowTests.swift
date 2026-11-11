@@ -56,18 +56,57 @@ final class ShellFlowTests: XCTestCase {
     let coffee = app.buttons["appearance.option.coffee"]
     let dark = app.buttons["appearance.option.dark"]
     XCTAssertTrue(coffee.waitForExistence(timeout: 5))
-    dark.tap()
-    waitUntilSelected(dark)
+    tapAndWaitUntilSelected("dark", in: app)
     XCTAssertFalse(coffee.isSelected)
-    coffee.tap()
-    waitUntilSelected(coffee)
+    tapAndWaitUntilSelected("coffee", in: app)
     XCTAssertFalse(dark.isSelected)
   }
 
-  /// The checkmark moves on the next render, a moment after the tap.
+  private static let appearanceOptions = ["system", "dark", "light", "coffee", "charcoal"]
+
+  /// Taps an appearance option, then waits until it shows selected.
   @MainActor
-  private func waitUntilSelected(_ element: XCUIElement) {
-    expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element)
-    waitForExpectations(timeout: 5)
+  private func tapAndWaitUntilSelected(_ name: String, in app: XCUIApplication) {
+    let identifier = "appearance.option.\(name)"
+    let option = app.buttons[identifier]
+    let asked = Date()
+    option.tap()
+    waitUntilSelected(option, identifier, in: app, tapAsked: asked, tapReturned: Date())
+  }
+
+  /// The checkmark moves on the next render, a moment after the tap; on a loaded runner the tap
+  /// itself and the snapshots that read the screen can take seconds, so the wait allows 20. When even
+  /// that passes, a screenshot and what the test could read of every appearance option are attached
+  /// before the failure, which names the option waited for.
+  @MainActor
+  private func waitUntilSelected(
+    _ option: XCUIElement, _ identifier: String, in app: XCUIApplication, tapAsked: Date, tapReturned: Date
+  ) {
+    let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: option)
+    let result = XCTWaiter.wait(for: [selected], timeout: 20)
+    guard result != .completed else { return }
+    let since = Date().timeIntervalSince(tapReturned)
+    let ended = result == .timedOut ? "timed out" : "ended with result \(result.rawValue)"
+    var options: [String] = []
+    for name in Self.appearanceOptions {
+      let id = "appearance.option.\(name)"
+      if let seen = try? app.buttons[id].firstMatch.snapshot() {
+        options.append("\(seen.identifier): exists true, isSelected \(seen.isSelected), label \"\(seen.label)\"")
+      } else {
+        options.append("\(id): exists false")
+      }
+    }
+    let timing = String(
+      format: "%.2f s since the tap returned (the tap took %.2f s)", since, tapReturned.timeIntervalSince(tapAsked))
+    let screenshot = XCTAttachment(screenshot: app.screenshot())
+    screenshot.name = "Appearance when the wait for \(identifier) \(ended)"
+    screenshot.lifetime = .keepAlways
+    add(screenshot)
+    let report = XCTAttachment(
+      string: (["The wait for \(identifier) to be selected \(ended), \(timing)."] + options).joined(separator: "\n"))
+    report.name = "Appearance options when the wait for \(identifier) \(ended)"
+    report.lifetime = .keepAlways
+    add(report)
+    XCTFail("\(identifier) was not selected within 20 seconds, \(timing): \(options.joined(separator: "; "))")
   }
 }
