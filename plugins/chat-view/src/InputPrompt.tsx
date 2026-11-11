@@ -1237,7 +1237,22 @@ export function InputPrompt({
             (PRDCT-4417). */}
         <li className="chat-ask-end" role="none" data-ready={valid ? 'true' : undefined}>
           <span className="chat-ask-seat" aria-hidden="true" />
+          {/* The buttons stand beside the rail's end, the one that answers
+              first: off until every answer fits, on as the rail reaches its
+              filled seat (PRDCT-4418). The steps layout's Next stays live,
+              since it moves on; ⌘Enter still says what is owed. */}
           <div className="chat-ask-actions">
+            <button
+              type="button"
+              className="chat-ask-btn"
+              onMouseDown={keepFocus}
+              data-primary="true"
+              title={steps && !last && !review ? 'Next (Enter)' : `${approveLabel} (⌘ Enter)`}
+              disabled={busy || (steps && !last && !review ? attempted && !valid : !valid)}
+              onClick={() => (steps ? advance(step) : send())}
+            >
+              {steps && !last && !review ? 'Next' : approveLabel}
+            </button>
             {steps && step > 0 && (
               <button
                 type="button"
@@ -1249,7 +1264,6 @@ export function InputPrompt({
                 Back
               </button>
             )}
-            <span className="chat-prompt-spacer" />
             {skip && (
               <button
                 type="button"
@@ -1262,17 +1276,6 @@ export function InputPrompt({
                 Skip
               </button>
             )}
-            <button
-              type="button"
-              className="chat-ask-btn"
-              onMouseDown={keepFocus}
-              data-primary="true"
-              title={steps && !last && !review ? 'Next (Enter)' : `${approveLabel} (⌘ Enter)`}
-              disabled={busy || (attempted && !valid)}
-              onClick={() => (steps ? advance(step) : send())}
-            >
-              {steps && !last && !review ? 'Next' : approveLabel}
-            </button>
           </div>
         </li>
       </ol>
@@ -1324,7 +1327,10 @@ export function ClosedForm({
           {ask && <p className="chat-prompt-ask">{ask}</p>}
         </div>
       </div>
-      <ol className="chat-ask-fields" style={{ '--ask-progress': '100%' } as React.CSSProperties}>
+      <ol
+        className="chat-ask-fields"
+        style={{ '--ask-progress': 'calc(100% - var(--ask-end-h) / 2)' } as React.CSSProperties}
+      >
         {questions.map((question) => {
           const key = questionKey(question)
           const value = entry.answers?.[key]
@@ -1355,6 +1361,15 @@ export function ClosedForm({
             </li>
           )
         })}
+        {/* The rail ends where the live card's did: on its seat, filled
+            once the answers went, empty for a skip (PRDCT-4418). */}
+        <li
+          className="chat-ask-end"
+          role="none"
+          data-ready={entry.answer && !skipped ? 'true' : undefined}
+        >
+          <span className="chat-ask-seat" aria-hidden="true" />
+        </li>
       </ol>
     </div>
   )

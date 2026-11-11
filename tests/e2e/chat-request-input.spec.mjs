@@ -120,7 +120,9 @@ export async function run(t) {
       'an empty field is not judged when the person leaves it for the composer'
     )
     await email.fill('luca@antasphere')
-    await card.getByRole('button', { name: /^Approve/ }).click()
+    // Approve is off while an answer is owed (PRDCT-4418); ⌘Enter says what.
+    assert.equal(await card.getByRole('button', { name: /^Approve/ }).isDisabled(), true)
+    await email.press('Meta+Enter')
     await card.locator('.chat-field-problem').first().waitFor()
     assert.match(await card.locator('.chat-field-problem').first().innerText(), /not an e-mail/)
     assert.equal(await card.count(), 1, 'the card stays until the answers fit')
@@ -166,6 +168,11 @@ export async function run(t) {
     assert.match(await row.innerText(), /reb, wat/)
     assert.match(await row.innerText(), /Approved/i)
     assert.equal(await row.locator('.chat-ask-field[data-folded="true"]').count(), 4)
+    assert.equal(
+      await row.locator('.chat-ask-end[data-ready="true"]').count(),
+      1,
+      'the record ends its rail on a filled seat'
+    )
     assert.equal(await card.count(), 0, 'the card closed into its record')
     t.check('the approved card stays as the closed form, every step folded with its answer', true)
     // Nothing polled when the person approved (the tool's own wait had

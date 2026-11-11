@@ -4472,21 +4472,29 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    its seat centred on them and the hairline ending there. Empty while an
    answer is owed, filled in the accent the rail reaches it with once every
    answer fits. */
+/* The end row is as tall as the buttons on the live card, as a seat on the
+   settled record, which has none. */
+.chat-ask-fields {
+  --ask-end-h: var(--ask-btn-h);
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-fields {
+  --ask-end-h: var(--ask-seat);
+}
 .chat-ask-fields:has(> .chat-ask-end)::before {
-  bottom: calc(var(--ask-btn-h) / 2);
+  bottom: calc(var(--ask-end-h) / 2);
 }
 .chat-ask-end {
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: var(--ask-btn-h);
+  min-height: var(--ask-end-h);
 }
 .chat-ask-end > .chat-ask-actions {
   padding-top: 0;
 }
 .chat-ask-end > .chat-ask-seat {
-  top: calc(var(--ask-btn-h) / 2);
+  top: calc(var(--ask-end-h) / 2);
   translate: 0 -50%;
 }
 .chat-ask-end > .chat-ask-seat::after {
@@ -4881,6 +4889,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
   transition:
     background-color var(--default-transition-duration),
+    opacity calc(var(--default-transition-duration) * 2),
     scale var(--default-transition-duration) var(--ease-out-expo);
 }
 .chat-ask-btn:hover {
