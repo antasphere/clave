@@ -116,14 +116,27 @@ describe('MCP fleet session launch', () => {
       launchProfileId: 'chat:codex:yolo',
       launchProfile: yoloChat
     })
-    // An explicit chat profile still wins, by id.
+    // A generic chat ID follows this server's default, not the Mac's.
     await openFleetSession('server', 'ws', undefined, {
       cwd: '/srv/repo',
       mode: 'codex',
       chat: true,
       profile: 'codex-chat'
     })
-    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({ launchProfileId: 'codex-chat' })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      launchProfileId: 'chat:codex:yolo',
+      launchProfile: yoloChat
+    })
+    await openFleetSession('server', 'ws', undefined, {
+      cwd: '/srv/repo',
+      mode: 'codex',
+      profile: 'codex-chat'
+    })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      launchProfileId: 'chat:codex:yolo',
+      launchProfile: { command: ['codex', '--yolo'] },
+      dangerousMode: false
+    })
     // No default on the server: the built-in chat.
     api.fleetLaunchSettings.mockResolvedValue({
       profiles: { customProfiles: [codexChat], globalDefaults: {}, workspaceOverrides: {} },

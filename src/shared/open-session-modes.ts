@@ -121,7 +121,9 @@ export function chatDefaultFor(
  * flag always answered the built-in chat profile, so a workspace whose Codex
  * chats ran on a profile of the person's own got, from an agent, a tab on the
  * built-in command and its default approval policy, and asked before every
- * command. An explicit chat profile still wins. Refuses what cannot be
+ * command. The built-in chat IDs also mean the configured chat default:
+ * agents use these IDs to request a chat without knowing the saved profiles.
+ * An explicit custom chat profile still wins. Refuses what cannot be
  * honoured rather than quietly opening a terminal: chat on a mode that has no
  * chat view, or chat beside a profile that is not a chat profile.
  */
@@ -129,14 +131,15 @@ export function resolveProfileRef(
   payload: { mode?: OpenSessionMode; chat?: boolean; profile?: string },
   chatDefault?: string
 ): string | undefined {
-  if (!payload.chat) return payload.profile
   const mode = payload.mode ?? 'claude'
   const chatProfile = CHAT_PROFILE_IDS[mode]
+  const genericChat = chatProfile !== undefined && payload.profile === chatProfile
+  if (!payload.chat && !genericChat) return payload.profile
   if (!chatProfile) {
     throw new Error(`chat: true needs mode "claude" or "codex"; "${mode}" has no chat view`)
   }
   const family = mode as ChatFamily
-  if (payload.profile) {
+  if (payload.profile && !genericChat) {
     if (!isChatProfileRef(family, payload.profile))
       throw new Error(
         `chat: true opens a chat profile ("${chatProfile}", or a "chat:${family}:…" one); drop profile "${payload.profile}" or chat`

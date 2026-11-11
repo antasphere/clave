@@ -9,6 +9,7 @@ import { SessionEventSchema, type SessionEvent } from '../../../shared/session-m
 import { requestGone } from '../../../shared/request-refusals'
 import type { SpawnSpec } from '../adapter'
 import type { LaunchProfile } from '../../../shared/agent-launch'
+import { resolveProfileRef } from '../../../shared/open-session-modes'
 import type { CodexCallbacks, CodexConnection } from './codex-app-server'
 let mcpRoot: string
 beforeEach(() => {
@@ -928,6 +929,26 @@ describe('Codex chat permissions', () => {
       config: expect.any(Object)
     })
   })
+  it.each([
+    { flags: ['--yolo'], sandbox: 'danger-full-access', approvalPolicy: 'never' },
+    {
+      flags: ['-s', 'read-only', '-a', 'untrusted'],
+      sandbox: 'read-only',
+      approvalPolicy: 'untrusted'
+    }
+  ])(
+    'a generic chat request uses the configured profile permissions: $sandbox',
+    async (expected) => {
+      const custom = { ...profile(...expected.flags), id: 'chat:codex:configured' }
+      const plain = { ...profile(), id: 'codex-chat' }
+      const id = resolveProfileRef({ mode: 'codex', profile: 'codex-chat' }, custom.id)
+      const selected = [plain, custom].find((candidate) => candidate.id === id)!
+      expect(await threadParams({}, selected)).toMatchObject({
+        sandbox: expected.sandbox,
+        approvalPolicy: expected.approvalPolicy
+      })
+    }
+  )
   it('resumes a thread under the profile it was launched on', async () => {
     expect(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write'))).toMatchObject(
       { threadId: 'saved', sandbox: 'workspace-write', approvalPolicy: 'on-request' }

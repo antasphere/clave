@@ -1004,7 +1004,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe(
-            'Named local launch profile id or name. Omit to use the workspace default. For the chat view, use chat: true.'
+            'Named local launch profile id or name. Omit to use the workspace default. For the chat view, use chat: true. The generic IDs claude-chat and codex-chat also use the configured chat default; name a custom profile to override it.'
           ),
         account: z
           .string()

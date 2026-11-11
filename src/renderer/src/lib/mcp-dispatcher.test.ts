@@ -129,7 +129,7 @@ describe('clave_open_session on the window road', () => {
       launchProfileId: 'chat:codex:yolo'
     })
   })
-  it('opens the built-in chat when nothing is set, and an explicit chat profile wins', async () => {
+  it('opens the built-in chat when nothing is set, and follows a configured default', async () => {
     useLaunchProfileStore.setState({ preferences: preferences({}), loaded: true })
     await openSessionProgrammatically({ cwd: '/repo', mode: 'codex', chat: true })
     expect(spawned()).toMatchObject({ launchProfileId: 'codex-chat' })
@@ -144,8 +144,28 @@ describe('clave_open_session on the window road', () => {
       profile: 'codex-chat',
       dangerous: true
     })
-    expect(spawned()).toMatchObject({ launchProfileId: 'codex-chat', dangerousMode: true })
+    expect(spawned()).toMatchObject({ launchProfileId: 'chat:codex:yolo', dangerousMode: true })
   })
+  it.each([undefined, true, false])(
+    'a generic chat profile retains the workspace override with chat=%s',
+    async (chat) => {
+      useWorkspaceStore.setState({ activeWorkspaceId: 'home' })
+      useLaunchProfileStore.setState({
+        preferences: preferences({
+          globalDefaults: { codex: 'codex-chat' },
+          workspaceOverrides: { home: { codex: 'chat:codex:yolo' } }
+        }),
+        loaded: true
+      })
+      await openSessionProgrammatically({
+        cwd: '/repo',
+        mode: 'codex',
+        profile: 'codex-chat',
+        chat
+      })
+      expect(spawned()).toMatchObject({ launchProfileId: 'chat:codex:yolo', dangerousMode: false })
+    }
+  )
   it('a past conversation reopened carries its id to the spawn, and only then (PRDCT-4236)', async () => {
     await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', resumeSessionId: 'abc' })
     expect(spawned().resumeSessionId).toBe('abc')

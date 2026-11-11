@@ -150,7 +150,11 @@ export function resolveLaunch(
         chat: form === 'chat',
         ...(profileRef !== undefined ? { profile: profileRef } : {})
       },
-      form === 'chat' ? chatDefaultFor(preferences, family, routine.workspaceId) : undefined
+      // A routine's explicit profile is an operator choice, including the
+      // built-in. Only an omitted profile inherits the workspace default.
+      form === 'chat' && p.profile === undefined
+        ? chatDefaultFor(preferences, family, routine.workspaceId)
+        : undefined
     )
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error))

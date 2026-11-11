@@ -1100,7 +1100,7 @@ describe('opening a session', () => {
       profile: 'codex-chat',
       dangerous: true
     })
-    expect(started()[2]).toMatchObject({ launchProfileId: 'codex-chat', dangerousMode: true })
+    expect(started()[2]).toMatchObject({ launchProfileId: 'chat:codex:yolo', dangerousMode: true })
     // A terminal profile beside chat is refused, as before.
     await expect(
       run(h, 'openSession', { cwd: '/proj', mode: 'codex', chat: true, profile: 'strict' })
@@ -1109,6 +1109,19 @@ describe('opening a session', () => {
     await run(h, 'openSession', { cwd: '/proj', mode: 'codex', profile: 'strict' })
     expect(started()[3]).toMatchObject({ launchProfileId: 'strict' })
   })
+  it.each([undefined, true, false])(
+    'a generic chat profile keeps the caller workspace default with chat=%s',
+    async (chat) => {
+      const h = setup({
+        ...world(),
+        chatDefaults: { 'codex@ws1': 'chat:codex:yolo', 'codex@ws2': 'codex-chat' }
+      })
+      await run(h, 'openSession', { cwd: '/proj', mode: 'codex', profile: 'codex-chat', chat })
+      expect(h.argsOf('sessions.start')[0]).toMatchObject({
+        options: { launchProfileId: 'chat:codex:yolo', workspaceId: 'ws1', dangerousMode: false }
+      })
+    }
+  )
   it.each([undefined, false, true])(
     'persists sidebar attachment only when attachToParent is true: %s',
     async (attachToParent) => {
