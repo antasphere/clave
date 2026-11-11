@@ -41,7 +41,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         threadId: 'fleet-thread',
         turnId: 'fleet-turn',
         itemId: 'approval-item',
-        command: 'printf fixture',
+        command: 'echo fixture',
         cwd: process.cwd(),
         reason: 'Fleet native approval without a Mac',
         availableDecisions: ['accept', 'decline']

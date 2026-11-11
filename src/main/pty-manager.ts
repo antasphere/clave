@@ -559,6 +559,25 @@ class PtyManager {
     sessionManager.forget(id)
   }
 
+  /** The launch a helper run for this session runs as (PRDCT-4331, the
+   *  permission explainer): the session's workspace, profile and account.
+   *  Empty for a session this process did not spawn. */
+  launchContextOf(id: string): {
+    workspaceId?: string
+    launchProfileId?: string
+    claudeProfileId?: string
+    configDir?: string
+  } {
+    const options = this.spawns.get(id)?.options
+    if (!options) return {}
+    return {
+      workspaceId: options.workspaceId,
+      launchProfileId: options.launchProfile?.id ?? options.launchProfileId,
+      claudeProfileId: options.claudeProfileId,
+      configDir: options.configDir
+    }
+  }
+
   /** The conversation a session would resume: Claude's session id, a Codex
    *  chat's thread, or the rollout a Codex terminal wrote (found by its cwd
    *  and start). Null when the session has nothing to resume. */

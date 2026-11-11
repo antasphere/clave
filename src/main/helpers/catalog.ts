@@ -9,3 +9,4 @@
 export { titleHelper } from './title'
 export { exchangeDigestHelper, workDigestHelper } from './digests'
 export { commitMessageHelper, pushSummaryHelper } from './git'
+export { permissionExplainerHelper } from './explainer'

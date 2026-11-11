@@ -202,9 +202,13 @@ export async function run(t) {
     assert.equal(replies().find((r) => r.id === 'fleet-native-approval').result.decision, 'accept')
     // Mac B's dock moves on to the next request without being touched, and
     // its record of the approval says it was answered elsewhere.
+    // Every prompt card in sight is read: the question waits inline in the
+    // transcript (PRDCT-4157) while the approval is still docked, so until
+    // Mac B hears the settlement the locator holds two cards, and a strict
+    // read of one would throw instead of waiting.
     let macBDock = ''
     await eventually(async () => {
-      macBDock = (await dockOf(macB).count()) ? await dockOf(macB).innerText() : ''
+      macBDock = (await dockOf(macB).allInnerTexts()).join('\n')
       return (
         macBDock.includes('Fleet public answer') && !macBDock.includes(nativeApproval.description)
       )

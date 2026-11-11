@@ -37,9 +37,9 @@ export const myHelper = defineHelper<Input, Output>({
 const outcome = await runHelper(myHelper, input, launchContext, { owner: sessionId })
 ```
 
-Nothing in the runner changes for a new helper. Priorities today: commit message 80,
-tab title 70, push summary 40, exchange digest 30, work digest 20. A helper the person
-is waiting on in a modal (the permission explainer, PRDCT-4331) goes above them all.
+Nothing in the runner changes for a new helper. Priorities today: permission explainer
+100 (`explainer.ts`; a person is waiting on the card, PRDCT-4331), commit message 80, tab title 70, push
+summary 40, exchange digest 30, work digest 20.
 
 Only `background` helpers (the two digests) count against `MAX_RUNNING_HELPERS`, and the
 two digests share the pool `digests` of two: a title, a git call or a prompt a person
@@ -60,7 +60,8 @@ unreadable reply; the git helpers one retry after any failure, a timeout include
 - **The history marker opens the prompt.** A helper's transcript lands in the store like
   any conversation; `session-history/index.ts` keeps it out of the history by the
   prompt's first words (`TITLE_HELPER_MARKER`, `DIGEST_HELPER_MARKER`,
-  `WORK_DIGEST_MARKER`, `GIT_HELPER_MARKER`). A new helper adds its marker there.
+  `WORK_DIGEST_MARKER`, `GIT_HELPER_MARKER`, `PERMISSION_EXPLAINER_MARKER`). A new helper
+  adds its marker there.
 - **No Electron.** The standalone server loads the runner with the title generator and
   the exchange digest (`sessions/host-graph.test.ts`).
 

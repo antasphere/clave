@@ -44,7 +44,8 @@ const startsTurn = (block: Block): boolean =>
 /** Words to the reader, or a failure: never inside a card. A permission the
  *  agent asked to use a tool is not one; a question or a form is. */
 export function isBoundary(block: Block): boolean {
-  if (block.kind === 'error') return true
+  // A change of permission mode is said to the reader (PRDCT-4331).
+  if (block.kind === 'error' || block.kind === 'mode') return true
   if (block.kind === 'permission') return isQuestion(block.request) || isInputRequest(block.request)
   return false
 }

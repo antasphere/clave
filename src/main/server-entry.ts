@@ -62,6 +62,8 @@ import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import { runningIn, serverConversations } from './session-history/server-conversations'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
+import { explainingSessionHost } from './sessions/permission-explanations'
+import { explainerPorts } from './sessions/explain-permission'
 import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
 import { executeSecretAction } from './secret-actions'
 import {
@@ -334,7 +336,15 @@ async function main(): Promise<void> {
     publish: (id, event) => sessionManager.publishHostEvent(id, event),
     setState: (id, state) => sessionManager.setState(id, state)
   })
-  const sessions = requestHost.host
+  // PRDCT-4331: every tool permission read in plain words, here where the
+  // session runs, and the reading sent to every client of the session.
+  const sessions = explainingSessionHost({
+    host: requestHost.host,
+    subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+    publish: (id, event) => sessionManager.publishHostEvent(id, event),
+    ...explainerPorts(requests)
+  }).host
   installE2eHooks({ sessionHost: sessions })
   // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
   // The installed plugins, their host and the view leases are this server's:

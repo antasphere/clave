@@ -360,6 +360,17 @@ export const SessionEvent = Schema.Union(
     /** The agent's word under a field it could not fill, by the question's key. */
     notes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
   }),
+  /** What a permission request does, read where the session runs
+   *  (PRDCT-4331): the level, the plain sentence, whether it matches the
+   *  person's ask, or why no sentence came. Keyed by the request's id. */
+  Schema.Struct({
+    type: Schema.Literal('permission_explained'),
+    id: Schema.String,
+    level: Schema.optional(Schema.Literal('reads', 'project', 'outside', 'irreversible')),
+    sentence: Schema.optional(Schema.String),
+    asked: Schema.optional(Schema.Literal('yes', 'no', 'unclear')),
+    failed: Schema.optional(Schema.String)
+  }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),
     used: Schema.Number,

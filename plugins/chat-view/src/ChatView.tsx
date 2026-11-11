@@ -59,6 +59,8 @@ import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
+import { ModeLine } from './PermissionReading'
+import { usePermissionReading, withPermissionReading } from './permission-reading-context'
 import { FormTail } from './FormTail'
 import { isInputRequest } from './input-request'
 import { isQuestion } from './approvals'
@@ -406,6 +408,8 @@ const EntryRow = memo(function EntryRow({
         {entry.message}
       </div>
     )
+  if (entry.kind === 'mode')
+    return <ModeLine label={entry.label} fromLabel={entry.fromLabel} by={entry.by} />
   return null
 })
 /** A run of tools, re-rendered only when one of its calls changed: the run is
@@ -914,6 +918,16 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const waitingOn = isRemoteKey(session.id)
     ? serverDock(remotePending, session.id)
     : openRequests(conversation.entries)
+  // PRDCT-4331: what the permission card reads, and the mode switch.
+  const { reading: permissionReading, switchMode } = usePermissionReading({
+    sessionId: session.id,
+    cwd: session.cwd,
+    conversation,
+    dispatch,
+    write,
+    report,
+    remotePending
+  })
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
@@ -1077,7 +1091,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     jump.reveal && (!searchReveal || jump.reveal.nonce > searchReveal.nonce)
       ? jump.reveal
       : searchReveal
-  return (
+  return withPermissionReading(
+    permissionReading,
     <div
       ref={pane}
       className="chat-view"
@@ -1404,7 +1419,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   conversation.permissionMode.mode,
                   conversation.permissionMode.modes
                 )
-                if (next) void write({ type: 'set_permission_mode', mode: next }).catch(report)
+                if (next) switchMode(next)
                 return
               }
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -1481,9 +1496,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 mode={conversation.permissionMode.mode}
                 modes={conversation.permissionMode.modes}
                 disabled={closed}
-                onSelect={(id) =>
-                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
-                }
+                onSelect={switchMode}
               />
             )}
             <ModelMenu

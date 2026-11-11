@@ -52,7 +52,15 @@ const INPUTS: Record<string, unknown> = {
   'exchange-digest': [{ from: 'Verifier', text: 'done' }],
   'work-digest': { notes: ['a'], tools: 1 },
   'commit-message': { diff: 'diff --git a/x b/x', recent: '' },
-  'push-summary': { commitMessages: ['feat: a'], diffStats: '1 file' }
+  'push-summary': { commitMessages: ['feat: a'], diffStats: '1 file' },
+  // PRDCT-4331: refused in main like the rest; it runs where the session
+  // runs (`server-entry.ts` wraps the server's own host with it).
+  'permission-explainer': {
+    toolName: 'Bash',
+    toolDescription: 'Runs a command in a terminal on the computer.',
+    input: { command: 'ls' },
+    floor: 'reads'
+  }
 }
 
 async function boot(mode: 'in-process' | 'separate' | 'attached'): Promise<{
