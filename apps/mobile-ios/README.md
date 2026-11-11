@@ -9,10 +9,12 @@ keeps its credentials in the Keychain apart from its settings and drafts, isolat
 owner, and draws the desktop's four themes with Geist and Heroicons from the owned tokens
 and assets. No React Native, no JavaScript engine, no WebView.
 
-Identifiers: bundle `com.clave.ios.dev` (every configuration; a production identifier is
-owed with the Apple team), callback scheme `clave-ios` (`clave-ios://oauth/callback`, the
-deep link `clave-ios://chat/<machineId>/<sessionId>`), OAuth client name `Clave iOS`,
-Keychain service `com.clave.ios.dev.credentials`. Deployment target iOS 17.
+Identifiers: bundle `com.clave.ios.dev` in Debug and `com.clave.ios` in Release (the
+identifier a store build carries is owed with the Apple team), callback scheme `clave-ios`
+(`clave-ios://oauth/callback`, the deep link `clave-ios://chat/<machineId>/<sessionId>`),
+OAuth client name `Clave iOS`, Keychain service `<bundle id>.credentials`
+(`com.clave.ios.dev.credentials` in Debug, `com.clave.ios.credentials` in Release).
+Deployment target iOS 17.
 
 The key-value store (one JSON file in the app's support folder, every key under the owner's
 namespace) keeps each machine's sends of unknown outcome under a key of its own,
@@ -21,6 +23,11 @@ under the old shared key `clave.unknown-sends` are moved to their machine's key 
 first connection. A machine's records move only into a ledger that does not exist yet (a ledger
 emptied since keeps its key, holding an empty list); the old list is removed only after every
 machine's write succeeded; and a move that failed runs again at the next connection made.
+A send whose record left its ledger while the conversation's mark still says its outcome is
+unknown (a failed write during that move, or a process end between two of a settle's writes)
+keeps the bar until the person chooses: Discard or Send again then clears the bar, says the
+phone cannot tell whether the message was delivered, and sends nothing; the draft and the
+picked files stay, and the person checks the conversation before sending it again.
 
 ## The toolchain
 
