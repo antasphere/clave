@@ -710,6 +710,17 @@ function sessionIdentity(session: Session): string {
   ])
 }
 
+/** Whether a restart's patch puts the session on another account. */
+function accountMoved(
+  session: Session,
+  patch: Partial<Pick<Session, 'claudeProfileId' | 'codexAccountId'>>
+): boolean {
+  return (
+    ('claudeProfileId' in patch && patch.claudeProfileId !== session.claudeProfileId) ||
+    ('codexAccountId' in patch && patch.codexAccountId !== session.codexAccountId)
+  )
+}
+
 // Lifecycle actions invalidate reads taken before a restart, including a
 // true/false cycle that ends before the inventory promise settles.
 function preservePendingSession(id: string): void {
@@ -2006,6 +2017,10 @@ export const useSessionStore = create<SessionState>((set) => ({
           ? {
               ...s,
               ...patch,
+              // The CLI's limit report is the old account's: a restart onto
+              // another account, by hand or by the policy, closes it, or the
+              // chip reads "Out" on an account with headroom left.
+              limitReported: accountMoved(s, patch) ? null : s.limitReported,
               alive: true,
               restarting: false,
               activityStatus: 'idle' as const,
