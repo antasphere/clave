@@ -147,7 +147,8 @@
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "yaml": "2.9.1"
   },
   "workspaces": [
     "packages/ui",
