@@ -9,9 +9,10 @@
  *
  * Every method may answer a value or a promise; a thrown or rejected
  * `CapabilityUnavailable` is the one declared failure, anything else is a
- * defect. A secret enters through exactly two methods (`setToken`, the token;
- * `startApiKey`, the key), as the plain string the payload carried redacted,
- * and is held nowhere on this side of the port.
+ * defect. A secret enters through exactly three methods (`setToken`, the
+ * token; `startApiKey`, the key; `integrations.setElevenLabsKey`, the
+ * ElevenLabs key), as the plain string the payload carried redacted, and is
+ * held nowhere on this side of the port.
  */
 import { Context, Layer } from 'effect'
 import type * as Settings from '@clave/contract/settings'
@@ -40,6 +41,10 @@ export interface HelperPreferencePatch {
   readonly model?: string | null
   readonly account?: HelperAccount
 }
+export type IntegrationsStatus = typeof Settings.IntegrationsView.Type
+export type ElevenLabsStatus = typeof Settings.ElevenLabsStatusView.Type
+export type ElevenLabsModelId = typeof Settings.ElevenLabsModelId.Type
+export type ElevenLabsVoices = typeof Settings.ElevenLabsVoicesView.Type
 export type Workspace = typeof Settings.WorkspaceView.Type
 export type WorkspaceState = typeof Settings.WorkspaceStateView.Type
 export type WorkspaceStamp = typeof Settings.WorkspaceStamp.Type
@@ -108,6 +113,22 @@ export interface SettingsSourceService {
       helperId: string,
       patch: HelperPreferencePatch
     ) => Awaitable<ReadonlyArray<HelperPreference>>
+  }
+  /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
+   *  by the host's secret port, its account check, and the voice and model
+   *  the agents speak with. Every write answers the status; none carries the
+   *  key. A host with none behind it answers `CapabilityUnavailable`. */
+  readonly integrations: {
+    readonly read: () => Awaitable<IntegrationsStatus>
+    readonly setElevenLabsKey: (apiKey: string) => Awaitable<IntegrationsStatus>
+    readonly checkElevenLabs: () => Awaitable<IntegrationsStatus>
+    readonly removeElevenLabsKey: () => Awaitable<IntegrationsStatus>
+    readonly setElevenLabsVoice: (
+      voiceId: string,
+      voiceName: string,
+      modelId: ElevenLabsModelId | undefined
+    ) => Awaitable<IntegrationsStatus>
+    readonly listElevenLabsVoices: () => Awaitable<ElevenLabsVoices>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Awaitable<void>
@@ -211,6 +232,14 @@ function noneSource(): SettingsSourceService {
       setWorkspace: refuse('launchProfiles')
     },
     helpers: { list: refuse('helpers'), set: refuse('helpers') },
+    integrations: {
+      read: refuse('integrations'),
+      setElevenLabsKey: refuse('integrations'),
+      checkElevenLabs: refuse('integrations'),
+      removeElevenLabsKey: refuse('integrations'),
+      setElevenLabsVoice: refuse('integrations'),
+      listElevenLabsVoices: refuse('integrations')
+    },
     preferences: { setAppIcon: refuse('appIcon') },
     antasphere: {
       status: refuse('antasphereAccount'),

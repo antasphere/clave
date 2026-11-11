@@ -25,6 +25,7 @@ import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
 import type { HelperPreference } from '../shared/helper-preferences'
+import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type {
   FleetDesktopAPI,
@@ -1120,6 +1121,43 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (serverId === LOCAL_SERVER_ID) return local.helperSet(helperId, patch)
       const { api } = await backing(serverId)
       return [...(await api.settings.helpers.set(helperId, patch))] as HelperPreference[]
+    },
+    // The integrations too (PRDCT-4410): a server's key is sealed on that
+    // server, this Mac's over its own route; neither lands on the other.
+    fleetIntegrations: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.integrationsRead()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.read()) as IntegrationsStatus
+    },
+    fleetElevenLabsSetKey: async (serverId, apiKey) => {
+      if (serverId === LOCAL_SERVER_ID) return local.elevenLabsSetKey(apiKey)
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.setElevenLabsKey(apiKey)) as IntegrationsStatus
+    },
+    fleetElevenLabsCheck: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.elevenLabsCheck()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.checkElevenLabs()) as IntegrationsStatus
+    },
+    fleetElevenLabsRemove: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.elevenLabsRemove()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.removeElevenLabsKey()) as IntegrationsStatus
+    },
+    fleetElevenLabsSetVoice: async (serverId, voiceId, voiceName, modelId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.elevenLabsSetVoice(voiceId, voiceName, modelId)
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.setElevenLabsVoice(
+        voiceId,
+        voiceName,
+        modelId
+      )) as IntegrationsStatus
+    },
+    fleetElevenLabsVoices: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.elevenLabsVoices()
+      const { api } = await backing(serverId)
+      const { voices } = await api.settings.integrations.listElevenLabsVoices()
+      return { voices: voices.map((v) => ({ ...v, labels: { ...v.labels } })) as ElevenLabsVoice[] }
     },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)

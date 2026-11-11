@@ -62,6 +62,7 @@ import {
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { HelpersSettings } from './HelpersSettings'
+import { IntegrationsSettings } from './IntegrationsSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
 import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
@@ -75,6 +76,7 @@ import {
   ServerActivitySettings,
   ServerAgentsSettings,
   ServerHelpersSettings,
+  ServerIntegrationsSettings,
   ServerUsageSettings
 } from './ServerPages'
 
@@ -235,6 +237,8 @@ export function SettingsPanel(): React.JSX.Element {
           (server ? <ServerAgentsSettings serverId={server} /> : <AgentsSettings />)}
         {settingsSection === 'helpers' &&
           (server ? <ServerHelpersSettings serverId={server} /> : <HelpersSettings />)}
+        {settingsSection === 'integrations' &&
+          (server ? <ServerIntegrationsSettings serverId={server} /> : <IntegrationsSettings />)}
         {settingsSection === 'appearance' && <AppearanceSettings />}
         {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}

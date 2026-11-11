@@ -30,6 +30,7 @@ import {
   type HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
+import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
   PluginSecretPrompt,
@@ -1350,6 +1351,43 @@ const electronAPI = {
     ipc: (helperId, patch) => ipcRenderer.invoke('helpers:set', { helperId, patch }),
     server: async ({ api }, helperId, patch) =>
       loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
+  }),
+  // ── Settings: the integrations of this Mac (PRDCT-4410), with a server arm ──
+  // The key goes in once and comes back in no answer, on either road.
+  integrationsRead: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:read'),
+    server: async ({ api }) => loose<IntegrationsStatus>(await api.settings.integrations.read())
+  }),
+  elevenLabsSetKey: viaServer<[string], IntegrationsStatus>({
+    ipc: (apiKey) => ipcRenderer.invoke('integrations:elevenlabs-set-key', apiKey),
+    server: async ({ api }, apiKey) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.setElevenLabsKey(apiKey))
+  }),
+  elevenLabsCheck: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:elevenlabs-check'),
+    server: async ({ api }) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.checkElevenLabs())
+  }),
+  elevenLabsRemove: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:elevenlabs-remove'),
+    server: async ({ api }) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.removeElevenLabsKey())
+  }),
+  elevenLabsSetVoice: viaServer<
+    [string, string, ElevenLabsModelId | undefined],
+    IntegrationsStatus
+  >({
+    ipc: (voiceId, voiceName, modelId) =>
+      ipcRenderer.invoke('integrations:elevenlabs-set-voice', { voiceId, voiceName, modelId }),
+    server: async ({ api }, voiceId, voiceName, modelId) =>
+      loose<IntegrationsStatus>(
+        await api.settings.integrations.setElevenLabsVoice(voiceId, voiceName, modelId)
+      )
+  }),
+  elevenLabsVoices: viaServer<[], { voices: ElevenLabsVoice[] }>({
+    ipc: () => ipcRenderer.invoke('integrations:elevenlabs-voices'),
+    server: async ({ api }) =>
+      loose<{ voices: ElevenLabsVoice[] }>(await api.settings.integrations.listElevenLabsVoices())
   }),
   spawnSession: viaServer<
     [

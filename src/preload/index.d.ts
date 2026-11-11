@@ -65,6 +65,7 @@ import type {
   HelperPreference,
   HelperPreferencePatch
 } from '../shared/helper-preferences'
+import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -75,6 +76,7 @@ import type {
 export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
 export type { HelperAccount, HelperPreference, HelperPreferencePatch }
+export type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus }
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -894,6 +896,20 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `fleetHelpers` / `fleetHelperSet`. */
   helpersList: () => Promise<HelperPreference[]>
   helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's integrations (PRDCT-4410): the ElevenLabs key sealed on the
+   *  machine, its account check, the voice and model. Every write answers
+   *  the status, which never carries the key. A server's are
+   *  `fleetIntegrations` and the `fleetElevenLabs*` members. */
+  integrationsRead: () => Promise<IntegrationsStatus>
+  elevenLabsSetKey: (apiKey: string) => Promise<IntegrationsStatus>
+  elevenLabsCheck: () => Promise<IntegrationsStatus>
+  elevenLabsRemove: () => Promise<IntegrationsStatus>
+  elevenLabsSetVoice: (
+    voiceId: string,
+    voiceName: string,
+    modelId: ElevenLabsModelId | undefined
+  ) => Promise<IntegrationsStatus>
+  elevenLabsVoices: () => Promise<{ voices: ElevenLabsVoice[] }>
   spawnSession: (
     cwd: string,
     options?: {

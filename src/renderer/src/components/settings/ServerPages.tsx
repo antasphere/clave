@@ -23,6 +23,7 @@ import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { QuotaOverview, ToolToggle, type QuotaProvider, type Tool } from '../usage/UsagePanel'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
 import { HelpersList } from './HelpersSettings'
+import { IntegrationsList } from './IntegrationsSettings'
 import { SettingsPage, SettingsSection, SettingsCard, SettingsCallout } from './primitives'
 
 /**
@@ -168,6 +169,29 @@ export function ServerHelpersSettings({ serverId }: { serverId: string }): React
         <ServerNotice serverId={serverId} {...page} />
         {page.connected && settings.status !== 'error' && (
           <HelpersList machine={serverId} machineName={name} accounts={settings.claude} />
+        )}
+      </div>
+    </SettingsPage>
+  )
+}
+
+// ── Integrations ────────────────────────────────────────────────────────────
+
+/** The integrations of a server (PRDCT-4410): the ElevenLabs key is sealed
+ *  on the server itself, by its own secret port, and checked from there. */
+export function ServerIntegrationsSettings({ serverId }: { serverId: string }): ReactElement {
+  const page = useServerPage(serverId)
+  const { settings, name } = page
+  return (
+    <SettingsPage
+      title="Integrations"
+      description={`What ${name} can reach on the person's behalf: the ElevenLabs voice its Folio pages speak with. The key is sealed on the server itself.`}
+      testId="integrations"
+    >
+      <div className="settings-page-sections" data-server-settings={serverId}>
+        <ServerNotice serverId={serverId} {...page} />
+        {page.connected && settings.status !== 'error' && (
+          <IntegrationsList machine={serverId} machineName={name} />
         )}
       </div>
     </SettingsPage>
