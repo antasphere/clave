@@ -1557,9 +1557,15 @@ export function EndedNotice({
     )
   }
   if (limit) {
+    // A server tab never has a proposal (this Mac's policy skips it): the
+    // server's other accounts are on the account chip, not in this Mac's
+    // Settings (PRDCT-4328).
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {sentence} No other account has headroom: add one in Settings → Accounts to continue.
+        {sentence}{' '}
+        {isRemoteKey(sessionId)
+          ? 'Pick another account of this server from the account chip to continue.'
+          : 'No other account has headroom: add one in Settings → Accounts to continue.'}
       </div>
     )
   }
