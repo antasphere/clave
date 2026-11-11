@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-const f = vi.hoisted(() => ({ move: vi.fn() }))
+const f = vi.hoisted(() => ({
+  move: vi.fn(),
+  sessions: [] as Array<{ id: string; alive: boolean; claudeSessionId?: string }>
+}))
 vi.mock('../store/session-store', () => ({
-  useSessionStore: { getState: () => ({ moveItems: f.move }) }
+  useSessionStore: { getState: () => ({ moveItems: f.move, sessions: f.sessions }) }
 }))
 import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
 import { useFleetStore } from '../store/fleet-store'
+import { resourceKey } from '@clave/contract/fleet'
 const profile = {
   id: 'remote',
   name: 'Remote only',
@@ -165,6 +169,63 @@ describe('MCP fleet session launch', () => {
       ).rejects.toThrow()
     expect(api.fleetStart).not.toHaveBeenCalled()
   })
+  it('reopens a resumed conversation on the profile and the server account it ran on, unless the call names its account (PRDCT-4321)', async () => {
+    const api = setup()
+    const resumed = {
+      cwd: '/srv/repo',
+      mode: 'claude' as const,
+      resumeSessionId: 'conv-1',
+      resumeLaunchProfileId: 'chat:claude:mine',
+      resumeAccount: { id: 'srv-acct', label: 'Studio work' }
+    }
+    await openFleetSession('server', undefined, undefined, resumed)
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      claudeMode: true,
+      resumeSessionId: 'conv-1',
+      launchProfileId: 'chat:claude:mine',
+      claudeProfileId: 'srv-acct',
+      claudeProfileLabel: 'Studio work'
+    })
+    // The call's own account wins.
+    await openFleetSession('server', undefined, undefined, { ...resumed, account: 'Remote Claude' })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({
+      claudeProfileId: 'c',
+      claudeProfileLabel: 'Remote Claude'
+    })
+    // A codex resume never takes a Claude account.
+    await openFleetSession('server', undefined, undefined, { ...resumed, mode: 'codex' })
+    expect(api.fleetStart.mock.calls.at(-1)![2].claudeProfileId).toBeUndefined()
+  })
+  it('answers a resume with the stopped tab of that server that holds the conversation, restarted in place (PRDCT-4321)', async () => {
+    const api = setup() as ReturnType<typeof setup> & { restartSession: ReturnType<typeof vi.fn> }
+    api.restartSession = vi.fn().mockResolvedValue({ id: 'held' })
+    const held = resourceKey('session', 'server', 'tab-9')
+    const elsewhere = resourceKey('session', 'other', 'tab-1')
+    f.sessions.push(
+      { id: elsewhere, alive: false, claudeSessionId: 'conv-x' },
+      { id: held, alive: false, claudeSessionId: 'conv-x' }
+    )
+    try {
+      const result = await openFleetSession('server', undefined, undefined, {
+        cwd: '/srv/app',
+        mode: 'claude',
+        resumeSessionId: 'conv-x'
+      })
+      expect(result.sessionId).toBe(held)
+      expect(api.restartSession).toHaveBeenCalledWith(held, { onlyIfStopped: true })
+      expect(api.fleetStart).not.toHaveBeenCalled()
+      // No holder on this server: a new tab on the conversation.
+      await openFleetSession('server', undefined, undefined, {
+        cwd: '/srv/app',
+        mode: 'claude',
+        resumeSessionId: 'conv-y'
+      })
+      expect(api.fleetStart).toHaveBeenCalledTimes(1)
+    } finally {
+      f.sessions.splice(0)
+    }
+  })
+
   it('carries same-server attachment only when explicitly requested', async () => {
     const api = setup()
     for (const attachToParent of [false, true]) {

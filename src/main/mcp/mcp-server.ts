@@ -38,7 +38,7 @@ import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
 import { type RoutineMachine, registerRoutineTools } from './routine-tools'
 import {
-  historyWithLiveLaunch,
+  historyWithServers,
   hostRecords,
   restampSessionLaunch
 } from '../session-history/host-reads'
@@ -607,7 +607,9 @@ function historyLookups(api: Awaited<ReturnType<typeof serverClient.api>>): Hist
   return {
     // The ledger's memory with the live record of every held conversation
     // laid over it (round 5 F1): what the tab's own Resume reads.
-    history: async () => (await historyWithLiveLaunch(api, records)).entries,
+    // PRDCT-4321: every connected server's conversations too, each tagged
+    // with its server, so an agent reopens a server's conversation there.
+    history: async () => (await historyWithServers(api)).entries,
     records,
     sessions: () => api.sessions.list(),
     workspaces: () => workspaceManager.getWorkspaces().map((w) => ({ id: w.id, name: w.name }))

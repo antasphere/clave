@@ -60,6 +60,14 @@ export interface LedgerRow {
   effort?: string
   accountId?: string
   accountLabel?: string
+  /** The account directory the tab's Claude Code ran under
+   *  (`CLAUDE_CONFIG_DIR`), where its transcript lives instead of the shared
+   *  root: written by a server's own History (PRDCT-4321), which must still
+   *  find a deleted tab's transcript. Absolute paths only. */
+  configDir?: string
+  /** The launch profile the tab ran on (PRDCT-4321), so a server's
+   *  conversation reopens the way it ran (the chat view, its own profile). */
+  launchProfileId?: string
 }
 
 /** The launch fields of a row, as the fold keeps them on an entry. */
@@ -107,6 +115,18 @@ function launchOf(r: Record<string, unknown>): LedgerLaunch {
   return out
 }
 
+/** The row's account directory, kept only when absolute and of a path's length. */
+function configDirOf(r: Record<string, unknown>): { configDir?: string } {
+  const dir = str(r.configDir)
+  return dir && path.isAbsolute(dir) && dir.length <= CWD_MAX ? { configDir: dir } : {}
+}
+
+/** The row's launch profile id, kept only as a short single-line string. */
+function launchProfileOf(r: Record<string, unknown>): { launchProfileId?: string } {
+  const id = str(r.launchProfileId)
+  return id && id.length <= ACCOUNT_ID_MAX * 2 && !/[\r\n]/.test(id) ? { launchProfileId: id } : {}
+}
+
 /** Re-pick a row field by field: it crosses the IPC boundary from the
  *  renderer and must not smuggle extra keys — or the wrong shapes — into the
  *  file. Returns null when a required field is missing or malformed. */
@@ -138,7 +158,9 @@ export function normalizeLedgerRow(input: unknown): LedgerRow | null {
     workspaceId: str(r.workspaceId),
     groupId: str(r.groupId),
     groupName: str(r.groupName),
-    ...launchOf(r)
+    ...launchOf(r),
+    ...configDirOf(r),
+    ...launchProfileOf(r)
   }
 }
 

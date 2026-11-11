@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import { homedir } from 'os'
 import { transcriptProjectDirName } from '../exchange-capture/contract/workstream-events'
 
 /**
@@ -340,4 +341,24 @@ export class PeekCache {
   size(): number {
     return this.entries.size
   }
+}
+
+/** The shared transcripts root: `~/.claude/projects`, unless
+ *  `CLAVE_TRANSCRIPTS_ROOT` names another directory (the E2E harness's way of
+ *  seeding transcripts without touching the real store). */
+export function transcriptsRoot(): string {
+  return process.env.CLAVE_TRANSCRIPTS_ROOT || path.join(homedir(), '.claude', 'projects')
+}
+
+/** Where a Claude conversation's transcript lives: under its tab's own
+ *  account directory (`CLAUDE_CONFIG_DIR`) when the tab ran with one, else
+ *  the shared root. Only an absolute path counts; anything else is the
+ *  shared root, so a stray value never points the read elsewhere. */
+export function conversationRoot(configDir: unknown): string {
+  // Taken as the spawn takes it (CLAUDE_CONFIG_DIR, untrimmed), so the read
+  // looks where Claude Code wrote.
+  if (typeof configDir === 'string' && path.isAbsolute(configDir)) {
+    return path.join(configDir, 'projects')
+  }
+  return transcriptsRoot()
 }

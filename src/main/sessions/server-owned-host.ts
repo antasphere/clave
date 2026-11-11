@@ -8,6 +8,7 @@ import { serverHistory } from './server-history'
 import { resumeOptions } from './resume-options'
 import { providerSwitchOptions } from './provider-switch'
 import type { PtySpawnOptions } from './adapters/pty-backend'
+import type { ServerConversations } from '../session-history/server-conversations'
 
 export interface ServerOwnedHostOptions {
   host: SessionHostService
@@ -20,6 +21,10 @@ export interface ServerOwnedHostOptions {
    *  moment it binds and again when a Resume binds it to the new process
    *  (PRDCT-4191). Absent, nothing is told, as before. */
   currentState?: SessionManager['currentState']
+  /** The server's own History (PRDCT-4321): told each tab's conversation as
+   *  it changes, and its last word before its record goes, so a deleted tab's
+   *  conversation stays listed and resumable. Absent, nothing is kept. */
+  conversations?: ServerConversations
 }
 
 /** Recover a tab's identity, never its process. Only restart is Resume. */
@@ -45,6 +50,10 @@ export function stoppedSession(record: SessionRecord): Session {
   }
 }
 
+/** How often a turn's end may re-read a tab's record for the History, at
+ *  most, per tab (PRDCT-4321). */
+export const OBSERVE_EVERY_MS = 5_000
+
 export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   host: SessionHostService
   close: () => void
@@ -52,7 +61,33 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   const base = options.host
   const sidebar = options.sidebar
   const history = serverHistory(options.dataDir)
-  const stopHistory = options.subscribeAll((id, stream) => history.record(id, stream))
+  const conversations = options.conversations
+  /** When each tab was last observed at a turn's end. */
+  const observedAt = new Map<string, number>()
+  const stopHistory = options.subscribeAll((id, stream) => {
+    history.record(id, stream)
+    // A turn's end is where a tab's conversation shows a change: the first
+    // idle after its start, a new conversation after `/clear`. A terminal
+    // ends a turn `idle`, a chat `done` (the Claude and Codex adapters), and
+    // a tab that stops `ended`. An observe re-reads every record, so a tab is
+    // observed at most once per OBSERVE_EVERY_MS from here, and never at a
+    // turn's start.
+    if (
+      conversations &&
+      stream.kind === 'event' &&
+      stream.event.type === 'state_change' &&
+      (stream.event.state === 'idle' ||
+        stream.event.state === 'done' ||
+        stream.event.state === 'ended')
+    ) {
+      const now = Date.now()
+      const last = observedAt.get(id)
+      if (last === undefined || now - last >= OBSERVE_EVERY_MS) {
+        observedAt.set(id, now)
+        conversations.observe(id)
+      }
+    }
+  })
   const bindings = new Map<string, Set<() => void>>()
   const unsubscriptions = new Set<() => void>()
   const bind = (id: string): void => {
@@ -133,6 +168,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         )
       bind(result.id)
       if (base.get(result.id)?.transport === 'events') options.ready(result.id)
+      conversations?.observe(result.id)
       return result
     },
     stop: async (id) => {
@@ -142,8 +178,13 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         await pending.get(id)?.catch(() => {})
         const record = recordOf(id)
         await base.stop(id)
+        // The record's last word, read again after the stop (a running tab's
+        // record can still change as it stops), before the record goes.
+        const last = recordOf(id) ?? record
+        if (last) conversations?.closing(last)
         if (record) base.discardRecord(record.tmuxName ?? record.id)
         history.remove(id)
+        observedAt.delete(id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, id)
       } finally {
         closing.delete(id)
@@ -152,9 +193,11 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     discardRecord: (key) => {
       const record = records().find((r) => (r.tmuxName ?? r.id) === key)
       if (record && base.get(record.id)) throw new Error('Close a running session through stop')
+      if (record) conversations?.closing(record)
       base.discardRecord(key)
       if (record) {
         history.remove(record.id)
+        observedAt.delete(record.id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, record.id)
       }
     },
@@ -221,11 +264,21 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     },
     rename: (id, name) => {
       requireLive(id)
-      return base.rename(id, name)
+      const renamed = base.rename(id, name)
+      conversations?.observe(id)
+      return renamed
     },
     setPage: (id, page) => {
       requireLive(id)
       base.setPage(id, page)
+    },
+    // A `/clear` moves a tab onto a new conversation, and the window keeps
+    // it here (PRDCT-4321): the record names the new one from now on, so the
+    // History is told now. Left to the next list, a second `/clear` before it
+    // would replace the record's conversation unseen, and that one is lost.
+    keepOnRecord: (id, fields) => {
+      base.keepOnRecord(id, fields)
+      if (fields.claudeSessionId) conversations?.observe(id)
     },
     // A session's work is its record's (PRDCT-4123), so a stopped session's
     // can change too: no requireLive. Its Resume carries the work on, the
@@ -294,9 +347,14 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         if (base.get(id)?.transport === 'events') options.ready(id)
         return { ...result, resumed: !!spawn.resumeSessionId }
       }
-      const work = resume().finally(() => {
-        pending.delete(id)
-      })
+      const work = resume()
+        .then((result) => {
+          conversations?.observe(id)
+          return result
+        })
+        .finally(() => {
+          pending.delete(id)
+        })
       pending.set(id, work)
       return work
     }

@@ -152,10 +152,12 @@ function seedCodexStub(dir) {
 
 /**
  * `count` daemons (two by default), each started with the fleet flags plus
- * `serverArgs`; `world.mac(label, { args })` adds app flags to a Mac's launch
- * (the server upgrade spec's `--test-version`, issue #266). `codexStub` puts
- * a stand-in `codex` on the daemons' PATH for the API-key login. `env` adds
- * variables to the daemons' environment (a spec's own transcripts root).
+ * `serverArgs`; `world.mac(label, { args, env })` adds app flags to a Mac's
+ * launch (the server upgrade spec's `--test-version`, issue #266) and
+ * variables to its environment (a Mac's own transcripts root, distinct from
+ * the daemons'). `codexStub` puts a stand-in `codex` on the daemons' PATH for
+ * the API-key login. `env` adds variables to the daemons' environment (a
+ * spec's own transcripts root).
  */
 export async function fleetWorld(
   label,
@@ -284,7 +286,7 @@ export async function fleetWorld(
       )
       return report
     },
-    async mac(label, { reuse = null, args = [] } = {}) {
+    async mac(label, { reuse = null, args = [], env: macEnv = {} } = {}) {
       const dir = reuse ?? fixturePath(`${run}-mac-${label}`)
       const root = fixturePath(`${run}-local-${label}`)
       mkdirSync(root, { recursive: true })
@@ -307,7 +309,7 @@ export async function fleetWorld(
       }
       const launched = await launchApp(dir, {
         server: 'in-process',
-        env: { SHELL: '/bin/sh' },
+        env: { SHELL: '/bin/sh', ...macEnv },
         args: ['--dev-echo-adapter', ...args]
       })
       const mac = { ...launched, label, dir, root, servers, owners: [], errors: [] }

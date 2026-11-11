@@ -160,8 +160,27 @@ export interface RestartOverridesInput {
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
 }
 
+/** The server a History row's conversation ran on (PRDCT-4321): absent for
+ *  this Mac's own. `online` is whether it answered this list; an offline
+ *  server's rows are its last answer, kept, and cannot be resumed. `held`
+ *  is what the server said of the conversation (a tab runs it, a stopped tab
+ *  holds it, no tab does); null when the row comes from this Mac's own
+ *  record of a server tab and the server's answer does not list it (a
+ *  server older than its History, a tab it ran before it kept one) or the
+ *  server did not answer. */
+export interface HistoryServerRef {
+  id: string
+  name: string
+  online: boolean
+  held: 'running' | 'stopped' | 'closed' | null
+}
+
 export interface HistoryListEntry {
-  source: 'ledger' | 'transcript'
+  /** `server`: a conversation a server's own History listed (PRDCT-4321). */
+  source: 'ledger' | 'transcript' | 'server'
+  server?: HistoryServerRef
+  /** The launch profile a server's conversation ran on (PRDCT-4321). */
+  launchProfileId?: string
   /** Which CLI's conversation this is; resume exists for claude only. */
   provider: 'claude' | 'codex' | 'pi' | 'antigravity'
   agentProvider?: string | null
