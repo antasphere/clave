@@ -54,6 +54,14 @@ vi.mock('../store/codex-account-store', () => ({
   resolveCodexAccount: vi.fn(),
   describeCodexAccountAuth: vi.fn()
 }))
+vi.mock('./session-accounts', () => ({
+  sessionAccountView: vi.fn(),
+  ownerAccountView: vi.fn(),
+  poolOf: vi.fn(),
+  resolveOwnedAccount: vi.fn(),
+  describeAccountAuth: vi.fn(),
+  sessionAccountIdOf: vi.fn()
+}))
 let restartSessionProcess: typeof import('./switch-account').restartSessionProcess
 beforeEach(async () => {
   vi.resetModules()

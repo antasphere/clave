@@ -33,6 +33,13 @@ export type LaunchProfile = typeof Settings.LaunchProfileView.Type
 export type LauncherFamily = typeof Settings.LauncherFamily.Type
 export type LaunchProfilePreferences = typeof Settings.LaunchProfilePreferencesView.Type
 export type AppIcon = typeof Settings.AppIconSchema.Type
+export type HelperPreference = typeof Settings.HelperPreferenceView.Type
+export type HelperAccount = typeof Settings.HelperAccountView.Type
+export interface HelperPreferencePatch {
+  readonly enabled?: boolean
+  readonly model?: string | null
+  readonly account?: HelperAccount
+}
 export type Workspace = typeof Settings.WorkspaceView.Type
 export type WorkspaceState = typeof Settings.WorkspaceStateView.Type
 export type WorkspaceStamp = typeof Settings.WorkspaceStamp.Type
@@ -92,6 +99,15 @@ export interface SettingsSourceService {
       family: LauncherFamily,
       profileId: string | null
     ) => Awaitable<LaunchProfilePreferences>
+  }
+  /** The helpers' preference on this host (PRDCT-4330): every declared
+   *  helper with its switch, model and account; a write answers the list. */
+  readonly helpers: {
+    readonly list: () => Awaitable<ReadonlyArray<HelperPreference>>
+    readonly set: (
+      helperId: string,
+      patch: HelperPreferencePatch
+    ) => Awaitable<ReadonlyArray<HelperPreference>>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Awaitable<void>
@@ -194,6 +210,7 @@ function noneSource(): SettingsSourceService {
       setGlobal: refuse('launchProfiles'),
       setWorkspace: refuse('launchProfiles')
     },
+    helpers: { list: refuse('helpers'), set: refuse('helpers') },
     preferences: { setAppIcon: refuse('appIcon') },
     antasphere: {
       status: refuse('antasphereAccount'),

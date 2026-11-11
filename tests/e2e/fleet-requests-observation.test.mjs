@@ -56,9 +56,9 @@ function page(initial) {
         if (selected.length !== 1) throw new Error('strict mode violation: multiple prompts')
         return selected[0]
       },
-      async evaluateAll(read) {
+      async allInnerTexts() {
         if (failure) throw failure
-        return read(pick(prompts).map((innerText) => ({ innerText })))
+        return pick(prompts)
       },
       first() {
         return locator((nodes) => pick(nodes).slice(0, 1))

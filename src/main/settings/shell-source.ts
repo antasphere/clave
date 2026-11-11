@@ -37,6 +37,11 @@ import { AntasphereAccountManager } from '../antasphere-account'
 import { shellOwnsAntasphereAccount } from '../server-boot'
 import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
+import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { setHelperConfigSource } from '../helpers/registry'
+
+/** What a helper asked of main says when a server runs them (PRDCT-4330). */
+export const HELPERS_RUN_ON_SERVER = "Helpers run on Clave's server."
 import { settingsSourceFromManagers } from './source'
 
 /** The Antasphere account manager, while this process is the server; null
@@ -49,6 +54,14 @@ export const shellAntasphereAccount: AntasphereAccountManager | null = shellOwns
   ? new AntasphereAccountManager({})
   : null
 
+/** Whether main owns this Mac's helpers (PRDCT-4330): only while the server
+ *  runs in this process. With a server behind the window (the separate
+ *  child, the packaged default, or an attached daemon), that server owns the
+ *  preference and the accounts and runs every helper; main keeps no
+ *  preference, runs no helper, and its IPC route refuses (the window asks
+ *  the server). */
+const shellOwnsHelpers = serverLaunch.mode === 'in-process'
+
 export const shellSettingsSource: SettingsSourceService = settingsSourceFromManagers({
   claudeAccounts: claudeAccountsManager,
   codexAccounts: codexAccountsManager,
@@ -58,6 +71,7 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   launchProfiles: launchProfileManager,
   preferences: preferencesManager,
   workspaces: workspaceManager,
+  ...(shellOwnsHelpers && { helpers: helperPreferences }),
   // Loaded on first use so this module's own import graph reaches no PTY
   // backend (a unit test loads it without one); the app's boot imports the
   // same login manager statically, so in the app nothing loads twice.
@@ -65,6 +79,14 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   applyAppIcon,
   ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount })
 })
+
+// In-process, main is the server: every helper of this Mac runs here and
+// reads this Mac's preference at each call (PRDCT-4330). With a server of its
+// own behind the window, THE choke point: main's runner refuses every helper,
+// whoever calls it and by whatever road (a fallback to IPC at boot, Sync all,
+// a caller added later), so nothing ever runs here on defaults.
+if (shellOwnsHelpers) installHelperPreferences(helperPreferences)
+else setHelperConfigSource(() => ({ refused: HELPERS_RUN_ON_SERVER }))
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

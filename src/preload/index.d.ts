@@ -61,6 +61,11 @@ import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { SlidelessAPI } from '../shared/slideless'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
+  HelperAccount,
+  HelperPreference,
+  HelperPreferencePatch
+} from '../shared/helper-preferences'
+import type {
   LaunchProfile,
   LaunchProfilePreferences,
   LauncherFamily,
@@ -69,6 +74,7 @@ import type {
 
 export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
+export type { HelperAccount, HelperPreference, HelperPreferencePatch }
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -881,6 +887,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
     family: LauncherFamily,
     profileId: string | null
   ) => Promise<LaunchProfilePreferences>
+  /** This Mac's helpers (PRDCT-4330): every declared one with its switch,
+   *  model and account; a write answers the whole list. A server's are
+   *  `fleetHelpers` / `fleetHelperSet`. */
+  helpersList: () => Promise<HelperPreference[]>
+  helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
   spawnSession: (
     cwd: string,
     options?: {

@@ -4,6 +4,7 @@ import { codexUsageManager } from '../codex-usage'
 import { resetSettingsPorts } from '../ports'
 import { tempDataDir } from '../ports/testing'
 import { standaloneSettingsSource } from './standalone-source'
+import { helperById, helperConfig, setHelperConfigSource } from '../helpers/registry'
 
 /**
  * The standalone server owns the Antasphere login the way the shell does
@@ -32,6 +33,22 @@ describe('the standalone settings source', () => {
     expect(status).toMatchObject({ phase: 'signed-out', account: null, issuerHost: '127.0.0.1:1' })
     expect(typeof shutdown).toBe('function')
     shutdown()
+  })
+})
+
+describe('the helpers on the standalone server (PRDCT-4330)', () => {
+  it("the runner reads this server's preference, written through its settings source", async () => {
+    const dir = tempDataDir('clave-standalone-helpers-')
+    const { settings, shutdown } = standaloneSettingsSource(dir, {})
+    try {
+      const title = helperById('tab-title')!
+      expect(helperConfig(title).enabled).toBe(true)
+      await settings.helpers.set('tab-title', { enabled: false, model: 'sonnet' })
+      expect(helperConfig(title)).toMatchObject({ enabled: false, model: 'sonnet' })
+    } finally {
+      shutdown()
+      setHelperConfigSource()
+    }
   })
 })
 

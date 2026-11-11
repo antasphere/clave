@@ -558,6 +558,7 @@ export type SettingsSection =
   | 'general'
   | 'accounts'
   | 'agents'
+  | 'helpers'
   | 'appearance'
   | 'keymaps'
   | 'updates'

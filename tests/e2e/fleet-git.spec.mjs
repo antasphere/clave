@@ -9,8 +9,8 @@
  * Mac's own git IPC — re-handled here to count and refuse — is never asked
  * for a write. A change on the server's disk reaches the panel through the
  * server's watch; a commit message asked of the server answers the sentence
- * about its missing Claude login (the daemon's `claude` is a signed-out
- * stub); and the draft typed for the server checkout is absent from a Mac
+ * about its missing Claude login (the daemon's default Claude profile,
+ * `fixtures/fleet-title.mjs`, refuses as a signed-out one); and the draft typed for the server checkout is absent from a Mac
  * session on the same path, which keeps its own.
  */
 import assert from 'node:assert/strict'
@@ -167,8 +167,9 @@ export async function run(t) {
       true
     )
 
-    // A commit message asked of the server is written by the server's claude,
-    // a signed-out stub here: the panel reads one sentence about the login.
+    // A commit message asked of the server is written by the server's Claude,
+    // its default profile, signed out here: the panel reads one sentence
+    // about the login.
     writeFileSync(path.join(a.root, 'second.txt'), 'a second change\n')
     const generating = mark()
     await step('the server names its missing Claude login', async () => {

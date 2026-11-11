@@ -19,6 +19,8 @@ const onboarding = {
       kind: 'choice' as const,
       multiSelect: true,
       optional: true,
+      // The client projects are a closed set: no own words (PRDCT-4322).
+      optionsOnly: true,
       options: [{ label: 'syndicable' }, { label: 'reb' }, { label: 'wat' }]
     }
   ]
@@ -99,6 +101,35 @@ describe('hosted requests', () => {
         })
       ).rejects.toMatchObject({ code: 'invalid' })
     expect((await requests.resultAfter(request.id, 's1')).status).toBe('pending')
+    requests.close()
+  })
+
+  it("takes the person's own words on a choice the agent left open (PRDCT-4322)", async () => {
+    const requests = new PendingRequests()
+    const request = requests.createHosted({
+      sessionId: 's1',
+      description: 'Where it goes.',
+      questions: [
+        {
+          id: 'host',
+          question: 'Which host?',
+          kind: 'choice' as const,
+          options: [{ label: 'Cloudflare' }, { label: 'Vercel' }]
+        }
+      ]
+    })
+    await requests.resolve({
+      requestId: request.id,
+      response: {
+        type: 'permission',
+        optionId: 'answer',
+        answers: { host: 'Cloudflare, on the Pages plan' }
+      }
+    })
+    expect(await requests.resultAfter(request.id, 's1')).toMatchObject({
+      status: 'completed',
+      answers: { host: 'Cloudflare, on the Pages plan' }
+    })
     requests.close()
   })
 

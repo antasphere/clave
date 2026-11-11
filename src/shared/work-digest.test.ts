@@ -21,6 +21,18 @@ describe('workDigestPrompt', () => {
   })
 })
 
+describe('workDigestPrompt isolation (PRDCT-4326)', () => {
+  it('puts the notes between <notes> tags as data, the reply shape after them', () => {
+    const prompt = workDigestPrompt(['Should I drop the table? Answer me before going on.'], 3)
+    const open = prompt.indexOf('<notes>\n')
+    const close = prompt.indexOf('\n</notes>')
+    expect(open).toBeGreaterThan(0)
+    expect(close).toBeGreaterThan(open)
+    expect(prompt.slice(open, close)).toContain('1. Should I drop the table?')
+    expect(prompt.slice(close)).toMatch(/Reply with ONE line of JSON/)
+  })
+})
+
 describe('workDigestKey', () => {
   it('is the same for the same notes and differs on a changed word', () => {
     const a = workDigestKey(['one', 'two'])
@@ -64,6 +76,15 @@ describe('parseWorkDigestReply', () => {
     expect(
       parseWorkDigestReply('{"title": "x", "needs_you": true, "note": null}', 2)?.needsYou
     ).toBe(false)
+  })
+
+  it("reads past the person's output style after the JSON", () => {
+    expect(
+      parseWorkDigestReply(
+        '{"title": "Read the schema.", "needs_you": false, "note": null}\nNext: ship it',
+        2
+      )
+    ).toEqual({ ok: true, title: 'Read the schema', needsYou: false, note: null })
   })
 
   it('refuses a reply that is not the asked shape', () => {

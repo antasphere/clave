@@ -62,6 +62,8 @@ import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import { runningIn, serverConversations } from './session-history/server-conversations'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
+import { explainingSessionHost } from './sessions/permission-explanations'
+import { explainerPorts } from './sessions/explain-permission'
 import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
 import { executeSecretAction } from './secret-actions'
 import {
@@ -93,12 +95,17 @@ import { fileStorage } from './ports/storage'
 import { lazyTerminalPorts } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
-import { publishSessionStates, setServerEventPublisher } from './server/session-events'
+import {
+  publishSessionStates,
+  sessionLimitReported,
+  setServerEventPublisher
+} from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { rememberedSpawnModel } from './sessions/spawn-model'
 import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
+import { hostDigests, sessionLaunchOf } from './exchange-digest'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -329,7 +336,15 @@ async function main(): Promise<void> {
     publish: (id, event) => sessionManager.publishHostEvent(id, event),
     setState: (id, state) => sessionManager.setState(id, state)
   })
-  const sessions = requestHost.host
+  // PRDCT-4331: every tool permission read in plain words, here where the
+  // session runs, and the reading sent to every client of the session.
+  const sessions = explainingSessionHost({
+    host: requestHost.host,
+    subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+    publish: (id, event) => sessionManager.publishHostEvent(id, event),
+    ...explainerPorts(requests)
+  }).host
   installE2eHooks({ sessionHost: sessions })
   // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
   // The installed plugins, their host and the view leases are this server's:
@@ -432,6 +447,9 @@ async function main(): Promise<void> {
       workspaceFiles: workspaceFilesInstance,
       // ── ADR 0004: the routines ──
       routines,
+      // ── PRDCT-4327: the digests a client asks for, read on this server's
+      // own record of the session, filed in its data folder ──
+      digests: hostDigests(sessionLaunchOf(ptyManager)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.
@@ -520,6 +538,10 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
+  // this in its IPC handlers, which a daemon never registers, so until now a
+  // server's limit reached no client and its chat drew "server ended".
+  const stopLimits = ptyManager.onLimitReported((id, report) => sessionLimitReported(id, report))
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
@@ -595,6 +617,7 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    stopLimits()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
     plugins.close()

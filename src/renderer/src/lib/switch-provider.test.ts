@@ -40,8 +40,18 @@ vi.mock('./account-policy', () => ({
     session.launchProfileId === 'claude-chat' || session.launchProfileId === 'codex-chat'
 }))
 vi.mock('./switch-account', () => ({
-  accountForLaunch: (provider: string) =>
-    provider === 'codex' ? { id: 'c1', label: 'Codex 1' } : { id: 'work', label: 'Work' },
+  // The owner-aware landing (PRDCT-4328): this Mac's pool for this Mac's
+  // tab, the server's for a server tab (`Studio`), null while unread.
+  landingForSession: (session: { id: string } | undefined, provider: string) =>
+    session?.id === 'clave-owner:session:srv-b:unread'
+      ? null
+      : session?.id.startsWith('clave-owner:')
+        ? { account: { id: 'srv-one', label: 'Studio' }, summary: undefined }
+        : {
+            account:
+              provider === 'codex' ? { id: 'c1', label: 'Codex 1' } : { id: 'work', label: 'Work' },
+            summary: undefined
+          },
   accountProviderOf: () => 'claude',
   sessionAccountExhausted: () => false,
   restartSessionProcess: h.restart
@@ -218,6 +228,47 @@ describe('providerSwitchLanding', () => {
       headroom: null,
       overrides: {}
     })
+  })
+})
+
+describe('providerSwitchLanding on a server tab (PRDCT-4328)', () => {
+  it("lands on the server's account, never this Mac's, and refuses while the server is unread", () => {
+    const remote = { ...h.session, id: 'clave-owner:session:srv-b:abc' } as Session
+    const unread = { ...h.session, id: 'clave-owner:session:srv-b:unread' } as Session
+    h.state = { sessions: [h.session, remote, unread] }
+    expect(
+      mod.providerSwitchLanding(
+        { provider: 'codex', model: { id: 'gpt-5.5', label: 'GPT' } },
+        remote.id
+      )
+    ).toMatchObject({
+      account: { id: 'srv-one', label: 'Studio' },
+      overrides: { codexAccountId: 'srv-one', codexAccountLabel: 'Studio' }
+    })
+    const refused = mod.providerSwitchLanding(
+      { provider: 'codex', model: { id: 'gpt-5.5', label: 'GPT' } },
+      unread.id
+    )
+    expect(refused.account).toBeNull()
+    expect(refused.refused).toMatch(/not read yet/)
+  })
+
+  it('a move refused for an unread server restarts nothing', async () => {
+    const unread = { ...h.session, id: 'clave-owner:session:srv-b:unread' } as Session
+    h.state = { sessions: [unread] }
+    const result = await mod.switchSessionProvider(unread.id, {
+      from: 'claude',
+      target: {
+        adapterId: 'codex-chat',
+        provider: 'codex',
+        label: 'Codex',
+        model: { id: 'gpt-5.5', label: 'GPT' }
+      },
+      road: 'handoff',
+      handoff: async () => 'note'
+    })
+    expect(result.ok).toBe(false)
+    expect(h.restart).not.toHaveBeenCalled()
   })
 })
 

@@ -34,6 +34,7 @@ import { registerPreviewHandlers } from './preview-handlers'
 import { registerHistoryHandlers } from './history-handlers'
 import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handlers'
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
+import { registerHelperHandlers } from './helper-handlers'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 import { registerCodexAccountHandlers } from './codex-accounts-handlers'
 import { registerAccountLoginHandlers } from './account-login-handlers'
@@ -92,6 +93,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerActivityHandlers()
   registerKeymapHandlers(deps)
   registerLaunchProfileHandlers()
+  registerHelperHandlers()
   registerGithubHandlers()
   // ── Lane A: the server ──
   registerServerHandlers()

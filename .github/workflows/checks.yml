@@ -4,9 +4,9 @@ name: Checks
 # request. Nothing ran them before this workflow, which is how 175 lint errors
 # piled up unseen; release.yml and build-win.yml only build.
 #
-# Linux validation runs in parallel, with all files selected by Vitest divided
-# across eight isolated runners. The named check waits for every validation job
-# and verifies the unit reports against the collected file inventory.
+# Linux validation runs in parallel. Eight isolated hosts divide the complete
+# unit inventory; the named check waits for every validation job and verifies
+# that every selected test file completed exactly once.
 on:
   push:
     branches: [dev]
@@ -15,10 +15,6 @@ on:
     inputs:
       baseline:
         description: Run the original sequential schedule for a timing comparison
-        type: boolean
-        default: false
-      linux_only:
-        description: Measure Linux validation without starting the Electron suite
         type: boolean
         default: false
 
@@ -41,6 +37,8 @@ jobs:
         task: [lint, typecheck, unit-1, unit-2, unit-3, unit-4, unit-5, unit-6, unit-7, unit-8]
     steps:
       - uses: actions/checkout@v4
+      # Bun 1.4.1 matches the dev dependency used by the server-process tests.
+      # Setup explicitly downloads Electron: npm install no longer fetches its binary.
       - uses: ./.github/actions/setup-checks
 
       - uses: actions/cache@v4
@@ -61,6 +59,7 @@ jobs:
 
       - name: Generated code is current
         if: matrix.task == 'typecheck'
+        # A .proto change must include its checked-in terminal-service bindings.
         run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
       - name: Build secure filesystem helper
@@ -74,7 +73,7 @@ jobs:
         run: |
           mkdir -p unit-reports
           if [ "$TASK" = unit-1 ]; then
-            npx --no-install vitest list --config vitest.ci.config.mjs --filesOnly --json > unit-reports/inventory.json
+            npx --no-install vitest list --filesOnly --json > unit-reports/inventory.json
           fi
           npx --no-install vitest run --shard="${TASK#unit-}/8" \
             --config vitest.ci.config.mjs \
@@ -86,6 +85,8 @@ jobs:
         with:
           name: unit-reports-${{ matrix.task }}
           path: unit-reports/
+          # A rerun replaces this worker's earlier report, never another shard's.
+          overwrite: true
           if-no-files-found: error
           retention-days: 14
 
@@ -126,7 +127,6 @@ jobs:
   # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
   # thread). Nothing here touches the release rail.
   e2e-run:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.linux_only }}
     name: Electron (${{ matrix.task }})
     strategy:
       fail-fast: false
@@ -262,6 +262,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-reports-${{ matrix.task }}
+          overwrite: true
           path: e2e-reports/
           if-no-files-found: error
           retention-days: 14
@@ -272,7 +273,7 @@ jobs:
   e2e:
     name: End-to-end (the real app, macOS)
     needs: e2e-run
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || !inputs.linux_only) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

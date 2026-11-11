@@ -1,6 +1,10 @@
 import { createContext, useContext } from 'react'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
-import type { DigestLaunch, DigestMessage } from '../../../src/shared/exchange-digest'
+import {
+  clipDigestMessages,
+  type DigestLaunch,
+  type DigestMessage
+} from '../../../src/shared/exchange-digest'
 import type { Entry } from './reducer'
 import type { DeliveryEntry, DeliveryGroup } from './tools'
 
@@ -126,9 +130,16 @@ export function gist(body: string): string {
 }
 
 /** What a timeline's digest reads: each message, its sender, and what this
- *  session asked before it and answered after it (`indexExchanges`). The
- *  view and the timeline compute it alike, so they agree on its key. */
+ *  session asked before it and answered after it (`indexExchanges`), clipped
+ *  as the host clips it (`clipDigestMessages`, PRDCT-4327): the latest
+ *  messages, each text clipped, so a pasted log of any length is read. The
+ *  view and the timeline compute it alike, so they agree on its key; the
+ *  messages left out in front are `group.messages.length - result.length`. */
 export function digestMessages(group: DeliveryGroup, index: ExchangeIndex): DigestMessage[] {
+  return clipDigestMessages(allMessages(group, index)).messages
+}
+
+function allMessages(group: DeliveryGroup, index: ExchangeIndex): DigestMessage[] {
   return group.messages.map((message) => {
     const delivery = parseDelivery(message.text)
     const exchange = index.get(message) ?? {}

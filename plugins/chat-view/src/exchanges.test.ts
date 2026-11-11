@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildProvenanceHeader } from '../../../src/shared/exchange-provenance'
-import { gist, indexExchanges, recentTimelines } from './exchanges'
+import { digestMessages, gist, indexExchanges, recentTimelines } from './exchanges'
+import { clipDigestMessages, digestKey } from '../../../src/shared/exchange-digest'
 import type { Entry } from './reducer'
 import type { DeliveryEntry } from './tools'
 
@@ -112,5 +113,18 @@ describe('recentTimelines', () => {
       { key: 'd4', block: { kind: 'delivery-group' } }
     ]
     expect([...recentTimelines(rows)]).toEqual(['d2', 'd3', 'd4'])
+  })
+})
+
+describe('digestMessages (PRDCT-4327)', () => {
+  it('clips before the key: a pasted log is sent clipped, and the host’s clip of it finds the same key', () => {
+    const messages = Array.from({ length: 35 }, (_, i) =>
+      from('Lane A', 'a1', i === 34 ? 'P'.repeat(300_000) : `step ${i}`)
+    )
+    const sent = digestMessages({ kind: 'delivery-group', messages }, indexExchanges(messages))
+    expect(sent).toHaveLength(30)
+    expect(sent[0].text).toBe('step 5')
+    expect(sent[29].text).toBe(`${'P'.repeat(4_000)}…`)
+    expect(digestKey(clipDigestMessages(sent).messages)).toBe(digestKey(sent))
   })
 })

@@ -72,3 +72,57 @@ describe('the shell builds an Antasphere account manager only for the in-process
     expect('antasphere' in m.shellSettingsSource.managers).toBe(false)
   })
 })
+
+/**
+ * The helpers (PRDCT-4330): main owns this Mac's preference and runs helpers
+ * only while the server runs in its process. With a server behind the window
+ * main keeps no preference, offers none on its IPC route, installs no source,
+ * and never reaches the server for one.
+ */
+const asked = vi.hoisted(() => ({ client: 0 }))
+vi.mock('../mcp/server-client', () => {
+  asked.client += 1
+  return { serverClient: { api: async () => ({}) } }
+})
+
+describe('main owns the helpers only when it is the server', () => {
+  it('in-process: the runner reads main’s own store, written through the source', async () => {
+    await load('in-process')
+    const { installSettingsPorts, resetSettingsPorts } = await import('../ports')
+    const { tempDataDir, electronTestPorts } = await import('../ports/testing')
+    installSettingsPorts(electronTestPorts(tempDataDir('clave-shell-helpers-')))
+    try {
+      const prefs = await import('../helpers/preferences')
+      const registry = await import('../helpers/registry')
+      const m = (await import('./shell-source')) as unknown as {
+        shellSettingsSource: { managers: { helpers?: unknown } }
+      }
+      expect(m.shellSettingsSource.managers.helpers).toBe(prefs.helperPreferences)
+      prefs.helperPreferences.set('tab-title', { enabled: false, model: 'sonnet' })
+      expect(registry.helperConfig(registry.helperById('tab-title')!)).toMatchObject({
+        enabled: false,
+        model: 'sonnet'
+      })
+    } finally {
+      resetSettingsPorts()
+    }
+  })
+
+  it.each(['separate', 'attached'] as const)(
+    '%s: no preference in main, no source installed, the server never asked',
+    async (mode) => {
+      asked.client = 0
+      const m = (await load(mode)) as unknown as {
+        shellSettingsSource: { managers: { helpers?: unknown } }
+      }
+      expect('helpers' in m.shellSettingsSource.managers).toBe(false)
+      const registry = await import('../helpers/registry')
+      // A source answering "off" for everything would show through here.
+      expect(registry.helperConfig(registry.helperById('tab-title')!)).toMatchObject({
+        enabled: true,
+        model: 'haiku'
+      })
+      expect(asked.client).toBe(0)
+    }
+  )
+})

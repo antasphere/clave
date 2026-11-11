@@ -20,7 +20,10 @@ export async function readBounded(path: string, limit: number): Promise<Buffer> 
   const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK)
   try {
     const info = await file.stat()
-    if (!info.isFile()) throw new Error('Folders and special files cannot be attached.')
+    // Two sentences, not one: a server tab's refusal card tells a folder
+    // from a special file by them (`refusedKind`, renderer lib/drop-refusal.ts).
+    if (info.isDirectory()) throw new Error('Folders cannot be attached.')
+    if (!info.isFile()) throw new Error('Special files cannot be attached.')
     if (info.size > limit)
       throw new Error(
         'File is too large for a preview or a direct image. Send it as a file reference.'

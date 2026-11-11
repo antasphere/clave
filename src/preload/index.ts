@@ -24,6 +24,11 @@ import type {
 } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
+import {
+  SERVER_SILENT,
+  type HelperPreference,
+  type HelperPreferencePatch
+} from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
@@ -64,8 +69,8 @@ import {
   type OnboardingInstallResult,
   type OnboardingState
 } from '../shared/onboarding'
-import type { DigestRequest } from '../shared/exchange-digest'
-import type { WorkDigestRequest } from '../shared/work-digest'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -247,6 +252,53 @@ const viaServer = <A extends unknown[], R>(
       }
       throw error
     }
+  }
+}
+/** How long a digest call waits for the window's own server before it is
+ *  told the server did not answer (PRDCT-4327): the bound the restore's
+ *  top-up waits for the same server (`listServerRestoreRecords`). */
+const DIGEST_SERVER_WAIT_MS = 15_000
+let digestsExternal: Promise<boolean> | null = null
+/** The server the window will have, or none within `ms`. */
+const serverWithin = (ms: number): Promise<Backing | null> =>
+  new Promise((resolve) => {
+    let settled = false
+    let withdraw: (() => void) | null = null
+    const finish = (value: Backing | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      withdraw?.()
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), ms)
+    withdraw = onServerAvailable((found) => finish(found))
+    if (settled) withdraw()
+  })
+/**
+ * The digests' road (PRDCT-4327). Inside the app (in-process) as every
+ * session call: main over IPC until it names its server, the server after,
+ * one process and one store either way. When the window's sessions live on a
+ * server of their own (separate, attached: `IPC_SERVER_EXTERNAL`, known from
+ * the launch), main is never asked: main does not hold the tab's record, the
+ * account list it belongs to, nor the helpers' settings. The call waits for
+ * that server, DIGEST_SERVER_WAIT_MS at most, and a server that never comes
+ * is a rejection the card says as "the server did not answer".
+ */
+const viaOwnServer = <A extends unknown[], R>(route: {
+  ipc: (...args: A) => Promise<R>
+  server: (backing: Backing, ...args: A) => Promise<R>
+}): ((...args: A) => Promise<R>) => {
+  const routed = viaServer<A, R>(route)
+  return async (...args) => {
+    digestsExternal ??= ipcRenderer.invoke(IPC_SERVER_EXTERNAL).then(
+      (external) => external === true,
+      () => false
+    )
+    if (!(await digestsExternal)) return routed(...args)
+    const backing = serverBacking ?? (await serverWithin(DIGEST_SERVER_WAIT_MS))
+    if (!backing) throw new Error('The server did not answer')
+    return route.server(backing, ...args)
   }
 }
 /** The wire subscriptions `sessionsSubscribe` holds on the server, per session. */
@@ -495,6 +547,42 @@ void Promise.resolve()
 // server road.
 void serverMode()
 const terminalChains = new Map<string, Promise<void>>()
+/**
+ * Where this Mac's helpers run (PRDCT-4330): on the server process behind the
+ * window when there is one (the separate child or an attached daemon, set at
+ * boot: `IPC_SERVER_EXTERNAL`), which owns the helpers' preference and the
+ * accounts; in main only when the server runs inside it (the in-process
+ * server has no git service, so `viaServer` would not do). With a server of
+ * its own that cannot be reached, the call is refused rather than run in
+ * main, which keeps no preference.
+ */
+let serverExternal: Promise<boolean> | null = null
+const viaHelperHost =
+  <A extends unknown[], R>(route: {
+    ipc: (...args: A) => Promise<R>
+    server: (backing: Backing, ...args: A) => Promise<R>
+  }) =>
+  async (...args: A): Promise<R> => {
+    serverExternal ??= Promise.resolve(ipcRenderer.invoke(IPC_SERVER_EXTERNAL)).then(
+      (external) => external === true,
+      () => {
+        serverExternal = null
+        return false
+      }
+    )
+    if (!(await serverExternal)) return route.ipc(...args)
+    // A server that cannot be reached is said in plain words, no address;
+    // its own refusal ("Switched off …") passes through.
+    const backing = await serverRouter.backing().catch(() => null)
+    if (!backing) throw new Error(SERVER_SILENT)
+    try {
+      return await route.server(backing, ...args)
+    } catch (error) {
+      const tag = (error as { _tag?: unknown } | null)?._tag
+      if (tag === 'ServerUnreachable' || tag === 'ServerRefused') throw new Error(SERVER_SILENT)
+      throw error
+    }
+  }
 const viaAttachedServer =
   <A extends unknown[]>(route: {
     ipc: (...args: A) => void
@@ -1251,6 +1339,16 @@ const electronAPI = {
     server: async ({ api }, workspaceId, family, profileId) =>
       profiles(await api.settings.launchProfiles.setWorkspace(workspaceId, family, profileId))
   }),
+  // ── Settings: the helpers of this Mac (PRDCT-4330), with a server arm ──
+  helpersList: viaServer<[], HelperPreference[]>({
+    ipc: () => ipcRenderer.invoke('helpers:list'),
+    server: async ({ api }) => loose<HelperPreference[]>(await api.settings.helpers.list())
+  }),
+  helperSet: viaServer<[string, HelperPreferencePatch], HelperPreference[]>({
+    ipc: (helperId, patch) => ipcRenderer.invoke('helpers:set', { helperId, patch }),
+    server: async ({ api }, helperId, patch) =>
+      loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
+  }),
   spawnSession: viaServer<
     [
       string,
@@ -1837,14 +1935,35 @@ const electronAPI = {
     ipcRenderer.invoke('session:save-transcript', markdown, fileName),
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
-  // What the reader needs from a run of messages other tabs sent: a one-shot
-  // model call in main (src/main/exchange-digest.ts), answered as a result.
-  exchangeDigest: (request: DigestRequest) => ipcRenderer.invoke('exchanges:digest', request),
-  exchangeDigestsOf: (sessionId: string) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
-  // The title of a card of the agent's working notes (PRDCT-4212), the same
-  // one-shot runner, filed under the tab beside the exchange digests.
-  workDigest: (request: WorkDigestRequest) => ipcRenderer.invoke('work:digest', request),
-  workDigestsOf: (sessionId: string) => ipcRenderer.invoke('work:digests-of', sessionId),
+  // What the reader needs from a run of messages other tabs sent, and the
+  // title of a card of the agent's working notes (PRDCT-4212): one-shot model
+  // calls read by the server that runs the tab, as every session call is
+  // (PRDCT-4327): the server reads them on ITS record of the session (its
+  // account list, its helper settings) and files them in its own data
+  // folder. In-process, main reads them until it names its server
+  // (src/main/exchange-digest.ts); a window whose server is its own process
+  // never asks main (`viaOwnServer`). The launch the view sends is for
+  // main's arm only: the wire carries none.
+  exchangeDigest: viaOwnServer<[DigestRequest], DigestResult>({
+    ipc: (request) => ipcRenderer.invoke('exchanges:digest', request),
+    server: async ({ api }, { sessionId, key, messages }) =>
+      (await api.digests.exchange({ sessionId, key, messages })) as DigestResult
+  }),
+  exchangeDigestsOf: viaOwnServer<[string], Record<string, DigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.exchangesOf(sessionId)) as Record<string, DigestDone>
+  }),
+  workDigest: viaOwnServer<[WorkDigestRequest], WorkDigestResult>({
+    ipc: (request) => ipcRenderer.invoke('work:digest', request),
+    server: async ({ api }, { sessionId, key, notes, tools }) =>
+      (await api.digests.work({ sessionId, key, notes, tools })) as WorkDigestResult
+  }),
+  workDigestsOf: viaOwnServer<[string], Record<string, WorkDigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('work:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.workOf(sessionId)) as Record<string, WorkDigestDone>
+  }),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".
@@ -2464,7 +2583,13 @@ const electronAPI = {
   gitCommitFiles: (cwd: string, hash: string) => ipcRenderer.invoke('git:commit-files', cwd, hash),
   gitCommitDiff: (cwd: string, hash: string, filePath: string) =>
     ipcRenderer.invoke('git:commit-diff', cwd, hash, filePath),
-  gitGenerateCommitMessage: (cwd: string) => ipcRenderer.invoke('git:generate-commit-message', cwd),
+  // The git panel's two one-shots run where this Mac's helpers run
+  // (PRDCT-4330): on the server behind the window when there is one (it owns
+  // the helpers' preference and the accounts), in main when it runs in-process.
+  gitGenerateCommitMessage: viaHelperHost<[string], string>({
+    ipc: (cwd) => ipcRenderer.invoke('git:generate-commit-message', cwd),
+    server: ({ api }, cwd) => api.git.generateCommitMessage(cwd)
+  }),
   gitMagicSync: (repoPaths: string[]) => ipcRenderer.invoke('git:magic-sync', repoPaths),
   gitMagicPull: (repoPaths: string[]) => ipcRenderer.invoke('git:magic-pull', repoPaths),
   gitRefreshRemotes: (repoPaths: string[]) => ipcRenderer.invoke('git:refresh-remotes', repoPaths),
@@ -2472,8 +2597,16 @@ const electronAPI = {
   onGitBatchProgress: (callback: (progress: GitBatchProgress) => void) =>
     createIpcListener<[GitBatchProgress]>('git:batch-progress', callback),
   gitJourney: (cwd: string, maxCount?: number) => ipcRenderer.invoke('git:journey', cwd, maxCount),
-  gitSummarizePush: (cwd: string, commitMessages: string[], diffStats: string) =>
-    ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
+  gitSummarizePush: viaHelperHost<
+    [string, string[], string],
+    { title: string; description: string }
+  >({
+    ipc: (cwd, commitMessages, diffStats) =>
+      ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
+    server: async ({ api }, cwd, commitMessages, diffStats) => ({
+      ...(await api.git.summarizePush(cwd, commitMessages, diffStats))
+    })
+  }),
 
   showNotification: (options: { title: string; body: string; sessionId: string }) =>
     ipcRenderer.invoke('notification:show', options),

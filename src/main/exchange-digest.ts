@@ -1,19 +1,20 @@
-import { execFile, type ChildProcess } from 'child_process'
+import fs from 'fs'
 import { DigestStore } from './exchange-digest-store'
 import { settingsPorts } from './ports'
-import {
-  accountTokenForSpawn,
-  getLoginShellEnv,
-  getUserShell
-} from './sessions/adapters/pty-backend'
-import { launchProfileManager } from './launch-profile-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
-import { buildOneShotLaunch } from './claude-one-shot'
+import { accountTokenForSpawn } from './sessions/adapters/pty-backend'
+import * as helperRunner from './helpers/runner'
+import { helperAccountId } from './helpers/runner'
+import { helperConfig } from './helpers/registry'
+import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
+import type { HelperFailureReason } from '../shared/helper-prompt'
 import {
-  digestPrompt,
+  clipDigestMessages,
+  digestKey,
   parseDigestReply,
   type DigestDone,
   type DigestLaunch,
+  type DigestMessage,
   type DigestRequest,
   type DigestResult
 } from '../shared/exchange-digest'
@@ -22,66 +23,22 @@ import {
   parseWorkDigestReply,
   placeNote,
   workDigestBucket,
-  workDigestPrompt,
+  workDigestKey,
   type WorkDigestDone,
   type WorkDigestRequest,
   type WorkDigestResult
 } from '../shared/work-digest'
 
 /**
- * The exchange digest's one-shot (`src/shared/exchange-digest.ts` says what it
- * is for): one short Haiku turn with no tool, no skill and no MCP server, the
- * way a tab title is named (`TITLE_CLI_ARGS`), Sonnet if Haiku is not to be
- * had. It runs the agent the session runs, on the session's account. One at a
- * time, since a reader scrolling through history mounts many timelines at
- * once, and every child is ended on the quit (`cancelAll`), as the titles'
- * are: a `claude -p` nothing kills outlives the app (PRDCT-3375).
- *
- * The WORK digest (`src/shared/work-digest.ts`, the title of a card of the
- * agent's working notes, PRDCT-4212) rides the same queue, the same child and
- * the same file, under keys of its own (`work-…`): one runner for every
- * one-shot the chat views ask for.
+ * The exchange digest (`src/shared/exchange-digest.ts` says what it is for)
+ * and the WORK digest (`src/shared/work-digest.ts`, the title of a card of
+ * the agent's working notes, PRDCT-4212): two helpers (`helpers/digests.ts`)
+ * run by the helpers' runner, on the agent and the account the session runs,
+ * their answers filed by session so a timeline reads them once. The queue,
+ * the cap and the kill on quit are the runner's (PRDCT-3375).
  */
 
-export const DIGEST_TIMEOUT_MS = 45_000
-
-export const DIGEST_CLI_ARGS = [
-  '-p',
-  '--model',
-  'haiku',
-  '--fallback-model',
-  'sonnet',
-  '--strict-mcp-config',
-  '--mcp-config',
-  '{"mcpServers":{}}',
-  '--disable-slash-commands',
-  '--tools',
-  ''
-]
-
-/** The digest of a timeline never needs more than its latest messages. */
-const MAX_MESSAGES = 30
-/** Nor more than this of any one message. */
-const MAX_CHARS = 4000
-
-/** One one-shot waiting its turn: what to send, whose account, and who
- *  takes the model's reply (or the failure). */
-interface Job {
-  launch: DigestLaunch
-  prompt: string
-  what: string
-  resolve: (reply: { ok: true; stdout: string } | { ok: false; error: string }) => void
-}
-
-const queue: Job[] = []
-/** Two at a time: a session with several fresh timelines is read in step. */
-const MAX_RUNNING = 2
-let running = 0
-const children = new Set<ChildProcess>()
-let closed = false
-
-const clip = (text: string | undefined): string | undefined =>
-  text === undefined ? undefined : text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}…` : text
+export { DIGEST_TIMEOUT_MS }
 
 /** The digests read so far, filed by session (exchange-digest-store.ts),
  *  in Clave's data folder through the storage port rather than Electron's
@@ -111,8 +68,10 @@ export function workDigestsOf(sessionId: string): Record<string, WorkDigestDone>
 /** A timeline's digest: the one filed for these messages, or a call read now
  *  and filed when it answers. */
 export function requestDigest(request: DigestRequest): Promise<DigestResult> {
-  if (closed) return Promise.resolve({ ok: false, error: 'Clave is quitting' })
-  if (!request.messages.length) return Promise.resolve({ ok: false, error: 'No messages' })
+  if (helperRunner.isShutDown())
+    return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
+  if (!request.messages.length)
+    return Promise.resolve({ ok: false, error: 'No messages', reason: 'refused' })
   const filed = digests().get(request.sessionId, request.key)
   if (filed) return Promise.resolve(filed)
   const id = `${request.sessionId}|${request.key}`
@@ -130,8 +89,10 @@ export function requestDigest(request: DigestRequest): Promise<DigestResult> {
 /** The digest of a stretch of working notes: the one filed for these notes,
  *  or a call read now and filed when it answers (`work-digest.ts`). */
 export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDigestResult> {
-  if (closed) return Promise.resolve({ ok: false, error: 'Clave is quitting' })
-  if (!request.notes.length) return Promise.resolve({ ok: false, error: 'No notes' })
+  if (helperRunner.isShutDown())
+    return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
+  if (!request.notes.length)
+    return Promise.resolve({ ok: false, error: 'No notes', reason: 'refused' })
   const bucket = workDigestBucket(request.sessionId)
   const filed = digests().get(bucket, request.key) as unknown as WorkDigestDone | undefined
   if (filed) return Promise.resolve(filed)
@@ -148,167 +109,335 @@ export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDiges
 }
 const workInflight = new Map<string, Promise<WorkDigestResult>>()
 
-function read(request: DigestRequest): Promise<DigestResult> {
+// ── PRDCT-4330 (helpers-settings lane) ──
+/** Whether the harness's canned reply stands in for the model. A spec that
+ *  puts a stub `claude` on the PATH sets CLAVE_E2E_DIGEST_RUNNER=1 to send the
+ *  digests through the runner, so their arguments can be read. */
+const harnessReplies = (): boolean =>
+  TEST_NO_ACTIVATE && process.env.CLAVE_E2E_DIGEST_RUNNER !== '1'
+
+/** A helper that is off never reaches the harness's reply either: the
+ *  preference is read first, as the runner reads it. */
+function switchedOff(
+  helper: typeof exchangeDigestHelper | typeof workDigestHelper
+): { ok: false; error: string; reason: 'disabled' } | null {
+  return helperConfig(helper).enabled
+    ? null
+    : {
+        ok: false,
+        error: `Switched off in Settings › Helpers (${helper.label}).`,
+        reason: 'disabled'
+      }
+}
+// ── end PRDCT-4330 ──
+
+async function read(request: DigestRequest): Promise<DigestResult> {
   // Under the end-to-end harness no model is called: a spec that wants a
   // digest hands the model's reply in CLAVE_E2E_DIGEST_REPLY, read the way a
   // real one is, after a beat so the reading state shows.
   if (TEST_NO_ACTIVATE) {
-    const reply = process.env.CLAVE_E2E_DIGEST_REPLY
+    const off = switchedOff(exchangeDigestHelper)
+    if (off) return off
+    journalRead('exchange', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
+    const reply = testReply(process.env.CLAVE_E2E_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return new Promise((resolve) =>
-      setTimeout(
-        () =>
-          resolve(
-            parseDigestReply(reply, request.messages.length) ?? {
-              ok: false,
-              error: 'Unreadable test reply'
-            }
-          ),
-        600
-      )
+    return testAccount(exchangeDigestHelper, request.launch).then(
+      (refused) =>
+        refused ??
+        new Promise<DigestResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                testFailure(reply) ??
+                  parseDigestReply(reply, request.messages.length) ?? {
+                    ok: false,
+                    error: 'Unreadable test reply'
+                  }
+              ),
+            600
+          )
+        )
     )
   }
-  const messages = request.messages.slice(-MAX_MESSAGES).map((message) => ({
-    from: message.from,
-    text: clip(message.text) ?? '',
-    request: clip(message.request),
-    reply: clip(message.reply)
-  }))
-  const offset = request.messages.length - messages.length
-  return oneShot(request.launch, digestPrompt(messages), `${messages.length} message(s)`).then(
-    (reply) => {
-      if (!reply.ok) return reply
-      const parsed = parseDigestReply(reply.stdout, messages.length)
-      if (!parsed) {
-        console.warn('[exchange-digest] unreadable reply:', reply.stdout.slice(0, 200))
-        return { ok: false, error: 'The model did not answer in the asked shape' }
+  const { messages, offset } = clipDigestMessages(request.messages)
+  return helperRunner
+    .runHelper(exchangeDigestHelper, messages, request.launch)
+    .then((outcome): DigestResult => {
+      if (!outcome.ok) {
+        if (outcome.reason === 'unreadable')
+          console.warn('[exchange-digest] unreadable reply:', outcome.detail.slice(0, 200))
+        return { ok: false, error: failureText(outcome), reason: outcome.reason }
       }
+      const parsed = outcome.value
       return { ...parsed, message: parsed.message === null ? null : parsed.message + offset }
-    }
-  )
+    })
 }
 
-function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
+async function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
   // Under the harness, the reply comes from CLAVE_E2E_WORK_DIGEST_REPLY.
   if (TEST_NO_ACTIVATE) {
-    const reply = process.env.CLAVE_E2E_WORK_DIGEST_REPLY
+    const off = switchedOff(workDigestHelper)
+    if (off) return off
+    journalRead('work', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
+    const reply = testReply(process.env.CLAVE_E2E_WORK_DIGEST_REPLY, request.launch)
     if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
-    return new Promise((resolve) =>
-      setTimeout(
-        () =>
-          resolve(
-            parseWorkDigestReply(reply, request.notes.length) ?? {
-              ok: false,
-              error: 'Unreadable test reply'
-            }
-          ),
-        600
-      )
+    return testAccount(workDigestHelper, request.launch).then(
+      (refused) =>
+        refused ??
+        new Promise<WorkDigestResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                testFailure(reply) ??
+                  parseWorkDigestReply(reply, request.notes.length) ?? {
+                    ok: false,
+                    error: 'Unreadable test reply'
+                  }
+              ),
+            600
+          )
+        )
     )
   }
   const { notes, offset } = clipNotes(request.notes)
-  return oneShot(
-    request.launch,
-    workDigestPrompt(notes, request.tools),
-    `${notes.length} note(s)`
-  ).then((reply) => {
-    if (!reply.ok) return reply
-    const parsed = parseWorkDigestReply(reply.stdout, notes.length)
-    if (!parsed) {
-      console.warn('[exchange-digest] unreadable work reply:', reply.stdout.slice(0, 200))
-      return { ok: false, error: 'The model did not answer in the asked shape' }
-    }
-    return placeNote(parsed, offset)
-  })
+  return helperRunner
+    .runHelper(workDigestHelper, { notes, tools: request.tools }, request.launch)
+    .then((outcome): WorkDigestResult => {
+      if (!outcome.ok) {
+        if (outcome.reason === 'unreadable')
+          console.warn('[exchange-digest] unreadable work reply:', outcome.detail.slice(0, 200))
+        return { ok: false, error: failureText(outcome), reason: outcome.reason }
+      }
+      return placeNote(outcome.value, offset)
+    })
 }
 
-/** One prompt to the model, in its turn in the queue. */
-function oneShot(
-  launch: DigestLaunch,
-  prompt: string,
-  what: string
-): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
-  return new Promise((resolve) => {
-    queue.push({ launch, prompt, what, resolve })
-    void next()
-  })
-}
-
-async function next(): Promise<void> {
-  if (running >= MAX_RUNNING) return
-  const job = queue.shift()
-  if (!job) return
-  running++
-  // Room for another beside this one: start it now, not once this one ends.
-  void next()
-  const started = Date.now()
-  console.log(`[exchange-digest] reading ${job.what}, ${queue.length} waiting`)
+/** Under the harness, every read is journaled where THIS process keeps its
+ *  data (main: the app's user data; a separate server: `userData/server`;
+ *  a daemon: its data dir), one JSON line each, so a spec tells which
+ *  process read a digest (`chat-digest-early.spec.mjs`). */
+function journalRead(kind: 'exchange' | 'work', sessionId: string, key: string): void {
   try {
-    const result = await run(job)
-    console.log(
-      `[exchange-digest] ${result.ok ? 'answered' : `failed: ${result.error.slice(0, 120)}`} in ${Date.now() - started}ms`
+    fs.appendFileSync(
+      settingsPorts().storage.pathOf('e2e-digest-reads.jsonl'),
+      `${JSON.stringify({ kind, sessionId, key, pid: process.pid, at: Date.now() })}\n`
     )
-    job.resolve(result)
-  } catch (error) {
-    job.resolve({ ok: false, error: error instanceof Error ? error.message : String(error) })
-  } finally {
-    running--
-    void next()
+  } catch {
+    /* a journal that cannot be written is no read of its own */
   }
 }
 
-async function run(job: Job): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
-  const { launch } = job
-  const shot = buildOneShotLaunch({
-    profile: launchProfileManager.resolveClaudeCli(launch.workspaceId, launch.launchProfileId),
-    args: DIGEST_CLI_ARGS,
-    loginEnv: getLoginShellEnv(),
-    account: {
-      configDir: launch.configDir,
-      oauthToken: await accountTokenForSpawn('claude', launch.claudeProfileId)
+/** The harness's reply, with `{account}` standing for the account the read
+ *  runs on (`default` for the machine login), so a spec sees which one. */
+function testReply(reply: string | undefined, launch: DigestLaunch): string | undefined {
+  return reply?.replaceAll('{account}', launch.claudeProfileId ?? 'default')
+}
+
+/** Under the harness, a read stands in for the run up to the model call:
+ *  the helper's own config (`helperConfig`, the seam the Settings page sets)
+ *  decides on which account it runs (`helperAccountId`), and that account
+ *  resolves as a spawn resolves it (`accountTokenForSpawn`): an account this
+ *  process does not know fails as the CLI would be refused, `auth`. Whether
+ *  the helper runs at all was read before (`switchedOff`). */
+async function testAccount(
+  definition: Parameters<typeof helperConfig>[0],
+  launch: DigestLaunch
+): Promise<{ ok: false; error: string; reason: 'auth' } | null> {
+  try {
+    await accountTokenForSpawn('claude', helperAccountId(helperConfig(definition), launch))
+    return null
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      reason: 'auth'
+    }
+  }
+}
+
+/** `E2E_FAIL:<reason>` under the harness: a read that fails with that reason. */
+function testFailure(
+  reply: string
+): { ok: false; error: string; reason: HelperFailureReason } | null {
+  const match = /^E2E_FAIL:(\w+)$/.exec(reply.trim())
+  return match
+    ? { ok: false, error: 'A failure under test', reason: match[1] as HelperFailureReason }
+    : null
+}
+
+/** What a failed digest says: the asked-shape one in words, the rest as the CLI said it. */
+function failureText(outcome: { reason: string; detail: string }): string {
+  return outcome.reason === 'unreadable'
+    ? 'The model did not answer in the asked shape'
+    : outcome.detail
+}
+
+/* The host's side (PRDCT-4327): a client asks the server a tab runs on for
+ * its digests, and the server reads them on the tab's own agent and account,
+ * which it takes from ITS OWN record of the session. What a client sends
+ * about the launch is never read: a server's account ids mean nothing on the
+ * Mac that shows the tab, and the reverse. The digests are filed in the
+ * host's data folder, so every client of that server reads the same one. */
+
+/** The fields of a session record a digest's launch is read from. */
+export interface DigestLaunchRecord {
+  workspaceId?: string
+  launchProfileId?: string
+  claudeProfileId?: string
+  configDir?: string
+}
+
+/** How the host finds its own record of a session, by the session's id. */
+export type DigestRecordOf = (sessionId: string) => DigestLaunchRecord | null | undefined
+
+/** The launch a digest runs on: the record's, field for field. No account on
+ *  the record is the Default (the machine login), never another account. */
+export function launchFromRecord(record: DigestLaunchRecord): DigestLaunch {
+  return {
+    workspaceId: record.workspaceId,
+    launchProfileId: record.launchProfileId,
+    claudeProfileId: record.claudeProfileId,
+    configDir: record.configDir
+  }
+}
+
+/** What a client sends: the digest's subject, never its launch. */
+export interface HostDigestRequest {
+  sessionId: string
+  key: string
+  messages: readonly DigestMessage[]
+}
+export interface HostWorkDigestRequest {
+  sessionId: string
+  key: string
+  notes: readonly string[]
+  tools: number
+}
+
+export interface HostDigests {
+  exchangeDigest: (request: HostDigestRequest) => Promise<DigestResult>
+  exchangeDigestsOf: (sessionId: string) => Record<string, DigestDone>
+  workDigest: (request: HostWorkDigestRequest) => Promise<WorkDigestResult>
+  workDigestsOf: (sessionId: string) => Record<string, WorkDigestDone>
+}
+
+/** A session this host has no record of: said, never read on a guess. */
+export const UNKNOWN_SESSION_ERROR = 'This server has no record of that session'
+
+/** The digests as a host serves them to its clients. */
+/** Where a host's sessions are known: its records, and the launch of what it
+ *  spawned (the session manager, `pty-manager.ts`). */
+export interface DigestLaunchSource {
+  getSessionRecord: (sessionId: string) => DigestLaunchRecord | null | undefined
+  spawnLaunchOf: (sessionId: string) => DigestLaunchRecord | null | undefined
+}
+
+/** The launch a host reads a session's digests on, as both servers compose
+ *  it: its own RECORD of the session first (what a tab comes back on, and
+ *  what an account switch rewrites), else the launch of the process it
+ *  spawned (a session that keeps no record), else none: refused. */
+export function sessionLaunchOf(source: DigestLaunchSource): DigestRecordOf {
+  return (sessionId) => source.getSessionRecord(sessionId) ?? source.spawnLaunchOf(sessionId)
+}
+
+/** How many reads a session may have waiting on the host at once: a client
+ *  asking for more is told to ask again in a moment, so no client can queue
+ *  model calls without end, nor push a tab's real digests out of its store. */
+export const MAX_WAITING_PER_SESSION = 10
+
+/** A key that is not the key of what it came with: a call would cost a model
+ *  read for content the store files under a name it does not have. */
+export const KEY_MISMATCH_ERROR = 'The key does not match what was sent'
+
+/** The digests as a host serves them to its clients. Every request is read
+ *  on the launch of the host's own record of the session, under the key the
+ *  host recomputes from the content (a key that does not match is refused),
+ *  and at most MAX_WAITING_PER_SESSION distinct reads wait per session. */
+export function hostDigests(recordOf: DigestRecordOf): HostDigests {
+  const launchOf = (sessionId: string): DigestLaunch | null => {
+    const record = recordOf(sessionId)
+    return record ? launchFromRecord(record) : null
+  }
+  const waiting = new Map<string, Set<string>>()
+  /** Run a read, unless it is one more than the session may have waiting.
+   *  A read filed already, or one already waiting, costs nothing more. */
+  const admit = <R>(
+    sessionId: string,
+    id: string,
+    filed: boolean,
+    run: () => Promise<R>,
+    busy: R
+  ): Promise<R> => {
+    if (filed) return run()
+    const pending = waiting.get(sessionId) ?? new Set<string>()
+    if (!pending.has(id) && pending.size >= MAX_WAITING_PER_SESSION) return Promise.resolve(busy)
+    pending.add(id)
+    waiting.set(sessionId, pending)
+    return run().finally(() => {
+      pending.delete(id)
+      if (pending.size === 0 && waiting.get(sessionId) === pending) waiting.delete(sessionId)
+    })
+  }
+  const unknown = {
+    ok: false as const,
+    error: UNKNOWN_SESSION_ERROR,
+    reason: 'unknown-session' as const
+  }
+  const mismatch = { ok: false as const, error: KEY_MISMATCH_ERROR, reason: 'refused' as const }
+  const busy = {
+    ok: false as const,
+    error: 'Too many reads are waiting for this tab',
+    reason: 'busy' as const
+  }
+  return {
+    exchangeDigest: (request) => {
+      // Clipped as the view clips (idempotent), so the key is the view's.
+      const { messages } = clipDigestMessages(request.messages)
+      if (digestKey(messages) !== request.key) return Promise.resolve(mismatch)
+      const launch = launchOf(request.sessionId)
+      if (!launch) return Promise.resolve(unknown)
+      return admit<DigestResult>(
+        request.sessionId,
+        request.key,
+        digests().get(request.sessionId, request.key) !== undefined,
+        () => requestDigest({ sessionId: request.sessionId, key: request.key, messages, launch }),
+        busy
+      )
     },
-    userShell: getUserShell()
-  })
-  return new Promise((resolve) => {
-    const child = execFile(
-      shot.file,
-      shot.args,
-      { env: shot.env, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: DIGEST_TIMEOUT_MS },
-      (err, stdout, stderr) => {
-        children.delete(child)
-        if (err) {
-          console.error('[exchange-digest] claude CLI error:', err.message, stderr)
-          resolve({ ok: false, error: stderr || err.message })
-          return
-        }
-        resolve({ ok: true, stdout })
-      }
-    )
-    children.add(child)
-    child.stdin?.write(job.prompt)
-    child.stdin?.end()
-  })
+    exchangeDigestsOf: digestsOf,
+    workDigest: (request) => {
+      const { notes } = clipNotes(request.notes)
+      if (workDigestKey(notes) !== request.key) return Promise.resolve(mismatch)
+      const launch = launchOf(request.sessionId)
+      if (!launch) return Promise.resolve(unknown)
+      return admit<WorkDigestResult>(
+        request.sessionId,
+        request.key,
+        digests().get(workDigestBucket(request.sessionId), request.key) !== undefined,
+        () =>
+          requestWorkDigest({
+            sessionId: request.sessionId,
+            key: request.key,
+            notes,
+            tools: request.tools,
+            launch
+          }),
+        busy
+      )
+    },
+    workDigestsOf
+  }
 }
 
 /** End every queued and running digest: the sessions' shutdown calls it with
- *  the titles' (`pty-manager.ts` killAll); `quit` also shuts the door. */
+ *  the titles' (`pty-manager.ts` killAll); `quit` also shuts the door. The
+ *  runner is one for every helper, so this ends the titles' too. */
 export function cancelAll(quit = false): void {
-  if (quit) closed = true
   store?.flush()
-  for (const job of queue.splice(0)) job.resolve({ ok: false, error: 'Cancelled' })
-  for (const child of [...children]) {
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      /* already gone */
-    }
-    const hard = setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        /* already gone */
-      }
-    }, 1000)
-    child.once('exit', () => clearTimeout(hard))
-  }
+  if (quit) helperRunner.shutdown()
+  else helperRunner.cancelAll()
 }

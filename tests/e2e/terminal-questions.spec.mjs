@@ -8,7 +8,7 @@ import { until } from './harness.mjs'
    - a message never scrolls inside its box: a long one stands whole while
      read, then pins as a preview of its first lines once read past; a click
      on the preview glides back to it, a click on it glides to the preview;
-   - the "Other" answer wraps as it is typed, and its record in the transcript
+   - the answer line wraps as it is typed, and its record in the transcript
      wraps too and says Answered, even when the agent's state moved on before
      the answer's write came back. */
 
@@ -309,7 +309,8 @@ export async function run(t) {
     const leaving = await pair()
     t.check('a pushed question scrolls on over the top edge', leaving.top < 0, leaving)
 
-    /* 4. "Other": the field wraps, the record wraps and says Answered. */
+    /* 4. The person's own words: the answer line wraps, the record wraps and
+       says Answered (PRDCT-4322: the answer line under the options). */
     await fixture.evaluate((id) => {
       const host = globalThis.__claveE2E.sessionHost
       const write = host.write
@@ -350,7 +351,7 @@ export async function run(t) {
     if (await waiting.isVisible().catch(() => false)) await waiting.click()
     const dock = view.locator('.chat-prompt[data-kind="question"]')
     await dock.waitFor()
-    const other = dock.getByPlaceholder('Type your own answer')
+    const other = dock.getByRole('textbox', { name: 'Your answer' })
     await other.fill(ANSWER)
     const field = await other.evaluate((el) => ({
       tag: el.tagName,
@@ -360,15 +361,14 @@ export async function run(t) {
       line: Number.parseFloat(getComputedStyle(el).lineHeight)
     }))
     t.check(
-      'the Other answer wraps onto more lines as it is typed',
+      'the answer line wraps onto more lines as it is typed',
       field.tag === 'TEXTAREA' &&
         field.height > field.line * 1.5 &&
         field.scrollWidth <= field.clientWidth,
       field
     )
+    // Enter in the last field sends: no separate review page.
     await other.press('Enter')
-    await dock.locator('.chat-prompt-review').waitFor()
-    await win.keyboard.press('Enter')
     await dock.waitFor({ state: 'detached' })
     // The dock leaves on the state change, before the answer lands on the record.
     // The record sits in the last exchange: bring the end into reach.
@@ -378,10 +378,13 @@ export async function run(t) {
       root.scrollTop = root.scrollHeight
     })
     const row = view.locator('.chat-permission-row').last()
-    await until(async () => (await row.locator('.chat-permission-row-answer').count()) === 1)
+    const folded = row.locator('.chat-ask-folded-answer')
+    await until(async () =>
+      (await folded.count()) === 1 ? (await folded.innerText()) !== '' : false
+    )
     const record_ = await row.evaluate((el) => {
       const column = el.closest('.chat-column').getBoundingClientRect()
-      const answer = el.querySelector('.chat-permission-row-answer').getBoundingClientRect()
+      const answer = el.querySelector('.chat-ask-folded-answer').getBoundingClientRect()
       return {
         text: el.innerText,
         state: el.dataset.state,
@@ -391,7 +394,7 @@ export async function run(t) {
     })
     t.check(
       "the answer's record says Answered and stays inside the column",
-      /Answered/.test(record_.text) &&
+      /Answered/i.test(record_.text) &&
         !/No longer awaiting/.test(record_.text) &&
         record_.state === 'answered' &&
         record_.overflow <= 0.5,

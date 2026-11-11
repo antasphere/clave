@@ -53,12 +53,14 @@ import { ExchangeContext, digestMessages, indexExchanges, recentTimelines } from
 import { useStretchDigests, useTimelineDigests } from './digest'
 import { digestKey } from '../../../src/shared/exchange-digest'
 import { workDigestKey } from '../../../src/shared/work-digest'
-import { foldStretches, rowKey, stretchNotes, toolCount, type Row } from './stretches'
+import { digestNotes, foldStretches, rowKey, toolCount, type Row } from './stretches'
 import { WorkStretch } from './WorkStretch'
 import { StretchContext, recentStretches } from './stretch-context'
 import { useExchangeJump } from './jump'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import { ApprovalRun, InlineQuestion, PermissionRow, PromptDock } from './PromptDock'
+import { ModeLine } from './PermissionReading'
+import { usePermissionReading, withPermissionReading } from './permission-reading-context'
 import { FormTail } from './FormTail'
 import { isInputRequest } from './input-request'
 import { isQuestion } from './approvals'
@@ -113,12 +115,15 @@ import {
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
+import { DropRefusal } from './DropRefusal'
+import { serverNameOf } from '../../../src/renderer/src/lib/drop-refusal'
 import { transcriptMarkdown } from './export'
 import { registerTranscriptExporter } from '../../../src/renderer/src/views/transcript-export'
 import { ViewEmpty } from './EmptyDrawing'
 import { ServerEnded } from './ServerEnded'
 import {
   failureText,
+  droppedPathFallback,
   pathForMessage,
   pathsFromDataTransfer
 } from '../../../src/renderer/src/lib/dropped-paths'
@@ -403,6 +408,8 @@ const EntryRow = memo(function EntryRow({
         {entry.message}
       </div>
     )
+  if (entry.kind === 'mode')
+    return <ModeLine label={entry.label} fromLabel={entry.fromLabel} by={entry.by} />
   return null
 })
 /** A run of tools, re-rendered only when one of its calls changed: the run is
@@ -740,8 +747,13 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     changeAttachments,
     onDraftChange,
     clearSent,
-    restore
+    restore,
+    refusal,
+    dismissRefusal,
+    startDrop
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
+  // The server a tab of another machine runs on, as the refusal card names it.
+  const serverName = useFleetStore((s) => serverNameOf(s.connections, ownerOf(session.id)))
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
   const filesBlocked =
@@ -860,20 +872,32 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   /* Paths dragged as text. Each is made stable first — a transient source
      copied, a local file carried to a server's session — and one that cannot
      be (a folder under a temp root, a file the server refuses) lands as the
-     path it was dropped with, the reason reported beside it. */
+     path it was dropped with, the reason reported beside it. On a server's
+     tab a path of this Mac means nothing to the agent: the refusal card says
+     what stayed here instead (PRDCT-4329). */
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
+    const outcome = startDrop()
     const stable = await Promise.all(
       paths.map((p) =>
-        stablePath(p).catch((failure: unknown) => {
+        stablePath(p).catch((failure: unknown): string | null => {
           const path = isRemoteKey(p) ? parseResourceKey('file', p).id : p
           const name = path.split(/[\\/]/).pop() || path
+          if (outcome.refuse(p, failure, name)) return null
+          if (droppedPathFallback(session.id, p) === 'refuse') {
+            // Another server's file, dragged by its key: not this Mac's either.
+            report(`${failureText(failure)} ${name} was not added to the message.`)
+            return null
+          }
           report(`${failureText(failure)} ${name} is in the message as a path.`)
           return path
         })
       )
     )
-    insertAtCaret(stable.map(pathForMessage).join(' ') + ' ')
+    const kept = stable.filter((path): path is string => path !== null)
+    if (!kept.length) return
+    insertAtCaret(kept.map(pathForMessage).join(' ') + ' ')
+    outcome.landed()
   }
   const stablePath = async (p: string): Promise<string> => {
     if (!isRemoteKey(session.id)) {
@@ -894,6 +918,16 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const waitingOn = isRemoteKey(session.id)
     ? serverDock(remotePending, session.id)
     : openRequests(conversation.entries)
+  // PRDCT-4331: what the permission card reads, and the mode switch.
+  const { reading: permissionReading, switchMode } = usePermissionReading({
+    sessionId: session.id,
+    cwd: session.cwd,
+    conversation,
+    dispatch,
+    write,
+    report,
+    remotePending
+  })
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
@@ -1028,7 +1062,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     () =>
       blocks.flatMap(({ block, key }) => {
         if (block.kind !== 'work-stretch' || !stretchContext.recent.has(key)) return []
-        const notes = stretchNotes(block)
+        const { notes } = digestNotes(block)
         return [{ key: workDigestKey(notes), notes, tools: toolCount(block) }]
       }),
     [blocks, stretchContext]
@@ -1057,7 +1091,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     jump.reveal && (!searchReveal || jump.reveal.nonce > searchReveal.nonce)
       ? jump.reveal
       : searchReveal
-  return (
+  return withPermissionReading(
+    permissionReading,
     <div
       ref={pane}
       className="chat-view"
@@ -1070,6 +1105,14 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         }
       }}
       onKeyDown={(event) => {
+        // The refusal card goes first, like any card the composer raised;
+        // a second Escape is the agent's.
+        if (event.key === 'Escape' && refusal) {
+          event.preventDefault()
+          event.stopPropagation()
+          dismissRefusal()
+          return
+        }
         if (event.key === 'Escape' && state === 'working') {
           event.preventDefault()
           takeBack()
@@ -1280,6 +1323,16 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
         />
+        {refusal && (
+          <DropRefusal
+            refusal={refusal}
+            server={serverName}
+            onClose={() => {
+              dismissRefusal()
+              textarea.current?.focus()
+            }}
+          />
+        )}
         {slashOpen && (
           <div className="chat-slash-anchor">
             <SlashMenu
@@ -1366,7 +1419,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                   conversation.permissionMode.mode,
                   conversation.permissionMode.modes
                 )
-                if (next) void write({ type: 'set_permission_mode', mode: next }).catch(report)
+                if (next) switchMode(next)
                 return
               }
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -1443,9 +1496,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 mode={conversation.permissionMode.mode}
                 modes={conversation.permissionMode.modes}
                 disabled={closed}
-                onSelect={(id) =>
-                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
-                }
+                onSelect={switchMode}
               />
             )}
             <ModelMenu
@@ -1557,9 +1608,15 @@ export function EndedNotice({
     )
   }
   if (limit) {
+    // A server tab never has a proposal (this Mac's policy skips it): the
+    // server's other accounts are on the account chip, not in this Mac's
+    // Settings (PRDCT-4328).
     return (
       <div className="chat-notice" role="status" data-chat-ended="limit">
-        {sentence} No other account has headroom: add one in Settings → Accounts to continue.
+        {sentence}{' '}
+        {isRemoteKey(sessionId)
+          ? 'Pick another account of this server from the account chip to continue.'
+          : 'No other account has headroom: add one in Settings → Accounts to continue.'}
       </div>
     )
   }

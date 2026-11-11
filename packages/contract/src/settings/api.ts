@@ -47,6 +47,7 @@ import {
   SetWorkspaceLaunchProfile,
   UpsertLaunchProfile
 } from './launch-profiles'
+import { ListHelperPreferences, SetHelperPreference } from './helpers'
 import { SetAppIcon } from './preferences'
 import {
   LoadWorkspaceState,
@@ -208,6 +209,9 @@ export const settingsGroup = ApiGroup.make('settings')
       SetWorkspaceLaunchProfile
     )
   )
+  // The helpers (PRDCT-4330)
+  .add(HttpCqrs.queryEndpoint('listHelperPreferences', '/helpers', ListHelperPreferences))
+  .add(HttpCqrs.commandEndpoint('setHelperPreference', '/helpers', SetHelperPreference))
   // Preferences
   .add(HttpCqrs.commandEndpoint('setAppIcon', '/preferences/app-icon', SetAppIcon))
   // Workspaces

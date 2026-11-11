@@ -133,21 +133,6 @@ export function resolveCodexAccount(
   return loose.length === 1 ? loose[0] : undefined
 }
 
-/** What a session says about its Codex account (see `sessionAccount`). */
-export function sessionCodexAccount(session: {
-  codexAccountId?: string
-  codexAccountLabel?: string
-}): { id: string; label: string; removed: boolean } {
-  const { accounts } = useCodexAccountStore.getState()
-  const live = accounts.find((a) => a.id === (session.codexAccountId ?? DEFAULT_CODEX_ACCOUNT_ID))
-  if (live) return { id: live.id, label: live.label, removed: false }
-  return {
-    id: session.codexAccountId ?? DEFAULT_CODEX_ACCOUNT_ID,
-    label: session.codexAccountLabel ?? 'Removed account',
-    removed: true
-  }
-}
-
 /** The spawn fields an account contributes: main resolves the home by id. */
 export function codexAccountSpawnFields(account: CodexAccount): {
   codexAccountId: string

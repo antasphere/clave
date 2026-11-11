@@ -1,0 +1,134 @@
+/* What a permission request does (PermissionReading.tsx, PRDCT-4331): the
+   level as a small pill, the plain sentence beside it. Kept in its own sheet
+   beside the component while the card's layout is being reworked
+   (PRDCT-4322); the tones are the system's own inks. */
+.chat-permission-reading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spacing) calc(var(--spacing) * 2);
+}
+.chat-permission-level {
+  --level-ink: var(--text-secondary);
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing);
+  padding: calc(var(--spacing) * 0.25) calc(var(--spacing) * 2);
+  border-radius: var(--radius-full);
+  border: thin solid color-mix(in srgb, var(--level-ink) 35%, transparent);
+  color: var(--level-ink);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+.chat-permission-level svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+/* The lowest level is neutral: never a colour that reads as "safe". The
+   upper levels carry words and an icon; the ink only adds to them. */
+.chat-permission-level[data-level='reads'] {
+  --level-ink: var(--text-secondary);
+}
+.chat-permission-level[data-level='project'] {
+  --level-ink: var(--text-primary);
+}
+.chat-permission-level[data-level='outside'] {
+  --level-ink: var(--color-warning);
+  background-color: color-mix(in srgb, var(--level-ink) 10%, transparent);
+}
+.chat-permission-level[data-level='irreversible'] {
+  --level-ink: var(--color-destructive);
+  background-color: color-mix(in srgb, var(--level-ink) 10%, transparent);
+}
+.chat-permission-level[data-level='unverified'] {
+  --level-ink: var(--text-tertiary);
+  border-style: dashed;
+}
+.chat-permission-level[data-size='small'] {
+  padding: 0 calc(var(--spacing) * 1.5);
+  font-weight: var(--font-weight-normal);
+}
+.chat-permission-tag {
+  display: inline-flex;
+  margin-left: calc(var(--spacing) * 2);
+}
+.chat-permission-failed {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.chat-permission-sentence {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  animation: chat-permission-sentence-in 220ms var(--ease-out-expo);
+}
+/* The secrets note: a hint beside the level, in its neutral ink. */
+.chat-permission-secrets {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.chat-permission-secrets svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+/* No level earned: the model's reading, said to be one, in the quiet ink;
+   never a tone that reads as "safe". */
+.chat-permission-sentence[data-verified='false'] {
+  color: var(--text-secondary);
+}
+.chat-permission-sentence[data-loading='true'] {
+  color: var(--text-tertiary);
+  animation: chat-permission-reading 1.6s ease-in-out infinite;
+}
+.chat-permission-match {
+  margin-left: calc(var(--spacing) * 2);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+}
+@keyframes chat-permission-sentence-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes chat-permission-reading {
+  50% {
+    opacity: 0.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-permission-sentence,
+  .chat-permission-sentence[data-loading='true'] {
+    animation: none;
+  }
+}
+/* The way back to skipping permissions: a quiet verb, never a primary. */
+.chat-permission-bypass {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--spacing);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.chat-permission-bypass:hover {
+  color: var(--text-primary);
+}
+.chat-permission-bypass svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+.chat-mode-line strong {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}

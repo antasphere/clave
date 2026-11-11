@@ -8,6 +8,7 @@ import type {
   AntasphereAccountStatus,
   ClaudeAccount,
   CodexAccount,
+  HelperPreference,
   LaunchProfile,
   LaunchProfilePreferences,
   SettingsEvent,
@@ -47,6 +48,17 @@ export class FakeSettingsSource implements SettingsSourceService {
   codex: CodexAccount[] = []
   jobs: AccountLoginJob[] = []
   profiles: LaunchProfilePreferences = emptyProfiles()
+  /** The host's helpers as the fake holds them (PRDCT-4330). */
+  helperList: HelperPreference[] = [
+    {
+      id: 'tab-title',
+      label: 'Tab titles',
+      enabled: true,
+      model: 'haiku',
+      defaultModel: 'haiku',
+      account: { kind: 'session' }
+    }
+  ]
   state: WorkspaceState = {
     version: 1,
     workspaces: [],
@@ -260,6 +272,25 @@ export class FakeSettingsSource implements SettingsSourceService {
     setWorkspace: (workspaceId, family, profileId) => {
       this.record('launchProfiles.setWorkspace', workspaceId, family, profileId)
       return this.profiles
+    }
+  }
+  readonly helpers: SettingsSourceService['helpers'] = {
+    list: () => this.helperList,
+    set: (helperId, patch) => {
+      this.record('helpers.set', helperId, patch)
+      const known = this.helperList.find((h) => h.id === helperId)
+      if (!known) throw new Error(`There is no helper "${helperId}" on this machine.`)
+      this.helperList = this.helperList.map((h) =>
+        h.id === helperId
+          ? {
+              ...h,
+              ...(patch.enabled !== undefined && { enabled: patch.enabled }),
+              ...(patch.model !== undefined && { model: patch.model ?? h.defaultModel }),
+              ...(patch.account !== undefined && { account: patch.account })
+            }
+          : h
+      )
+      return this.helperList
     }
   }
   readonly preferences: SettingsSourceService['preferences'] = {

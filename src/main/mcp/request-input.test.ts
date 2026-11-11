@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  REQUEST_INPUT_DESCRIPTION,
   inputResultPayload,
   pollResult,
   requestInputSchema,
@@ -81,6 +82,38 @@ describe('clave_request_input arguments', () => {
         { id: 'budget', question: 'Seats', kind: 'number', options: [], min: 1, max: 10 }
       ]
     })
+  })
+
+  it('carries a choice closed to its options, and says every question goes through the form (PRDCT-4322)', () => {
+    const args = parse({
+      description: 'Where it runs.',
+      questions: [
+        {
+          id: 'server',
+          label: 'Which server?',
+          kind: 'choice',
+          optionsOnly: true,
+          options: [{ label: 'studio' }, { label: 'mini' }]
+        },
+        {
+          id: 'host',
+          label: 'Which host?',
+          kind: 'choice',
+          options: [{ label: 'a' }, { label: 'b' }]
+        }
+      ]
+    })
+    const [closed, open] = toHostedInput(args, 'tab-1').questions
+    expect(closed.optionsOnly).toBe(true)
+    expect(open).not.toHaveProperty('optionsOnly')
+    expect(() =>
+      toHostedInput(
+        parse({ description: 'D', questions: [{ id: 'a', label: 'A', optionsOnly: true }] }),
+        'tab-1'
+      )
+    ).toThrow('optionsOnly belongs to a choice')
+    expect(REQUEST_INPUT_DESCRIPTION).toContain('never through your own question tool')
+    expect(REQUEST_INPUT_DESCRIPTION).not.toContain('can also go through your own question tool')
   })
 
   it.each([

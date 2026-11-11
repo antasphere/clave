@@ -31,7 +31,8 @@ import {
   type UsageProvider
 } from '../../store/usage-store'
 import { windowExhausted } from '../../lib/account-pool'
-import { accountForLaunch } from '../../lib/switch-account'
+import { accountForLaunch, accountProviderOf } from '../../lib/switch-account'
+import { ownAccountFrom, useSessionAccountView } from '../../lib/session-accounts'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import { useCodexAccountStore } from '../../store/codex-account-store'
 import { PiLogo } from '../icons/cli-logos'
@@ -326,6 +327,18 @@ export function SidebarFooter(): React.ReactElement {
         ? (sessionLabel ?? 'Removed account')
         : null
   const quota = provider === 'codex' ? codexUsageStore(accountId)() : claudeUsageStore(accountId)()
+  // A tab on a server: its OWN account on that server and that account's
+  // read there (PRDCT-4328), the server's settings the chip and the row
+  // already keep current. Never this Mac's account of the same id.
+  const remoteFocused = focusedSession && isRemoteKey(focusedSession.id) ? focusedSession : null
+  const remoteProvider = remoteFocused ? accountProviderOf(remoteFocused) : null
+  const remoteView = useSessionAccountView(remoteFocused, remoteProvider)
+  const remoteOwn = remoteFocused && remoteView ? ownAccountFrom(remoteView, remoteFocused) : null
+  const remoteRead = remoteOwn && remoteView ? remoteView.usage[remoteOwn.id] : undefined
+  const remoteUsage =
+    remoteRead && remoteRead.status !== 'error'
+      ? headroomWindow(claudeUsageForModel(remoteRead, remoteFocused?.model))
+      : null
   const pi = piUsageStores.today()
   const loadUsage =
     provider === 'pi' ? pi.load : provider === 'claude' || provider === 'codex' ? quota.load : null
@@ -375,7 +388,12 @@ export function SidebarFooter(): React.ReactElement {
   const showWork =
     !usage && !piTotals && !showProviderStatus && trackerEnabled && trackerMinutes > 0
   const showMetaRow =
-    usage !== null || piTotals !== null || showProviderStatus || showWork || showFeedbackIcon
+    usage !== null ||
+    remoteUsage !== null ||
+    piTotals !== null ||
+    showProviderStatus ||
+    showWork ||
+    showFeedbackIcon
 
   return (
     <div
@@ -447,6 +465,8 @@ export function SidebarFooter(): React.ReactElement {
                 provider={quotaProvider}
                 account={quotaProvider === 'claude' ? accountLabel : null}
               />
+            ) : remoteUsage && remoteProvider && remoteOwn ? (
+              <UsageLine window={remoteUsage} provider={remoteProvider} account={remoteOwn.label} />
             ) : piTotals ? (
               <button
                 className="sidebar-footer-line"
