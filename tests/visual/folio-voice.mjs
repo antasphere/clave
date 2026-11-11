@@ -47,7 +47,7 @@ const GOOD = 'xi-test-folio-look'
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('@container'))
     .join('\n')
-  const literal = css.match(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(|\b\d+(?:\.\d+)?(?:px|rem|ms)\b/gi)
+  const literal = css.match(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(|\b\d+(?:\.\d+)?(?:px|rem|ms|s)\b/gi)
   assert.equal(
     literal,
     null,

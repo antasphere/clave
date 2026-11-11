@@ -545,17 +545,17 @@
 }
 @media (prefers-reduced-motion: no-preference) {
   .folio-pen {
-    animation: folio-pen 1.6s var(--ease-out-settle) infinite;
+    animation: folio-pen var(--beat-pen) var(--ease-out-settle) infinite;
   }
   .folio-tick[data-status='writing'] > span,
   .folio-tick[data-status='working'] > span {
-    animation: folio-breathe 1.8s ease-in-out infinite;
+    animation: folio-breathe var(--beat-breathe) ease-in-out infinite;
   }
   .folio-note[data-state='running'] .folio-note-icon {
-    animation: folio-breathe 1.4s ease-in-out infinite;
+    animation: folio-breathe var(--beat-breathe-quick) ease-in-out infinite;
   }
   .folio-loader .folio-loader-stroke {
-    animation: folio-loader-write 1.6s ease-in-out infinite;
+    animation: folio-loader-write var(--beat-pen) ease-in-out infinite;
   }
 }
 @keyframes folio-pen {

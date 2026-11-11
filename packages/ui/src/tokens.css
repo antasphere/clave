@@ -95,18 +95,18 @@
      defaults. Every rounded-* utility resolves to these, and the design-system
      classes (.sidebar-item, .btn-*, .input-*, .floating-card) reference them,
      so this is the single knob for how round the whole app feels. */
-  --radius: 0.375rem;       /* base (== --radius-lg) */
-  --radius-sm: 0.1875rem;   /* 3px  (was 4px) */
-  --radius-md: 0.25rem;     /* 4px  (was 6px) */
-  --radius-lg: 0.375rem;    /* 6px  (was 8px)  — buttons, tabs, inputs */
+  --radius: 0.375rem; /* base (== --radius-lg) */
+  --radius-sm: 0.1875rem; /* 3px  (was 4px) */
+  --radius-md: 0.25rem; /* 4px  (was 6px) */
+  --radius-lg: 0.375rem; /* 6px  (was 8px)  — buttons, tabs, inputs */
   /* --radius-xl: the corner of a SURFACE (a menu, a card, a pane). At Compact
      it is derived, concentric with the rows it holds: control corner + the
      surface's inset + its border = 11px. Comfortable keeps the hand-picked
      10px it was tuned at. Each density preset sets its own — see
      density.css. Frames (bars) take --frame-radius. */
   --radius-xl: calc(var(--control-radius) + var(--surface-inset) + var(--frame-border));
-  --radius-2xl: 0.875rem;   /* 14px (was 16px) */
-  --radius-full: 9999px;    /* pills, dots, round buttons */
+  --radius-2xl: 0.875rem; /* 14px (was 16px) */
+  --radius-full: 9999px; /* pills, dots, round buttons */
 
   /* The radius of a control sitting INSIDE a --radius-xl panel — every button,
      chip, tab and field in the toolbar, the sidebar's launcher and switcher, and
@@ -134,19 +134,18 @@
      label sizes on top of whichever preset is active. */
   --ui-text-offset: 0px;
 
-
   /* ── The control spec ──────────────────────────────────────────────────
      One control, five numbers. Every button, chip, tab, row and field reads
      ALL of them from here and writes none as a literal, so the ratio Luca
      picked on the workspace popover's rows (28px, 8px sides, 13px label,
      6px corner) is the ratio of every control in the app, and a change here
      is a change everywhere (2026-09-21, with the design lead). */
-  --control-h: var(--control-h-md);  /* 28px */
-  --control-px: 0.5rem;              /* 8px  — the sides of a text control */
-  --control-gap: 0.375rem;           /* 6px  — icon to label inside a control */
-  --control-text: calc(13px + var(--ui-text-offset));  /* the label */
-  --control-radius: var(--radius-lg);/* 6px */
-  --control-icon: 1rem;              /* 16px — the glyph in a 28px box */
+  --control-h: var(--control-h-md); /* 28px */
+  --control-px: 0.5rem; /* 8px  — the sides of a text control */
+  --control-gap: 0.375rem; /* 6px  — icon to label inside a control */
+  --control-text: calc(13px + var(--ui-text-offset)); /* the label */
+  --control-radius: var(--radius-lg); /* 6px */
+  --control-icon: 1rem; /* 16px — the glyph in a 28px box */
 
   /* The label of the small controls — the launcher's buttons, the switcher's
      chips and search, the side panel's tabs, the primary / secondary buttons,
@@ -177,12 +176,16 @@
      the inner corner stays concentric with the frame's at every preset
      (Comfortable: 34px frame, 2px inset, 10px corner → 28px control, 7px). */
   --frame-border: 1px;
-  --frame-inset: 1px;                /* framed control to frame edge */
-  --frame-h: var(--control-h);       /* 28px: a frame is one control tall */
-  --frame-radius: var(--control-radius);                                              /* 6px */
-  --framed-control-h: calc(var(--frame-h) - 2 * (var(--frame-inset) + var(--frame-border)));   /* 24px */
-  --framed-control-radius: calc(var(--frame-radius) - var(--frame-inset) - var(--frame-border)); /* 4px */
-  --framed-control-icon: 0.875rem;   /* 14px glyph in a 24px box (Tight / Compact only) */
+  --frame-inset: 1px; /* framed control to frame edge */
+  --frame-h: var(--control-h); /* 28px: a frame is one control tall */
+  --frame-radius: var(--control-radius); /* 6px */
+  --framed-control-h: calc(
+    var(--frame-h) - 2 * (var(--frame-inset) + var(--frame-border))
+  ); /* 24px */
+  --framed-control-radius: calc(
+    var(--frame-radius) - var(--frame-inset) - var(--frame-border)
+  ); /* 4px */
+  --framed-control-icon: 0.875rem; /* 14px glyph in a 24px box (Tight / Compact only) */
 
   /* A surface (menu, card, pane) is not a frame: it holds full-size rows and
      insets them by this much, which is what --radius-xl above is cut from. */
@@ -191,15 +194,15 @@
   /* Control height scale — single source of truth for row/button/input heights.
      Components reference these via var(--control-h-*) so a change here propagates everywhere. */
   --control-h-xs: 1.25rem; /* 20px — row-level affordances (a file row's stage/discard) */
-  --control-h-sm: 1.5rem;  /* 24px — extra compact */
+  --control-h-sm: 1.5rem; /* 24px — extra compact */
   --control-h-md: 1.75rem; /* 28px — default rows, buttons, compact inputs */
-  --control-h-lg: 2rem;    /* 32px — inputs */
+  --control-h-lg: 2rem; /* 32px — inputs */
 
   /* The toolbar's inner row, and the card height that follows from it once the
      floating card's 1px borders are added. The sidebar's launcher panel is cut
      to the same height, so the two top bars read as one band across the divide. */
-  --toolbar-h: var(--frame-h);                                            /* 28px: the toolbar is a frame */
-  --toolbar-row-h: calc(var(--toolbar-h) - 2 * var(--frame-border));      /* 26px */
+  --toolbar-h: var(--frame-h); /* 28px: the toolbar is a frame */
+  --toolbar-row-h: calc(var(--toolbar-h) - 2 * var(--frame-border)); /* 26px */
 
   /* Where the content column's first card BELOW the toolbar starts, measured
      from the top of the window: the column's own top margin (my-2), the toolbar
@@ -209,7 +212,9 @@
      clears the macOS traffic lights (y=16, ~14px tall). The two 0.5rem terms
      restate the `my-2` and `gap-2` utilities the components are written with;
      --toolbar-h is the part that moves with the density preset. */
-  --content-top-offset: calc(0.5rem + var(--toolbar-h) + 0.5rem); /* 44px at Compact, 50px at Comfortable */
+  --content-top-offset: calc(
+    0.5rem + var(--toolbar-h) + 0.5rem
+  ); /* 44px at Compact, 50px at Comfortable */
 
   /* Height of a row in the git panel's repo tree (a directory or a repo
      header). Fixed rather than content-sized, since the trailing sync badges
@@ -277,8 +282,8 @@
   --color-status-waiting: #f59e0b;
   --color-status-inactive: #6b7280;
 
-  --font-sans: "Geist Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --font-sans: 'Geist Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Single source of truth for "medium" UI text weight. Overrides Tailwind's
      default font-medium (500) so every `font-medium` utility and every design-
@@ -292,6 +297,12 @@
   --ease-out-settle: cubic-bezier(0.32, 1.18, 0.6, 1);
 
   --animate-fade-in: fade-in 150ms var(--ease-out-expo);
+
+  /* The beats of the drawings in the house hand: the pen's stroke, a figure
+     breathing at rest, a quicker breath while it works. */
+  --beat-pen: 1.6s;
+  --beat-breathe: 1.8s;
+  --beat-breathe-quick: 1.4s;
 }
 
 /* Dark theme (default) */
@@ -299,7 +310,7 @@
    attribute so a nested element can carry a theme of its own, which is how the
    Appearance page paints each theme's swatch with that theme's real tokens
    instead of a copied hex. Same rule, two selectors: nothing is duplicated. */
-[data-theme="dark"],
+[data-theme='dark'],
 :root {
   /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
   --terminal-foreground: rgba(255, 255, 255, 0.9);
@@ -380,7 +391,8 @@
   --control-surface: #201e1b;
   --field-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14);
   --focus-ring:
-    0 0 0 1px var(--color-accent), 0 0 0 4px color-mix(in srgb, var(--color-accent) 22%, transparent);
+    0 0 0 1px var(--color-accent),
+    0 0 0 4px color-mix(in srgb, var(--color-accent) 22%, transparent);
   --surface-200: #262420;
   --surface-300: #2f2c28;
   --surface-400: #38352f;
@@ -453,7 +465,7 @@
 }
 
 /* Light theme — Linear-inspired warm grays */
-[data-theme="light"] {
+[data-theme='light'] {
   /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
   --terminal-foreground: #1b1b18;
   --terminal-accent: rgba(27, 27, 24, 0.7);
@@ -507,7 +519,7 @@
   --rule-alpha: 0.022;
   --text-primary: #1b1b18;
   --text-secondary: #5c5c56; /* 6.1:1 on --surface-50 (was #6c6c65, 4.8:1) */
-  --text-tertiary: #70706a;  /* 4.5:1 on --surface-50 (was #9b9b94, 2.5:1) */
+  --text-tertiary: #70706a; /* 4.5:1 on --surface-50 (was #9b9b94, 2.5:1) */
   --git-worktree: #7c3aed;
   --sidebar-item-text: #45453f;
   --sidebar-icon-color: #6c6c65;
@@ -538,7 +550,7 @@
 }
 
 /* Coffee theme — warm light, matching Claude's cream/beige aesthetic */
-[data-theme="coffee"] {
+[data-theme='coffee'] {
   /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
   --terminal-foreground: #1b1610;
   --terminal-accent: rgba(27, 22, 16, 0.7);
@@ -587,7 +599,7 @@
   --rule-alpha: 0.055;
   --text-primary: #1b1610;
   --text-secondary: #5d574f; /* 6.0:1 on --surface-50 (was #756e66, 4.2:1) */
-  --text-tertiary: #6d6660;  /* 4.8:1 on --surface-50 (was #9b9590, 2.5:1) */
+  --text-tertiary: #6d6660; /* 4.8:1 on --surface-50 (was #9b9590, 2.5:1) */
   --git-worktree: #7c3aed;
   --sidebar-item-text: #4d4840;
   --sidebar-icon-color: #756e66;
@@ -642,7 +654,7 @@
    toolbar, the panels inside the sidebar) and sits a step BELOW --surface-50,
    the chrome that the window ground and the sidebar share. Cards are wells
    here exactly as they are in dark. */
-[data-theme="charcoal"] {
+[data-theme='charcoal'] {
   /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
   --terminal-foreground: #efece9;
   --terminal-accent: rgba(255, 243, 232, 0.8);
@@ -700,7 +712,7 @@
      went cold. */
   --text-primary: #efece9;
   --text-secondary: #b8b4b0; /* 6.4:1 on --surface-50 (was #a39f9b, 5.0:1) */
-  --text-tertiary: #9c9893;  /* 4.5:1 on --surface-50 (was #84807b, 3.3:1) */
+  --text-tertiary: #9c9893; /* 4.5:1 on --surface-50 (was #84807b, 3.3:1) */
   --git-worktree: #a78bfa;
   --sidebar-item-text: #c7c3c0;
   --sidebar-icon-color: #9f9a96;
@@ -734,4 +746,3 @@
   --color-wellbeing-strong-bg: oklch(0.36 0.035 50);
   --color-wellbeing-strong-border: oklch(0.5 0.07 50);
 }
-
