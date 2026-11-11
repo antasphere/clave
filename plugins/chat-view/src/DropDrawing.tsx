@@ -11,13 +11,19 @@
    - sessions: the sidebar's rows beside the composer; the one being dragged
      has come out of its column and travels the accent line into the message,
      the others stay seated.
+   - refused: the refusal card's, smaller and drawn beside its words rather
+     than over them (PRDCT-4329). This Mac on the left, a laptop with the
+     folder on its screen; the server on the right, its stacked units. The
+     accent line leaves the folder for the server and stops short against
+     its bar; the way on is only dashed, to the ringed dot where it would
+     have landed, which stays ink: nothing arrived.
 
    The accent line draws itself once as the card comes up; a reader who asked
    for no motion gets the still drawing. Ink comes from the app's tokens
    (`.chat-drawing` in system.css), so every theme just works. Words never go
    inside a drawing: the card says them underneath. */
 
-export type DropDrawingKind = 'files' | 'sessions'
+export type DropDrawingKind = 'files' | 'sessions' | 'refused'
 
 /** The composer, as every drawing shows it: a paper box with one line of
  *  text and the send dot at its end. */
@@ -63,27 +69,70 @@ function Page({
 function Folder({
   x,
   y,
+  scale = 1,
+  front,
   className = ''
 }: {
   x: number
   y: number
+  /** Smaller for the refusal card's drawing; the strokes keep their weight. */
+  scale?: number
+  front?: boolean
   className?: string
 }): React.JSX.Element {
-  const w = 46
-  const h = 36
-  const t = 16
+  const w = 46 * scale
+  const h = 36 * scale
+  const t = 16 * scale
   return (
     <g className={className}>
       <path
-        className="bx"
-        d={`M${x + 4},${y} H${x + t} l5,5 H${x + w - 4} a4,4 0 0 1 4,4 V${y + h - 4} a4,4 0 0 1 -4,4 H${x + 4} a4,4 0 0 1 -4,-4 V${y + 4} a4,4 0 0 1 4,-4 Z`}
+        className={front ? 'bx bx--front' : 'bx'}
+        d={`M${x + 4},${y} H${x + t} l${5 * scale},${5 * scale} H${x + w - 4} a4,4 0 0 1 4,4 V${y + h - 4} a4,4 0 0 1 -4,4 H${x + 4} a4,4 0 0 1 -4,-4 V${y + 4} a4,4 0 0 1 4,-4 Z`}
       />
-      <line className="ln ln--thin" x1={x} y1={y + 12} x2={x + w} y2={y + 12} />
+      <line className="ln ln--thin" x1={x} y1={y + 12 * scale} x2={x + w} y2={y + 12 * scale} />
     </g>
   )
 }
 
+/** The refusal card's drawing: the folder on this Mac, the server, and the
+ *  line between them that does not arrive. */
+function Refused(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 132 80" className="chat-drawing drop-refused-drawing" aria-hidden="true">
+      {/* the ground both machines stand on */}
+      <line className="ln ln--thin" x1="4" y1="74" x2="128" y2="74" />
+      {/* this Mac: a laptop, the folder on its screen */}
+      <rect className="bx" x="6" y="28" width="48" height="34" rx="4" />
+      <rect className="bx bx--front" x="1" y="62" width="58" height="5" rx="2.5" />
+      <Folder x={17} y={36} scale={0.58} front />
+      {/* the server: three units, each with its slot and its light, the top
+          one's light the ringed dot below, where the line would have landed */}
+      <rect className="bx bx--front" x="94" y="22" width="34" height="15" rx="3.5" />
+      <line className="ln ln--thin" x1="104" y1="29.5" x2="121" y2="29.5" />
+      <rect className="bx" x="94" y="40" width="34" height="15" rx="3.5" />
+      <circle className="dot dot--seat" cx="101" cy="47.5" r="1.6" />
+      <line className="ln ln--thin" x1="107" y1="47.5" x2="121" y2="47.5" />
+      <rect className="bx" x="94" y="58" width="34" height="15" rx="3.5" />
+      <circle className="dot dot--seat" cx="101" cy="65.5" r="1.6" />
+      <line className="ln ln--thin" x1="107" y1="65.5" x2="121" y2="65.5" />
+      {/* the one line that carries the meaning: it leaves the folder for the
+          server and stops short, against its bar */}
+      <path
+        className="ln ln--c travel"
+        pathLength={1}
+        d="M38,40 C44,22 56,13 68,13 M72,7.5 V18.5"
+      />
+      {/* where it would have gone, only dashed, and where it would have landed */}
+      <path className="ln ln--soft" d="M77,13 C83,13 88,17 90.5,23" />
+      <circle className="bx bx--front" cx="94" cy="29.5" r="4.5" />
+      <circle className="ring" cx="94" cy="29.5" r="4.5" />
+      <circle className="dot dot--seat" cx="94" cy="29.5" r="1.8" />
+    </svg>
+  )
+}
+
 export function DropDrawing({ kind }: { kind: DropDrawingKind }): React.JSX.Element {
+  if (kind === 'refused') return <Refused />
   return (
     <svg viewBox="0 0 240 150" className="chat-drawing" aria-hidden="true">
       <defs>
