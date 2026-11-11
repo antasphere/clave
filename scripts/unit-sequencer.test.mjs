@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import UnitSequencer, { partitionUnitFiles } from './unit-sequencer.mjs'
 
 const slow = [
@@ -10,6 +11,22 @@ const slow = [
 const files = [...slow, ...Array.from({ length: 500 }, (_, i) => `src/new-${i}.test.ts`)]
 
 describe('Linux unit placement', () => {
+  it('loads the real CI config and executes a shard through the Vitest CLI', () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        'node_modules/vitest/vitest.mjs',
+        'run',
+        'scripts/merge-unit-reports.test.mjs',
+        '--config',
+        'vitest.ci.config.mjs',
+        '--shard=1/1'
+      ],
+      { encoding: 'utf8', timeout: 20_000, env: { ...process.env, NO_COLOR: '1' } }
+    )
+    expect(output).toMatch(/8 passed/)
+  }, 25_000)
+
   it('runs every file exactly once, including files without timing hints', () => {
     for (const count of [1, 2, 4, 8, 600]) {
       const shards = partitionUnitFiles(files, count)
