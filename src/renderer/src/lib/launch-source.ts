@@ -18,7 +18,13 @@ import {
   type LaunchProfile,
   type LauncherFamily
 } from '../../../shared/agent-launch'
-import { profilesFor, selectedLaunchProfile } from '../store/launch-profile-store'
+import {
+  profilesFor,
+  selectedChatProfile,
+  selectedLaunchProfile
+} from '../store/launch-profile-store'
+import { CHAT_PROFILE_IDS, chatDefaultFor } from '../../../shared/open-session-modes'
+import { connectionsForModel, type ModelConnection } from './switch-account'
 import { describeClaudeProfileAuth, useClaudeProfileStore } from '../store/claude-profile-store'
 import { describeCodexAccountAuth, useCodexAccountStore } from '../store/codex-account-store'
 import { capStatusLine, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
@@ -49,6 +55,13 @@ export interface LaunchSource {
   selectedProfileId(family: LauncherFamily): string
   accounts(family: PooledFamily): LaunchAccount[]
   selectedAccountId(family: PooledFamily): string | null
+  /** The chat profile a chat launch of the family opens on (PRDCT-4423):
+   *  the family's chat default in the workspace, else its built-in chat;
+   *  undefined for a family with no chat view. */
+  chatProfileId(family: LauncherFamily): string | undefined
+  /** The connections a launch of `model` could run on, judged for that
+   *  model, the suggested one marked (`connectionsForModel`). */
+  connections(family: PooledFamily, model: string | undefined): ModelConnection[]
 }
 
 /** This Mac, from the local stores; read at render so the caller's own
@@ -81,7 +94,9 @@ export function localLaunchSource(workspaceId: string | null): LaunchSource {
     selectedAccountId: (family) =>
       family === 'claude'
         ? useClaudeProfileStore.getState().selectedProfileId
-        : useCodexAccountStore.getState().selectedAccountId
+        : useCodexAccountStore.getState().selectedAccountId,
+    chatProfileId: (family) => selectedChatProfile(family, workspaceId) ?? CHAT_PROFILE_IDS[family],
+    connections: (family, model) => connectionsForModel(family, model)
   }
 }
 
@@ -110,6 +125,9 @@ export function serverLaunchSource(
     profilesFor: (family) => serverProfilesFor(settings, family),
     selectedProfileId: (family) => resolveLaunchProfile(preferences, family, null).id,
     accounts,
-    selectedAccountId: (family) => accounts(family)[0]?.id ?? null
+    selectedAccountId: (family) => accounts(family)[0]?.id ?? null,
+    chatProfileId: (family) =>
+      chatDefaultFor(preferences, family, null) ?? CHAT_PROFILE_IDS[family],
+    connections: (family, model) => connectionsForModel(family, model, serverId)
   }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useAccountPolicyStore } from './account-policy-store'
+import { isValidModelName } from '../../../shared/model-name'
 
 /** Which agent a session runs. One field instead of the four booleans
  *  (`claudeMode` / `claudeAgentsMode` / `antigravityMode` / `codexMode`) the
@@ -20,6 +21,10 @@ export interface AgentSetup {
   codexAccountId?: string
   /** Local binary-wrapper profile, independent from the Claude account. */
   launchProfileId?: string
+  /** The model picked in the launcher (PRDCT-4423): what the pool judges
+   *  the account by and what the spawn passes as the CLI's model flag.
+   *  Absent = the harness's own default. */
+  model?: string
 }
 
 export const DEFAULT_AGENT_SETUP: AgentSetup = { kind: 'claude', dangerousMode: false }
@@ -82,7 +87,12 @@ export function parseSetup(raw: unknown): AgentSetup | null {
     ...(typeof value.codexAccountId === 'string' && kind === 'codex'
       ? { codexAccountId: value.codexAccountId }
       : {}),
-    ...(typeof value.launchProfileId === 'string' ? { launchProfileId: value.launchProfileId } : {})
+    ...(typeof value.launchProfileId === 'string'
+      ? { launchProfileId: value.launchProfileId }
+      : {}),
+    ...(typeof value.model === 'string' && isValidModelName(value.model)
+      ? { model: value.model }
+      : {})
   }
 }
 

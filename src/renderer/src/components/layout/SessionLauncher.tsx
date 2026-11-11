@@ -13,15 +13,16 @@ import {
 } from '../../store/launch-prefs'
 import { launchSession, type LaunchCwd } from '../../lib/launch-session'
 import { setWorkspaceLaunchProfile, useLaunchProfileStore } from '../../store/launch-profile-store'
-import type { LaunchProfile, LauncherFamily } from '../../../../shared/agent-launch'
+import { chatProfileSource, type LauncherFamily } from '../../../../shared/agent-launch'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
-import {
-  localLaunchSource,
-  serverLaunchSource,
-  type LaunchAccount,
-  type LaunchSource,
-  type PooledFamily
-} from '../../lib/launch-source'
+import { localLaunchSource, serverLaunchSource, type LaunchSource } from '../../lib/launch-source'
+import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
+import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models'
+import { isChatProfileRef } from '../../../../shared/open-session-modes'
+import type { ModelOption } from '../../../../shared/session-model'
+import { useLaunchSettingsStore } from '../../store/launch-settings-store'
+import { useAgentUpdatesStore } from '../../store/agent-updates-store'
+import { useSessionStore } from '../../store/session-store'
 import {
   loadServerSettings,
   startServerSettingsEvents,
@@ -33,7 +34,8 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   BoltIcon,
-  CheckIcon
+  CheckIcon,
+  SparklesIcon
 } from '@heroicons/react/24/outline'
 import { AgentPickerPopover } from '../agents/AgentPickerPopover'
 import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
@@ -101,15 +103,38 @@ const MENU_ICON_INSET = 5
  *  the other 6px is the gap the menu leaves under the panel. */
 const MENU_SIDE_OFFSET = 9
 
+/** A model a harness row offers: `id` undefined is the harness's own
+ *  default (no flag passed). `family` names whose credits it spends, for the
+ *  hint of a model no connection can run. */
+interface LauncherModel {
+  id: string | undefined
+  label: string
+  family: string
+}
+
+const DEFAULT_MODEL: LauncherModel = { id: undefined, label: 'Default', family: 'Default' }
+
+/** How a remembered model reads: a Claude id by its name, any other as it is. */
+function modelLabel(setup: AgentSetup): string | null {
+  if (!setup.model) return null
+  return setup.kind === 'claude' || setup.kind === 'claude-agents'
+    ? claudeModelName(setup.model)
+    : setup.model
+}
+
 /** The sentence the button's tooltip says, so the remembered setup is legible
  *  without launching it — the whole point of remembering is that one click is
- *  enough, which only works if you can see what that click will do. */
-function describeSetup(setup: AgentSetup, profileLabel?: string): string {
-  const parts = [AGENT_LABELS[setup.kind]]
-  if (setup.kind === 'claude-agents') parts[0] = 'Claude Agents'
-  if (setup.dangerousMode) parts.push(setup.kind === 'codex' ? '(YOLO)' : '(skip permissions)')
-  if (profileLabel) parts.push(`· ${profileLabel}`)
-  return `New session — ${parts.join(' ')}`
+ *  enough, which only works if you can see what that click will do:
+ *  "<Harness> · <model> · <connection>" (PRDCT-4423), each part left out
+ *  when it is the harness's own default. */
+function describeSetup(setup: AgentSetup, connectionLabel?: string): string {
+  const family: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
+  let harness = setup.kind === 'claude-agents' ? 'Claude Agents' : HARNESS_BY_ID[family].name
+  if (setup.dangerousMode) harness += setup.kind === 'codex' ? ' (YOLO)' : ' (skip permissions)'
+  const parts = [harness, modelLabel(setup), connectionLabel].filter(
+    (part): part is string => !!part
+  )
+  return `New session — ${parts.join(' · ')}`
 }
 
 /**
@@ -131,6 +156,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [menuAlignOffset, setMenuAlignOffset] = useState(0)
+  /** Codex's models, asked of its CLI when the menu first opens (there is
+   *  no static list): undefined until the answer, `failed` when it could not
+   *  be read (the row then offers its default alone). */
+  const [codexModels, setCodexModels] = useState<ModelOption[] | 'failed' | undefined>(undefined)
   const caretRef = useRef<HTMLButtonElement | null>(null)
   const agentButtonRef = useRef<HTMLButtonElement | null>(null)
   const agents = useAgentStore((s) => s.agents)
@@ -160,12 +189,23 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const setup = getLastAgentSetup(activeWorkspaceId)
   const terminalShortcut = useShortcutLabel('newTerminal')
   const claudeShortcut = useShortcutLabel('newClaude')
-  const dangerousShortcut = useShortcutLabel('newDangerousClaude')
   const agentsShortcut = useShortcutLabel('newClaudeAgents')
   const antigravityShortcut = useShortcutLabel('newAntigravity')
   const codexShortcut = useShortcutLabel('newCodex')
-  const yoloCodexShortcut = useShortcutLabel('newYoloCodex')
   const piShortcut = useShortcutLabel('newPi')
+  const HARNESS_SHORTCUTS: Record<HarnessId, string | null> = {
+    claude: claudeShortcut,
+    codex: codexShortcut,
+    antigravity: antigravityShortcut,
+    pi: piShortcut
+  }
+  const interactionMode = useLaunchSettingsStore((s) => s.interactionMode)
+  const harnessSettings = useLaunchSettingsStore((s) => s.harnesses)
+  const agentStatuses = useAgentUpdatesStore((s) => s.agents)
+  /** Installed unless a check said otherwise: a harness not checked yet
+   *  keeps its row, so the menu does not flicker at boot. */
+  const harnessInstalled = (id: HarnessId): boolean =>
+    agentStatuses.find((status) => status.id === id)?.installed !== false
 
   const connectedRemoteLocations = locations.filter(
     (l) => l.type === 'remote' && l.status === 'connected'
@@ -207,7 +247,6 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const topSource = sourceFor(activeServerId ?? LOCAL_SERVER_ID)
   const hasRemoteLocations = connectedRemoteLocations.length > 0 || pairedServers.length > 0
   const hasAgentLocations = agents.length > 0
-  const multiProfile = topSource.accounts('claude').length > 1
 
   // The servers whose rows the menu draws, read while they are connected so
   // the rows are there before the menu opens; read again when a server
@@ -225,17 +264,22 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
   const AgentLogo = AGENT_LOGOS[setup.kind]
   const setupFamily: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
-  const binaryProfile =
-    topSource.profilesFor(setupFamily).find((p) => p.id === setup.launchProfileId) ??
-    topSource
-      .profilesFor(setupFamily)
-      .find((p) => p.id === topSource.selectedProfileId(setupFamily))
-  const profileLabel =
-    multiProfile && (setup.kind === 'claude' || setup.kind === 'claude-agents')
-      ? topSource
-          .accounts('claude')
-          .find((p) => p.id === (setup.claudeProfileId ?? topSource.selectedAccountId('claude')))
-          ?.label
+  // The connection the button's click goes out on: the one the setup names,
+  // else the pool's suggestion for the setup's model. Named only when the
+  // pool has a choice to make.
+  const setupPool = HARNESS_BY_ID[setupFamily].connectionPool
+  const connectionLabel =
+    setupPool && topSource.accounts(setupPool).length > 1
+      ? (() => {
+          const named = setupPool === 'claude' ? setup.claudeProfileId : setup.codexAccountId
+          const connections = topSource.connections(setupPool, setup.model)
+          return (
+            connections.find((c) => (named ? c.id === named : c.suggested)) ??
+            (named
+              ? undefined
+              : connections.find((c) => c.id === topSource.selectedAccountId(setupPool)))
+          )?.label
+        })()
       : undefined
 
   /** Opening measures the agent button so the menu hangs off its left edge,
@@ -251,9 +295,18 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
         for (const serverId of serversKey.split('\u0000'))
           if (serverSettings[serverId]?.status !== 'ready') void loadServerSettings(serverId)
       }
+      if (open && (codexModels === undefined || codexModels === 'failed')) {
+        const cwd = getWorkspaceById(activeWorkspaceId)?.rootDir ?? '/'
+        const read = window.electronAPI?.adaptersModels?.('codex-chat', cwd)
+        if (!read) setCodexModels('failed')
+        else
+          void read
+            .then((models) => setCodexModels(models.length > 0 ? models : 'failed'))
+            .catch(() => setCodexModels('failed'))
+      }
       setMenuOpen(open)
     },
-    [serversKey, serverSettings]
+    [serversKey, serverSettings, codexModels, activeWorkspaceId]
   )
 
   const run = useCallback(async (request: Parameters<typeof launchSession>[0]) => {
@@ -270,253 +323,300 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const cwdFor = (e: { altKey: boolean }): LaunchCwd =>
     e.altKey ? { kind: 'ask' } : { kind: 'workspace-root' }
 
-  const launchAgent = (next: AgentSetup, cwd: LaunchCwd): void => {
+  /** `pinProfile`: a profile picked under Advanced becomes the workspace's
+   *  default for its family, as a profile row did before PRDCT-4423; the
+   *  transport a plain row derives from the interaction mode is not a pick
+   *  and is never written. */
+  const launchAgent = (
+    next: AgentSetup,
+    cwd: LaunchCwd,
+    options: { pinProfile?: boolean } = {}
+  ): void => {
     setMenuOpen(false)
-    if (activeWorkspaceId && next.launchProfileId && !activeServerId) {
+    if (options.pinProfile && activeWorkspaceId && next.launchProfileId && !activeServerId) {
       const family: LauncherFamily = next.kind === 'claude-agents' ? 'claude' : next.kind
       void setWorkspaceLaunchProfile(activeWorkspaceId, family, next.launchProfileId)
     }
     void run({ setup: next, cwd, remember: true })
   }
 
-  /** A Claude or Codex entry in the caret menu: one level per choice left to
-   *  make. With a single launch profile and a single account it launches on a
-   *  click. Otherwise hovering it opens the launch profiles — the terminal
-   *  CLI, its chat view, every saved profile and its chat twin — and, with
-   *  more than one account, hovering a profile opens that provider's accounts
-   *  beside it, each with its headroom. With one profile and several accounts
-   *  the accounts come straight after the entry. The profiles and the
-   *  accounts are the source's: this Mac's, or the server's the row runs on. */
-  const renderPooledEntry = (entry: {
-    family: PooledFamily
-    label: string
-    shortcut: string | undefined
-    Logo: typeof ClaudeLogo
-    binaryProfiles: LaunchProfile[]
-    selectedBinaryId: string
-    accounts: LaunchAccount[]
-    selectedAccountId: string | null
-    disabled: boolean
-    launch: (launchProfileId: string, accountId?: string) => void
-  }): React.JSX.Element => {
-    const {
-      family,
-      label,
-      shortcut,
-      Logo,
-      binaryProfiles,
-      selectedBinaryId,
-      accounts,
-      selectedAccountId,
-      disabled,
-      launch
-    } = entry
-    const multiAccount = accounts.length > 1
-    const entryAttr = { [`data-${family}-entry`]: label }
-    if (!multiAccount && binaryProfiles.length === 1) {
-      return (
-        <DropdownMenuItem
-          {...entryAttr}
-          disabled={disabled}
-          onSelect={() => launch(binaryProfiles[0].id)}
-        >
-          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-          <span className="flex-1">{label}</span>
-          {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
-        </DropdownMenuItem>
-      )
+  /** The transport a launch of this harness runs on (PRDCT-4425): the chat
+   *  default of its family when the interaction mode is a chat view and the
+   *  harness has a chat adapter, else the family's selected TERMINAL profile
+   *  (a chat profile selected as the default stands for its terminal form
+   *  here: the "(chat)" twins are never a row of their own). */
+  const transportFor = (source: LaunchSource, harness: Harness): string => {
+    if (interactionMode !== 'terminal' && harness.chatAdapterId) {
+      const chat = source.chatProfileId(harness.id)
+      if (chat) return chat
     }
-    const accountRows = (binaryId: string): React.JSX.Element[] =>
-      accounts.map((account) => (
-        <DropdownMenuItem
-          key={account.id}
-          {...{ [`data-${family}-account`]: account.id }}
-          onSelect={() => launch(binaryId, account.id)}
-          title={account.title}
-        >
-          <span className="flex-1 truncate">{account.label}</span>
-          {account.headroom && (
-            <span className="text-[11px] text-text-tertiary tabular-nums flex-shrink-0">
-              {account.headroom}
-            </span>
-          )}
-          {binaryId === selectedBinaryId && account.id === selectedAccountId && (
-            <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-          )}
-        </DropdownMenuItem>
-      ))
-    const profileCheck = (binaryId: string): React.JSX.Element | null =>
-      binaryId === selectedBinaryId ? (
-        <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-      ) : null
-    return (
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger {...entryAttr} disabled={disabled}>
-          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-          <span className="flex-1">{label}</span>
-          <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
-        </DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          {binaryProfiles.length === 1 ? (
-            <>
-              <DropdownMenuLabel>Account</DropdownMenuLabel>
-              {accountRows(binaryProfiles[0].id)}
-            </>
-          ) : (
-            <>
-              <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
-              {binaryProfiles.map((binary) =>
-                multiAccount ? (
-                  <DropdownMenuSub key={binary.id}>
-                    <DropdownMenuSubTrigger data-launch-profile-entry={binary.id}>
-                      <span className="flex-1 truncate">{binary.name}</span>
-                      {profileCheck(binary.id)}
-                      <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuLabel>Account</DropdownMenuLabel>
-                      {accountRows(binary.id)}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                ) : (
-                  <DropdownMenuItem
-                    key={binary.id}
-                    data-launch-profile-entry={binary.id}
-                    onSelect={() => launch(binary.id)}
-                  >
-                    <span className="flex-1 truncate">{binary.name}</span>
-                    {profileCheck(binary.id)}
-                  </DropdownMenuItem>
-                )
-              )}
-            </>
-          )}
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-    )
+    const selected = source.selectedProfileId(harness.id)
+    if (!isChatProfileRef(harness.id, selected)) return selected
+    return chatProfileSource(selected)?.id ?? `builtin-${harness.id}`
   }
 
-  /** An Antigravity or Pi entry: no account, one level for the profile. */
-  const renderAgentEntry = (entry: {
-    kind: Exclude<AgentKind, 'claude' | 'claude-agents' | 'codex'>
-    label: string
-    shortcut: string | undefined
-    binaryProfiles: LaunchProfile[]
-    selectedBinaryId: string
-    disabled: boolean
-    launch: (launchProfileId: string) => void
-  }): React.JSX.Element => {
-    const { kind, label, shortcut, binaryProfiles, selectedBinaryId, disabled, launch } = entry
-    const Logo = AGENT_LOGOS[kind]
-    if (binaryProfiles.length === 1) {
-      return (
-        <DropdownMenuItem disabled={disabled} onSelect={() => launch(binaryProfiles[0].id)}>
-          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-          <span className="flex-1">{label}</span>
-          {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
-        </DropdownMenuItem>
-      )
+  /** The models a harness's row offers on hover, or null for a harness with
+   *  no model level (Antigravity takes no model on its command line). */
+  const modelsFor = (
+    source: LaunchSource,
+    harness: Harness
+  ): LauncherModel[] | 'loading' | null => {
+    if (!harness.takesModel) return null
+    if (harness.id === 'claude')
+      return CLAUDE_MODELS.map((model) => ({
+        id: model.id,
+        label: model.name,
+        family: model.alias.charAt(0).toUpperCase() + model.alias.slice(1)
+      }))
+    if (harness.id === 'codex') {
+      if (codexModels === undefined) return 'loading'
+      if (codexModels === 'failed' || codexModels.length === 0) return [DEFAULT_MODEL]
+      return codexModels.map((model) => ({ id: model.id, label: model.label, family: model.label }))
     }
-    return (
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger disabled={disabled}>
-          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-          <span className="flex-1">{label}</span>
-          <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
-        </DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
-          {binaryProfiles.map((profile) => (
-            <DropdownMenuItem
-              key={profile.id}
-              data-launch-profile-entry={profile.id}
-              onSelect={() => launch(profile.id)}
-            >
-              <span className="flex-1 truncate">{profile.name}</span>
-              {profile.id === selectedBinaryId && (
-                <CheckIcon className="w-3.5 h-3.5 text-text-tertiary" />
-              )}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-    )
+    // Pi runs whichever provider its own config names: its default, and the
+    // models its saved profiles pin.
+    const pinned = [
+      ...new Set(
+        source
+          .profilesFor(harness.id)
+          .map((profile) => profile.pi?.model)
+          .filter((model): model is string => !!model)
+      )
+    ]
+    return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
   }
 
-  /** The seven agent rows of ONE machine, from its source: the one function
-   *  the top section and every "Run on <server>" section render with, so a
-   *  server offers exactly what it can start (PRDCT-4162). `launch` is where
-   *  the setup goes: the launcher's own path for the top section, an explicit
-   *  server for a server section. Shortcuts are shown for the top section
-   *  alone: they fire the machine the active workspace lives on. */
+  /** The harness rows of ONE machine, from its source: the one function the
+   *  top section and every "Run on <server>" section render with, so a
+   *  server offers exactly what it can start (PRDCT-4162). Three questions,
+   *  one level each (PRDCT-4423): the row is the TOOL (a click launches it on
+   *  its preferred model and the pool's suggested connection), hovering it
+   *  offers the MODEL, hovering a model offers WHO PAYS (the pool's
+   *  connections, judged for that model, the suggested one marked). This
+   *  Mac lists the harnesses it has installed; a server lists every family
+   *  its source exposes. `launch` is where the setup goes: the launcher's own
+   *  path for the top section, an explicit server for a server section.
+   *  Shortcuts are shown for the top section alone: they fire the machine
+   *  the active workspace lives on. */
   const renderSourceEntries = (
     source: LaunchSource,
-    launch: (setup: AgentSetup) => void,
+    launch: (setup: AgentSetup, options?: { pinProfile?: boolean }) => void,
     options: { shortcuts: boolean; disabled: boolean }
   ): React.JSX.Element => {
-    const shortcut = (label: string | null): string | undefined =>
-      options.shortcuts ? (label ?? undefined) : undefined
-    const claudeEntry = (
-      kind: AgentKind,
-      label: string,
-      key: string | null,
-      dangerousMode: boolean
-    ): React.JSX.Element =>
-      renderPooledEntry({
-        family: 'claude',
-        label,
-        shortcut: shortcut(key),
-        Logo: ClaudeLogo,
-        binaryProfiles: source.profilesFor('claude'),
-        selectedBinaryId: source.selectedProfileId('claude'),
-        accounts: source.accounts('claude'),
-        selectedAccountId: source.selectedAccountId('claude'),
-        disabled: options.disabled,
-        launch: (launchProfileId, claudeProfileId) =>
-          launch({ kind, dangerousMode, claudeProfileId, launchProfileId })
-      })
-    const codexEntry = (
-      label: string,
-      key: string | null,
-      dangerousMode: boolean
-    ): React.JSX.Element =>
-      renderPooledEntry({
-        family: 'codex',
-        label,
-        shortcut: shortcut(key),
-        Logo: CodexLogo,
-        binaryProfiles: source.profilesFor('codex'),
-        selectedBinaryId: source.selectedProfileId('codex'),
-        accounts: source.accounts('codex'),
-        selectedAccountId: source.selectedAccountId('codex'),
-        disabled: options.disabled,
-        launch: (launchProfileId, codexAccountId) =>
-          launch({ kind: 'codex', dangerousMode, codexAccountId, launchProfileId })
-      })
-    const agentEntry = (
-      kind: 'antigravity' | 'pi',
-      label: string,
-      key: string | null
-    ): React.JSX.Element =>
-      renderAgentEntry({
-        kind,
-        label,
-        shortcut: shortcut(key),
-        binaryProfiles: source.profilesFor(kind),
-        selectedBinaryId: source.selectedProfileId(kind),
-        disabled: options.disabled,
-        launch: (launchProfileId) => launch({ kind, dangerousMode: false, launchProfileId })
-      })
+    const local = source.serverId === LOCAL_SERVER_ID
+    const rows = HARNESSES.filter((harness) => !local || harnessInstalled(harness.id))
+    if (rows.length === 0) {
+      return (
+        <>
+          <DropdownMenuItem disabled data-no-harness>
+            <span className="flex-1">No harness installed</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            data-install-harness
+            onSelect={() => {
+              setMenuOpen(false)
+              useSessionStore.getState().openSettings('agents')
+            }}
+          >
+            <span className="flex-1">Install a harness…</span>
+          </DropdownMenuItem>
+        </>
+      )
+    }
+    return <>{rows.map((harness) => renderHarnessRow(source, harness, launch, options))}</>
+  }
+
+  const renderHarnessRow = (
+    source: LaunchSource,
+    harness: Harness,
+    launch: (setup: AgentSetup, options?: { pinProfile?: boolean }) => void,
+    options: { shortcuts: boolean; disabled: boolean }
+  ): React.JSX.Element => {
+    const Logo = AGENT_LOGOS[harness.id]
+    const shortcut = options.shortcuts ? (HARNESS_SHORTCUTS[harness.id] ?? undefined) : undefined
+    const preferredModel = harnessSettings[harness.id]?.preferredModel
+    const pool = harness.connectionPool
+    const go = (choice: { model?: string; accountId?: string; launchProfileId?: string }): void =>
+      launch(
+        {
+          kind: harness.id,
+          dangerousMode: false,
+          launchProfileId: choice.launchProfileId ?? transportFor(source, harness),
+          ...(choice.model ? { model: choice.model } : {}),
+          ...(choice.accountId && pool === 'claude' ? { claudeProfileId: choice.accountId } : {}),
+          ...(choice.accountId && pool === 'codex' ? { codexAccountId: choice.accountId } : {})
+        },
+        { pinProfile: choice.launchProfileId !== undefined }
+      )
+    const rowModel = harness.takesModel ? preferredModel : undefined
+    const models = modelsFor(source, harness)
+    const advanced = source
+      .profilesFor(harness.id)
+      .filter((profile) => !isChatProfileRef(harness.id, profile.id))
+    const hasAdvanced = advanced.length > 1
+    const isClaude = harness.id === 'claude'
+
+    if (!models && !hasAdvanced && !isClaude) {
+      return (
+        <DropdownMenuItem
+          key={harness.id}
+          data-harness-row={harness.id}
+          disabled={options.disabled}
+          onSelect={() => go({ model: rowModel })}
+        >
+          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <span className="flex-1">{harness.name}</span>
+          {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
+        </DropdownMenuItem>
+      )
+    }
+
+    const multiAccount = pool !== null && source.accounts(pool).length > 1
+
+    const connectionRows = (model: string | undefined): React.JSX.Element[] =>
+      pool
+        ? source.connections(pool, model).map((connection) => (
+            <DropdownMenuItem
+              key={connection.id}
+              data-harness-connection={connection.id}
+              data-suggested={connection.suggested ? 'true' : undefined}
+              disabled={!connection.usable}
+              onSelect={() => go({ model, accountId: connection.id })}
+            >
+              <span className="flex-1 truncate">{connection.label}</span>
+              {connection.suggested && (
+                <span className="badge account-switch-suggested">
+                  <SparklesIcon aria-hidden />
+                  Suggested
+                </span>
+              )}
+              {connection.headroom && (
+                <span className="text-[11px] text-text-tertiary tabular-nums flex-shrink-0">
+                  {connection.headroom}
+                </span>
+              )}
+            </DropdownMenuItem>
+          ))
+        : []
+
+    const modelRow = (model: LauncherModel): React.JSX.Element => {
+      const key = model.id ?? 'default'
+      const connections = pool ? source.connections(pool, model.id) : []
+      const unavailable =
+        pool !== null && connections.length > 0 && !connections.some((c) => c.usable)
+      const hint = unavailable ? `No connection with ${model.family} credits` : undefined
+      const check =
+        model.id !== undefined && model.id === preferredModel ? (
+          <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+        ) : null
+      const body = (
+        <>
+          <span className="flex-1 truncate">{model.label}</span>
+          {hint && (
+            <span className="text-[11px] text-text-tertiary flex-shrink-0" data-model-hint>
+              {hint}
+            </span>
+          )}
+          {check}
+        </>
+      )
+      if (multiAccount && !unavailable) {
+        return (
+          <DropdownMenuSub key={key}>
+            <DropdownMenuSubTrigger
+              data-harness-model={key}
+              onClick={() => go({ model: model.id })}
+            >
+              {body}
+              <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuLabel>Connection</DropdownMenuLabel>
+              {connectionRows(model.id)}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )
+      }
+      return (
+        <DropdownMenuItem
+          key={key}
+          data-harness-model={key}
+          disabled={unavailable}
+          title={hint}
+          onSelect={() => go({ model: model.id })}
+        >
+          {body}
+        </DropdownMenuItem>
+      )
+    }
+
+    const selectedProfile = source.selectedProfileId(harness.id)
     return (
-      <>
-        {claudeEntry('claude', 'Claude Code', claudeShortcut, false)}
-        {claudeEntry('claude', 'Claude Code (skip permissions)', dangerousShortcut, true)}
-        {claudeEntry('claude-agents', 'Claude Agents', agentsShortcut, false)}
-        {agentEntry('antigravity', 'Antigravity CLI', antigravityShortcut)}
-        {codexEntry('Codex CLI', codexShortcut, false)}
-        {codexEntry('Codex CLI (YOLO)', yoloCodexShortcut, true)}
-        {agentEntry('pi', 'Pi', piShortcut)}
-      </>
+      <DropdownMenuSub key={harness.id}>
+        <DropdownMenuSubTrigger
+          data-harness-row={harness.id}
+          disabled={options.disabled}
+          // The row itself launches: hovering opens the next question, a
+          // click answers it with the defaults.
+          onClick={() => go({ model: rowModel })}
+        >
+          <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <span className="flex-1">{harness.name}</span>
+          {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
+          <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          {models && <DropdownMenuLabel>Model</DropdownMenuLabel>}
+          {models === 'loading' ? (
+            <DropdownMenuItem disabled data-harness-model="loading">
+              <span className="flex-1">Loading…</span>
+            </DropdownMenuItem>
+          ) : (
+            models?.map(modelRow)
+          )}
+          {(hasAdvanced || isClaude) && models && <DropdownMenuSeparator />}
+          {hasAdvanced && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-harness-advanced={harness.id}>
+                <span className="flex-1">Advanced</span>
+                <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
+                {advanced.map((profile) => (
+                  <DropdownMenuItem
+                    key={profile.id}
+                    data-launch-profile-entry={profile.id}
+                    onSelect={() => go({ model: rowModel, launchProfileId: profile.id })}
+                  >
+                    <span className="flex-1 truncate">{profile.name}</span>
+                    {profile.id === selectedProfile && (
+                      <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
+          {isClaude && (
+            <DropdownMenuItem
+              data-harness-agents
+              onSelect={() =>
+                launch({
+                  kind: 'claude-agents',
+                  dangerousMode: false,
+                  launchProfileId: transportFor(source, { ...harness, chatAdapterId: null })
+                })
+              }
+            >
+              <span className="flex-1">Agents…</span>
+              {options.shortcuts && agentsShortcut && (
+                <DropdownMenuShortcut>{agentsShortcut}</DropdownMenuShortcut>
+              )}
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
     )
   }
 
@@ -544,7 +644,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
               disabled={busy}
               className="launcher-btn"
               data-launcher-agent
-              title={`${describeSetup(setup, [binaryProfile?.name, profileLabel].filter(Boolean).join(' · '))} — workspace root (⌥ to choose a folder)`}
+              title={`${describeSetup(setup, connectionLabel)} — workspace root (⌥ to choose a folder)`}
               onClick={(e) => void run({ setup, cwd: cwdFor(e), remember: true })}
             >
               <AgentLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
@@ -602,7 +702,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
                 {renderSourceEntries(
                   topSource,
-                  (next) => launchAgent(next, { kind: 'workspace-root' }),
+                  (next, options) => launchAgent(next, { kind: 'workspace-root' }, options),
                   { shortcuts: true, disabled: false }
                 )}
 
@@ -756,7 +856,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           <button
             disabled={busy}
             className="launcher-icon-btn"
-            title={`${describeSetup(setup, profileLabel)} — in another folder…`}
+            title={`${describeSetup(setup, connectionLabel)} — in another folder…`}
             aria-label="New session in another folder"
             onClick={() => void run({ setup, cwd: { kind: 'ask' }, remember: true })}
           >

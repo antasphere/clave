@@ -12,6 +12,7 @@ import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-stor
 import { deliverPendingChatView, pendingChatView } from './pending-chat-view'
 import type { LaunchProfile, LauncherFamily } from '../../../shared/agent-launch'
 import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
+import { permissionRungFor, useLaunchSettingsStore } from '../store/launch-settings-store'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -94,6 +95,29 @@ export function launchServer(
   if (req.serverId !== undefined) return req.serverId
   if (req.groupId) return ownerOf(req.groupId)
   return workspaceServer(req.workspaceId ?? getActiveWorkspaceId()) ?? LOCAL_SERVER_ID
+}
+
+type SpawnOptions = NonNullable<Parameters<Window['electronAPI']['spawnSession']>[1]>
+
+/** What the launcher's setup asks of the CLI beyond the family
+ *  (PRDCT-4423): the model picked in the menu (its `--model`/`-m`), and,
+ *  when the launch does not skip approvals, the permission rung Settings →
+ *  Harnesses set as the harness's default. `claude agents` takes neither: it
+ *  is a subcommand with no model or permission flag of its own. Cmd+Y keeps
+ *  its bypass: a dangerous setup never carries a rung. */
+export function setupSpawnFlags(
+  setup: AgentSetup | null
+): Pick<SpawnOptions, 'model' | 'permissionMode'> {
+  if (!setup || setup.kind === 'claude-agents') return {}
+  const rung = setup.dangerousMode
+    ? undefined
+    : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
+  return {
+    ...(setup.model ? { model: setup.model } : {}),
+    // The spawn's type names Claude's rungs; the other harnesses' (Codex's
+    // sandbox names, Antigravity's) travel as the same string field.
+    ...(rung ? { permissionMode: rung as SpawnOptions['permissionMode'] } : {})
+  }
 }
 
 const NO_AGENT = {
@@ -190,6 +214,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
       ...modes,
       dangerousMode,
+      ...setupSpawnFlags(req.setup),
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(req.setup?.launchProfileId ? { launchProfileId: req.setup.launchProfileId } : {}),
       ...(serverProfile ? { launchProfile: serverProfile } : {}),
@@ -270,15 +295,19 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
   // has headroom, else the next one along. Claude and Codex alike, each
   // judged for the model the launch will run (PRDCT-4302): a chat starts on
   // the model last picked in its composer, so an account with its Fable week
-  // spent still takes a launch on Opus.
+  // spent still takes a launch on Opus. A model picked in the launcher
+  // (PRDCT-4423) is the one the launch runs, so it is the one judged.
   const isClaudeSession = modes.claudeMode || modes.claudeAgentsMode
   const launchWorkspaceId = req.workspaceId ?? getActiveWorkspaceId()
+  const pickedModel = req.setup?.model
   const [claudeModel, codexModel] = await Promise.all([
     isClaudeSession
-      ? rememberedLaunchModel('claude', req.setup?.launchProfileId, launchWorkspaceId)
+      ? (pickedModel ??
+        rememberedLaunchModel('claude', req.setup?.launchProfileId, launchWorkspaceId))
       : undefined,
     modes.codexMode
-      ? rememberedLaunchModel('codex', req.setup?.launchProfileId, launchWorkspaceId)
+      ? (pickedModel ??
+        rememberedLaunchModel('codex', req.setup?.launchProfileId, launchWorkspaceId))
       : undefined
   ])
   const profile = isClaudeSession
@@ -312,6 +341,7 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
       dangerousMode,
       initialPrompt,
       launchProfileId: req.setup?.launchProfileId,
+      ...setupSpawnFlags(req.setup),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields
     })

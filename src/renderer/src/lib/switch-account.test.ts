@@ -18,7 +18,8 @@ import {
   sessionSwitchTargets,
   accountForLaunch,
   nextAccountFor,
-  resolveAccountRef
+  resolveAccountRef,
+  connectionsForModel
 } from './switch-account'
 
 vi.mock('../store/session-store', () => ({ useSessionStore: {} }))
@@ -207,6 +208,48 @@ describe('the launch picks its account for the model it will run', () => {
     })
     expect(accountForLaunch('claude', undefined, 'claude-opus-5-5').id).toBe('spare')
     expect(accountForLaunch('claude').id).toBe('spare')
+  })
+})
+
+describe('the connections the launcher offers for a model (PRDCT-4423)', () => {
+  afterEach(() => {
+    useClaudeProfileStore.setState({ selectedProfileId: 'default' })
+  })
+  it('judges each connection for the model and marks the one a plain launch lands on', () => {
+    const spare = { ...originalProfiles[0], id: 'spare', label: 'Spare', hasToken: true }
+    useClaudeProfileStore.setState({
+      profiles: [...originalProfiles, spare],
+      selectedProfileId: 'default'
+    })
+    const open = { ...windows[0], usedPercentage: 10 }
+    useClaudeAccountsUsage.setState({
+      byAccount: {
+        default: summary,
+        spare: { status: 'ready', error: null, windows: [open], tightest: open }
+      }
+    })
+    const onOpus = connectionsForModel('claude', 'claude-opus-5-5')
+    expect(onOpus.map((c) => [c.id, c.usable, c.suggested])).toEqual([
+      ['default', true, true],
+      ['spare', true, false]
+    ])
+    expect(onOpus[1].label).toBe('Spare')
+    expect(onOpus[1].headroom).toContain('90% left')
+    // Fable: the selected account's Fable week is spent, so the spare is
+    // the pick, and the spent one is not usable for it.
+    const onFable = connectionsForModel('claude', 'claude-fable-5-1')
+    expect(onFable.map((c) => [c.id, c.usable, c.suggested])).toEqual([
+      ['default', false, false],
+      ['spare', true, true]
+    ])
+    expect(onFable[0].headroom).toContain('Fable')
+  })
+  it('has no usable connection when every account is spent for the model', () => {
+    useClaudeAccountsUsage.setState({ byAccount: { default: summary } })
+    const onFable = connectionsForModel('claude', 'claude-fable-5-1')
+    expect(onFable.length).toBeGreaterThan(0)
+    expect(onFable.some((c) => c.usable)).toBe(false)
+    expect(onFable.some((c) => c.suggested)).toBe(false)
   })
 })
 
