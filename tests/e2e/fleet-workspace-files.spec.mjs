@@ -105,7 +105,7 @@ export async function run(t) {
         'workspace'
       )
       assert.equal(await mac.win.locator('.panel-path').getAttribute('title'), server.root)
-      assertFileEndpoint(observers, opening, 0, '/files/list')
+      await assertFileEndpoint(observers, opening, 0, '/files/list')
 
       const watching = mark()
       const folder = tree.locator('[data-tree-name="watched-folder"]')
@@ -132,7 +132,7 @@ export async function run(t) {
         .locator('[data-tree-name="appeared-in-folder.txt"]')
         .waitFor({ state: 'visible', timeout: 5000 })
       assert.equal(await folder.getAttribute('data-tree-expanded'), 'true')
-      assertFileEndpoint(observers, changes, 0, '/files/list')
+      await assertFileEndpoint(observers, changes, 0, '/files/list')
       t.check(
         'an unfocused server workspace shows its own tree and refreshes root and expanded folders from disk',
         true
@@ -144,7 +144,7 @@ export async function run(t) {
       await clickReady(mac.win.getByRole('menuitem', { name: 'Open in Tab', exact: true }))
       const editor = mac.win.locator('.cm-content[contenteditable="true"]:visible')
       await editor.waitFor()
-      assertFileEndpoint(observers, reading, 0, '/files/read')
+      await assertFileEndpoint(observers, reading, 0, '/files/read')
       const editing = mark()
       await editor.fill('Saved through the workspace file tree')
       await editor.press('Meta+s')
@@ -154,7 +154,7 @@ export async function run(t) {
           'Saved through the workspace file tree',
         'the workspace tree editor saves real server bytes'
       )
-      assertFileEndpoint(observers, editing, 0, '/files/write')
+      await assertFileEndpoint(observers, editing, 0, '/files/write')
       await showMac(mac)
       const macTree = mac.win.locator(`[data-file-tree-root="${mac.root}"]`)
       await macTree.locator('[data-tree-name="mac-only.txt"]').waitFor({ state: 'visible' })

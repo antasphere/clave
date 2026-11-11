@@ -11,13 +11,19 @@ on:
   push:
     branches: [dev]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Run the original sequential schedule for a timing comparison
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 # A newer push to the same branch or pull request supersedes the running check.
 concurrency:
-  group: checks-${{ github.ref }}
+  group: checks-${{ github.ref }}-${{ inputs.baseline && 'baseline' || 'normal' }}
   cancel-in-progress: true
 
 jobs:
@@ -120,10 +126,14 @@ jobs:
   # The report step turns into a gate (drop continue-on-error) once the
   # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
   # thread). Nothing here touches the release rail.
-  e2e:
-    name: End-to-end (the real app, macOS)
+  e2e-run:
+    name: Electron (${{ matrix.task }})
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2","3","4","5"]') }}
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.baseline && 120 || 35 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -155,7 +165,22 @@ jobs:
         id: build
         run: npx electron-vite build
 
+      - name: Report, hosted suite batch
+        id: suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}
+        continue-on-error: true
+        env:
+          HOST_BATCH: ${{ format('{0}/5', matrix.task) }}
+        run: node tests/e2e/ci-batch.mjs "$HOST_BATCH" --report-dir=e2e-reports
+
+      - name: All worker processes completed
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}
+        env:
+          COMPLETE: ${{ steps.suite.outputs.complete }}
+        run: test "$COMPLETE" = true
+
       - name: Gate, actual renderer and native view module audit
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
         run: node scripts/renderer-module-audit.mjs
 
       # The packaged app, not the checkout: electron-builder leaves out the
@@ -164,6 +189,7 @@ jobs:
       # and 2.2.0 shipped that way (PRDCT-3418). An unsigned arm64 --dir
       # package is the same asar the release builds, without the signing.
       - name: Gate, the packaged app loads what its bundles require
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
@@ -176,13 +202,15 @@ jobs:
       # here and not in the Linux job): a terminal spawned through it streams
       # its bytes, a killed process is reported by the server.
       - name: Gate, the terminal process from the built bundle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
         run: npx vitest run scripts/server-process.test.mjs src/main/terminal-process
 
       - name: Gate, the server spec with the server in-process
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
 
       - name: Gate, the server spec with the server attached
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '4' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: attached
@@ -192,7 +220,7 @@ jobs:
       # starts, a killed terminal process is started again, the quit stops
       # both.
       - name: Gate, the server spec with the server separate
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: separate
@@ -204,38 +232,66 @@ jobs:
       # manager of its own, idle, to confirm the handoff the server had
       # issued). The separate spec is red on the code before that fix.
       - name: Gate, the Antasphere sign-in on the three servers
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '4' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs antasphere-account
 
       # A daemon on an older version, with a stand-in install script, and an
       # app on a newer test version (issue #266): the server upgrades to the
       # app's version only once no agent works, and Upgrade now runs it at once.
       - name: Gate, connected servers follow the app's version
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '5' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs fleet-server-upgrade
 
       # Current full-renderer completeness, lifecycle and responsiveness gates.
       # Retired prefix-cache integration remains explicitly named legacy diagnostics.
       - name: Gate, full Markdown client, native lifecycle and responsiveness
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
 
       - name: Gate, MCP sessions on connected servers
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '5' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs mcp-fleet-sessions
 
-      - name: Report, the whole suite with the server in-process
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      - name: Report, sequential baseline suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task == 'baseline' }}
         continue-on-error: true
+        run: node tests/e2e/run.mjs --report e2e-reports/shard-1.json
+
+      - name: Preserve shard results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-reports-${{ matrix.task }}
+          overwrite: true
+          path: e2e-reports/
+          if-no-files-found: error
+          retention-days: 14
+
+  # Retain the check name used by branch protection. A failed gate, failed
+  # setup or missing shard fails this job. Ordinary full-suite assertion
+  # failures keep the existing report policy, and remain visible in the summary.
+  e2e:
+    name: End-to-end (the real app, macOS)
+    needs: e2e-run
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-reports-*
+          path: e2e-reports
+          merge-multiple: true
+      - name: Every spec completed exactly once
+        env:
+          SHARDS: ${{ inputs.baseline && '1' || '5' }}
         run: |
-          set +e
-          node tests/e2e/run.mjs | tee e2e-in-process.log
-          status=${PIPESTATUS[0]}
-          line=$(grep -E '^[0-9]+ passed, ' e2e-in-process.log | tail -1)
-          {
-            echo "## End-to-end, whole suite, server in-process"
-            echo
-            echo "\`${line:-no result line: the runner did not finish}\` (exit ${status})"
-            echo
-            echo "A report, not a gate: see the comment on this job in checks.yml."
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit $status
+          node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md
+          cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: All required Electron gates passed
+        env:
+          RESULT: ${{ needs.e2e-run.result }}
+        run: test "$RESULT" = success

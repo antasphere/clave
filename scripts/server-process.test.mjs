@@ -14,6 +14,7 @@ import {
   terminalProcessBundle,
   terminalProcessCommand
 } from './server-process.mjs'
+import { withServerClient } from './server-process-client.mjs'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -157,41 +158,94 @@ describe('the server as its own process', () => {
         { url: server.url, token: server.token },
         { client: 'server-process-test' }
       )
-      const events = []
-      backing.push.onEvent((envelope) => events.push(envelope.event))
-      backing.push.connect()
-      await backing.push.whenOpen()
-      const info = await backing.api.sessions.start({
-        cwd: dataDir,
-        windowKey: 'w1',
-        options: { launchProfileId: 'dev-echo-adapter' }
-      })
-      backing.push.subscribe(info.id, () => {})
-      await backing.push.subscribed(info.id)
-      await backing.api.sessions.write(info.id, { type: 'user_message', text: 'hello' })
-      const until = async (pred, ms = 5000) => {
-        const end = Date.now() + ms
-        while (Date.now() < end) {
-          if (pred()) return true
-          await new Promise((r) => setTimeout(r, 50))
+      // #363 is unestablished. Keep the failed request and child diagnostics,
+      // and close clients after the unchanged check, on either outcome.
+      await withServerClient(server, backing, async () => {
+        const events = []
+        backing.push.onEvent((envelope) => events.push(envelope.event))
+        backing.push.connect()
+        await backing.push.whenOpen()
+        const info = await backing.api.sessions.start({
+          cwd: dataDir,
+          windowKey: 'w1',
+          options: { launchProfileId: 'dev-echo-adapter' }
+        })
+        backing.push.subscribe(info.id, () => {})
+        await backing.push.subscribed(info.id)
+        await backing.api.sessions.write(info.id, { type: 'user_message', text: 'hello' })
+        const until = async (pred, ms = 5000) => {
+          const end = Date.now() + ms
+          while (Date.now() < end) {
+            if (pred()) return true
+            await new Promise((r) => setTimeout(r, 50))
+          }
+          return pred()
         }
-        return pred()
-      }
-      expect(
-        await until(() =>
-          events.some((e) => e._tag === 'session.state_changed' && e.id === info.id)
-        )
-      ).toBe(true)
-      // The session is listed while the server runs and goes with it: a
-      // chat's CLI is a child of this process and must not outlive it.
-      expect((await backing.api.sessions.list('w1')).map((s) => s.id)).toEqual([info.id])
-      backing.push.close()
-      await backing.api.dispose()
+        expect(
+          await until(() =>
+            events.some((e) => e._tag === 'session.state_changed' && e.id === info.id)
+          )
+        ).toBe(true)
+        // The session is listed while the server runs and goes with it: a
+        // chat's CLI is a child of this process and must not outlive it.
+        expect((await backing.api.sessions.list('w1')).map((s) => s.id)).toEqual([info.id])
+      })
     } finally {
       await server.stop()
       rmSync(dataDir, { recursive: true, force: true })
     }
   }, 30_000)
+
+  it('keeps a child exit and stderr in a failed check and still closes its clients', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-diagnostics-'))
+    const fixture = path.join(dataDir, 'announces-then-exits')
+    writeFileSync(
+      fixture,
+      `#!/usr/bin/env node
+const http = require('node:http')
+const server = http.createServer((_, response) => response.end('[]'))
+server.listen(0, '127.0.0.1', () => {
+  process.stdout.write(JSON.stringify({ url: 'http://127.0.0.1:' + server.address().port, token: 'fixture-token' }) + '\\n')
+  process.stderr.write('fixture child exit\\n')
+  setTimeout(() => process.exit(9), 25)
+})
+`,
+      { mode: 0o700 }
+    )
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      env: { ...process.env, CLAVE_BUN: fixture }
+    })
+    try {
+      expect(await untilDead(server.pid)).toBe(true)
+      expect(server.processState?.()).toEqual({ exitCode: 9, signalCode: null })
+      const closed = []
+      const client = {
+        push: { close: () => closed.push('push') },
+        api: { dispose: async () => closed.push('api') }
+      }
+      let original
+      const error = await withServerClient(server, client, async () => {
+        try {
+          return await fetch(`${server.url}/sessions?windowKey=w1`)
+        } catch (cause) {
+          original = cause
+          throw cause
+        }
+      }).catch((e) => e)
+      expect(original).toBeInstanceOf(Error)
+      expect(original.cause.code).toBe('ECONNREFUSED')
+      expect(error.cause).toBe(original)
+      expect(error.message).toContain('"exitCode":9')
+      expect(error.message).toContain('fixture child exit')
+      expect(closed).toEqual(['push', 'api'])
+    } finally {
+      await server.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  })
 
   it('stops the CLI a chat started when the server stops, as the app’s quit does', async () => {
     // A chat's CLI is a detached child of the server process (the adapter

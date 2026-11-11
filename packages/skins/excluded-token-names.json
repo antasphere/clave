@@ -13,6 +13,7 @@
   "--control-text",
   "--control-text-sm",
   "--ease-out-expo",
+  "--ease-out-settle",
   "--font-mono",
   "--font-sans",
   "--font-weight-medium",

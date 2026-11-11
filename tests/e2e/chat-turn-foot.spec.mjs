@@ -51,16 +51,19 @@ export async function run(t) {
       return g.atEnd && g.shown ? g : null
     })
     t.check('the transcript sits at its end with the last turn hovered', !!geometry, last)
-    if (!geometry) return
+    // Preserve the observed failure and report both dependent checks as
+    // failures when their end-position precondition was not established.
+    // Returning here used to omit them from the report entirely.
+    const observed = geometry ?? last
     t.check(
       "the last turn's hover line is inside the scroller, not clipped at its foot",
-      geometry.metaBottom <= geometry.scrollerBottom,
-      geometry
+      !!geometry && observed.metaBottom <= observed.scrollerBottom,
+      observed
     )
     t.check(
       "the hover line keeps at least 16px of air from the composer's box",
-      geometry.composerTop - geometry.metaBottom >= 16,
-      geometry
+      !!geometry && observed.composerTop - observed.metaBottom >= 16,
+      observed
     )
   } finally {
     await close()
