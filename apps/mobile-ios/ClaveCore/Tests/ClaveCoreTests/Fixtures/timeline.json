@@ -1,0 +1,1 @@
+{"items":[{"event":{"type":"user_message","text":"hello","clientMessageId":"m-1"},"at":1,"position":{"generation":"g1","sequence":1}},{"event":{"type":"assistant_text","delta":"hello","final":true},"at":2,"position":{"generation":"g1","sequence":2}}],"before":null,"cursor":{"generation":"g1","sequence":3},"truncated":false}

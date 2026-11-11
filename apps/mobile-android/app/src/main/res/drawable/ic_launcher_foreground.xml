@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A plain mark for the development build: the letter C in Clave's ink on its ground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#f1f0ee"
+        android:pathData="M54,30 a24,24 0 1,0 0,48 a24,24 0 0,0 17,-7 l-6,-6 a16,16 0 1,1 0,-22 l6,-6 a24,24 0 0,0 -17,-7 z" />
+</vector>

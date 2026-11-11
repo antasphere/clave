@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app declares the services, the receivers and the file provider. This module declares the
+     one permission its notification poster needs (Android 13 and later ask the person for it),
+     so the requirement travels with the code that has it. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+</manifest>
