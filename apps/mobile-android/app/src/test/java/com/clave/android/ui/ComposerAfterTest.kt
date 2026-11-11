@@ -21,10 +21,14 @@ class ComposerAfterTest {
     private val unknown = UnknownSend("m", "s", "m-1", text = "hello", at = 1, draftText = "hello", attachments = listOf(file))
 
     @Test
-    fun `a real discard empties the composer and clears what is stored`() {
-        for (result in listOf(DiscardResult.Discarded, null)) {
-            assertEquals(ComposerAfter("", emptyList(), null, clearsStored = true), composerAfterDiscard(result, "hello", listOf(file), unknown))
-        }
+    fun `a discard takes out what the discarded message carried, an edit and a file added since stay, and with no ledger everything goes`() {
+        assertEquals(ComposerAfter("", emptyList(), null, clearsStored = false), composerAfterDiscard(DiscardResult.Discarded, "hello", listOf(file), unknown))
+        assertEquals(
+            "the ledger's cleanup kept them in the stores, the field keeps them too",
+            ComposerAfter("hello, edited", listOf(other), null, clearsStored = false),
+            composerAfterDiscard(DiscardResult.Discarded, "hello, edited", listOf(file, other), unknown),
+        )
+        assertEquals(ComposerAfter("", emptyList(), null, clearsStored = true), composerAfterDiscard(null, "hello, edited", listOf(file, other), unknown))
     }
 
     @Test
@@ -57,7 +61,7 @@ class ComposerAfterTest {
     fun `delivered, a file sent leaves the composer and a file added since stays`() {
         assertEquals(
             "" to listOf(other),
-            composerAfterDelivered(unknown, null, null, storedDraft = "", draft = "hello", attachments = listOf(file, other)),
+            composerAfterDelivered(unknown, null, null, storedDraft = "", storedFiles = listOf(other), draft = "hello", attachments = listOf(file, other)),
         )
         assertEquals(
             ComposerAfter("", listOf(other), ARRIVED_NOTHING_DISCARDED, clearsStored = false),
@@ -73,14 +77,63 @@ class ComposerAfterTest {
     }
 
     @Test
+    fun `Send again answered it had arrived takes out only what the first message carried, an edit and a file added since stay`() {
+        assertEquals(
+            "nothing went now: the edit was never sent, nor the new file",
+            ComposerAfterSent("hello, edited", listOf(other), ARRIVED_NOTHING_SENT, clearsStoredFiles = false),
+            composerAfterSent("m-1", unknown, text = "hello, edited", files = listOf(file, other), draft = "hello, edited", attachments = listOf(file, other)),
+        )
+        assertEquals(
+            ComposerAfterSent("", emptyList(), ARRIVED_NOTHING_SENT, clearsStoredFiles = false),
+            composerAfterSent("m-1", unknown, text = "hello", files = listOf(file), draft = "hello", attachments = listOf(file)),
+        )
+        // Its own write, under the new id: what it sent leaves, the stored attachment draft with it.
+        assertEquals(
+            ComposerAfterSent("", emptyList(), null, clearsStoredFiles = true),
+            composerAfterSent("m-2", unknown, text = "hello, edited", files = listOf(file, other), draft = "hello, edited", attachments = listOf(file, other)),
+        )
+        assertEquals(
+            "typed while it went: kept",
+            ComposerAfterSent("hello, edited, more", listOf(file, other), null, clearsStoredFiles = true),
+            composerAfterSent("m-2", null, text = "hello, edited", files = listOf(file), draft = "hello, edited, more", attachments = listOf(file, other)),
+        )
+    }
+
+    @Test
+    fun `a files-only send refused keeps its files, a files-only send delivered lets them go`() {
+        val filesOnly = UnknownSend("m", "s", "m-3", text = "", at = 1, draftText = "", attachments = listOf(file))
+        assertNull(
+            "the stored attachment draft still holds the record: not delivered, kept to send again",
+            composerAfterDelivered(filesOnly, null, null, storedDraft = "", storedFiles = listOf(file), draft = "", attachments = listOf(file)),
+        )
+        assertEquals("" to emptyList<FileAttachment>(), composerAfterDelivered(filesOnly, null, null, storedDraft = "", storedFiles = emptyList(), draft = "", attachments = listOf(file)))
+    }
+
+    @Test
     fun `delivered meanwhile, the composer's copy goes only when the store's draft went and the field still holds it`() {
-        assertEquals("" to emptyList<FileAttachment>(), composerAfterDelivered(unknown, null, null, storedDraft = "", draft = "hello", attachments = listOf(file)))
-        assertEquals("" to listOf(other), composerAfterDelivered(unknown, null, null, storedDraft = "", draft = "hello", attachments = listOf(other)))
+        assertEquals("" to emptyList<FileAttachment>(), composerAfterDelivered(unknown, null, null, storedDraft = "", storedFiles = emptyList(), draft = "hello", attachments = listOf(file)))
+        assertEquals("" to listOf(other), composerAfterDelivered(unknown, null, null, storedDraft = "", storedFiles = listOf(other), draft = "hello", attachments = listOf(other)))
         // An edit, a stored draft the core kept, a mark (refused, unknown), the send still waiting: nothing changes.
-        assertNull(composerAfterDelivered(unknown, null, null, storedDraft = "", draft = "hello, edited", attachments = listOf(file)))
-        assertNull(composerAfterDelivered(unknown, null, null, storedDraft = "hello", draft = "hello", attachments = listOf(file)))
-        assertNull(composerAfterDelivered(unknown, null, DeliveryMark(DeliveryMark.Kind.Rejected, "m-1", "no", 2), storedDraft = "", draft = "hello", attachments = listOf(file)))
-        assertNull(composerAfterDelivered(unknown, unknown, null, storedDraft = "", draft = "hello", attachments = listOf(file)))
-        assertNull(composerAfterDelivered(null, null, null, storedDraft = "", draft = "hello", attachments = listOf(file)))
+        assertNull(composerAfterDelivered(unknown, null, null, storedDraft = "", storedFiles = emptyList(), draft = "hello, edited", attachments = listOf(file)))
+        assertNull(composerAfterDelivered(unknown, null, null, storedDraft = "hello", storedFiles = emptyList(), draft = "hello", attachments = listOf(file)))
+        assertNull(composerAfterDelivered(unknown, null, DeliveryMark(DeliveryMark.Kind.Rejected, "m-1", "no", 2), storedDraft = "", storedFiles = emptyList(), draft = "hello", attachments = listOf(file)))
+        assertNull(composerAfterDelivered(unknown, unknown, null, storedDraft = "", storedFiles = emptyList(), draft = "hello", attachments = listOf(file)))
+        assertNull(composerAfterDelivered(null, null, null, storedDraft = "", storedFiles = emptyList(), draft = "hello", attachments = listOf(file)))
+    }
+
+    @Test
+    fun `a notice an older build left without its send is the card over the kept draft, and its Discard keeps the draft and files`() {
+        val orphan = DeliveryMark(DeliveryMark.Kind.Unknown, "m-old", "Delivery has not been confirmed.", 7)
+        val card = orphanCard("m", "s", orphan, storedDraft = "hello")
+        assertEquals(UnknownSend("m", "s", "m-old", text = "hello", at = 7), card)
+        assertEquals(
+            "that mark alone goes",
+            ComposerAfter("hello", listOf(file), null, clearsStored = false),
+            composerAfterDiscard(DiscardResult.OrphanCleared, "hello", listOf(file), card),
+        )
+        // Cleared, the card leaves without a mark: nothing it stands for leaves the composer.
+        assertNull(composerAfterDelivered(card, null, null, storedDraft = "hello", storedFiles = listOf(file), draft = "hello", attachments = listOf(file)))
+        val fileOnly = orphanCard("m", "s", orphan, storedDraft = "")
+        assertEquals("" to listOf(file), composerAfterDelivered(fileOnly, null, null, storedDraft = "", storedFiles = listOf(file), draft = "", attachments = listOf(file)))
     }
 }

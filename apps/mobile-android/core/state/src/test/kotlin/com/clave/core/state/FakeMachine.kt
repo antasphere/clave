@@ -203,7 +203,12 @@ internal class SyncKv : KeyValueStore {
     @Volatile var beforeWrite: (suspend (key: String, value: String) -> Unit)? = null
     /** Runs before every read, with its key. */
     @Volatile var beforeGet: ((String) -> Unit)? = null
+    /** Runs before a removal lands, with its key; a test suspends or throws here. */
+    @Volatile var beforeRemove: (suspend (String) -> Unit)? = null
+    /** Runs before every read, with its key, and may suspend there: a test holds, cancels or refuses one read. */
+    @Volatile var beforeRead: (suspend (String) -> Unit)? = null
     override suspend fun get(key: String): String? {
+        beforeRead?.invoke(key)
         beforeGet?.invoke(key)
         return map[key]
     }
@@ -212,7 +217,10 @@ internal class SyncKv : KeyValueStore {
         beforeWrite?.invoke(key, value)
         map[key] = value
     }
-    override suspend fun remove(key: String) { map.remove(key) }
+    override suspend fun remove(key: String) {
+        beforeRemove?.invoke(key)
+        map.remove(key)
+    }
 }
 
 internal class SyncSecure : SecureStore {
@@ -329,8 +337,10 @@ internal class Harness(
         ),
     )
 
+    /** As OwnerSession.open does before it hands the session out: the ends a previous process recorded are finished first. */
     suspend fun start(): Harness {
         credentials.set(machineId, Credential(machine.base, TOKEN))
+        delivery?.finishRecordedEnds()
         store.loadMachines()
         return this
     }

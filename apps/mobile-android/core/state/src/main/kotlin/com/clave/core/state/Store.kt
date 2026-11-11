@@ -4,6 +4,7 @@ import com.clave.core.chat.Action
 import com.clave.core.chat.BufferedItem
 import com.clave.core.chat.Conversation
 import com.clave.core.chat.DeliveryController
+import com.clave.core.chat.DiscardChoice
 import com.clave.core.chat.HistoryCursor
 import com.clave.core.chat.Reachability
 import com.clave.core.chat.SendFailure
@@ -110,6 +111,14 @@ public const val NOTHING_WAITING: String = "That message is no longer waiting, s
 
 /** "Discard" when the server had accepted the message before the choice. */
 public const val ARRIVED_NOTHING_DISCARDED: String = "The message had already arrived, so nothing was discarded."
+
+/** A send whose record the phone could not save before its write, and which it no longer keeps: true, and stays true. */
+public const val NOTHING_SENT: String = "The send could not be saved safely. Nothing was sent."
+
+/** A send whose record failed before its write and could not be taken back: not sent now, but kept, so the next
+ *  connection may send it under its own id. Shown as the unknown choice, where Discard stops that. */
+public const val KEPT_NOT_SAVED: String =
+    "The phone could not save this message safely, so it was not sent now. It is still kept and may be sent on the next connection; discard it to stop that."
 
 /** "Send again" or "Discard" when the phone could not record the choice: the message still waits, as before. */
 public const val CHOICE_NOT_SAVED: String = "The phone could not save that choice, so nothing was discarded or sent again. Try again."
@@ -694,6 +703,10 @@ public class ClaveStore(private val services: Services) {
                 val reason = if (delivery.inFlight(pending.clientMessageId)) STILL_SENDING else DELIVERY_UNKNOWN_FIRST
                 return SendOutcome.Failed(pending.clientMessageId, reason)
             }
+            // A notice of unknown delivery a build before this one left without its send: nobody knows
+            // whether that message arrived, so the person chooses (Send again or Discard) first.
+            val orphan = delivery.orphan(machineId, sessionId)
+            if (orphan != null) return SendOutcome.Failed(orphan.clientMessageId, DELIVERY_UNKNOWN_FIRST)
             return sendAdmitted(machineId, sessionId, text, clientMessageId, attachments, delivery)
         } finally {
             delivery.release(machineId, sessionId)
@@ -729,12 +742,11 @@ public class ClaveStore(private val services: Services) {
             draftText = text,
             attachments = attachments.takeIf { it.isNotEmpty() },
         )
-        try {
-            delivery?.begin(send)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            return SendOutcome.Failed(clientMessageId, "The send could not be saved safely. Nothing was sent.")
+        // "Nothing was sent" only once the ledger holds none of it: an entry left behind is one a pass may send.
+        when (delivery?.begin(send) ?: DeliveryController.Begun.Recorded) {
+            DeliveryController.Begun.Recorded -> Unit
+            DeliveryController.Begun.NotSaved -> return SendOutcome.Failed(clientMessageId, NOTHING_SENT)
+            DeliveryController.Begun.KeptNotSaved -> return SendOutcome.Unknown(clientMessageId, KEPT_NOT_SAVED)
         }
         val ports = object : SendPorts {
             override suspend fun write(clientMessageId: String) = asSendCall { client.sessions.write(sessionId, message) }
@@ -751,11 +763,12 @@ public class ClaveStore(private val services: Services) {
             throw e
         }
         if (outcome is SendOutcome.Failed) log.event("store.send_failed", mapOf("machine" to machineId))
-        delivery?.finish(send, outcome)
-        if (outcome is SendOutcome.Sent && services.drafts.get(machineId, sessionId) == text) {
+        // What the controller could record: an end it failed to save is answered unknown, never settled.
+        val reported = delivery?.finish(send, outcome) ?: outcome
+        if (reported is SendOutcome.Sent && services.drafts.get(machineId, sessionId) == text) {
             services.drafts.clear(machineId, sessionId)
         }
-        return outcome
+        return reported
     }
 
     /**
@@ -774,8 +787,10 @@ public class ClaveStore(private val services: Services) {
     ): SendOutcome {
         val delivery = services.delivery
         if (delivery != null) {
-            when (delivery.discard(machineId, sessionId, unknownId)) {
-                DeliveryController.DiscardResult.Discarded -> Unit
+            // Recorded as a Send again: the text being sent anew stays in the composer's stores.
+            when (delivery.discard(machineId, sessionId, unknownId, DiscardChoice.SendAgain)) {
+                // A notice left without its send: cleared, the draft goes under a new id as the person chose.
+                DeliveryController.DiscardResult.Discarded, DeliveryController.DiscardResult.OrphanCleared -> Unit
                 // It arrived before the choice: the first id is the message, nothing more goes.
                 DeliveryController.DiscardResult.AlreadyDelivered -> return SendOutcome.Sent(unknownId, reconciled = true)
                 DeliveryController.DiscardResult.AlreadyRejected ->
