@@ -968,6 +968,9 @@ final class DeliveryRestartTests: XCTestCase {
     XCTAssertEqual(mark?.kind, .unknown, "the send stays unknown")
     XCTAssertEqual(mark?.reason, holdSentence("A phone may not do this."), "the mark says the hold")
     XCTAssertEqual(model.deliveryMark?.reason, holdSentence("A phone may not do this."), "and so does the bar")
+    // The outcome is still unknown, so no failure stands beside the bar (round 5d's gap A05).
+    XCTAssertNil(model.sendError, "no failure is said for a send whose outcome is unknown")
+    XCTAssertNil(model.sendNotice, "nothing in the error tone under the hold")
     XCTAssertEqual(model.draft, "Sent text.", "the draft stays")
     XCTAssertEqual(model.pendingFiles.map(\.name), ["own-refused.txt"], "the file stays")
   }

@@ -271,7 +271,10 @@ final class AccessibilityEvidenceTests: XCTestCase {
   /// low-contrast machine name (viewport 2's contrast call, naming it) and failed on a low-contrast
   /// Sign out without naming the element; it flagged neither a low-contrast Open label nor a card
   /// label set at a fixed point size, and the single audit before this change flagged neither of
-  /// those two either.
+  /// those two either. The card's calls after its contrast call still end with the list back at its
+  /// top in every largest-size run (its row at y 280 before, at y 884 after), so whether they audited
+  /// the card is not shown: the fixed-size label may have gone unflagged for that reason rather than
+  /// by a limit of the audit. The card's contrast and the whole top are shown audited in place.
   private enum MachinesViewport: String, CaseIterable {
     /// The account section: Sign out and the email present, hittable and steady; the walk's types in
     /// one call.
