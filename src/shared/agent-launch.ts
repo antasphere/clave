@@ -346,7 +346,8 @@ export function buildAgentArgv(input: {
   } else if (input.kind === 'antigravity') {
     if (
       input.permissionMode &&
-      HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === input.permissionMode)
+      HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === input.permissionMode) &&
+      !profileSetsPermissions(input.profile)
     )
       argv.push('--mode', input.permissionMode)
     if (input.initialPrompt) argv.push('-i', input.initialPrompt)
@@ -461,6 +462,10 @@ export function claudeProfilePermissions(profile: LaunchProfile): {
 export function profileSetsPermissions(profile: LaunchProfile): boolean {
   if (profile.family === 'claude') return claudeProfilePermissions(profile).mode !== undefined
   if (profile.family === 'codex') return Object.keys(codexProfilePolicy(profile)).length > 0
+  if (profile.family === 'antigravity')
+    return [...profile.command, ...profile.additionalArgs].some(
+      (token) => token === '--mode' || token.startsWith('--mode=')
+    )
   return false
 }
 

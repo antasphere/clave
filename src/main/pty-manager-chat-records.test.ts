@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => {
   const handles = new Map<string, { id: string }>()
   return {
     handles,
+    /** The profile `launchProfileManager.resolve` answers for a test that
+     *  needs one with flags of its own; null answers the bare chat id. */
+    resolvedProfile: null as null | Record<string, unknown>,
     backend: {
       writeEventSessionRecord: vi.fn(() => true),
       discardSessionRecord: vi.fn(),
@@ -111,7 +114,7 @@ vi.mock('./launch-profile-manager', () => ({
   eventsProfile: (id?: string) =>
     id === 'claude-chat' || id === 'codex-chat' ? { id, adapterId: id } : undefined,
   isEchoLaunchProfile: () => false,
-  launchProfileManager: { resolve: () => ({ id: 'claude-chat' }) }
+  launchProfileManager: { resolve: () => mocks.resolvedProfile ?? { id: 'claude-chat' } }
 }))
 
 import { ptyManager } from './pty-manager'
@@ -630,6 +633,24 @@ describe("the person's permission default reaches a chat (PRDCT-4424)", () => {
     launch.harnesses = { claude: { permissionDefault: 'workspace-write' } }
     await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     expect(optionsOf(mocks.claude).permissionMode).toBeUndefined()
+  })
+
+  it('applies no default rung to a profile that sets its own permissions (verifier, round 3)', async () => {
+    launch.harnesses = { claude: { permissionDefault: 'bypassPermissions' } }
+    mocks.resolvedProfile = {
+      id: 'claude-chat',
+      name: 'Claude (chat)',
+      family: 'claude',
+      command: ['claude'],
+      additionalArgs: ['--permission-mode', 'plan']
+    }
+    try {
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+      expect(optionsOf(mocks.claude).permissionMode).toBeUndefined()
+      expect(optionsOf(mocks.claude).dangerousMode).not.toBe(true)
+    } finally {
+      mocks.resolvedProfile = null
+    }
   })
 
   it('turns the bypass rung into the dangerous flag', async () => {

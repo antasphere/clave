@@ -70,8 +70,10 @@ vi.mock('../store/launch-prefs', () => ({
   agentSetupToModes: () => f.modes,
   rememberAgentSetup: f.remember
 }))
-import { launchSession, transportProfileFor } from './launch-session'
+import { launchSession, setupSpawnFlags, transportProfileFor } from './launch-session'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
+import { useLaunchProfileStore } from '../store/launch-profile-store'
+import { DEFAULT_LAUNCH_PROFILE_PREFERENCES } from '../../../shared/agent-launch'
 
 afterEach(() => {
   vi.resetAllMocks()
@@ -573,5 +575,43 @@ describe('transportProfileFor', () => {
     expect(
       transportProfileFor({ kind: 'claude', dangerousMode: false, launchProfileId: 'work' }, chat)
     ).toBe('work')
+  })
+})
+
+describe('setupSpawnFlags', () => {
+  // The person's default rung never travels with a profile that sets its own
+  // permissions (verifier, round 3: the renderer's guard is the only one on
+  // the Claude chat road).
+  afterEach(() => {
+    useLaunchSettingsStore.setState({ harnesses: {} })
+    useLaunchProfileStore.setState({ preferences: DEFAULT_LAUNCH_PROFILE_PREFERENCES })
+  })
+  it('sends the default rung for a bare profile, none for a profile with a mode of its own', () => {
+    useLaunchSettingsStore.setState({
+      harnesses: { claude: { permissionDefault: 'bypassPermissions' } }
+    })
+    useLaunchProfileStore.setState({
+      preferences: {
+        ...DEFAULT_LAUNCH_PROFILE_PREFERENCES,
+        customProfiles: [
+          {
+            id: 'planned',
+            name: 'Planned',
+            family: 'claude',
+            command: ['claude'],
+            additionalArgs: ['--permission-mode', 'plan']
+          }
+        ]
+      }
+    })
+    const setup = { kind: 'claude' as const, dangerousMode: false, model: 'claude-opus-5-5' }
+    expect(setupSpawnFlags(setup)).toEqual({
+      model: 'claude-opus-5-5',
+      permissionMode: 'bypassPermissions'
+    })
+    expect(setupSpawnFlags(setup, 'planned')).toEqual({ model: 'claude-opus-5-5' })
+    expect(setupSpawnFlags({ ...setup, dangerousMode: true }, 'planned')).toEqual({
+      model: 'claude-opus-5-5'
+    })
   })
 })
