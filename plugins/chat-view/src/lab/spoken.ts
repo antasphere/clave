@@ -4,7 +4,9 @@ import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
 import { clipText } from '../../../../src/shared/helper-prompt'
 import {
   SPOKEN_MAX_CHARS,
+  splitBlocks,
   spokenKey,
+  type SpokenBlock,
   type SpokenDone,
   type SpokenResult
 } from '../../../../src/shared/spoken-rendering'
@@ -22,7 +24,7 @@ import { speakable } from './speech'
 export type SpokenState =
   | { state: 'idle' }
   | { state: 'preparing' }
-  | { state: 'ready'; text: string }
+  | { state: 'ready'; text: string; blocks?: SpokenBlock[] }
   | { state: 'failed'; reason?: DigestFailure }
 
 /** What a request for a rendering comes back with: the host's answer, or a
@@ -68,7 +70,7 @@ export function loadSpokenRenderings(sessionId: string): Promise<void> {
         const states = { ...s.states }
         for (const [key, done] of Object.entries(found ?? {}))
           if (done?.ok && typeof done.text === 'string')
-            states[idOf(sessionId, key)] = { state: 'ready', text: done.text }
+            states[idOf(sessionId, key)] = readyOf(done)
         return { states }
       })
     })
@@ -94,7 +96,8 @@ export function requestSpokenRendering(
   const request = loadSpokenRenderings(sessionId)
     .then(async (): Promise<SpokenAnswer> => {
       const known = useSpokenStore.getState().states[id]
-      if (known?.state === 'ready') return { ok: true, text: known.text }
+      if (known?.state === 'ready')
+        return { ok: true, text: known.text, ...(known.blocks && { blocks: known.blocks }) }
       if (known?.state === 'failed' && !canAskAgain(known.reason))
         return { ok: false, error: 'not asked again', reason: known.reason }
       useSpokenStore.getState().set(id, { state: 'preparing' })
@@ -116,17 +119,24 @@ export function requestSpokenRendering(
         : { ok: false, error: 'This app cannot prepare a spoken version.' }
       useSpokenStore
         .getState()
-        .set(
-          id,
-          answer.ok
-            ? { state: 'ready', text: answer.text }
-            : { state: 'failed', reason: answer.reason }
-        )
+        .set(id, answer.ok ? readyOf(answer) : { state: 'failed', reason: answer.reason })
       return answer
     })
     .finally(() => inFlight.delete(id))
   inFlight.set(id, request)
   return request
+}
+
+/** A rendering as the store keeps it: its blocks only when they are blocks
+ *  (a server's answer is data, checked before it is kept). */
+function readyOf(done: SpokenDone): SpokenState {
+  const blocks = Array.isArray(done.blocks)
+    ? done.blocks.filter(
+        (block): block is SpokenBlock =>
+          !!block && Number.isInteger(block.n) && typeof block.text === 'string'
+      )
+    : undefined
+  return { state: 'ready', text: done.text, ...(blocks?.length && { blocks }) }
 }
 
 /** Where a page's spoken rendering stands, for its read control. */
@@ -142,15 +152,32 @@ export function useSpokenRenderings(sessionId: string): void {
   }, [sessionId])
 }
 
+/** One block of what a reading speaks: the page block it reads (`n`, 1
+ *  and up; 0 for a rendering filed before the blocks, which lights nothing)
+ *  and its words, ready for the voice. */
+export interface SpokenSourceBlock {
+  n: number
+  text: string
+}
+
 /** What a reading speaks, decided on the rendering's answer: the rendering
- *  when there is one, else the page as written, with why. Pure. */
+ *  when there is one, block by block when it has its blocks (PRDCT-4430),
+ *  else the page as written, block by block too (the page's own split), with
+ *  why. Pure. */
 export function spokenSource(
   answer: SpokenAnswer | null,
   markdown: string
-): { text: string; fallback?: DigestFailure | 'missing' } {
-  if (answer?.ok && answer.text.trim()) return { text: speakable(answer.text) }
+): { text: string; blocks: SpokenSourceBlock[]; fallback?: DigestFailure | 'missing' } {
+  if (answer?.ok && answer.text.trim()) {
+    const text = speakable(answer.text)
+    const blocks = answer.blocks?.length
+      ? answer.blocks.map((block) => ({ n: block.n, text: speakable(block.text) }))
+      : [{ n: 0, text }]
+    return { text, blocks }
+  }
   return {
     text: speakable(markdown),
+    blocks: splitBlocks(markdown).map((block, i) => ({ n: i + 1, text: speakable(block) })),
     fallback: answer && !answer.ok ? (answer.reason ?? 'failed') : 'missing'
   }
 }

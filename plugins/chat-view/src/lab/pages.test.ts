@@ -3,11 +3,14 @@ import { emptyConversation, reduceConversation, type Entry } from '../reducer'
 import type { SessionEvent } from '../../../../src/shared/session-model'
 import { pageTitleKey } from '../../../../src/shared/page-title'
 import { ANONYMOUS_PROVENANCE_HEADER } from '../../../../src/shared/exchange-provenance'
+import { splitBlocks, spokenPrompt } from '../../../../src/shared/spoken-rendering'
 import {
   briefFor,
   buildPages,
   currentPage,
+  firstBlocks,
   headline,
+  pageBlocks,
   titleKeyOf,
   turnPage,
   type Page
@@ -290,5 +293,46 @@ describe('a page titled by a helper (PRDCT-4412)', () => {
     expect(long.title).toBe('Why does the build fail?')
     expect(briefFor(long, long.title)).toBe(long.brief)
     expect(briefFor(long, 'A failing build')).toBe('Why does the build fail? It worked yesterday.')
+  })
+})
+
+describe('a page by blocks (PRDCT-4430)', () => {
+  const page = (): Page =>
+    pagesOf([
+      { type: 'user_message', text: 'Fix it' },
+      { type: 'assistant_text', delta: '## Plan\n\nFirst I read.\n\n- a\n- b', final: true },
+      { type: 'tool_call', id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
+      { type: 'tool_result', id: 't1', output: 'x' },
+      // A list right after a list in the entry before: still two blocks.
+      { type: 'assistant_text', delta: '- c\n\n---\n\nDone.', final: true }
+    ])[0]
+
+  it('numbers the blocks across the prose entries, each with its row', () => {
+    const p = page()
+    expect(pageBlocks(p)).toEqual([
+      { n: 1, markdown: '## Plan', rowKey: p.rows[0].key },
+      { n: 2, markdown: 'First I read.', rowKey: p.rows[0].key },
+      { n: 3, markdown: '- a\n- b', rowKey: p.rows[0].key },
+      { n: 4, markdown: '- c', rowKey: p.rows[1].key },
+      { n: 5, markdown: 'Done.', rowKey: p.rows[1].key }
+    ])
+    expect([...firstBlocks(p)]).toEqual([
+      [p.rows[0].key, 1],
+      [p.rows[1].key, 4]
+    ])
+  })
+
+  it('reads aloud a text the prompt cuts into exactly the page’s blocks', () => {
+    const p = page()
+    const markdowns = pageBlocks(p).map((block) => block.markdown)
+    expect(splitBlocks(p.spoken)).toEqual(markdowns)
+    const prompt = spokenPrompt(p.spoken)
+    const sent = [...prompt.matchAll(/<b n="(\d+)">\n([\s\S]*?)\n<\/b>/g)].map((m) => [
+      Number(m[1]),
+      m[2]
+    ])
+    expect(sent).toEqual(markdowns.map((markdown, i) => [i + 1, markdown]))
+    // The copy keeps the answer as written.
+    expect(p.answer).toBe('## Plan\n\nFirst I read.\n\n- a\n- b\n\n- c\n\n---\n\nDone.')
   })
 })

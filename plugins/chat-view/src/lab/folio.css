@@ -636,6 +636,129 @@
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+/* The player (PRDCT-4430): play and pause, stop, and the bar by block. */
+.folio-player {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  min-width: 0;
+}
+.folio-player[data-state='playing'],
+.folio-player[data-state='paused'] {
+  flex: 1 1 100%;
+}
+.folio-stop {
+  padding: 0 calc(var(--spacing) * 1.5);
+}
+.folio-player-bar {
+  display: flex;
+  flex: 1 1 calc(var(--spacing) * 40);
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding-left: calc(var(--spacing) * 1);
+}
+.folio-scrub {
+  --ticks: 1;
+  --fill: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--ticks), 1fr);
+  flex: 1 1 auto;
+  min-width: calc(var(--spacing) * 16);
+  height: calc(var(--spacing) * 4);
+  cursor: pointer;
+  touch-action: none;
+  border-radius: var(--radius-sm);
+}
+/* The track, and the part read over it. */
+.folio-scrub::before,
+.folio-scrub-fill {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 2px;
+  translate: 0 -50%;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+}
+.folio-scrub::before {
+  right: 0;
+  background-color: color-mix(in oklab, var(--folio-ink) 14%, transparent);
+}
+.folio-scrub-fill {
+  width: calc(var(--fill) * 100%);
+  background-color: var(--color-accent);
+  transition: width var(--default-transition-duration) linear;
+}
+/* One tick per block, at its start. */
+.folio-scrub-tick {
+  position: relative;
+  pointer-events: none;
+}
+.folio-scrub-tick::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1.5px;
+  height: calc(var(--spacing) * 2);
+  translate: 0 -50%;
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--folio-ink) 28%, transparent);
+}
+.folio-scrub-tick[data-played='true']::before,
+.folio-scrub-tick[data-current='true']::before {
+  background-color: var(--color-accent);
+}
+.folio-scrub:hover .folio-scrub-tick::before {
+  height: calc(var(--spacing) * 3);
+}
+.folio-scrub:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+.folio-player-time {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The page by blocks: each block of the answer its own element, spaced as
+   the prose was; the one being read washed in the accent. */
+.folio-block > :first-child {
+  margin-top: 0;
+}
+.folio-block > :last-child {
+  margin-bottom: 0;
+}
+.chat-prose > .folio-block:not(:first-child):has(> :is(h1, h2, h3, h4):first-child) {
+  margin-top: calc(var(--spacing) * 5);
+}
+.folio-block {
+  margin-inline: calc(var(--spacing) * -2);
+  padding-inline: calc(var(--spacing) * 2);
+  border-radius: var(--radius-md);
+  transition: background-color var(--default-transition-duration) var(--ease-out-expo);
+}
+.folio-body[data-player='true'] .folio-block {
+  cursor: pointer;
+}
+.folio-body[data-player='true'] .folio-block:hover:not([data-reading='true']) {
+  background-color: color-mix(in oklab, var(--color-accent) 5%, transparent);
+}
+.folio-block[data-reading='true'] {
+  background-color: color-mix(in oklab, var(--color-accent) 11%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .folio-block,
+  .folio-scrub-fill {
+    transition: none;
+  }
+}
 .folio-tally {
   margin-left: auto;
   color: var(--text-tertiary);

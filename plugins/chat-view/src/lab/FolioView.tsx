@@ -9,6 +9,8 @@ import {
   ClipboardDocumentIcon,
   ListBulletIcon,
   PaperClipIcon,
+  PauseIcon,
+  PlayIcon,
   SpeakerWaveIcon,
   StopIcon,
   XMarkIcon
@@ -73,6 +75,8 @@ import {
   briefFor,
   buildPages,
   currentPage,
+  entryBlocks,
+  firstBlocks,
   STATUS_WORDS,
   turnPage,
   type Note,
@@ -81,6 +85,7 @@ import {
 } from './pages'
 import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
 import { fallbackLine, useSpokenRenderings } from './spoken'
+import { clockOf, scrubFill, tickAt } from './progress'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
@@ -114,17 +119,49 @@ function clock(at: number): string {
     : `${then.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${time}`
 }
 
-/** The answer's prose, memoised on its entry: a streamed delta re-renders the
- *  paragraph it grows and nothing else on the page. */
+/** One block of the answer (PRDCT-4430): the page renders each block of
+ *  `splitBlocks` on its own, numbered across the page (`data-block`), so the
+ *  voice reading block n lights block n (`data-reading`). Memoised: a streamed
+ *  delta re-renders the block it grows and nothing else. */
+const Block = memo(function Block({
+  n,
+  markdown,
+  reading,
+  streaming,
+  components
+}: {
+  n: number
+  markdown: string
+  reading: boolean
+  streaming: boolean
+  components: Components
+}): React.JSX.Element {
+  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  return (
+    <div className="folio-block" data-block={n} data-reading={reading ? 'true' : undefined}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  )
+})
+
+/** The answer's prose, memoised on its entry, written block by block from
+ *  `first` (the number of its first block on the page); `reading` is the
+ *  block the voice reads, when it is one of this entry's. */
 const Prose = memo(function Prose({
   entry,
+  first,
+  reading,
   onError
 }: {
   entry: Extract<Entry, { kind: 'assistant' }>
+  first: number
+  reading: number | null
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const streaming = !entry.final
-  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  const blocks = useMemo(() => entryBlocks(entry.text), [entry.text])
   const components = useMemo<Components>(
     () => ({
       code: ChatCode,
@@ -152,9 +189,17 @@ const Prose = memo(function Prose({
   )
   return (
     <div className="chat-prose folio-prose" data-streaming={streaming ? 'true' : undefined}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-        {entry.text}
-      </ReactMarkdown>
+      {blocks.map((markdown, i) => (
+        <Block
+          // By position: a streamed block keeps its element as it grows.
+          key={i}
+          n={first + i}
+          markdown={markdown}
+          reading={reading === first + i}
+          streaming={streaming && i === blocks.length - 1}
+          components={components}
+        />
+      ))}
     </div>
   )
 })
@@ -195,10 +240,16 @@ function ToolNote({
 function Line({
   row,
   pen,
+  first,
+  reading,
   onError
 }: {
   row: PageRow
   pen: boolean
+  /** The number of the row's first block on the page. */
+  first: number
+  /** The block the voice reads, when it is one of this row's. */
+  reading: number | null
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const [opened, setOpened] = useState<string | null>(null)
@@ -211,7 +262,7 @@ function Line({
   return (
     <div className="folio-line" data-notes={row.notes.length > 0 ? 'true' : undefined}>
       <div className="folio-text">
-        {row.prose && <Prose entry={row.prose} onError={onError} />}
+        {row.prose && <Prose entry={row.prose} first={first} reading={reading} onError={onError} />}
         {row.error && (
           <div className="chat-notice" data-tone="error" role="alert">
             {row.error.message}
@@ -343,6 +394,93 @@ function readTitle(
   return note
 }
 
+/** How long after the reader scrolls the page the voice leaves it where they
+ *  put it: the block being read is brought into view only after that. */
+const READER_SCROLL_MS = 3_000
+
+/** The player at the page's foot (PRDCT-4430): the bar, one tick per block
+ *  of the reading, the part read filled; a click or a drag goes to the block
+ *  under the pointer; the time read and the whole, once known. */
+function Scrub({
+  reading,
+  onSeek
+}: {
+  reading: Reading
+  onSeek: (tick: number) => void
+}): React.JSX.Element {
+  const bar = useRef<HTMLDivElement>(null)
+  const dragging = useRef(false)
+  const last = useRef<number | null>(null)
+  const seekAt = (clientX: number): void => {
+    const rect = bar.current?.getBoundingClientRect()
+    if (!rect) return
+    const tick = tickAt(clientX - rect.left, rect.width, reading.blocks)
+    if (tick === last.current) return
+    last.current = tick
+    onSeek(tick)
+  }
+  const fill = scrubFill(reading.tick, reading.blocks, reading.fraction)
+  return (
+    <div className="folio-player-bar">
+      <div
+        ref={bar}
+        className="folio-scrub"
+        data-testid="folio-scrub"
+        role="slider"
+        aria-label="Block being read"
+        aria-valuemin={1}
+        aria-valuemax={reading.blocks}
+        aria-valuenow={reading.tick + 1}
+        aria-valuetext={`Block ${reading.tick + 1} of ${reading.blocks}`}
+        tabIndex={0}
+        style={
+          {
+            '--ticks': reading.blocks,
+            '--fill': fill
+          } as React.CSSProperties
+        }
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
+          dragging.current = true
+          last.current = reading.tick
+          event.currentTarget.setPointerCapture?.(event.pointerId)
+          seekAt(event.clientX)
+        }}
+        onPointerMove={(event) => {
+          if (dragging.current) seekAt(event.clientX)
+        }}
+        onPointerUp={() => {
+          dragging.current = false
+          last.current = null
+        }}
+        onPointerCancel={() => {
+          dragging.current = false
+          last.current = null
+        }}
+      >
+        <span className="folio-scrub-fill" aria-hidden="true" />
+        {reading.ticks.map((block, i) => (
+          <span
+            key={`${i}-${block}`}
+            className="folio-scrub-tick"
+            data-testid="folio-scrub-tick"
+            data-played={i < reading.tick ? 'true' : undefined}
+            data-current={i === reading.tick ? 'true' : undefined}
+            aria-hidden="true"
+          />
+        ))}
+      </div>
+      {reading.voice === 'elevenlabs' && (
+        <span className="folio-player-time" data-testid="folio-player-time">
+          {clockOf(reading.totalMs === null && reading.elapsedMs === 0 ? null : reading.elapsedMs)}
+          {' / '}
+          {clockOf(reading.totalMs)}
+        </span>
+      )}
+    </div>
+  )
+}
+
 /** The page on screen. Keyed by its page by the caller, so turning to another
  *  plays the turn once; growing in place plays nothing. */
 function PageView({
@@ -366,6 +504,91 @@ function PageView({
   const lastRow = page.rows.at(-1)
   const penOnLast = live && !!lastRow
   const reading = voice.reading?.key === page.key ? voice.reading : null
+  const lit = reading?.block ?? null
+  // Each row's first block, and so which row holds the block being read.
+  const firsts = useMemo(() => firstBlocks(page), [page])
+  const rowsWithProse = useMemo(() => [...firsts.keys()], [firsts])
+  const rowReading = (rowKey: string): number | null => {
+    if (lit === null) return null
+    const at = rowsWithProse.indexOf(rowKey)
+    if (at < 0) return null
+    const first = firsts.get(rowKey) ?? 0
+    const next = at + 1 < rowsWithProse.length ? firsts.get(rowsWithProse[at + 1])! : Infinity
+    return lit >= first && lit < next ? lit : null
+  }
+
+  // The block being read comes into view, unless the reader scrolled the page
+  // in the last few seconds: their place wins.
+  const body = useRef<HTMLDivElement>(null)
+  const userScrolledAt = useRef(0)
+  const active = reading !== null
+  useEffect(() => {
+    if (!active) return
+    const mark = (): void => {
+      userScrolledAt.current = Date.now()
+    }
+    const keys = (event: KeyboardEvent): void => {
+      if (/^(PageUp|PageDown|Home|End|ArrowUp|ArrowDown)$/.test(event.key)) mark()
+    }
+    window.addEventListener('wheel', mark, { passive: true, capture: true })
+    window.addEventListener('touchmove', mark, { passive: true, capture: true })
+    window.addEventListener('keydown', keys, { capture: true })
+    return () => {
+      window.removeEventListener('wheel', mark, { capture: true })
+      window.removeEventListener('touchmove', mark, { capture: true })
+      window.removeEventListener('keydown', keys, { capture: true })
+    }
+  }, [active])
+  useEffect(() => {
+    if (lit === null) return
+    if (Date.now() - userScrolledAt.current < READER_SCROLL_MS) return
+    const block = body.current?.querySelector<HTMLElement>(`[data-block="${lit}"]`)
+    block?.scrollIntoView?.({ block: 'nearest' })
+  }, [lit])
+
+  const finished = !live && !!page.answer
+  // A click on a block reads from it: a reading of this page moves there, any
+  // other starts one. A link, a button or a field keeps its own click, and a
+  // selection made by dragging is not a click on a block.
+  const onBodyClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (!finished || !voice.supported) return
+    const target = event.target as HTMLElement
+    if (target.closest('a, button, summary, input, textarea, select, label')) return
+    const block = target.closest<HTMLElement>('.folio-block')
+    if (!block) return
+    const selection = window.getSelection?.()
+    if (selection && !selection.isCollapsed && selection.toString().trim()) return
+    const n = Number(block.dataset.block)
+    if (!Number.isInteger(n) || n < 1) return
+    voice.readFrom(page.key, page.spoken, n)
+  }
+  const seekTick = (tick: number): void => {
+    const block = reading?.ticks[tick]
+    if (block !== undefined) voice.seekBlock(block)
+  }
+  const toggle = (): void => {
+    if (!reading || reading.state === 'preparing') return
+    if (reading.state === 'paused') voice.resume()
+    else voice.pause()
+  }
+  // The player's keys: Space plays or pauses, the arrows move a block.
+  const onPlayerKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!reading || reading.state === 'preparing') return
+    const onButton = (event.target as HTMLElement).closest('button')
+    if (event.key === ' ' && !onButton) {
+      event.preventDefault()
+      toggle()
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      seekTick(
+        Math.max(
+          0,
+          Math.min(reading.blocks - 1, reading.tick + (event.key === 'ArrowLeft' ? -1 : 1))
+        )
+      )
+    }
+  }
+
   return (
     <article
       className="folio-page"
@@ -374,9 +597,21 @@ function PageView({
       aria-label={`Page ${page.number}: ${title}`}
     >
       <PageHead page={page} of={of} title={title} sessionId={sessionId} />
-      <div className="folio-body">
+      <div
+        ref={body}
+        className="folio-body"
+        data-player={reading ? 'true' : undefined}
+        onClick={onBodyClick}
+      >
         {page.rows.map((row) => (
-          <Line key={row.key} row={row} pen={penOnLast && row === lastRow} onError={onError} />
+          <Line
+            key={row.key}
+            row={row}
+            pen={penOnLast && row === lastRow}
+            first={firsts.get(row.key) ?? 0}
+            reading={rowReading(row.key)}
+            onError={onError}
+          />
         ))}
         {live && !lastRow && (
           <div className="folio-line">
@@ -389,48 +624,72 @@ function PageView({
           <p className="folio-aside">Stopped before it finished.</p>
         )}
       </div>
-      {!live && page.answer && (
+      {finished && (
         <footer className="folio-foot">
-          {voice.supported &&
-            (reading?.phase === 'preparing' ? (
-              <button
-                type="button"
-                className="folio-action folio-read"
-                data-on="true"
-                data-phase="preparing"
-                title={readTitle(reading, undefined)}
-                onClick={voice.stop}
-              >
-                <StopIcon aria-hidden="true" />
-                Preparing
-                <FolioLoader />
-              </button>
-            ) : reading ? (
-              <button
-                type="button"
-                className="folio-action folio-read"
-                data-on="true"
-                data-phase="speaking"
-                title={readTitle(reading, undefined)}
-                onClick={voice.stop}
-              >
-                <StopIcon aria-hidden="true" />
-                Stop reading
-                <span className="folio-action-count">
-                  {reading.at + 1}/{reading.of}
-                </span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="folio-action folio-read"
-                title={readTitle(null, voice.fallbacks[page.key], voice.notes[page.key])}
-                onClick={() => voice.read(page.key, page.answer)}
-              >
-                <SpeakerWaveIcon aria-hidden="true" />
-                Read it to me
-              </button>
-            ))}
+          {voice.supported && (
+            <div className="folio-player" data-state={reading?.state} onKeyDown={onPlayerKey}>
+              {reading?.phase === 'preparing' ? (
+                <button
+                  type="button"
+                  className="folio-action folio-read"
+                  data-testid="folio-play"
+                  data-on="true"
+                  data-phase="preparing"
+                  title={readTitle(reading, undefined)}
+                  onClick={voice.stop}
+                >
+                  <StopIcon aria-hidden="true" />
+                  Preparing
+                  <FolioLoader />
+                </button>
+              ) : reading ? (
+                <>
+                  <button
+                    type="button"
+                    className="folio-action folio-read"
+                    data-testid="folio-play"
+                    data-on="true"
+                    data-phase="speaking"
+                    data-state={reading.state}
+                    title={readTitle(reading, undefined)}
+                    onClick={toggle}
+                  >
+                    {reading.state === 'paused' ? (
+                      <PlayIcon aria-hidden="true" />
+                    ) : (
+                      <PauseIcon aria-hidden="true" />
+                    )}
+                    {reading.state === 'paused' ? 'Play' : 'Pause'}
+                    <span className="folio-action-count">
+                      {reading.tick + 1}/{reading.blocks}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="folio-action folio-stop"
+                    data-testid="folio-stop"
+                    aria-label="Stop reading"
+                    title="Stop reading"
+                    onClick={voice.stop}
+                  >
+                    <StopIcon aria-hidden="true" />
+                  </button>
+                  <Scrub reading={reading} onSeek={seekTick} />
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="folio-action folio-read"
+                  data-testid="folio-play"
+                  title={readTitle(null, voice.fallbacks[page.key], voice.notes[page.key])}
+                  onClick={() => voice.read(page.key, page.spoken)}
+                >
+                  <SpeakerWaveIcon aria-hidden="true" />
+                  Read it to me
+                </button>
+              )}
+            </div>
+          )}
           <CopyAnswer text={page.answer} />
           {page.tools > 0 && (
             <span className="folio-tally">
@@ -788,7 +1047,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     if (writing.current !== latest.key) return
     writing.current = null
     if (latest.status === 'done' && autoRead && visible && latest.answer)
-      read(latest.key, latest.answer)
+      read(latest.key, latest.spoken)
   }, [latest, autoRead, visible, read])
 
   const pane = useRef<HTMLDivElement>(null)

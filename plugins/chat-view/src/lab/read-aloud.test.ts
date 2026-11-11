@@ -11,15 +11,23 @@ import type { SpokenAnswer } from './spoken'
 
 const h = vi.hoisted(() => {
   const cleanups: (() => void)[] = []
+  /** Every state the hook holds, in the order it asks for them: the first
+   *  is the reading. */
+  const holders: { value: unknown }[] = []
   return {
     cleanups,
+    holders,
     react: {
       useState: <T>(initial: T | (() => T)) => {
-        let value = typeof initial === 'function' ? (initial as () => T)() : initial
-        const set = (next: T | ((now: T) => T)): void => {
-          value = typeof next === 'function' ? (next as (now: T) => T)(value) : next
+        const holder = {
+          value: (typeof initial === 'function' ? (initial as () => T)() : initial) as unknown
         }
-        return [value, set] as const
+        holders.push(holder)
+        const set = (next: T | ((now: T) => T)): void => {
+          holder.value =
+            typeof next === 'function' ? (next as (now: T) => T)(holder.value as T) : next
+        }
+        return [holder.value as T, set] as const
       },
       useRef: <T>(current: T) => ({ current }),
       useCallback: <T>(fn: T) => fn,
@@ -36,7 +44,13 @@ vi.mock('react', () => ({ ...h.react, default: h.react }))
 vi.mock('./spoken', () => ({
   spokenKeyOf: (markdown: string) => `key-${markdown.length}`,
   spokenSource: (answer: SpokenAnswer | null, markdown: string) =>
-    answer?.ok ? { text: answer.text } : { text: markdown, fallback: 'missing' },
+    answer?.ok
+      ? { text: answer.text, blocks: answer.blocks ?? [{ n: 0, text: answer.text }] }
+      : {
+          text: markdown,
+          blocks: markdown.split('\n\n').map((text, i) => ({ n: i + 1, text })),
+          fallback: 'missing'
+        },
   requestSpokenRendering: (_s: string, _k: string, _l: unknown, markdown: string) =>
     new Promise<SpokenAnswer | null>((resolve) => h.asked.push({ markdown, answer: resolve }))
 }))
@@ -67,6 +81,7 @@ const flush = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  h.holders.length = 0
   spoken = []
   speakCalls = []
   h.asked.length = 0
@@ -207,5 +222,116 @@ describe('the "no ElevenLabs" memory (verifier round 2, R02)', () => {
     })
     await readPage(voice, 'Two.')
     expect(speakCalls).toHaveLength(2)
+  })
+})
+
+/** A system voice the test drives: each utterance waits until the test
+ *  starts and ends it; cancel, pause and resume are counted. */
+function drivenVoice(): {
+  queued: FakeUtterance[]
+  calls: string[]
+} {
+  const queued: FakeUtterance[] = []
+  const calls: string[] = []
+  ;(window as unknown as { speechSynthesis: unknown }).speechSynthesis = {
+    speak: (u: FakeUtterance) => {
+      spoken.push(u.text)
+      queued.push(u)
+    },
+    cancel: () => calls.push('cancel'),
+    pause: () => calls.push('pause'),
+    resume: () => calls.push('resume')
+  }
+  return { queued, calls }
+}
+
+describe('the player on the system voice (PRDCT-4430)', () => {
+  const blocks = [
+    { n: 1, text: 'One.' },
+    { n: 2, text: 'Two.' },
+    { n: 3, text: 'Three.' }
+  ]
+  const reading = (): Record<string, unknown> | null =>
+    h.holders[0].value as Record<string, unknown> | null
+
+  it('speaks each block as its own run, the reading on the block whose utterance started', async () => {
+    const v = drivenVoice()
+    const voice = usePane()
+    voice.read('p', 'One\n\nTwo\n\nThree')
+    expect(reading()).toMatchObject({ state: 'preparing', block: null })
+    h.asked[0].answer({ ok: true, text: 'One.\n\nTwo.\n\nThree.', blocks })
+    await flush()
+    expect(spoken).toEqual(['One.', 'Two.', 'Three.'])
+    expect(reading()).toMatchObject({ state: 'playing', block: 1, blocks: 3, ticks: [1, 2, 3] })
+    v.queued[1].onstart?.()
+    expect(reading()).toMatchObject({ block: 2, tick: 1 })
+    v.queued[1].onend?.()
+    v.queued[2].onstart?.()
+    expect(reading()).toMatchObject({ block: 3, tick: 2 })
+    v.queued[2].onend?.()
+    expect(reading()).toBeNull()
+  })
+
+  it('pause and resume go through the system voice and the reading says so', async () => {
+    const v = drivenVoice()
+    const voice = usePane()
+    voice.read('p', 'x')
+    h.asked[0].answer({ ok: true, text: 'x', blocks })
+    await flush()
+    voice.pause()
+    expect(v.calls.at(-1)).toBe('pause')
+    expect(reading()).toMatchObject({ state: 'paused', phase: 'speaking' })
+    voice.resume()
+    expect(v.calls.at(-1)).toBe('resume')
+    expect(reading()).toMatchObject({ state: 'playing' })
+  })
+
+  it('a seek cancels and speaks again from the block; the old run ends nothing', async () => {
+    const v = drivenVoice()
+    const voice = usePane()
+    voice.read('p', 'x')
+    h.asked[0].answer({ ok: true, text: 'x', blocks })
+    await flush()
+    const before = v.queued.length
+    voice.seekBlock(3)
+    expect(v.calls.at(-1)).toBe('cancel')
+    expect(spoken.slice(before)).toEqual(['Three.'])
+    expect(reading()).toMatchObject({ block: 3 })
+    // The cancelled run's last utterance ends late: the reading goes on.
+    v.queued[before - 1].onend?.()
+    expect(reading()).not.toBeNull()
+    v.queued.at(-1)!.onend?.()
+    expect(reading()).toBeNull()
+  })
+
+  it('a block clicked while the page prepares is where the reading starts, and the first voice call', async () => {
+    drivenVoice()
+    const voice = usePane()
+    voice.readFrom('p', 'x', 2)
+    expect(reading()).toMatchObject({ state: 'preparing', block: 2 })
+    // A second click while preparing moves the start, asking nothing new.
+    voice.readFrom('p', 'x', 3)
+    expect(h.asked).toHaveLength(1)
+    expect(reading()).toMatchObject({ block: 3 })
+    h.asked[0].answer({ ok: true, text: 'x', blocks })
+    await flush()
+    expect(speakCalls.map((c) => c.text)).toEqual(['Three.'])
+    expect(spoken).toEqual(['Three.'])
+    expect(reading()).toMatchObject({ block: 3, tick: 2 })
+  })
+
+  it('a rendering without blocks plays as one block and lights nothing', async () => {
+    drivenVoice()
+    const voice = usePane()
+    voice.read('p', 'x')
+    h.asked[0].answer({ ok: true, text: 'Old rendering.' })
+    await flush()
+    expect(spoken).toEqual(['Old rendering.'])
+    expect(reading()).toMatchObject({ block: null, blocks: 1, ticks: [0] })
+    // A click on a block of such a page restarts from its only part.
+    voice.seekBlock(2)
+    expect(spoken).toEqual(['Old rendering.'])
+    voice.seekBlock(0)
+    expect(spoken).toEqual(['Old rendering.', 'Old rendering.'])
   })
 })

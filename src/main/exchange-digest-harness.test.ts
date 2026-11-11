@@ -237,7 +237,8 @@ describe('Folio’s reads under the harness', () => {
     const title = titleRequest()
     await expect(requestSpoken(spoken)).resolves.toEqual({
       ok: true,
-      text: 'Done, on tab-account.'
+      text: 'Done, on tab-account.',
+      blocks: [{ n: 1, text: 'Done, on tab-account.' }]
     })
     await expect(requestPageTitle(title)).resolves.toEqual({ ok: true, title: 'Why it is done' })
     expect(journaled()).toMatchObject([

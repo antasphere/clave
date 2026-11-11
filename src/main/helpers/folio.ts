@@ -1,5 +1,10 @@
 import { HELPER_SYSTEM_PREAMBLE } from '../../shared/helper-prompt'
-import { parseSpokenReply, spokenPrompt, type SpokenDone } from '../../shared/spoken-rendering'
+import {
+  parseSpokenReply,
+  splitBlocks,
+  spokenPrompt,
+  type SpokenDone
+} from '../../shared/spoken-rendering'
 import { pageTitlePrompt, parsePageTitleReply, type PageTitleDone } from '../../shared/page-title'
 import { defineHelper } from './registry'
 
@@ -19,7 +24,9 @@ export const spokenRenderingHelper = defineHelper<string, SpokenDone>({
   label: 'Spoken renderings',
   systemPrompt: `${HELPER_SYSTEM_PREAMBLE} Your one task: write an answer as it should be spoken by a voice, word for word, with nothing summarised and nothing added.`,
   buildPrompt: spokenPrompt,
-  parseReply: (stdout) => parseSpokenReply(stdout),
+  // The reply must carry the blocks the prompt sent, numbered 1 to k
+  // (PRDCT-4430); one that does not is unreadable, and asked once more.
+  parseReply: (stdout, markdown) => parseSpokenReply(stdout, splitBlocks(markdown).length),
   model: 'haiku',
   fallbackModel: 'sonnet',
   // A long answer is a long reply: up to sixty thousand characters in.

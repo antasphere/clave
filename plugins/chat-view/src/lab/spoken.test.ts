@@ -116,19 +116,73 @@ describe('requestSpokenRendering', () => {
 describe('what a reading speaks', () => {
   it('the rendering when there is one, the page as written with why when not', () => {
     expect(spokenSource({ ok: true, text: 'Two things changed.' }, '- **a**\n- b')).toEqual({
-      text: 'Two things changed.'
+      text: 'Two things changed.',
+      blocks: [{ n: 0, text: 'Two things changed.' }]
     })
     expect(spokenSource({ ok: false, error: 'x', reason: 'limit' }, '- **a**\n- b')).toEqual({
       text: 'a. b.',
+      blocks: [{ n: 1, text: 'a. b.' }],
       fallback: 'limit'
     })
     expect(spokenSource({ ok: false, error: 'x' }, 'Plain.')).toEqual({
       text: 'Plain.',
+      blocks: [{ n: 1, text: 'Plain.' }],
       fallback: 'failed'
     })
-    expect(spokenSource(null, 'Plain.')).toEqual({ text: 'Plain.', fallback: 'missing' })
+    expect(spokenSource(null, 'Plain.')).toEqual({
+      text: 'Plain.',
+      blocks: [{ n: 1, text: 'Plain.' }],
+      fallback: 'missing'
+    })
     // An empty rendering is no rendering.
     expect(spokenSource({ ok: true, text: '  ' }, 'Plain.').fallback).toBe('missing')
+  })
+
+  it('speaks a rendering block by block, and a page read as written by its own blocks (PRDCT-4430)', () => {
+    expect(
+      spokenSource(
+        {
+          ok: true,
+          text: 'One.\n\nTwo.',
+          blocks: [
+            { n: 1, text: 'One.' },
+            { n: 2, text: '**Two.**' }
+          ]
+        },
+        '# One\n\nTwo'
+      ).blocks
+    ).toEqual([
+      { n: 1, text: 'One.' },
+      { n: 2, text: 'Two.' }
+    ])
+    expect(spokenSource(null, '# Head\n\nBody here\n\n```sh\nls\n```').blocks).toEqual([
+      { n: 1, text: 'Head.' },
+      { n: 2, text: 'Body here.' },
+      { n: 3, text: '(A code block.)' }
+    ])
+  })
+
+  it('keeps a rendering’s blocks in the store, filed or asked', async () => {
+    const blocks = [
+      { n: 1, text: 'A.' },
+      { n: 2, text: 'B.' }
+    ]
+    install({
+      spokenRendering: vi.fn(async () => ({ ok: true, text: 'A.\n\nB.', blocks })),
+      spokenRenderingsOf: vi.fn(async () => ({ old: { ok: true, text: 'Old.' } }))
+    })
+    await expect(requestSpokenRendering('s', 'k', {}, 'A\n\nB')).resolves.toEqual({
+      ok: true,
+      text: 'A.\n\nB.',
+      blocks
+    })
+    expect(stateOf('k')).toEqual({ state: 'ready', text: 'A.\n\nB.', blocks })
+    expect(stateOf('old')).toEqual({ state: 'ready', text: 'Old.' })
+    await expect(requestSpokenRendering('s', 'k', {}, 'A\n\nB')).resolves.toEqual({
+      ok: true,
+      text: 'A.\n\nB.',
+      blocks
+    })
   })
 
   it('says why a page was read as written, in the digests’ words', () => {

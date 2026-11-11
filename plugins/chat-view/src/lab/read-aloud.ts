@@ -6,7 +6,8 @@ import {
   type MachineIntegrations
 } from '../../../../src/renderer/src/store/integrations-store'
 import type { DigestFailure } from '../digest'
-import { AudioQueue, speechParts } from './audio'
+import { AudioQueue, blockParts, type SpeechPart } from './audio'
+import { partFor, partPlace, partTicks } from './progress'
 import { speechChunks } from './speech'
 import { requestSpokenRendering, spokenKeyOf, spokenSource, type SpokenAnswer } from './spoken'
 
@@ -14,15 +15,88 @@ import { requestSpokenRendering, spokenKeyOf, spokenSource, type SpokenAnswer } 
  *  `preparing` while the spoken rendering is asked (`spoken.ts`) and the
  *  first part of the voice, then `speaking`; `fallback` says why the page is
  *  read as written; `voice` which voice reads it, and `why` the system voice
- *  reads it rather than the server's ElevenLabs voice. */
+ *  reads it rather than the server's ElevenLabs voice.
+ *
+ *  The player (PRDCT-4430): `state` is preparing, playing or paused; `block`
+ *  the page block being read (`[data-block]`, null when the rendering has no
+ *  blocks); `blocks` how many ticks the bar has, `ticks` the block each one
+ *  reads, `tick` the one in play and `fraction` how much of it is read;
+ *  `elapsedMs` and `totalMs` (null while unknown) the ElevenLabs voice's
+ *  clock. */
 export interface Reading {
   key: string
   at: number
   of: number
   phase: 'preparing' | 'speaking'
+  state: 'preparing' | 'playing' | 'paused'
+  block: number | null
+  blocks: number
+  ticks: number[]
+  tick: number
+  fraction: number
+  elapsedMs: number
+  totalMs: number | null
   fallback?: DigestFailure | 'missing'
   voice?: 'elevenlabs' | 'system'
   why?: string
+}
+
+/** The reading being prepared: nothing played yet, the block asked to start
+ *  from (if any) lit at once. */
+function preparingReading(key: string, from: number | null): Reading {
+  return {
+    key,
+    at: 0,
+    of: 0,
+    phase: 'preparing',
+    state: 'preparing',
+    block: from,
+    blocks: 0,
+    ticks: [],
+    tick: 0,
+    fraction: 0,
+    elapsedMs: 0,
+    totalMs: null
+  }
+}
+
+/** The reading at part `at` of `parts`. Pure. */
+export function readingAt(
+  key: string,
+  parts: SpeechPart[],
+  at: number,
+  extra: Partial<Reading> = {}
+): Reading {
+  const ticks = partTicks(parts)
+  const place = partPlace(parts, at)
+  return {
+    key,
+    at,
+    of: parts.length,
+    phase: 'speaking',
+    state: 'playing',
+    block: place.block,
+    blocks: ticks.length,
+    ticks,
+    tick: place.tick,
+    fraction: place.fraction,
+    elapsedMs: 0,
+    totalMs: null,
+    ...extra
+  }
+}
+
+/** The reading in flight, as the hook holds it: what the controls act on. */
+interface Active {
+  key: string
+  mine: number
+  /** The block to start from, asked while the reading was preparing. */
+  from: number | null
+  /** The parts, once the voice is chosen; null while preparing. */
+  parts: SpeechPart[] | null
+  pause: () => void
+  resume: () => void
+  seek: (at: number) => void
 }
 
 /** Whose pages are read: the tab, and the account its helper runs on. */
@@ -159,7 +233,16 @@ export function useReadAloud(source: ReadSource): {
   /** The pages last read by the system voice, or whose ElevenLabs read
    *  stopped, and why: the control says it on hover. */
   notes: Record<string, string>
-  read: (key: string, markdown: string) => void
+  /** Read a page aloud, from its first block or from block `from`. */
+  read: (key: string, markdown: string, from?: number) => void
+  /** Read from block `n`: a reading of that page moves there, any other
+   *  starts one. */
+  readFrom: (key: string, markdown: string, n: number) => void
+  pause: () => void
+  resume: () => void
+  /** Move the reading to page block `n` (the first part of that block, or
+   *  of the next block with words). */
+  seekBlock: (n: number) => void
   stop: () => void
 } {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
@@ -169,14 +252,15 @@ export function useReadAloud(source: ReadSource): {
   const [reading, setReading] = useState<Reading | null>(null)
   const [fallbacks, setFallbacks] = useState<Record<string, DigestFailure | 'missing'>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
-  const from = useRef(source)
-  from.current = source
+  const sourceRef = useRef(source)
+  sourceRef.current = source
   // The generation of the reading in flight: an utterance or a part of a
   // cancelled one still fires its end, and must not move the new one along.
   const generation = useRef(0)
   // This pane's token: the voice is ours while `voiceOwner` is it.
   const me = useRef<symbol>(Symbol('folio-voice'))
   const queue = useRef<AudioQueue | null>(null)
+  const active = useRef<Active | null>(null)
   // The tabs whose server said it has no ElevenLabs (no key, no voice), for
   // NO_VOICE_MEMORY_MS: a server without a key is not asked again on every
   // page, and a key pasted meanwhile is used soon after.
@@ -207,6 +291,7 @@ export function useReadAloud(source: ReadSource): {
   }, [])
   const stop = useCallback((): void => {
     generation.current += 1
+    active.current = null
     queue.current?.stop()
     if (voiceOwner === me.current) synth?.cancel()
     release()
@@ -216,7 +301,7 @@ export function useReadAloud(source: ReadSource): {
   stopRef.current = stop
 
   const read = useCallback(
-    (key: string, markdown: string): void => {
+    (key: string, markdown: string, from?: number): void => {
       if (!supported) return
       // Whatever another pane was reading stops first: one voice at a time.
       if (voiceOwner && voiceOwner !== me.current) ownerStop?.()
@@ -225,8 +310,18 @@ export function useReadAloud(source: ReadSource): {
       const mine = ++generation.current
       voiceOwner = me.current
       ownerStop = () => stopRef.current()
-      setReading({ key, at: 0, of: 0, phase: 'preparing' })
-      const { sessionId, launch } = from.current
+      const run: Active = {
+        key,
+        mine,
+        from: from ?? null,
+        parts: null,
+        pause: () => undefined,
+        resume: () => undefined,
+        seek: () => undefined
+      }
+      active.current = run
+      setReading(preparingReading(key, from ?? null))
+      const { sessionId, launch } = sourceRef.current
       /** Still this reading, and still ours to speak. */
       const current = (): boolean => {
         if (generation.current !== mine) return false
@@ -234,68 +329,124 @@ export function useReadAloud(source: ReadSource): {
         setReading(null)
         return false
       }
+      /** Change the reading, while it is still this one. */
+      const patch = (change: (now: Reading) => Reading): void => {
+        if (generation.current !== mine) return
+        setReading((now) => (now && now.key === key ? change(now) : now))
+      }
       const done = (): void => {
+        if (active.current === run) active.current = null
         release()
         setReading(null)
       }
 
       const speakSystem = (
-        text: string,
+        parts: SpeechPart[],
+        start: number,
         fallback: DigestFailure | 'missing' | undefined,
         why: VoiceWhy
       ): void => {
         note(key, voiceNote(why))
-        const chunks = speechChunks(text)
-        if (!chunks.length || !synth || !systemVoice) return done()
-        const at = (n: number): Reading => ({
-          key,
-          at: n,
-          of: chunks.length,
-          phase: 'speaking',
-          voice: 'system',
-          why: why.words,
-          ...(fallback && { fallback })
-        })
-        setReading(at(0))
-        chunks.forEach((chunk, n) => {
-          const utterance = new SpeechSynthesisUtterance(chunk)
-          utterance.lang = document.documentElement.lang || navigator.language
-          utterance.rate = 1.04
-          utterance.onstart = () => {
-            if (generation.current === mine) setReading(at(n))
+        if (!parts.length || !synth || !systemVoice) return done()
+        const extra = { voice: 'system' as const, why: why.words, ...(fallback && { fallback }) }
+        // Each block is its own run of utterances, so the block in play is
+        // known; a seek cancels and speaks again from the asked block.
+        let step = 0
+        let paused = false
+        const sayFrom = (first: number): void => {
+          const mineStep = ++step
+          paused = false
+          synth.cancel()
+          setReading(readingAt(key, parts, first, extra))
+          const live = (): boolean => generation.current === mine && step === mineStep
+          for (let n = first; n < parts.length; n++) {
+            const chunks = speechChunks(parts[n].text)
+            chunks.forEach((chunk, c) => {
+              const utterance = new SpeechSynthesisUtterance(chunk)
+              utterance.lang = document.documentElement.lang || navigator.language
+              utterance.rate = 1.04
+              utterance.onstart = () => {
+                if (live())
+                  setReading(
+                    readingAt(key, parts, n, {
+                      ...extra,
+                      state: paused ? 'paused' : 'playing',
+                      fraction: partPlace(parts, n, c / chunks.length).fraction
+                    })
+                  )
+              }
+              const end = (): void => {
+                if (!live() || n !== parts.length - 1 || c !== chunks.length - 1) return
+                done()
+              }
+              utterance.onend = end
+              utterance.onerror = end
+              synth.speak(utterance)
+            })
           }
-          const end = (): void => {
-            if (generation.current !== mine || n !== chunks.length - 1) return
-            done()
-          }
-          utterance.onend = end
-          utterance.onerror = end
-          synth.speak(utterance)
-        })
+        }
+        run.parts = parts
+        run.pause = () => {
+          paused = true
+          synth.pause?.()
+          patch((now) => ({ ...now, state: 'paused' }))
+        }
+        run.resume = () => {
+          paused = false
+          synth.resume?.()
+          patch((now) => ({ ...now, state: 'playing' }))
+        }
+        run.seek = (at) => sayFrom(at)
+        sayFrom(start)
       }
 
       const speakElevenLabs = (
-        parts: string[],
+        parts: SpeechPart[],
+        start: number,
         first: Promise<SpeakResult>,
         fallback: DigestFailure | 'missing' | undefined
       ): void => {
         note(key, null)
-        const at = (n: number): Reading => ({
-          key,
-          at: n,
-          of: parts.length,
-          phase: 'speaking',
-          voice: 'elevenlabs',
-          ...(fallback && { fallback })
-        })
+        const extra = { voice: 'elevenlabs' as const, ...(fallback && { fallback }) }
         const player = (queue.current ??= new AudioQueue())
+        const stateNow = (): Reading['state'] => (player.state === 'paused' ? 'paused' : 'playing')
+        run.parts = parts
+        run.pause = () => {
+          player.pause()
+          patch((now) => ({ ...now, state: 'paused' }))
+        }
+        run.resume = () => {
+          player.resume()
+          patch((now) => ({ ...now, state: 'playing' }))
+        }
+        run.seek = (at) => {
+          player.seek(at)
+          patch((now) => ({
+            ...readingAt(key, parts, at, extra),
+            elapsedMs: now.elapsedMs,
+            totalMs: now.totalMs
+          }))
+        }
+        setReading(readingAt(key, parts, start, extra))
         player.play({
           parts,
+          start,
           first,
           source: (text) => speakPart(sessionId, text),
-          onProgress: (n) => {
-            if (generation.current === mine) setReading(at(n))
-          },
+          onProgress: (n) =>
+            patch((now) => ({
+              ...readingAt(key, parts, n, extra),
+              state: stateNow(),
+              elapsedMs: now.elapsedMs,
+              totalMs: now.totalMs
+            })),
+          onTime: (elapsedMs, totalMs, fraction) =>
+            patch((now) => ({
+              ...now,
+              elapsedMs,
+              totalMs,
+              fraction: partPlace(parts, now.at, fraction).fraction
+            })),
           onEnd: () => {
             if (generation.current === mine) done()
           },
@@ -312,7 +463,7 @@ export function useReadAloud(source: ReadSource): {
       const speak = (answer: SpokenAnswer | null): void => {
         // Stopped, or another reading began, while the rendering was asked.
         if (!current()) return
-        const { text, fallback } = spokenSource(answer, markdown)
+        const { blocks, fallback } = spokenSource(answer, markdown)
         setFallbacks((now) => {
           if (now[key] === fallback) return now
           const next = { ...now }
@@ -320,22 +471,37 @@ export function useReadAloud(source: ReadSource): {
           else delete next[key]
           return next
         })
-        const remembered = rememberedVoiceReason(unset.current.get(sessionId), Date.now())
-        if (remembered) return speakSystem(text, fallback, voiceWhy(remembered))
-        unset.current.delete(sessionId)
-        const parts = speechParts(text)
+        const parts = blockParts(blocks)
         if (!parts.length) return done()
+        // The block asked while preparing, if any (a click on the page).
+        const asked = run.from === null ? 0 : partFor(parts, run.from)
+        const start = asked < 0 ? 0 : asked
+        const remembered = rememberedVoiceReason(unset.current.get(sessionId), Date.now())
+        if (remembered) return speakSystem(parts, start, fallback, voiceWhy(remembered))
+        unset.current.delete(sessionId)
         if (!audioVoice)
-          return speakSystem(text, fallback, { kind: 'unset', words: 'this app plays no audio' })
+          return speakSystem(parts, start, fallback, {
+            kind: 'unset',
+            words: 'this app plays no audio'
+          })
         // The first part decides the voice: ElevenLabs when the server speaks
         // it, the system voice (and why) when it cannot.
-        const first = speakPart(sessionId, parts[0])
+        const first = speakPart(sessionId, parts[start].text)
         void first.then((spoken) => {
           if (!current()) return
-          if (spoken.ok) return speakElevenLabs(parts, first, fallback)
+          // A block clicked while the first part was asked: start there.
+          const now = run.from === null ? start : partFor(parts, run.from)
+          const begin = now < 0 ? start : now
+          if (spoken.ok)
+            return speakElevenLabs(
+              parts,
+              begin,
+              begin === start ? first : speakPart(sessionId, parts[begin].text),
+              fallback
+            )
           if (spoken.reason && rememberedReasons.has(spoken.reason))
             unset.current.set(sessionId, { reason: spoken.reason, at: Date.now() })
-          speakSystem(text, fallback, voiceWhy(spoken.reason))
+          speakSystem(parts, begin, fallback, voiceWhy(spoken.reason))
         })
       }
       requestSpokenRendering(sessionId, spokenKeyOf(markdown), launch, markdown).then(speak, () =>
@@ -344,6 +510,34 @@ export function useReadAloud(source: ReadSource): {
     },
     [synth, supported, systemVoice, audioVoice, note, release]
   )
+  const seekBlock = useCallback((n: number): void => {
+    const run = active.current
+    if (!run || run.mine !== generation.current) return
+    if (!run.parts) {
+      // Still preparing: the reading will start from this block.
+      run.from = n
+      setReading((now) => (now && now.key === run.key ? { ...now, block: n } : now))
+      return
+    }
+    const at = partFor(run.parts, n)
+    if (at >= 0) run.seek(at)
+  }, [])
+  const readFrom = useCallback(
+    (key: string, markdown: string, n: number): void => {
+      if (active.current?.key === key && active.current.mine === generation.current)
+        return seekBlock(n)
+      read(key, markdown, n)
+    },
+    [read, seekBlock]
+  )
+  const pause = useCallback((): void => {
+    const run = active.current
+    if (run?.parts && run.mine === generation.current) run.pause()
+  }, [])
+  const resume = useCallback((): void => {
+    const run = active.current
+    if (run?.parts && run.mine === generation.current) run.resume()
+  }, [])
   // A view gone takes its voice with it, and only its own.
   useEffect(() => {
     const token = me.current
@@ -357,7 +551,7 @@ export function useReadAloud(source: ReadSource): {
       }
     }
   }, [synth])
-  return { supported, reading, fallbacks, notes, read, stop }
+  return { supported, reading, fallbacks, notes, read, readFrom, pause, resume, seekBlock, stop }
 }
 
 /** One part spoken by the server the tab runs on. A call that fails is an

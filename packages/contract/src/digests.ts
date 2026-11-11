@@ -125,9 +125,13 @@ export const WorkDigestDone = Schema.Struct({
 export const WorkDigestResult = Schema.Union(WorkDigestDone, NotRead)
 export type WorkDigestResult = typeof WorkDigestResult.Type
 
+/** One block of a spoken rendering, numbered as the page's blocks
+ *  (PRDCT-4430). A server released before the blocks sends none. */
+export const SpokenBlock = Schema.Struct({ n: Schema.Int, text: Schema.String })
 export const SpokenDone = Schema.Struct({
   ok: Schema.Literal(true),
-  text: Schema.String
+  text: Schema.String,
+  blocks: Schema.optional(Schema.Array(SpokenBlock))
 })
 export const SpokenResult = Schema.Union(SpokenDone, NotRead)
 export type SpokenResult = typeof SpokenResult.Type

@@ -32,6 +32,7 @@ import {
 import {
   SPOKEN_MAX_CHARS,
   parseSpokenReply,
+  splitBlocks,
   spokenBucket,
   spokenKey,
   type SpokenDone,
@@ -322,7 +323,10 @@ async function readSpoken(request: SpokenRequest): Promise<SpokenResult> {
             () =>
               resolve(
                 testFailure(reply) ??
-                  parseSpokenReply(reply) ?? { ok: false, error: 'Unreadable test reply' }
+                  parseSpokenReply(
+                    reply,
+                    splitBlocks(clipText(request.markdown, SPOKEN_MAX_CHARS)).length
+                  ) ?? { ok: false, error: 'Unreadable test reply' }
               ),
             600
           )

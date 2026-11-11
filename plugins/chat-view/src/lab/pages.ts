@@ -5,6 +5,7 @@ import { visibleEntries, type ToolEntry } from '../tools'
 import type { PermissionEntry } from '../approvals'
 import { clipText } from '../../../../src/shared/helper-prompt'
 import { PAGE_TITLE_MESSAGE_CHARS, pageTitleKey } from '../../../../src/shared/page-title'
+import { joinBlocks, splitBlocks } from '../../../../src/shared/spoken-rendering'
 
 /* Folio reads the conversation as a book of pages, one per question: the
    reader's message is the page's title, the agent's answer is its text, and
@@ -64,8 +65,12 @@ export interface Page {
   rows: PageRow[]
   status: PageStatus
   at: number
-  /** The answer's text, joined, for copying and for reading aloud. */
+  /** The answer's text, joined, for copying. */
   answer: string
+  /** What is read aloud (PRDCT-4430): the page's blocks (`pageBlocks`)
+   *  joined so that `splitBlocks` cuts it back into exactly those blocks, so
+   *  the spoken rendering asked on it is numbered as the page is. */
+  spoken: string
   tools: number
   failed: number
 }
@@ -216,6 +221,7 @@ export function buildPages(
     const answer = draft.rows
       .flatMap((row) => (row.prose ? [row.prose.text.trim()] : []))
       .join('\n\n')
+    const spoken = joinBlocks(blocksOf(draft.rows).map((block) => block.markdown))
     return {
       key: draft.key,
       holds: draft.holds,
@@ -231,10 +237,46 @@ export function buildPages(
       status: statusOf(draft.question, draft.rows, lastPage ? state : 'done'),
       at: draft.at,
       answer,
+      spoken,
       tools: tools.length,
       failed: tools.filter((tool) => tool.failed === true).length
     }
   })
+}
+
+/** One block of a page (PRDCT-4430): its number across the page's prose
+ *  entries in order (block 1 is the first block of the first prose entry),
+ *  its markdown, and the row it is written in. */
+export interface PageBlock {
+  n: number
+  markdown: string
+  rowKey: string
+}
+
+/** The blocks of one prose entry: the split the page renders and the voice
+ *  is asked on. */
+export const entryBlocks = (text: string): string[] => splitBlocks(text)
+
+function blocksOf(rows: PageRow[]): PageBlock[] {
+  const blocks: PageBlock[] = []
+  for (const row of rows)
+    if (row.prose)
+      for (const markdown of entryBlocks(row.prose.text))
+        blocks.push({ n: blocks.length + 1, markdown, rowKey: row.key })
+  return blocks
+}
+
+/** A page's blocks, numbered across its prose entries. Pure. */
+export function pageBlocks(page: Pick<Page, 'rows'>): PageBlock[] {
+  return blocksOf(page.rows)
+}
+
+/** The number of each row's first block, for the rows that have prose. */
+export function firstBlocks(page: Pick<Page, 'rows'>): Map<string, number> {
+  const first = new Map<string, number>()
+  for (const block of blocksOf(page.rows))
+    if (!first.has(block.rowKey)) first.set(block.rowKey, block.n)
+  return first
 }
 
 function statusOf(question: UserEntry[], rows: PageRow[], state: AgentState): PageStatus {

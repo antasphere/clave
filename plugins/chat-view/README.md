@@ -243,6 +243,21 @@ written (`speech.ts` takes the markdown out and cuts the utterances) and the rea
 control says why. The speaker toggle in the composer's footer reads each new
 answer as it finishes.
 
+The reading is a player, by block (PRDCT-4430). One split, `splitBlocks` in
+`src/shared/spoken-rendering.ts`, cuts an answer into its top-level blocks (a
+paragraph, a heading, a list, a table, a fence, a quote); the page renders
+each block on its own (`data-block`, numbered across the page's prose), and
+the spoken rendering is asked on those same blocks, numbered, and answered
+block by block (a reply whose numbers do not match is asked again, then the
+page is read as written, by the same blocks). The voice speaks one part per
+block (`audio.ts`, a long block in several parts), so the block being read is
+known and washed in the accent, brought into view unless the reader scrolled
+in the last three seconds. The control plays and pauses (the ElevenLabs
+element and the system voice alike), Stop ends the reading, a click on a block
+reads from it, and the bar at the page's foot has one tick per block, a click
+or a drag (or the arrows) going to a block, with the time once known
+(`progress.ts`). A rendering filed before the blocks plays whole, nothing lit.
+
 It keeps the same reducer, subscription order and composer as the Chat view
 (`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,
 menus and work cards are the shared components) and renders only the page on

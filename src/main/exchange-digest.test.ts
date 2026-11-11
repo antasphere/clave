@@ -193,13 +193,25 @@ describe('Folio’s reads on the helpers runner', () => {
     const [call] = mocks.calls
     expect(call.args[call.args.indexOf('--system-prompt') + 1]).toMatch(/spoken by a voice/)
     expect(call.prompt.startsWith(SPOKEN_MARKER)).toBe(true)
-    expect(call.prompt).toContain(`<answer>\n${markdown}\n</answer>`)
-    call.finish(null, '<spoken>\nResult. Row one: a 1, b 2.\n</spoken>\nNext: nothing.', '')
-    await expect(done).resolves.toEqual({ ok: true, text: 'Result. Row one: a 1, b 2.' })
-    expect(mocks.filed.get(`f1:spoken|${spokenKey(markdown)}`)).toEqual({
+    // The answer goes as data, cut into its numbered blocks (PRDCT-4430).
+    expect(call.prompt).toContain(
+      '<answer>\n<b n="1">\n# Result\n</b>\n<b n="2">\n| a | b |\n|---|---|\n| 1 | 2 |\n</b>\n</answer>'
+    )
+    call.finish(
+      null,
+      '<spoken>\n<b n="1">Result.</b>\n<b n="2">Row one: a 1, b 2.</b>\n</spoken>\nNext: nothing.',
+      ''
+    )
+    const read = {
       ok: true,
-      text: 'Result. Row one: a 1, b 2.'
-    })
+      text: 'Result.\n\nRow one: a 1, b 2.',
+      blocks: [
+        { n: 1, text: 'Result.' },
+        { n: 2, text: 'Row one: a 1, b 2.' }
+      ]
+    }
+    await expect(done).resolves.toEqual(read)
+    expect(mocks.filed.get(`f1:spoken|${spokenKey(markdown)}`)).toEqual(read)
     expect(mocks.caps.get('f1:spoken')).toBe(40)
   })
 
@@ -210,7 +222,42 @@ describe('Folio’s reads on the helpers runner', () => {
     expect(mocks.calls[0].prompt).toContain(`${'M'.repeat(SPOKEN_MAX_CHARS)}…`)
     expect(mocks.calls[0].prompt).not.toContain('M'.repeat(SPOKEN_MAX_CHARS + 1))
     mocks.calls[0].finish(null, '<spoken>Long.</spoken>', '')
-    await expect(done).resolves.toEqual({ ok: true, text: 'Long.' })
+    await expect(done).resolves.toEqual({
+      ok: true,
+      text: 'Long.',
+      blocks: [{ n: 1, text: 'Long.' }]
+    })
+  })
+
+  it('asks once more when the blocks do not match the ones sent, then reads the page as written (PRDCT-4430)', async () => {
+    const markdown = 'One.\n\nTwo.'
+    const done = requestSpoken({ sessionId: 'f4', key: spokenKey(markdown), launch: {}, markdown })
+    await ticks()
+    // Two blocks sent, one came back (merged): unreadable, asked again.
+    mocks.calls[0].finish(null, '<spoken><b n="1">One. Two.</b></spoken>', '')
+    await ticks()
+    expect(mocks.calls).toHaveLength(2)
+    mocks.calls[1].finish(null, '<spoken><b n="1">One.</b><b n="2">Two.</b></spoken>', '')
+    await expect(done).resolves.toMatchObject({
+      ok: true,
+      blocks: [
+        { n: 1, text: 'One.' },
+        { n: 2, text: 'Two.' }
+      ]
+    })
+    const again = 'Three.\n\nFour.'
+    const failed = requestSpoken({
+      sessionId: 'f4',
+      key: spokenKey(again),
+      launch: {},
+      markdown: again
+    })
+    await ticks()
+    mocks.calls[2].finish(null, '<spoken><b n="2">Four.</b><b n="1">Three.</b></spoken>', '')
+    await ticks()
+    mocks.calls[3].finish(null, '<spoken>Three. Four.</spoken>', '')
+    await expect(failed).resolves.toMatchObject({ ok: false, reason: 'unreadable' })
+    expect(mocks.calls).toHaveLength(4)
   })
 
   it('the page title asks Haiku with the message as data, retries an unreadable reply, files under its cap', async () => {
@@ -401,7 +448,11 @@ describe('the host serves Folio’s reads on its own record (PRDCT-4327 terms)',
     await ticks()
     expect(mocks.accounts).toEqual(['server-account-7'])
     mocks.calls[0].finish(null, '<spoken>All green.</spoken>', '')
-    await expect(done).resolves.toEqual({ ok: true, text: 'All green.' })
+    await expect(done).resolves.toEqual({
+      ok: true,
+      text: 'All green.',
+      blocks: [{ n: 1, text: 'All green.' }]
+    })
     expect([...mocks.filed.keys()]).toEqual([`named:spoken|${spokenKey(markdown)}`])
   })
 
@@ -439,7 +490,11 @@ describe('the host serves Folio’s reads on its own record (PRDCT-4327 terms)',
     await ticks()
     expect(mocks.calls).toHaveLength(1)
     mocks.calls[0].finish(null, '<spoken>Raw.</spoken>', '')
-    await expect(done).resolves.toEqual({ ok: true, text: 'Raw.' })
+    await expect(done).resolves.toEqual({
+      ok: true,
+      text: 'Raw.',
+      blocks: [{ n: 1, text: 'Raw.' }]
+    })
     const message = 'Q'.repeat(PAGE_TITLE_MESSAGE_CHARS * 3)
     const titled = host.pageTitle({
       sessionId: 'plain',
