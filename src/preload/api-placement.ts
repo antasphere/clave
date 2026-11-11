@@ -339,79 +339,79 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
     "server groups get the move-to-window menu, and this Mac's windows move a server group's id they do not own (PRDCT-4334)"
   ),
   getUsageLimits: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   getClaudeUsageSnapshot: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   onClaudeAccountUsage: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   claudeAccountsList: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   claudeAccountsMigrated: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   claudeAccountAdd: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   claudeAccountUpdate: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   claudeAccountReorder: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   claudeAccountRemove: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   claudeAccountSetToken: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   claudeAccountClearToken: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   onClaudeAccountsChanged: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   codexAccountsList: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   codexAccountAdd: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   codexAccountUpdate: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   codexAccountReorder: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   codexAccountRemove: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   codexAccountClearCredential: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   onCodexAccountsChanged: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   accountLoginStart: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   accountLoginApiKey: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   accountLoginInput: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   accountLoginCancel: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   accountLoginList: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   onAccountLoginProgress: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts, on purpose; a server's are signed in on the server itself and only read here (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   antasphereAccountGet: local,
   antasphereAccountSignIn: local,
@@ -420,13 +420,13 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   antasphereAccountDismiss: local,
   onAntasphereAccountChanged: local,
   getCodexUsageLimits: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   getCodexUsageSnapshot: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   onCodexAccountUsage: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
   restartSession: routed,
   getPiUsage: local,
@@ -514,7 +514,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   preferencesGet: local,
   preferencesSet: local,
   onRecommendedAccountChanged: localBecause(
-    "this Mac's accounts and usage; a server tab's: PRDCT-4328, the accounts lane (fleetAccounts, fleetUsage)"
+    "this Mac's launch choice, on purpose; a server tab's account is its server's, read by the seam (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
   getMicAccess: local,
   requestMicAccess: local,
