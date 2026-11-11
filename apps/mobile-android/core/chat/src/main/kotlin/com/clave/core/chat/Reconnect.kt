@@ -15,7 +15,7 @@
  * Every end (sent, rejected, the composer's own write refused, a discard) is recorded in the send's
  * ledger entry before its cleanup, and the entry leaves last ([finishEnd]); a recorded end is never
  * asked about or written again, and a controller built again over the same stores finishes it with
- * no server ([DeliveryController.finishRecordedEnds]). A same-id completion refused (401, 403) keeps
+ * no server ([DeliveryController.finishRecordedEnds]). A same-id completion refused (401, 403, a declared 422) keeps
  * the send unknown and is not sent again by itself.
  *
  * Ported from `apps/mobile/src/reconnect/pass.ts` and `controller.ts`.
@@ -520,13 +520,52 @@ class DeliveryController(
         }
     }
 
-    suspend fun begin(send: UnknownSend) {
+    /** What [begin] left, the send's write not having left the phone. */
+    enum class Begun {
+        /** The entry and its mark are kept: the write may leave. */
+        Recorded,
+        /** The record failed and the ledger holds none of this send (taken out again, or never written):
+         *  nothing was sent and nothing will be, so the person may be told so. */
+        NotSaved,
+        /** The record failed and its entry could not be taken out again: a later pass may still send it
+         *  under its id, so the person must not be told that nothing was sent. */
+        KeptNotSaved,
+    }
+
+    /**
+     * The ledger entry, then its mark, before the write leaves, so a crash mid-send is found on the
+     * next start. When the store refuses a write here, nothing has left yet: the entry is taken out
+     * again before any answer ([Begun.NotSaved] once the ledger holds none of it), since a pass would
+     * otherwise send what the person is told was not sent; when that undoing fails too and the entry
+     * stays, the answer is [Begun.KeptNotSaved]. A cancellation is thrown as it comes, the entry left
+     * as it is, like a send cancelled with its write out ([abandon]).
+     */
+    suspend fun begin(send: UnknownSend): Begun {
         active.add(send.clientMessageId)
         try {
             recordUnknownSend(send, "Delivery has not been confirmed.", sends, marks)
         } catch (error: Throwable) {
             active.remove(send.clientMessageId)
+            if (error is CancellationException || error !is Exception) throw error
+            return if (undoBegin(send)) Begun.NotSaved else Begun.KeptNotSaved
+        }
+        return Begun.Recorded
+    }
+
+    /** Takes a failed begin's entry out of the ledger; true once it holds none of it, read back when the removal fails. */
+    private suspend fun undoBegin(send: UnknownSend): Boolean = try {
+        sends.remove(send.clientMessageId)
+        true
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        try {
+            sends.list().none { it.clientMessageId == send.clientMessageId }
+        } catch (error: CancellationException) {
             throw error
+        } catch (_: Exception) {
+            // Unreadable too: whether it stays is not known, so it is answered as kept.
+            false
         }
     }
 

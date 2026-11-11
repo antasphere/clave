@@ -111,6 +111,14 @@ public const val NOTHING_WAITING: String = "That message is no longer waiting, s
 /** "Discard" when the server had accepted the message before the choice. */
 public const val ARRIVED_NOTHING_DISCARDED: String = "The message had already arrived, so nothing was discarded."
 
+/** A send whose record the phone could not save before its write, and which it no longer keeps: true, and stays true. */
+public const val NOTHING_SENT: String = "The send could not be saved safely. Nothing was sent."
+
+/** A send whose record failed before its write and could not be taken back: not sent now, but kept, so the next
+ *  connection may send it under its own id. Shown as the unknown choice, where Discard stops that. */
+public const val KEPT_NOT_SAVED: String =
+    "The phone could not save this message safely, so it was not sent now. It is still kept and may be sent on the next connection; discard it to stop that."
+
 /** "Send again" or "Discard" when the phone could not record the choice: the message still waits, as before. */
 public const val CHOICE_NOT_SAVED: String = "The phone could not save that choice, so nothing was discarded or sent again. Try again."
 
@@ -733,12 +741,11 @@ public class ClaveStore(private val services: Services) {
             draftText = text,
             attachments = attachments.takeIf { it.isNotEmpty() },
         )
-        try {
-            delivery?.begin(send)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            return SendOutcome.Failed(clientMessageId, "The send could not be saved safely. Nothing was sent.")
+        // "Nothing was sent" only once the ledger holds none of it: an entry left behind is one a pass may send.
+        when (delivery?.begin(send) ?: DeliveryController.Begun.Recorded) {
+            DeliveryController.Begun.Recorded -> Unit
+            DeliveryController.Begun.NotSaved -> return SendOutcome.Failed(clientMessageId, NOTHING_SENT)
+            DeliveryController.Begun.KeptNotSaved -> return SendOutcome.Unknown(clientMessageId, KEPT_NOT_SAVED)
         }
         val ports = object : SendPorts {
             override suspend fun write(clientMessageId: String) = asSendCall { client.sessions.write(sessionId, message) }

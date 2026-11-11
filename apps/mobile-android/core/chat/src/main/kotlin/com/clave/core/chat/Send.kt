@@ -90,8 +90,8 @@ sealed interface SendOutcome {
     data class Rejected(override val clientMessageId: String, val reason: String) : SendOutcome
     /**
      * Nobody can tell: the draft stays, nothing was sent by itself. [completionRefused]: the same-id
-     * completion of a send whose first write was not seen was refused (401, 403); the first may still
-     * arrive, so it stays unknown, and no pass sends the completion again.
+     * completion of a send whose first write was not seen was refused (401, 403, a declared 422); the
+     * first may still arrive, so it stays unknown, and no pass sends the completion again.
      */
     data class Unknown(override val clientMessageId: String, val reason: String, val completionRefused: Boolean = false) : SendOutcome
     /** Another kind of failure (the token refused, a policy refusal): the draft stays. */
@@ -191,16 +191,12 @@ suspend fun reconcile(
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
+                    // Every answer but a lost one refuses the completion alone: a 401, a 403, a policy, or a
+                    // declared 422 (SessionWriteRefused, SessionNotFound, SessionWriteUnknown). None proves
+                    // the first write absent, which may still arrive: unknown, never completed again by a
+                    // pass. Only a status read settles it then (accepted, or rejected through its end).
                     if (!outcomeLost(error)) {
-                        // A definite refusal of the completion (the Failed class: 401, 403, a policy)
-                        // proves nothing of the first write, which may still arrive: unknown, never
-                        // completed again. A declared rejection or an unknown answer stays as it reads.
-                        val refused = refusal(clientMessageId, error)
-                        return if (refused is SendOutcome.Failed) {
-                            SendOutcome.Unknown(clientMessageId, completionRefusedReason(refused.reason), completionRefused = true)
-                        } else {
-                            refused
-                        }
+                        return SendOutcome.Unknown(clientMessageId, completionRefusedReason(reasonOf(error)), completionRefused = true)
                     }
                 }
                 return reconcile(clientMessageId, ports, options, mayRetry = false)

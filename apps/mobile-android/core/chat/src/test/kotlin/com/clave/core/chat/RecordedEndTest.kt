@@ -147,25 +147,33 @@ class RecordedEndTest {
     }
 
     @Test
-    fun `a same-id completion refused with a 401 or a 403 stays unknown and holds the send, a declared rejection stays rejected`() = runTest {
+    fun `a same-id completion refused with a 401, a 403 or a declared 422 stays unknown and holds the send, the first write's own refusal keeps its reading`() = runTest {
         for (refusal in listOf(
             SendFailure(SendFailure.Kind.Policy, "This device may not write to that session.", status = 403),
             SendFailure(SendFailure.Kind.Unauthenticated, "The server refused the token.", status = 401),
+            // The write route's declared failures (contract sessions.ts:531): none of them proves the first write absent.
+            SendFailure(SendFailure.Kind.Refused, "The provider refused the message.", status = 422, failureTag = "SessionWriteRefused"),
+            SendFailure(SendFailure.Kind.Refused, "No such session.", status = 422, failureTag = "SessionNotFound"),
+            SendFailure(SendFailure.Kind.Refused, "Not known.", status = 422, failureTag = "SessionWriteUnknown"),
         )) {
             val ports = Ports(listOf(WriteStatusKind.Absent), write = { throw refusal })
             val outcome = reconcile("m-1", ports)
             assertEquals(SendOutcome.Unknown("m-1", completionRefusedReason(refusal.message!!), completionRefused = true), outcome)
             assertEquals(1, ports.writes)
         }
-        val rejected = Ports(listOf(WriteStatusKind.Absent), write = {
-            throw SendFailure(SendFailure.Kind.Refused, "The provider refused the message.", status = 422, failureTag = "SessionWriteRefused")
-        })
-        assertEquals(SendOutcome.Rejected("m-1", "The provider refused the message."), reconcile("m-1", rejected))
-        // The first write of the composer's own send refused with a 403: that write did not land, a terminal failure.
-        val first = Ports(listOf(WriteStatusKind.Unknown), write = {
-            throw SendFailure(SendFailure.Kind.Policy, "This device may not write to that session.", status = 403)
-        })
-        assertEquals(SendOutcome.Failed("m-1", "This device may not write to that session."), sendMessage("m-1", first))
+        // A lost completion stays an ambiguous outcome: asked again, never held.
+        val lost = Ports(listOf(WriteStatusKind.Absent), write = { throw SendFailure(SendFailure.Kind.Protocol, "The server answered 502.", status = 502) })
+        assertEquals(SendOutcome.Unknown("m-1", "The message was sent again once and its outcome is still not known."), reconcile("m-1", lost))
+        // The composer's own first write refused: that write did not land, a terminal end by its reading.
+        fun first(refusal: SendFailure) = Ports(listOf(WriteStatusKind.Unknown), write = { throw refusal })
+        assertEquals(
+            SendOutcome.Failed("m-1", "This device may not write to that session."),
+            sendMessage("m-1", first(SendFailure(SendFailure.Kind.Policy, "This device may not write to that session.", status = 403))),
+        )
+        assertEquals(
+            SendOutcome.Rejected("m-1", "The provider refused the message."),
+            sendMessage("m-1", first(SendFailure(SendFailure.Kind.Refused, "The provider refused the message.", status = 422, failureTag = "SessionWriteRefused"))),
+        )
     }
 
     @Test

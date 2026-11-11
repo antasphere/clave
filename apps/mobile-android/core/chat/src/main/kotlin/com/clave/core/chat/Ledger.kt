@@ -49,7 +49,7 @@ data class UnknownSend(
      */
     val end: SendEnd? = null,
     /**
-     * A same-id completion of this send was refused (401, 403). That says nothing of the first
+     * A same-id completion of this send was refused (401, 403, a declared 422). That says nothing of the first
      * write, which may still arrive, so the send stays unknown; but no pass sends the completion
      * again, in this process or the next: the person decides (Send again, or Discard).
      */
