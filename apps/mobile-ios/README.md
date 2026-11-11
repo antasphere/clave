@@ -148,9 +148,9 @@ shows its cached login environment and its one-shot resolver naming the recorder
 daemon runs that one probe itself, the recorder answering. After the seed the recorders and
 the folders are watched for the whole run against the probe's line; one call beyond it, one
 file, or a recorder log that cannot be read stops the daemon. The run folder is the stack's
-own, marked with its owner id, or the boot refuses before touching it. Until that fix is on `mobile` and this branch is rebased onto it, the daemon
-announces none of the three and the boot refuses before the seed; every fixture boot that
-starts a session, seeds, writes or launches is on hold until the wave's coordinator lifts it.
+own, marked with its owner id, or the boot refuses before touching it. That fix has been on
+`mobile` since 10 November 2026 and this branch carries it; without it the daemon would
+announce none of the three, and the boot would refuse before the seed.
 
 ## What a device install needs
 

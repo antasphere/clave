@@ -361,8 +361,7 @@ drop-title-opt-out` is the verifier's knob for that proof.
 - The chats run the Echo adapter (`--dev-echo-adapter`), which repeats what it is told and
   raises no request. The daemon around it is the real server entry: on 9 November 2026 two
   boots (11:18:58 and 11:19:54) let it call the real Claude CLI once each to name the
-  seeded chat, which the checks above now stop. Until lane C's fix (PR #354) is on `mobile`
-  and this branch is rebased onto it, the daemon announces none of the three prerequisites
-  and the boot refuses before the seed; every boot that starts a session is on hold until
-  the wave's coordinator lifts it.
+  seeded chat, which the checks above now stop. Lane C's fix (PR #354) has been on `mobile`
+  since 10 November 2026 and this branch carries it; without it the daemon would announce
+  none of the three prerequisites, and the boot would refuse before the seed.
 - The relay and the server are this checkout's own entries, run under the repository's Bun.
