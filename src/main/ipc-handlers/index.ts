@@ -34,6 +34,7 @@ import { registerPreviewHandlers } from './preview-handlers'
 import { registerHistoryHandlers } from './history-handlers'
 import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handlers'
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
+import { registerLaunchSettingsHandlers } from '../launch-settings'
 import { registerHelperHandlers } from './helper-handlers'
 import { registerIntegrationsHandlers } from './integrations-handlers'
 import { registerSpeechHandlers } from './speech-handlers'
@@ -95,6 +96,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerActivityHandlers()
   registerKeymapHandlers(deps)
   registerLaunchProfileHandlers()
+  registerLaunchSettingsHandlers()
   registerHelperHandlers()
   registerIntegrationsHandlers()
   registerSpeechHandlers()

@@ -1,5 +1,10 @@
 import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
 import { readJson, writeJson } from './ports/storage'
+import {
+  DEFAULT_INTERACTION_MODE,
+  type HarnessSettingsById,
+  type InteractionMode
+} from '../shared/harness'
 
 export type AppIcon = 'dark' | 'light' | 'claude'
 
@@ -41,6 +46,17 @@ export interface Preferences {
    */
   chatView: string | null
   /**
+   * How a new conversation opens (PRDCT-4425, `shared/harness.ts`): one of
+   * the chat views, or the terminal. Written by Settings → General and the
+   * onboarding; a launch takes its transport and its first view from it.
+   */
+  interactionMode: InteractionMode
+  /**
+   * Per harness (Settings → Harnesses): the model a click in the launcher
+   * runs and the permission rung a launch starts on. Absent = the CLI's own.
+   */
+  harnessSettings: HarnessSettingsById
+  /**
    * The first-run walk (`onboarding.ts`): `pending` until it is finished or
    * skipped, then `done`. Decided once, on the first read, and written at
    * once when it is a first run: a machine where Clave has already
@@ -67,6 +83,8 @@ const DEFAULTS: Preferences = {
   chatModels: {},
   chatEfforts: {},
   chatView: null,
+  interactionMode: DEFAULT_INTERACTION_MODE,
+  harnessSettings: {},
   onboarding: 'pending'
 }
 

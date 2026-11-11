@@ -1550,6 +1550,14 @@ export interface ElectronAPI extends FleetDesktopAPI {
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
   onRecommendedAccountChanged: (callback: (enabled: boolean) => void) => () => void
+  launchSettingsGet: () => Promise<import('../shared/harness').LaunchSettings>
+  launchSettingsSet: (
+    patch: import('../shared/harness').LaunchSettingsPatch
+  ) => Promise<import('../shared/harness').LaunchSettings>
+  onLaunchSettingsChanged: (
+    callback: (settings: import('../shared/harness').LaunchSettings) => void
+  ) => () => void
+  launchRememberedModel: (adapterId: string) => Promise<string | null>
   getMicAccess: () => Promise<MicAccessState>
   requestMicAccess: () => Promise<MicAccessState>
   openMicPrivacySettings: () => Promise<void>
