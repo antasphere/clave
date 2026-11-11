@@ -13,14 +13,21 @@ describe('a pane that comes back (PRDCT-4419)', () => {
     expect(revealed(1200, 0)).toBe(false)
   })
 
-  it('finishes the transitions running in it and leaves the keyframe animations', () => {
+  it('finishes the transitions and one-shot entries, and leaves loops and scripts', () => {
+    const timing = (iterations: number): { getComputedTiming: () => { iterations: number } } => ({
+      getComputedTiming: () => ({ iterations })
+    })
     const transition = { transitionProperty: 'opacity', finish: vi.fn() }
-    const breathing = { finish: vi.fn() }
-    const root = { getAnimations: vi.fn(() => [transition, breathing]) }
-    expect(settle(root)).toBe(1)
+    const entry = { animationName: 'chat-ask-field-in', effect: timing(1), finish: vi.fn() }
+    const breathing = { animationName: 'breathe', effect: timing(Infinity), finish: vi.fn() }
+    const scripted = { effect: timing(1), finish: vi.fn() }
+    const root = { getAnimations: vi.fn(() => [transition, entry, breathing, scripted]) }
+    expect(settle(root)).toBe(2)
     expect(root.getAnimations).toHaveBeenCalledWith({ subtree: true })
     expect(transition.finish).toHaveBeenCalledOnce()
+    expect(entry.finish).toHaveBeenCalledOnce()
     expect(breathing.finish).not.toHaveBeenCalled()
+    expect(scripted.finish).not.toHaveBeenCalled()
   })
 
   it('does nothing where no animation can be read', () => {

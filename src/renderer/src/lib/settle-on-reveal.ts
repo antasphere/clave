@@ -13,8 +13,10 @@
  * is painted: a ResizeObserver reports after layout and before paint, in
  * the same frame the transitions were created. A card that arrives while
  * the pane is on screen starts its transition on a frame the pane already
- * had its box, and keeps it. Keyframe animations are not touched: one that
- * loops (a drawing that breathes) restarting is not seen.
+ * had its box, and keeps it. A keyframe animation that plays once (a row of
+ * the questions form coming in) restarts the same way and is finished too;
+ * one that loops (a drawing that breathes, a spinner) is left running, its
+ * restart is not seen.
  */
 
 /** Whether a box that measured `previous` (undefined: never measured) and
@@ -23,16 +25,29 @@ export function revealed(previous: number | undefined, next: number): boolean {
   return next > 0 && !(previous !== undefined && previous > 0)
 }
 
-/** A CSS transition, told apart from a keyframe animation or a script's own
- *  animation by the property it carries. */
-type Running = { finish: () => void } & Partial<{ transitionProperty: string }>
+/** A CSS transition carries the property it moves, a CSS keyframe animation
+ *  its name; a script's own animation carries neither and is left alone. */
+type Running = { finish: () => void } & Partial<{
+  transitionProperty: string
+  animationName: string
+  effect: { getComputedTiming?: () => { iterations?: number | null } } | null
+}>
 
-/** Finish every CSS transition running in `root` and under it. */
+/** Whether a CSS keyframe animation plays a set number of times: an entry,
+ *  never a loop. */
+const playsOnce = (animation: Running): boolean => {
+  if (typeof animation.animationName !== 'string') return false
+  const iterations = animation.effect?.getComputedTiming?.().iterations
+  return typeof iterations === 'number' && Number.isFinite(iterations)
+}
+
+/** Finish every CSS transition and every one-shot keyframe animation
+ *  running in `root` and under it. */
 export function settle(root: { getAnimations?: (o?: { subtree: boolean }) => Running[] }): number {
   const running = root.getAnimations?.({ subtree: true }) ?? []
   let finished = 0
   for (const animation of running) {
-    if (typeof animation.transitionProperty !== 'string') continue
+    if (typeof animation.transitionProperty !== 'string' && !playsOnce(animation)) continue
     animation.finish()
     finished++
   }
