@@ -46,7 +46,7 @@ export async function run(t) {
           },
           {
             question: 'Who else to copy?',
-            options: [{ label: 'Romain' }, { label: 'Valentin' }],
+            options: [{ label: 'Ana' }, { label: 'Ben' }],
             multiSelect: true
           }
         ],
@@ -110,18 +110,18 @@ export async function run(t) {
     t.check('a folded answer reopens to be edited in place, and folds back edited', true)
 
     // The second question is multi-select, answered by digit keys and own words.
-    await dock.getByRole('checkbox', { name: /Romain/ }).waitFor()
+    await dock.getByRole('checkbox', { name: /Ana/ }).waitFor()
     // Moving on kept the focus in the card, so a digit picks at once.
     await win.keyboard.press('2')
     assert.ok(
       await until(
         async () =>
-          (await dock.getByRole('checkbox', { name: /Valentin/ }).getAttribute('aria-checked')) ===
+          (await dock.getByRole('checkbox', { name: /Ben/ }).getAttribute('aria-checked')) ===
           'true'
       ),
       'the digit key picks the second option'
     )
-    await dock.getByRole('checkbox', { name: /Romain/ }).click()
+    await dock.getByRole('checkbox', { name: /Ana/ }).click()
     await dock.getByPlaceholder('Add your own words').fill('the client')
     // The last question's button sends: no separate review page.
     assert.equal((await writes()).length, 0, 'nothing is sent before the last button')
@@ -133,7 +133,7 @@ export async function run(t) {
       optionId: 'answer',
       answers: {
         'Send now or draft?': 'Draft only, and show it to me first',
-        'Who else to copy?': 'Romain, Valentin, the client'
+        'Who else to copy?': 'Ana, Ben, the client'
       }
     })
     t.check(
@@ -145,7 +145,7 @@ export async function run(t) {
     const row = view.locator('.chat-permission-row[data-kind="question"]')
     assert.match(await row.innerText(), /Answered/i)
     assert.match(await row.innerText(), /Send now or draft\?\s*Draft only, and show it to me first/)
-    assert.match(await row.innerText(), /Who else to copy\?\s*Romain, Valentin, the client/)
+    assert.match(await row.innerText(), /Who else to copy\?\s*Ana, Ben, the client/)
     t.check('an answered question closes into the card it was, every answer on its line', true)
 
     // A pick on the last question never sends: every answer folds into its
