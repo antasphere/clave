@@ -491,13 +491,18 @@ describe('the schedule', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
-  it('never starts a timer when not scheduled (test mode, dev builds)', async () => {
-    vi.useFakeTimers()
-    const { deps } = machine({})
+  it('never starts a timer when not scheduled (test mode, dev builds), but looks once at boot', async () => {
+    const { m, deps } = machine({ installed: PI, latest: PI_LATEST })
     const manager = new AgentUpdateManager(deps)
-    const spy = vi.spyOn(manager, 'checkAll')
+    const checks = vi.spyOn(manager, 'checkAll')
     manager.start()
-    await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS * 2)
-    expect(spy).not.toHaveBeenCalled()
+    // One look, so the launcher lists what is on the PATH (PRDCT-4423, 12
+    // November 2026: a Mac with Claude Code alone showed four rows); no
+    // upgrade, since a dev build never runs the installers on its own.
+    const state = await manager.detectAll()
+    expect(checks).not.toHaveBeenCalled()
+    expect(state.agents.find((a) => a.id === 'pi')?.installed).toBe(true)
+    expect(state.agents.find((a) => a.id === 'claude')?.installed).toBe(false)
+    expect(m.runs.every((run) => run.includes('--version'))).toBe(true)
   })
 })
