@@ -502,7 +502,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       // The reader's own typing, kept by the server for this view: only an
       // open form takes it, and never into the agent's draft (PRDCT-4210).
       if (event.sent || entry.answer || entry.answeredElsewhere) return state
-      entries[index] = { ...entry, typed: { ...entry.typed, ...event.answers } }
+      // Replaying the server's typing retires the earlier agent fill just
+      // as typedSent does, so a remounted card cannot land that old fill.
+      const draft = { ...entry.draft }
+      for (const key of Object.keys(event.answers)) delete draft[key]
+      entries[index] = { ...entry, draft, typed: { ...entry.typed, ...event.answers } }
       return { ...state, entries }
     }
     if (event.sent || entry.answer) {

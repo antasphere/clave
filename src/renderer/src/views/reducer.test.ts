@@ -398,6 +398,54 @@ describe('taking a message back', () => {
     expect(shown(late)).toEqual(['go'])
   })
 
+  it('replayed typing supersedes an earlier agent fill, including cleared fields', () => {
+    const request: ChatEvent = {
+      type: 'permission_request',
+      id: 'clave:draft',
+      description: 'Your details',
+      options: [{ id: 'answer', label: 'Approve' }]
+    }
+    const drafted = run([
+      request,
+      {
+        type: 'permission_updated',
+        id: request.id,
+        answers: { name: 'Luca', when: '2026-11-17', projects: ['old'], optional: 'old' }
+      },
+      { type: 'permission_updated', id: request.id, answers: { kept: 'typed' }, typed: true }
+    ])
+    const typed = reduceConversation(drafted, {
+      event: {
+        type: 'permission_updated',
+        id: request.id,
+        answers: { name: 'Luca P', projects: [], optional: '' },
+        typed: true
+      },
+      at: 2
+    })
+    expect(typed.entries[0]).toMatchObject({
+      typed: { kept: 'typed', name: 'Luca P', projects: [], optional: '' }
+    })
+    expect((typed.entries[0] as { draft?: object }).draft).toEqual({ when: '2026-11-17' })
+    // A later agent write, even the same value it set before the typing,
+    // speaks for that field again without discarding the other typed fields.
+    const updated = reduceConversation(typed, {
+      event: { type: 'permission_updated', id: request.id, answers: { name: 'Luca' } },
+      at: 3
+    })
+    expect(updated.entries[0]).toMatchObject({
+      draft: { name: 'Luca', when: '2026-11-17' },
+      typed: { kept: 'typed', projects: [], optional: '' }
+    })
+    expect((updated.entries[0] as { typed?: object }).typed).not.toHaveProperty('name')
+    expect((drafted.entries[0] as { draft?: object }).draft).toEqual({
+      name: 'Luca',
+      when: '2026-11-17',
+      projects: ['old'],
+      optional: 'old'
+    })
+  })
+
   it('a form the agent asked lives across the turn, follows its writes, and folds its approve into the record', () => {
     const form: ChatEvent = {
       type: 'permission_request',

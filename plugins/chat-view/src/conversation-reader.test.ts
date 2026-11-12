@@ -190,6 +190,52 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.history).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])(
+    'remounts a form without reapplying an agent fill over server typing (typing in snapshot: %s)',
+    async (inSnapshot) => {
+      const request = {
+        type: 'permission_request' as const,
+        id: 'clave:draft',
+        description: 'Your details',
+        options: [{ id: 'answer', label: 'Approve' }]
+      }
+      const typing = {
+        type: 'permission_updated' as const,
+        id: request.id,
+        answers: { name: 'Luca P' },
+        typed: true
+      }
+      const snapshot: TimelinePage = {
+        ...page([], inSnapshot ? 3 : 2),
+        items: [
+          { event: request, position: position(1) },
+          {
+            event: {
+              type: 'permission_updated',
+              id: request.id,
+              answers: { name: 'Luca', when: '2026-11-17' }
+            },
+            position: position(2)
+          },
+          ...(inSnapshot ? [{ event: typing, position: position(3) }] : [])
+        ]
+      }
+      // A newly mounted view has no local typedSent action or card cache.
+      // Its pending request and server draft arrive before historical replay.
+      const h = setup(vi.fn(async () => snapshot))
+      h.reader.stream({ kind: 'event', event: request })
+      h.reader.stream({ kind: 'event', event: typing })
+      h.reader.start()
+      await settle()
+      expect(h.entries()).toHaveLength(1)
+      expect(h.entries()[0]).toMatchObject({
+        kind: 'permission',
+        typed: { name: 'Luca P' }
+      })
+      expect((h.entries()[0] as { draft?: object }).draft).toEqual({ when: '2026-11-17' })
+    }
+  )
+
   it('does not resurrect a subscription request settled in the subsequent snapshot', async () => {
     const request = {
       type: 'permission_request' as const,
