@@ -413,6 +413,27 @@ describe('the positioned snapshot/live handoff', () => {
     await settle()
     expect(h.timeline).toHaveBeenCalledTimes(reads)
   })
+  it('keeps a current reply arriving while a late old-process frame is being refreshed', async () => {
+    const refresh = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockResolvedValueOnce(page([1], 1, 'current'))
+        .mockImplementation(() => refresh.promise)
+    )
+    h.reader.start()
+    await settle()
+    h.reader.stream(frame(99, 'late old frame', 'old-process'))
+    await settle()
+    expect(h.timeline).toHaveBeenCalledTimes(2)
+    // The authoritative answer is still held when the current process speaks.
+    h.reader.stream(frame(2, 'current reply', 'current'))
+    refresh.resolve(page([1], 1, 'current'))
+    await settle()
+    expect(h.entries().map((e) => ('text' in e ? e.text : ''))).toEqual(['same', 'current reply'])
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.history).not.toHaveBeenCalled()
+  })
   it('only an explicit unsupported result uses frozen history and preserves buffered legacy live events', async () => {
     const h = setup(vi.fn(async () => null))
     h.reader.start()
