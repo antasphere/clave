@@ -49,6 +49,7 @@ import { WorkChangeRefusal, WorkSessionUnknown } from '@clave/contract/work-rule
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
 import { SessionWrites, sanitizeReason } from './writes'
+import { deviceIdOfActor } from '../devices/actor'
 import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 
 const messageOf = (error: unknown): string =>
@@ -115,17 +116,20 @@ export const sessionHandlers = [
   // persisted before the session is even checked, `dispatched` right before
   // the hand-off, then `accepted` or `rejected`; a second write of a held id
   // answers by its state and writes nothing. ──
-  CommandHandler.make(WriteSession, (payload) =>
+  CommandHandler.make(WriteSession, (payload, dispatch) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
       const input = payload.input
+      // A phone reads an acknowledgement of every write; the owner's desktop, of
+      // any version, reads the old empty answer for a write it did not identify.
+      const phone = deviceIdOfActor(dispatch.actor) !== null
       const id = payload.id
       const refused = (error: unknown, text?: string): SessionWriteRefused =>
         new SessionWriteRefused({ id, message: sanitizeReason(error, text) })
       if (input.type !== 'user_message' || input.clientMessageId === undefined) {
         yield* known(host, id)
         yield* Effect.tryPromise({ try: () => host.write(id, input), catch: refused })
-        return { status: 'accepted', at: Date.now() } as const
+        return phone ? ({ status: 'accepted', at: Date.now() } as const) : undefined
       }
       const ledger = yield* SessionWrites
       const clientMessageId = input.clientMessageId

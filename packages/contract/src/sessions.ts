@@ -637,7 +637,7 @@ export class SessionWriteUnknown extends Schema.TaggedError<SessionWriteUnknown>
  *  unknown; none of them writes anything. */
 export const WriteSession = Command.define('WriteSession', {
   payload: Schema.Struct({ id: Schema.String, input: SessionWrite }),
-  success: WriteAnswer,
+  success: Schema.Union(WriteAnswer, Schema.Void),
   failure: Schema.Union(SessionNotFound, SessionWriteRefused, SessionWriteUnknown)
 })
 /**
