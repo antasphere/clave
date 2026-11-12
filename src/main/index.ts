@@ -29,7 +29,7 @@ import {
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
 import { agentUpdateManager } from './agent-updates'
-import { REGISTRY_ENV, startSlideless } from './slideless'
+import { REGISTRY_ENV } from './artefacts/service'
 import { buildAppMenu } from './app-menu'
 import { initTelemetry, cleanupTelemetry } from './telemetry'
 import { initNotificationManager } from './notification-manager'
@@ -699,6 +699,9 @@ app.whenReady().then(() => {
     session.defaultSession,
     session.fromPartition(VIEW_PARTITION)
   ])
+  // Their listeners close with the app; the handlers themselves are wired
+  // with the saved servers (`ipc-handlers/server-handlers.ts`).
+  app.on('will-quit', () => void loopbackForwards.closeAll())
   // MCP failure must not break the app — spawns just omit the --mcp-config flag.
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
   // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
@@ -724,7 +727,6 @@ app.whenReady().then(() => {
     snapshot: prereleaseSnapshotOutcome()
   })
   agentUpdateManager.start()
-  startSlideless()
   initTelemetry()
   initMissionControl()
 

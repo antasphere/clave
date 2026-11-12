@@ -16,7 +16,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { SlidelessServed, SlidelessSnapshot, SlidelessState } from '../shared/slideless'
+import type { Artefact, SlidelessState } from '@clave/contract/artefacts/model'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -1870,19 +1870,64 @@ const electronAPI = {
   onSecretRequestsChanged: (callback: (requests: unknown[]) => void) =>
     createIpcListener<[unknown[]]>('secret:requests-changed', callback),
 
-  slideless: {
-    getState: () => ipcRenderer.invoke('slideless:get-state') as Promise<SlidelessState>,
-    install: () => ipcRenderer.invoke('slideless:install') as Promise<SlidelessState>,
-    serve: (target: string) =>
-      ipcRenderer.invoke('slideless:serve', target) as Promise<SlidelessServed>,
-    release: (target: string, lease: string) =>
-      ipcRenderer.invoke('slideless:release', target, lease) as Promise<void>,
-    snapshot: (target: string) =>
-      ipcRenderer.invoke('slideless:snapshot', target) as Promise<SlidelessSnapshot>,
-    onState: (callback: (state: SlidelessState) => void) =>
-      createIpcListener<[SlidelessState]>('slideless:state', callback),
-    onServerExited: (callback: (target: string) => void) =>
-      createIpcListener<[string]>('slideless:server-exited', callback)
+  // ── PRDCT-4474: a session's artefact, on the server the session runs on.
+  // This Mac's own server here, on the digests' road (`viaOwnServer`): main
+  // over IPC until it names its server, the server after. A connected
+  // server's sessions are routed by `createFleetDesktop`. ──
+  artefacts: {
+    list: viaOwnServer<[], Artefact[]>({
+      ipc: () => ipcRenderer.invoke('artefacts:list'),
+      server: async ({ api }) => [...(await api.artefacts.list())]
+    }),
+    // The preview runs on this machine's loopback: its own address is framed as it is.
+    hold: viaOwnServer<[string, string?], { url: string; holdId: string; ttlMs: number }>({
+      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:hold', sessionId, holdId),
+      server: async ({ api }, sessionId, holdId) => {
+        const held = await api.artefacts.hold(sessionId, holdId)
+        return { url: held.url, holdId: held.holdId, ttlMs: held.ttlMs }
+      }
+    }),
+    release: viaOwnServer<[string, string], void>({
+      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:release', sessionId, holdId),
+      server: ({ api }, sessionId, holdId) => api.artefacts.release(sessionId, holdId)
+    }),
+    saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    }),
+    close: viaOwnServer<[string], void>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.close(sessionId)
+    }),
+    onChanged: viaServerEvent<'artefact.changed', { sessionId: string; artefact: Artefact | null }>(
+      'artefacts:changed',
+      'artefact.changed',
+      (event) => ({
+        sessionId: event.sessionId,
+        artefact: event.artefact
+      })
+    ),
+    onPreviewExited: viaServerEvent<'artefact.preview_exited', string>(
+      'artefacts:preview-exited',
+      'artefact.preview_exited',
+      (event) => event.sessionId
+    ),
+    // This Mac's own copy here; a server's id is the fleet wrapper's to route.
+    slidelessState: viaOwnServer<[string?], SlidelessState>({
+      ipc: () => ipcRenderer.invoke('artefacts:slidelessState'),
+      server: ({ api }) => api.artefacts.slidelessState()
+    }),
+    installSlideless: viaOwnServer<[string?], SlidelessState>({
+      ipc: () => ipcRenderer.invoke('artefacts:installSlideless'),
+      server: ({ api }) => api.artefacts.installSlideless()
+    }),
+    onSlidelessState: viaServerEvent<
+      'slideless.state_changed',
+      { serverId: string | null; state: SlidelessState }
+    >('artefacts:slideless-state', 'slideless.state_changed', (event) => ({
+      serverId: null,
+      state: event.state
+    }))
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),

@@ -24,6 +24,7 @@ import { Effect, Either, Runtime, Stream } from 'effect'
 import * as Socket from '@effect/platform/Socket'
 import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
+import * as NodeStream from '@effect/platform-node/NodeStream'
 import { WebSocket, type RawData } from 'ws'
 import {
   FORWARD_HOLD_LIMIT,
@@ -185,7 +186,16 @@ const relayHttp = (
           return
         }
         const length = Number(answer.headers['content-length'])
-        const body = Stream.fromAsyncIterable(answer as AsyncIterable<Uint8Array>, (e) => e).pipe(
+        // Read through the platform's own reader, never through the answer's
+        // async iterator: an iterator's `return()` waits for the read in
+        // flight, so on a stream that says nothing (a preview's reload stream
+        // between two edits) the caller's leaving would be noticed only at
+        // the next chunk, and every reloaded frame would leave a connection
+        // open on the page until then. This reader lets go at once.
+        const body = NodeStream.fromReadable<unknown, Uint8Array>(
+          () => answer,
+          (e) => e
+        ).pipe(
           // The caller left (the platform interrupts the answer) or the page
           // broke off: the request to the page goes too, never left open.
           Stream.ensuring(

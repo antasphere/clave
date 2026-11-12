@@ -58,7 +58,7 @@ import type {
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { SlidelessAPI } from '../shared/slideless'
+import type { Artefact, SlidelessState } from '@clave/contract/artefacts/model'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   HelperAccount,
@@ -770,6 +770,29 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
+/** The window's road to the artefacts (PRDCT-4474). */
+export interface ArtefactsAPI {
+  /** Every artefact this window can show: this Mac's own server's, and each connected server's, their session ids as the window keys them. */
+  list(): Promise<Artefact[]>
+  /** Hold the preview of a session's artefact; call again with the holdId before ttlMs runs out. The url is one this window can frame. */
+  hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
+  release(sessionId: string, holdId: string): Promise<void>
+  saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
+  /** The session shows no artefact any more, for every window and every Mac. */
+  close(sessionId: string): Promise<void>
+  onChanged(
+    callback: (change: { sessionId: string; artefact: Artefact | null }) => void
+  ): () => void
+  /** The preview died under its holders: hold again. */
+  onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
+  slidelessState(serverId?: string): Promise<SlidelessState>
+  installSlideless(serverId?: string): Promise<SlidelessState>
+  onSlidelessState(
+    callback: (change: { serverId: string | null; state: SlidelessState }) => void
+  ): () => void
+}
+
 export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
@@ -1139,7 +1162,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
   secretSubmit: (id: string, secret: string) => Promise<SecretRequestView>
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
-  slideless: SlidelessAPI
+  /**
+   * A session's HTML artefact (PRDCT-4474), on the server the session runs
+   * on: this Mac's own server for its own sessions, a connected server for
+   * its sessions, their ids keyed as the window keys them.
+   */
+  artefacts: ArtefactsAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>

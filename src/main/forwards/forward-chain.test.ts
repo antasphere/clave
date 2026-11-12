@@ -199,6 +199,32 @@ describe('the forward chain', () => {
     expect(JSON.parse(up.body.toString())).toEqual({ bytes: BIG_BYTES, sha256: sha256(big) })
   })
 
+  it('lets go of a silent stream across both hops within 1 s of the page leaving', async () => {
+    const closed = target.closeOf('/quiet')
+    const started = await new Promise<http.ClientRequest>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port: opened.port,
+          path: '/quiet',
+          headers: windowHeaders(),
+          agent: false
+        },
+        (res) => res.once('data', () => resolve(req))
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    const left = Date.now()
+    started.destroy()
+    const ms = await Promise.race([
+      closed.then(() => Date.now() - left),
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 5000))
+    ])
+    expect(ms).toBeGreaterThanOrEqual(0)
+    expect(ms).toBeLessThan(1000)
+  })
+
   it('relays a WebSocket across both hops, text and binary, and its close code', async () => {
     const ws = socketOf(await connect(opened.port, '/ws', windowHeaders()))
     const text = nextMessage(ws)

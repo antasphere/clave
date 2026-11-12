@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { Either, Schema } from 'effect'
-import type { SlidelessState as SharedSlidelessState } from '../../../src/shared/slideless'
 import {
   Artefact,
   ArtefactPreview,
   ArtefactRefused,
   ArtefactVersion,
   HoldArtefactPreview,
-  OpenArtefact,
-  SlidelessState
+  OpenArtefact
 } from './artefacts'
 import { ServerEvent } from './events'
 
@@ -67,34 +65,6 @@ describe('the artefacts contract', () => {
     const refused = new ArtefactRefused({ message: 'This session has no artefact open.' })
     expect(refused._tag).toBe('ArtefactRefused')
     expect(refused.message).toBe('This session has no artefact open.')
-  })
-
-  it('holds the Slideless state field for field with the shared one', () => {
-    // Both directions, at the type level: a drift in either copy fails the typecheck.
-    const fromShared = (state: SharedSlidelessState): SlidelessState => state
-    const toShared = (state: SlidelessState): SharedSlidelessState => state
-    const keys = <T extends object>(value: T): string[] => Object.keys(value).sort()
-    const samples: SharedSlidelessState[] = [
-      { phase: 'missing', version: null, error: 'Slideless is not installed yet' },
-      { phase: 'installing', version: null, error: null },
-      { phase: 'ready', version: '0.14.1', error: null, override: false },
-      { phase: 'error', version: null, error: 'The registry did not answer in time' }
-    ]
-    for (const sample of samples) {
-      const decoded = Schema.decodeUnknownSync(SlidelessState)(fromShared(sample))
-      expect(toShared(decoded)).toEqual(sample)
-      expect(keys(decoded)).toEqual(keys(sample))
-    }
-    // The phases are the same list on both sides.
-    const phases: ReadonlyArray<SharedSlidelessState['phase']> =
-      SlidelessState.fields.phase.literals
-    expect([...phases].sort()).toEqual(['error', 'installing', 'missing', 'ready'])
-    expect(Object.keys(SlidelessState.fields).sort()).toEqual([
-      'error',
-      'override',
-      'phase',
-      'version'
-    ])
   })
 
   it('carries its three events as server events', () => {

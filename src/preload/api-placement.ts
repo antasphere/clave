@@ -200,17 +200,17 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   secretSubmit: local,
   secretDismiss: local,
   onSecretRequestsChanged: local,
-  'slideless.getState': local,
-  'slideless.install': local,
-  'slideless.serve': wrongForServerTab(
-    "serves a target of this Mac's disk: a server file's key is not served (unverified, PRDCT-4334)"
-  ),
-  'slideless.release': localBecause('releases the lease serve() gave on this Mac'),
-  'slideless.snapshot': wrongForServerTab(
-    "snapshots a target of this Mac's disk (unverified for a server file, PRDCT-4334)"
-  ),
-  'slideless.onState': local,
-  'slideless.onServerExited': local,
+  // ── PRDCT-4474: a session's artefact, on the server it runs on ──
+  'artefacts.list': routed,
+  'artefacts.hold': routed,
+  'artefacts.release': routed,
+  'artefacts.saveVersion': routed,
+  'artefacts.close': routed,
+  'artefacts.onChanged': routed,
+  'artefacts.onPreviewExited': routed,
+  'artefacts.slidelessState': routed,
+  'artefacts.installSlideless': routed,
+  'artefacts.onSlidelessState': routed,
   'linkedDocuments.getDefaultSignature': local,
   'linkedDocuments.setDefaultSignature': localBecause('a file of this Mac'),
   'linkedDocuments.list': local,

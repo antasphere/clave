@@ -1,7 +1,10 @@
 import { useViewRegistry } from '../../views/store'
 import { initLinkedDocuments, useLinkedDocumentStore } from '../../store/linked-document-store'
 import { LinkedDocumentPanel } from '../files/LinkedDocumentPanel'
-import { useEffect, useMemo, useState } from 'react'
+import { ArtefactPanel } from '../files/ArtefactPanel'
+import { initArtefacts, isShown, SPLIT_DEFAULT, useArtefactStore } from '../../store/artefact-store'
+import { latestOpenedWins, type PaneLook } from './latest-opened-wins'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useSessionStore,
   getDisplayOrder,
@@ -71,6 +74,35 @@ export function TerminalGrid(): React.JSX.Element {
   const viewPaneIds = useViewPaneIds()
   const linked = useLinkedDocumentStore((s) => s.documents)
   useEffect(() => initLinkedDocuments(), [])
+  // PRDCT-4474: a session's artefact takes the same slot as its linked
+  // document, one or the other, the latest opened (latest-opened-wins.ts).
+  const artefacts = useArtefactStore((s) => s.artefacts)
+  const artefactHidden = useArtefactStore((s) => s.hidden)
+  const artefactSplit = useArtefactStore((s) => s.split)
+  useEffect(() => initArtefacts(), [])
+  const shownArtefacts = useMemo(
+    () =>
+      new Set(
+        Object.values(artefacts)
+          .filter((a) => isShown(a, artefactHidden))
+          .map((a) => a.sessionId)
+      ),
+    [artefacts, artefactHidden]
+  )
+  const lastLook = useRef<PaneLook>({ documents: [], shownArtefacts: new Set() })
+  useEffect(() => {
+    const next: PaneLook = { documents: linked, shownArtefacts }
+    const change = latestOpenedWins(lastLook.current, next)
+    lastLook.current = next
+    for (const doc of change.hideDocuments)
+      void window.electronAPI.linkedDocuments
+        .update(doc.id, doc.revision, { hidden: true })
+        .catch(console.error)
+    for (const sessionId of change.hideArtefacts) {
+      const artefact = useArtefactStore.getState().artefacts[sessionId]
+      if (artefact) useArtefactStore.getState().setHidden(sessionId, artefact.openedAt)
+    }
+  }, [linked, shownArtefacts])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
   const sessions = useSessionStore((s) => s.sessions)
   // Asked again when a tab arrives, and when a restored tab's process is back
@@ -173,10 +205,20 @@ export function TerminalGrid(): React.JSX.Element {
     (id) => !isFileTabId(id) && !agentSessionIds.has(id)
   )
 
-  const linkedActive =
+  const alone =
     selectedSessionIds.length === 1 && !viewGroup && !viewSession
-      ? linked.find((d) => d.sessionId === selectedSessionIds[0] && !d.hidden)
+      ? selectedSessionIds[0]
       : undefined
+  const linkedActive = alone ? linked.find((d) => d.sessionId === alone && !d.hidden) : undefined
+  const artefactActive =
+    alone && !linkedActive && shownArtefacts.has(alone) ? artefacts[alone] : undefined
+  // The share of the pane the session keeps beside its card, and whether one shows.
+  const cardSplit = linkedActive
+    ? linkedActive.split
+    : artefactActive
+      ? (artefactSplit[artefactActive.sessionId] ?? SPLIT_DEFAULT)
+      : undefined
+  const cardActive = cardSplit !== undefined
 
   if (sessions.length === 0 && fileTabs.length === 0) {
     return (
@@ -198,7 +240,7 @@ export function TerminalGrid(): React.JSX.Element {
   return (
     <div
       className={
-        linkedActive
+        cardActive
           ? 'flex-1 relative overflow-hidden floating-card linked-document-frame'
           : 'flex-1 relative overflow-hidden'
       }
@@ -303,15 +345,61 @@ export function TerminalGrid(): React.JSX.Element {
           <LinkedDocumentPanel document={doc} />
         </div>
       ))}
-      {/* A hidden document is reopened from the session's own header
-          (LinkedDocumentReopen), not from a chip floating over its content. */}
+      {/* The artefact of the session alone in the pane, mounted only while it
+          shows: the frame holds the server's preview for as long as it is
+          mounted, and a hidden or unselected one holds nothing. */}
+      {artefactActive && (
+        <div
+          key={`artefact:${artefactActive.sessionId}`}
+          className="linked-document-slot"
+          style={{ left: `${(cardSplit ?? SPLIT_DEFAULT) * 100}%` }}
+        >
+          <div
+            className="linked-document-divider"
+            role="separator"
+            aria-label="Resize artefact"
+            aria-orientation="vertical"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault()
+                useArtefactStore
+                  .getState()
+                  .setSplit(
+                    artefactActive.sessionId,
+                    (cardSplit ?? SPLIT_DEFAULT) + (event.key === 'ArrowLeft' ? -0.05 : 0.05)
+                  )
+              }
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault()
+              const parent = event.currentTarget.parentElement?.parentElement
+              if (!parent) return
+              const bounds = parent.getBoundingClientRect()
+              const id = artefactActive.sessionId
+              const move = (e: PointerEvent): void => {
+                useArtefactStore.getState().setSplit(id, (e.clientX - bounds.left) / bounds.width)
+              }
+              const up = (): void => {
+                window.removeEventListener('pointermove', move)
+                window.removeEventListener('pointerup', up)
+              }
+              window.addEventListener('pointermove', move)
+              window.addEventListener('pointerup', up)
+            }}
+          />
+          <ArtefactPanel sessionId={artefactActive.sessionId} artefact={artefactActive} />
+        </div>
+      )}
+      {/* A hidden document or artefact is reopened from the session's own
+          header (LinkedDocumentReopen), not from a chip floating over its content. */}
 
       {/* Grid renders ALL terminals and ALL file tabs to keep them alive; the
           unselected ones are hidden (see each loop below). */}
       <div
         className="h-full grid gap-2"
         style={{
-          width: linkedActive ? `${linkedActive.split * 100}%` : '100%',
+          width: cardSplit !== undefined ? `${cardSplit * 100}%` : '100%',
           gridTemplateColumns: `repeat(${cols}, 1fr)`,
           gridTemplateRows: `repeat(${rows}, 1fr)`,
           // EITHER view hides the mosaic, and `visibility` (not `display`) is
@@ -368,7 +456,7 @@ export function TerminalGrid(): React.JSX.Element {
               ref={settleOnReveal}
               data-terminal-tile={session.id}
               className={
-                linkedActive
+                cardActive
                   ? 'min-h-0 min-w-0 h-full overflow-hidden'
                   : 'min-h-0 min-w-0 h-full floating-card'
               }

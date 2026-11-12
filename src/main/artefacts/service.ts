@@ -8,8 +8,8 @@
  * anywhere. A window that shows the page HOLDS the preview: the first hold
  * starts it and registers its port with the forwarder, so the window reaches
  * it over the server's one port (`ForwardRegistry`); a hold lives ninety
- * seconds unless renewed, and the last hold to go stops the preview and
- * gives the lease back. A preview that dies under its holders is said to
+ * seconds unless renewed, and a preview nobody has held for a minute is
+ * stopped and its lease given back. A preview that dies under its holders is said to
  * them (`artefact.preview_exited`): they hold again and a new one starts.
  *
  * Built by both entries, in-process by main and standalone by
@@ -40,6 +40,10 @@ import { DEFAULT_REGISTRY, describeState, installSlideless, resolveCli } from '.
 export const HOLD_TTL_MS = 90_000
 /** How often the holds past their time are dropped. */
 export const SWEEP_MS = 15_000
+/** How long a preview nobody holds is kept running: a person who looks at
+ *  another tab and comes back finds the page at once, where a stop at the
+ *  last release would start the preview again at every return. */
+export const LINGER_MS = 60_000
 /** How long a one-shot `slideless snapshot` may run. */
 export const SNAPSHOT_COMMAND_TIMEOUT_MS = 60_000
 /** A registry to install from instead of npm's (the end-to-end specs' fixture). */
@@ -220,6 +224,10 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   })
   const holds = new Map<string, Hold>()
   const previews = new Map<string, Preview>()
+  /** A target → when its last hold went; stopped by the sweep `LINGER_MS` later. */
+  const idleSince = new Map<string, number>()
+  /** Each session's last state, for the turn that ends and the tab that ended. */
+  const previousState = new Map<string, AgentState>()
   const starting = new Map<string, Promise<Preview>>()
 
   const previewFor = (target: string): Promise<Preview> => {
@@ -264,18 +272,37 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     return preview
   }
 
-  /** Stop a target's preview once nothing holds it any more. */
-  const stopIfUnheld = (target: string): void => {
-    for (const hold of holds.values()) if (hold.target === target) return
+  const stopNow = (target: string): void => {
+    idleSince.delete(target)
     const preview = forgetPreview(target)
     if (preview) servers.release(target, preview.holder)
+  }
+
+  /** Whether a session that still runs shows this target: a preview is kept
+   *  waiting only for a person who may come back to such a tab. A tab that
+   *  ended, a tab closed for good or a link that moved on keeps none. */
+  const awaited = (target: string): boolean =>
+    Object.entries(deps.links.all()).some(
+      ([sessionId, link]) =>
+        link.target === target &&
+        previousState.get(sessionId) !== 'ended' &&
+        deps.sessions.knows(sessionId)
+    )
+
+  /** A target lost its last hold: kept a minute when a running session shows
+   *  it (the sweep stops it then), stopped at once otherwise. */
+  const noteIfUnheld = (target: string): void => {
+    for (const hold of holds.values()) if (hold.target === target) return
+    if (!previews.has(target)) return
+    if (!awaited(target)) stopNow(target)
+    else if (!idleSince.has(target)) idleSince.set(target, now())
   }
 
   const dropHold = (holdId: string): void => {
     const hold = holds.get(holdId)
     if (!hold) return
     holds.delete(holdId)
-    stopIfUnheld(hold.target)
+    noteIfUnheld(hold.target)
   }
 
   const dropSessionHolds = (sessionId: string): void => {
@@ -283,6 +310,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   }
 
   function previewExited(target: string): void {
+    idleSince.delete(target)
     forgetPreview(target)
     const told = new Set<string>()
     for (const [holdId, hold] of [...holds]) {
@@ -296,6 +324,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   const sweep = (): void => {
     const at = now()
     for (const [holdId, hold] of [...holds]) if (hold.expiresAt <= at) dropHold(holdId)
+    for (const [target, since] of [...idleSince]) if (at - since >= LINGER_MS) stopNow(target)
   }
 
   // ── The versions ──
@@ -391,10 +420,12 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   }
 
   // ── A version at each finished turn ──
-  const previousState = new Map<string, AgentState>()
   const onState = (sessionId: string, next: AgentState): void => {
     const previous = previousState.get(sessionId)
     previousState.set(sessionId, next)
+    // The tab ended: its preview is not kept waiting for it.
+    const shown = next === 'ended' ? deps.links.get(sessionId) : undefined
+    if (shown) noteIfUnheld(shown.target)
     if (!finishesTurn(previous, next)) return
     if (!deps.links.get(sessionId) || state().phase !== 'ready') return
     saveVersion(sessionId).catch((error: unknown) =>
@@ -420,19 +451,25 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     open: async (sessionId, path) => {
       if (!deps.sessions.knows(sessionId)) throw new ArtefactRefusal(NO_SUCH_SESSION)
       const { target, page, title } = resolveArtefact(path)
-      // The link replaces the session's previous one, and its holds with it.
-      dropSessionHolds(sessionId)
+      // The link replaces the session's previous one, and its holds with it:
+      // written first, so the preview of a folder the session no longer
+      // shows is stopped at once rather than kept waiting.
       const link = { target, page, title, openedAt: new Date(now()).toISOString() }
       deps.links.set(sessionId, link)
+      dropSessionHolds(sessionId)
       const artefact: Artefact = { sessionId, ...link }
       tell({ _tag: 'artefact.changed', sessionId, artefact })
       installWhenMissing()
       return artefact
     },
     close: async (sessionId) => {
+      // The link goes first, so the preview stops with the holds instead of
+      // waiting a minute for a tab that shows it no more.
+      const link = deps.links.get(sessionId)
+      if (link) deps.links.remove(sessionId)
       dropSessionHolds(sessionId)
-      if (!deps.links.get(sessionId)) return
-      deps.links.remove(sessionId)
+      if (!link) return
+      noteIfUnheld(link.target)
       tell({ _tag: 'artefact.changed', sessionId, artefact: null })
     },
     hold: async (sessionId, holdId): Promise<ArtefactPreview> => {
@@ -441,6 +478,8 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       readyCli()
       const known = holdId === undefined ? undefined : holds.get(holdId)
       const preview = await previewFor(link.target)
+      // Held again: a preview that was waiting out its minute stays.
+      idleSince.delete(link.target)
       if (known && known.sessionId === sessionId && known.target === link.target) {
         known.expiresAt = now() + HOLD_TTL_MS
         return { holdId: holdId!, lease: preview.lease, url: preview.url, ttlMs: HOLD_TTL_MS }
@@ -483,6 +522,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       if (sweeper) clearInterval(sweeper)
       sweeper = null
       holds.clear()
+      idleSince.clear()
       for (const target of [...previews.keys()]) forgetPreview(target)
       servers.stopAll()
     }

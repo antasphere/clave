@@ -6,7 +6,6 @@ import { registerUsageHandlers } from './usage-handlers'
 import { registerGitHandlers } from './git-handlers'
 import { registerUpdaterHandlers } from './updater-handlers'
 import { registerAgentUpdateHandlers } from './agent-update-handlers'
-import { registerSlidelessHandlers } from '../slideless'
 import { registerTelemetryHandlers } from './telemetry-handlers'
 import { registerOnboardingHandlers } from './onboarding-handlers'
 import { registerFeedbackHandlers } from './feedback-handlers'
@@ -38,6 +37,8 @@ import { registerLaunchSettingsHandlers } from '../launch-settings'
 import { registerHelperHandlers } from './helper-handlers'
 import { registerIntegrationsHandlers } from './integrations-handlers'
 import { registerSpeechHandlers } from './speech-handlers'
+// ── PRDCT-4474: a session's artefact, on this Mac's own server ──
+import { registerArtefactHandlers } from './artefact-handlers'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 import { registerCodexAccountHandlers } from './codex-accounts-handlers'
 import { registerAccountLoginHandlers } from './account-login-handlers'
@@ -67,7 +68,6 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerGitHandlers()
   registerUpdaterHandlers()
   registerAgentUpdateHandlers()
-  registerSlidelessHandlers()
   registerTelemetryHandlers()
   registerOnboardingHandlers()
   registerFeedbackHandlers()
@@ -100,6 +100,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerHelperHandlers()
   registerIntegrationsHandlers()
   registerSpeechHandlers()
+  registerArtefactHandlers()
   registerGithubHandlers()
   // ── Lane A: the server ──
   registerServerHandlers()

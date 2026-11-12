@@ -35,6 +35,7 @@
     "./digests": "./src/digests.ts",
     "./speech": "./src/speech.ts",
     "./artefacts": "./src/artefacts.ts",
+    "./artefacts/model": "./src/artefacts/model.ts",
     "./server-info": "./src/server-info.ts",
     "./history": "./src/history.ts",
     "./release-version": "./src/release-version.ts",

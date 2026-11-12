@@ -9,6 +9,7 @@ import type { AgentState } from '@clave/contract/sessions'
 import { ArtefactLinks, type LinksStorage } from './links'
 import {
   HOLD_TTL_MS,
+  LINGER_MS,
   NO_ARTEFACT_OPEN,
   NO_PAGE,
   NO_SUCH_SESSION,
@@ -19,6 +20,9 @@ import {
   type ArtefactServiceHandle
 } from './service'
 import { CLI_OVERRIDE_ENV } from './slideless-cli'
+
+/** Where every test's clock starts. */
+const START = Date.UTC(2026, 10, 12, 10)
 
 /**
  * The service that owns a session's artefact (PRDCT-4472), over real child
@@ -134,7 +138,7 @@ function setup(
   const known = new Set(['s1', 's2'])
   const stateListeners = new Set<(sessionId: string, state: AgentState) => void>()
   const logged: string[] = []
-  let at = Date.UTC(2026, 10, 12, 10)
+  let at = START
   const service = createArtefactService({
     dataDir: join(root, 'data'),
     execPath: process.execPath,
@@ -248,7 +252,7 @@ describe('opening an artefact', () => {
   })
 
   it('a second open replaces the first and drops its holds', async () => {
-    const { service, root, deck, forwards } = setup()
+    const { service, root, deck, forwards, setNow } = setup()
     await service.open('s1', deck)
     const held = await service.hold('s1')
     expect(forwards.resolve(held.lease)).toBeDefined()
@@ -258,10 +262,17 @@ describe('opening an artefact', () => {
     const second = await service.open('s1', other)
     expect((await service.list()).map((a) => a.target)).toEqual([other])
     expect(second.target).toBe(other)
-    // The first preview had no other holder: it stopped and its lease went.
+    // The first preview is shown by no session any more: it stopped at
+    // once, with no minute of waiting, and its lease went.
     expect(forwards.resolve(held.lease)).toBeUndefined()
+    // The first hold went with the first link: its id is not renewed.
     const renewed = await service.hold('s1', held.holdId)
     expect(renewed.holdId).not.toBe(held.holdId)
+    expect(renewed.lease).not.toBe(held.lease)
+    // A close stops the second the same way, held or not.
+    setNow(START + 1)
+    await service.close('s1')
+    expect(forwards.resolve(renewed.lease)).toBeUndefined()
   })
 })
 
@@ -319,7 +330,7 @@ describe('holding a preview', () => {
     expect(forwards.resolve(first.lease)).toEqual({ port: Number(new URL(first.url).port) })
   })
 
-  it('stops the preview with the last release, and sweeps a hold past its time', async () => {
+  it('keeps a preview a minute after its last release, joins it when held again, then stops it; sweeps a hold past its time', async () => {
     const { service, deck, forwards, children, setNow } = setup()
     await service.open('s1', deck)
     await service.open('s2', deck)
@@ -331,18 +342,58 @@ describe('holding a preview', () => {
     await service.release('s1', a.holdId)
     expect(forwards.resolve(b.lease)).toBeDefined()
     await service.release('s2', b.holdId)
+    // Nobody holds it: it is kept for a minute, and a sweep before that leaves it.
+    setNow(START + LINGER_MS - 1)
+    service.sweep()
+    expect(forwards.resolve(b.lease)).toBeDefined()
+    expect(alive(children[0]!.pid!)).toBe(true)
+    // Held again within the minute: the same preview, the same lease, no second child.
+    const back = await service.hold('s1')
+    expect(back.lease).toBe(b.lease)
+    expect(children).toHaveLength(1)
+    setNow(START + 10 * LINGER_MS)
+    service.sweep()
+    // Its hold is past its time by now, so this sweep dropped it and noted the
+    // preview idle; it is stopped a minute after THAT, not after the first release.
+    expect(forwards.resolve(b.lease)).toBeDefined()
+    setNow(START + 11 * LINGER_MS)
+    service.sweep()
     expect(forwards.resolve(b.lease)).toBeUndefined()
     await expect.poll(() => alive(children[0]!.pid!), { timeout: 3_000 }).toBe(false)
 
     const c = await service.hold('s1')
     expect(children).toHaveLength(2)
-    setNow(Date.UTC(2026, 10, 12, 10) + HOLD_TTL_MS - 1)
+    const held = START + 11 * LINGER_MS
+    setNow(held + HOLD_TTL_MS - 1)
     service.sweep()
     expect(forwards.resolve(c.lease)).toBeDefined()
-    setNow(Date.UTC(2026, 10, 12, 10) + HOLD_TTL_MS)
+    setNow(held + HOLD_TTL_MS + LINGER_MS)
+    service.sweep()
+    // The hold lapsed in this sweep; the preview goes a minute after.
+    expect(forwards.resolve(c.lease)).toBeDefined()
+    setNow(held + HOLD_TTL_MS + 2 * LINGER_MS)
     service.sweep()
     expect(forwards.resolve(c.lease)).toBeUndefined()
     await expect.poll(() => alive(children[1]!.pid!), { timeout: 3_000 }).toBe(false)
+  })
+
+  it('keeps no preview waiting for a tab that ended: stopped at its last release, or at the end when nobody holds it', async () => {
+    const { service, deck, forwards, emitState } = setup()
+    await service.open('s1', deck)
+    service.start()
+    const a = await service.hold('s1')
+    emitState('s1', 'ended')
+    // Still held by a window that shows the ended tab: it stays.
+    expect(forwards.resolve(a.lease)).toBeDefined()
+    await service.release('s1', a.holdId)
+    expect(forwards.resolve(a.lease)).toBeUndefined()
+    // The other order: released first (kept a minute), then the tab ends.
+    emitState('s1', 'idle')
+    const b = await service.hold('s1')
+    await service.release('s1', b.holdId)
+    expect(forwards.resolve(b.lease)).toBeDefined()
+    emitState('s1', 'ended')
+    expect(forwards.resolve(b.lease)).toBeUndefined()
   })
 
   it('tells the holders of a preview killed from outside, gives its lease back, and starts a new one at the next hold', async () => {

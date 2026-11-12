@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react'
 import { DocumentTextIcon, EnvelopeIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../shared/linked-documents'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
-import { SlidelessArtefact } from './SlidelessArtefact'
 import { useFileChanged } from '../../hooks/use-file-changed'
 import { ViewModeToggle } from './ViewModeToggle'
 import { IconButton } from '@clave/ui/components'
@@ -14,8 +13,8 @@ import { LinkedEmailComposer } from './LinkedEmailComposer'
  * The card a session's linked document lives in, inset in the session's frame
  * (see TerminalGrid). ONE shell for every kind — the header, the conflict
  * notice, the scroll area and the revisioned save queue are here; the body is
- * picked by kind: the email composer, the Markdown page editor, or the HTML
- * preview, the last two with a Source view.
+ * picked by kind: the email composer, or the Markdown page editor with a
+ * Source view. An HTML page is the session's artefact (ArtefactPanel).
  */
 export function LinkedDocumentPanel({
   document: incoming
@@ -26,8 +25,6 @@ export function LinkedDocumentPanel({
   const current = useRef(incoming)
   const [status, setStatus] = useState('Saved')
   const [error, setError] = useState('')
-  // HTML opens on the page itself (PRDCT-4262): an artefact is there to be
-  // seen, through Slideless; Source is one click away.
   const [source, setSource] = useState(false)
   const [signatureError, setSignatureError] = useState('')
   const [epoch, setEpoch] = useState(0)
@@ -164,8 +161,8 @@ export function LinkedDocumentPanel({
         )}
         {doc.kind !== 'email' && (
           <ViewModeToggle
-            mode={source ? 'source' : doc.kind === 'html' ? 'rendered' : 'page'}
-            modes={doc.kind === 'html' ? ['rendered', 'source'] : ['page', 'source']}
+            mode={source ? 'source' : 'page'}
+            modes={['page', 'source']}
             onChange={(mode) => setSource(mode === 'source')}
           />
         )}
@@ -231,51 +228,19 @@ export function LinkedDocumentPanel({
             signatureError={signatureError}
             onSignatureError={setSignatureError}
           />
-        ) : doc.kind === 'markdown' ? (
-          source ? (
-            <CodeEditor
-              filename={doc.path!}
-              value={doc.content}
-              onChange={(content) => update({ content })}
-            />
-          ) : (
-            <MarkdownPageEditor
-              key={epoch}
-              content={doc.content}
-              onChange={(content) => update({ content })}
-              onSave={() => {}}
-            />
-          )
+        ) : source ? (
+          <CodeEditor
+            filename={doc.path!}
+            value={doc.content}
+            onChange={(content) => update({ content })}
+          />
         ) : (
-          <>
-            {source && (
-              <CodeEditor
-                filename={doc.path!}
-                value={doc.content}
-                onChange={(content) => update({ content })}
-              />
-            )}
-            {/* The Slideless view stays mounted under Source and through a
-                conflict (PRDCT-4262), so its server keeps running and each
-                finished turn still saves a version; it is only out of sight. */}
-            {!source && doc.conflict && (
-              <div className="linked-document-notice">
-                Resolve the external file conflict before previewing. Your edits remain available in
-                Source.
-              </div>
-            )}
-            <div
-              className="h-full"
-              style={source || doc.conflict ? { display: 'none' } : undefined}
-            >
-              <SlidelessArtefact
-                target={doc.root ?? doc.path!}
-                page={doc.path!}
-                sessionId={doc.sessionId}
-                reloadKey={doc.revision}
-              />
-            </div>
-          </>
+          <MarkdownPageEditor
+            key={epoch}
+            content={doc.content}
+            onChange={(content) => update({ content })}
+            onSave={() => {}}
+          />
         )}
       </div>
     </section>

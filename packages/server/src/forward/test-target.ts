@@ -72,6 +72,13 @@ export async function startTestTarget(): Promise<TestTarget> {
       })
       return
     }
+    if (path === '/quiet') {
+      // An event stream that says one line and then nothing, as a preview's
+      // reload stream does between two edits.
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.write(': open\n\n')
+      return
+    }
     if (path === '/big') {
       res.writeHead(200, { 'content-type': 'application/octet-stream' })
       let offset = 0

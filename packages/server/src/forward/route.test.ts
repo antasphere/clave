@@ -191,6 +191,26 @@ describe('the forward route', () => {
     expect(Date.now() - aborted).toBeLessThan(1000)
   })
 
+  it('lets go of a SILENT stream within 1 s too: nothing is written that could notice the caller left', async () => {
+    const closed = target.closeOf('/quiet')
+    const started = await new Promise<http.ClientRequest>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port, path: `/forward/${lease}/quiet`, headers: auth(), agent: false },
+        (res) => res.once('data', () => resolve(req))
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    const left = Date.now()
+    started.destroy()
+    const ms = await Promise.race([
+      closed.then(() => Date.now() - left),
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 5000))
+    ])
+    expect(ms).toBeGreaterThanOrEqual(0)
+    expect(ms).toBeLessThan(1000)
+  })
+
   it('answers 502 refused when the target is gone', async () => {
     const gone = registry.register(await closedPort())
     const answer = await ask(port, `/forward/${gone.lease}/echo`, { headers: auth() })

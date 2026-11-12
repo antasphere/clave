@@ -5,7 +5,7 @@
  * the server's token stay in main: the answer is the URL and the key, and
  * the window gate (`window-gate.ts`) adds the secret to the window's requests.
  */
-import { app, ipcMain, type WebContents } from 'electron'
+import { ipcMain, type WebContents } from 'electron'
 import log from 'electron-log/main'
 import { isForwardLease } from '@clave/contract/forward'
 import { LoopbackForwards, type OpenedForward } from './loopback-forwards'
@@ -74,9 +74,5 @@ export function registerForwardHandlers(
     const one = opened?.pop()
     one?.release()
     if (held && opened && opened.length === 0) held.delete(key)
-  })
-
-  app.on('will-quit', () => {
-    void loopbackForwards.closeAll()
   })
 }

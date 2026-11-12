@@ -108,6 +108,10 @@ import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { hostDigests, sessionLaunchOf } from './exchange-digest'
 import { hostSpeech } from './speech'
+import {
+  startWatching as startAgentStateWatching,
+  stopWatching as stopAgentStateWatching
+} from './agent-state-manager'
 // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
@@ -582,6 +586,14 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // A tab that runs in a terminal says its state through its lifecycle hooks,
+  // which write under this server's own data folder: they are read here
+  // (PRDCT-4472). Until now only the desktop app read its own folder, so on a
+  // server running on its own such a tab never said a turn had ended, to the
+  // clients (ADR 0003, wave 5, named there as a gap) or to the artefact
+  // service, which saves a version at that moment. A chat's state comes from
+  // its stream and is left alone by the watch.
+  startAgentStateWatching(() => undefined)
   // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
   // this in its IPC handlers, which a daemon never registers, so until now a
   // server's limit reached no client and its chat drew "server ended".
@@ -663,6 +675,7 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    stopAgentStateWatching()
     stopLimits()
     stopCleared()
     setServerEventPublisher(null)

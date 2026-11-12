@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { createServer } from 'net'
 import { isAbsolute, resolve } from 'path'
-import type { SlidelessSnapshot } from '../../shared/slideless'
+import type { ArtefactVersion } from '@clave/contract/artefacts'
 import type { ResolvedCli } from './slideless-cli'
 
 /**
@@ -188,7 +188,7 @@ export class PreviewServers {
   }
 
   /** Save a version of a served target. */
-  async snapshot(raw: string): Promise<SlidelessSnapshot> {
+  async snapshot(raw: string): Promise<ArtefactVersion> {
     const entry = this.running.get(resolve(raw))
     if (!entry) throw new Error('This artefact is not being served')
     const base = await entry.url

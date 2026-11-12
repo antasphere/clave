@@ -18,6 +18,7 @@ import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/f
 import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
 import type { RoutinesListing } from '@clave/contract/routines/model'
+import type { Artefact } from '@clave/contract/artefacts/model'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
@@ -1346,9 +1347,132 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // ── PRDCT-4411: the speech's answer ──
   type SpeakAnswer = Awaited<ReturnType<ElectronAPI['speakText']>>
   type PageTitlesFiled = Awaited<ReturnType<ElectronAPI['pageTitlesOf']>>
+  // ── PRDCT-4474: a session's artefact, on the server the session runs on ──
+  // A server's preview is on THAT server's loopback: the window frames it
+  // through a loopback port of this Mac (`forwards:open`, main's forwarder),
+  // opened on the lease the server's hold answers. Each hold remembers its
+  // lease and the forward it opened, so a renewal that answers a new lease
+  // (the server started the preview again) moves the frame to a new forward,
+  // and a release lets go of both.
+  type ArtefactsAPI = ElectronAPI['artefacts']
+  type ForwardOpened = { url: string; key: string }
+  const remoteHolds = new Map<string, { serverId: string; lease: string; forward: ForwardOpened }>()
+  const keyedArtefact = (owner: string, artefact: Artefact): Artefact => ({
+    ...artefact,
+    sessionId: key(owner, artefact.sessionId)
+  })
+  const releaseForward = (forward: ForwardOpened): void => {
+    void ports.invoke('forwards:release', forward.key).catch(noop)
+  }
+  const artefacts: ArtefactsAPI = {
+    ...local.artefacts,
+    list: async () => {
+      // Each source answers or contributes nothing: an older server without
+      // the domain, or a connection down, never empties the others.
+      const own = local.artefacts.list().catch((): Artefact[] => [])
+      const servers = connections
+        .filter((c) => c.enabled)
+        .map(async (c) => {
+          try {
+            const listed = await (await backing(c.id)).api.artefacts.list()
+            return listed.map((a) => keyedArtefact(c.id, a))
+          } catch {
+            return []
+          }
+        })
+      return (await Promise.all([own, ...servers])).flat()
+    },
+    hold: (id, holdId) =>
+      route(
+        id,
+        (wireId) => local.artefacts.hold(wireId, holdId),
+        async (b, wireId) => {
+          const serverId = parseSessionKey(id).serverId
+          const preview = await b.api.artefacts.hold(wireId, holdId)
+          const known = holdId === undefined ? undefined : remoteHolds.get(holdId)
+          if (known && known.serverId === serverId && known.lease === preview.lease) {
+            if (preview.holdId !== holdId) {
+              remoteHolds.delete(holdId!)
+              remoteHolds.set(preview.holdId, known)
+            }
+            return { url: known.forward.url, holdId: preview.holdId, ttlMs: preview.ttlMs }
+          }
+          // A new lease: the new forward opens BEFORE the old one goes, so
+          // the frame never points at a port that is already closed.
+          const forward = (await ports.invoke(
+            'forwards:open',
+            serverId,
+            preview.lease
+          )) as ForwardOpened
+          if (known) {
+            remoteHolds.delete(holdId!)
+            releaseForward(known.forward)
+          }
+          remoteHolds.set(preview.holdId, { serverId, lease: preview.lease, forward })
+          return { url: forward.url, holdId: preview.holdId, ttlMs: preview.ttlMs }
+        }
+      ),
+    release: async (id, holdId) => {
+      const known = remote(id) ? remoteHolds.get(holdId) : undefined
+      if (known) remoteHolds.delete(holdId)
+      try {
+        await route(
+          id,
+          (wireId) => local.artefacts.release(wireId, holdId),
+          (b, wireId) => b.api.artefacts.release(wireId, holdId)
+        )
+      } finally {
+        // The server may be gone: this Mac's port is let go of all the same.
+        if (known) releaseForward(known.forward)
+      }
+    },
+    saveVersion: (id) =>
+      route(
+        id,
+        (wireId) => local.artefacts.saveVersion(wireId),
+        (b, wireId) => b.api.artefacts.saveVersion(wireId)
+      ),
+    close: (id) =>
+      route(
+        id,
+        (wireId) => local.artefacts.close(wireId),
+        (b, wireId) => b.api.artefacts.close(wireId)
+      ),
+    onChanged: (cb) =>
+      both(
+        local.artefacts.onChanged(cb),
+        eventListener('artefact.changed', (event, owner) =>
+          cb({
+            sessionId: key(owner, event.sessionId),
+            artefact: event.artefact ? keyedArtefact(owner, event.artefact) : null
+          })
+        )
+      ),
+    onPreviewExited: (cb) =>
+      both(
+        local.artefacts.onPreviewExited(cb),
+        eventListener('artefact.preview_exited', (event, owner) => cb(key(owner, event.sessionId)))
+      ),
+    slidelessState: async (serverId) =>
+      serverId === undefined || serverId === LOCAL_SERVER_ID
+        ? local.artefacts.slidelessState()
+        : (await backing(serverId)).api.artefacts.slidelessState(),
+    installSlideless: async (serverId) =>
+      serverId === undefined || serverId === LOCAL_SERVER_ID
+        ? local.artefacts.installSlideless()
+        : (await backing(serverId)).api.artefacts.installSlideless(),
+    onSlidelessState: (cb) =>
+      both(
+        local.artefacts.onSlidelessState(cb),
+        eventListener('slideless.state_changed', (event, owner) =>
+          cb({ serverId: owner, state: event.state })
+        )
+      )
+  }
   const api: ElectronAPI = {
     ...local,
     ...shared,
+    artefacts,
     sessionsList: async () => {
       const own = await local.sessionsList()
       return [...own, ...connections.flatMap((c) => lastSnapshots.get(c.id)?.sessions ?? [])]
