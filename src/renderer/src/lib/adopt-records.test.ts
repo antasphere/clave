@@ -247,6 +247,19 @@ describe('ongoing server chat discovery', () => {
     expect(spawned).toEqual([])
     stop()
   })
+
+  it('a top-level launch reply moves its discovered row to the same first position as an ordinary launch', async () => {
+    byIdRecords = ['older', 'launching'].map((id) => ({ ...record(id), running: true }))
+    useSessionStore.setState({ displayOrder: [] })
+    const stop = startServerChatSync(listeners().api)
+    await flush()
+    expect(useSessionStore.getState().displayOrder).toEqual(['older', 'launching'])
+    const session = useSessionStore.getState().sessions.find((s) => s.id === 'launching')!
+    useSessionStore.getState().addSession(session)
+    expect(useSessionStore.getState().displayOrder).toEqual(['launching', 'older'])
+    expect(ids().filter((id) => id === 'launching')).toHaveLength(1)
+    stop()
+  })
 })
 
 describe('placeRecords', () => {

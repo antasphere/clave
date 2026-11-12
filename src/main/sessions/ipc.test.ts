@@ -480,8 +480,18 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   )
   // A cursor or a size that is not a count is ignored, never trusted.
   expect(history(event, id, 'x', -3)).toEqual(newest)
+  const timeline = mocks.handlers.get('sessions:timeline')
+  const snapshot = timeline(event, id)
+  expect(snapshot.items.at(-1)).toMatchObject({
+    event: { type: 'user_message', text: 'm499' },
+    at: 499,
+    position: { sequence: 500 }
+  })
+  expect(snapshot.cursor.sequence).toBe(500)
+  expect(timeline(event, id, snapshot.before, 10).items).toHaveLength(10)
   mocks.keyForWindow.mockReturnValue('other-window')
   expect(() => history(event, id)).toThrow('another window')
+  expect(() => timeline(event, id)).toThrow('another window')
   mocks.keyForWindow.mockReturnValue('window')
 })
 

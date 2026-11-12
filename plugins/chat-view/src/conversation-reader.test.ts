@@ -1,0 +1,364 @@
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import type { TimelinePage } from '@clave/contract/timeline'
+import type { SessionPosition, SessionStream } from '../../../src/shared/session-model'
+import {
+  conversationReader,
+  HANDOFF_MAX_ITEMS,
+  type ConversationReader
+} from './conversation-reader'
+import { emptyConversation, reduceConversation, type Conversation, type Entry } from './reducer'
+
+const position = (sequence: number, generation = 'g'): SessionPosition => ({ generation, sequence })
+const frame = (sequence: number, text = 'same', generation = 'g'): SessionStream => ({
+  kind: 'event',
+  event: { type: 'user_message', text },
+  position: position(sequence, generation)
+})
+const page = (
+  sequences: number[],
+  sequence = sequences.at(-1) ?? 0,
+  generation = 'g'
+): TimelinePage => ({
+  items: sequences.map((n) => ({
+    event: { type: 'user_message' as const, text: 'same' },
+    position: position(n, generation)
+  })),
+  before: null,
+  cursor: position(sequence, generation),
+  truncated: false
+})
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 8; i++) await Promise.resolve()
+}
+const cleanups: Array<() => void> = []
+afterEach(() => {
+  for (const close of cleanups.splice(0)) close()
+  vi.useRealTimers()
+})
+function setup(timeline = vi.fn<() => Promise<TimelinePage | null>>(async () => page([1]))): {
+  reader: ConversationReader
+  timeline: Mock<() => Promise<TimelinePage | null>>
+  snapshot: Mock
+  event: Mock
+  failed: Mock
+  history: Mock
+  entries(): Entry[]
+  state(): Conversation
+} {
+  let conversation = { ...emptyConversation, state: 'working' as const, run: 4 }
+  const snapshot = vi.fn()
+  const event = vi.fn()
+  const failed = vi.fn()
+  const history = vi.fn(async () => ({
+    items: [{ event: { type: 'user_message' as const, text: 'old' } }],
+    before: null
+  }))
+  const reader = conversationReader(
+    { timeline, history },
+    {
+      page: (p, replace, truncated) => {
+        snapshot(p, replace, truncated)
+        conversation = reduceConversation(
+          conversation,
+          replace ? { snapshot: p.items } : { prepend: p.items }
+        ) as typeof conversation
+      },
+      event: (item) => {
+        event(item)
+        conversation = reduceConversation(conversation, item) as typeof conversation
+      },
+      reading: vi.fn(),
+      failed
+    }
+  )
+  cleanups.push(reader.stop)
+  return {
+    reader,
+    timeline,
+    snapshot,
+    event,
+    failed,
+    history,
+    entries: () => conversation.entries,
+    state: () => conversation
+  }
+}
+
+describe('the positioned snapshot/live handoff', () => {
+  it('keeps a host pending request and typed fields without duplicating a request already in the timeline', async () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'request',
+      description: 'Choose',
+      options: [{ id: 'allow', label: 'Allow' }]
+    }
+    const h = setup(
+      vi.fn(async () => ({ ...page([], 1), items: [{ event: request, position: position(1) }] }))
+    )
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.stream({
+      kind: 'event',
+      event: { type: 'permission_updated', id: 'request', answers: { choice: 'yes' }, typed: true }
+    })
+    h.reader.start()
+    await settle()
+    expect(h.entries()).toHaveLength(1)
+    expect(h.entries()[0]).toMatchObject({ kind: 'permission', typed: { choice: 'yes' } })
+    expect(h.history).not.toHaveBeenCalled()
+  })
+
+  it('does not resurrect a subscription request settled in the subsequent snapshot', async () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'request',
+      description: 'Choose',
+      options: [{ id: 'allow', label: 'Allow' }]
+    }
+    const h = setup(
+      vi.fn(async () => ({
+        ...page([], 1),
+        items: [
+          { event: { type: 'permission_withdrawn' as const, id: 'request' }, position: position(1) }
+        ]
+      }))
+    )
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.start()
+    await settle()
+    expect(h.entries()).toHaveLength(0)
+  })
+  it('takes the latest positioned state covered by the snapshot instead of leaving the subscribe state stale', async () => {
+    const h = setup(
+      vi.fn(async () => ({
+        ...page([], 1),
+        items: [
+          {
+            event: { type: 'state_change' as const, state: 'done' as const, run: 4 },
+            position: position(1)
+          }
+        ]
+      }))
+    )
+    h.reader.start()
+    h.reader.stream({
+      kind: 'event',
+      event: { type: 'state_change', state: 'done', run: 4 },
+      position: position(1)
+    })
+    await settle()
+    expect(h.state().state).toBe('done')
+  })
+
+  it('keeps the host’s unpositioned subscription state and background snapshot outside transcript deduplication', async () => {
+    const h = setup()
+    h.reader.stream({ kind: 'event', event: { type: 'state_change', state: 'working', run: 4 } })
+    h.reader.stream({ kind: 'event', event: { type: 'background_tasks', tasks: [] } })
+    h.reader.start()
+    await settle()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    expect(h.event).toHaveBeenCalledTimes(2)
+    expect(h.entries()).toHaveLength(1)
+    expect(h.history).not.toHaveBeenCalled()
+  })
+  it('starts after subscription and buffers meanwhile; snapshot-covered events occur once', async () => {
+    const h = setup()
+    h.reader.stream(frame(1))
+    expect(h.timeline).not.toHaveBeenCalled()
+    h.reader.start()
+    await settle()
+    expect(h.entries()).toHaveLength(1)
+    expect(h.event).not.toHaveBeenCalled()
+    expect(h.history).not.toHaveBeenCalled()
+    expect(h.state()).toMatchObject({ state: 'working', run: 4 })
+  })
+  it('applies above-watermark frames in position order, preserving identical messages at distinct positions', async () => {
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(vi.fn(() => answer.promise))
+    h.reader.start()
+    h.reader.stream(frame(3))
+    h.reader.stream(frame(2))
+    h.reader.stream(frame(2))
+    answer.resolve(page([1]))
+    await settle()
+    expect(h.entries()).toHaveLength(3)
+    h.reader.stream(frame(3))
+    h.reader.stream(frame(1))
+    h.reader.stream(frame(4))
+    expect(h.entries()).toHaveLength(4)
+    expect(h.event).toHaveBeenCalledTimes(3)
+  })
+  it('repairs a sequence gap by snapshot, without appending out of order or losing the missing event', async () => {
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockResolvedValueOnce(page([1]))
+        .mockImplementation(() => answer.promise)
+    )
+    h.reader.start()
+    await settle()
+    h.reader.stream(frame(3))
+    expect(h.entries()).toHaveLength(1)
+    h.reader.stream(frame(2))
+    answer.resolve(page([1, 2, 3]))
+    await settle()
+    expect(h.entries()).toHaveLength(3)
+    h.reader.stream(frame(3))
+    expect(h.entries()).toHaveLength(3)
+  })
+  it('replaces from a reconnect snapshot and ignores an old HTTP response', async () => {
+    const old = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => old.promise)
+        .mockResolvedValue(page([1, 2]))
+    )
+    h.reader.start()
+    h.reader.reconnect()
+    await settle()
+    expect(h.entries()).toHaveLength(2)
+    old.resolve(page([1]))
+    await settle()
+    expect(h.entries()).toHaveLength(2)
+    h.reader.reconnect()
+    await settle()
+    expect(h.entries()).toHaveLength(2)
+  })
+  it('takes a new generation snapshot, clearing old entries even when the new snapshot is empty', async () => {
+    const h = setup(
+      vi
+        .fn()
+        .mockResolvedValueOnce(page([1, 2]))
+        .mockResolvedValue(page([], 0, 'new'))
+    )
+    h.reader.start()
+    await settle()
+    h.reader.reconnect()
+    await settle()
+    expect(h.entries()).toHaveLength(0)
+    const reads = h.timeline.mock.calls.length
+    h.reader.stream(frame(3, 'stale old connection'))
+    await settle()
+    expect(h.timeline).toHaveBeenCalledTimes(reads)
+    expect(h.entries()).toHaveLength(0)
+  })
+  it('a new-generation frame rejects the old in-flight snapshot, and retired-generation frames cannot reset it', async () => {
+    const old = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockResolvedValueOnce(page([1]))
+        .mockImplementationOnce(() => old.promise)
+        .mockResolvedValue(page([1], 1, 'new'))
+    )
+    h.reader.start()
+    await settle()
+    h.reader.retry()
+    h.reader.stream(frame(2, 'new message', 'new'))
+    await settle()
+    old.resolve(page([1, 2, 3]))
+    h.reader.stream(frame(4, 'stale', 'g'))
+    await settle()
+    expect(h.entries()).toHaveLength(2)
+    expect(h.entries().at(-1)).toMatchObject({ text: 'new message' })
+  })
+  it('retries a raced-generation snapshot without committing it', async () => {
+    vi.useFakeTimers()
+    const old = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => old.promise)
+        .mockResolvedValue(page([1], 1, 'new'))
+    )
+    h.reader.start()
+    h.reader.stream(frame(2, 'new message', 'new'))
+    old.resolve(page([1]))
+    await settle()
+    expect(h.snapshot).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(h.entries()).toHaveLength(2)
+  })
+  it('only an explicit unsupported result uses frozen history and preserves buffered legacy live events', async () => {
+    const h = setup(vi.fn(async () => null))
+    h.reader.start()
+    h.reader.stream({ kind: 'event', event: { type: 'user_message', text: 'new' } })
+    await settle()
+    expect(h.history).toHaveBeenCalledTimes(1)
+    expect(h.entries().map((e) => ('text' in e ? e.text : ''))).toEqual(['old', 'new'])
+  })
+  it('shows real failures after bounded retries, never an empty/fallback transcript; Retry can recover', async () => {
+    vi.useFakeTimers()
+    const h = setup(vi.fn().mockRejectedValue(new Error('HTTP 500')))
+    h.reader.start()
+    await vi.advanceTimersByTimeAsync(121000)
+    expect(h.failed).toHaveBeenCalled()
+    expect(h.history).not.toHaveBeenCalled()
+    expect(h.snapshot).not.toHaveBeenCalled()
+    h.timeline.mockResolvedValue(page([1]))
+    h.reader.retry()
+    await settle()
+    expect(h.entries()).toHaveLength(1)
+  })
+  it('stops retries and all callbacks after unmount', async () => {
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(vi.fn(() => answer.promise))
+    h.reader.start()
+    h.reader.stop()
+    answer.resolve(page([1]))
+    await settle()
+    h.reader.stream(frame(2))
+    h.reader.retry()
+    h.reader.reconnect()
+    await vi.advanceTimersByTimeAsync(121000)
+    expect(h.snapshot).not.toHaveBeenCalled()
+    expect(h.event).not.toHaveBeenCalled()
+    expect(h.failed).not.toHaveBeenCalled()
+  })
+  it('bounds the handoff buffer; an overflowing prefix must be covered by the snapshot and retention remains explicit', async () => {
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(vi.fn(() => answer.promise))
+    h.reader.start()
+    for (let n = 1; n <= HANDOFF_MAX_ITEMS + 2; n++) h.reader.stream(frame(n))
+    answer.resolve({ ...page([HANDOFF_MAX_ITEMS + 2]), truncated: true })
+    await settle()
+    expect(h.entries()).toHaveLength(1)
+    expect(h.reader.source().truncated).toBe(true)
+    expect(h.snapshot.mock.calls[0][2]).toBe(true)
+  })
+  it('keeps pagination on the positioned source and refuses old-generation pages', async () => {
+    const h = setup()
+    h.reader.start()
+    await settle()
+    const source = h.reader.source()
+    h.timeline.mockResolvedValue(page([], 1))
+    await source.read(1, 20)
+    expect(h.timeline).toHaveBeenLastCalledWith(1, 20)
+    expect(h.history).not.toHaveBeenCalled()
+    h.timeline.mockResolvedValue(page([], 0, 'new'))
+    await expect(source.read(1)).rejects.toThrow('generation')
+    expect(source.current()).toBe(false)
+  })
+  it('drops an earlier-page response racing a reconnect', async () => {
+    const h = setup()
+    h.reader.start()
+    await settle()
+    const answer = deferred<TimelinePage | null>()
+    const source = h.reader.source()
+    h.timeline.mockImplementationOnce(() => answer.promise)
+    const earlier = source.read(1)
+    h.reader.reconnect()
+    await settle()
+    answer.resolve(page([1]))
+    await expect(earlier).rejects.toThrow('changed')
+  })
+})

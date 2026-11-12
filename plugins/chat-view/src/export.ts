@@ -11,6 +11,8 @@ export interface TranscriptMeta {
   model?: string | null
   /** When the copy was taken. */
   exportedAt: Date
+  /** The host dropped older events from its retained conversation. */
+  truncated?: boolean
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0')
@@ -85,6 +87,7 @@ export function transcriptMarkdown(
     `exported ${day(meta.exportedAt)} ${clock(meta.exportedAt.getTime())}`
   ].filter(Boolean)
   out.push('', facts.join(' · '))
+  if (meta.truncated) out.push('', '> Some earlier messages are no longer retained by this server.')
 
   // Who holds the floor: a heading is written only when the speaker changes,
   // so an answer split by tool runs reads as one answer.
@@ -279,6 +282,8 @@ export function handoffMessage(
   const header = `Continued from ${extras.from} · handoff`
   const intro = `This conversation ran on ${extras.from}${meta.cwd ? ` in ${code(meta.cwd)}` : ''} and moves to you here. You are reading a transcript of it, not continuing it: what ${extras.from} had in its working memory, the approvals it was granted and the live results of its earlier tool runs are not yours. The files it changed are on disk. Read, then carry on from where it stopped.`
   const fixed: string[] = [`# ${header}`, '', intro]
+  if (meta.truncated)
+    fixed.push('', 'Some earlier messages are no longer retained by the source server.')
   if (extras.note?.trim())
     fixed.push('', `## Handoff note from ${extras.from}`, '', extras.note.trim())
   // The tail has its own ceiling, so a huge diff summary or file list can

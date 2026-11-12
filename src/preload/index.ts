@@ -49,6 +49,7 @@ import {
   IPC_SERVER_EXTERNAL
 } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
+import type { TimelinePage } from '@clave/contract/timeline'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
@@ -1154,6 +1155,10 @@ const electronAPI = {
     ipc: (id, before, limit) => ipcRenderer.invoke('sessions:history', id, before, limit),
     server: ({ api }, id, before, limit) =>
       api.sessions.history(id, before, limit) as Promise<HistoryPage>
+  }),
+  sessionsTimeline: viaServer<[string, number?, number?], TimelinePage | null>({
+    ipc: (id, before, limit) => ipcRenderer.invoke('sessions:timeline', id, before, limit),
+    server: ({ api }, id, before, limit) => api.sessions.timeline(id, before, limit)
   }),
   // The composer's files: prepared into a session's attachment records here,
   // read again in main when the message is sent.

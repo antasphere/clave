@@ -14,6 +14,19 @@ function counting(value: unknown): { call: Call; used: () => number } {
 }
 
 describe('the history deadline (PRDCT-3526)', () => {
+  it('reads the positioned snapshot under the history deadline, keeping cursor and retention', async () => {
+    const ordinary = counting({ id: 's1' })
+    const page = {
+      items: [],
+      before: null,
+      cursor: { generation: 'g', sequence: 7 },
+      truncated: true
+    }
+    const history = counting(page)
+    expect(await sessionsClient(ordinary.call, history.call).timeline('s1', 200, 50)).toEqual(page)
+    expect(history.used()).toBe(1)
+    expect(ordinary.used()).toBe(0)
+  })
   it('a page of the past goes through the history call, the rest through the ordinary one', async () => {
     const ordinary = counting({ id: 's1' })
     const history = counting({ items: [], before: null })

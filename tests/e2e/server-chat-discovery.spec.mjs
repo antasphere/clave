@@ -127,9 +127,10 @@ export async function run(t) {
     })
     app = launched.app
     const { win } = launched
-    // Keep a concrete proof of the unresolved integration dependency on
-    // #388. The provider creates this transcript through a real server turn;
-    // no session record or application event is hand-seeded.
+    // The frozen launch past remains distinct from positioned history.
+    // The provider creates this transcript through a real server turn;
+    // no session record or application event is hand-seeded. The separate
+    // original-replay spec keeps this exact chat alive through its UI proof.
     const earlier = await request('POST', '/sessions/start', {
       cwd: HIDDEN.rootDir,
       options: { codexMode: true, launchProfileId: 'codex-chat', workspaceId: HIDDEN.id }
@@ -149,24 +150,23 @@ export async function run(t) {
     const replayed = lateHistory.items.some(
       (i) => i.event.delta === 'Fixture reply: created outside the desktop'
     )
-    const expectedReplay = process.env.CLAVE_E2E_EXPECT_PRE_ADOPTION_REPLAY === 'available'
-    assert.equal(
-      replayed,
-      expectedReplay,
-      'explicit pre-adoption replay expectation for this candidate'
+    assert.equal(replayed, false, 'legacy history keeps the launch boundary')
+    const timeline = await request('GET', `/sessions/timeline?id=${earlier.id}`)
+    assert.ok(
+      timeline.items.some((i) => i.event.delta === 'Fixture reply: created outside the desktop')
     )
     const gap = {
-      dependency: 'https://github.com/antasphere/clave/pull/388',
-      expectedReplay,
-      observedReplay: replayed,
+      contract: 'legacy launch history and the pinned #388 positioned timeline',
+      legacyHistoryContainsReply: replayed,
+      positionedTimelineContainsReply: true,
       providerTranscriptContainsReply: true,
       sessionId: earlier.id,
       threadId: priorThread
     }
-    writeFileSync(path.join(ROOT, 'replay-dependency.json'), JSON.stringify(gap, null, 2))
-    console.log(`pre-adoption replay dependency: ${JSON.stringify(gap)}`)
+    writeFileSync(path.join(ROOT, 'history-boundaries.json'), JSON.stringify(gap, null, 2))
+    console.log(`history boundaries: ${JSON.stringify(gap)}`)
     t.check(
-      'pre-adoption replay dependency is reproduced explicitly, not waived as acceptance',
+      'positioned history includes pre-attachment turns while legacy launch history stays frozen',
       true
     )
     assert.ok(

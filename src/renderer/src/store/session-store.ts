@@ -1296,7 +1296,20 @@ export const useSessionStore = create<SessionState>((set) => ({
 
       // Discovery can place a hosted chat while the launch reply is still
       // on its way. The explicit launch still selects it, but adds no row.
-      if (state.sessions.some((s) => s.id === session.id)) return { ...focusPatch }
+      if (state.sessions.some((s) => s.id === session.id))
+        return {
+          ...focusPatch,
+          // Keep a group the person already chose. A top-level row follows
+          // the same newest-first rule whether discovery or launch wins.
+          ...(state.groups.some((g) => g.sessionIds.includes(session.id))
+            ? {}
+            : {
+                displayOrder: [
+                  session.id,
+                  ...getDisplayOrder(state).filter((id) => id !== session.id)
+                ]
+              })
+        }
 
       // FIRST ROW, top level, always. A new tab used to be appended at the
       // bottom and, when the whole selection sat in one group, nested into

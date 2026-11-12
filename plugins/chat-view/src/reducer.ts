@@ -181,6 +181,8 @@ export type Action =
    *  its result, an interrupt and its message), so it reduces on its own. */
   | { prepend: HistoryItem[] }
   | { sync: HistoryItem[] }
+  /** A positioned snapshot is authoritative, including an empty generation. */
+  | { snapshot: HistoryItem[] }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
   /** The reader's typing into an open form was sent to its draft
@@ -348,8 +350,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     entries[last] = { ...message, withdrawn: true }
     return { ...state, entries }
   }
-  if ('sync' in action) {
-    if (!action.sync.length) return state
+  if ('sync' in action || 'snapshot' in action) {
+    const items = 'snapshot' in action ? action.snapshot : action.sync
+    if ('sync' in action && !items.length) return state
     // The past rebuilds the entries, never the state: the state is the
     // kernel's word on the stream (and the subscribe's answer), and a
     // replayed page may hold a fatal error or a blocked request of a process
@@ -358,7 +361,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // read under the live `working` would mark every message as mid-turn.
     // The mode is replayed from no mode, so the past's first word on it is
     // no change; the live word stands when the past says none.
-    const synced = action.sync.reduce(reduceConversation, {
+    const synced = items.reduce(reduceConversation, {
       ...state,
       entries: [],
       first: 0,
