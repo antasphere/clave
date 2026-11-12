@@ -7,7 +7,11 @@ import { z } from 'zod'
 import { isQuestionAnswerKey } from '../../../../packages/server/src/requests/question-key'
 import { codexRoot, findCodexRollout } from '../../session-history/codex'
 import { replayCodexHistory } from './codex-history'
-import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
+import {
+  codexProfilePolicy,
+  codexRungPolicy,
+  type LaunchProfile
+} from '../../../shared/agent-launch'
 import {
   SessionInputSchema,
   userMessageEvent,
@@ -1128,10 +1132,17 @@ export class CodexAdapter implements SessionAdapter {
     this.replayPast(state)
     state.ready = (async () => {
       const options = object(state.spec.options)
-      // The launch's own choice (Clave's dangerous mode) first, then what the
-      // profile's flags ask for, then the defaults; an absent sandbox leaves
-      // the one Codex's config gives the folder.
-      const profilePolicy = state.profile ? codexProfilePolicy(state.profile) : {}
+      // The launch's own choice (Clave's dangerous mode) first, then the
+      // profile's own flags (a saved profile is a deliberate choice: a YOLO
+      // profile stays YOLO), then the person's rung (PRDCT-4424: Settings →
+      // Harnesses, the launch's `permissionRung`, a default), then the
+      // defaults; an absent sandbox leaves the one Codex's config gives the
+      // folder.
+      const ownPolicy = state.profile ? codexProfilePolicy(state.profile) : {}
+      const profilePolicy =
+        Object.keys(ownPolicy).length > 0
+          ? ownPolicy
+          : (codexRungPolicy(options.permissionRung) ?? {})
       const launchMode = text(options.permissionMode)
       if (launchMode && !['on-request', 'never'].includes(launchMode))
         throw new Error(`Unsupported Codex permissionMode: ${launchMode}`)

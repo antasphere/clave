@@ -1,0 +1,348 @@
+import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { openChat } from './chat-view.spec.mjs'
+import { until } from './harness.mjs'
+
+/* Folio reads a page in the ElevenLabs voice of the server the tab runs on
+   (PRDCT-4411), on the real app with the echo adapter:
+   - no key yet: the system voice reads the page and the pane remembers the
+     server has no ElevenLabs, for NO_VOICE_MEMORY_MS (30 s) only: a key and a
+     voice set meanwhile (through the window's bridge, so the pane stays
+     mounted and the Integrations page's store never tells it) are used by
+     the first page read once the memory has run out;
+   - with the key and the voice set, the voice card says "Basil · ElevenLabs
+     on this Mac" before a click; Listen rewrites the answer for the voice,
+     creates the voice ("Creating the voice with Basil"), asks the server for
+     its audio and plays it through an audio element; ElevenLabs was asked
+     with the key, in its header, for the spoken text;
+   - ElevenLabs answering 402 (the credits spent): the Mac's voice reads the
+     page and the card says why in one line, then says it once read (a page
+     with words not spoken before: the pane keeps the parts it had, and plays
+     those without asking).
+   ElevenLabs is a stub on a local port (`CLAVE_ELEVENLABS_BASE_URL`) that
+   answers a second of silence; every key is invented. In the page, audio
+   playback is stubbed (`play` resolves and `ended` fires 100 ms later) and so
+   is the system voice; both record what they were asked. The spoken
+   rendering comes from CLAVE_E2E_SPOKEN_REPLY. Pinned in-process: the
+   integration set is this Mac's, the same process that speaks. The paste on
+   the Integrations page itself is settings-integrations.spec.mjs's. */
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const SILENCE = readFileSync(path.join(HERE, 'fixtures', 'silence-1s.mp3'))
+const FOLIO = ['--dev-echo-view=clave.chat-view/lab']
+const READY = '[data-testid="folio-view"] textarea:not(:disabled)'
+const GOOD = 'xi-test-folio-good'
+const VOICES = [
+  { voice_id: 'voice-a', name: 'Ada', category: 'premade', labels: {}, preview_url: null },
+  { voice_id: 'voice-b', name: 'Basil', category: 'premade', labels: {}, preview_url: null }
+]
+
+/** The stub: the account and the voices for the good key; speech as a
+ *  second of silence, or 402 once `quota` is set. */
+function startStub() {
+  const seen = []
+  const state = { quota: false }
+  const server = createServer((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      const key = req.headers['xi-api-key']
+      const { pathname } = new URL(req.url, 'http://stub')
+      const raw = Buffer.concat(chunks).toString('utf8')
+      let body = null
+      try {
+        body = raw ? JSON.parse(raw) : null
+      } catch {
+        body = raw
+      }
+      seen.push({ method: req.method, pathname, key, body })
+      const json = (status, value) =>
+        res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value))
+      if (key !== GOOD) return json(401, { detail: { status: 'invalid_api_key' } })
+      if (pathname === '/v1/user/subscription')
+        return json(200, { tier: 'creator', character_count: 10, character_limit: 100000 })
+      if (pathname === '/v2/voices') return json(200, { voices: VOICES, has_more: false })
+      if (req.method === 'POST' && /^\/v1\/text-to-speech\/[^/]+(\/stream)?$/.test(pathname)) {
+        if (state.quota)
+          return json(402, { detail: { status: 'payment_required', message: 'credits' } })
+        return res.writeHead(200, { 'content-type': 'audio/mpeg' }).end(SILENCE)
+      }
+      return json(404, {})
+    })
+  })
+  return new Promise((resolve) =>
+    server.listen(0, '127.0.0.1', () =>
+      resolve({
+        url: `http://127.0.0.1:${server.address().port}`,
+        seen,
+        state,
+        close: () => new Promise((done) => server.close(() => done()))
+      })
+    )
+  )
+}
+
+/** The page's audio and system voice, stubbed: each records what it plays. */
+async function stubPlayback(win) {
+  await win.evaluate(() => {
+    window.__played = []
+    window.__spoken = []
+    window.__states = []
+    window.__lines = []
+    HTMLMediaElement.prototype.play = function play() {
+      window.__played.push(this.src)
+      setTimeout(() => this.dispatchEvent(new Event('ended')), 100)
+      return Promise.resolve()
+    }
+    HTMLMediaElement.prototype.pause = function pause() {
+      window.__paused = (window.__paused ?? 0) + 1
+    }
+    const stub = {
+      speaking: false,
+      pending: false,
+      paused: false,
+      speak(utterance) {
+        window.__spoken.push(utterance.text)
+        setTimeout(() => {
+          utterance.onstart?.()
+          setTimeout(() => utterance.onend?.(), 1200)
+        }, 50)
+      },
+      cancel: () => undefined,
+      pause: () => undefined,
+      resume: () => undefined,
+      getVoices: () => [],
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined
+    }
+    Object.defineProperty(window, 'speechSynthesis', { value: stub, configurable: true })
+    // Every state the voice card takes and every line it says, as it says
+    // it: a reading of a tenth of a second is over before a poll would see it.
+    new MutationObserver(() => {
+      const card = document.querySelector('[data-testid="folio-voice-card"]')
+      const state = card?.getAttribute('data-voice-state') ?? null
+      if (state && window.__states.at(-1) !== state) window.__states.push(state)
+      for (const el of card?.querySelectorAll(
+        '[data-testid="folio-voice-line"], [data-testid="folio-voice-why"], [data-testid="folio-voice-source"]'
+      ) ?? []) {
+        const text = el.textContent.replace(/\d+s$/, '').trim()
+        if (text && !window.__lines.includes(text)) window.__lines.push(text)
+      }
+    }).observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['data-voice-state']
+    })
+  })
+}
+
+async function ask(view, text) {
+  const input = view.locator('textarea[aria-label="Message"]')
+  await input.fill(text)
+  await input.press('Enter')
+}
+
+/** What the pane remembers of a server without ElevenLabs, in ms
+ *  (`NO_VOICE_MEMORY_MS` of plugins/chat-view/src/lab/read-aloud.ts). */
+const NO_VOICE_MEMORY_MS = 30_000
+
+export async function run(t) {
+  const stub = await startStub()
+  const chat = await openChat(
+    'folio-elevenlabs',
+    FOLIO,
+    READY,
+    {
+      CLAVE_ELEVENLABS_BASE_URL: stub.url,
+      CLAVE_E2E_SPOKEN_REPLY: '<spoken>Spoken text.</spoken>'
+    },
+    null,
+    { server: 'in-process' }
+  )
+  const { win, app } = chat
+  try {
+    const view = win.locator('[data-testid="folio-view"]')
+    await view.locator('textarea[aria-label="Message"]').waitFor()
+    await stubPlayback(win)
+
+    // ── (0) No key: the system voice reads, and the pane remembers, briefly ──
+    const card = view.locator('[data-testid="folio-voice-card"]')
+    const listen = card.locator('.folio-voice-listen')
+    await ask(view, 'what is the weather like in namur')
+    await until(async () => ((await listen.count()) ? true : null))
+    await listen.click()
+    const unsetAt = Date.now()
+    const systemRead = await until(
+      async () => {
+        const said = await win.evaluate(() => window.__spoken)
+        return said.length ? said : null
+      },
+      { tries: 100, gapMs: 50 }
+    )
+    t.check(
+      'without a key the system voice reads the page',
+      JSON.stringify(systemRead) === '["Spoken text."]',
+      systemRead
+    )
+    const unsetLine = await until(async () => {
+      const seen = await win.evaluate(() => window.__lines)
+      return seen.find((line) => line.includes('no ElevenLabs on this server')) ?? null
+    })
+    t.equal(
+      'the card says there is no ElevenLabs',
+      unsetLine,
+      "Reading with the Mac's voice: no ElevenLabs on this server"
+    )
+    t.equal('ElevenLabs was not asked to speak', stub.seen.length, 0)
+    await until(
+      async () => ((await card.getAttribute('data-voice-state')) === 'idle' ? true : null),
+      {
+        tries: 100,
+        gapMs: 50
+      }
+    )
+    // A key pasted and a voice chosen, the pane still open; then the memory
+    // runs out.
+    await win.evaluate(
+      async ([key]) => {
+        await window.electronAPI.elevenLabsSetKey(key)
+        await window.electronAPI.elevenLabsSetVoice('voice-b', 'Basil', undefined)
+      },
+      [GOOD]
+    )
+    const left = NO_VOICE_MEMORY_MS + 1_000 - (Date.now() - unsetAt)
+    if (left > 0) await win.waitForTimeout(left)
+    await win.evaluate(() => {
+      window.__spoken = []
+      window.__states = []
+      window.__lines = []
+    })
+
+    // ── (a) The server's ElevenLabs voice reads the page ──
+    await ask(view, 'tell me about the weather in brussels please')
+    const named = await until(async () => {
+      const said = card.locator('[data-testid="folio-voice-source"]')
+      if (!(await said.count())) return null
+      const text = (await said.innerText()).trim()
+      return text.includes('Basil') ? text : null
+    })
+    t.equal('before a click, the card names the voice', named, 'Basil · ElevenLabs on this Mac')
+    await listen.click()
+    const played = await until(
+      async () => {
+        const urls = await win.evaluate(() => window.__played)
+        return urls.length ? urls : null
+      },
+      { tries: 100, gapMs: 50 }
+    )
+    assert.ok(played, 'an audio element played')
+    t.check(
+      'one part played, from a Blob URL',
+      played.length === 1 && /^blob:/.test(played[0]),
+      played
+    )
+    // The read ends once the part has played.
+    await until(
+      async () => ((await card.getAttribute('data-voice-state')) === 'idle' ? true : null),
+      {
+        tries: 60,
+        gapMs: 50
+      }
+    )
+    const states = await win.evaluate(() => window.__states)
+    t.equal(
+      'the card went idle, rewriting, creating, playing, idle',
+      JSON.stringify(states),
+      JSON.stringify(['idle', 'rewriting', 'creating', 'playing', 'idle'])
+    )
+    const lines = await win.evaluate(() => window.__lines)
+    t.check(
+      'the card said its steps, and the voice',
+      lines.includes('Rewriting for the voice') &&
+        lines.includes('Creating the voice with Basil') &&
+        lines.some((line) => line.startsWith('Basil · ElevenLabs')),
+      lines
+    )
+    t.equal(
+      'once read, the card offers to listen again',
+      (await listen.innerText()).trim(),
+      'Listen again'
+    )
+    const speaks = stub.seen.filter(
+      (r) => r.method === 'POST' && r.pathname === '/v1/text-to-speech/voice-b'
+    )
+    t.check(
+      'past the memory, ElevenLabs was asked once, for the chosen voice',
+      speaks.length === 1,
+      stub.seen
+    )
+    t.equal('for the spoken text', speaks[0]?.body?.text, 'Spoken text.')
+    t.equal('with the pasted key, in its header', speaks[0]?.key, GOOD)
+    t.equal('on the chosen model', speaks[0]?.body?.model_id, 'eleven_flash_v2_5')
+    t.equal('the system voice said nothing', (await win.evaluate(() => window.__spoken)).length, 0)
+    t.check(
+      'the window never saw the key',
+      !JSON.stringify(await win.evaluate(() => window.electronAPI.integrationsRead())).includes(
+        GOOD
+      )
+    )
+
+    // ── (c) The credits spent: the system voice reads, and the control says why ──
+    stub.state.quota = true
+    // New words for the new page: a pane keeps the parts it already had
+    // spoken (verifier round 3), so the same words would play from there
+    // without asking ElevenLabs. The harness reads the reply at each read.
+    await app.evaluate(() => {
+      process.env.CLAVE_E2E_SPOKEN_REPLY = '<spoken>Spoken text for tomorrow.</spoken>'
+    })
+    await win.evaluate(() => {
+      window.__states = []
+      window.__lines = []
+    })
+    await ask(view, 'and what about tomorrow in ghent')
+    await until(async () =>
+      (await listen.count()) && (await listen.innerText()).trim() === 'Listen' ? true : null
+    )
+    await listen.click()
+    const spoken = await until(
+      async () => {
+        const said = await win.evaluate(() => window.__spoken)
+        return said.length ? said : null
+      },
+      { tries: 100, gapMs: 50 }
+    )
+    t.check(
+      'the system voice read the spoken version',
+      JSON.stringify(spoken) === '["Spoken text for tomorrow."]',
+      spoken
+    )
+    const why = await until(async () => {
+      const seen = await win.evaluate(() => window.__lines)
+      return seen.find((line) => line.includes('credits')) ?? null
+    })
+    t.equal(
+      'the card says the credits are spent, in one line, and reads on with the Mac',
+      why,
+      "Reading with the Mac's voice: the ElevenLabs credits are spent"
+    )
+    const after = await until(async () => {
+      if ((await card.getAttribute('data-voice-state')) !== 'idle') return null
+      const line = card.locator('[data-testid="folio-voice-why"]')
+      return (await line.count()) ? (await line.innerText()).trim() : null
+    })
+    t.equal(
+      'and says it once read',
+      after,
+      "Read with the Mac's voice: the ElevenLabs credits are spent"
+    )
+    t.equal('no second audio played', (await win.evaluate(() => window.__played)).length, 1)
+  } finally {
+    await chat.close()
+    await stub.close()
+  }
+}

@@ -63,6 +63,8 @@ import { DigestsPort, digestHandlers } from './digests'
 import { DeviceSessions, DevicesEventsLive, PhoneRoad, deviceHandlers } from './devices'
 // ── The mobile wave, lane B: the write ledger ──
 import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
+// ── PRDCT-4411: the speech ──
+import { SpeechPort, speechHandlers } from './speech'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -118,6 +120,8 @@ export type ServerServices =
   | PhoneRoad
   // ── The mobile wave, lane B: the write ledger ──
   | SessionWrites
+  // ── PRDCT-4411: the speech ──
+  | SpeechPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -238,7 +242,9 @@ export const BusesLive = busesLayer.pipe(
       // ── PRDCT-4327: the digests ──
       ...digestHandlers,
       // ── Mobile wave, lane A: the devices ──
-      ...deviceHandlers
+      ...deviceHandlers,
+      // ── PRDCT-4411: the speech ──
+      ...speechHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )
@@ -299,6 +305,9 @@ export const ServerLive = (
 
 /** The largest body a digest command may send (PRDCT-4327). */
 export const DIGEST_BODY_LIMIT = 3 * 1024 * 1024
+/** The largest body a speech command may send (PRDCT-4411): 5,000
+ *  characters of text, a voice and a model, with room for JSON escaping. */
+export const SPEECH_BODY_LIMIT = 64 * 1024
 
 /** Bound transfer and sensitive resolution bodies before JSON decoding.
  * Authentication runs first; oversized secret inputs are never echoed. */
@@ -314,7 +323,10 @@ const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
             // in the worst JSON escaping): nothing bigger is read or parsed.
             request.url.startsWith('/digests/')
             ? DIGEST_BODY_LIMIT
-            : undefined
+            : // PRDCT-4411: a speech command carries one part of a page.
+              request.url.startsWith('/speech/')
+              ? SPEECH_BODY_LIMIT
+              : undefined
     if (limit === undefined) return app
     const length = Number(request.headers['content-length'])
     if (Number.isFinite(length) && length > limit)

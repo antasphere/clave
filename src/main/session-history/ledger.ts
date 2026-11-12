@@ -45,7 +45,7 @@ export interface LedgerRow {
   claudeSessionId: string | null
   name: string
   cwd: string
-  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'claude-agents' | 'terminal'
+  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode' | 'claude-agents' | 'terminal'
   model: string | null
   workspaceId: string | null
   groupId: string | null
@@ -82,6 +82,7 @@ const MODES: ReadonlySet<string> = new Set([
   'antigravity',
   'codex',
   'pi',
+  'opencode',
   'claude-agents',
   'terminal'
 ])

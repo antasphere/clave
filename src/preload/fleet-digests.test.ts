@@ -21,7 +21,11 @@ function fixture(): {
       k: { ok: true, needsYou: false, summary: 'Filed on x.', message: null }
     })),
     work: vi.fn(async () => ({ ok: false, error: 'limit', reason: 'limit' })),
-    workOf: vi.fn(async () => ({}))
+    workOf: vi.fn(async () => ({})),
+    spoken: vi.fn(async () => ({ ok: true, text: 'Said on x.' })),
+    spokenOf: vi.fn(async () => ({})),
+    title: vi.fn(async () => ({ ok: true, title: 'Titled on x' })),
+    titleOf: vi.fn(async () => ({}))
   }
   const mac = {
     exchangeDigest: vi.fn(async () => ({
@@ -32,7 +36,11 @@ function fixture(): {
     })),
     exchangeDigestsOf: vi.fn(async () => ({})),
     workDigest: vi.fn(async () => ({ ok: true, title: 'Here', needsYou: false, note: null })),
-    workDigestsOf: vi.fn(async () => ({}))
+    workDigestsOf: vi.fn(async () => ({})),
+    spokenRendering: vi.fn(async () => ({ ok: true, text: 'Said here.' })),
+    spokenRenderingsOf: vi.fn(async () => ({})),
+    pageTitle: vi.fn(async () => ({ ok: true, title: 'Titled here' })),
+    pageTitlesOf: vi.fn(async () => ({}))
   }
   const api = createFleetDesktop(mac as unknown as ElectronAPI, {
     invoke: vi.fn(async (channel: string, ...args: unknown[]) => {
@@ -101,6 +109,22 @@ describe('the digests on the fleet road', () => {
     })
     await h.api.workDigestsOf(id)
     expect(h.server.workOf).toHaveBeenCalledWith('s1')
+    await expect(
+      h.api.spokenRendering({ sessionId: id, key: 'spoken-1-a', launch, markdown: 'm' })
+    ).resolves.toEqual({ ok: true, text: 'Said on x.' })
+    expect(h.server.spoken).toHaveBeenCalledWith({
+      sessionId: 's1',
+      key: 'spoken-1-a',
+      markdown: 'm'
+    })
+    await h.api.spokenRenderingsOf(id)
+    expect(h.server.spokenOf).toHaveBeenCalledWith('s1')
+    await expect(
+      h.api.pageTitle({ sessionId: id, key: 'title-1-a', launch, message: 'q' })
+    ).resolves.toEqual({ ok: true, title: 'Titled on x' })
+    expect(h.server.title).toHaveBeenCalledWith({ sessionId: 's1', key: 'title-1-a', message: 'q' })
+    await h.api.pageTitlesOf(id)
+    expect(h.server.titleOf).toHaveBeenCalledWith('s1')
     for (const fn of Object.values(h.mac)) expect(fn).not.toHaveBeenCalled()
     await h.api.fleetDisconnect('x')
   })
@@ -117,6 +141,16 @@ describe('the digests on the fleet road', () => {
     expect(h.mac.workDigest).toHaveBeenCalledWith(work)
     await h.api.workDigestsOf('local-1')
     expect(h.mac.workDigestsOf).toHaveBeenCalledWith('local-1')
+    const spoken = { sessionId: 'local-1', key: 'spoken-1-a', launch, markdown: 'm' }
+    await expect(h.api.spokenRendering(spoken)).resolves.toEqual({ ok: true, text: 'Said here.' })
+    expect(h.mac.spokenRendering).toHaveBeenCalledWith(spoken)
+    await h.api.spokenRenderingsOf('local-1')
+    expect(h.mac.spokenRenderingsOf).toHaveBeenCalledWith('local-1')
+    const title = { sessionId: 'local-1', key: 'title-1-a', launch, message: 'q' }
+    await h.api.pageTitle(title)
+    expect(h.mac.pageTitle).toHaveBeenCalledWith(title)
+    await h.api.pageTitlesOf('local-1')
+    expect(h.mac.pageTitlesOf).toHaveBeenCalledWith('local-1')
     for (const fn of Object.values(h.server)) expect(fn).not.toHaveBeenCalled()
   })
 })

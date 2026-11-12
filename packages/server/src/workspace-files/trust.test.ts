@@ -70,6 +70,18 @@ describe('describeElevated — what the review dialog must disclose', () => {
     expect(safe.sessions[0].prompt).toBeUndefined()
   })
 
+  it('treats an OpenCode launch prompt as elevated and keeps the mode itself in safe mode', () => {
+    const loaded = single(
+      group({
+        sessions: [session({ claudeMode: false, opencodeMode: true, prompt: 'work now' })]
+      })
+    )
+    expect(describeElevated(loaded).prompts).toEqual(['work now'])
+    const safe = sanitizeElevated(loaded) as ClaveFileReadResult & ClaveGroupData
+    expect(safe.sessions[0].opencodeMode).toBe(true)
+    expect(safe.sessions[0].prompt).toBeUndefined()
+  })
+
   it('discloses auto-run commands and dangerousMode', () => {
     const result = single(
       group({

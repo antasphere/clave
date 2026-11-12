@@ -36,6 +36,8 @@ import { historyClient as serverHistoryClient, type HistoryClient } from './hist
 import { routinesClient, type RoutinesClient } from './routines'
 // ── PRDCT-4327: the digests ──
 import { digestsClient, type DigestsClient } from './digests'
+// ── PRDCT-4411: the speech ──
+import { speechClient, type SpeechClient } from './speech'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -94,6 +96,8 @@ export interface ClaveApiClient {
   readonly routines: RoutinesClient
   // ── PRDCT-4327: the digests (`./digests.ts`) ──
   readonly digests: DigestsClient
+  // ── PRDCT-4411: the speech (`./speech.ts`) ──
+  readonly speech: SpeechClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -180,6 +184,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     routines: routinesClient(call),
     // ── PRDCT-4327: the digests ──
     digests: digestsClient(call, patientCall),
+    // ── PRDCT-4411: the speech ──
+    speech: speechClient(call, patientCall),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

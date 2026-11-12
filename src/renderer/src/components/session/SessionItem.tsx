@@ -86,6 +86,7 @@ function isProviderRow(session: Session): boolean {
       session.antigravityMode ||
       session.codexMode ||
       session.piMode ||
+      session.opencodeMode ||
       session.claudeMode ||
       session.claudeAgentsMode
     )

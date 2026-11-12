@@ -70,6 +70,8 @@ import { routinesGroup } from './routines/api'
 import { digestsGroup } from './digests'
 // ── Mobile wave, lane A: the devices, a phone paired with this server (`devices.ts`) ──
 import { devicesGroup } from './devices'
+// ── PRDCT-4411: the speech of the server a tab runs on (`speech.ts`) ──
+import { speechGroup } from './speech'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -166,6 +168,8 @@ export { routinesGroup }
 export { digestsGroup }
 // ── Mobile wave, lane A: the devices (`devices.ts`) ──
 export { devicesGroup }
+// ── PRDCT-4411: the speech ──
+export { speechGroup }
 
 // ── Lane B: terminals ──
 
@@ -195,6 +199,8 @@ export const ClaveApi = Api.make('clave')
   .add(digestsGroup)
   // ── Mobile wave, lane A: the devices ──
   .add(devicesGroup)
+  // ── PRDCT-4411: the speech ──
+  .add(speechGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

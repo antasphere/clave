@@ -44,5 +44,7 @@ export * as Routines from './routines'
 export * as Digests from './digests'
 // ── Mobile wave, lane A: the devices, a phone paired with this server ──
 export * as Devices from './devices'
+// ── PRDCT-4411: the speech of the server a tab runs on ──
+export * as Speech from './speech'
 
 // ── Lane B: terminals · Lane D: settings served ──

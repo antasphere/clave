@@ -32,7 +32,9 @@ describe('keymap defaults', () => {
     expect(config.bindings.newPi).toContain('Mod+Shift+P')
     expect(config.bindings.newClaudeAtFolder).toEqual(['Mod+Alt+N'])
     expect(config.bindings.newPiAtFolder).toEqual(['Mod+Alt+Shift+P'])
-    expect(KEYMAP_ACTIONS).toHaveLength(45)
+    expect(config.bindings.newOpencode).toEqual([])
+    expect(config.bindings.newOpencodeAtFolder).toEqual([])
+    expect(KEYMAP_ACTIONS).toHaveLength(47)
   })
 
   it('keeps the master key off the chords a terminal owns', () => {

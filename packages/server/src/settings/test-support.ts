@@ -9,6 +9,7 @@ import type {
   ClaudeAccount,
   CodexAccount,
   HelperPreference,
+  IntegrationsStatus,
   LaunchProfile,
   LaunchProfilePreferences,
   SettingsEvent,
@@ -74,7 +75,28 @@ export class FakeSettingsSource implements SettingsSourceService {
   readonly secrets: string[] = []
   readonly calls: Array<{ method: string; args: unknown[] }> = []
   /** What the two login commands, the icon and the Antasphere account answer; unset lets them run. */
-  refuse: { login?: boolean; appIcon?: boolean; antasphere?: boolean } = {}
+  refuse: {
+    login?: boolean
+    appIcon?: boolean
+    antasphere?: boolean
+    integrations?: boolean
+  } = {}
+  /** The host's integrations as the fake holds them (PRDCT-4410): the key it
+   *  was handed goes to `secrets`, never into this. */
+  integrationsStatus: IntegrationsStatus = {
+    elevenLabs: {
+      configured: false,
+      setAt: null,
+      voiceId: null,
+      voiceName: null,
+      modelId: 'eleven_flash_v2_5',
+      checkedAt: null,
+      tier: null,
+      charactersUsed: null,
+      charactersLimit: null,
+      lastError: null
+    }
+  }
   /** The Antasphere account as the fake holds it, moved by the four commands. */
   antasphereStatus: AntasphereAccountStatus = {
     phase: 'signed-out',
@@ -291,6 +313,55 @@ export class FakeSettingsSource implements SettingsSourceService {
           : h
       )
       return this.helperList
+    }
+  }
+  private integrationsHere(): void {
+    if (this.refuse.integrations)
+      throw unavailable('integrations', 'This server has no integrations.')
+  }
+  private elevenLabs(patch: Partial<IntegrationsStatus['elevenLabs']>): IntegrationsStatus {
+    this.integrationsStatus = {
+      elevenLabs: { ...this.integrationsStatus.elevenLabs, ...patch }
+    }
+    return this.integrationsStatus
+  }
+  readonly integrations: SettingsSourceService['integrations'] = {
+    read: () => {
+      this.integrationsHere()
+      return this.integrationsStatus
+    },
+    setElevenLabsKey: (apiKey) => {
+      this.record('integrations.setElevenLabsKey')
+      this.integrationsHere()
+      if (!apiKey.trim()) throw new Error('Paste the API key first.')
+      this.secrets.push(apiKey)
+      return this.elevenLabs({ configured: true, setAt: 1, checkedAt: 1, tier: 'creator' })
+    },
+    checkElevenLabs: () => {
+      this.record('integrations.checkElevenLabs')
+      this.integrationsHere()
+      return this.elevenLabs({ checkedAt: 2 })
+    },
+    removeElevenLabsKey: () => {
+      this.record('integrations.removeElevenLabsKey')
+      this.integrationsHere()
+      return this.elevenLabs({ configured: false, setAt: null, voiceId: null, voiceName: null })
+    },
+    setElevenLabsVoice: (voiceId, voiceName, modelId) => {
+      this.record('integrations.setElevenLabsVoice', voiceId, voiceName, modelId)
+      this.integrationsHere()
+      return this.elevenLabs({ voiceId, voiceName, ...(modelId && { modelId }) })
+    },
+    listElevenLabsVoices: () => {
+      this.record('integrations.listElevenLabsVoices')
+      this.integrationsHere()
+      if (!this.integrationsStatus.elevenLabs.configured)
+        throw new Error('No ElevenLabs key on this machine.')
+      return {
+        voices: [
+          { voiceId: 'v1', name: 'Voice one', category: 'premade', labels: {}, previewUrl: null }
+        ]
+      }
     }
   }
   readonly preferences: SettingsSourceService['preferences'] = {

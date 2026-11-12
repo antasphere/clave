@@ -12,6 +12,10 @@
 import type {
   ExchangeDigestRead,
   ExchangeDigestResult,
+  PageTitleRead,
+  PageTitleResult,
+  SpokenRenderingRead,
+  SpokenResult,
   WorkDigestRead,
   WorkDigestResult
 } from '@clave/contract/digests'
@@ -26,6 +30,12 @@ export interface DigestsClient {
   readonly exchangesOf: (sessionId: string) => Promise<Record<string, Done<ExchangeDigestResult>>>
   readonly work: (request: WorkDigestRead) => Promise<WorkDigestResult>
   readonly workOf: (sessionId: string) => Promise<Record<string, Done<WorkDigestResult>>>
+  /** Folio's spoken rendering of an answer, and every one filed for a tab. */
+  readonly spoken: (request: SpokenRenderingRead) => Promise<SpokenResult>
+  readonly spokenOf: (sessionId: string) => Promise<Record<string, Done<SpokenResult>>>
+  /** Folio's page title of a reader's message, and every one filed for a tab. */
+  readonly title: (request: PageTitleRead) => Promise<PageTitleResult>
+  readonly titleOf: (sessionId: string) => Promise<Record<string, Done<PageTitleResult>>>
 }
 
 /** The server answered, without the digests. */
@@ -81,6 +91,28 @@ export const digestsClient = (call: Call, patientCall: Call = call): DigestsClie
   workOf: (sessionId) =>
     orOutdated(
       call((c) => c.digests.workOf({ payload: { sessionId } })),
+      {}
+    ),
+  spoken: ({ sessionId, key, markdown }) =>
+    orOutdated<SpokenResult>(
+      patientCall((c) => c.digests.spoken({ payload: { sessionId, key, markdown } })),
+      OUTDATED,
+      REFUSED
+    ),
+  spokenOf: (sessionId) =>
+    orOutdated(
+      call((c) => c.digests.spokenOf({ payload: { sessionId } })),
+      {}
+    ),
+  title: ({ sessionId, key, message }) =>
+    orOutdated<PageTitleResult>(
+      patientCall((c) => c.digests.title({ payload: { sessionId, key, message } })),
+      OUTDATED,
+      REFUSED
+    ),
+  titleOf: (sessionId) =>
+    orOutdated(
+      call((c) => c.digests.titleOf({ payload: { sessionId } })),
       {}
     )
 })

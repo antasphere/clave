@@ -5,7 +5,8 @@
  * the source's own `CapabilityUnavailable` is the one failure that reaches
  * the wire as declared (422). Anything else the source throws is a defect.
  *
- * The two secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`) arrive
+ * The three secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
+ * `SetElevenLabsKey`) arrive
  * redacted; they are opened here, handed to the source, and appear in no
  * answer: the success schemas carry none, and the contract's own test keeps
  * it so.
@@ -23,10 +24,12 @@ import {
   SignInWithAntasphere,
   SignOutOfAntasphere,
   CapabilityUnavailable,
+  CheckElevenLabs,
   ClearClaudeAccountToken,
   ClearCodexAccountCredential,
   DeleteLaunchProfile,
   ListAccountLogins,
+  ListElevenLabsVoices,
   ListHelperPreferences,
   ListClaudeAccounts,
   ListCodexAccounts,
@@ -34,12 +37,14 @@ import {
   ListMigratedClaudeAccounts,
   LoadWorkspaceState,
   ReadClaudeUsage,
+  ReadIntegrations,
   ReadClaudeUsageSnapshot,
   ReadCodexUsage,
   ReadCodexUsageSnapshot,
   ReadPiUsage,
   RemoveClaudeAccount,
   RemoveCodexAccount,
+  RemoveElevenLabsKey,
   RenameClaudeAccount,
   RenameCodexAccount,
   ReorderClaudeAccounts,
@@ -47,6 +52,8 @@ import {
   SendAccountLoginInput,
   SetAppIcon,
   SetClaudeAccountToken,
+  SetElevenLabsKey,
+  SetElevenLabsVoice,
   SetGlobalLaunchProfile,
   SetHelperPreference,
   SetLastActiveWorkspace,
@@ -191,6 +198,19 @@ export const settingsHandlers = [
       })
     }))
   ),
+  // The integrations (PRDCT-4410): the host's ElevenLabs key, sealed there.
+  // Every one may be refused (a host with no integrations, a key refused by
+  // the service); the key goes in redacted and comes back in no answer.
+  QueryHandler.make(ReadIntegrations, () => call((s) => s.integrations.read())),
+  CommandHandler.make(SetElevenLabsKey, (p) =>
+    call((s) => s.integrations.setElevenLabsKey(Redacted.value(p.apiKey)))
+  ),
+  CommandHandler.make(CheckElevenLabs, () => call((s) => s.integrations.checkElevenLabs())),
+  CommandHandler.make(RemoveElevenLabsKey, () => call((s) => s.integrations.removeElevenLabsKey())),
+  CommandHandler.make(SetElevenLabsVoice, (p) =>
+    call((s) => s.integrations.setElevenLabsVoice(p.voiceId, p.voiceName, p.modelId))
+  ),
+  QueryHandler.make(ListElevenLabsVoices, () => call((s) => s.integrations.listElevenLabsVoices())),
   // Preferences: the icon needs a Dock, which this server may not have.
   CommandHandler.make(SetAppIcon, (p) => call((s) => s.preferences.setAppIcon(p.icon))),
   // The Antasphere account (PRDCT-3259): the server owns the login, or says

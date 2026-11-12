@@ -45,11 +45,13 @@ export function stoppedSession(record: SessionRecord): Session {
       ? 'codex'
       : record.piMode
         ? 'pi'
-        : record.antigravityMode
-          ? 'antigravity'
-          : record.claudeMode
-            ? 'claude'
-            : 'terminal'
+        : record.opencodeMode
+          ? 'opencode'
+          : record.antigravityMode
+            ? 'antigravity'
+            : record.claudeMode
+              ? 'claude'
+              : 'terminal'
   }
 }
 

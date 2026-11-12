@@ -20,6 +20,8 @@ import { setPendingChatView } from '../../lib/pending-chat-view'
 import { selectedChatProfile } from '../../store/launch-profile-store'
 import { CHAT_PROFILE_IDS } from '../../../../shared/open-session-modes'
 import { useWorkspaceStore } from '../../store/workspace-store'
+import { useLaunchSettingsStore } from '../../store/launch-settings-store'
+import type { InteractionMode } from '../../../../shared/harness'
 import { skinAction, useSkinStore } from '../../lib/skin'
 import './onboarding.css'
 
@@ -32,8 +34,9 @@ import './onboarding.css'
  *   1. What Clave is, in plain words.
  *   2. An assistant: Claude or ChatGPT, installed in one click when missing,
  *      signed in through the browser (`ConnectStep.tsx`).
- *   3. The kind of chat the reader prefers: Chat, Enclave, or the
- *      experimental view. It becomes the view every new chat opens in.
+ *   3. The kind of chat the reader prefers: Chat, Enclave, Folio or the
+ *      terminal. It is the interaction mode (PRDCT-4425): how every new
+ *      conversation opens.
  *   4. A workspace: a name and where its folder goes (or a folder they
  *      already have). It opens with a session already on it, the first
  *      message sent, so the agent is answering by the time the door opens.
@@ -87,6 +90,29 @@ function ChatPreview({
           ))}
         </>
       )}
+      {kind === 'terminal' && (
+        <>
+          {/* the agent's own screen: a dark block, a prompt line, the cursor */}
+          <rect
+            x="10"
+            y="10"
+            width="100"
+            height="52"
+            rx="4"
+            style={{ fill: 'color-mix(in oklab, var(--ink) 82%, transparent)' }}
+          />
+          <path className="ln" d="M18,22 L23,26 L18,30" style={{ stroke: 'var(--paper)' }} />
+          <line
+            className="ln ln--thin"
+            x1="28"
+            y1="26"
+            x2="74"
+            y2="26"
+            style={{ stroke: 'var(--paper)' }}
+          />
+          <rect className="dot dot--c" x="18" y="40" width="5" height="8" rx="1" />
+        </>
+      )}
       {kind === 'lab' && (
         <>
           {/* the strip of pages, the one being read in the accent */}
@@ -133,7 +159,7 @@ export function Onboarding(): React.JSX.Element | null {
   const [direction, setDirection] = useState<1 | -1>(1)
   const [agents, setAgents] = useState<OnboardingAgent[] | null>(null)
   const [installErrors, setInstallErrors] = useState<Partial<Record<OnboardingAgentId, string>>>({})
-  const [chatView, setChatView] = useState<string>(CHAT_VIEWS[0].id)
+  const [mode, setMode] = useState<InteractionMode>(CHAT_VIEWS[0].mode)
   const [name, setName] = useState('My workspace')
   const [parent, setParent] = useState<string | null>(null)
   const [existing, setExisting] = useState<string | null>(null)
@@ -174,7 +200,12 @@ export function Onboarding(): React.JSX.Element | null {
     void loadAccountLogins()
     if (!useClaudeProfileStore.getState().loaded) void loadClaudeProfiles()
     if (!useCodexAccountStore.getState().loaded) void loadCodexAccounts()
-    if (next.chatView && CHAT_VIEWS.some((c) => c.id === next.chatView)) setChatView(next.chatView)
+    // The step starts on the interaction mode already set (Settings →
+    // General, or an earlier walk).
+    const settings = useLaunchSettingsStore.getState()
+    void (settings.loaded ? Promise.resolve() : settings.load()).then(() =>
+      setMode(useLaunchSettingsStore.getState().interactionMode)
+    )
     void window.electronAPI.onboardingAgents(true).then(setAgents)
   }, [])
 
@@ -279,23 +310,28 @@ export function Onboarding(): React.JSX.Element | null {
       if (useWorkspaceStore.getState().activeWorkspaceId !== ws.id) await setActiveWorkspace(ws.id)
       if (agent) {
         const accountId = connections[agent]!
+        // The way just picked: a chat on the chat launch profile the launcher
+        // would open in this workspace (the built-in one by default), or,
+        // for the terminal, the workspace's terminal profile (none named).
+        const terminal = mode === 'terminal'
         await launchSession({
-          // A chat, not a terminal: the chat launch profile the launcher
-          // would open in this workspace (the built-in one by default), so
-          // the session opens in the chat style just picked.
           setup:
             agent === 'claude'
               ? {
                   kind: 'claude',
                   dangerousMode: false,
                   claudeProfileId: accountId,
-                  launchProfileId: selectedChatProfile('claude', ws.id) ?? CHAT_PROFILE_IDS.claude
+                  launchProfileId: terminal
+                    ? undefined
+                    : (selectedChatProfile('claude', ws.id) ?? CHAT_PROFILE_IDS.claude)
                 }
               : {
                   kind: 'codex',
                   dangerousMode: false,
                   codexAccountId: accountId,
-                  launchProfileId: selectedChatProfile('codex', ws.id) ?? CHAT_PROFILE_IDS.codex
+                  launchProfileId: terminal
+                    ? undefined
+                    : (selectedChatProfile('codex', ws.id) ?? CHAT_PROFILE_IDS.codex)
                 },
           cwd: { kind: 'path', path: ws.root },
           workspaceId: ws.id,
@@ -457,9 +493,9 @@ export function Onboarding(): React.JSX.Element | null {
             key={view.id}
             type="button"
             role="radio"
-            aria-checked={chatView === view.id}
-            className={chatView === view.id ? 'onb-choice is-on' : 'onb-choice'}
-            onClick={() => setChatView(view.id)}
+            aria-checked={mode === view.mode}
+            className={mode === view.mode ? 'onb-choice is-on' : 'onb-choice'}
+            onClick={() => setMode(view.mode)}
             data-onboarding-chat-view={view.id}
             data-stagger-item
           >
@@ -486,8 +522,14 @@ export function Onboarding(): React.JSX.Element | null {
           type="button"
           className="btn-primary"
           onClick={() => {
-            void window.electronAPI.onboardingSetChatView(chatView)
-            setPendingChatView(chatView)
+            // The one setting (PRDCT-4425); the first chat also carries its
+            // view to a separate server that has not heard it yet.
+            void useLaunchSettingsStore.getState().setInteractionMode(mode)
+            setPendingChatView(
+              mode === 'terminal'
+                ? null
+                : (CHAT_VIEWS.find((view) => view.mode === mode)?.id ?? null)
+            )
             go(5)
           }}
         >

@@ -76,6 +76,8 @@ import { GitLive } from './git/api'
 import { RoutinesLive } from './routines/api'
 // ── PRDCT-4327: the digests ──
 import { DigestsLive } from './digests/api'
+// ── PRDCT-4411: the speech ──
+import { SpeechLive } from './speech/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade, SetServerName } from '@clave/contract/server-info'
 // ── PRDCT-4321: the conversations a server's tabs ran ──
@@ -281,6 +283,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       DigestsLive,
       // ── Mobile wave, lane A: the devices ──
       DevicesLive,
+      // ── PRDCT-4411: the speech ──
+      SpeechLive,
       HealthLive
     )
   )

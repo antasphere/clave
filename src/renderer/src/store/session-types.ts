@@ -352,6 +352,7 @@ export interface Session {
   codexMode: boolean
   /** Pi mode. Optional so session records written before Pi remain valid. */
   piMode?: boolean
+  opencodeMode?: boolean
   /** Claude session launched via the `claude agents` subcommand. */
   claudeAgentsMode?: boolean
   dangerousMode: boolean
@@ -559,6 +560,7 @@ export type SettingsSection =
   | 'accounts'
   | 'agents'
   | 'helpers'
+  | 'integrations'
   | 'appearance'
   | 'keymaps'
   | 'updates'
@@ -575,6 +577,7 @@ export interface PinnedGroupSession {
   antigravityMode: boolean
   codexMode: boolean
   piMode?: boolean
+  opencodeMode?: boolean
   claudeAgentsMode?: boolean
   dangerousMode: boolean
   /** One-shot initial prompt auto-submitted to the agent on launch. Agent modes

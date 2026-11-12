@@ -60,6 +60,7 @@ import type {
   HelperPreferencePatch,
   HelperPreferenceView
 } from '../helpers/preferences'
+import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -84,6 +85,21 @@ export interface AntasphereAccountLike {
   onChange(listener: (status: AntasphereAccountStatus) => void): () => void
 }
 
+/** The integrations of a host as the source needs them
+ *  (`../integrations/elevenlabs.ts`'s `ElevenLabsIntegration`). */
+export interface IntegrationsLike {
+  status(): ElevenLabsStatus
+  setKey(apiKey: string): Promise<ElevenLabsStatus>
+  check(): Promise<ElevenLabsStatus>
+  removeKey(): Promise<ElevenLabsStatus>
+  setVoice(
+    voiceId: string,
+    voiceName: string,
+    modelId?: ElevenLabsModelId
+  ): Promise<ElevenLabsStatus>
+  voices(): Promise<{ voices: ElevenLabsVoice[] }>
+}
+
 export interface SettingsManagers {
   claudeAccounts: ClaudeAccountsManager
   codexAccounts: CodexAccountsManager
@@ -101,6 +117,9 @@ export interface SettingsManagers {
       patch: HelperPreferencePatch
     ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
   }
+  /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
+   *  on its own secret port; absent, refused. */
+  integrations?: IntegrationsLike
   /** Where the process has a PTY for a login (the shell); absent, a login is
    *  refused. Loaded on the first call, not at construction: the login
    *  manager pulls the PTY backend in, which the shell must not load from
@@ -202,6 +221,10 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   const antasphere = (): AntasphereAccountLike =>
     m.antasphere ?? refuse('antasphereAccount', 'This server holds no Antasphere account.')
   m.antasphere?.onChange((status) => emit({ _tag: 'accounts.antasphere_changed', status }))
+  // The integrations (PRDCT-4410): no event of their own; the page reads the
+  // status each write answers.
+  const integrations = (): IntegrationsLike =>
+    m.integrations ?? refuse('integrations', 'This server has no integrations.')
 
   // The change event and the write's answer carry the state after the write
   // with its stamp (PRDCT-3405): a window compares the stamp with the last
@@ -308,6 +331,18 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
               ...(patch.account && { account: mutable<HelperAccount>(patch.account) })
             })
           : refuse('helpers', 'This server runs no helpers.')
+    },
+    integrations: {
+      read: () => ({ elevenLabs: integrations().status() }),
+      setElevenLabsKey: async (apiKey) => ({
+        elevenLabs: await integrations().setKey(apiKey)
+      }),
+      checkElevenLabs: async () => ({ elevenLabs: await integrations().check() }),
+      removeElevenLabsKey: async () => ({ elevenLabs: await integrations().removeKey() }),
+      setElevenLabsVoice: async (voiceId, voiceName, modelId) => ({
+        elevenLabs: await integrations().setVoice(voiceId, voiceName, modelId)
+      }),
+      listElevenLabsVoices: () => integrations().voices()
     },
     preferences: {
       setAppIcon: (icon) => {

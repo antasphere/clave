@@ -19,6 +19,8 @@ export const KEYMAP_ACTION_IDS = [
   'newYoloCodexAtFolder',
   'newPi',
   'newPiAtFolder',
+  'newOpencode',
+  'newOpencodeAtFolder',
   'toggleSidebar',
   'toggleSidePanel',
   'openFilePalette',
@@ -165,6 +167,9 @@ export const KEYMAP_ACTIONS: readonly KeymapActionDefinition[] = [
   action('newPiAtFolder', 'New Pi session in chosen folder', 'Sessions', 'global', [
     'Mod+Alt+Shift+P'
   ]),
+  // No default key: a person binds one in Settings → Keymaps.
+  action('newOpencode', 'New OpenCode session', 'Sessions', 'global', []),
+  action('newOpencodeAtFolder', 'New OpenCode session in chosen folder', 'Sessions', 'global', []),
   action('closeFocused', 'Close focused tab or window', 'Sessions', 'global', ['Mod+W']),
   action(
     'killFocusedSession',

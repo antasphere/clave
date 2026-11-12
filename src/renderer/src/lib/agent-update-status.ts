@@ -6,6 +6,8 @@ export function installLabel(install: AgentInstall | null): string | null {
   switch (install.kind) {
     case 'claude-native':
       return 'Native installer'
+    case 'opencode-native':
+      return 'Native installer'
     case 'homebrew':
       return install.cask ? 'Homebrew cask' : 'Homebrew'
     case 'package':
@@ -31,7 +33,7 @@ export function agentStatusLine(agent: AgentUpdateStatus, autoUpdate: boolean): 
     return agent.latestVersion ? `Updating to ${agent.latestVersion}…` : 'Updating…'
   }
   if (!agent.installed) {
-    return agent.lastCheckedAt ? 'Not installed' : 'Not checked yet'
+    return agent.lastCheckedAt ? 'Not installed' : 'Checking…'
   }
   if (agent.updateAvailable && agent.latestVersion && agent.heldBack === agent.latestVersion) {
     const who = agent.install?.kind === 'homebrew' ? 'Homebrew does not' : 'Its installer does not'

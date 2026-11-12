@@ -65,6 +65,10 @@ export { DevicesPort, type DevicesPortService } from './devices/port'
 import type { WriteLedgerStorage } from './sessions/writes'
 
 export { type WriteLedgerStorage } from './sessions/writes'
+// ── PRDCT-4411: the speech ──
+import { SpeechPort, type SpeechService } from './speech/port'
+
+export { SpeechPort, type SpeechService } from './speech/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -113,6 +117,9 @@ export interface ServerPorts {
   /** Where the write ledger and the server's own history of writes are
    *  kept, per session (`sessions/writes.ts`); in memory when absent. */
   readonly writeLedger?: WriteLedgerStorage
+  // ── PRDCT-4411: the speech ──
+  /** Text spoken with the machine's ElevenLabs voice, for a session the server has a record of. `SpeechPort.none` when absent: every call refused as unavailable. */
+  readonly speech?: SpeechService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -141,6 +148,8 @@ export const PortsLive = (
   | DigestsPort
   // ── Mobile wave, lane A: the devices ──
   | DevicesPort
+  // ── PRDCT-4411: the speech ──
+  | SpeechPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -165,5 +174,7 @@ export const PortsLive = (
     // ── PRDCT-4327: the digests ──
     DigestsPort.layer(ports.digests ?? DigestsPort.none),
     // ── Mobile wave, lane A: the devices ──
-    DevicesPort.layer(ports.devices ?? DevicesPort.none)
+    DevicesPort.layer(ports.devices ?? DevicesPort.none),
+    // ── PRDCT-4411: the speech ──
+    SpeechPort.layer(ports.speech ?? SpeechPort.none)
   )

@@ -91,14 +91,30 @@ describe('the settings contract keeps secrets off every surface a client reads',
     expect(JSON.stringify(confirm)).not.toContain('secret-state')
   })
 
-  it('only two payloads carry a secret in, and both carry it redacted', () => {
+  it('only three payloads carry a secret in, and each carries it redacted', () => {
     const carrying = definitions.filter((d) =>
       propertyNames(d.payload.ast).some((n) => SECRET_FIELDS.has(n))
     )
     expect(carrying.map((d) => d.tag).sort()).toEqual([
       'SetClaudeAccountToken',
+      'SetElevenLabsKey',
       'StartCodexApiKeyLogin'
     ])
+    // The ElevenLabs key (PRDCT-4410): in redacted, out in nothing.
+    const key = Schema.decodeUnknownSync(Settings.SetElevenLabsKey.payload)({
+      apiKey: 'xi-contract-test-key'
+    })
+    expect(String(key.apiKey)).toBe('<redacted>')
+    expect(JSON.stringify(key)).not.toContain('xi-contract')
+    for (const definition of [
+      Settings.ReadIntegrations,
+      Settings.SetElevenLabsKey,
+      Settings.CheckElevenLabs,
+      Settings.RemoveElevenLabsKey,
+      Settings.SetElevenLabsVoice,
+      Settings.ListElevenLabsVoices
+    ])
+      expect(propertyNames(definition.success.ast)).not.toContain('sealed')
     const token = Schema.decodeUnknownSync(Settings.SetClaudeAccountToken.payload)({
       id: 'a',
       token: 'sk-ant-oat01-x'

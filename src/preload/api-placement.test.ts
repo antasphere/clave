@@ -95,6 +95,13 @@ const UNREADABLE_NO_PLACE = new Set([
   'launchProfileSetWorkspace',
   'helpersList',
   'helperSet',
+  'integrationsRead',
+  'elevenLabsSetKey',
+  'elevenLabsCheck',
+  'elevenLabsRemove',
+  'elevenLabsSetVoice',
+  'elevenLabsVoices',
+  'elevenLabsPreview',
   'routinesList',
   'routinesRunNow',
   'routinesDismiss',
@@ -209,8 +216,17 @@ describe('every member of the exposed API declares where it runs for a server ta
     expect(silent).toEqual([])
   })
 
-  it('the four digest members go to the server a tab runs on (PRDCT-4327)', () => {
-    for (const name of ['exchangeDigest', 'exchangeDigestsOf', 'workDigest', 'workDigestsOf'])
+  it('the digest members go to the server a tab runs on (PRDCT-4327), Folio’s reads too', () => {
+    for (const name of [
+      'exchangeDigest',
+      'exchangeDigestsOf',
+      'workDigest',
+      'workDigestsOf',
+      'spokenRendering',
+      'spokenRenderingsOf',
+      'pageTitle',
+      'pageTitlesOf'
+    ])
       expect(API_PLACEMENT[name]).toEqual({ placement: 'routed' })
   })
 })

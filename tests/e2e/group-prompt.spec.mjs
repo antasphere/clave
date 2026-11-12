@@ -81,7 +81,7 @@ export async function run(t) {
     // AND puts it on a command line this spec can read.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
+    await selectBuiltIn(win, 'codex')
     await win.waitForTimeout(4000)
 
     // Add the group through the picker.
@@ -157,7 +157,7 @@ export async function run(t) {
     // arrived.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await selectBuiltIn(win, 'Claude Agents', 'Claude', 'claude')
+    await selectBuiltIn(win, 'claude-agents')
     await win.waitForTimeout(4000)
 
     const agentsTooltip = await win.evaluate(

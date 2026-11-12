@@ -112,6 +112,7 @@ import { rememberedSpawnModel } from './sessions/spawn-model'
 import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { hostDigests, sessionLaunchOf } from './exchange-digest'
+import { hostSpeech } from './speech'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -456,6 +457,9 @@ async function main(): Promise<void> {
       // ── PRDCT-4327: the digests a client asks for, read on this server's
       // own record of the session, filed in its data folder ──
       digests: hostDigests(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-4411: speech with this server's ElevenLabs key and voice, for
+      // a session it has a record of ──
+      speech: hostSpeech(sessionLaunchOf(ptyManager)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.

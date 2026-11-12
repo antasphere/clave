@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { sanitizeCarriedLaunchProfile } from '../shared/agent-launch'
+import {
+  isCodexRung,
+  profileSetsPermissions,
+  sanitizeCarriedLaunchProfile,
+  type LauncherFamily
+} from '../shared/agent-launch'
+import { HARNESS_BY_ID, sanitizeHarnessSettings } from '../shared/harness'
+import { preferencesManager } from './preferences-manager'
 import { findExecutable } from './shell-launch'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
@@ -44,6 +51,17 @@ function restartRuntime(
     ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
     ...(runtime.effort !== undefined ? { effort: runtime.effort } : {})
   }
+}
+/** The rung a harness's launches start on when the spawn names none: the
+ *  person's setting, kept only when it is a rung of that harness's ladder.
+ *  Read off the preferences as `getLaunchSettings` reads them, without its
+ *  Electron half: the session host runs in the standalone server too. */
+function permissionDefaultFor(family: LauncherFamily): string | undefined {
+  const rung = sanitizeHarnessSettings(preferencesManager.get('harnessSettings'))[family]
+    ?.permissionDefault
+  return rung && HARNESS_BY_ID[family].permissionRungs.some((entry) => entry.id === rung)
+    ? rung
+    : undefined
 }
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
@@ -163,13 +181,15 @@ class PtyManager {
     terminalJournal()?.spawn(cwd, options)
     const family = options?.piMode
       ? 'pi'
-      : options?.antigravityMode
-        ? 'antigravity'
-        : options?.codexMode
-          ? 'codex'
-          : options?.claudeAgentsMode || options?.claudeMode !== false
-            ? 'claude'
-            : null
+      : options?.opencodeMode
+        ? 'opencode'
+        : options?.antigravityMode
+          ? 'antigravity'
+          : options?.codexMode
+            ? 'codex'
+            : options?.claudeAgentsMode || options?.claudeMode !== false
+              ? 'claude'
+              : null
     const carried =
       family && options?.launchProfile
         ? sanitizeCarriedLaunchProfile(options.launchProfile)
@@ -179,6 +199,34 @@ class PtyManager {
     if (carried && carried.family !== family)
       throw new Error(`Launch profile "${carried.name}" is for ${carried.family}, not ${family}`)
     options = { ...options, launchProfile: carried ?? undefined }
+    // The person's permission default (Settings → Harnesses, PRDCT-4423,
+    // PRDCT-4424) for a spawn that names no mode and does not skip the
+    // permissions: the launcher's, an agent's and a routine's launches alike;
+    // a mode the spawn names (a routine's own, a restart's) wins. The rung is
+    // checked against the harness's ladder; its bypass rung is the dangerous
+    // flag, never a mode passed as such.
+    // A profile that sets its own permissions keeps them (verifier, round 2).
+    const ownProfile = family
+      ? (carried ??
+        launchProfileManager.resolve(family, options?.workspaceId, options?.launchProfileId))
+      : undefined
+    if (
+      family &&
+      !options.claudeAgentsMode &&
+      !options.dangerousMode &&
+      !options.permissionMode &&
+      !(ownProfile && profileSetsPermissions(ownProfile))
+    ) {
+      const rung = permissionDefaultFor(family)
+      if (rung === HARNESS_BY_ID[family].bypassRung) options = { ...options, dangerousMode: true }
+      else if (rung)
+        options = {
+          ...options,
+          // The spawn options still type Claude's modes alone; the argv
+          // builder takes each harness's own rung.
+          permissionMode: rung as PtySpawnOptions['permissionMode']
+        }
+    }
     const profileId =
       carried?.id ??
       options?.launchProfileId ??
@@ -259,15 +307,17 @@ class PtyManager {
         ? adapter.provider
         : options?.piMode
           ? 'pi'
-          : options?.codexMode
-            ? 'codex'
-            : options?.antigravityMode
-              ? 'antigravity'
-              : options?.claudeAgentsMode
-                ? 'claude-agents'
-                : options?.claudeMode === false
-                  ? 'terminal'
-                  : 'claude',
+          : options?.opencodeMode
+            ? 'opencode'
+            : options?.codexMode
+              ? 'codex'
+              : options?.antigravityMode
+                ? 'antigravity'
+                : options?.claudeAgentsMode
+                  ? 'claude-agents'
+                  : options?.claudeMode === false
+                    ? 'terminal'
+                    : 'claude',
       transport: isEvents ? 'events' : 'pty',
       adapterId: adapter.id,
       windowKey: options?.windowKey ?? '',
@@ -345,6 +395,14 @@ class PtyManager {
             sandbox:
               options?.dangerousMode && adapter.provider === 'codex'
                 ? 'danger-full-access'
+                : undefined,
+            // A Codex chat's rung (PRDCT-4424): the thread's sandbox and
+            // approval policy, over the profile's flags (`codexRungPolicy`).
+            permissionRung:
+              adapter.provider === 'codex' &&
+              !options?.dangerousMode &&
+              isCodexRung(options?.permissionMode)
+                ? options.permissionMode
                 : undefined
           }
         })
@@ -408,6 +466,7 @@ class PtyManager {
       antigravityMode: false,
       codexMode: codex,
       piMode: false,
+      opencodeMode: false,
       claudeAgentsMode: false,
       // Whether bypass is available to the chat: launched skipping the
       // permissions, or resumed in another mode with bypass kept reachable.

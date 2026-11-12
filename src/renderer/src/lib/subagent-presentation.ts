@@ -21,7 +21,8 @@ function isLocalAgent(session: Session): boolean {
       session.claudeAgentsMode ||
       session.codexMode ||
       session.antigravityMode ||
-      session.piMode
+      session.piMode ||
+      session.opencodeMode
     )
   )
 }

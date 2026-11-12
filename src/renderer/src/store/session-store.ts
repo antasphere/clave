@@ -534,6 +534,7 @@ function normalizeSession(session: Session): Session {
     antigravityMode: session.antigravityMode ?? false,
     codexMode: session.codexMode ?? false,
     piMode: session.piMode ?? false,
+    opencodeMode: session.opencodeMode ?? false,
     claudeAgentsMode: session.claudeAgentsMode ?? false,
     detectedUrl: session.detectedUrl ?? null,
     serverStatus: session.serverStatus ?? null,

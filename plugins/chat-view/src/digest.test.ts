@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  DIGEST_BUSY_RETRY_MS,
   DIGEST_GIVE_UP_MS,
   DIGEST_RETRY_AFTER_MS,
   DIGEST_SETTLE_MS,
@@ -27,6 +28,7 @@ type Answer =
         | 'disabled'
         | 'refused'
         | 'failed'
+        | 'busy'
     }
 
 let answers: Answer[] = []
@@ -247,5 +249,91 @@ describe('a digest that could not be read', () => {
     await flush()
     expect(read).toHaveBeenCalledTimes(3)
     expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done' })
+  })
+})
+
+describe('a read the host found busy', () => {
+  it('is asked again by itself after DIGEST_BUSY_RETRY_MS, with no new view', async () => {
+    expect(DIGEST_BUSY_RETRY_MS).toBe(4_000)
+    const d = digests()
+    const item = { key: 'k', payload: 'q' }
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: false, error: 'Too many reads', reason: 'busy' })
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'failed', reason: 'busy' })
+    answers.push({ ok: true, title: 'Read' })
+    await vi.advanceTimersByTimeAsync(DIGEST_BUSY_RETRY_MS - 1)
+    expect(read).toHaveBeenCalledTimes(1)
+    // The timer, then the ask it makes at once.
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
+  })
+
+  it('is not asked again once its card left the view', async () => {
+    const d = digests()
+    const item = { key: 'k', payload: 'q' }
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: false, error: 'Too many reads', reason: 'busy' })
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    d.view('s', [], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_BUSY_RETRY_MS * 3)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(1)
+    // Not even asked: the card keeps its failure, as it was left.
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'failed', reason: 'busy' })
+  })
+
+  it('is re-asked by a view asking after DIGEST_BUSY_RETRY_MS, not after a minute', async () => {
+    const d = digests()
+    const item = { key: 'k', payload: 'q' }
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: false, error: 'Too many reads', reason: 'busy' })
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    // Out of view (its own timer cleared), back in view 4 s later.
+    d.view('s', [], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_BUSY_RETRY_MS)
+    answers.push({ ok: true, title: 'Read' })
+    d.view('s', [item], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('a family that asks at once', () => {
+  it('reads a card with no settle wait when its family says so (the page titles)', async () => {
+    const d = createDigests<string, { ok: true; title: string }>({
+      filed: () => Promise.resolve({}),
+      read,
+      settleMs: 0
+    })
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: true, title: 'Now' })
+    d.view('s', [{ key: 'k', payload: 'q' }], {})
+    await vi.advanceTimersByTimeAsync(0)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(d.useStore.getState().states['s|k']).toMatchObject({ state: 'done', fresh: true })
+  })
+
+  it('waits DIGEST_SETTLE_MS by default', async () => {
+    const d = digests()
+    d.useStore.getState().file('s', {})
+    answers.push({ ok: true, title: 'Later' })
+    d.view('s', [{ key: 'k', payload: 'q' }], {})
+    await vi.advanceTimersByTimeAsync(DIGEST_SETTLE_MS - 1)
+    expect(read).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(read).toHaveBeenCalledTimes(1)
   })
 })
