@@ -990,7 +990,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
         mode: z
           // 'gemini' is kept as a deprecated alias (the Gemini CLI was retired
           // and folded into Antigravity); it maps to an antigravity session.
-          .enum(['claude', 'antigravity', 'gemini', 'codex', 'pi', 'terminal'])
+          .enum(['claude', 'antigravity', 'gemini', 'codex', 'pi', 'opencode', 'terminal'])
           .optional()
           .describe(
             "Which agent CLI to start, or terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused."
@@ -1010,7 +1010,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .boolean()
           .optional()
           .describe(
-            'Start the agent without approval prompts: claude with --dangerously-skip-permissions, codex with --yolo. Ignored for antigravity, pi and terminal.'
+            'Start the agent without approval prompts: claude with --dangerously-skip-permissions, codex with --yolo, opencode with --auto. Ignored for antigravity, pi and terminal.'
           ),
         model: z
           .string()
@@ -1018,7 +1018,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(200)
           .optional()
           .describe(
-            'Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"). claude, codex and pi modes only; omitted = the launch profile\'s default, else the CLI\'s. The user can still switch later with /model inside the tab.'
+            'Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"). claude, codex and pi modes only (the OpenCode TUI takes no model flag: pick it inside OpenCode); omitted = the launch profile\'s default, else the CLI\'s. The user can still switch later with /model inside the tab.'
           ),
         profile: z
           .string()

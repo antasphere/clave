@@ -27,9 +27,9 @@ export interface PermissionRung {
 
 export interface Harness {
   id: HarnessId
-  /** The name a person reads: Claude Code, Codex, Antigravity, Pi. */
+  /** The name a person reads: Claude Code, Codex, Antigravity, Pi, OpenCode. */
   name: string
-  /** The binary on the PATH (`claude`, `codex`, `agy`, `pi`). */
+  /** The binary on the PATH (`claude`, `codex`, `agy`, `pi`, `opencode`). */
   command: string
   /** The account pool whose connections this harness runs on (ADR 0002), or
    *  null for a harness Clave holds no connection for yet (Antigravity, Pi:
@@ -177,6 +177,24 @@ export const HARNESSES: readonly Harness[] = [
     bypassRung: null,
     install: 'npm install -g @earendil-works/pi-coding-agent',
     docsUrl: 'https://pi.dev/docs'
+  },
+  {
+    // OpenCode 2's TUI takes no model on its command line (`opencode run`
+    // does, the TUI does not: the model is picked inside it or set in its
+    // config), and its permissions are config rules, not a CLI ladder; its
+    // one flag, `--auto`, is what `dangerousMode` passes.
+    id: 'opencode',
+    name: 'OpenCode',
+    command: 'opencode',
+    connectionPool: null,
+    vendorOnly: false,
+    chatAdapterId: null,
+    takesModel: false,
+    permissionRungs: [],
+    defaultRung: null,
+    bypassRung: null,
+    install: 'curl -fsSL https://opencode.ai/v2/install | bash',
+    docsUrl: 'https://opencode.ai/docs'
   }
 ]
 

@@ -10,7 +10,7 @@ import { CHAT_PROFILE_IDS } from '../../../shared/open-session-modes'
  *  four independent booleans can encode states that don't exist. The booleans
  *  stay the wire format for `spawnSession` and the Session record — this type
  *  is the launcher's own vocabulary, bridged by the helpers below. */
-export type AgentKind = 'claude' | 'claude-agents' | 'antigravity' | 'codex' | 'pi'
+export type AgentKind = 'claude' | 'claude-agents' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 
 /** Everything the agent button needs to relaunch what was last launched. */
 export interface AgentSetup {
@@ -41,7 +41,14 @@ const NO_WORKSPACE_KEY = '__none__'
  *  wrong agent. */
 const PREF_KEY = 'lastAgentSetupByWorkspace'
 
-const AGENT_KINDS: readonly AgentKind[] = ['claude', 'claude-agents', 'antigravity', 'codex', 'pi']
+const AGENT_KINDS: readonly AgentKind[] = [
+  'claude',
+  'claude-agents',
+  'antigravity',
+  'codex',
+  'pi',
+  'opencode'
+]
 
 /** The four spawn booleans for a setup. Exactly one is true. */
 export function agentSetupToModes(setup: AgentSetup): {
@@ -50,13 +57,15 @@ export function agentSetupToModes(setup: AgentSetup): {
   antigravityMode: boolean
   codexMode: boolean
   piMode: boolean
+  opencodeMode: boolean
 } {
   return {
     claudeMode: setup.kind === 'claude',
     claudeAgentsMode: setup.kind === 'claude-agents',
     antigravityMode: setup.kind === 'antigravity',
     codexMode: setup.kind === 'codex',
-    piMode: setup.kind === 'pi'
+    piMode: setup.kind === 'pi',
+    opencodeMode: setup.kind === 'opencode'
   }
 }
 

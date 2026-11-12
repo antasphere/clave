@@ -16,7 +16,7 @@ import type {
   LauncherFamily,
   PiThinkingLevel
 } from '../../../../shared/agent-launch'
-import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo, OpenCodeLogo } from '../icons/cli-logos'
 import {
   SettingsCallout,
   SettingsCard,
@@ -34,7 +34,8 @@ const FAMILIES: {
   { id: 'claude', label: 'Claude', Logo: ClaudeLogo },
   { id: 'antigravity', label: 'Antigravity', Logo: AntigravityLogo },
   { id: 'codex', label: 'Codex', Logo: CodexLogo },
-  { id: 'pi', label: 'Pi', Logo: PiLogo }
+  { id: 'pi', label: 'Pi', Logo: PiLogo },
+  { id: 'opencode', label: 'OpenCode', Logo: OpenCodeLogo }
 ]
 const THINKING: PiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 /** The select's value for "the Pi default": a select's value is a string, and

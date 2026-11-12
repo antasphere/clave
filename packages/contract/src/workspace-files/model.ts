@@ -28,6 +28,7 @@ export const ClaveSession = Schema.Struct({
   antigravityMode: Schema.Boolean,
   codexMode: Schema.Boolean,
   piMode: Schema.optional(Schema.Boolean),
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.optional(Schema.Boolean),
   dangerousMode: Schema.Boolean,
   /** Auto-submitted to the agent on launch: elevated. */

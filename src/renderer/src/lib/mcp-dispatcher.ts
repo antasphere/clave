@@ -177,6 +177,7 @@ function pinnedGroupsInScope(inScope: (x: { workspaceId?: string | null }) => bo
     if (s.antigravityMode) return 'antigravity'
     if (s.codexMode) return 'codex'
     if (s.piMode) return 'pi'
+    if (s.opencodeMode) return 'opencode'
     if (s.claudeAgentsMode) return 'claude-agents'
     if (s.claudeMode) return 'claude'
     return 'terminal'
@@ -513,8 +514,16 @@ export async function openSessionProgrammatically(payload: {
   // where a unit test reaches it. The skip-approvals flag used to stop here
   // for every agent but Claude, while the spawn already turned it into Codex's
   // --yolo for the launcher's own Cmd+Y (PRDCT-2528).
-  const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
-    resolveSpawnModes(payload)
+  const {
+    claudeMode,
+    antigravityMode,
+    codexMode,
+    piMode,
+    opencodeMode,
+    dangerousMode,
+    model,
+    family
+  } = resolveSpawnModes(payload)
   // The chat the launcher would open in that workspace: the person's own
   // chat profile when they set one, as the account below is the pool's pick.
   const profileRef = resolveProfileRef(
@@ -561,6 +570,7 @@ export async function openSessionProgrammatically(payload: {
     antigravityMode,
     codexMode,
     piMode,
+    opencodeMode,
     dangerousMode,
     model,
     launchProfileId,
@@ -600,6 +610,7 @@ export async function openSessionProgrammatically(payload: {
     antigravityMode,
     codexMode,
     piMode,
+    opencodeMode,
     claudeAgentsMode: false,
     dangerousMode,
     model: info.model,
@@ -1262,6 +1273,8 @@ function handleSelfCheckpoint(sessionId: string, message: string): unknown {
   const self = state.sessions.find((s) => s.sessionType === 'local' && s.id === sessionId)
   if (!self) throw new Error('Calling session not found')
   if (sessionMode(self) === 'pi') throw new Error('Pi exchange capture is not supported yet')
+  if (sessionMode(self) === 'opencode')
+    throw new Error('OpenCode exchange capture is not supported yet')
   const text = sanitizeForPaste(message)
   const endpoint = captureEndpointOf(self, state.groups)
   window.electronAPI.captureExchangeMessage({
@@ -1481,7 +1494,8 @@ async function handleSendToSession(payload: {
   if (sender) {
     const recordDelivery = (): void => {
       if (!submitted) return
-      if (sessionMode(sender) === 'pi' || sessionMode(target) === 'pi') return
+      const uncaptured = (mode: string): boolean => mode === 'pi' || mode === 'opencode'
+      if (uncaptured(sessionMode(sender)) || uncaptured(sessionMode(target))) return
       window.electronAPI.captureExchangeMessage({
         ts: new Date().toISOString(),
         sender: captureEndpointOf(sender, useSessionStore.getState().groups),

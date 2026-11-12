@@ -39,7 +39,7 @@ import {
   SparklesIcon
 } from '@heroicons/react/24/outline'
 import { AgentPickerPopover } from '../agents/AgentPickerPopover'
-import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo, OpenCodeLogo } from '../icons/cli-logos'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -77,7 +77,8 @@ const AGENT_LOGOS: Record<AgentKind, typeof ClaudeLogo> = {
   'claude-agents': ClaudeLogo,
   antigravity: AntigravityLogo,
   codex: CodexLogo,
-  pi: PiLogo
+  pi: PiLogo,
+  opencode: OpenCodeLogo
 }
 
 const AGENT_LABELS: Record<AgentKind, string> = {
@@ -85,7 +86,8 @@ const AGENT_LABELS: Record<AgentKind, string> = {
   'claude-agents': 'Agents',
   antigravity: 'Antigravity',
   codex: 'Codex',
-  pi: 'Pi'
+  pi: 'Pi',
+  opencode: 'OpenCode'
 }
 
 /** The caret's menu drops straight DOWN from the panel — the chevron says so —
@@ -194,11 +196,13 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const antigravityShortcut = useShortcutLabel('newAntigravity')
   const codexShortcut = useShortcutLabel('newCodex')
   const piShortcut = useShortcutLabel('newPi')
+  const opencodeShortcut = useShortcutLabel('newOpencode')
   const HARNESS_SHORTCUTS: Record<HarnessId, string | null> = {
     claude: claudeShortcut,
     codex: codexShortcut,
     antigravity: antigravityShortcut,
-    pi: piShortcut
+    pi: piShortcut,
+    opencode: opencodeShortcut
   }
   const harnessSettings = useLaunchSettingsStore((s) => s.harnesses)
   const agentStatuses = useAgentUpdatesStore((s) => s.agents)

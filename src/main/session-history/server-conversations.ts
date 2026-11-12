@@ -99,6 +99,7 @@ function isClaudeConversation(record: SessionRecord): boolean {
     !record.claudeAgentsMode &&
     !record.codexMode &&
     !record.piMode &&
+    !record.opencodeMode &&
     !record.antigravityMode &&
     typeof record.claudeSessionId === 'string' &&
     record.claudeSessionId.length > 0

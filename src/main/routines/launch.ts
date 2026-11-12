@@ -183,6 +183,7 @@ export function resolveLaunch(
       antigravityMode: modes.antigravityMode,
       codexMode: modes.codexMode,
       piMode: modes.piMode,
+      opencodeMode: modes.opencodeMode,
       dangerousMode: modes.dangerousMode,
       ...(modes.model !== undefined ? { model: modes.model } : {}),
       ...(launchProfileId !== undefined ? { launchProfileId } : {}),

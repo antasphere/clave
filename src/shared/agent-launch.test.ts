@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
   codexProfilePolicy,
@@ -291,6 +292,37 @@ describe('agent argv', () => {
       '--session',
       'pi-id'
     ])
+  })
+
+  it("launches OpenCode's TUI with the flags it has: --session, --auto, --prompt, never a model", () => {
+    const profile = BUILT_IN_LAUNCH_PROFILES.find((p) => p.family === 'opencode')!
+    expect(profile.command).toEqual(['opencode'])
+    expect(buildAgentArgv({ kind: 'opencode', profile, sessionId: 'fresh', model: 'x/y' })).toEqual(
+      ['opencode']
+    )
+    expect(
+      buildAgentArgv({
+        kind: 'opencode',
+        profile,
+        resumeSessionId: 'ses_abc',
+        dangerousMode: true,
+        initialPrompt: 'hello'
+      })
+    ).toEqual(['opencode', '--session', 'ses_abc', '--auto', '--prompt', 'hello'])
+    const auto = { ...profile, id: 'oc-auto', builtIn: false, additionalArgs: ['--auto'] }
+    expect(buildAgentArgv({ kind: 'opencode', profile: auto, dangerousMode: true })).toEqual([
+      'opencode',
+      '--auto'
+    ])
+    const managed = { ...profile, id: 'oc-bad', builtIn: false, additionalArgs: ['--prompt=x'] }
+    expect(() => buildAgentArgv({ kind: 'opencode', profile: managed })).toThrow(
+      'Clave-managed flag'
+    )
+    expect(AGENT_CAPABILITIES.opencode).toEqual({
+      claveTools: 'unsupported',
+      exchangeCapture: 'unsupported',
+      blockedState: 'unsupported'
+    })
   })
 
   it('keeps unsupported Pi capabilities explicit', () => {

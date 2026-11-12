@@ -174,7 +174,8 @@ const NO_AGENT = {
   claudeAgentsMode: false,
   antigravityMode: false,
   codexMode: false,
-  piMode: false
+  piMode: false,
+  opencodeMode: false
 }
 
 /** What a setup names in a SERVER's own lists (PRDCT-4162): the profile's

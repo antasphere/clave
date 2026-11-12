@@ -179,11 +179,12 @@ export function modeOf(record: SessionRecord | undefined, provider: string): str
     if (record.antigravityMode) return 'antigravity'
     if (record.codexMode) return 'codex'
     if (record.piMode) return 'pi'
+    if (record.opencodeMode) return 'opencode'
     if (record.claudeAgentsMode) return 'claude-agents'
     if (record.claudeMode) return 'claude'
     return 'terminal'
   }
-  return ['claude', 'codex', 'antigravity', 'pi', 'claude-agents'].includes(provider)
+  return ['claude', 'codex', 'antigravity', 'pi', 'opencode', 'claude-agents'].includes(provider)
     ? provider
     : 'terminal'
 }
@@ -321,7 +322,7 @@ export function endpointOf(
 ): EndpointIdentity | null {
   const record = ctx.shell.record(session.id)
   const mode = modeOf(record, session.provider)
-  if (mode === 'pi') return null
+  if (mode === 'pi' || mode === 'opencode') return null
   const group = groupOfSession(layouts, session.id)
   return {
     sessionId: session.id,

@@ -6,6 +6,8 @@ export function installLabel(install: AgentInstall | null): string | null {
   switch (install.kind) {
     case 'claude-native':
       return 'Native installer'
+    case 'opencode-native':
+      return 'Native installer'
     case 'homebrew':
       return install.cask ? 'Homebrew cask' : 'Homebrew'
     case 'package':

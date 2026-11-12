@@ -1405,6 +1405,7 @@ const electronAPI = {
         antigravityMode?: boolean
         codexMode?: boolean
         piMode?: boolean
+        opencodeMode?: boolean
         claudeAgentsMode?: boolean
         resumeSessionId?: string
         claudeSessionId?: string

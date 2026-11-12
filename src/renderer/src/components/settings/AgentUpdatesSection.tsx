@@ -2,7 +2,7 @@ import { ArrowDownTrayIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import type { AgentUpdateId, AgentUpdateStatus } from '../../../../shared/agent-updates'
 import { agentStatusLine, installLabel, timeOf } from '../../lib/agent-update-status'
-import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo, OpenCodeLogo } from '../icons/cli-logos'
 import {
   SettingsCallout,
   SettingsCard,
@@ -15,7 +15,8 @@ const LOGOS: Record<AgentUpdateId, (p: { className?: string }) => React.JSX.Elem
   claude: ClaudeLogo,
   codex: CodexLogo,
   antigravity: AntigravityLogo,
-  pi: PiLogo
+  pi: PiLogo,
+  opencode: OpenCodeLogo
 }
 
 /** One agent CLI's row: logo, name and version, how it was installed, its

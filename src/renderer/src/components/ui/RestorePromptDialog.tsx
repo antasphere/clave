@@ -24,7 +24,13 @@ export function RestorePromptDialog(): React.JSX.Element | null {
   if (!isOpen) return null
 
   const agents = pending.filter(
-    (r) => r.claudeMode || r.antigravityMode || r.codexMode || r.piMode || r.claudeAgentsMode
+    (r) =>
+      r.claudeMode ||
+      r.antigravityMode ||
+      r.codexMode ||
+      r.piMode ||
+      r.opencodeMode ||
+      r.claudeAgentsMode
   ).length
   const terminals = pending.length - agents
   const parts: string[] = []

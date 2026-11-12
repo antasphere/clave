@@ -640,6 +640,8 @@ export function AppShell(): React.JSX.Element {
       newYoloCodexAtFolder: () => launch({ kind: 'codex', dangerousMode: true }, 'ask'),
       newPi: () => launch({ kind: 'pi', dangerousMode: false }, 'workspace-root'),
       newPiAtFolder: () => launch({ kind: 'pi', dangerousMode: false }, 'ask'),
+      newOpencode: () => launch({ kind: 'opencode', dangerousMode: false }, 'workspace-root'),
+      newOpencodeAtFolder: () => launch({ kind: 'opencode', dangerousMode: false }, 'ask'),
       toggleSidebar: () => toggleSidebar(),
       toggleSidePanel: () => toggleFileTree(),
       openFilePalette: () => toggleFilePalette(),

@@ -1032,11 +1032,17 @@ export function Sidebar(): React.JSX.Element {
             session.antigravityMode ||
             session.codexMode ||
             session.piMode ||
+            session.opencodeMode ||
             session.claudeAgentsMode
           // A Claude account belongs to a Claude session of either kind:
           // `claude agents` takes the token like `claude` does (round 2 of
           // verification found the clone of an agents tab on the machine login).
-          const dupClaudeKind = !(session.antigravityMode || session.codexMode || session.piMode)
+          const dupClaudeKind = !(
+            session.antigravityMode ||
+            session.codexMode ||
+            session.piMode ||
+            session.opencodeMode
+          )
           // Re-prime the clone with the same one-shot prompt (agent modes only;
           // `claude agents` rejects a positional prompt). Undefined for a normal
           // (un-primed) session → same as today.
@@ -1051,6 +1057,7 @@ export function Sidebar(): React.JSX.Element {
               antigravityMode: session.antigravityMode,
               codexMode: session.codexMode,
               piMode: session.piMode,
+              opencodeMode: session.opencodeMode,
               claudeAgentsMode: session.claudeAgentsMode,
               dangerousMode: session.dangerousMode,
               model: session.model,
@@ -1079,6 +1086,7 @@ export function Sidebar(): React.JSX.Element {
             antigravityMode: session.antigravityMode,
             codexMode: session.codexMode,
             piMode: session.piMode,
+            opencodeMode: session.opencodeMode,
             claudeAgentsMode: session.claudeAgentsMode,
             dangerousMode: session.dangerousMode,
             model: sessionInfo.model,

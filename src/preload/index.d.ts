@@ -103,7 +103,7 @@ export interface HistoryLedgerRow {
   claudeSessionId: string | null
   name: string
   cwd: string
-  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'claude-agents' | 'terminal'
+  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode' | 'claude-agents' | 'terminal'
   model: string | null
   workspaceId: string | null
   groupId: string | null
@@ -331,6 +331,7 @@ export interface ClaveFileGroupData {
     antigravityMode: boolean
     codexMode: boolean
     piMode?: boolean
+    opencodeMode?: boolean
     claudeAgentsMode?: boolean
     dangerousMode: boolean
     prompt?: string
@@ -400,6 +401,7 @@ export interface ClaveFileWriteData {
     antigravityMode: boolean
     codexMode: boolean
     piMode?: boolean
+    opencodeMode?: boolean
     claudeAgentsMode?: boolean
     dangerousMode: boolean
     prompt?: string
@@ -434,6 +436,7 @@ export interface ClaveFileWriteData {
       antigravityMode: boolean
       codexMode: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       dangerousMode: boolean
       prompt?: string
@@ -500,6 +503,7 @@ export interface SessionRecord {
   antigravityMode: boolean
   codexMode: boolean
   piMode: boolean
+  opencodeMode: boolean
   claudeAgentsMode: boolean
   dangerousMode: boolean
   /** Model the session was launched on (claude/codex); re-applied on re-spawn. */
@@ -923,6 +927,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
       antigravityMode?: boolean
       codexMode?: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       resumeSessionId?: string
       claudeSessionId?: string

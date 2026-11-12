@@ -452,6 +452,7 @@ export const SpawnOptions = Schema.Struct({
   antigravityMode: Schema.optional(Schema.Boolean),
   codexMode: Schema.optional(Schema.Boolean),
   piMode: Schema.optional(Schema.Boolean),
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.optional(Schema.Boolean),
   resumeSessionId: Schema.optional(Schema.String),
   claudeSessionId: Schema.optional(Schema.String),
@@ -709,6 +710,8 @@ export const SessionRecord = Schema.Struct({
   antigravityMode: Schema.Boolean,
   codexMode: Schema.Boolean,
   piMode: Schema.Boolean,
+  /** Optional on the wire: a record from a host before OpenCode has none. */
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.Boolean,
   dangerousMode: Schema.Boolean,
   model: Schema.optional(Schema.String),

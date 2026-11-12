@@ -1176,7 +1176,7 @@ export async function spawnAgentTabIn(app, page, dir, { until: untilFn = until }
 }
 
 /** Every harness the launcher knows, in its menu's order (PRDCT-4423). */
-export const HARNESS_IDS = ['claude', 'codex', 'antigravity', 'pi']
+export const HARNESS_IDS = ['claude', 'codex', 'antigravity', 'pi', 'opencode']
 
 /**
  * The launcher lists the harnesses the agent-updates check found on the PATH

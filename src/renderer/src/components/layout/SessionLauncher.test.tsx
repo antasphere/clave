@@ -209,10 +209,11 @@ beforeEach(() => {
 })
 
 describe('the rows are the installed harnesses', () => {
-  it('lists the four harnesses by name in table order, none checked yet counting as installed', () => {
+  it('lists the five harnesses by name in table order, none checked yet counting as installed', () => {
     const html = render()
-    expect(rows(html)).toEqual(['claude', 'codex', 'antigravity', 'pi'])
-    for (const name of ['Claude Code', 'Codex', 'Antigravity', 'Pi']) expect(html).toContain(name)
+    expect(rows(html)).toEqual(['claude', 'codex', 'antigravity', 'pi', 'opencode'])
+    for (const name of ['Claude Code', 'Codex', 'Antigravity', 'Pi', 'OpenCode'])
+      expect(html).toContain(name)
     // The old variant rows are gone; Agents lives inside the Claude Code row.
     expect(html).not.toContain('skip permissions)')
     expect(html).not.toContain('YOLO')
@@ -224,11 +225,11 @@ describe('the rows are the installed harnesses', () => {
 
   it('drops a harness a check found missing', () => {
     g.installed = { codex: false, antigravity: true }
-    expect(rows(render())).toEqual(['claude', 'antigravity', 'pi'])
+    expect(rows(render())).toEqual(['claude', 'antigravity', 'pi', 'opencode'])
   })
 
   it('says so when no harness is installed, and opens the harness settings', () => {
-    g.installed = { claude: false, codex: false, antigravity: false, pi: false }
+    g.installed = { claude: false, codex: false, antigravity: false, pi: false, opencode: false }
     const html = render()
     expect(rows(html)).toEqual([])
     expect(html).toContain('No harness installed')

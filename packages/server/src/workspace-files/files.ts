@@ -200,6 +200,7 @@ interface RawSession {
   geminiMode?: boolean
   codexMode?: boolean
   piMode?: boolean
+  opencodeMode?: boolean
   claudeAgentsMode?: boolean
   dangerousMode?: boolean
   prompt?: string
@@ -390,6 +391,7 @@ export function resolveGroup(raw: RawGroup, dir: string, fallbackName: string): 
       antigravityMode: s.antigravityMode ?? s.geminiMode ?? false,
       codexMode: s.codexMode ?? false,
       piMode: s.piMode ?? false,
+      opencodeMode: s.opencodeMode ?? false,
       claudeAgentsMode: s.claudeAgentsMode ?? false,
       dangerousMode: s.dangerousMode ?? false,
       // Free text, auto-submitted to the agent on launch: the raw template.
@@ -446,6 +448,7 @@ export function serializeGroup(g: ClaveFileWriteGroup, dir: string): RawGroup {
       antigravityMode: s.antigravityMode,
       codexMode: s.codexMode,
       piMode: s.piMode,
+      opencodeMode: s.opencodeMode,
       claudeAgentsMode: s.claudeAgentsMode,
       dangerousMode: s.dangerousMode,
       ...(s.prompt ? { prompt: s.prompt } : {}),

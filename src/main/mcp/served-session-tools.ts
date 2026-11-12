@@ -241,8 +241,10 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
       checkpoint: (self, name, message) => {
         if (modeOfSession(ctx, self) === 'pi')
           throw new Error('Pi exchange capture is not supported yet')
+        if (modeOfSession(ctx, self) === 'opencode')
+          throw new Error('OpenCode exchange capture is not supported yet')
         const endpoint = endpointOf(ctx, self, layouts)
-        if (!endpoint) throw new Error('Pi exchange capture is not supported yet')
+        if (!endpoint) throw new Error('Exchange capture is not supported yet for this harness')
         const { text, provenance } = checkpointCapture(self, name, message)
         ctx.shell.captureMessage({
           ts: new Date().toISOString(),
@@ -383,7 +385,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
 
 // ── Opening a session ──
 
-type OpenMode = 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
+type OpenMode = 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'opencode' | 'terminal'
 
 async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   // The target group first, so a bad reference fails cleanly; its window is
@@ -402,12 +404,20 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     throw new Error('The group and workspace arguments name different workspaces')
 
   const mode = (str(p.mode) as OpenMode | undefined) ?? 'claude'
-  const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
-    resolveSpawnModes({
-      mode,
-      ...(p.dangerous !== undefined ? { dangerous: p.dangerous === true } : {}),
-      ...(str(p.model) !== undefined ? { model: str(p.model) } : {})
-    })
+  const {
+    claudeMode,
+    antigravityMode,
+    codexMode,
+    piMode,
+    opencodeMode,
+    dangerousMode,
+    model,
+    family
+  } = resolveSpawnModes({
+    mode,
+    ...(p.dangerous !== undefined ? { dangerous: p.dangerous === true } : {}),
+    ...(str(p.model) !== undefined ? { model: str(p.model) } : {})
+  })
   const profileRef = resolveProfileRef(
     {
       mode,
@@ -465,6 +475,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         antigravityMode,
         codexMode,
         piMode,
+        opencodeMode,
         dangerousMode,
         ...(model !== undefined ? { model } : {}),
         ...(launchProfileId !== undefined ? { launchProfileId } : {}),
@@ -523,8 +534,8 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     await ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS).catch(() => undefined)
   }
   // An agent's delegation is a transport event (PRDCT-1568), recorded with
-  // its launch prompt; a terminal and a Pi tab are not captured.
-  if (ctx.callerSessionId && mode !== 'terminal' && mode !== 'pi') {
+  // its launch prompt; a terminal, a Pi and an OpenCode tab are not captured.
+  if (ctx.callerSessionId && mode !== 'terminal' && mode !== 'pi' && mode !== 'opencode') {
     try {
       const layouts = await allLayouts(ctx, key)
       const [spawner, spawned] = await Promise.all([
@@ -683,6 +694,7 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         session.antigravityMode ||
         session.codexMode ||
         session.piMode ||
+        session.opencodeMode ||
         session.claudeAgentsMode
       )
       const atRoot = session.rootSession === true && !!pin.workspaceRoot
@@ -702,6 +714,7 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
           antigravityMode: session.antigravityMode,
           codexMode: session.codexMode,
           ...(session.piMode !== undefined ? { piMode: session.piMode } : {}),
+          ...(session.opencodeMode !== undefined ? { opencodeMode: session.opencodeMode } : {}),
           ...(session.claudeAgentsMode !== undefined
             ? { claudeAgentsMode: session.claudeAgentsMode }
             : {}),

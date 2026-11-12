@@ -210,11 +210,14 @@ function buildServer(
       if (record.antigravityMode) return 'antigravity'
       if (record.codexMode) return 'codex'
       if (record.piMode) return 'pi'
+      if (record.opencodeMode) return 'opencode'
       if (record.claudeAgentsMode) return 'claude-agents'
       if (record.claudeMode) return 'claude'
       return 'terminal'
     }
-    return ['claude', 'codex', 'antigravity', 'pi', 'claude-agents'].includes(session.provider)
+    return ['claude', 'codex', 'antigravity', 'pi', 'opencode', 'claude-agents'].includes(
+      session.provider
+    )
       ? session.provider
       : 'terminal'
   }
@@ -450,7 +453,9 @@ function buildServer(
           .describe(
             "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id): the new agent tab continues it, in cwd. A tab of this server that already runs the conversation is answered as it is (alreadyOpen: true), nothing started; a stopped tab that still holds it is resumed in place. A Claude conversation this server's History remembers (clave_history), its tab deleted, reopens in its own folder with no cwd. Any other conversation needs cwd, and starts fresh on the id when no transcript is found there. Agent modes only."
           ),
-        mode: z.enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'terminal']).optional(),
+        mode: z
+          .enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'opencode', 'terminal'])
+          .optional(),
         model: z.string().min(1).max(256).optional(),
         name: z.string().min(1).max(255).optional().describe('Display name for the new tab'),
         prompt: boundedText.optional().describe('First message an agent tab starts on'),
@@ -458,7 +463,7 @@ function buildServer(
         dangerous: z
           .boolean()
           .optional()
-          .describe('Start a claude or codex agent without approval prompts'),
+          .describe('Start a claude, codex or opencode agent without approval prompts'),
         chat: z
           .boolean()
           .optional()
@@ -548,12 +553,20 @@ function buildServer(
       const directory = await stat(args.cwd).catch(() => undefined)
       if (!directory?.isDirectory()) throw new Error(`no such directory: ${args.cwd}`)
       const groupId = args.groupId === undefined ? null : knownGroup(args.groupId)
-      const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
-        resolveSpawnModes({
-          mode,
-          ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
-          ...(args.model !== undefined ? { model: args.model } : {})
-        })
+      const {
+        claudeMode,
+        antigravityMode,
+        codexMode,
+        piMode,
+        opencodeMode,
+        dangerousMode,
+        model,
+        family
+      } = resolveSpawnModes({
+        mode,
+        ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
+        ...(args.model !== undefined ? { model: args.model } : {})
+      })
       const launchProfileId = resolveProfileRef(
         {
           mode,
@@ -589,6 +602,7 @@ function buildServer(
           antigravityMode,
           codexMode,
           piMode,
+          opencodeMode,
           dangerousMode,
           ...(model !== undefined ? { model } : {}),
           ...(launchProfileId !== undefined ? { launchProfileId } : {}),

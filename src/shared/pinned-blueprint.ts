@@ -13,6 +13,7 @@ export interface PinnedBlueprintSession {
   antigravityMode: boolean
   codexMode: boolean
   piMode?: boolean
+  opencodeMode?: boolean
   claudeAgentsMode?: boolean
   dangerousMode: boolean
   prompt?: string

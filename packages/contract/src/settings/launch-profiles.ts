@@ -16,7 +16,7 @@ import { SettingsRefused } from './failures'
 // Views
 // ---------------------------------------------------------------------------
 
-export const LauncherFamily = Schema.Literal('claude', 'antigravity', 'codex', 'pi')
+export const LauncherFamily = Schema.Literal('claude', 'antigravity', 'codex', 'pi', 'opencode')
 
 export const PiThinkingLevel = Schema.Literal(
   'off',
@@ -52,7 +52,8 @@ export const FamilyDefaultsView = Schema.partial(
     claude: Schema.String,
     antigravity: Schema.String,
     codex: Schema.String,
-    pi: Schema.String
+    pi: Schema.String,
+    opencode: Schema.String
   })
 )
 

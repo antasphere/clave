@@ -15,6 +15,17 @@ describe('clave_open_session spawn modes', () => {
     expect(modes.dangerousMode).toBe(true)
     expect(modes.family).toBe('codex')
   })
+  it('opens OpenCode in its own mode, with --auto as its skip-approvals flag and no model', () => {
+    const modes = resolveSpawnModes({ mode: 'opencode', dangerous: true, model: 'x/y' })
+    expect(modes).toMatchObject({
+      opencodeMode: true,
+      piMode: false,
+      claudeMode: false,
+      dangerousMode: true,
+      family: 'opencode'
+    })
+    expect(modes.model).toBeUndefined()
+  })
   it('keeps the flag for claude', () => {
     expect(resolveSpawnModes({ mode: 'claude', dangerous: true }).dangerousMode).toBe(true)
     expect(resolveSpawnModes({ dangerous: true }).dangerousMode).toBe(true)

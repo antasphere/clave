@@ -28,9 +28,11 @@ import type {
  *  - Codex installs with npm when npm is on the PATH, else the Homebrew cask;
  *    with neither, the walk links to its install page instead of guessing.
  *
- *  - Antigravity and Pi (Settings → Harnesses only) take the harness table's
- *    own line (`HARNESS_BY_ID[id].install`); Pi's is an npm install, so it
- *    needs npm on the PATH like Codex.
+ *  - Antigravity, Pi and OpenCode (Settings → Harnesses only) take the
+ *    harness table's own line (`HARNESS_BY_ID[id].install`); Pi's is an npm
+ *    install, so it needs npm on the PATH like Codex; OpenCode's is its own
+ *    curl installer, which puts it in `~/.opencode/bin` and on the PATH of
+ *    the shell's rc file (read again by the interactive login shell).
  *
  * After an install the login environment is read again, so the session the
  * walk ends on finds the new command without a restart.
@@ -47,7 +49,8 @@ const COMMANDS: Record<InstallableAgentId, string> = {
   claude: HARNESS_BY_ID.claude.command,
   codex: HARNESS_BY_ID.codex.command,
   antigravity: HARNESS_BY_ID.antigravity.command,
-  pi: HARNESS_BY_ID.pi.command
+  pi: HARNESS_BY_ID.pi.command,
+  opencode: HARNESS_BY_ID.opencode.command
 }
 
 function executable(file: string): boolean {

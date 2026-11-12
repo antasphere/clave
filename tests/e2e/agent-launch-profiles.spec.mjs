@@ -94,9 +94,9 @@ export async function run(t) {
       .locator('section[data-harness]')
       .evaluateAll((els) => els.map((el) => el.getAttribute('data-harness')))
     t.equal(
-      'settings exposes all four harnesses as first-class sections',
+      'settings exposes all five harnesses as first-class sections',
       harnessIds.join(','),
-      'claude,codex,antigravity,pi'
+      'claude,codex,antigravity,pi,opencode'
     )
 
     const piSection = win.locator('section[data-harness="pi"]')
@@ -154,13 +154,14 @@ export async function run(t) {
         ])
       )
     t.equal(
-      'the launcher lists each harness by its name, Pi and Codex included',
+      'the launcher lists each harness by its name, Pi, Codex and OpenCode included',
       JSON.stringify(rowNames),
       JSON.stringify([
         ['claude', 'Claude Code'],
         ['codex', 'Codex'],
         ['antigravity', 'Antigravity'],
-        ['pi', 'Pi']
+        ['pi', 'Pi'],
+        ['opencode', 'OpenCode']
       ])
     )
     const menuText = (await win.locator('[role="menu"]').allTextContents()).join(' ')

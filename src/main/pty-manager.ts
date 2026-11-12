@@ -181,13 +181,15 @@ class PtyManager {
     terminalJournal()?.spawn(cwd, options)
     const family = options?.piMode
       ? 'pi'
-      : options?.antigravityMode
-        ? 'antigravity'
-        : options?.codexMode
-          ? 'codex'
-          : options?.claudeAgentsMode || options?.claudeMode !== false
-            ? 'claude'
-            : null
+      : options?.opencodeMode
+        ? 'opencode'
+        : options?.antigravityMode
+          ? 'antigravity'
+          : options?.codexMode
+            ? 'codex'
+            : options?.claudeAgentsMode || options?.claudeMode !== false
+              ? 'claude'
+              : null
     const carried =
       family && options?.launchProfile
         ? sanitizeCarriedLaunchProfile(options.launchProfile)
@@ -305,15 +307,17 @@ class PtyManager {
         ? adapter.provider
         : options?.piMode
           ? 'pi'
-          : options?.codexMode
-            ? 'codex'
-            : options?.antigravityMode
-              ? 'antigravity'
-              : options?.claudeAgentsMode
-                ? 'claude-agents'
-                : options?.claudeMode === false
-                  ? 'terminal'
-                  : 'claude',
+          : options?.opencodeMode
+            ? 'opencode'
+            : options?.codexMode
+              ? 'codex'
+              : options?.antigravityMode
+                ? 'antigravity'
+                : options?.claudeAgentsMode
+                  ? 'claude-agents'
+                  : options?.claudeMode === false
+                    ? 'terminal'
+                    : 'claude',
       transport: isEvents ? 'events' : 'pty',
       adapterId: adapter.id,
       windowKey: options?.windowKey ?? '',
@@ -462,6 +466,7 @@ class PtyManager {
       antigravityMode: false,
       codexMode: codex,
       piMode: false,
+      opencodeMode: false,
       claudeAgentsMode: false,
       // Whether bypass is available to the chat: launched skipping the
       // permissions, or resumed in another mode with bypass kept reachable.

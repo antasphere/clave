@@ -1,7 +1,7 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
 import { HARNESS_BY_ID } from './harness'
 
-export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi'
+export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 export type AgentKind = LauncherFamily | 'claude-agents'
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -53,7 +53,22 @@ export const BUILT_IN_LAUNCH_PROFILES: readonly LaunchProfile[] = [
     additionalArgs: [],
     builtIn: true
   },
-  { id: 'builtin-pi', name: 'Pi', family: 'pi', command: ['pi'], additionalArgs: [], builtIn: true }
+  {
+    id: 'builtin-pi',
+    name: 'Pi',
+    family: 'pi',
+    command: ['pi'],
+    additionalArgs: [],
+    builtIn: true
+  },
+  {
+    id: 'builtin-opencode',
+    name: 'OpenCode',
+    family: 'opencode',
+    command: ['opencode'],
+    additionalArgs: [],
+    builtIn: true
+  }
 ]
 
 export const DEFAULT_LAUNCH_PROFILE_PREFERENCES: LaunchProfilePreferences = {
@@ -63,7 +78,7 @@ export const DEFAULT_LAUNCH_PROFILE_PREFERENCES: LaunchProfilePreferences = {
   workspaceOverrides: {}
 }
 
-const FAMILY_VALUES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi'])
+const FAMILY_VALUES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi', 'opencode'])
 const THINKING_VALUES = new Set<PiThinkingLevel>([
   'off',
   'minimal',
@@ -106,7 +121,10 @@ const MANAGED_ARGS: Record<LauncherFamily, Set<string>> = {
     '--session-dir',
     '--no-session',
     '--mode'
-  ])
+  ]),
+  // OpenCode 2's TUI: the session it continues and the prompt it starts on.
+  // `--auto` stays a profile's own choice, as Codex's `--yolo` does.
+  opencode: new Set(['--session', '-s', '--prompt'])
 }
 
 function cleanText(value: unknown, maxLength: number): string | undefined {
@@ -352,6 +370,15 @@ export function buildAgentArgv(input: {
       argv.push('--mode', input.permissionMode)
     if (input.initialPrompt) argv.push('-i', input.initialPrompt)
     return argv
+  } else if (input.kind === 'opencode') {
+    // OpenCode 2's TUI (`opencode --help`, v2.2.7): `--session <id>` continues
+    // a session, `--auto` approves what its config does not deny, `--prompt`
+    // starts on a prompt. It takes no model: that is `opencode run`'s flag.
+    const tokens = [...input.profile.command, ...input.profile.additionalArgs]
+    if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
+    if (input.dangerousMode && !tokens.includes('--auto')) argv.push('--auto')
+    if (input.initialPrompt) argv.push('--prompt', input.initialPrompt)
+    return argv
   } else {
     const pi = input.profile.pi
     const provider = input.provider ?? pi?.provider
@@ -484,5 +511,10 @@ export const AGENT_CAPABILITIES = {
     blockedState: 'unsupported'
   },
   codex: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'unsupported' },
-  pi: { claveTools: 'unsupported', exchangeCapture: 'unsupported', blockedState: 'unsupported' }
+  pi: { claveTools: 'unsupported', exchangeCapture: 'unsupported', blockedState: 'unsupported' },
+  opencode: {
+    claveTools: 'unsupported',
+    exchangeCapture: 'unsupported',
+    blockedState: 'unsupported'
+  }
 } as const
