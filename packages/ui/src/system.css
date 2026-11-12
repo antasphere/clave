@@ -4516,10 +4516,13 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+/* What the agent asks, at the size of the card's own fields and of the
+   chat's prose: the eyebrow above says it is the agent asking, the size
+   needs not (PRDCT-4486). */
 .chat-prompt-ask {
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
