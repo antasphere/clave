@@ -63,6 +63,8 @@ import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
 import { DigestsPort, digestHandlers } from './digests'
 // ── PRDCT-4411: the speech ──
 import { SpeechPort, speechHandlers } from './speech'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactsEventsLive, ArtefactsPort, artefactHandlers } from './artefacts'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -114,6 +116,8 @@ export type ServerServices =
   | DigestsPort
   // ── PRDCT-4411: the speech ──
   | SpeechPort
+  // ── PRDCT-4472: the artefacts ──
+  | ArtefactsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -155,6 +159,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
   // ── ADR 0004: the scheduler's news told to the clients ──
   const routinesEvents = RoutinesEventsLive.pipe(Layer.provide(services))
+  // ── PRDCT-4472: a session's artefact, its preview and Slideless told to the clients ──
+  const artefactsEvents = ArtefactsEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -174,7 +180,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Issue #266: the server domain ──
     serverInfoEvents,
     // ── ADR 0004: the routines ──
-    routinesEvents
+    routinesEvents,
+    // ── PRDCT-4472: the artefacts ──
+    artefactsEvents
   )
 }
 
@@ -222,7 +230,9 @@ export const BusesLive = busesLayer.pipe(
       // ── PRDCT-4327: the digests ──
       ...digestHandlers,
       // ── PRDCT-4411: the speech ──
-      ...speechHandlers
+      ...speechHandlers,
+      // ── PRDCT-4472: the artefacts ──
+      ...artefactHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

@@ -29,7 +29,7 @@ import {
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
 import { agentUpdateManager } from './agent-updates'
-import { startSlideless } from './slideless'
+import { REGISTRY_ENV, startSlideless } from './slideless'
 import { buildAppMenu } from './app-menu'
 import { initTelemetry, cleanupTelemetry } from './telemetry'
 import { initNotificationManager } from './notification-manager'
@@ -235,7 +235,14 @@ async function bootServer(): Promise<void> {
           // ── Issue #266: the version it reports, the one its child gets too ──
           appVersion: app.getVersion(),
           // ── PRDCT-4241: where this Mac keeps the name it answers to as a server ──
-          dataDir: app.getPath('userData')
+          dataDir: app.getPath('userData'),
+          // ── PRDCT-4472: the artefacts of this server's sessions, over user data,
+          // where a development app already installed its Slideless; a test
+          // instance installs only from the fixture registry it was given ──
+          artefacts: {
+            dataDir: app.getPath('userData'),
+            autoInstall: !TEST_NO_ACTIVATE || Boolean(process.env[REGISTRY_ENV])
+          }
         })
         // The scheduler reads its routines and arms its tick once the
         // server is up and the agent tools listen: a run it starts reaches

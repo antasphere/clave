@@ -13,7 +13,7 @@ import {
   integrityMatches,
   readTar,
   resolveCli
-} from './cli'
+} from './slideless-cli'
 
 const dirs: string[] = []
 const tmp = (): string => {

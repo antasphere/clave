@@ -2,17 +2,25 @@
  * The Slideless command line as the app runs it (PRDCT-4262): Clave's own
  * copy under user data, installed silently at the first launch that finds
  * none (Romain's call, 9 November 2026), the artefact servers it runs, and the
- * IPC the renderer uses. `cli.ts` and `servers.ts` hold the behaviour and are
- * tested without Electron.
+ * IPC the renderer uses. The behaviour lives in `../artefacts/` since
+ * PRDCT-4472 (`slideless-cli.ts`, `preview-servers.ts`), where the server
+ * that owns a session's artefact runs it too; this road stays until the
+ * windows ask that server instead.
  */
 import { app, ipcMain } from 'electron'
 import { spawn } from 'child_process'
 import { join } from 'path'
 import { broadcastToAllWindows } from '../window-routing'
 import { TEST_NO_ACTIVATE } from '../test-mode'
-import { describeState, installSlideless, resolveCli, DEFAULT_REGISTRY } from './cli'
-import { ArtefactServers } from './servers'
-import type { SlidelessState } from '../../shared/slideless'
+import {
+  describeState,
+  installSlideless,
+  resolveCli,
+  DEFAULT_REGISTRY
+} from '../artefacts/slideless-cli'
+import { PreviewServers } from '../artefacts/preview-servers'
+import { previewHostPath, writePreviewHost } from '../artefacts/preview-host'
+import type { SlidelessServed, SlidelessState } from '../../shared/slideless'
 
 /** A registry to install from instead of npm's (the end-to-end specs' fixture). */
 export const REGISTRY_ENV = 'CLAVE_TEST_SLIDELESS_REGISTRY'
@@ -55,15 +63,30 @@ export function installManagedSlideless(): Promise<SlidelessState> {
   return installing
 }
 
-export const artefactServers = new ArtefactServers({
+const previews = new PreviewServers({
   spawn,
   fetch: globalThis.fetch,
   execPath: process.execPath,
+  // Written before the first serve (`registerSlidelessHandlers`); the same
+  // file the in-process server's artefact service writes under user data.
+  hostPath: previewHostPath(app.getPath('userData')),
   store: storeDir(),
   resolveCli: () => resolveCli(cliDir(), process.env),
   // A child that died under its holders: the views serve again.
   onExit: (target) => broadcastToAllWindows('slideless:server-exited', target)
 })
+
+/** The previews as the renderer's IPC knows them: a serve answers `lease`,
+ *  the name the window's road still reads for what the previews call a holder. */
+export const artefactServers = {
+  serve: async (target: string): Promise<SlidelessServed> => {
+    const { url, holder } = await previews.serve(target)
+    return { url, lease: holder }
+  },
+  release: (target: string, lease: string): void => previews.release(target, lease),
+  snapshot: (target: string) => previews.snapshot(target),
+  stopAll: (): void => previews.stopAll()
+}
 
 /**
  * At start: install in the background when no usable copy is there. A test
@@ -77,6 +100,11 @@ export function startSlideless(): void {
 }
 
 export function registerSlidelessHandlers(): void {
+  try {
+    writePreviewHost(app.getPath('userData'))
+  } catch (error) {
+    console.error('[slideless] the preview host could not be written', error)
+  }
   ipcMain.handle('slideless:get-state', () => state())
   ipcMain.handle('slideless:install', () => installManagedSlideless())
   ipcMain.handle('slideless:serve', (_event, target: unknown) =>

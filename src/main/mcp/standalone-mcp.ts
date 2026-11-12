@@ -12,7 +12,12 @@ import {
   registerRoutineTools
 } from './routine-tools'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { AgentTokensService, RoutinesService, SessionHostService } from '@clave/server'
+import type {
+  AgentTokensService,
+  ArtefactsService,
+  RoutinesService,
+  SessionHostService
+} from '@clave/server'
 import { RoutineReportRefusal } from '../routines/service'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
@@ -55,6 +60,12 @@ import {
 import { planResumeFromRecords } from './conversation-history'
 import type { ServerConversations } from '../session-history/server-conversations'
 import type { HistoryConversation } from '@clave/contract/history'
+import {
+  OPEN_ARTEFACT_DESCRIPTION_SERVER,
+  OPEN_ARTEFACT_TOOL,
+  openArtefactSchema,
+  openedAnswer
+} from './artefact-tool'
 
 export interface StandaloneMcpOptions {
   readonly sessions: SessionHostService
@@ -90,6 +101,9 @@ export interface StandaloneMcpOptions {
    *  its bypass there, so a deleted tab comes back with no `cwd` passed;
    *  `clave_history` lists it. Absent, a resume needs `cwd`. */
   readonly conversations?: ServerConversations | undefined
+  /** PRDCT-4472: this server's artefacts, what `clave_open_artefact` opens a
+   *  session's HTML page with. Absent, the tool is not registered. */
+  readonly artefacts?: ArtefactsService
 }
 /** The conversation this server's History remembers by its id, with its
  *  transcript still on the disk (PRDCT-4321); undefined otherwise, or when the
@@ -236,7 +250,7 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. ' +
+        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. An HTML page, document or deck you made -> clave_open_artefact with its folder (index.html inside): open it ONCE, then edit its files; it reloads itself and keeps a version per turn. ' +
         ROUTINE_TOOLS_INSTRUCTION.slice(2)
     }
   )
@@ -834,6 +848,20 @@ function buildServer(
       }
     }
   )
+  // ── PRDCT-4472: a session's HTML artefact, opened on this server for the calling session ──
+  const artefacts = options.artefacts
+  if (artefacts)
+    server.registerTool(
+      OPEN_ARTEFACT_TOOL,
+      { description: OPEN_ARTEFACT_DESCRIPTION_SERVER, inputSchema: openArtefactSchema },
+      async ({ path }) => {
+        try {
+          return text(openedAnswer(await artefacts.open(sessionId, path)))
+        } catch (error) {
+          return { content: [{ type: 'text', text: message(error) }], isError: true }
+        }
+      }
+    )
   // ── PRDCT-4243: the routine tools, over this server alone ──
   if (options.routines && options.routineTools) {
     const { routines, routineTools } = options

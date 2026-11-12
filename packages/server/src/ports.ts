@@ -62,6 +62,10 @@ export { DigestsPort, type DigestsService } from './digests/port'
 import { SpeechPort, type SpeechService } from './speech/port'
 
 export { SpeechPort, type SpeechService } from './speech/port'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactsPort, type ArtefactsService } from './artefacts/port'
+
+export { ArtefactsPort, type ArtefactsService } from './artefacts/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -110,6 +114,9 @@ export interface ServerPorts {
    *  route outside the router reads it, and the entry that starts a page
    *  registers its port on the same object. No page is forwarded when absent. */
   readonly forwards?: ForwardRegistry
+  // ── PRDCT-4472: the artefacts ──
+  /** A session's HTML artefact, its preview and its versions, run by this server. `ArtefactsPort.none` when absent: every call refused as unavailable. */
+  readonly artefacts?: ArtefactsService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -138,6 +145,8 @@ export const PortsLive = (
   | DigestsPort
   // ── PRDCT-4411: the speech ──
   | SpeechPort
+  // ── PRDCT-4472: the artefacts ──
+  | ArtefactsPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -162,5 +171,7 @@ export const PortsLive = (
     // ── PRDCT-4327: the digests ──
     DigestsPort.layer(ports.digests ?? DigestsPort.none),
     // ── PRDCT-4411: the speech ──
-    SpeechPort.layer(ports.speech ?? SpeechPort.none)
+    SpeechPort.layer(ports.speech ?? SpeechPort.none),
+    // ── PRDCT-4472: the artefacts ──
+    ArtefactsPort.layer(ports.artefacts ?? ArtefactsPort.none)
   )

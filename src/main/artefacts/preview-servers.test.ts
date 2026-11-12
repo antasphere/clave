@@ -3,13 +3,16 @@ import { spawn, type ChildProcess } from 'child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { ArtefactServers, artefactTarget } from './servers'
+import { PreviewServers, artefactTarget } from './preview-servers'
+import { writePreviewHost } from './preview-host'
 
 /**
- * A stand-in for the Slideless CLI, run as a real child process: it answers
- * `dev <target> --port <n> … --json` by listening on the port, printing the
- * address line the real CLI prints, and counting snapshots on the real route
- * (header required, as the real one does).
+ * A stand-in for the Slideless CLI, run as a real child process under the
+ * real preview host (`preview-host.ts`): it answers `dev <target> --port <n>
+ * … --json` by listening on the port, printing the address line the real CLI
+ * prints, and counting snapshots on the real route (header required, as the
+ * real one does). The host takes itself out of `argv`, so the stand-in reads
+ * its arguments as the real CLI does.
  */
 const FAKE_CLI = `
 const http = require('http');
@@ -38,7 +41,7 @@ http.createServer((req, res) => {
 `
 
 const dirs: string[] = []
-const servers: ArtefactServers[] = []
+const servers: PreviewServers[] = []
 afterEach(() => {
   servers.splice(0).forEach((s) => s.stopAll())
   dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true }))
@@ -47,10 +50,11 @@ afterEach(() => {
 interface Setup {
   root: string
   deck: string
-  servers: ArtefactServers
+  servers: PreviewServers
   spawned: string[][]
   children: ChildProcess[]
   cliPath: string
+  hostPath: string
 }
 
 function setup(env: NodeJS.ProcessEnv = {}, onExit?: (target: string) => void): Setup {
@@ -58,12 +62,13 @@ function setup(env: NodeJS.ProcessEnv = {}, onExit?: (target: string) => void): 
   dirs.push(root)
   const cliPath = join(root, 'fake-cli.cjs')
   writeFileSync(cliPath, FAKE_CLI)
+  const hostPath = writePreviewHost(join(root, 'data'))
   const deck = join(root, 'deck')
   mkdirSync(deck)
   writeFileSync(join(deck, 'index.html'), '<h1>x</h1>')
   const spawned: string[][] = []
   const children: ChildProcess[] = []
-  const servers_ = new ArtefactServers({
+  const servers_ = new PreviewServers({
     spawn: (command, args, options) => {
       spawned.push([command, ...args])
       const child = spawn(command, args, options)
@@ -72,6 +77,7 @@ function setup(env: NodeJS.ProcessEnv = {}, onExit?: (target: string) => void): 
     },
     fetch: globalThis.fetch,
     execPath: process.execPath,
+    hostPath,
     store: join(root, 'store'),
     resolveCli: () => ({ cli: { cliPath, version: '0.14.0', override: false } }),
     env: { ...process.env, ...env },
@@ -79,20 +85,24 @@ function setup(env: NodeJS.ProcessEnv = {}, onExit?: (target: string) => void): 
     onExit
   })
   servers.push(servers_)
-  return { root, deck, servers: servers_, spawned, children, cliPath }
+  return { root, deck, servers: servers_, spawned, children, cliPath, hostPath }
 }
 
 const alive = (c: ChildProcess): boolean => c.exitCode === null && c.signalCode === null
 
 describe('artefact servers', () => {
-  it('runs the CLI with Electron Node on a free port, keeps versions in its store, and answers the address', async () => {
-    const { deck, servers: s, spawned, cliPath, root } = setup()
-    const { url, lease } = await s.serve(deck)
+  it('runs the CLI under the preview host with Electron Node on a free port, keeps versions in its store, and answers the address', async () => {
+    const { deck, servers: s, spawned, cliPath, hostPath, root, children } = setup()
+    const { url, holder } = await s.serve(deck)
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/)
-    expect(lease).toMatch(/^[0-9a-f-]{36}$/)
+    expect(holder).toMatch(/^[0-9a-f-]{36}$/)
     const port = url.match(/:(\d+)\//)![1]
+    // The child's input is a pipe this process holds open and never writes to.
+    expect(children[0]!.stdin).not.toBeNull()
+    expect(children[0]!.stdin!.writableLength).toBe(0)
     expect(spawned[0]).toEqual([
       process.execPath,
+      hostPath,
       cliPath,
       'dev',
       deck,
@@ -111,13 +121,13 @@ describe('artefact servers', () => {
     const a = await s.serve(deck)
     const b = await s.serve(`${deck}/`)
     expect(b.url).toBe(a.url)
-    expect(b.lease).not.toBe(a.lease)
+    expect(b.holder).not.toBe(a.holder)
     expect(spawned).toHaveLength(1)
-    s.release(deck, a.lease)
-    // A lease counts once.
-    s.release(deck, a.lease)
+    s.release(deck, a.holder)
+    // A holder counts once.
+    s.release(deck, a.holder)
     expect(s.targets()).toEqual([deck])
-    s.release(deck, b.lease)
+    s.release(deck, b.holder)
     expect(s.targets()).toEqual([])
     await expect
       .poll(
@@ -152,10 +162,11 @@ describe('artefact servers', () => {
   it('refuses to start without a CLI, saying why', async () => {
     const root = mkdtempSync(join(tmpdir(), 'clave-artefacts-'))
     dirs.push(root)
-    const s = new ArtefactServers({
+    const s = new PreviewServers({
       spawn,
       fetch: globalThis.fetch,
       execPath: process.execPath,
+      hostPath: join(root, 'host.mjs'),
       store: join(root, 'store'),
       resolveCli: () => ({ cli: null, reason: 'Slideless is not installed yet' })
     })
@@ -177,9 +188,9 @@ describe('artefact servers', () => {
     const [a, b] = await Promise.all([s.serve(deck), s.serve(deck)])
     expect(a.url).toBe(b.url)
     expect(spawned).toHaveLength(1)
-    s.release(deck, a.lease)
+    s.release(deck, a.holder)
     expect(s.targets()).toEqual([deck])
-    s.release(deck, b.lease)
+    s.release(deck, b.holder)
     expect(s.targets()).toEqual([])
   })
 
@@ -190,7 +201,7 @@ describe('artefact servers', () => {
       (served) => served,
       () => null
     )
-    // The lease is only known once serve answers; stopAll is the release that
+    // The holder is only known once serve answers; stopAll is the release that
     // can land during the start (a quit, a closed window).
     s.stopAll()
     await raced
@@ -212,20 +223,20 @@ describe('artefact servers', () => {
     expect(s.targets()).toEqual([])
     const calm = setup({}, (t) => exited.push(t))
     const held = await calm.servers.serve(calm.deck)
-    calm.servers.release(calm.deck, held.lease)
+    calm.servers.release(calm.deck, held.holder)
     await new Promise((r) => setTimeout(r, 500))
     expect(exited).toEqual([deck])
   })
 
-  it('after a crash, the old lease does nothing to the new server another holder serves', async () => {
+  it('after a crash, the old holder does nothing to the new server another holder serves', async () => {
     const { deck, servers: s, children } = setup({ FAKE_MODE: 'die' }, () => {})
     const first = await s.serve(deck)
     await expect.poll(() => s.targets(), { timeout: 3000 }).toEqual([])
     // The fake dies again 300 ms after each start; serve the new one and hold it.
     const second = await s.serve(deck)
-    s.release(deck, first.lease)
+    s.release(deck, first.holder)
     expect(s.targets()).toEqual([deck])
     expect(alive(children.at(-1)!)).toBe(true)
-    s.release(deck, second.lease)
+    s.release(deck, second.holder)
   })
 })

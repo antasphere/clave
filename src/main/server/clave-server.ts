@@ -23,8 +23,11 @@
  * modules), which the boot owns.
  */
 import { hostname } from 'node:os'
+import { join } from 'node:path'
 import { type OwnServerName, ownServerName as keptServerName } from './server-name'
 import type { EmbeddedServer, ServerPorts } from '@clave/server'
+import type { ForwardRegistry } from '@clave/server/forward-registry'
+import type { ArtefactServiceHandle } from '../artefacts/service'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
 import {
   type ClaveServerEndpoint,
@@ -36,6 +39,8 @@ import { publishSessionStates, setServerEventPublisher } from './session-events'
 export { type ClaveServerEndpoint, getClaveServerEndpoint } from './endpoint'
 
 let running: EmbeddedServer | null = null
+/** PRDCT-4472: the artefacts of this server's sessions, stopped with it. */
+let artefactService: { stop(): Promise<void> } | null = null
 let starting: Promise<ClaveServerEndpoint> | null = null
 let stopStates: (() => void) | null = null
 
@@ -57,6 +62,11 @@ export interface StartOptions {
    *  the app's user data. Absent (tests), the name is the environment's or
    *  the hostname's and cannot be set. */
   dataDir?: string
+  /** PRDCT-4472: the artefacts of this server's sessions, over the app's user
+   *  data (so the copy of Slideless the app installed under `slideless/cli`
+   *  is the one it runs); `autoInstall` off under test mode with no fixture
+   *  registry. Absent, the server shows no artefacts. */
+  artefacts?: { readonly dataDir: string; readonly autoInstall: boolean }
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -85,10 +95,16 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
     import('../pty-manager'),
     import('../speech')
   ])
+  // PRDCT-4472: a session's HTML artefact, its preview and its versions, this
+  // process's own; a preview a window holds is reached through the forwarder.
+  const artefacts = options.artefacts
+    ? await inProcessArtefacts(options.artefacts, manager, sessionLaunchOf(ptyManager))
+    : undefined
   const server = await startEmbedded({
     ports: {
       digests: hostDigests(sessionLaunchOf(ptyManager)),
       speech: hostSpeech(sessionLaunchOf(ptyManager)),
+      ...(artefacts && { artefacts: artefacts.service, forwards: artefacts.forwards }),
       ...(options.appVersion !== undefined && {
         serverInfo: ServerInfoPort.appRun(
           options.appVersion,
@@ -103,6 +119,10 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
     ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures })
   })
   running = server
+  if (artefacts) {
+    artefacts.service.start()
+    artefactService = artefacts.service
+  }
   const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token, mode: 'in-process' }
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
@@ -156,6 +176,40 @@ function defaultServerName(host: string): string {
   return host.trim().split('.')[0]?.trim() || 'clave-server'
 }
 
+/** The artefact service of the server in this process (PRDCT-4472), built
+ *  only when the server runs here: a child or an attached server has its own. */
+async function inProcessArtefacts(
+  options: { readonly dataDir: string; readonly autoInstall: boolean },
+  manager: SessionManager,
+  recordOf: (sessionId: string) => unknown
+): Promise<{ service: ArtefactServiceHandle; forwards: ForwardRegistry }> {
+  const [{ createArtefactService }, { ArtefactLinks, fileLinksStorage }, { ForwardRegistry }] =
+    await Promise.all([
+      import('../artefacts/service'),
+      import('../artefacts/links'),
+      import('@clave/server/forward-registry')
+    ])
+  const forwards = new ForwardRegistry()
+  const service = createArtefactService({
+    dataDir: options.dataDir,
+    execPath: process.execPath,
+    env: process.env,
+    links: new ArtefactLinks(fileLinksStorage(join(options.dataDir, 'artefacts.json'))),
+    forwards,
+    sessions: {
+      knows: (id) => Boolean(recordOf(id)),
+      // Read as `publishSessionStates` reads it (`session-events.ts`).
+      onState: (listener) =>
+        manager.subscribeAll((id, stream) => {
+          if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+          listener(id, stream.event.state)
+        })
+    },
+    autoInstall: options.autoInstall
+  })
+  return { service, forwards }
+}
+
 export async function stopClaveServer(): Promise<void> {
   if (starting) await starting.catch(() => undefined)
   const server = running
@@ -164,6 +218,9 @@ export async function stopClaveServer(): Promise<void> {
   setServerEventPublisher(null)
   stopStates?.()
   stopStates = null
+  const artefacts = artefactService
+  artefactService = null
+  await artefacts?.stop()
   if (!server) return
   // The stop's own figures, in the log (PRDCT-3375): what it answered, who it
   // told, what it had to destroy. A quit measured at ten seconds in wave 3
