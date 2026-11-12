@@ -268,10 +268,13 @@ function HarnessBlock({
   const [install, setInstall] = useState<InstallState>({ busy: false, result: null })
   // Missing only when a CHECK said so: before the first check main reports
   // every harness as not installed with no check time (the verifier's F4).
-  const ownProfiles = useLaunchProfileStore((s) =>
-    s.preferences.customProfiles.filter((profile) => profile.family === harness.id)
+  // The selector answers the store's own array (a stable reference); the
+  // filter runs outside it, or every read re-renders the page for good.
+  const customProfiles = useLaunchProfileStore((s) => s.preferences.customProfiles)
+  const missing = !harnessPresent(
+    status,
+    (customProfiles ?? []).filter((profile) => profile.family === harness.id)
   )
-  const missing = !harnessPresent(status, ownProfiles)
 
   const runInstall = async (): Promise<void> => {
     setInstall({ busy: true, result: null })
