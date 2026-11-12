@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource, aSession } from '../test-support'
-import { fileWriteLedgerStorage } from './writes'
+import { STOPPED_AFTER_DISPATCH, fileWriteLedgerStorage } from './writes'
 
 let server: EmbeddedServer | undefined
 const roots: string[] = []
@@ -50,6 +50,30 @@ it('upgrades a saved desktop session before serving, accepts its first phone mes
   await server.stop()
   server = await startEmbedded({ ports: { sessions: source, writeLedger: storageFor(root) } })
   expect(await (await request('/sessions/write', message)).json()).toEqual(accepted)
+  expect(source.writes).toHaveLength(1)
+})
+
+it('reads a message the session held when the server stopped as unknown after the restart, never rejected, and sends it nowhere again', async () => {
+  const root = scratch()
+  const source = new FakeSource(aSession('desktop-existing'))
+  Object.assign(source, {
+    write: (id: string, input: unknown) =>
+      new Promise<void>(() => {
+        source.writes.push({ id, input })
+      })
+  })
+  server = await startEmbedded({ ports: { sessions: source, writeLedger: storageFor(root) } })
+  void request('/sessions/write', message).catch(() => {})
+  await vi.waitFor(() => expect(source.writes).toHaveLength(1))
+  await server.stop()
+  server = await startEmbedded({ ports: { sessions: source, writeLedger: storageFor(root) } })
+  expect(await (await request(query)).json()).toMatchObject({
+    status: 'unknown',
+    reason: STOPPED_AFTER_DISPATCH
+  })
+  const again = await request('/sessions/write', message)
+  expect(again.status).toBe(422)
+  expect(await again.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
   expect(source.writes).toHaveLength(1)
 })
 

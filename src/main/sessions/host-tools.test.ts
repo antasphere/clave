@@ -170,3 +170,47 @@ describe('a model switch through the host (PRDCT-4302)', () => {
     expect(rememberChatModel).not.toHaveBeenCalled()
   })
 })
+
+describe('a message the phone sends, through the host (PRDCT-4448)', () => {
+  it('carries the id the client minted into the message the manager writes', async () => {
+    await host.write('c1', { type: 'user_message', text: 'hi', clientMessageId: 'phone-00000001' })
+    expect(writes).toEqual([
+      ['c1', { type: 'user_message', text: 'hi', clientMessageId: 'phone-00000001' }]
+    ])
+  })
+  it('settles a message with attachments only once the session acknowledged it', async () => {
+    let acknowledge!: () => void
+    vi.spyOn(manager, 'write').mockImplementationOnce((id, input) => {
+      writes.push([id, input])
+      return new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+    })
+    let settled = false
+    const written = host
+      .write('c1', {
+        type: 'user_message',
+        text: 'see this',
+        attachments: [
+          {
+            id: 'a',
+            path: '/tmp/x.png',
+            name: 'x.png',
+            mimeType: 'image/png',
+            size: 3,
+            delivery: 'image'
+          }
+        ],
+        clientMessageId: 'phone-00000002'
+      })
+      .then(() => {
+        settled = true
+      })
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+    acknowledge()
+    await written
+    expect(settled).toBe(true)
+  })
+})

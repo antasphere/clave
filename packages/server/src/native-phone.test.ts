@@ -115,6 +115,12 @@ describe('a message the phone sends', () => {
     expect(source.writes).toHaveLength(0)
   })
 
+  it('is refused before any write when its id is shorter than the contract allows', async () => {
+    const response = await post('/sessions/write', phoneWrite('s1', 'hi', 'short'), server.token)
+    expect(response.status).toBe(400)
+    expect(source.writes).toHaveLength(0)
+  })
+
   it('is found by the id the phone minted, at the path the phone asks before a retry', async () => {
     await post('/sessions/write', phoneWrite('s1', 'hi', 'm-native-0003'), server.token)
     const response = await get('/sessions/writes?id=s1&clientMessageId=m-native-0003', server.token)

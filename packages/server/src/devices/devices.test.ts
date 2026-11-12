@@ -430,6 +430,18 @@ describe('the device session’s reach', () => {
     expect((await w.json('GET', '/sessions', { token: 'a'.repeat(64) })).status).toBe(401)
     expect((await w.json('GET', '/sessions', { token: '' })).status).toBe(401)
   })
+  it('is refused with 401 when it presents the hash its record keeps, and so is its hello', async () => {
+    const w = await start()
+    const { token } = await w.device()
+    const stored = hashToken(token)
+    expect(w.storage.read()).toContain(stored)
+    expect((await w.json('GET', '/sessions', { token: stored })).status).toBe(401)
+    expect((await w.json('GET', '/devices/me', { token: stored })).status).toBe(401)
+    const peer = new Peer(w.pushUrl())
+    await peer.opened
+    peer.send({ _tag: 'hello', token: stored })
+    expect((await peer.closed).code).toBe(CLOSE_UNAUTHORIZED)
+  })
   it('records the phone as seen on its calls, at most once a minute, and tells the clients', async () => {
     const w = await start()
     const { token, deviceId } = await w.device()
@@ -679,11 +691,14 @@ describe('the notice a pairing request raises', () => {
       pairingId,
       ...{ name: PHONE.name, platform: 'ios' }
     })
-    const phoneHeard: string[] = []
-    while (!(await phone.silence(100)))
-      phoneHeard.push((await phone.next())._tag === 'event' ? 'event' : 'other')
+    const phoneHeard: ServerFrame[] = []
+    while (!(await phone.silence(100))) phoneHeard.push(await phone.next())
     // Whatever the phone heard was the revision bump, never the request itself.
-    expect(phoneHeard.every((tag) => tag === 'event')).toBe(true)
+    expect(phoneHeard.every((frame) => frame._tag === 'event')).toBe(true)
+    expect(phoneHeard.map((frame) => frame._tag === 'event' && frame.event._tag)).not.toContain(
+      'devices.pairing_requested'
+    )
+    expect(JSON.stringify(phoneHeard)).not.toContain(pairingId)
     mac.ws.close()
     phone.ws.close()
     await Promise.all([mac.closed, phone.closed])

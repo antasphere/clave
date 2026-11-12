@@ -3062,3 +3062,42 @@ it('Claude negative stdin callback emits no evidence', async () => {
   expect(events.filter((e) => e.type === 'user_message')).toHaveLength(0)
   child.emit('exit', 0)
 })
+it('tells an identified initialInput that stdin refuses as one non-fatal error, and leaves nothing unhandled', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  vi.spyOn(child.stdin, 'write').mockImplementation(((_chunk: unknown, callback?: unknown) => {
+    if (typeof callback === 'function') queueMicrotask(() => callback(new Error('EPIPE')))
+    return true
+  }) as typeof child.stdin.write)
+  mock.spawn.mockReturnValue(child)
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown): void => void unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  try {
+    const adapter = new ClaudeAdapter()
+    adapter.configure(spec.id, {
+      initialInput: { type: 'user_message', text: 'retry', clientMessageId: 'phone-00000013' }
+    })
+    const handle = await adapter.spawn(spec)
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    adapter.ready(handle)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(events.filter((e) => e.type === 'error')).toEqual([
+      {
+        type: 'error',
+        message: 'The initial message delivery could not be confirmed.',
+        fatal: false
+      }
+    ])
+    expect(unhandled).toEqual([])
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+    child.emit('exit', 0)
+  }
+})
