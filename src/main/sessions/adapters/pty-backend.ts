@@ -1861,6 +1861,43 @@ export class PtyBackend {
     return adoptable
   }
 
+  /**
+   * The ids of the sessions this machine keeps a record of, read and nothing
+   * more (PRDCT-4448): the write ledger's first activation seeds them, the
+   * sessions that predate identified writes. Unlike `listAdoptableSessions`
+   * it prunes nothing, asks tmux nothing, checks no working directory and
+   * creates no folder: a malformed record, or one whose folder is gone, stays
+   * for the adoption to judge. A record of no known shape is not named.
+   */
+  recordedSessionIds(): string[] {
+    const storage = lazyTerminalPorts.storage
+    const ids: string[] = []
+    let files: string[]
+    try {
+      files = storage.list(SESSION_RECORDS_FOLDER)
+    } catch {
+      return ids
+    }
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue
+      let raw: unknown
+      try {
+        raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
+      } catch {
+        continue
+      }
+      if (!raw || typeof raw !== 'object') continue
+      const meta = raw as { id?: unknown; tmuxName?: unknown }
+      if (typeof meta.id !== 'string' || meta.id === '') continue
+      // The adoption's own rule: tmux-backed with a valid name, or plain with a uuid id.
+      const validShape = meta.tmuxName
+        ? typeof meta.tmuxName === 'string' && isValidTmuxName(meta.tmuxName)
+        : UUID_RE.test(meta.id)
+      if (validShape) ids.push(meta.id)
+    }
+    return ids
+  }
+
   /** Destroy a surviving session the user chose not to bring back: kill the
    *  backing tmux session when there is one, then drop the record. */
   discardSessionRecord(key: string): void {

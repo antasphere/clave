@@ -1,7 +1,7 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource, aSession } from '../test-support'
 import { fileWriteLedgerStorage } from './writes'
@@ -105,4 +105,30 @@ it('legacy activation initializes only the saved identities supplied by the host
   expect(response.status).toBe(422)
   expect(await response.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
   expect(source.writes).toHaveLength(0)
+})
+it('reads the saved identities at the first activation alone, never on a later boot (PRDCT-4448)', () => {
+  const root = scratch()
+  const saved = vi.fn(() => ['desktop-existing', 'desktop-existing', 'desktop-other'])
+  const lazily = (): ReturnType<typeof fileWriteLedgerStorage> =>
+    fileWriteLedgerStorage(join(root, 'write-ledger'), {
+      activationFile: join(root, 'write-ledger-activation.json'),
+      sessionIds: saved
+    })
+  lazily()
+  expect(saved).toHaveBeenCalledTimes(1)
+  expect(
+    JSON.parse(readFileSync(join(root, 'write-ledger', 'desktop-other.ledger.json'), 'utf8'))
+  ).toMatchObject({ complete: true })
+  lazily()
+  expect(saved).toHaveBeenCalledTimes(1)
+})
+it('reads nothing for a ledger folder that exists without an activation marker (PRDCT-4448)', () => {
+  const root = scratch()
+  mkdirSync(join(root, 'write-ledger'))
+  const saved = vi.fn(() => ['desktop-existing'])
+  fileWriteLedgerStorage(join(root, 'write-ledger'), {
+    activationFile: join(root, 'write-ledger-activation.json'),
+    sessionIds: saved
+  })
+  expect(saved).not.toHaveBeenCalled()
 })

@@ -785,6 +785,8 @@ class PtyManager {
   setSessionWorkspace = ptyBackend.setSessionWorkspace.bind(ptyBackend)
   setSessionClaudeSessionId = ptyBackend.setSessionClaudeSessionId.bind(ptyBackend)
   listAdoptableSessions = ptyBackend.listAdoptableSessions.bind(ptyBackend)
+  /** The recorded session ids, read without pruning (PRDCT-4448). */
+  recordedSessionIds = ptyBackend.recordedSessionIds.bind(ptyBackend)
   discardSessionRecord = ptyBackend.discardSessionRecord.bind(ptyBackend)
 }
 export const ptyManager = new PtyManager()

@@ -491,9 +491,11 @@ async function main(): Promise<void> {
       // ── The mobile wave, lane B: the write ledger, per session, under `--data-dir` ──
       writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'), {
         activationFile: path.join(dataDir, 'write-ledger-activation.json'),
-        sessionIds: [
+        // Read at the first activation alone, and never through the adoptable
+        // listing, which prunes the records it cannot bring back (PRDCT-4448).
+        sessionIds: () => [
           ...sessionManager.list().map((session) => session.id),
-          ...sessions.listAdoptableRecords().map((record) => record.id)
+          ...ptyManager.recordedSessionIds()
         ]
       }),
       // ── Issue #266: the server domain ──

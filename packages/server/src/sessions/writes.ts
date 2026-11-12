@@ -403,10 +403,15 @@ function statusOf(entry: LedgerEntry): WriteStatusView {
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-/** The documents as files under `dir` (owner-only, written then renamed). */
+/** The documents as files under `dir` (owner-only, written then renamed). The saved
+ *  sessions of a legacy installation are named by `sessionIds`; a function is read at
+ *  the first activation alone, never on a later boot (PRDCT-4448). */
 export function fileWriteLedgerStorage(
   dir: string,
-  legacy?: { readonly activationFile: string; readonly sessionIds: ReadonlyArray<string> }
+  legacy?: {
+    readonly activationFile: string
+    readonly sessionIds: ReadonlyArray<string> | (() => ReadonlyArray<string>)
+  }
 ): WriteLedgerStorage {
   const target = (name: string): string => path.join(dir, name)
   const storage: WriteLedgerStorage = {
@@ -432,6 +437,13 @@ export function fileWriteLedgerStorage(
     // proves these saved sessions predate identified writes. Existing storage,
     // even empty/corrupt, must never be relabelled as a legacy installation.
     const firstActivation = !fs.existsSync(dir)
+    // Named before the activation is recorded, and for a first activation alone: a later
+    // boot reads nothing for it (PRDCT-4448).
+    const saved = !firstActivation
+      ? []
+      : typeof legacy.sessionIds === 'function'
+        ? legacy.sessionIds()
+        : legacy.sessionIds
     fs.mkdirSync(path.dirname(legacy.activationFile), { recursive: true, mode: 0o700 })
     // Record activation outside the ledger directory BEFORE initializing ids.
     // A crash part-way through, or loss of the entire ledger directory later,
@@ -439,7 +451,7 @@ export function fileWriteLedgerStorage(
     fs.writeFileSync(legacy.activationFile, JSON.stringify({ v: 1 }), { mode: 0o600, flag: 'wx' })
     if (firstActivation) {
       const ledger = new WriteLedger(storage)
-      for (const id of new Set(legacy.sessionIds)) ledger.initialize(id)
+      for (const id of new Set(saved)) ledger.initialize(id)
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
     }
   }

@@ -63,6 +63,10 @@ export interface StartOptions {
    *  the app's user data. Absent (tests), the name is the environment's or
    *  the hostname's and cannot be set. */
   dataDir?: string
+  /** The sessions this Mac keeps records of, read without pruning anything
+   *  (PRDCT-4448): the write ledger's first activation seeds them, and asks
+   *  at that activation alone. The app's terminal manager by default. */
+  recordedSessionIds?: () => ReadonlyArray<string>
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -107,9 +111,11 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
       ...(options.dataDir !== undefined && {
         writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`, {
           activationFile: `${options.dataDir}/write-ledger-activation.json`,
-          sessionIds: [
+          // Read at the first activation alone, and never through the adoptable
+          // listing, which prunes the records it cannot bring back (PRDCT-4448).
+          sessionIds: () => [
             ...manager.list().map((session) => session.id),
-            ...(ports.sessions?.listAdoptableRecords().map((record) => record.id) ?? [])
+            ...(options.recordedSessionIds ?? (() => ptyManager.recordedSessionIds()))()
           ]
         })
       }),

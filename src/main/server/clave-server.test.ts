@@ -237,3 +237,96 @@ describe('this Mac’s own name as a server (PRDCT-4241, verifier round 2 N10)',
     }
   })
 })
+
+describe('the write ledger’s first activation in the shell (PRDCT-4448)', () => {
+  it('seeds the sessions its records name, read without pruning, and reads them at the first activation alone', async () => {
+    const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const dir = mkdtempSync(join(tmpdir(), 'clave-ledger-first-'))
+    const manager = new SessionManager()
+    const adapter = new EchoAdapter()
+    manager.registerAdapter(adapter)
+    manager.adopt(record('live-1'), adapter.prepare(record('live-1')), adapter)
+    // The adoptable listing prunes what it cannot bring back: the first activation never
+    // asks it. The read-only inventory names the records instead.
+    const listAdoptableRecords = vi.fn(() => [])
+    const records = { listAdoptableRecords, discardRecord: vi.fn(), release: vi.fn() }
+    const recordedSessionIds = vi.fn(() => ['recorded-1'])
+    const options = {
+      manager,
+      ports: { sessions: createSessionHost({ manager, lifecycle, records }) },
+      dataDir: dir,
+      recordedSessionIds
+    }
+    try {
+      await startClaveServer(options)
+      expect(listAdoptableRecords).not.toHaveBeenCalled()
+      expect(recordedSessionIds).toHaveBeenCalledTimes(1)
+      for (const id of ['live-1', 'recorded-1'])
+        expect(
+          JSON.parse(readFileSync(join(dir, 'write-ledger', `${id}.ledger.json`), 'utf8'))
+        ).toMatchObject({ complete: true })
+      await stopClaveServer()
+      // A later boot: the activation is behind it, and nothing is read for it again.
+      await startClaveServer(options)
+      expect(recordedSessionIds).toHaveBeenCalledTimes(1)
+      expect(listAdoptableRecords).not.toHaveBeenCalled()
+    } finally {
+      await stopClaveServer()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the app’s own records for it by default, and prunes none of them', async () => {
+    const {
+      mkdirSync,
+      mkdtempSync,
+      readFileSync,
+      readdirSync,
+      realpathSync,
+      rmSync,
+      writeFileSync
+    } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const { installTerminalPorts, resetTerminalPorts } = await import('../ports/terminals')
+    const { installSettingsPorts, resetSettingsPorts } = await import('../ports/registry')
+    const { electronTestPorts } = await import('../ports/testing')
+    const { fileStorage } = await import('../ports/storage')
+    const { sessionRecords } = await import('../sessions/records')
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'clave-ledger-records-')))
+    const data = join(dir, 'data')
+    const folder = join(dir, 'session-records')
+    mkdirSync(data)
+    mkdirSync(folder)
+    const kept = '44444444-4444-4444-8444-444444444444'
+    const gone = '55555555-5555-4555-8555-555555555555'
+    const plain = (id: string, cwd: string): string =>
+      JSON.stringify({ id, cwd, folderName: 'project', claudeMode: false })
+    writeFileSync(join(folder, `${kept}.json`), plain(kept, dir))
+    writeFileSync(join(folder, `${gone}.json`), plain(gone, join(dir, 'gone')))
+    writeFileSync(join(folder, '66666666-6666-4666-8666-666666666666.json'), '{not json')
+    installSettingsPorts(electronTestPorts(dir))
+    installTerminalPorts({ storage: fileStorage(dir) })
+    const before = readdirSync(folder).sort()
+    const manager = new SessionManager()
+    try {
+      await startClaveServer({
+        manager,
+        ports: { sessions: createSessionHost({ manager, lifecycle, records: sessionRecords }) },
+        dataDir: data
+      })
+      expect(readdirSync(folder).sort()).toEqual(before)
+      for (const id of [kept, gone])
+        expect(
+          JSON.parse(readFileSync(join(data, 'write-ledger', `${id}.ledger.json`), 'utf8'))
+        ).toMatchObject({ complete: true })
+    } finally {
+      await stopClaveServer()
+      resetTerminalPorts()
+      resetSettingsPorts()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
