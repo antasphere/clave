@@ -18,7 +18,9 @@ import { FakeSource, Peer, aSession } from '../test-support'
 import { memoryDeviceStorage, type DevicesPortService } from './port'
 import { DEVICE_FORBIDDEN_MESSAGE } from './scope'
 import {
+  ROAD_HUB_CONCURRENCY,
   ROAD_HUB_PER_MINUTE,
+  ROAD_HUB_TIMEOUT_MS,
   ROAD_MACHINE_ID,
   budgetedFetch,
   roadRoute,
@@ -132,6 +134,12 @@ interface Hub {
   userinfo: number
   down: boolean
   delayMs: number
+  /** Send the headers at once and never finish the body. */
+  stallBody: boolean
+  /** The same, for the discovery document. */
+  stallDiscovery: boolean
+  openBodies: number
+  maxOpenBodies: number
 }
 
 async function start(
@@ -141,16 +149,42 @@ async function start(
     machineId?: () => string
   } = {}
 ): Promise<{ server: EmbeddedServer; hub: Hub; source: FakeSource }> {
-  const hub: Hub = { people: new Map(), userinfo: 0, down: false, delayMs: 0 }
+  const hub: Hub = {
+    people: new Map(),
+    userinfo: 0,
+    down: false,
+    delayMs: 0,
+    stallBody: false,
+    stallDiscovery: false,
+    openBodies: 0,
+    maxOpenBodies: 0
+  }
   const userinfo = `${provider.issuer}/userinfo`
   // The hub's userinfo is answered here, by bearer; everything else (the
   // discovery document, the keys) is the local provider's own.
   const fetchHub: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (hub.stallDiscovery && url.endsWith('/.well-known/openid-configuration'))
+      return new Response(new ReadableStream({ start: () => {} }), {
+        headers: { 'content-type': 'application/json' }
+      })
     if (url !== userinfo) return globalThis.fetch(input, init)
     hub.userinfo += 1
     if (hub.delayMs) await new Promise((resolve) => setTimeout(resolve, hub.delayMs))
     if (hub.down) throw new Error('connection refused')
+    if (hub.stallBody) {
+      hub.openBodies += 1
+      hub.maxOpenBodies = Math.max(hub.maxOpenBodies, hub.openBodies)
+      return new Response(
+        new ReadableStream({
+          start: () => {},
+          cancel: () => {
+            hub.openBodies -= 1
+          }
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      )
+    }
     const header = new Headers(init?.headers).get('authorization') ?? ''
     const sub = hub.people.get(header.replace(/^Bearer /, ''))
     return sub
@@ -271,6 +305,49 @@ describe('GET /machines', () => {
     const down = await fetch(`${server.url}/machines`, { headers: bearer('another-token') })
     expect(down.status).toBe(503)
   })
+
+  it('answers within its deadline when the hub sends its headers and stalls its body', async () => {
+    const { server, hub } = await start()
+    hub.stallBody = true
+    const began = Date.now()
+    const answer = await fetch(`${server.url}/machines`, {
+      headers: bearer('owner-token'),
+      signal: AbortSignal.timeout(ROAD_HUB_TIMEOUT_MS + 4_000)
+    })
+    expect(answer.status).toBe(503)
+    expect(Date.now() - began).toBeLessThan(ROAD_HUB_TIMEOUT_MS + 1_500)
+  }, 20_000)
+
+  it('answers within its deadline when the hub’s discovery document stalls', async () => {
+    const { server, hub } = await start()
+    hub.stallDiscovery = true
+    hub.people.set('owner-token', OWNER)
+    const began = Date.now()
+    const answer = await fetch(`${server.url}/machines`, {
+      headers: bearer('owner-token'),
+      signal: AbortSignal.timeout(ROAD_HUB_TIMEOUT_MS * 2 + 4_000)
+    })
+    // The discovery falls back to the hub's known userinfo path within one deadline.
+    expect([200, 401, 503]).toContain(answer.status)
+    expect(Date.now() - began).toBeLessThan(ROAD_HUB_TIMEOUT_MS * 2 + 1_500)
+  }, 25_000)
+
+  it('holds no more requests at the hub than its concurrency while their bodies stall', async () => {
+    const { server, hub } = await start()
+    hub.stallBody = true
+    const answers = await Promise.all(
+      Array.from({ length: ROAD_HUB_CONCURRENCY + 2 }, (_, i) =>
+        fetch(`${server.url}/machines`, {
+          headers: bearer(`stalled-${i}`),
+          signal: AbortSignal.timeout(ROAD_HUB_TIMEOUT_MS + 4_000)
+        }).then((response) => response.status)
+      )
+    )
+    expect(answers.every((status) => status === 503)).toBe(true)
+    expect(hub.maxOpenBodies).toBeLessThanOrEqual(ROAD_HUB_CONCURRENCY)
+    // Every stalled body the road started reading is let go, none left open.
+    expect(hub.openBodies).toBe(0)
+  }, 20_000)
 
   it('asks the hub no more than its budget a minute, whatever the callers send', async () => {
     const { server, hub } = await start()
@@ -406,6 +483,17 @@ describe('the alias /m/<id>/<path>', () => {
     expect(JSON.parse(again.body)).toEqual({ status: 'approved' })
     const phone = bearer(deviceSession.token)
     expect((await raw(server.url, 'GET', `/m/${ID}/sessions`, phone)).status).toBe(200)
+    // A paired phone's control it did not identify is acknowledged too: the phone reads an
+    // answer to every write (the owner's desktop keeps the old empty one).
+    const interrupt = await raw(
+      server.url,
+      'POST',
+      `/m/${ID}/sessions/write`,
+      { ...phone, 'content-type': 'application/json' },
+      JSON.stringify({ id: 's1', input: { type: 'interrupt' } })
+    )
+    expect(interrupt.status).toBe(200)
+    expect(JSON.parse(interrupt.body)).toMatchObject({ status: 'accepted' })
     const forbidden = await raw(server.url, 'GET', `/m/${ID}/devices`, phone)
     expect(forbidden.status).toBe(403)
     expect(JSON.parse(forbidden.body)).toMatchObject({ message: DEVICE_FORBIDDEN_MESSAGE })

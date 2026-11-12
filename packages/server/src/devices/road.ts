@@ -85,32 +85,116 @@ export function roadRoute(url: string, machineId: () => string | null): RoadRout
   return { kind: 'alias', url: `${inner}${query}` }
 }
 
-/** A `fetch` that keeps to the road's budget: a few requests at a time, so
- *  many a minute. Over the budget it throws, which the bearer check reads as
- *  a hub that did not answer (503), and nothing leaves this process. */
+/** The most a hub answer may weigh: its discovery document and its userinfo are a few
+ *  hundred bytes; the reviewed check itself refuses a discovery document over 256 KiB. */
+export const ROAD_HUB_MAX_BYTES = 256 * 1024
+
+/** A promise that rejects when the signal aborts, for a call that may not heed it. */
+const untilAborted = (signal: AbortSignal): Promise<never> =>
+  new Promise((_, reject) => {
+    if (signal.aborted) reject(new Error('the hub did not answer in time'))
+    else
+      signal.addEventListener('abort', () => reject(new Error('the hub did not answer in time')), {
+        once: true
+      })
+  })
+
+/** The whole body, at most `max` bytes, read before `signal` aborts; the stream is let go either way. */
+async function readBounded(
+  response: Response,
+  max: number,
+  signal: AbortSignal
+): Promise<Uint8Array> {
+  const reader = response.body?.getReader()
+  if (!reader) return new Uint8Array()
+  const release = (): void => void reader.cancel().catch(() => {})
+  signal.addEventListener('abort', release, { once: true })
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), untilAborted(signal)])
+      if (done) break
+      size += value.byteLength
+      if (size > max) throw new Error('the hub answered more than this server reads')
+      chunks.push(value)
+    }
+  } catch (error) {
+    release()
+    throw error
+  } finally {
+    signal.removeEventListener('abort', release)
+  }
+  const body = new Uint8Array(size)
+  let at = 0
+  for (const chunk of chunks) {
+    body.set(chunk, at)
+    at += chunk.byteLength
+  }
+  return body
+}
+
+/**
+ * A `fetch` that keeps to the road's budget for the WHOLE exchange: a few requests at a time
+ * and so many a minute, one deadline over the headers and the body together, and a bound on
+ * the body's size. The body is read here, and the caller is handed an answer already read, so
+ * a hub that sends its headers and then holds its body can neither keep a caller waiting past
+ * the deadline nor hold more than the budget open. Over the budget, or past the deadline, it
+ * throws, which the bearer check reads as a hub that did not answer (503).
+ */
 export function budgetedFetch(
   base: typeof globalThis.fetch,
   now: () => number,
-  limits: { readonly concurrency: number; readonly perMinute: number } = {
-    concurrency: ROAD_HUB_CONCURRENCY,
-    perMinute: ROAD_HUB_PER_MINUTE
-  }
+  limits: {
+    readonly concurrency: number
+    readonly perMinute: number
+    readonly timeoutMs?: number
+    readonly maxBytes?: number
+  } = { concurrency: ROAD_HUB_CONCURRENCY, perMinute: ROAD_HUB_PER_MINUTE }
 ): typeof globalThis.fetch {
   let inFlight = 0
   const started: number[] = []
-  return async (input, init) => {
+  const timeoutMs = limits.timeoutMs ?? ROAD_HUB_TIMEOUT_MS
+  const maxBytes = limits.maxBytes ?? ROAD_HUB_MAX_BYTES
+  const limited = async (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: RequestInit
+  ): Promise<Response> => {
     const at = now()
     while (started.length > 0 && started[0]! <= at - 60_000) started.shift()
     if (inFlight >= limits.concurrency || started.length >= limits.perMinute)
       throw new Error('the hub budget of this server is spent')
     inFlight += 1
     started.push(at)
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(), timeoutMs)
+    const outer = init?.signal
+    const follow = (): void => deadline.abort()
+    if (outer?.aborted) deadline.abort()
+    outer?.addEventListener('abort', follow, { once: true })
     try {
-      return await base(input, init)
+      const response = await Promise.race([
+        base(input, { ...init, signal: deadline.signal }),
+        untilAborted(deadline.signal)
+      ])
+      const body = await readBounded(response, maxBytes, deadline.signal)
+      return new Response(
+        body.byteLength === 0 && [204, 304].includes(response.status)
+          ? null
+          : (body.buffer as ArrayBuffer),
+        {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers
+        }
+      )
     } finally {
+      clearTimeout(timer)
+      outer?.removeEventListener('abort', follow)
       inFlight -= 1
     }
   }
+  return limited as typeof globalThis.fetch
 }
 
 export interface PhoneRoadService {
