@@ -38,7 +38,10 @@
     "./server-name": "./src/server-name.ts",
     "./upgrade-failure": "./src/upgrade-failure.ts",
     "./routines": "./src/routines/index.ts",
-    "./routines/model": "./src/routines/model.ts"
+    "./routines/model": "./src/routines/model.ts",
+    "./devices": "./src/devices.ts",
+    "./timeline": "./src/timeline.ts",
+    "./session-write-error": "./src/session-write-error.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

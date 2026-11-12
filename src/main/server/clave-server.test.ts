@@ -88,7 +88,9 @@ describe('the server started by the shell', () => {
     const idle = listeners()
     expect(hasServerEventPublisher()).toBe(false)
     await startClaveServer({ manager, ports: { sessions: hostOver(manager) } })
-    expect(listeners()).toBe(idle + 1)
+    // Two listeners on the manager's stream: the state publisher, and the
+    // notifier's observation (the mobile wave, lane B); the stop takes both off.
+    expect(listeners()).toBe(idle + 2)
     expect(hasServerEventPublisher()).toBe(true)
     await stopClaveServer()
     expect(listeners()).toBe(idle)

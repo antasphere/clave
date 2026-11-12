@@ -69,7 +69,9 @@ async function setup(): Promise<{
   adapter.on(handle, 'stream', (stream) => {
     if (stream.kind === 'event') events.push(stream.event)
   })
-  const send = (text: string): void => adapter.write(handle, { type: 'user_message', text })
+  const send = (text: string): void => {
+    void adapter.write(handle, { type: 'user_message', text })
+  }
   const complete = (): void =>
     callbacks.notification({
       method: 'turn/completed',
@@ -449,3 +451,330 @@ it.each(['failed', 'interrupted'])(
     expect(translator.turnId).toBe('')
   }
 )
+it('an identified write has no durable acceptance before provider dispatch', async () => {
+  const { WriteLedger, memoryWriteLedgerStorage } =
+    await import('../../../../packages/server/src/sessions/writes')
+  const storage = memoryWriteLedgerStorage()
+  const ledger = new WriteLedger(
+    storage,
+    () => 1,
+    () => {}
+  )
+  const s = await setup()
+  const id = 'phone-00000001'
+  ledger.initialize('followup')
+  ledger.receive('followup', id)
+  ledger.dispatch('followup', id)
+  s.adapter.on(s.handle, 'stream', (stream) => {
+    if (
+      stream.kind === 'event' &&
+      stream.event.type === 'user_message' &&
+      stream.event.clientMessageId
+    )
+      ledger.evidence('followup', id, 2)
+  })
+  s.adapter.write(s.handle, { type: 'user_message', text: 'NEVER SENT YET', clientMessageId: id })
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(0)
+  const reboot = new WriteLedger(
+    storage,
+    () => 3,
+    () => {}
+  )
+  const actual = reboot.status('followup', id)
+  await tick()
+  await s.adapter.kill(s.handle)
+  expect(actual.status).toBe('unknown')
+})
+
+it('an identified Codex write waits for provider acknowledgement and then emits its history', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const accepted = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000002'
+  })
+  expect(accepted).toBeInstanceOf(Promise)
+  await tick()
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(1)
+  expect(s.events.filter((e) => e.type === 'user_message')).toEqual([])
+  let settled = false
+  void Promise.resolve(accepted).then(() => {
+    settled = true
+  })
+  await tick()
+  expect(settled).toBe(false)
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await accepted
+  expect(s.events.filter((e) => e.type === 'user_message')).toEqual([
+    { type: 'user_message', text: 'hello', clientMessageId: 'phone-00000002' }
+  ])
+  await s.adapter.kill(s.handle)
+})
+
+it('an identified Codex write with a lost acknowledgement remains unknown', async () => {
+  const s = await setup()
+  s.request.mockRejectedValue(new Error('transport timed out'))
+  await expect(
+    s.adapter.write(s.handle, {
+      type: 'user_message',
+      text: 'hello',
+      clientMessageId: 'phone-00000003'
+    })
+  ).rejects.toMatchObject({ _tag: 'UnconfirmedSessionWrite', clientMessageId: 'phone-00000003' })
+  expect(s.events.filter((e) => e.type === 'user_message')).toEqual([])
+  await s.adapter.kill(s.handle)
+})
+it('known provider refusal stays refused without evidence', async () => {
+  const s = await setup()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start'
+      ? Promise.reject(new CodexRpcError(-32600, 'not allowed'))
+      : original(method, params)
+  )
+  try {
+    await expect(
+      s.adapter.write(s.handle, {
+        type: 'user_message',
+        text: 'hello',
+        clientMessageId: 'phone-00000009'
+      })
+    ).rejects.toBeInstanceOf(CodexRpcError)
+    expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+  } finally {
+    await s.adapter.kill(s.handle)
+  }
+})
+it('close before dispatch never accepts', async () => {
+  const s = await setup()
+  const result = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000010'
+  })
+  const assertion = expect(result).rejects.toBeInstanceOf(CodexRpcError)
+  await s.adapter.kill(s.handle)
+  await assertion
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(0)
+  expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+})
+it('provider response before RPC acknowledgement must retain conversation order', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const result = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000011'
+  })
+  await tick()
+  s.notify({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+  })
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await result
+  const order = s.events
+    .filter((e) => e.type === 'user_message' || e.type === 'assistant_text')
+    .map((e) => e.type)
+  await s.adapter.kill(s.handle)
+  expect(order[0]).toBe('user_message')
+})
+it('failed ACK flushes provider frames without identified acceptance', async () => {
+  const s = await setup()
+  let reject!: (e: Error) => void
+  const gate = new Promise((_, r) => (reject = r))
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate : original(method, params)
+  )
+  const accepted = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000021'
+  })
+  const failure = expect(accepted).rejects.toMatchObject({ _tag: 'UnconfirmedSessionWrite' })
+  await tick()
+  s.notify({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+  })
+  expect(s.events.filter((e) => e.type === 'assistant_text')).toHaveLength(0)
+  reject(new Error('lost response'))
+  await failure
+  expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(0)
+  expect(s.events.filter((e) => e.type === 'assistant_text')).toHaveLength(1)
+  await s.adapter.kill(s.handle)
+})
+it('queued identified writes retain user order and one send each', async () => {
+  const s = await setup()
+  const first = deferred()
+  const second = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start'
+      ? first.promise
+      : method === 'turn/steer'
+        ? second.promise
+        : original(method, params)
+  )
+  const a = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'first',
+    clientMessageId: 'phone-00000022'
+  })
+  const b = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'second',
+    clientMessageId: 'phone-00000023'
+  })
+  await tick()
+  expect(s.request.mock.calls.filter(([m]) => m === 'turn/steer')).toHaveLength(0)
+  first.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await a
+  await tick()
+  expect(s.events.filter((e) => e.type === 'user_message').map((e) => e.text)).toEqual(['first'])
+  second.resolve({ turnId: 'turn' })
+  await b
+  expect(s.events.filter((e) => e.type === 'user_message').map((e) => e.text)).toEqual([
+    'first',
+    'second'
+  ])
+  expect(
+    s.request.mock.calls.filter(([m]) => m === 'turn/start' || m === 'turn/steer')
+  ).toHaveLength(2)
+  await s.adapter.kill(s.handle)
+})
+it.each([true, false])(
+  'mixed desktop and phone writes preserve dispatch order, same tick %s',
+  async (sameTick) => {
+    const s = await setup()
+    const gate = deferred()
+    const original = s.request.getMockImplementation()!
+    s.request.mockImplementation((method, params) =>
+      method === 'turn/start' ? gate.promise : original(method, params)
+    )
+    const first = s.adapter.write(s.handle, {
+      type: 'user_message',
+      text: 'phone first',
+      clientMessageId: 'phone-00000024'
+    })
+    if (!sameTick) await tick()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'desktop second' })
+    gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+    await first
+    await tick()
+    const texts = s.events.filter((e) => e.type === 'user_message').map((e) => e.text)
+    await s.adapter.kill(s.handle)
+    expect(texts).toEqual(['phone first', 'desktop second'])
+  }
+)
+it('coalesced response and notification preserve order through real JSON-RPC reader', async () => {
+  const { EventEmitter } = await import('node:events')
+  const { PassThrough } = await import('node:stream')
+  const { CodexAppServer } = await import('./codex-app-server')
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(() => {
+      queueMicrotask(() => child.emit('close', 0))
+      return true
+    })
+  })
+  let turn: { id: number; method: string } | undefined
+  child.stdin.on('data', (chunk) => {
+    for (const line of chunk.toString().trim().split('\n')) {
+      const frame = JSON.parse(line)
+      if (frame.id === undefined) continue
+      if (frame.method === 'turn/start') {
+        turn = frame
+        continue
+      }
+      const result = frame.method === 'thread/start' ? { thread: { id: 'thread' } } : {}
+      child.stdout.write(JSON.stringify({ id: frame.id, result }) + '\n')
+    }
+  })
+  const adapter = new CodexAdapter(
+    (_cwd, callbacks) =>
+      new CodexAppServer(
+        child as unknown as ConstructorParameters<typeof CodexAppServer>[0],
+        callbacks
+      )
+  )
+  const handle = await adapter.spawn({
+    id: 'coalesced',
+    provider: 'codex',
+    adapterId: adapter.id,
+    transport: 'events',
+    cwd: root,
+    windowKey: 'test',
+    state: 'idle',
+    title: 'test',
+    createdAt: 1
+  })
+  const events: SessionEvent[] = []
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  const result = adapter.write(handle, {
+    type: 'user_message',
+    text: 'question',
+    clientMessageId: 'phone-00000025'
+  })
+  await tick()
+  expect(turn!.method).toBe('turn/start')
+  child.stdout.write(
+    JSON.stringify({ id: turn!.id, result: { turn: { id: 'turn', status: 'inProgress' } } }) +
+      '\n' +
+      JSON.stringify({
+        method: 'item/agentMessage/delta',
+        params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+      }) +
+      '\n'
+  )
+  await result
+  const order = events
+    .filter((e) => e.type === 'user_message' || e.type === 'assistant_text')
+    .map((e) => e.type)
+  await adapter.kill(handle)
+  expect(order).toEqual(['user_message', 'assistant_text'])
+})
+
+it('reentrant desktop input does not overtake an already deferred desktop input', async () => {
+  const s = await setup()
+  const gate = deferred()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/start' ? gate.promise : original(method, params)
+  )
+  const first = s.adapter.write(s.handle, {
+    type: 'user_message',
+    text: 'phone first',
+    clientMessageId: 'phone-00000026'
+  })
+  await tick()
+  s.adapter.write(s.handle, { type: 'user_message', text: 'desktop second' })
+  s.adapter.on(s.handle, 'stream', (stream) => {
+    if (stream.kind === 'event' && stream.event.type === 'assistant_text')
+      s.adapter.write(s.handle, { type: 'user_message', text: 'desktop third' })
+  })
+  s.notify({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread', turnId: 'turn', itemId: 'a', delta: 'answer' }
+  })
+  gate.resolve({ turn: { id: 'turn', status: 'inProgress' } })
+  await first
+  await tick()
+  const order = s.events.filter((e) => e.type === 'user_message').map((e) => e.text)
+  await s.adapter.kill(s.handle)
+  expect(order).toEqual(['phone first', 'desktop second', 'desktop third'])
+})

@@ -57,6 +57,14 @@ export { Routines, type RoutinesService } from './routines/port'
 import { DigestsPort, type DigestsService } from './digests/port'
 
 export { DigestsPort, type DigestsService } from './digests/port'
+// ── Mobile wave, lane A: the devices ──
+import { DevicesPort, type DevicesPortService } from './devices/port'
+
+export { DevicesPort, type DevicesPortService } from './devices/port'
+// ── The mobile wave, lane B: where the write ledger is kept (`sessions/writes.ts`) ──
+import type { WriteLedgerStorage } from './sessions/writes'
+
+export { type WriteLedgerStorage } from './sessions/writes'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -96,6 +104,15 @@ export interface ServerPorts {
   // ── PRDCT-4327: the digests ──
   /** The one-shot digests a chat view shows, read on the server's own record of each session. `DigestsPort.none` when absent: every call refused as unavailable. */
   readonly digests?: DigestsService
+  // ── Mobile wave, lane A: the devices ──
+  /** A phone paired with this server as its owner's: the device records'
+   *  document, the owner's identity, the issuer, the server's name.
+   *  `DevicesPort.none` when absent: no owner, so no phone is ever admitted. */
+  readonly devices?: DevicesPortService
+  // ── The mobile wave, lane B: nothing is sent twice ──
+  /** Where the write ledger and the server's own history of writes are
+   *  kept, per session (`sessions/writes.ts`); in memory when absent. */
+  readonly writeLedger?: WriteLedgerStorage
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -122,6 +139,8 @@ export const PortsLive = (
   | Routines
   // ── PRDCT-4327: the digests ──
   | DigestsPort
+  // ── Mobile wave, lane A: the devices ──
+  | DevicesPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -144,5 +163,7 @@ export const PortsLive = (
     // ── ADR 0004: the routines ──
     Routines.layer(ports.routines ?? Routines.none),
     // ── PRDCT-4327: the digests ──
-    DigestsPort.layer(ports.digests ?? DigestsPort.none)
+    DigestsPort.layer(ports.digests ?? DigestsPort.none),
+    // ── Mobile wave, lane A: the devices ──
+    DevicesPort.layer(ports.devices ?? DevicesPort.none)
   )

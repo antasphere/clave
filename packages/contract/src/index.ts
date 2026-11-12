@@ -42,5 +42,7 @@ export * as Work from './work'
 export * as Routines from './routines'
 // ── PRDCT-4327: the digests read by the server a tab runs on ──
 export * as Digests from './digests'
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export * as Devices from './devices'
 
 // ── Lane B: terminals · Lane D: settings served ──

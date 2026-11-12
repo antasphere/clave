@@ -31,6 +31,8 @@ import { accountOverrides } from '../restart-overrides'
 import { providerSwitchOptions } from './provider-switch'
 import { conversationIdOf } from '../../shared/runtime-choices'
 import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
+// ── The mobile wave, lane B: a new session's write ledger starts complete ──
+import { initializeSessionWrites } from '../server/session-events'
 
 export type SessionInfoResult = {
   id: string
@@ -122,6 +124,7 @@ export async function spawnSession(
     workspaceId,
     windowKey: windowKey ?? undefined
   })
+  if (!options?.adoptSessionId) initializeSessionWrites(session.id)
   // The sender hosts the session from now on: its renderer holds the xterm
   // and receives pty:data. Adoption and re-homing rebind through this same
   // path (the adopting window is the sender).

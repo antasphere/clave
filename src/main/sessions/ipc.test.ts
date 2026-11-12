@@ -83,6 +83,7 @@ it('fans out through production IPC and detaches the consumer when its WebConten
   mocks.handlers.get('sessions:write')(event, id, { type: 'user_message', text: 'hello' })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: { type: 'assistant_text', delta: 'hello', final: true }
   })
   sender.send.mockClear()
@@ -160,6 +161,7 @@ it('readies an adapter only once and only after stream and exit notifications ar
   mocks.handlers.get('sessions:subscribe')({ sender }, id)
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: { type: 'user_message', text: 'initial prompt' }
   })
   expect(sender.send).toHaveBeenCalledWith(`sessions:exit:${id}`, 0)
@@ -202,6 +204,7 @@ it('keeps subscriptions after ready errors and retries until one successful call
   expect(subscribe()).toEqual({ ...record, run: 1 })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: {
       type: 'error',
       message: 'Session readiness failed: temporary startup failure',
@@ -212,6 +215,7 @@ it('keeps subscriptions after ready errors and retries until one successful call
   sessionManager.write(id, { type: 'user_message', text: 'subscription still works' })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: { type: 'user_message', text: 'subscription still works' }
   })
   subscribe()

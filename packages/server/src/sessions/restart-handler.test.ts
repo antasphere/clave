@@ -4,6 +4,7 @@ import { RestartSession } from '@clave/contract/sessions'
 import { sessionHandlers } from './handlers'
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
+import { SessionWrites } from './writes'
 
 /**
  * The server's RestartSession hands the host every field of the payload,
@@ -18,8 +19,16 @@ describe('RestartSession on the server (PRDCT-4300)', () => {
     published: unknown[]
   ): Promise<unknown> =>
     Effect.runPromise(
-      registration.handler(payload, (() => Effect.void) as never).pipe(
+      (
+        registration.handler(payload, (() => Effect.void) as never) as Effect.Effect<
+          unknown,
+          unknown,
+          SessionHost | ServerEvents | SessionWrites
+        >
+      ).pipe(
         Effect.provideService(SessionHost, host),
+        // The write command reads the ledger; every handler is typed with it.
+        Effect.provide(SessionWrites.memory),
         Effect.provideService(ServerEvents, {
           publish: (event: unknown) => {
             published.push(event)

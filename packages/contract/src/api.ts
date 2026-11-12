@@ -10,6 +10,7 @@
  * module and nothing else, added to `ClaveApi` as one line. A lane adds its
  * group and its line; nobody edits another lane's group.
  */
+import { GetSessionTimeline } from './timeline'
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
 import { Schema } from 'effect'
 import {
@@ -45,7 +46,9 @@ import {
   SetSessionPage,
   TypeIntoSession,
   // ── PRDCT-4123: which work a session does ──
-  ChangeSessionWork
+  ChangeSessionWork,
+  // ── The mobile wave, lane B: whether a client's message landed ──
+  GetSessionWriteStatus
 } from './sessions'
 import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
@@ -65,6 +68,8 @@ import { historyGroup } from './history'
 import { routinesGroup } from './routines/api'
 // ── PRDCT-4327: the digests read by the server a tab runs on (`digests.ts`) ──
 import { digestsGroup } from './digests'
+// ── Mobile wave, lane A: the devices, a phone paired with this server (`devices.ts`) ──
+import { devicesGroup } from './devices'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -101,6 +106,10 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
   // ── PRDCT-4123: which work a session does ──
   .add(HttpCqrs.commandEndpoint('changeWork', '/sessions/work', ChangeSessionWork))
+  // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
+  .add(HttpCqrs.queryEndpoint('writeStatus', '/sessions/writes', GetSessionWriteStatus))
+  // Mobile history ordering: the legacy history route keeps its semantics.
+  .add(HttpCqrs.queryEndpoint('timeline', '/sessions/timeline', GetSessionTimeline))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')
@@ -155,6 +164,8 @@ export { historyGroup }
 export { routinesGroup }
 // ── PRDCT-4327: the digests ──
 export { digestsGroup }
+// ── Mobile wave, lane A: the devices (`devices.ts`) ──
+export { devicesGroup }
 
 // ── Lane B: terminals ──
 
@@ -182,6 +193,8 @@ export const ClaveApi = Api.make('clave')
   .add(routinesGroup)
   // ── PRDCT-4327: the digests ──
   .add(digestsGroup)
+  // ── Mobile wave, lane A: the devices ──
+  .add(devicesGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

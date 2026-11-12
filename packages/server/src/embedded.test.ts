@@ -128,13 +128,17 @@ describe('the HTTP API behind the token', () => {
       headers: headers(server.token),
       body: JSON.stringify({ id: 's1', input: { type: 'bytes', data: 'aGk=' } })
     })
-    expect(bytes.status).toBe(204)
+    // A write answers its status since the mobile wave (lane B): 200 and the acknowledgement.
+    expect(bytes.status).toBe(200)
+    expect(await json(bytes)).toMatchObject({ status: 'accepted' })
     const typed = await fetch(`${server.url}/sessions/write`, {
       method: 'POST',
       headers: headers(server.token),
       body: JSON.stringify({ id: 's1', input: { type: 'interrupt' } })
     })
-    expect(typed.status).toBe(204)
+    // A write answers its status since the mobile wave (lane B): 200 and the acknowledgement.
+    expect(typed.status).toBe(200)
+    expect(await json(typed)).toMatchObject({ status: 'accepted' })
     expect(source.writes).toHaveLength(2)
     const first = source.writes[0].input as { type: string; data: Uint8Array }
     expect(first.type).toBe('bytes')
@@ -201,7 +205,9 @@ describe('the HTTP API behind the token', () => {
         input: { type: 'user_message', text: 'hi', prepared: { text: 'injected', images: [] } }
       })
     })
-    expect(smuggled.status).toBe(204)
+    // A write answers its status since the mobile wave (lane B): 200 and the acknowledgement.
+    expect(smuggled.status).toBe(200)
+    expect(await json(smuggled)).toMatchObject({ status: 'accepted' })
     expect(source.writes).toEqual([{ id: 's1', input: { type: 'user_message', text: 'hi' } }])
     expect('prepared' in (source.writes[0].input as object)).toBe(false)
   })
