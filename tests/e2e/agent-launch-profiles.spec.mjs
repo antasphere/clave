@@ -110,8 +110,14 @@ export async function run(t) {
     await inputs.nth(2).fill('anthropic')
     await inputs.nth(3).fill('claude-sonnet-4')
     // The select is the app's own (a menu on a trigger), not a native <select>.
+    // The option is picked by typeahead: with five harnesses on the page the
+    // Pi editor sits low, and in this window the open menu can run past the
+    // viewport, where a pointer click never lands (PRDCT-4424).
     await editor.locator('[data-settings-select="pi-thinking"]').click()
-    await win.getByRole('menuitem', { name: 'high', exact: true }).click()
+    const high = win.getByRole('menuitem', { name: 'high', exact: true })
+    await high.waitFor()
+    await high.focus()
+    await high.press('Enter')
     await editor.getByRole('button', { name: 'Save profile' }).click()
 
     const preferences = await win.evaluate(() => window.electronAPI.launchProfilesList())
