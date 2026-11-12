@@ -196,6 +196,15 @@ export class ClaudeStreamTranslator {
    *  be written to. Called after every switch the CLI confirmed, since a
    *  model switch can change the effort too (Haiku runs at none). */
   requestSettings: () => void = () => {}
+  /** The get_context_usage requests in flight: each answer names the window
+   *  of the model the session runs on, which nothing else says before a turn
+   *  ends (a resumed transcript never does, and the settings name the model
+   *  without its `[1m]`). */
+  readonly contextRequests = new Set<string>()
+  /** Ask the CLI how full the context is; the adapter sets it once the
+   *  process can be written to. Called at ready and after every switch the
+   *  CLI confirmed, since a switch can change the window. */
+  requestContext: () => void = () => {}
   /** What a `permission_mode` event offers; the adapter sets it at launch. */
   modes: PermissionModeOption[] = PERMISSION_MODES
   /** The main thread's context after its last call, and the model's window. */
@@ -499,6 +508,39 @@ export class ClaudeStreamTranslator {
       this.emit({ type: 'effort', effort })
     return true
   }
+  /** A control_response answering one of our get_context_usage requests;
+   *  false for any other. The CLI names its model's window (`maxTokens`) with
+   *  no turn and no token, a resumed conversation included, so the meter
+   *  fills to its count on a model Clave's table does not list (PRDCT-4456).
+   *  The count stays the last call's when there is one (a resumed
+   *  conversation's replay), so the meter does not jump; before any call it
+   *  is the CLI's own (`totalTokens`). A CLI that does not know the request
+   *  answers an error, and the meter keeps what it had. */
+  private contextRequest(p: Record<string, unknown>): boolean {
+    const response = z
+      .object({
+        request_id: z.string(),
+        subtype: z.enum(['success', 'error']),
+        response: z.unknown().optional()
+      })
+      .safeParse(p.response)
+    if (!response.success || !this.contextRequests.has(response.data.request_id)) return false
+    this.contextRequests.delete(response.data.request_id)
+    if (response.data.subtype !== 'success') return true
+    const usage = z
+      .object({
+        maxTokens: z.number().int().positive(),
+        totalTokens: z.number().int().nonnegative().optional()
+      })
+      .safeParse(response.data.response)
+    if (!usage.success) return true
+    const used = this.contextUsed ?? usage.data.totalTokens ?? null
+    if (used === this.contextUsed && usage.data.maxTokens === this.contextWindow) return true
+    this.contextUsed = used
+    this.contextWindow = usage.data.maxTokens
+    this.publishUsage()
+    return true
+  }
   /** A control_response answering one of our set_model requests; false for any other. */
   private modelRequest(p: Record<string, unknown>): boolean {
     const response = z
@@ -514,8 +556,9 @@ export class ClaudeStreamTranslator {
     if (response.data.subtype === 'success') {
       this.emit({ type: 'session_meta', model, providerSessionId: null })
       // The CLI answers set_model once the switch is done, not before: only
-      // now does get_settings describe the new model.
+      // now do get_settings and get_context_usage describe the new model.
       this.requestSettings()
+      this.requestContext()
     } else
       this.emit({
         type: 'error',
@@ -535,7 +578,12 @@ export class ClaudeStreamTranslator {
    *  that names one again is not emitted twice. */
   replay(lines: Iterable<string>): HistoryItem[] {
     const items = toHistoryItems(replayClaudeTranscript(lines), { wrappers: 'drop' })
-    for (const { event } of items) if (event.type === 'tool_call') this.tools.add(event.id)
+    for (const { event } of items) {
+      if (event.type === 'tool_call') this.tools.add(event.id)
+      // The context as the conversation left it: the count the view shows
+      // from the replay, which the CLI's window joins at ready.
+      else if (event.type === 'context_usage' && !event.parent) this.contextUsed = event.used
+    }
     return items
   }
   line(line: string): void {
@@ -658,6 +706,7 @@ export class ClaudeStreamTranslator {
         this.stopRequest(p) ||
         this.effortRequest(p) ||
         this.settingsRequest(p) ||
+        this.contextRequest(p) ||
         this.listRequest(p))
     ) {
       // Answered above: the switch took or the CLI said why not; the list arrived or did not.
@@ -1210,6 +1259,14 @@ export class ClaudeAdapter implements SessionAdapter {
         `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'get_settings' } })}\n`
       )
     }
+    live.translator.requestContext = () => {
+      if (!live.process || live.ended) return
+      const requestId = randomUUID()
+      live.translator.contextRequests.add(requestId)
+      live.process.stdin.write(
+        `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'get_context_usage' } })}\n`
+      )
+    }
     this.handles.set(spec.id, live)
     return live.handle
   }
@@ -1244,6 +1301,11 @@ export class ClaudeAdapter implements SessionAdapter {
     // The effort it starts at, in the CLI's own word: the launch's, else the
     // user's settings, else the model's default.
     live.translator.requestSettings()
+    // The window of the model it runs on, in the CLI's own word: a resumed
+    // conversation's count comes from its replay, and nothing before a turn's
+    // result named the window of a model Clave's table does not list
+    // (PRDCT-4456).
+    live.translator.requestContext()
     // A chat launched on no model, or on the `default` alias, runs on whatever
     // the CLI resolves that to: the settings answer above names it
     // (`applied.model`); a CLI whose answer names none is asked which model
