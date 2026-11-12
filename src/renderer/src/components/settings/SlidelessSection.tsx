@@ -42,16 +42,21 @@ function SlidelessRow({ owner, name }: { owner: string; name: string }): React.J
   const install = useArtefactStore((s) => s.install)
   useEffect(() => useArtefactStore.getState().readSlideless(owner), [owner])
   const phase = state?.phase ?? 'missing'
+  // This Mac shows its own pages plain without Slideless; a server's pages
+  // show only through it, so the missing line says so.
+  const own = owner === 'local'
   const line =
     phase === 'ready'
       ? state?.override
         ? 'Running the command line named by CLAVE_SLIDELESS_CLI.'
-        : 'Shows HTML artefacts beside the sessions of this machine, reloads them on every edit and keeps a version each turn. No account.'
+        : `Shows HTML artefacts beside the sessions of ${own ? 'this Mac' : 'this server'}, reloads them on every edit and keeps a version each turn. No account.`
       : phase === 'installing'
-        ? 'Installing…'
+        ? 'Installing the latest release.'
         : phase === 'error'
           ? 'The last install failed.'
-          : 'Not installed: HTML artefacts show without reload or versions until it is.'
+          : own
+            ? 'Not installed: HTML artefacts show without reload or versions until it is.'
+            : 'Not installed: the HTML artefacts of this server do not show until it is.'
   return (
     <SettingsRow
       label={`${name} · Slideless${state?.version && !state.override ? ` ${state.version}` : ''}`}
@@ -79,7 +84,9 @@ function SlidelessRow({ owner, name }: { owner: string; name: string }): React.J
             ? 'Installing…'
             : phase === 'ready'
               ? 'Install latest'
-              : 'Install'}
+              : phase === 'error'
+                ? 'Try again'
+                : 'Install'}
         </button>
       )}
     </SettingsRow>

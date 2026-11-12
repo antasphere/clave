@@ -32,15 +32,15 @@ export const awayPage = (reason: AwayReason): string => {
 ${refresh}
 <title>${escape(TITLES[reason])}</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light dark; background: Canvas; color: CanvasText; }
   html, body { height: 100%; margin: 0; }
   body {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; padding: 24px; box-sizing: border-box; text-align: center;
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    gap: 4px; padding: 24px; box-sizing: border-box; text-align: center;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   }
-  h1 { margin: 0; font-size: 15px; font-weight: 600; }
-  p { margin: 0; opacity: 0.7; }
+  h1 { margin: 0; font-size: 15px; font-weight: 400; }
+  p { margin: 0; opacity: 0.65; }
 </style>
 </head>
 <body>

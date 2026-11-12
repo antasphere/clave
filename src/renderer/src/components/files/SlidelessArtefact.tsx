@@ -131,24 +131,33 @@ export function SlidelessArtefact({
   // server older than this domain, or one that went away): never a blank pane.
   const carded = phase !== undefined && phase !== 'ready'
   const serveError = gaveUp
-    ? 'Slideless stopped again and again; reopen the panel to retry'
+    ? 'it stopped again and again. Hide the panel and open it again to retry.'
     : !carded && held?.openedAt === openedAt
       ? held.error
       : undefined
   return (
     <div className="flex flex-col h-full">
       {phase && phase !== 'ready' && (
-        <div className="linked-document-notice" data-testid="slideless-install-card">
+        <div
+          className="linked-document-notice flex items-center gap-2"
+          data-testid="slideless-install-card"
+        >
           <span className="flex-1 min-w-0">
+            {/* A server's page is not drawn under the card (below): the
+                sentence says where it will show rather than what it will do. */}
             {phase === 'installing'
-              ? `Installing Slideless on ${machine}: this page will reload on every edit and keep a version each turn.`
+              ? own
+                ? `Installing Slideless on ${machine}: this page will reload on every edit and keep a version each turn.`
+                : `Installing Slideless on ${machine}: this page shows here once it is installed.`
               : phase === 'error'
                 ? `Slideless could not be installed on ${machine}: ${slideless?.error ?? 'unknown error'}`
-                : `Install Slideless on ${machine} to reload this page on every edit and keep a version each turn.`}
+                : own
+                  ? `Install Slideless on ${machine} to reload this page on every edit and keep a version each turn.`
+                  : `Install Slideless on ${machine} to show this page here, reload it on every edit and keep a version each turn.`}
           </span>
           {phase !== 'installing' && (
             <button
-              className="btn-primary btn-compact"
+              className="btn-primary btn-compact flex-shrink-0"
               onClick={() => void install(owner).catch(() => {})}
             >
               {phase === 'error' ? 'Try again' : 'Install Slideless'}
