@@ -8,9 +8,9 @@
  * The store reads localStorage and the preload bridge at import time, so
  * both are stubbed first, as server-layout-apply.test.ts does.
  */
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkAssignment } from '@clave/contract/work-rules'
-import type { SessionRecord } from '../../../preload/index.d'
+import type { ElectronAPI, SessionRecord } from '../../../preload/index.d'
 import type { Session, SessionGroup } from '../store/session-types'
 
 let useSessionStore: typeof import('../store/session-store').useSessionStore
@@ -18,6 +18,7 @@ let placeRecords: typeof import('./adopt-record').placeRecords
 let adoptRecord: typeof import('./adopt-record').adoptRecord
 let adoptServerStartedSessions: typeof import('./adopt-record').adoptServerStartedSessions
 let RESTORE_CONCURRENCY: number
+let startServerChatSync: typeof import('./server-chat-sync').startServerChatSync
 
 /** Each spawn waits for the test to answer it, by session id. */
 const pending = new Map<string, (ok: boolean) => void>()
@@ -91,6 +92,7 @@ beforeAll(async () => {
   adoptRecord = lib.adoptRecord
   adoptServerStartedSessions = lib.adoptServerStartedSessions
   RESTORE_CONCURRENCY = lib.RESTORE_CONCURRENCY
+  startServerChatSync = (await import('./server-chat-sync')).startServerChatSync
 })
 
 beforeEach(() => {
@@ -123,6 +125,129 @@ const restoring = (): string[] =>
     .getState()
     .sessions.filter((s) => s.restoring)
     .map((s) => s.id)
+
+describe('ongoing server chat discovery', () => {
+  const listeners = (): {
+    registered: () => void
+    connected: () => void
+    api: Pick<ElectronAPI, 'adoptRunningChats' | 'onSessionRegistered' | 'onServerConnected'>
+    read: ReturnType<typeof vi.fn<() => Promise<SessionRecord[]>>>
+  } => {
+    const read = vi.fn(async () => byIdRecords)
+    const callbacks = { registered: () => {}, connected: () => {} }
+    return {
+      registered: () => callbacks.registered(),
+      connected: () => callbacks.connected(),
+      read,
+      api: {
+        adoptRunningChats: read,
+        onSessionRegistered: (fn) => {
+          callbacks.registered = fn
+          return () => {
+            callbacks.registered = () => {}
+          }
+        },
+        onServerConnected: (fn) => {
+          callbacks.connected = fn
+          return () => {
+            callbacks.connected = () => {}
+          }
+        }
+      }
+    }
+  }
+
+  it('discovers at connect and registration without changing focus, workspace or group placement', async () => {
+    const { placed } = placeRecords([{ ...record('selected'), running: true }], 'shown', {
+      focusFirst: true
+    })
+    expect(placed).toEqual(['selected'])
+    const before = useSessionStore.getState()
+    const events = listeners()
+    const stop = startServerChatSync(events.api)
+    await flush()
+    byIdRecords = [
+      {
+        ...record('external'),
+        transport: 'events',
+        running: true,
+        live: true,
+        workspaceId: 'hidden'
+      }
+    ]
+    kernel = [{ id: 'external', state: 'working' }]
+    events.registered()
+    await flush()
+    events.connected()
+    events.registered()
+    await flush()
+    const after = useSessionStore.getState()
+    expect(ids()).toEqual(['selected', 'external'])
+    expect(after.sessions.find((s) => s.id === 'external')).toMatchObject({
+      workspaceId: 'hidden',
+      alive: true,
+      agentState: 'working'
+    })
+    expect(after.selectedSessionIds).toEqual(before.selectedSessionIds)
+    expect(after.focusedSessionId).toEqual(before.focusedSessionId)
+    expect(after.groups).toEqual(before.groups)
+    expect(spawned).toEqual([])
+    stop()
+  })
+
+  it('coalesces notifications while a read is out, and reconciles again after it', async () => {
+    const events = listeners()
+    let release!: (records: SessionRecord[]) => void
+    events.read.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
+    const stop = startServerChatSync(events.api)
+    events.registered()
+    events.connected()
+    events.registered()
+    expect(events.read).toHaveBeenCalledTimes(1)
+    byIdRecords = [{ ...record('arrived-during-read'), running: true }]
+    release([])
+    await flush()
+    expect(events.read).toHaveBeenCalledTimes(2)
+    expect(ids()).toEqual(['arrived-during-read'])
+    expect(spawned).toEqual([])
+    stop()
+  })
+
+  it('withdraws listeners and discards an in-flight result after it stops', async () => {
+    const events = listeners()
+    let release!: (records: SessionRecord[]) => void
+    events.read.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
+    const stop = startServerChatSync(events.api)
+    stop()
+    release([{ ...record('late'), running: true }])
+    events.connected()
+    events.registered()
+    await flush()
+    expect(ids()).toEqual([])
+    expect(events.read).toHaveBeenCalledTimes(1)
+  })
+
+  it('a launch reply racing discovery selects its one row and keeps its requested group', async () => {
+    byIdRecords = [{ ...record('launching'), running: true }]
+    const events = listeners()
+    const stop = startServerChatSync(events.api)
+    await flush()
+    const session = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().addSession(session)
+    expect(ids()).toEqual(['launching'])
+    expect(useSessionStore.getState().focusedSessionId).toBe('launching')
+    useSessionStore.setState({
+      groups: [{ id: 'requested', sessionIds: [], terminals: [] } as unknown as SessionGroup]
+    })
+    useSessionStore.getState().addSessionInGroup(session, 'requested')
+    useSessionStore.getState().addSessionInGroup(session, 'requested')
+    expect(ids()).toEqual(['launching'])
+    expect(useSessionStore.getState().groups[0].sessionIds).toEqual(['launching'])
+    expect(useSessionStore.getState().displayOrder).not.toContain('launching')
+    expect(spawned).toEqual([])
+    stop()
+  })
+})
 
 describe('placeRecords', () => {
   it('shows every row from its record before any spawn answers', async () => {

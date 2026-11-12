@@ -31,6 +31,7 @@ import { accountOverrides } from '../restart-overrides'
 import { providerSwitchOptions } from './provider-switch'
 import { conversationIdOf } from '../../shared/runtime-choices'
 import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
+import { sessionRegistered } from '../server/session-events'
 
 export type SessionInfoResult = {
   id: string
@@ -180,6 +181,7 @@ export async function spawnSession(
     )
   }
 
+  sessionRegistered(session.id)
   return {
     id: session.id,
     cwd: session.cwd,

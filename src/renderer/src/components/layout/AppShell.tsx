@@ -69,6 +69,7 @@ import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { initServedToolsEvents } from '../../lib/served-events'
 import { installProviderSwitchRoad } from '../../lib/switch-provider'
 import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
+import { startServerChatSync } from '../../lib/server-chat-sync'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
 import { splitOngoingDead } from '../../lib/ongoing'
@@ -409,6 +410,7 @@ export function AppShell(): React.JSX.Element {
       // merge above was replaced by the saved layout and never drawn.
       document.documentElement.dataset.boot = 'complete'
       startDesktopFleet()
+      startServerChatSync(window.electronAPI)
 
       // Attached, the records are the SERVER's: the boot read above went over
       // IPC (main's own, empty attached) so the boot stayed fast and an early

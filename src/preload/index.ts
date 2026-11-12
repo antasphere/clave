@@ -1547,6 +1547,10 @@ const electronAPI = {
   // main answers over IPC (`records:adoption-scope`, `shared/adoption-scope.ts`).
   // By id the rule does not apply: the re-home path wants exactly those.
   listSessionRecords: (filter?: { ids?: string[] }) => listSessionRecords(filter),
+  adoptRunningChats: (): Promise<WireSessionRecord[]> =>
+    ipcRenderer.invoke('records:adopt-running-chats'),
+  onSessionRegistered: (callback: () => void) =>
+    onServerEventOf('session.registered', () => callback()),
 
   // The attached restore top-up: the server's surviving records for this
   // window, empty in-process (PRDCT-3376).

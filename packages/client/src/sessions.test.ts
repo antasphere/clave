@@ -65,13 +65,15 @@ describe('what the window keeps on a record (PRDCT-3526, round 2 of the verifier
     await client.keepOnRecord('t', { claudeSessionId: 'after-clear' })
     await client.keepOnRecord('t', { workspaceId: 'ws-2' })
     await client.keepOnRecord('t', { workspaceId: null })
+    await client.keepOnRecord('t', { window: { key: 'primary', expectedKey: null } })
     expect(payloads).toEqual([
       { id: 't', name: { displayName: 'A', userRenamed: true } },
       { id: 't', page: { url: 'http://127.0.0.1:1' } },
       { id: 't', page: null },
       { id: 't', claudeSessionId: 'after-clear' },
       { id: 't', workspaceId: 'ws-2' },
-      { id: 't', workspaceId: null }
+      { id: 't', workspaceId: null },
+      { id: 't', window: { key: 'primary', expectedKey: null } }
     ])
   })
 })
