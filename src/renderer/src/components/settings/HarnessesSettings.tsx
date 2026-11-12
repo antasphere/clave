@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import {
   ArrowDownTrayIcon,
@@ -349,12 +350,26 @@ function HarnessBlock({
           />
           Advanced: launch profiles
         </button>
+        {/* The fold opens inside the harness's own card, animated like every
+            fold of the house (420 ms), never as a block below it. */}
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="advanced"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              style={{ overflow: 'hidden' }}
+              data-harness-advanced-body={harness.id}
+            >
+              <div className="settings-card-inset">
+                <LaunchProfilesFamily family={harness.id} label={harness.name} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </SettingsCard>
-      {open && (
-        <div className="mt-3">
-          <LaunchProfilesFamily family={harness.id} label={harness.name} />
-        </div>
-      )}
     </section>
   )
 }

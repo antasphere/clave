@@ -35,6 +35,7 @@ import {
   ChevronRightIcon,
   BoltIcon,
   CheckIcon,
+  PlusIcon,
   SparklesIcon
 } from '@heroicons/react/24/outline'
 import { AgentPickerPopover } from '../agents/AgentPickerPopover'
@@ -209,6 +210,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     const status = agentStatuses.find((entry) => entry.id === id)
     return !status || status.lastCheckedAt === null || status.installed
   }
+  const installedCount = HARNESSES.filter((harness) => harnessInstalled(harness.id)).length
 
   const connectedRemoteLocations = locations.filter(
     (l) => l.type === 'remote' && l.status === 'connected'
@@ -689,6 +691,21 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                   topSource,
                   (next, options) => launchAgent(next, { kind: 'workspace-root' }, options),
                   { shortcuts: true, disabled: false }
+                )}
+                {topSource.serverId === LOCAL_SERVER_ID && installedCount > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      data-other-harness
+                      onSelect={() => {
+                        setMenuOpen(false)
+                        useSessionStore.getState().openSettings('agents')
+                      }}
+                    >
+                      <PlusIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+                      <span className="flex-1">Other harness…</span>
+                    </DropdownMenuItem>
+                  </>
                 )}
 
                 {pairedServers.map((server) => (

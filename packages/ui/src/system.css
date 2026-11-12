@@ -2595,6 +2595,12 @@ canvas[data-orb-state] {
     color 150ms,
     background-color 150ms;
 }
+/* A fold's body inside a card (Settings → Harnesses, Advanced): the card's
+   own paper, inset like a row, under the hairline the card draws between
+   its children. */
+.settings-card-inset {
+  padding: 0.75rem 1rem 1rem;
+}
 .settings-row-action:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);

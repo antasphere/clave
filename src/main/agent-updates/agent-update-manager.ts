@@ -128,7 +128,16 @@ export class AgentUpdateManager {
   }
 
   start(): void {
-    if (!this.deps.scheduled || !this.deps.supported) return
+    if (!this.deps.supported) return
+    // A dev build runs no timers (two apps upgrading one prefix is a race),
+    // but it still LOOKS once: the launcher and Settings → Harnesses list the
+    // harnesses the check found on the PATH (PRDCT-4423), and until a check
+    // has run every row reads as present. Found on 12 November 2026 when a
+    // Mac with Claude Code alone showed four rows.
+    if (!this.deps.scheduled) {
+      void this.detectAll()
+      return
+    }
     if (this.initialTimer || this.intervalTimer) return
     this.initialTimer = setTimeout(() => {
       this.initialTimer = null
@@ -175,6 +184,25 @@ export class AgentUpdateManager {
         const env = await this.deps.loginEnv()
         for (const target of AGENT_UPDATE_TARGETS) await this.inspect(target.id, env)
       }).then(() => (this.deps.getAutoUpdate() ? this.upgradeAvailable() : undefined))
+    )
+      .then(() => this.getState())
+      .finally(() => {
+        this.checkInFlight = null
+      })
+    this.checkInFlight = pass
+    return pass
+  }
+
+  /** Inspect every agent once, upgrading nothing: what is on the PATH and at
+   *  which version. The boot's pass in a build that runs no timers. */
+  detectAll(): Promise<AgentUpdatesState> {
+    if (!this.deps.supported) return Promise.resolve(this.getState())
+    if (this.checkInFlight) return this.checkInFlight
+    const pass = this.busyWhile(
+      this.enqueue(async () => {
+        const env = await this.deps.loginEnv()
+        for (const target of AGENT_UPDATE_TARGETS) await this.inspect(target.id, env)
+      })
     )
       .then(() => this.getState())
       .finally(() => {
