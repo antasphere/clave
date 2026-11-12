@@ -8,7 +8,13 @@ import { until } from './harness.mjs'
 
 /* Folio's player (PRDCT-4430), on the real app with the echo adapter (the
    agent answers with the reader's own words, here four paragraphs, so the
-   page has four blocks):
+   page has four blocks). The player's controls are the voice card's, in the
+   page's margin at its head:
+   - the card names its states in order: on the ElevenLabs path idle,
+     rewriting, creating ("Creating the voice with Ada"), playing, paused and
+     idle again once stopped; on the system voice idle, rewriting, playing,
+     with the why line ("Reading with the Mac's voice: no ElevenLabs on this
+     server"); before a click it says which voice will read;
    - the spoken rendering comes back block by block (CLAVE_E2E_SPOKEN_REPLY
      carries four numbered blocks, read by the real parser against the four
      blocks the page sends);
@@ -100,6 +106,26 @@ function startStub() {
  *  `utteranceMs` and records it. */
 async function stubPlayback(win, utteranceMs) {
   await win.evaluate((ms) => {
+    // Every state the voice card takes, as it takes it, and every step line.
+    window.__states = []
+    window.__lines = []
+    new MutationObserver(() => {
+      const card = document.querySelector('[data-testid="folio-voice-card"]')
+      const state = card?.getAttribute('data-voice-state') ?? null
+      if (state && window.__states.at(-1) !== state) window.__states.push(state)
+      for (const el of card?.querySelectorAll(
+        '[data-testid="folio-voice-line"], [data-testid="folio-voice-why"]'
+      ) ?? []) {
+        const text = el.textContent.replace(/\d+s$/, '').trim()
+        if (text && !window.__lines.includes(text)) window.__lines.push(text)
+      }
+    }).observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['data-voice-state']
+    })
     window.__played = []
     window.__paused = 0
     window.__spoken = []
@@ -163,8 +189,12 @@ async function waitLit(view, n, tries = 100) {
   return until(async () => ((await litBlock(view)) === n ? true : null), { tries, gapMs: 50 })
 }
 
+const CARD = '[data-testid="folio-voice-card"]'
+/** The card's Listen, idle. */
+const listen = (view) => view.locator(`${CARD} .folio-voice-listen`)
+
 async function pageReady(view, blocks = 4) {
-  const read = view.locator('.folio-foot .folio-read')
+  const read = listen(view)
   await until(async () => ((await read.count()) ? true : null))
   return until(async () => {
     const n = await view.locator('.folio-page .folio-block').count()
@@ -211,7 +241,14 @@ export async function run(t) {
         '["1","2","3","4"]'
       )
 
-      await view.getByRole('button', { name: 'Read aloud' }).click()
+      const card = view.locator(CARD)
+      t.equal(
+        'before a click, the card says which voice will read',
+        (await card.locator('[data-testid="folio-voice-source"]').innerText()).trim(),
+        'Ada · ElevenLabs on this Mac'
+      )
+      t.equal('the card is idle', await card.getAttribute('data-voice-state'), 'idle')
+      await listen(view).click()
       const played = await until(
         async () => {
           const urls = await win.evaluate(() => window.__played)
@@ -251,10 +288,11 @@ export async function run(t) {
         'pause pauses the element',
         (await win.evaluate(() => window.__paused)) > pausedBefore
       )
+      t.equal('and the control offers Play', await play.getAttribute('aria-label'), 'Play')
       t.equal(
-        'and the control offers Play',
-        (await play.innerText()).trim().split('\n')[0].trim(),
-        'Play'
+        'the card says the block it is on',
+        (await view.locator('[data-testid="folio-voice-block"]').innerText()).trim(),
+        'Block 1 of 4'
       )
       t.equal('block 1 stays lit while paused', await litBlock(view), 1)
 
@@ -300,9 +338,19 @@ export async function run(t) {
         gapMs: 25
       })
       t.equal('stop lights nothing', await litBlock(view), null)
+      t.check('and the card offers to listen again', (await listen(view).count()) === 1)
+      const states = await win.evaluate(() => window.__states)
+      t.equal(
+        'the card names its states in order on the ElevenLabs path',
+        JSON.stringify(states.slice(0, 5)),
+        JSON.stringify(['idle', 'rewriting', 'creating', 'playing', 'paused'])
+      )
+      t.equal('and is idle again once stopped', states.at(-1), 'idle')
+      const lines = await win.evaluate(() => window.__lines)
       t.check(
-        'and the control offers to read again',
-        (await view.getByRole('button', { name: 'Read aloud' }).count()) === 1
+        'the steps said their words',
+        lines.includes('Rewriting for the voice') && lines.includes('Creating the voice with Ada'),
+        lines
       )
     } finally {
       await chat.close()
@@ -336,7 +384,7 @@ export async function run(t) {
       )
       await ask(view, LONG)
       assert.ok(await pageReady(view, 12), 'the page shows its twelve blocks')
-      await view.getByRole('button', { name: 'Read aloud' }).click()
+      await listen(view).click()
       t.check('play lights block 1', !!(await waitLit(view, 1)), await litBlock(view))
       await until(async () => (stub.speaks().length >= 2 ? true : null), { tries: 60, gapMs: 50 })
       await settle()
@@ -380,7 +428,7 @@ export async function run(t) {
 
       // Five quick arrow presses: the light moves five ticks at once, the
       // server is asked once, for the tick they end on (verifier round 4).
-      const player = view.locator('.folio-player')
+      const player = view.locator(CARD)
       await player.locator('[data-testid="folio-scrub"]').focus()
       const beforeKeys = stub.speaks().length
       for (let i = 0; i < 5; i++) await win.keyboard.press('ArrowLeft', { delay: 20 })
@@ -409,7 +457,7 @@ export async function run(t) {
       })
       const received = stub.speaks().length
       const playedBefore = await win.evaluate(() => window.__played.length)
-      await view.getByRole('button', { name: 'Read aloud' }).click()
+      await listen(view).click()
       t.check('read again lights block 1', !!(await waitLit(view, 1)), await litBlock(view))
       const replayed = await until(
         async () =>
@@ -476,7 +524,18 @@ export async function run(t) {
       await stubPlayback(win, 900)
       await ask(view, ANSWER)
       assert.ok(await pageReady(view), 'the page shows its four blocks')
-      await view.getByRole('button', { name: 'Read aloud' }).click()
+      const card = view.locator(CARD)
+      const source = await until(async () => {
+        const said = card.locator('[data-testid="folio-voice-source"]')
+        return (await said.count()) ? (await said.innerText()).trim() : null
+      })
+      t.equal("before a click, the card says the Mac's voice will read", source, "The Mac's voice")
+      t.equal(
+        'and why',
+        (await card.locator('[data-testid="folio-voice-why"]').innerText()).trim(),
+        'No ElevenLabs on this server'
+      )
+      await listen(view).click()
       const spoken = await until(
         async () => {
           const said = await win.evaluate(() => window.__spoken)
@@ -509,6 +568,21 @@ export async function run(t) {
         'the bar has four ticks on the system voice too',
         await view.locator('[data-testid="folio-scrub-tick"]').count(),
         4
+      )
+      t.equal(
+        'the card says why the Mac reads it',
+        (await card.locator('[data-testid="folio-voice-why"]').innerText()).trim(),
+        "Reading with the Mac's voice: no ElevenLabs on this server"
+      )
+      t.equal(
+        'the card says it reads with the system voice',
+        await card.getAttribute('data-voice'),
+        'system'
+      )
+      t.equal(
+        'the card names its states in order on the system voice',
+        JSON.stringify((await win.evaluate(() => window.__states)).slice(0, 3)),
+        JSON.stringify(['idle', 'rewriting', 'playing'])
       )
     } finally {
       await chat.close()

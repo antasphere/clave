@@ -6,10 +6,11 @@
 //   - the page head while its title is written (the loader), and the title
 //     caught mid-reveal (the animation frames held: the page's own
 //     requestAnimationFrame is stubbed for the length of the shot);
-//   - the read control preparing the spoken version; the player playing with
-//     block 3 lit and the bar on tick 3; the player paused; the read control
-//     once a page was read by the system voice (its hover title in the
-//     caption: a native tooltip is drawn by the OS, never in a screenshot);
+//   - the voice card in the page's margin, in its states: idle (which voice
+//     will read), rewriting for the voice, creating the voice, playing with
+//     block 3 lit and the bar on tick 3 (the whole sheet, and the card
+//     alone), paused; then on the Mac's voice: idle with why, playing with
+//     the why line, and done (Listen again);
 //   - Settings → Integrations: the card empty, checked, with a voice chosen,
 //     and the Preview playing.
 //
@@ -64,6 +65,7 @@ const shots = []
 /** The stub: the account and the voices for the good key, a voice's own
  *  record with its preview on the stub, and speech as a second of silence. */
 function startStub() {
+  const state = { holdSpeech: 0 }
   const server = createServer((req, res) => {
     const chunks = []
     req.on('data', (c) => chunks.push(c))
@@ -97,8 +99,15 @@ function startStub() {
       if (pathname === '/v2/voices') return json(200, { voices, has_more: false })
       const one = /^\/v1\/voices\/([^/]+)$/.exec(pathname)
       if (one) return json(200, voices.find((v) => v.voice_id === one[1]) ?? {})
-      if (req.method === 'POST' && /^\/v1\/text-to-speech\/[^/]+(\/stream)?$/.test(pathname))
-        return res.writeHead(200, { 'content-type': 'audio/mpeg' }).end(SILENCE)
+      if (req.method === 'POST' && /^\/v1\/text-to-speech\/[^/]+(\/stream)?$/.test(pathname)) {
+        // The first ask held a while, so the card's "creating" is shot.
+        const hold = state.holdSpeech
+        state.holdSpeech = 0
+        return setTimeout(
+          () => res.writeHead(200, { 'content-type': 'audio/mpeg' }).end(SILENCE),
+          hold
+        )
+      }
       return json(404, {})
     })
   })
@@ -106,6 +115,7 @@ function startStub() {
     server.listen(0, '127.0.0.1', () =>
       resolve({
         url: `http://127.0.0.1:${server.address().port}`,
+        state,
         close: () => new Promise((done) => server.close(() => done()))
       })
     )
@@ -114,7 +124,8 @@ function startStub() {
 
 /** The page's audio and system voice, stubbed: an element plays and never
  *  ends by itself (the player stays where it is put); the system voice speaks
- *  each utterance for a quarter of a second. */
+ *  each utterance for a quarter of a second, once `window.__holdVoice` is
+ *  let go (held, the card stays on the block it is on). */
 async function stubPlayback(win) {
   await win.evaluate(() => {
     HTMLMediaElement.prototype.play = () => Promise.resolve()
@@ -124,10 +135,13 @@ async function stubPlayback(win) {
       pending: false,
       paused: false,
       speak(utterance) {
+        const at = (window.__voiceAt = Math.max(window.__voiceAt ?? 0, Date.now()) + 10)
         setTimeout(() => {
           utterance.onstart?.()
-          setTimeout(() => utterance.onend?.(), 250)
-        }, 10)
+          const end = () =>
+            window.__holdVoice ? setTimeout(end, 50) : setTimeout(() => utterance.onend?.(), 250)
+          end()
+        }, at - Date.now())
       },
       cancel: () => undefined,
       pause: () => undefined,
@@ -278,19 +292,44 @@ const REPLY = `<spoken>${SPOKEN.map((text, i) => `<b n="${i + 1}">${text}</b>`).
       { tries: 100, gapMs: 50 }
     )
 
-    // The read control preparing the spoken version.
+    // The voice card, idle: which voice will read, before a click.
     const page = view.locator('.folio-page')
-    const foot = page.locator('.folio-foot')
-    const read = foot.locator('.folio-read')
-    await read.waitFor()
-    await read.click()
-    await foot.locator('.folio-read[data-phase="preparing"] .folio-loader').waitFor()
-    const preparingTitle = await foot.locator('.folio-read').getAttribute('title')
+    const top = page.locator('.folio-top')
+    const card = page.locator('[data-testid="folio-voice-card"]')
+    const cardIn = (state) =>
+      until(async () => ((await card.getAttribute('data-voice-state')) === state ? true : null), {
+        tries: 300,
+        gapMs: 50
+      })
+    await card.locator('.folio-voice-listen').waitFor()
+    await until(async () =>
+      (await card.locator('[data-testid="folio-voice-source"]').count()) ? true : null
+    )
     await shoot(
       win,
-      'read-preparing',
-      foot,
-      `The read control while the spoken version is prepared: Preparing and the loader; a click stops it. Hover title: “${preparingTitle}”.`
+      'card-idle',
+      top,
+      `The voice card idle, in the margin beside the head: the figure still, Listen, and which voice will read (“${(await card.locator('[data-testid="folio-voice-source"]').innerText()).trim()}”).`
+    )
+
+    // Rewriting for the voice (the spoken version takes its time here).
+    stub.state.holdSpeech = 12000
+    await card.locator('.folio-voice-listen').click()
+    assert.ok(await cardIn('rewriting'), 'the card rewrites')
+    await shoot(
+      win,
+      'card-rewriting',
+      card,
+      'Step 1 of 2: “Rewriting for the voice”, the pen going over the line being read in the figure, the first rule being written, the seconds, Cancel.'
+    )
+
+    // Creating the voice (the stub holds the first part).
+    assert.ok(await cardIn('creating'), 'the card creates the voice')
+    await shoot(
+      win,
+      'card-creating',
+      card,
+      `Step 2 of 2: “${(await card.locator('[data-testid="folio-voice-line"] span').first().innerText()).trim()}”, the first rule filled, the wave drawing itself.`
     )
 
     // The player: block 3 lit, the bar on tick 3.
@@ -308,28 +347,34 @@ const REPLY = `<spoken>${SPOKEN.map((text, i) => `<b n="${i + 1}">${text}</b>`).
       'a click on block 3 reads from it'
     )
     await page.hover({ position: { x: 4, y: 4 } })
-    const playingTitle = await foot.locator('.folio-read').getAttribute('title')
     await shoot(
       win,
       'player-playing',
       view.locator('.folio-sheet'),
-      `The player playing with block 3 lit (a wash of the accent and the pen’s rule in the margin) and the bar on tick 3 (the ringed dot where the voice is). Hover title: “${playingTitle}”.`
+      'Playing, the whole page: block 3 lit (a wash of the accent and the pen’s rule in the margin), the voice card at the head of the margin with the player, the foot keeping only Copy the answer.'
     )
-    await shoot(win, 'player-playing-foot', foot, 'The same player, the foot alone, at full size.')
+    await shoot(
+      win,
+      'card-playing',
+      card,
+      'The card playing: Pause and Stop, “Block 3 of 4”, the bar on tick 3 (the ringed dot where the voice is), the voice and the time; the wave breathes.'
+    )
 
     // Paused.
-    const play = foot.locator('[data-testid="folio-play"]')
+    const play = card.locator('[data-testid="folio-play"]')
     await play.click()
-    await until(async () => ((await play.getAttribute('data-state')) === 'paused' ? true : null), {
-      tries: 60,
-      gapMs: 50
-    })
+    assert.ok(await cardIn('paused'), 'the card is paused')
     await page.hover({ position: { x: 4, y: 4 } })
-    await shoot(win, 'player-paused', foot, 'The player paused: Play offered, block 3 still lit.')
+    await shoot(
+      win,
+      'card-paused',
+      card,
+      'Paused: Play offered, block 3 still lit, the figure still.'
+    )
 
-    // The system voice: Stop, the key removed, a second page read (the first
+    // The Mac's voice: Stop, the key removed, a second page read (the first
     // page's parts are kept, and would play again without asking).
-    await foot.locator('[data-testid="folio-stop"]').click()
+    await card.locator('[data-testid="folio-stop"]').click()
     await win.evaluate(() => window.electronAPI.elevenLabsRemove())
     // Its own spoken words: a part already heard is kept by its words, and
     // would play again in the ElevenLabs voice without asking. The server is
@@ -340,25 +385,51 @@ const REPLY = `<spoken>${SPOKEN.map((text, i) => `<b n="${i + 1}">${text}</b>`).
     await input.fill(SECOND)
     await input.press('Enter')
     const second = view.locator('.folio-page[aria-label^="Page 2"]')
-    const secondFoot = second.locator('.folio-foot')
-    await secondFoot.locator('.folio-read').waitFor({ timeout: 30000 })
-    await secondFoot.getByRole('button', { name: 'Read aloud' }).click()
-    const note = await until(
-      async () => {
-        const control = secondFoot.locator('.folio-read')
-        if ((await control.getAttribute('data-phase')) !== null) return null
-        const said = await control.getAttribute('title')
-        return said && /System voice/.test(said) ? said : null
-      },
-      { tries: 600, gapMs: 50 }
+    const secondCard = second.locator('[data-testid="folio-voice-card"]')
+    await secondCard.locator('.folio-voice-listen').waitFor({ timeout: 30000 })
+    await until(async () =>
+      (await secondCard.locator('[data-testid="folio-voice-why"]').count()) ? true : null
     )
-    assert.ok(note, 'the read control says the page was read by the system voice')
-    await secondFoot.locator('.folio-read').hover()
     await shoot(
       win,
-      'system-voice',
-      secondFoot,
-      `The read control, hovered, once the page was read by the system voice. Its hover title: “${note}”.`
+      'card-idle-mac',
+      secondCard,
+      `Idle on a server with no ElevenLabs: “${(await secondCard.locator('[data-testid="folio-voice-source"]').innerText()).trim()}”, and why under it: “${(await secondCard.locator('[data-testid="folio-voice-why"]').innerText()).trim()}”.`
+    )
+    await win.evaluate(() => {
+      window.__holdVoice = true
+    })
+    await secondCard.locator('.folio-voice-listen').click()
+    assert.ok(
+      await until(
+        async () =>
+          (await secondCard.getAttribute('data-voice-state')) === 'playing' ? true : null,
+        { tries: 600, gapMs: 50 }
+      ),
+      "the Mac's voice plays"
+    )
+    await shoot(
+      win,
+      'card-mac-voice',
+      secondCard,
+      `Playing with the Mac’s voice: the why line in the accent of a note (“${(await secondCard.locator('[data-testid="folio-voice-why"]').innerText()).trim()}”), never an error.`
+    )
+    await win.evaluate(() => {
+      window.__holdVoice = false
+    })
+    assert.ok(
+      await until(
+        async () => ((await secondCard.getAttribute('data-voice-state')) === 'idle' ? true : null),
+        { tries: 600, gapMs: 50 }
+      ),
+      'the reading ends'
+    )
+    await secondCard.locator('.folio-voice-listen').hover()
+    await shoot(
+      win,
+      'card-done',
+      secondCard,
+      `Done: back to idle, “${(await secondCard.locator('.folio-voice-listen').innerText()).trim()}”, the voice and why kept.`
     )
   } finally {
     await chat.close()

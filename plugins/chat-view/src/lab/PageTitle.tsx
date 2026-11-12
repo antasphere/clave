@@ -22,7 +22,7 @@ import type { Page } from './pages'
  *  pen going back over it, the accent stroke written left to right and lifted
  *  off from the left, over and over, at the pace of the pen at the foot of a
  *  page being written (`.folio-pen`). Said after a title being written and in
- *  the read control while the spoken version is prepared. For a reader who
+ *  the voice card while a step of the reading runs. For a reader who
  *  asked for no motion, the stroke stands still, half written. */
 export function FolioLoader(): React.JSX.Element {
   return (

@@ -193,10 +193,12 @@ export function voiceChoices(
   voices: ReadonlyArray<ElevenLabsVoice>,
   chosen: { voiceId: string | null; voiceName: string | null }
 ): Choice[] {
-  const choices = voices.map((voice) => ({
-    value: voice.voiceId,
-    label: [voice.name, ...Object.values(voice.labels)].join(' · ')
-  }))
+  const choices: Choice[] = voices.map((voice) => {
+    const hint = Object.values(voice.labels).join(' · ')
+    return hint
+      ? { value: voice.voiceId, label: voice.name, hint }
+      : { value: voice.voiceId, label: voice.name }
+  })
   if (chosen.voiceId && !voices.some((v) => v.voiceId === chosen.voiceId))
     choices.unshift({ value: chosen.voiceId, label: chosen.voiceName ?? chosen.voiceId })
   return choices

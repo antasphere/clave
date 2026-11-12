@@ -40,7 +40,20 @@ export interface Reading {
   fallback?: DigestFailure | 'missing'
   voice?: 'elevenlabs' | 'system'
   why?: string
+  /** Whether the system voice reads because the server has no ElevenLabs
+   *  to offer (`unset`) or because ElevenLabs was asked and failed. */
+  whyKind?: VoiceWhy['kind']
+  /** While preparing, the step the reading is at (PRDCT-4430, the voice
+   *  card): the answer `rewriting` for the voice (the spoken rendering), then
+   *  `creating` the voice (the first part asked of ElevenLabs); null once
+   *  the voice speaks. `since` is when the step began. */
+  step: 'rewriting' | 'creating' | null
+  since: number
 }
+
+/** What a pane last heard of its tab's voice, from a reading: the server's
+ *  ElevenLabs voice spoke, or the system voice read, and why. */
+export type HeardVoice = { voice: 'elevenlabs' } | { voice: 'system'; why: VoiceWhy }
 
 /** The reading being prepared: nothing played yet, the block asked to start
  *  from (if any) lit at once. */
@@ -57,7 +70,9 @@ function preparingReading(key: string, from: number | null): Reading {
     tick: 0,
     fraction: 0,
     elapsedMs: 0,
-    totalMs: null
+    totalMs: null,
+    step: 'rewriting',
+    since: Date.now()
   }
 }
 
@@ -83,6 +98,8 @@ export function readingAt(
     fraction: place.fraction,
     elapsedMs: 0,
     totalMs: null,
+    step: null,
+    since: 0,
     ...extra
   }
 }
@@ -160,13 +177,14 @@ export function voiceWhy(reason: SpeechFailureReason | undefined): VoiceWhy {
   }
 }
 
-/** What the control says once a page was read by the system voice, or once
- *  the ElevenLabs voice stopped part way. Pure. */
+/** What the voice card says once a page was read by the Mac's voice (under
+ *  "The Mac's voice" when the server has none to offer), or once the
+ *  ElevenLabs voice stopped part way. Pure. */
 export function voiceNote(why: VoiceWhy, stopped = false): string {
   if (stopped) return `ElevenLabs stopped: ${why.words}`
   return why.kind === 'unset'
-    ? `System voice: ${why.words}`
-    : `Read with the system voice: ${why.words}`
+    ? why.words.charAt(0).toUpperCase() + why.words.slice(1)
+    : `Read with the Mac's voice: ${why.words}`
 }
 
 /** How long a pane remembers that its server has no ElevenLabs to offer (no
@@ -207,8 +225,21 @@ export function integrationsChanged(
 ): boolean {
   if (before === after) return false
   const machines = new Set([...Object.keys(before), ...Object.keys(after)])
-  for (const machine of machines)
-    if ((before[machine]?.elevenLabs ?? null) !== (after[machine]?.elevenLabs ?? null)) return true
+  for (const machine of machines) {
+    const was = before[machine]?.elevenLabs ?? null
+    const is = after[machine]?.elevenLabs ?? null
+    if (was === is) continue
+    // The same answer read again (the voice card reads this Mac's on each
+    // page) is no change: only the key, the voice or the model are.
+    if (
+      !was ||
+      !is ||
+      was.configured !== is.configured ||
+      was.voiceId !== is.voiceId ||
+      was.modelId !== is.modelId
+    )
+      return true
+  }
   return false
 }
 
@@ -234,6 +265,10 @@ export function useReadAloud(source: ReadSource): {
   /** The pages last read by the system voice, or whose ElevenLabs read
    *  stopped, and why: the control says it on hover. */
   notes: Record<string, string>
+  /** The pages read to their end in this pane: the card offers them again. */
+  heardPages: Record<string, true>
+  /** What the pane last heard of its tab's voice, null before any reading. */
+  heard: HeardVoice | null
   /** Read a page aloud, from its first block or from block `from`. */
   read: (key: string, markdown: string, from?: number) => void
   /** Read from block `n`: a reading of that page moves there, any other
@@ -253,6 +288,8 @@ export function useReadAloud(source: ReadSource): {
   const [reading, setReading] = useState<Reading | null>(null)
   const [fallbacks, setFallbacks] = useState<Record<string, DigestFailure | 'missing'>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
+  const [heardPages, setHeardPages] = useState<Record<string, true>>({})
+  const [heard, setHeard] = useState<HeardVoice | null>(null)
   const sourceRef = useRef(source)
   sourceRef.current = source
   // The generation of the reading in flight: an utterance or a part of a
@@ -355,6 +392,7 @@ export function useReadAloud(source: ReadSource): {
         if (active.current === run) active.current = null
         release()
         setReading(null)
+        setHeardPages((now) => (now[key] ? now : { ...now, [key]: true }))
       }
 
       const speakSystem = (
@@ -364,8 +402,14 @@ export function useReadAloud(source: ReadSource): {
         why: VoiceWhy
       ): void => {
         note(key, voiceNote(why))
+        setHeard({ voice: 'system', why })
         if (!parts.length || !synth || !systemVoice) return done()
-        const extra = { voice: 'system' as const, why: why.words, ...(fallback && { fallback }) }
+        const extra = {
+          voice: 'system' as const,
+          why: why.words,
+          whyKind: why.kind,
+          ...(fallback && { fallback })
+        }
         // Each block is its own run of utterances, so the block in play is
         // known; a seek cancels and speaks again from the asked block.
         let step = 0
@@ -424,6 +468,7 @@ export function useReadAloud(source: ReadSource): {
         fallback: DigestFailure | 'missing' | undefined
       ): void => {
         note(key, null)
+        setHeard({ voice: 'elevenlabs' })
         const extra = { voice: 'elevenlabs' as const, ...(fallback && { fallback }) }
         const player = (queue.current ??= new AudioQueue())
         const stateNow = (): Reading['state'] => (player.state === 'paused' ? 'paused' : 'playing')
@@ -502,7 +547,12 @@ export function useReadAloud(source: ReadSource): {
             words: 'this app plays no audio'
           })
         // The first part decides the voice: ElevenLabs when the server speaks
-        // it, the system voice (and why) when it cannot.
+        // it, the system voice (and why) when it cannot. The card says the
+        // voice is being created unless this window already knows the server
+        // has none to offer (this Mac's status, read by the card).
+        const status = useIntegrationsStore.getState().byMachine[ownerOf(sessionId)]?.elevenLabs
+        if (!status || (status.configured && status.voiceId))
+          patch((now) => ({ ...now, step: 'creating', since: Date.now() }))
         const first = speakCached(sessionId, parts[start].text)
         void first.then((spoken) => {
           if (!current()) return
@@ -568,7 +618,20 @@ export function useReadAloud(source: ReadSource): {
       }
     }
   }, [synth])
-  return { supported, reading, fallbacks, notes, read, readFrom, pause, resume, seekBlock, stop }
+  return {
+    supported,
+    reading,
+    fallbacks,
+    notes,
+    heardPages,
+    heard,
+    read,
+    readFrom,
+    pause,
+    resume,
+    seekBlock,
+    stop
+  }
 }
 
 /** One part spoken by the server the tab runs on. A call that fails is an

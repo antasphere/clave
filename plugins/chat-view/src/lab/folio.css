@@ -268,11 +268,23 @@
   gap: calc(var(--spacing) * 2);
   padding-bottom: calc(var(--spacing) * 5);
   border-bottom: thin solid var(--border-subtle-color);
-  max-width: calc(100% - var(--folio-margin) - var(--spacing) * 8);
+}
+/* The page's top: the head, and in the margin beside it the voice card,
+   on the same columns as the lines under them. */
+.folio-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--folio-margin);
+  column-gap: calc(var(--spacing) * 8);
+  row-gap: calc(var(--spacing) * 4);
+  align-items: start;
+}
+.folio-top > .folio-head {
+  grid-column: 1;
+  min-width: 0;
 }
 @container folio (max-width: 40rem) {
-  .folio-head {
-    max-width: none;
+  .folio-top {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .folio-eyebrow {
@@ -340,7 +352,7 @@
 
 /* The quiet loader (FolioLoader): a short ruled line and the pen going back
    over it, drawn in the `.chat-drawing` hand. After a title being written,
-   and in the read control while the spoken version is prepared. The stroke
+   and on the voice card while a step of the reading runs. The stroke
    is measured in its own length (pathLength 1): written left to right, then
    lifted off from the left, at the pace of the pen at a page's foot. */
 .chat-drawing.folio-loader {
@@ -354,9 +366,6 @@
 .folio-loader .folio-loader-stroke {
   stroke-dasharray: 1;
   stroke-dashoffset: 0.4;
-}
-.folio-action .folio-loader {
-  margin-left: 0;
 }
 .folio-voice-toggle .folio-loader {
   position: absolute;
@@ -614,7 +623,7 @@
   font-size: var(--text-xs);
 }
 
-/* The page's foot: read it aloud, copy it, how much work it took. */
+/* The page's foot: copy the answer, how much work it took. */
 .folio-foot {
   display: flex;
   flex-wrap: wrap;
@@ -654,41 +663,17 @@
 .folio-action[data-on='true'] {
   color: var(--color-accent);
 }
-.folio-action-count {
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-/* The player (PRDCT-4430): play and pause, stop, and the bar by block. The
-   bar is the spine's sibling, in the same hand and the same weights: a thin
-   ruled line, one tick per block (the spine's 1.5px ticks), the part read
-   drawn over it in the accent (the ONE line), and where the voice is, the
-   ringed dot of the drawings (`.chat-drawing .ring` over a dot in the
-   accent). The fill and the dot move on a short ease; a drag moves them
-   with the pointer, at once; under reduced motion everything is instant. */
-.folio-player {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(var(--spacing) * 0.5);
-  min-width: 0;
-}
-.folio-player[data-state='playing'],
-.folio-player[data-state='paused'] {
-  flex: 1 1 100%;
-}
-.folio-stop {
-  width: var(--control-h-sm);
-  justify-content: center;
-  padding: 0;
-  margin-left: 0;
-}
+/* The player's bar (PRDCT-4430), on the voice card: the spine's sibling, in
+   the same hand and the same weights: a thin ruled line, one tick per block
+   (the spine's 1.5px ticks), the part read drawn over it in the accent (the
+   ONE line), and where the voice is, the ringed dot of the drawings
+   (`.chat-drawing .ring` over a dot in the accent). The fill and the dot
+   move on a short ease; a drag moves them with the pointer, at once; under
+   reduced motion everything is instant. */
 .folio-player-bar {
   display: flex;
-  flex: 1 1 calc(var(--spacing) * 40);
   align-items: center;
-  gap: calc(var(--spacing) * 3);
   min-width: 0;
-  padding-left: calc(var(--spacing) * 2.5);
 }
 .folio-scrub {
   --ticks: 1;
@@ -698,7 +683,7 @@
   display: grid;
   grid-template-columns: repeat(var(--ticks), 1fr);
   flex: 1 1 auto;
-  min-width: calc(var(--spacing) * 16);
+  min-width: 0;
   height: var(--control-h-sm);
   cursor: pointer;
   touch-action: none;
@@ -800,11 +785,9 @@
 }
 .folio-player-time {
   flex-shrink: 0;
-  min-width: calc(var(--spacing) * 18);
+  margin-left: auto;
   color: var(--text-tertiary);
-  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 /* The page by blocks: each block of the answer its own element, spaced as
@@ -962,4 +945,271 @@
 }
 .folio-composer {
   max-width: var(--folio-sheet);
+}
+
+/* The voice card (VoiceCard.tsx, PRDCT-4430): in the page's margin at its
+   head, a sheet of paper laid in the margin, the hairline in the shadow as
+   the desk's other paper. The figure is the Integrations card's, at the
+   margin's size, and it says the step: the pen goes over the line being
+   read while the answer is rewritten, the wave draws itself while the voice
+   is created, it breathes while the voice plays, and it is still when idle
+   or paused. The two steps are two short rules the pen fills. The Mac's
+   voice is said in the accent of a note, never as an error. */
+.folio-voice {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding: calc(var(--spacing) * 3);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-raised);
+  box-shadow: 0 0 0 calc(var(--spacing) / 8) var(--edge-color);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  transition: box-shadow var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+  }
+}
+.folio-voice:not([data-voice-state='idle']) {
+  box-shadow:
+    0 0 0 calc(var(--spacing) / 8) var(--edge-color),
+    var(--raised-shadow);
+}
+@container folio (max-width: 40rem) {
+  .folio-voice {
+    grid-column: 1;
+    grid-row: 2;
+    max-width: calc(var(--folio-margin) * 1.4);
+  }
+}
+.folio-voice-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-drawing.folio-voice-figure {
+  width: calc(var(--spacing) * 22);
+  height: auto;
+  flex-shrink: 0;
+}
+.folio-voice-title {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+}
+.folio-voice-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  min-width: 0;
+}
+.folio-voice-listen,
+.folio-voice-control,
+.folio-voice-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 1.5);
+  height: var(--control-h-sm);
+  border-radius: var(--radius-control);
+  transition:
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration);
+}
+.folio-voice-listen {
+  padding: 0 calc(var(--spacing) * 2.5) 0 calc(var(--spacing) * 2);
+  margin-left: calc(var(--spacing) * -1);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+.folio-voice-control {
+  width: var(--control-h-sm);
+  color: var(--text-secondary);
+}
+.folio-voice-control[data-state='playing'],
+.folio-voice-control[data-state='paused'] {
+  color: var(--color-accent);
+}
+.folio-voice-cancel {
+  align-self: flex-start;
+  padding: 0 calc(var(--spacing) * 2);
+  margin-left: calc(var(--spacing) * -2);
+  color: var(--text-tertiary);
+}
+.folio-voice :is(.folio-voice-listen, .folio-voice-control) > svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+.folio-voice-listen:hover,
+.folio-voice-control:hover,
+.folio-voice-cancel:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.folio-voice :is(button, [role='slider']):focus-visible {
+  outline: calc(var(--spacing) * 0.5) solid
+    color-mix(in oklab, var(--color-accent) 45%, transparent);
+  outline-offset: calc(var(--spacing) * 0.25);
+}
+.folio-voice-ready {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+.folio-voice-block {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.folio-voice-source {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  margin: 0;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.folio-voice-why {
+  margin: 0;
+  padding-left: calc(var(--spacing) * 2);
+  border-left: calc(var(--spacing) * 0.5) solid
+    color-mix(in oklab, var(--color-accent) 55%, transparent);
+  color: color-mix(in oklab, var(--color-accent) 80%, var(--text-primary));
+}
+.folio-voice-why[data-tone='quiet'] {
+  border-left-color: var(--border-subtle-color);
+  color: var(--text-tertiary);
+}
+.folio-voice-auto {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+.folio-voice-line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  margin: 0;
+  color: var(--text-primary);
+}
+.folio-voice-line > .folio-loader {
+  margin-left: 0;
+}
+.folio-voice-seconds {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two steps: two short rules, the one running written by the pen over
+   and over, the one done filled, the one to come a hairline. */
+.folio-voice-steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--spacing) * 1.5);
+  margin: 0;
+  padding: calc(var(--spacing) * 1) 0;
+  list-style: none;
+}
+.folio-voice-step {
+  position: relative;
+  height: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--folio-ink) 14%, transparent);
+  overflow: hidden;
+}
+.folio-voice-step::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent);
+  transform-origin: left center;
+  scale: 0 1;
+}
+.folio-voice-step[data-done='true']::after {
+  scale: 1 1;
+  background-color: color-mix(in oklab, var(--color-accent) 55%, transparent);
+}
+.folio-voice-step[data-lit='true']::after {
+  scale: 0.5 1;
+}
+
+/* The figure says the step. */
+.folio-voice-pen {
+  opacity: 0;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0.4;
+}
+.folio-voice[data-voice-state='rewriting'] .folio-voice-pen {
+  opacity: 1;
+}
+.folio-voice[data-voice-state='rewriting'] .folio-voice-read {
+  opacity: 0;
+}
+.folio-voice-wave {
+  transform-box: fill-box;
+  transform-origin: left center;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.folio-voice[data-voice-state='idle'] .folio-voice-wave,
+.folio-voice[data-voice-state='rewriting'] .folio-voice-wave,
+.folio-voice[data-voice-state='paused'] .folio-voice-wave {
+  opacity: 0.45;
+}
+.folio-voice[data-voice-state='creating'] .folio-voice-wave {
+  stroke-dashoffset: 0.4;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .folio-voice[data-voice-state='rewriting'] .folio-voice-pen,
+  .folio-voice[data-voice-state='creating'] .folio-voice-wave {
+    animation: folio-loader-write var(--beat-pen) ease-in-out infinite;
+  }
+  .folio-voice[data-voice-state='playing'] .folio-voice-wave {
+    animation: folio-voice-breathe var(--beat-breathe) ease-in-out infinite;
+  }
+  .folio-voice[data-voice-state='playing'] .folio-voice-pulse {
+    animation: chat-drawing-pulse var(--beat-breathe) var(--ease-out-expo) infinite;
+  }
+  .folio-voice-step[data-lit='true']::after {
+    animation: folio-voice-fill var(--beat-pen) ease-in-out infinite;
+  }
+}
+@keyframes folio-voice-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    scale: 1 1;
+  }
+  50% {
+    opacity: 0.6;
+    scale: 1 0.55;
+  }
+}
+@keyframes folio-voice-fill {
+  0% {
+    scale: 0 1;
+    translate: 0 0;
+  }
+  55% {
+    scale: 1 1;
+    translate: 0 0;
+  }
+  100% {
+    scale: 0 1;
+    translate: 100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .folio-voice {
+    transition: none;
+    @starting-style {
+      opacity: 1;
+    }
+  }
 }

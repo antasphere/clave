@@ -13,13 +13,15 @@ import { until } from './harness.mjs'
      voice set meanwhile (through the window's bridge, so the pane stays
      mounted and the Integrations page's store never tells it) are used by
      the first page read once the memory has run out;
-   - with the key and the voice set, "Read aloud" prepares the spoken
-     version, asks the server for its audio and plays it through an audio
-     element; the control says "Reading with ElevenLabs"; ElevenLabs was
-     asked with the key, in its header, for the spoken text;
-   - ElevenLabs answering 402 (the credits spent): the system voice reads the
-     page and the control says why (a page with words not spoken before: the
-     pane keeps the parts it had, and plays those without asking).
+   - with the key and the voice set, the voice card says "Basil · ElevenLabs
+     on this Mac" before a click; Listen rewrites the answer for the voice,
+     creates the voice ("Creating the voice with Basil"), asks the server for
+     its audio and plays it through an audio element; ElevenLabs was asked
+     with the key, in its header, for the spoken text;
+   - ElevenLabs answering 402 (the credits spent): the Mac's voice reads the
+     page and the card says why in one line, then says it once read (a page
+     with words not spoken before: the pane keeps the parts it had, and plays
+     those without asking).
    ElevenLabs is a stub on a local port (`CLAVE_ELEVENLABS_BASE_URL`) that
    answers a second of silence; every key is invented. In the page, audio
    playback is stubbed (`play` resolves and `ended` fires 100 ms later) and so
@@ -88,7 +90,8 @@ async function stubPlayback(win) {
   await win.evaluate(() => {
     window.__played = []
     window.__spoken = []
-    window.__titles = []
+    window.__states = []
+    window.__lines = []
     HTMLMediaElement.prototype.play = function play() {
       window.__played.push(this.src)
       setTimeout(() => this.dispatchEvent(new Event('ended')), 100)
@@ -116,17 +119,24 @@ async function stubPlayback(win) {
       removeEventListener: () => undefined
     }
     Object.defineProperty(window, 'speechSynthesis', { value: stub, configurable: true })
-    // Every title the read control takes, as it takes it: a reading of a
-    // tenth of a second is over before a poll would see it.
+    // Every state the voice card takes and every line it says, as it says
+    // it: a reading of a tenth of a second is over before a poll would see it.
     new MutationObserver(() => {
-      const control = document.querySelector('.folio-foot .folio-read')
-      const title = control?.getAttribute('title') ?? null
-      if (title && window.__titles.at(-1) !== title) window.__titles.push(title)
+      const card = document.querySelector('[data-testid="folio-voice-card"]')
+      const state = card?.getAttribute('data-voice-state') ?? null
+      if (state && window.__states.at(-1) !== state) window.__states.push(state)
+      for (const el of card?.querySelectorAll(
+        '[data-testid="folio-voice-line"], [data-testid="folio-voice-why"], [data-testid="folio-voice-source"]'
+      ) ?? []) {
+        const text = el.textContent.replace(/\d+s$/, '').trim()
+        if (text && !window.__lines.includes(text)) window.__lines.push(text)
+      }
     }).observe(document.body, {
       subtree: true,
       childList: true,
+      characterData: true,
       attributes: true,
-      attributeFilter: ['title']
+      attributeFilter: ['data-voice-state']
     })
   })
 }
@@ -161,10 +171,11 @@ export async function run(t) {
     await stubPlayback(win)
 
     // ── (0) No key: the system voice reads, and the pane remembers, briefly ──
+    const card = view.locator('[data-testid="folio-voice-card"]')
+    const listen = card.locator('.folio-voice-listen')
     await ask(view, 'what is the weather like in namur')
-    const first = view.locator('.folio-foot .folio-read')
-    await until(async () => ((await first.count()) ? true : null))
-    await view.getByRole('button', { name: 'Read aloud' }).click()
+    await until(async () => ((await listen.count()) ? true : null))
+    await listen.click()
     const unsetAt = Date.now()
     const systemRead = await until(
       async () => {
@@ -179,15 +190,22 @@ export async function run(t) {
       systemRead
     )
     const unsetLine = await until(async () => {
-      const seen = await win.evaluate(() => window.__titles)
+      const seen = await win.evaluate(() => window.__lines)
       return seen.find((line) => line.includes('no ElevenLabs on this server')) ?? null
     })
-    t.check('the control says there is no ElevenLabs', !!unsetLine, unsetLine)
+    t.equal(
+      'the card says there is no ElevenLabs',
+      unsetLine,
+      "Reading with the Mac's voice: no ElevenLabs on this server"
+    )
     t.equal('ElevenLabs was not asked to speak', stub.seen.length, 0)
-    await until(async () => ((await first.getAttribute('data-phase')) === null ? true : null), {
-      tries: 100,
-      gapMs: 50
-    })
+    await until(
+      async () => ((await card.getAttribute('data-voice-state')) === 'idle' ? true : null),
+      {
+        tries: 100,
+        gapMs: 50
+      }
+    )
     // A key pasted and a voice chosen, the pane still open; then the memory
     // runs out.
     await win.evaluate(
@@ -201,12 +219,20 @@ export async function run(t) {
     if (left > 0) await win.waitForTimeout(left)
     await win.evaluate(() => {
       window.__spoken = []
-      window.__titles = []
+      window.__states = []
+      window.__lines = []
     })
 
     // ── (a) The server's ElevenLabs voice reads the page ──
     await ask(view, 'tell me about the weather in brussels please')
-    await view.getByRole('button', { name: 'Read aloud' }).click()
+    const named = await until(async () => {
+      const said = card.locator('[data-testid="folio-voice-source"]')
+      if (!(await said.count())) return null
+      const text = (await said.innerText()).trim()
+      return text.includes('Basil') ? text : null
+    })
+    t.equal('before a click, the card names the voice', named, 'Basil · ElevenLabs on this Mac')
+    await listen.click()
     const played = await until(
       async () => {
         const urls = await win.evaluate(() => window.__played)
@@ -221,18 +247,31 @@ export async function run(t) {
       played
     )
     // The read ends once the part has played.
-    const control = view.locator('.folio-foot .folio-read')
-    await until(async () => ((await control.getAttribute('data-phase')) === null ? true : null), {
-      tries: 60,
-      gapMs: 50
-    })
-    const titles = await win.evaluate(() => window.__titles)
-    const preparing = titles.indexOf('Preparing the spoken version…')
-    const reading = titles.indexOf('Reading with ElevenLabs')
+    await until(
+      async () => ((await card.getAttribute('data-voice-state')) === 'idle' ? true : null),
+      {
+        tries: 60,
+        gapMs: 50
+      }
+    )
+    const states = await win.evaluate(() => window.__states)
+    t.equal(
+      'the card went idle, rewriting, creating, playing, idle',
+      JSON.stringify(states),
+      JSON.stringify(['idle', 'rewriting', 'creating', 'playing', 'idle'])
+    )
+    const lines = await win.evaluate(() => window.__lines)
     t.check(
-      'the control prepared, then read with ElevenLabs',
-      preparing >= 0 && reading > preparing,
-      titles
+      'the card said its steps, and the voice',
+      lines.includes('Rewriting for the voice') &&
+        lines.includes('Creating the voice with Basil') &&
+        lines.some((line) => line.startsWith('Basil · ElevenLabs')),
+      lines
+    )
+    t.equal(
+      'once read, the card offers to listen again',
+      (await listen.innerText()).trim(),
+      'Listen again'
     )
     const speaks = stub.seen.filter(
       (r) => r.method === 'POST' && r.pathname === '/v1/text-to-speech/voice-b'
@@ -262,12 +301,14 @@ export async function run(t) {
       process.env.CLAVE_E2E_SPOKEN_REPLY = '<spoken>Spoken text for tomorrow.</spoken>'
     })
     await win.evaluate(() => {
-      window.__titles = []
+      window.__states = []
+      window.__lines = []
     })
     await ask(view, 'and what about tomorrow in ghent')
-    const second = view.locator('.folio-foot .folio-read')
-    await until(async () => ((await second.count()) ? true : null))
-    await view.getByRole('button', { name: 'Read aloud' }).click()
+    await until(async () =>
+      (await listen.count()) && (await listen.innerText()).trim() === 'Listen' ? true : null
+    )
+    await listen.click()
     const spoken = await until(
       async () => {
         const said = await win.evaluate(() => window.__spoken)
@@ -281,22 +322,23 @@ export async function run(t) {
       spoken
     )
     const why = await until(async () => {
-      const seen = await win.evaluate(() => window.__titles)
+      const seen = await win.evaluate(() => window.__lines)
       return seen.find((line) => line.includes('credits')) ?? null
     })
     t.equal(
-      'the control says the credits are spent',
+      'the card says the credits are spent, in one line, and reads on with the Mac',
       why,
-      'Reading with the system voice: the ElevenLabs credits are spent'
+      "Reading with the Mac's voice: the ElevenLabs credits are spent"
     )
     const after = await until(async () => {
-      const line = await second.getAttribute('title')
-      return line?.startsWith('Read with the system voice') ? line : null
+      if ((await card.getAttribute('data-voice-state')) !== 'idle') return null
+      const line = card.locator('[data-testid="folio-voice-why"]')
+      return (await line.count()) ? (await line.innerText()).trim() : null
     })
     t.equal(
       'and says it once read',
       after,
-      'Read with the system voice: the ElevenLabs credits are spent'
+      "Read with the Mac's voice: the ElevenLabs credits are spent"
     )
     t.equal('no second audio played', (await win.evaluate(() => window.__played)).length, 1)
   } finally {

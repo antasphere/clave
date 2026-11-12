@@ -7,13 +7,13 @@ import { until } from './harness.mjs'
    - a page's head shows the first sentence of the question at once, then
      the title a helper wrote in its place (PRDCT-4412); the contents list
      shows the same;
-   - "Read aloud" prepares the spoken version first, then speaks it, never
-     the page as written (PRDCT-4409);
+   - the voice card's Listen rewrites the answer for the voice first ("Rewriting
+     for the voice"), then speaks it, never the page as written (PRDCT-4409);
    - a spoken version that cannot be had (switched off) reads the page as
-     written, and the control says why on hover;
-   - with no ElevenLabs key on the server, the system voice reads the page,
-     and the control says so (PRDCT-4411; the ElevenLabs voice itself is
-     folio-elevenlabs.spec.mjs).
+     written, and the card says why;
+   - with no ElevenLabs key on the server, the Mac's voice reads the page,
+     and the card says so, then offers to listen again (PRDCT-4411; the
+     ElevenLabs voice itself is folio-elevenlabs.spec.mjs).
    Under the harness no model runs: the helpers' replies come from
    CLAVE_E2E_PAGE_TITLE_REPLY and CLAVE_E2E_SPOKEN_REPLY, after a beat, read
    by the real parsers. The system voice is stubbed in the page: it records
@@ -99,38 +99,46 @@ export async function run(t) {
       await win.keyboard.press('Escape')
       t.check('the contents list the written title', true)
 
-      // Read aloud: the spoken version is prepared, then spoken.
-      const read = view.locator('.folio-foot .folio-read')
-      await view.getByRole('button', { name: 'Read aloud' }).click()
-      const preparing = await until(
+      // Listen: the answer is rewritten for the voice, then spoken.
+      const card = view.locator('[data-testid="folio-voice-card"]')
+      const state = () => card.getAttribute('data-voice-state')
+      await card.locator('.folio-voice-listen').click()
+      const rewriting = await until(
         async () =>
-          (await read.getAttribute('data-phase')) === 'preparing'
-            ? await read.getAttribute('title')
+          (await state()) === 'rewriting'
+            ? (await card.locator('[data-testid="folio-voice-line"]').innerText()).trim()
             : null,
         { tries: 40, gapMs: 25 }
       )
-      assert.equal(preparing, 'Preparing the spoken version…')
-      const speaking = await until(
+      assert.match(rewriting ?? '', /^Rewriting for the voice\s*\d+s$/)
+      assert.equal(
+        await card.locator('[data-step="rewriting"]').getAttribute('data-lit'),
+        'true',
+        'step 1 of 2 is lit'
+      )
+      const why = await until(
         async () =>
-          (await read.getAttribute('data-phase')) === 'speaking'
-            ? await read.getAttribute('title')
+          (await state()) === 'playing'
+            ? (await card.locator('[data-testid="folio-voice-why"]').innerText()).trim()
             : null,
         { tries: 50, gapMs: 50 }
       )
-      // No ElevenLabs key on this server (PRDCT-4411): the system voice reads
-      // it, and the control says so.
-      assert.equal(speaking, 'Reading with the system voice: no ElevenLabs on this server')
+      // No ElevenLabs key on this server (PRDCT-4411): the Mac's voice reads
+      // it, and the card says so.
+      assert.equal(why, "Reading with the Mac's voice: no ElevenLabs on this server")
       const spoken = await win.evaluate(() => window.__spoken)
       assert.deepEqual(spoken, ['Spoken text.'])
-      t.check('reading a page aloud prepares its spoken version, then speaks it', true)
-      const once = await until(async () => {
-        const line = await read.getAttribute('title')
-        return line?.startsWith('System voice') ? line : null
-      })
+      t.check('reading a page aloud rewrites it for the voice, then speaks it', true)
+      const again = await until(async () =>
+        (await state()) === 'idle'
+          ? (await card.locator('.folio-voice-listen').innerText()).trim()
+          : null
+      )
+      t.equal('once read, the card offers to listen again', again, 'Listen again')
       t.equal(
-        'with no ElevenLabs on the server, the system voice reads, and the control says why',
-        once,
-        'System voice: no ElevenLabs on this server'
+        "with no ElevenLabs on the server, the card says the Mac's voice read it, and why",
+        (await card.locator('[data-testid="folio-voice-why"]').innerText()).trim(),
+        'No ElevenLabs on this server'
       )
     } finally {
       await chat.close()
@@ -145,20 +153,23 @@ export async function run(t) {
       const view = win.locator('[data-testid="folio-view"]')
       await stubVoice(win)
       await ask(view, 'read this one as it is written')
-      await view.getByRole('button', { name: 'Read aloud' }).click()
+      const card = view.locator('[data-testid="folio-voice-card"]')
+      await card.locator('.folio-voice-listen').click()
       const spoken = await until(async () => {
         const said = await win.evaluate(() => window.__spoken)
         return said.length ? said : null
       })
       assert.deepEqual(spoken, ['read this one as it is written.'])
-      const read = view.locator('.folio-foot .folio-read')
       const why = await until(async () => {
-        const line = await read.getAttribute('title')
-        return line?.startsWith('Read as written') ? line : null
+        if ((await card.getAttribute('data-voice-state')) !== 'idle') return null
+        const line = card.locator('[data-testid="folio-voice-why"]')
+        if (!(await line.count())) return null
+        const said = (await line.innerText()).trim()
+        return said.startsWith('Read as written') ? said : null
       })
-      assert.ok(why, 'the control says the page was read as written')
+      assert.ok(why, 'the card says the page was read as written')
       assert.equal(why, 'Read as written: spoken versions are switched off in Settings.')
-      t.check('a page with no spoken version is read as written, and the control says why', true)
+      t.check('a page with no spoken version is read as written, and the card says why', true)
     } finally {
       await chat.close()
     }

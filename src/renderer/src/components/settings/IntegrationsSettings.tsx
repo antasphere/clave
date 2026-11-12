@@ -320,7 +320,7 @@ function VoiceRow({
         {description}
         {previewError}
       </div>
-      <div className="settings-row-controls">
+      <div className="settings-row-controls settings-row-controls-wrap">
         {voices.status === 'error' && (
           <button
             type="button"
@@ -340,6 +340,7 @@ function VoiceRow({
             void setElevenLabsVoice(machine, voiceId, voice?.name ?? voiceId)
           }}
           ariaLabel="ElevenLabs voice"
+          className="integrations-voice-select"
           disabled={state.busy || choices.length === 0}
           testId="elevenlabs-voice"
         />

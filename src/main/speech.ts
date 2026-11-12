@@ -165,7 +165,14 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
     void integration.check().catch(() => undefined)
   }
 
-  return {
+  const logged = (answer: SpeakResult): SpeakResult => {
+    // Why a page fell to the system voice, in the main log: the reason and
+    // the words the control shows, never the key, never the service's body.
+    if (!answer.ok)
+      console.warn(`[speech] not spoken: ${answer.reason ?? 'failed'}: ${answer.error}`)
+    return answer
+  }
+  const inner: HostSpeech = {
     speak: async (request) => {
       if (!recordOf(request.sessionId)) return not('unknown-session', UNKNOWN_SESSION_ERROR)
       const text = typeof request.text === 'string' ? request.text : ''
@@ -258,5 +265,9 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
         return not('failed', SPEECH_NO_PREVIEW)
       return { ok: true, mime: 'audio/mpeg', audio: bytes.toString('base64'), characters: 0 }
     }
+  }
+  return {
+    speak: (request) => inner.speak(request).then(logged),
+    preview: (voiceId) => inner.preview(voiceId).then(logged)
   }
 }

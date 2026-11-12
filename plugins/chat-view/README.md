@@ -239,9 +239,32 @@ A finished page can be read aloud: the reading first asks for the page's spoken
 rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
 markdown, no code read out, the lists said as sentences, filed so a page read
 before is spoken at once), and speaks it; when none comes, it reads the page as
-written (`speech.ts` takes the markdown out and cuts the utterances) and the read
-control says why. The speaker toggle in the composer's footer reads each new
+written (`speech.ts` takes the markdown out and cuts the utterances) and the
+voice card says why. The speaker toggle in the composer's footer reads each new
 answer as it finishes.
+
+The VOICE CARD (`src/lab/VoiceCard.tsx`, its words in `voice-card.ts`,
+PRDCT-4430) is the one place a person reads and drives the reading: in the
+page's margin at its head, above the tool notes, on every finished page. Idle,
+it says which voice will read before a click: a tab on this Mac reads this
+Mac's ElevenLabs status once per page view (`loadIntegrations`, a local read),
+"Ada · ElevenLabs on this Mac" or "The Mac's voice" with why under it ("No
+ElevenLabs on this server", "No voice chosen on this server"); a server tab
+says what its last reading heard, else "The server's voice, if it has one".
+"Ready" when the spoken version is already filed, "Reads new answers" when the
+composer's toggle is on. Then each step, named and timed, with Cancel:
+"Rewriting for the voice" (step 1 of 2, the spoken rendering), "Creating the
+voice with Ada" (step 2 of 2, the first part asked of ElevenLabs; skipped when
+this Mac's status already says it has none). Then the player: Play/Pause,
+Stop, "Block 3 of 8", the bar, the voice and the time. When the Mac's voice
+reads, one line in the accent of a note says why ("Reading with the Mac's
+voice: the ElevenLabs credits are spent"), never an error. Read to its end,
+the card offers "Listen again". The figure is the Integrations card's drawing
+at the margin's size and says the step: the pen over the line being read, the
+wave drawing itself, the wave breathing while it plays; still under reduced
+motion. The card carries `data-voice-state` (idle, rewriting, creating,
+playing, paused) and each step `data-step`, for the specs. The page's foot
+keeps only Copy the answer and the steps count.
 
 The reading is a player, by block (PRDCT-4430). One split, `splitBlocks` in
 `src/shared/spoken-rendering.ts`, cuts an answer into its top-level blocks (a
@@ -252,9 +275,9 @@ block by block (a reply whose numbers do not match is asked again, then the
 page is read as written, by the same blocks). The voice speaks one part per
 block (`audio.ts`, a long block in several parts), so the block being read is
 known and washed in the accent, brought into view unless the reader scrolled
-in the last three seconds. The control plays and pauses (the ElevenLabs
-element and the system voice alike), Stop ends the reading, a click on a block
-reads from it, and the bar at the page's foot has one tick per block, a click
+in the last three seconds. The card's control plays and pauses (the
+ElevenLabs element and the system voice alike), Stop ends the reading, a click
+on a block reads from it, and the card's bar has one tick per block, a click
 or a drag (or the arrows) going to a block, with the time once known
 (`progress.ts`). A rendering filed before the blocks plays whole, nothing lit.
 

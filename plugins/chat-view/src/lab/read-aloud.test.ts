@@ -435,6 +435,57 @@ describe('the player on the system voice (PRDCT-4430)', () => {
     expect(reading()).toMatchObject({ block: 3, tick: 2 })
   })
 
+  it('names its steps: rewriting for the voice, then creating it, then playing (PRDCT-4430)', async () => {
+    drivenVoice()
+    let answer: (r: SpeakResult) => void = () => undefined
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = {
+      speakText: (request: { sessionId: string; text: string }) => {
+        speakCalls.push(request)
+        return new Promise<SpeakResult>((resolve) => (answer = resolve))
+      }
+    }
+    const voice = usePane()
+    voice.read('p', 'x')
+    expect(reading()).toMatchObject({ state: 'preparing', step: 'rewriting' })
+    h.asked[0].answer({ ok: true, text: 'x', blocks })
+    await flush()
+    expect(reading()).toMatchObject({ state: 'preparing', step: 'creating' })
+    answer({ ok: false, error: 'none', reason: 'no-integration' })
+    await flush()
+    expect(reading()).toMatchObject({
+      state: 'playing',
+      step: null,
+      voice: 'system',
+      whyKind: 'unset',
+      why: 'no ElevenLabs on this server'
+    })
+  })
+
+  it("skips creating the voice when this Mac's status says it has none", async () => {
+    drivenVoice()
+    useIntegrationsStore.setState({
+      byMachine: {
+        local: {
+          status: 'ready',
+          error: null,
+          busy: false,
+          voices: { status: 'idle', error: null, voices: [] },
+          elevenLabs: { configured: false } as never
+        }
+      }
+    })
+    const steps: unknown[] = []
+    const voice = usePane()
+    voice.read('p', 'x')
+    steps.push((reading() as { step: unknown }).step)
+    h.asked[0].answer({ ok: true, text: 'x', blocks })
+    await Promise.resolve()
+    steps.push((reading() as { step: unknown }).step)
+    await flush()
+    expect(steps).toEqual(['rewriting', 'rewriting'])
+    expect(reading()).toMatchObject({ state: 'playing', voice: 'system' })
+  })
+
   it('a rendering without blocks plays as one block and lights nothing', async () => {
     drivenVoice()
     const voice = usePane()

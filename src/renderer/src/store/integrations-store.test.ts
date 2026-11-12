@@ -172,7 +172,7 @@ describe('what the card says', () => {
       )
     ).toEqual([
       { value: 'gone', label: 'Gone voice' },
-      { value: 'v1', label: 'One · neutral · narration' }
+      { value: 'v1', label: 'One', hint: 'neutral · narration' }
     ])
     expect(store.modelChoices().map((c) => c.value)).toEqual([
       'eleven_flash_v2_5',

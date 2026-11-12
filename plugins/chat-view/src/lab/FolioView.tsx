@@ -9,8 +9,6 @@ import {
   ClipboardDocumentIcon,
   ListBulletIcon,
   PaperClipIcon,
-  PauseIcon,
-  PlayIcon,
   SpeakerWaveIcon,
   StopIcon,
   XMarkIcon
@@ -62,7 +60,7 @@ import { providerLabel } from '../models'
 import { useViewSessionStore } from '../../../../src/renderer/src/views/session-store'
 import { useSessionStore } from '../../../../src/renderer/src/store/session-store'
 import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
-import { digestIdOf, usePageTitles, usePageTitleStore, type DigestFailure } from '../digest'
+import { digestIdOf, usePageTitles, usePageTitleStore } from '../digest'
 import { EffortMenu } from '../EffortMenu'
 import { ContextMeter } from '../TerminalStatus'
 import { WorkCards } from '../WorkCards'
@@ -85,10 +83,10 @@ import {
 } from './pages'
 import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
 import { fallbackLine, useSpokenRenderings } from './spoken'
-import { clockOf, dragSeek, KEY_SEEK_MS, keySeekTarget, scrubShown, tickAt } from './progress'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
+import { VoiceCard } from './VoiceCard'
 import { LAB_VIEW } from './meta'
 
 /* Folio: the conversation as a book of pages, one per question. The reader's
@@ -371,134 +369,25 @@ function CopyAnswer({ text }: { text: string }): React.JSX.Element {
   )
 }
 
-/** What the read control says on hover: preparing; reading, and with which
- *  voice (the server's ElevenLabs voice, or the system voice and why,
- *  PRDCT-4411); once read, why the page was read as written, or by the
- *  system voice, or why the ElevenLabs voice stopped. */
-function readTitle(
-  reading: Reading | null,
-  fallback: DigestFailure | 'missing' | undefined,
-  note?: string
-): string | undefined {
-  if (reading?.phase === 'preparing') return 'Preparing the spoken version…'
-  if (reading) {
-    const voice =
-      reading.voice === 'elevenlabs'
-        ? 'Reading with ElevenLabs'
-        : reading.voice === 'system' && reading.why
-          ? `Reading with the system voice: ${reading.why}`
-          : 'Reading'
-    return reading.fallback ? `${voice}. ${fallbackLine(reading.fallback)}` : voice
-  }
-  if (fallback) return fallbackLine(fallback)
-  return note
+/** What the composer's speaker toggle says on hover while a page is read:
+ *  the step, or the voice (the server's ElevenLabs voice, or the Mac's and
+ *  why, PRDCT-4411). The voice card says the same on the page. */
+function readTitle(reading: Reading | null): string | undefined {
+  if (!reading) return undefined
+  if (reading.phase === 'preparing')
+    return reading.step === 'creating' ? 'Creating the voice…' : 'Rewriting for the voice…'
+  const voice =
+    reading.voice === 'elevenlabs'
+      ? 'Reading with ElevenLabs'
+      : reading.voice === 'system' && reading.why
+        ? `Reading with the Mac's voice: ${reading.why}`
+        : 'Reading'
+  return reading.fallback ? `${voice}. ${fallbackLine(reading.fallback)}` : voice
 }
 
 /** How long after the reader scrolls the page the voice leaves it where they
  *  put it: the block being read is brought into view only after that. */
 const READER_SCROLL_MS = 3_000
-
-/** The player at the page's foot (PRDCT-4430): the bar, one tick per block
- *  of the reading, the part read filled; a click goes to the block under the
- *  pointer, a drag moves the light with the pointer and goes to the block it
- *  is let go on (one seek, one part asked: never one per tick crossed); the
- *  time read and the whole, once known. */
-function Scrub({
-  reading,
-  pending,
-  onSeek
-}: {
-  reading: Reading
-  /** The tick the arrow keys moved the light to, before their seek. */
-  pending: number | null
-  onSeek: (tick: number) => void
-}): React.JSX.Element {
-  const bar = useRef<HTMLDivElement>(null)
-  // The tick under a press in progress (null with none): the ref for the
-  // handlers, the state for the light.
-  const pressed = useRef<number | null>(null)
-  const [drag, setDrag] = useState<number | null>(null)
-  const tickUnder = (clientX: number): number | null => {
-    const rect = bar.current?.getBoundingClientRect()
-    if (!rect) return null
-    return tickAt(clientX - rect.left, rect.width, reading.blocks)
-  }
-  const follow = (clientX: number): void => {
-    const tick = tickUnder(clientX)
-    if (tick === null || tick === pressed.current) return
-    pressed.current = tick
-    setDrag(tick)
-  }
-  const letGo = (seek: boolean): void => {
-    const tick = pressed.current
-    pressed.current = null
-    setDrag(null)
-    const to = seek ? dragSeek(tick, reading.tick) : null
-    if (to !== null) onSeek(to)
-  }
-  const shown = scrubShown(reading.tick, reading.fraction, reading.blocks, drag ?? pending)
-  return (
-    <div className="folio-player-bar">
-      <div
-        ref={bar}
-        className="folio-scrub"
-        data-testid="folio-scrub"
-        data-dragging={drag !== null ? 'true' : undefined}
-        role="slider"
-        aria-label="Block being read"
-        aria-valuemin={1}
-        aria-valuemax={reading.blocks}
-        aria-valuenow={shown.tick + 1}
-        aria-valuetext={`Block ${shown.tick + 1} of ${reading.blocks}`}
-        tabIndex={0}
-        style={
-          {
-            '--ticks': reading.blocks,
-            '--fill': shown.fill
-          } as React.CSSProperties
-        }
-        onPointerDown={(event) => {
-          if (event.button !== 0) return
-          event.currentTarget.setPointerCapture?.(event.pointerId)
-          pressed.current = null
-          follow(event.clientX)
-        }}
-        onPointerMove={(event) => {
-          if (pressed.current !== null) follow(event.clientX)
-        }}
-        onPointerUp={(event) => {
-          if (pressed.current === null) return
-          follow(event.clientX)
-          letGo(true)
-        }}
-        onPointerCancel={() => letGo(false)}
-        onLostPointerCapture={() => {
-          if (pressed.current !== null) letGo(true)
-        }}
-      >
-        <span className="folio-scrub-fill" aria-hidden="true" />
-        {reading.ticks.map((block, i) => (
-          <span
-            key={`${i}-${block}`}
-            className="folio-scrub-tick"
-            data-testid="folio-scrub-tick"
-            data-played={i < shown.tick ? 'true' : undefined}
-            data-current={i === shown.tick ? 'true' : undefined}
-            aria-hidden="true"
-          />
-        ))}
-        <span className="folio-scrub-head" data-testid="folio-scrub-head" aria-hidden="true" />
-      </div>
-      {reading.voice === 'elevenlabs' && (
-        <span className="folio-player-time" data-testid="folio-player-time">
-          {clockOf(reading.totalMs === null && reading.elapsedMs === 0 ? null : reading.elapsedMs)}
-          {' / '}
-          {clockOf(reading.totalMs)}
-        </span>
-      )}
-    </div>
-  )
-}
 
 /** The page on screen. Keyed by its page by the caller, so turning to another
  *  plays the turn once; growing in place plays nothing. */
@@ -509,6 +398,7 @@ function PageView({
   sessionId,
   direction,
   voice,
+  autoRead,
   onError
 }: {
   page: Page
@@ -517,6 +407,7 @@ function PageView({
   sessionId: string
   direction: number
   voice: ReturnType<typeof useReadAloud>
+  autoRead: boolean
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const live = page.status === 'writing' || page.status === 'working'
@@ -581,55 +472,6 @@ function PageView({
     if (!Number.isInteger(n) || n < 1) return
     voice.readFrom(page.key, page.spoken, n)
   }
-  const seekTick = (tick: number): void => {
-    const block = reading?.ticks[tick]
-    if (block !== undefined) voice.seekBlock(block)
-  }
-  const toggle = (): void => {
-    if (!reading || reading.state === 'preparing') return
-    if (reading.state === 'paused') voice.resume()
-    else voice.pause()
-  }
-  // The player's keys: Space plays or pauses, the arrows move a block. A run
-  // of arrow presses moves the light at once and seeks once, KEY_SEEK_MS
-  // after the last press (each seek is a paid call, verifier round 4).
-  const [keyTick, setKeyTick] = useState<number | null>(null)
-  const keyPending = useRef<number | null>(null)
-  const keyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const clearKeySeek = (): void => {
-    if (keyTimer.current) clearTimeout(keyTimer.current)
-    keyTimer.current = null
-    keyPending.current = null
-    setKeyTick(null)
-  }
-  useEffect(() => {
-    if (!reading) clearKeySeek()
-    return () => {
-      if (keyTimer.current) clearTimeout(keyTimer.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- cleared when the reading ends
-  }, [reading === null])
-  const onPlayerKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (!reading || reading.state === 'preparing') return
-    const onButton = (event.target as HTMLElement).closest('button')
-    if (event.key === ' ' && !onButton) {
-      event.preventDefault()
-      toggle()
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault()
-      const next = keySeekTarget(keyPending.current, reading.tick, event.key, reading.blocks)
-      keyPending.current = next
-      setKeyTick(next)
-      if (keyTimer.current) clearTimeout(keyTimer.current)
-      keyTimer.current = setTimeout(() => {
-        keyTimer.current = null
-        keyPending.current = null
-        setKeyTick(null)
-        if (next !== reading.tick) seekTick(next)
-      }, KEY_SEEK_MS)
-    }
-  }
-
   return (
     <article
       className="folio-page"
@@ -637,7 +479,12 @@ function PageView({
       data-status={page.status}
       aria-label={`Page ${page.number}: ${title}`}
     >
-      <PageHead page={page} of={of} title={title} sessionId={sessionId} />
+      <div className="folio-top" data-card={finished && voice.supported ? 'true' : undefined}>
+        <PageHead page={page} of={of} title={title} sessionId={sessionId} />
+        {finished && voice.supported && (
+          <VoiceCard page={page} sessionId={sessionId} voice={voice} autoRead={autoRead} />
+        )}
+      </div>
       <div
         ref={body}
         className="folio-body"
@@ -667,70 +514,6 @@ function PageView({
       </div>
       {finished && (
         <footer className="folio-foot">
-          {voice.supported && (
-            <div className="folio-player" data-state={reading?.state} onKeyDown={onPlayerKey}>
-              {reading?.phase === 'preparing' ? (
-                <button
-                  type="button"
-                  className="folio-action folio-read"
-                  data-testid="folio-play"
-                  data-on="true"
-                  data-phase="preparing"
-                  title={readTitle(reading, undefined)}
-                  onClick={voice.stop}
-                >
-                  <StopIcon aria-hidden="true" />
-                  Preparing
-                  <FolioLoader />
-                </button>
-              ) : reading ? (
-                <>
-                  <button
-                    type="button"
-                    className="folio-action folio-read"
-                    data-testid="folio-play"
-                    data-on="true"
-                    data-phase="speaking"
-                    data-state={reading.state}
-                    title={readTitle(reading, undefined)}
-                    onClick={toggle}
-                  >
-                    {reading.state === 'paused' ? (
-                      <PlayIcon aria-hidden="true" />
-                    ) : (
-                      <PauseIcon aria-hidden="true" />
-                    )}
-                    {reading.state === 'paused' ? 'Play' : 'Pause'}
-                    <span className="folio-action-count">
-                      {reading.tick + 1}/{reading.blocks}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="folio-action folio-stop"
-                    data-testid="folio-stop"
-                    aria-label="Stop reading"
-                    title="Stop reading"
-                    onClick={voice.stop}
-                  >
-                    <StopIcon aria-hidden="true" />
-                  </button>
-                  <Scrub reading={reading} pending={keyTick} onSeek={seekTick} />
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="folio-action folio-read"
-                  data-testid="folio-play"
-                  title={readTitle(null, voice.fallbacks[page.key], voice.notes[page.key])}
-                  onClick={() => voice.read(page.key, page.spoken)}
-                >
-                  <SpeakerWaveIcon aria-hidden="true" />
-                  Read aloud
-                </button>
-              )}
-            </div>
-          )}
           <CopyAnswer text={page.answer} />
           {page.tools > 0 && (
             <span className="folio-tally">
@@ -1328,6 +1111,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
                 sessionId={session.id}
                 direction={turned.direction}
                 voice={voice}
+                autoRead={autoRead}
                 onError={report}
               />
             )}
@@ -1510,7 +1294,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
                 aria-pressed={autoRead}
                 aria-label="Read new answers aloud"
                 title={
-                  readTitle(voice.reading, undefined) ??
+                  readTitle(voice.reading) ??
                   (autoRead ? 'New answers are read aloud' : 'Read new answers aloud')
                 }
                 data-on={autoRead ? 'true' : undefined}

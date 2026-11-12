@@ -2696,6 +2696,27 @@ canvas[data-orb-state] {
   gap: var(--control-gap);
   flex-shrink: 0;
 }
+/* A row whose controls would crush its words (the voice row of an
+   integration: a select and a button): the controls may wrap under one
+   another, right-aligned, and never take the words' column. */
+.settings-row-controls-wrap {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 60%;
+}
+/* The voice select names the voice; the labels sit under it in the menu.
+   Capped, so a long name never pushes the Preview button off the card. */
+.integrations-voice-select {
+  max-width: 16rem;
+}
+.integrations-voice-select .select-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* A value the row only states (the density stop, a token count, "repos"):
    the control's label size in secondary ink, tabular so a column of them
    lines up. */
