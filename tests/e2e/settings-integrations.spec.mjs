@@ -180,8 +180,8 @@ export async function run(t) {
     )
     t.equal('the voice holds after a reload', held, 'voice-b')
     t.check(
-      'its label is the voice and its labels',
-      /Basil · american/.test(await textOf(reloaded)),
+      'its label is the voice alone; its labels wait in the menu',
+      /Basil/.test(await textOf(reloaded)) && !/american/.test(await textOf(reloaded)),
       await textOf(reloaded)
     )
 
