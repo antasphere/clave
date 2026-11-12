@@ -32,6 +32,8 @@ import { ServerEvents } from './events'
 import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } from './ports'
 import { PushHubService, pushRoute } from './push/route'
 import { fixtureRoute } from './fixtures/route'
+// ── PRDCT-4473: the forwarded pages ──
+import { forwardRoute } from './forward/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, WorkspacesWelcomeLive, settingsHandlers } from './settings'
 import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
@@ -227,8 +229,11 @@ export const BusesLive = busesLayer.pipe(
 )
 
 /** The middleware outside the router, outermost first: the loopback CORS
- *  answer, the push upgrade, then the token check, then (test mode only)
- *  the fixture route, inside the token check so it is never open. */
+ *  answer, the push upgrade, then the token check, then the forwarded pages
+ *  (PRDCT-4473, `forward/route.ts`) and (test mode only) the fixture route,
+ *  both inside the token check so neither is ever open. The forward route
+ *  sits before the body bounds: its bodies are streamed to the page, never
+ *  read here, so no limit applies to them. */
 const outer =
   (options: ServerOptions) =>
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
@@ -236,7 +241,11 @@ const outer =
       corsForLoopback(
         pushRoute(hub)(
           bearerAuth(options.token)(
-            fixtureRoute(options.testFixtures === true)(boundedFileRequest(privateAnswerJson(app)))
+            forwardRoute(options.ports.forwards)(
+              fixtureRoute(options.testFixtures === true)(
+                boundedFileRequest(privateAnswerJson(app))
+              )
+            )
           )
         )
       )
@@ -272,7 +281,8 @@ export const DIGEST_BODY_LIMIT = 3 * 1024 * 1024
 export const SPEECH_BODY_LIMIT = 64 * 1024
 
 /** Bound transfer and sensitive resolution bodies before JSON decoding.
- * Authentication runs first; oversized secret inputs are never echoed. */
+ * Authentication runs first; oversized secret inputs are never echoed.
+ * `/forward/` never reaches this: its route answers before it (`outer`). */
 const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
     const limit =

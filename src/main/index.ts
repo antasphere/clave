@@ -11,7 +11,8 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
-  safeStorage
+  safeStorage,
+  session
 } from 'electron'
 import { flushRendererStorage } from './flush-storage'
 import { TEST_NO_ACTIVATE } from './test-mode'
@@ -67,7 +68,9 @@ import { codexUsageManager } from './codex-usage'
 import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
-import { hardenViewHost, installViewGuestPolicy } from './view-guests'
+import { loopbackForwards } from './forwards'
+import { installWindowGate } from './forwards/window-gate'
+import { VIEW_PARTITION, hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, markServerGone, ServerBootError, type ServerHandle } from './server-boot'
 import { serverLaunch } from './server-launch'
 import { flagsForServerChild, startSeparateServer } from './server-child'
@@ -683,6 +686,12 @@ app.whenReady().then(() => {
   registerMcpWindowOpener(openWindow)
   installPreviewProtocol()
   installViewGuestPolicy()
+  // PRDCT-4473: the forward listeners answer only Clave's own windows and the
+  // view guests inside them, the same two sessions the preview serves.
+  installWindowGate(loopbackForwards, () => [
+    session.defaultSession,
+    session.fromPartition(VIEW_PARTITION)
+  ])
   // MCP failure must not break the app — spawns just omit the --mcp-config flag.
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
   // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
