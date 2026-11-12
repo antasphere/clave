@@ -4439,6 +4439,27 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-option .chat-prompt-key {
   color: var(--text-tertiary);
 }
+/* The permission card (PRDCT-4483): the question card's buttons
+   (`chat-ask-btn`, the words alone, the keys in the tooltip), the queue level
+   with the question, more air inside the card and above the buttons. */
+.chat-prompt[data-kind='permission'] {
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4);
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-body {
+  gap: calc(var(--spacing) * 2.5);
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-head {
+  align-items: baseline;
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-queue {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-actions {
+  gap: calc(var(--spacing) * 2);
+  padding-top: var(--spacing);
+}
 /* ── The question card, inline (PRDCT-4157) ──
    A question the agent asks is answered where it asked it: in the agent's own
    column, under its words, with no box around it. At its head a drawing in
@@ -5375,6 +5396,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-permission-row[data-state='waiting'] {
   color: var(--text-secondary);
+}
+/* The glyph stands on the middle of the first line, whatever the line holds
+   (a level pill, a reply that wraps under it): the row aligns to its start,
+   so the glyph takes the line's half-leading as its margin (PRDCT-4483). */
+.chat-permission-row > .chat-tool-status {
+  margin-block: calc((1lh - var(--chat-glyph)) / 2);
 }
 /* The status, what was asked, and the reader's reply. The question keeps to
    one line; the reply is the reader's own words at any length, so it wraps,

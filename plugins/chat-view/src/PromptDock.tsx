@@ -10,7 +10,6 @@ import { describeTool, safeJson, type ApprovalGroup, type ToolKind } from './too
 import { approvalRunSummary, decisionWord, describeApproval, isQuestion } from './approvals'
 import { useDisclosure } from './disclosure'
 import { ChatCode } from './code'
-import { Key } from './prompt-bits'
 import { ClosedForm, InputPrompt } from './InputPrompt'
 import { isDeny, isInputRequest, forgetCard } from './input-request'
 import { useQuestionHost, type Answer } from './question-context'
@@ -89,11 +88,14 @@ function PermissionPrompt({
   request,
   agent,
   busy,
+  waiting,
   onAnswer
 }: {
   request: Permission
   agent: string
   busy: boolean
+  /** How many requests wait in the dock, this one included. */
+  waiting: number
   onAnswer: Answer
 }): React.JSX.Element {
   const { title, target, code } = describeRequest(request, agent)
@@ -104,6 +106,36 @@ function PermissionPrompt({
   const ordered = [...denies, ...allows.slice(1).reverse(), ...allows.slice(0, 1)]
   const primary = allows[0]
   const keyOf = (id: string): number => ordered.findIndex((o) => o.id === id) + 1
+  // A button carries its words alone (PRDCT-4483). Its keys stay live and are
+  // said on approach, in the tooltip, the question card's way ("Skip (Esc)"),
+  // and to assistive technology: Escape denies, ⌘ Enter allows, a digit
+  // presses the button at that place from the left.
+  const keysOf = (option: Permission['options'][number]): { hint: string; aria: string } => {
+    const digit = String(keyOf(option.id))
+    if (option === denies[0]) return { hint: 'Esc', aria: `Escape ${digit}` }
+    if (option === primary) return { hint: '⌘ Enter', aria: `Meta+Enter ${digit}` }
+    return { hint: digit, aria: digit }
+  }
+  const button = (option: Permission['options'][number]): React.JSX.Element => {
+    const keys = keysOf(option)
+    return (
+      <button
+        key={option.id}
+        type="button"
+        // The question card's buttons (`chat-ask-btn`), so the two cards that
+        // wait on the reader wear the same ones; `chat-prompt-btn` stays the
+        // hook the dock's specs find them by.
+        className="chat-prompt-btn chat-ask-btn"
+        data-primary={option === primary ? 'true' : undefined}
+        title={`${option.label} (${keys.hint})`}
+        aria-keyshortcuts={keys.aria}
+        disabled={busy}
+        onClick={() => onAnswer(request.id, option.id)}
+      >
+        {option.label}
+      </button>
+    )
+  }
   const body = useFocusOnArrival()
   return (
     <div
@@ -126,7 +158,12 @@ function PermissionPrompt({
         }
       }}
     >
-      <div className="chat-prompt-title">{title}</div>
+      <div className="chat-prompt-head">
+        <div className="chat-prompt-title">{title}</div>
+        {/* The queue stands level with the question rather than on a line
+            of its own above it. */}
+        {waiting > 1 && <span className="chat-prompt-queue">1 of {waiting} waiting</span>}
+      </div>
       {target && <div className="chat-prompt-target">{target}</div>}
       {/* PRDCT-4331: the level at once, then what the request does in plain words. */}
       <PermissionReading request={request} />
@@ -149,36 +186,9 @@ function PermissionPrompt({
         </details>
       )}
       <div className="chat-prompt-actions">
-        {denies.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className="chat-prompt-btn"
-            disabled={busy}
-            onClick={() => onAnswer(request.id, option.id)}
-          >
-            {option.label}
-            <Key>{keyOf(option.id)}</Key>
-            {option === denies[0] && <Key>Esc</Key>}
-          </button>
-        ))}
+        {denies.map(button)}
         <span className="chat-prompt-spacer" />
-        {ordered
-          .filter((o) => !isDeny(o.id))
-          .map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className="chat-prompt-btn"
-              data-primary={option === primary ? 'true' : undefined}
-              disabled={busy}
-              onClick={() => onAnswer(request.id, option.id)}
-            >
-              {option.label}
-              <Key>{keyOf(option.id)}</Key>
-              {option === primary && <Key>⌘↩</Key>}
-            </button>
-          ))}
+        {ordered.filter((o) => !isDeny(o.id)).map(button)}
       </div>
       <BackToBypass />
     </div>
@@ -210,7 +220,7 @@ export function PromptDock({
       data-kind={question ? 'question' : 'permission'}
       aria-label={question ? 'Question' : 'Permission request'}
     >
-      {requests.length > 1 && (
+      {question && requests.length > 1 && (
         <div className="chat-prompt-queue">1 of {requests.length} waiting</div>
       )}
       {question ? (
@@ -228,6 +238,7 @@ export function PromptDock({
           request={request}
           agent={agent}
           busy={busy(request.id)}
+          waiting={requests.length}
           onAnswer={onAnswer}
         />
       )}

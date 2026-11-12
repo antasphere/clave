@@ -9,7 +9,7 @@ import * as ReactModule from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PermissionRow } from '../../../../plugins/chat-view/src/PromptDock'
+import { PermissionRow, PromptDock } from '../../../../plugins/chat-view/src/PromptDock'
 import {
   BackToBypass,
   ModeLine,
@@ -295,6 +295,65 @@ describe('the transcript row', () => {
       { explained: {} }
     )
     expect(question).not.toContain('chat-permission-level')
+  })
+
+  it('stands on one line: the pill on its words, the glyph on the first line (PRDCT-4483)', () => {
+    const sheet = readFileSync(
+      join(__dirname, '../../../../plugins/chat-view/src/permission-reading.css'),
+      'utf8'
+    )
+    // The icon is the pill's first child: aligned on centres, its lower edge
+    // was the pill's baseline, and the pill rose off the words beside it.
+    expect(sheet).toMatch(/\.chat-permission-level \{[^}]*align-items: baseline/)
+    expect(sheet).toMatch(/\.chat-permission-secrets \{[^}]*align-items: baseline/)
+    expect(sheet).toMatch(
+      /\.chat-permission-level svg,\s*\.chat-permission-secrets svg \{[^}]*align-self: center/
+    )
+    const system = readFileSync(join(__dirname, '../../../../packages/ui/src/system.css'), 'utf8')
+    expect(system).toMatch(
+      /\.chat-permission-row > \.chat-tool-status \{\s*margin-block: calc\(\(1lh - var\(--chat-glyph\)\) \/ 2\);/
+    )
+  })
+})
+
+describe('the card in the dock (PRDCT-4483)', () => {
+  const asked = (id: string): Permission => ({
+    ...request('npm install'),
+    id,
+    options: [
+      { id: 'allow-once', label: 'Allow once' },
+      { id: 'allow-always', label: 'Always allow' },
+      { id: 'deny', label: 'Deny' }
+    ]
+  })
+  const dock = (requests: Permission[]): string =>
+    render(
+      <PromptDock requests={requests} agent="Claude" busy={() => false} onAnswer={() => {}} />,
+      { explained: {} }
+    )
+  it('answers with words alone, its keys in the tooltip and for assistive technology', () => {
+    const html = dock([asked('a')])
+    expect(html).not.toContain('<kbd')
+    const buttons = [
+      ...html.matchAll(/<button[^>]*class="chat-prompt-btn chat-ask-btn"[^>]*>([^<]*)<\/button>/g)
+    ]
+    expect(buttons.map((m) => m[1])).toEqual(['Deny', 'Always allow', 'Allow once'])
+    expect(buttons.map((m) => /title="([^"]*)"/.exec(m[0])?.[1])).toEqual([
+      'Deny (Esc)',
+      'Always allow (2)',
+      'Allow once (⌘ Enter)'
+    ])
+    expect(buttons.map((m) => /aria-keyshortcuts="([^"]*)"/.exec(m[0])?.[1])).toEqual([
+      'Escape 1',
+      '2',
+      'Meta+Enter 3'
+    ])
+  })
+  it('says the queue level with the question, and nothing when one request waits', () => {
+    expect(dock([asked('a'), asked('b')])).toMatch(
+      /<div class="chat-prompt-head"><div class="chat-prompt-title">[^<]*<\/div><span class="chat-prompt-queue">1 of 2 waiting<\/span><\/div>/
+    )
+    expect(dock([asked('a')])).not.toContain('chat-prompt-queue')
   })
 })
 
