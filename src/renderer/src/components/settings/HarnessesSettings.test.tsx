@@ -168,10 +168,11 @@ describe('a missing harness', () => {
     expect(html).toContain('Install it from its own page')
   })
 
-  it('shows neither the model nor the permissions until it is there', () => {
+  it('shows neither the model nor the permissions until it is there, but keeps the launch profiles fold', () => {
     h.agents = ['claude', 'codex', 'antigravity', 'pi'].map((id) => agent(id, false))
-    render()
+    const html = render()
     expect(h.selects).toEqual([])
+    expect(tagWith(html, 'data-harness-advanced="pi"')).not.toBeNull()
   })
 
   it('reads a harness not checked yet as present: no Install, its settings shown (verifier, F4)', () => {

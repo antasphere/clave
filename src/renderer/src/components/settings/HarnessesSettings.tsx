@@ -350,41 +350,39 @@ function HarnessBlock({
             <PermissionsRow harness={harness} />
           </>
         )}
-        {!missing && (
-          <>
-            <button
-              className="settings-row-action"
-              onClick={() => setOpen((value) => !value)}
-              aria-expanded={open}
-              data-harness-advanced={harness.id}
-            >
-              <ChevronRightIcon
-                className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : ''}`}
-                aria-hidden
-              />
-              Advanced: launch profiles
-            </button>
-            {/* The fold opens inside the harness's own card, animated like every
+        {/* The launch profiles stay reachable for a harness the PATH check did
+            not find: a profile's wrapper is how such a harness is run. */}
+        <button
+          className="settings-row-action"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          data-harness-advanced={harness.id}
+        >
+          <ChevronRightIcon
+            className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : ''}`}
+            aria-hidden
+          />
+          Advanced: launch profiles
+        </button>
+        {/* The fold opens inside the harness's own card, animated like every
             fold of the house (420 ms), never as a block below it. */}
-            <AnimatePresence initial={false}>
-              {open && (
-                <motion.div
-                  key="advanced"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-                  style={{ overflow: 'hidden' }}
-                  data-harness-advanced-body={harness.id}
-                >
-                  <div className="settings-card-inset">
-                    <LaunchProfilesFamily family={harness.id} label={harness.name} />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </>
-        )}
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="advanced"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              style={{ overflow: 'hidden' }}
+              data-harness-advanced-body={harness.id}
+            >
+              <div className="settings-card-inset">
+                <LaunchProfilesFamily family={harness.id} label={harness.name} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </SettingsCard>
     </section>
   )
