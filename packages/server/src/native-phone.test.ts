@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from './embedded'
 import { FakeSource, aSession } from './test-support'
+import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 
 let server: EmbeddedServer
 let source: FakeSource
@@ -140,5 +141,57 @@ describe('the pairing the phone starts with no credential', () => {
     expect(response.status).toBe(422)
     const body = (await response.json()) as { _tag?: string }
     expect(['CapabilityUnavailable', 'DevicePairingRefused']).toContain(body._tag)
+  })
+})
+
+describe('a message the phone sends is acknowledged by its provider, not by the server alone', () => {
+  it('stays pending until the session acknowledges it, then reads accepted', async () => {
+    let acknowledge!: () => void
+    Object.assign(source, {
+      write: (id: string, input: unknown) =>
+        new Promise<void>((resolve) => {
+          source.writes.push({ id, input })
+          acknowledge = resolve
+        })
+    })
+    const answer = post('/sessions/write', phoneWrite('s1', 'hi', 'm-native-0010'), server.token)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const meanwhile = await get(
+      '/sessions/writes?id=s1&clientMessageId=m-native-0010',
+      server.token
+    )
+    expect(await meanwhile.json()).toMatchObject({ status: 'pending' })
+    acknowledge()
+    const settled = await answer
+    expect(settled.status).toBe(200)
+    expect(await settled.json()).toMatchObject({ status: 'accepted' })
+    const after = await get('/sessions/writes?id=s1&clientMessageId=m-native-0010', server.token)
+    expect(await after.json()).toMatchObject({ status: 'accepted' })
+    expect(source.writes).toHaveLength(1)
+  })
+
+  it('reads unknown when the session cannot confirm it, and a retry sends nothing', async () => {
+    Object.assign(source, {
+      write: async (id: string, input: unknown) => {
+        source.writes.push({ id, input })
+        throw new UnconfirmedSessionWrite(id, 'm-native-0011')
+      }
+    })
+    const answer = await post(
+      '/sessions/write',
+      phoneWrite('s1', 'hi', 'm-native-0011'),
+      server.token
+    )
+    expect(answer.status).toBe(422)
+    expect(await answer.json()).toMatchObject({ _tag: 'SessionWriteUnknown' })
+    const status = await get('/sessions/writes?id=s1&clientMessageId=m-native-0011', server.token)
+    expect(await status.json()).toMatchObject({ status: 'unknown' })
+    const again = await post(
+      '/sessions/write',
+      phoneWrite('s1', 'hi', 'm-native-0011'),
+      server.token
+    )
+    expect(again.status).toBe(422)
+    expect(source.writes).toHaveLength(1)
   })
 })

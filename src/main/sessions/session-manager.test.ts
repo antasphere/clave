@@ -354,3 +354,47 @@ describe('SessionManager', () => {
     expect(listener).toHaveBeenCalledTimes(6)
   })
 })
+
+describe('an identified write waits for its provider (PRDCT-4448)', () => {
+  it('answers when the adapter acknowledges, and fails as the adapter fails', async () => {
+    const { manager, adapter } = fixture()
+    await manager.create(session('a'))
+    let acknowledge!: () => void
+    let refuse!: (error: Error) => void
+    const write = vi.spyOn(adapter, 'write')
+    write.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledge = resolve
+        })
+    )
+    const sent = manager.write('a', {
+      type: 'user_message',
+      text: 'hello',
+      clientMessageId: 'phone-0001'
+    })
+    expect(sent).toBeInstanceOf(Promise)
+    let settled = false
+    void (sent as Promise<void>).then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    acknowledge()
+    await sent
+    expect(settled).toBe(true)
+    write.mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => {
+          refuse = reject
+        })
+    )
+    const unconfirmed = manager.write('a', {
+      type: 'user_message',
+      text: 'again',
+      clientMessageId: 'phone-0002'
+    })
+    refuse(new Error('the provider did not confirm whether the message arrived'))
+    await expect(unconfirmed).rejects.toThrow('did not confirm')
+  })
+})
