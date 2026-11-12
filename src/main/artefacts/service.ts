@@ -18,7 +18,10 @@
  * starts, so a link dropped then would be lost at every restart. A window
  * shows an artefact only for a session it lists, so a link whose tab is
  * gone is shown nowhere; what bounds the document is `MAX_LINKS` in
- * `links.ts`, the oldest link going first.
+ * `links.ts`. Over that bound the links of sessions this server does not
+ * know go first, oldest first, and a known session's link goes only when
+ * every link left is a known session's, so tabs closed for good never push
+ * out the page of a tab that still runs.
  *
  * Built by both entries, in-process by main and standalone by
  * `server-entry.ts`, over the entry's data folder. Imports no Electron,
@@ -454,7 +457,9 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       // written first, so the preview of a folder the session no longer
       // shows is stopped at once rather than kept waiting.
       const link = { target, page, title, openedAt: new Date(now()).toISOString() }
-      deps.links.set(sessionId, link)
+      // Over the bound, the links of tabs this server no longer knows go
+      // before the link of a tab that still runs.
+      deps.links.set(sessionId, link, (id) => deps.sessions.knows(id))
       dropSessionHolds(sessionId)
       const artefact: Artefact = { sessionId, ...link }
       tell({ _tag: 'artefact.changed', sessionId, artefact })

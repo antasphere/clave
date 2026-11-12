@@ -77,16 +77,25 @@ export function LinkedDocumentPanel({
   // reloads it, unless the panel holds edits of its own or a conflict. Main
   // reloads only when the file is not what the panel last loaded or saved,
   // so the panel's own saves never reload it under the person's cursor.
-  useFileChanged(doc.kind === 'email' ? null : (doc.path ?? null), () => {
-    if (pending.current || blocked.current || current.current.conflict) return
-    update({ reloadExternal: true, ifChanged: true })
-  })
+  // It reconciles once its watch is set, so an edit made while the watch was
+  // being set is seen; when nothing changed main reloads nothing.
+  useFileChanged(
+    doc.kind === 'email' ? null : (doc.path ?? null),
+    () => {
+      if (pending.current || blocked.current || current.current.conflict) return
+      update({ reloadExternal: true, ifChanged: true })
+    },
+    { reconcile: true }
+  )
 
   function update(input: LinkedUpdate, emailPatch?: Partial<LinkedEmail>): void {
     if (blocked.current) return
     const reloadsAtCall = reloads.current
     pending.current++
-    setStatus('Saving…')
+    // A read of the file from disk saves nothing: the status says Saving
+    // only for what is saved, or it would flash at every open now that the
+    // panel reads again once its watch is set.
+    if (!input.reloadExternal) setStatus('Saving…')
     setError('')
     setSignatureError('')
     // Keep the visible buffer local while serializing every edit through the main revision boundary.

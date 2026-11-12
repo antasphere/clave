@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import type { ArtefactEvent } from '@clave/contract/artefacts'
 import type { AgentState } from '@clave/contract/sessions'
-import { ArtefactLinks, type LinksStorage } from './links'
+import { ArtefactLinks, MAX_LINKS, type LinksStorage } from './links'
 import {
   HOLD_TTL_MS,
   LINGER_MS,
@@ -526,6 +526,27 @@ describe('the links of sessions the server does not know yet', () => {
     const held = await service.hold('s1')
     expect(forwards.resolve(held.lease)).toEqual({ port: Number(new URL(held.url).port) })
     expect((await service.list()).find((a) => a.sessionId === 's1')?.target).toBe(deck)
+  })
+
+  it('make room before the link of a tab that still runs: closed tabs never push it out', async () => {
+    const { service, deck, known, setNow } = setup()
+    let at = START
+    const tick = (): void => setNow((at += 1000))
+    await service.open('s1', deck)
+    // Five hundred other tabs each open a page and are then closed for good.
+    for (let n = 1; n <= MAX_LINKS; n++) {
+      tick()
+      known.add(`gone-${n}`)
+      await service.open(`gone-${n}`, deck)
+      known.delete(`gone-${n}`)
+    }
+    tick()
+    await service.open('s2', deck)
+    const listed = (await service.list()).map((a) => a.sessionId)
+    expect(listed).toHaveLength(MAX_LINKS)
+    expect(listed).toContain('s1')
+    expect(listed).toContain('s2')
+    expect(listed).not.toContain('gone-1')
   })
 })
 

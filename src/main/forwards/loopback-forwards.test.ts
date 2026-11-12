@@ -163,4 +163,31 @@ describe("the Mac hop's log", () => {
       await logged.closeAll()
     }
   })
+
+  it("names it by its label when the server's address cannot be read, never by its lease", async () => {
+    const lines: string[] = []
+    const logged = new LoopbackForwards({ log: (line) => lines.push(line) })
+    const silent = randomBytes(16).toString('hex')
+    const forward = await logged.open({
+      key: `server-gone:${silent}`,
+      label: 'server-gone',
+      lease: silent,
+      upstream: () => Promise.reject(new Error('the server is not connected'))
+    })
+    try {
+      const answer = await ask(forward.port, '/', {
+        headers: {
+          [WINDOW_HEADER]: logged.secrets().get(forward.port)!,
+          'sec-fetch-mode': 'navigate',
+          accept: 'text/html'
+        }
+      })
+      expect(answer.status).toBe(503)
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain('server-gone')
+      expect(lines[0]).not.toMatch(/[0-9a-f]{32}/)
+    } finally {
+      await logged.closeAll()
+    }
+  })
 })

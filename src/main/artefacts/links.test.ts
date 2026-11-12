@@ -65,6 +65,50 @@ describe('the artefact links', () => {
     expect(all['s-new']).toEqual(link(MAX_LINKS + 1))
   })
 
+  it('over the bound, lets the links nobody spares go first, oldest first', () => {
+    const links = new ArtefactLinks(memory())
+    const spared = new Set(['s-live'])
+    const spare = (id: string): boolean => spared.has(id)
+    // The spared link is the oldest of all, then 500 unspared ones.
+    links.set('s-live', link(0), spare)
+    for (let n = 1; n <= MAX_LINKS; n++) links.set(`s${n}`, link(n), spare)
+    const all = links.all()
+    expect(Object.keys(all)).toHaveLength(MAX_LINKS)
+    expect(all['s-live']).toEqual(link(0))
+    expect(all.s1).toBeUndefined()
+    expect(all.s2).toEqual(link(2))
+    expect(all[`s${MAX_LINKS}`]).toEqual(link(MAX_LINKS))
+  })
+
+  it('evicts a spared link, oldest first, only when every link left is spared', () => {
+    const links = new ArtefactLinks(memory())
+    const spare = (): boolean => true
+    for (let n = 1; n <= MAX_LINKS + 1; n++) links.set(`s${n}`, link(n), spare)
+    const all = links.all()
+    expect(Object.keys(all)).toHaveLength(MAX_LINKS)
+    expect(all.s1).toBeUndefined()
+    expect(all.s2).toEqual(link(2))
+    expect(all[`s${MAX_LINKS + 1}`]).toEqual(link(MAX_LINKS + 1))
+  })
+
+  it('never evicts the link being set, even the oldest and unspared', () => {
+    const links = new ArtefactLinks(memory())
+    const spare = (id: string): boolean => id !== 's-set'
+    for (let n = 1; n <= MAX_LINKS; n++) links.set(`s${n}`, link(n), spare)
+    // Older than every link in the document, and the only one not spared.
+    links.set('s-set', link(0), spare)
+    const all = links.all()
+    expect(Object.keys(all)).toHaveLength(MAX_LINKS)
+    expect(all['s-set']).toEqual(link(0))
+    expect(all.s1).toBeUndefined()
+    // The same without a spare: the age alone would name it, and it stays.
+    const plain = new ArtefactLinks(memory())
+    for (let n = 1; n <= MAX_LINKS; n++) plain.set(`s${n}`, link(n))
+    plain.set('s-set', link(0))
+    expect(plain.all()['s-set']).toEqual(link(0))
+    expect(plain.all().s1).toBeUndefined()
+  })
+
   it('writes the file owner-only through a rename', () => {
     const dir = mkdtempSync(join(tmpdir(), 'clave-links-'))
     dirs.push(dir)

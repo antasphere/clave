@@ -473,26 +473,12 @@ export async function run(t, server = 'in-process') {
       'it shows the file',
       !!(await until(async () => (await editorText()).includes('first words')))
     )
-    // With the server apart from the app, the panel's watch on its file is
-    // set a moment after the panel shows (a request to the server), and an
-    // edit made in that moment is seen only at the next one: under load this
-    // check failed once in about six runs on its first write. The file is
-    // therefore written again, at most three times, until the panel follows;
-    // the count is said, so a first write that was missed stays in sight.
-    let writes = 0
-    let rewritten = null
-    while (!rewritten && writes < 3) {
-      writes++
-      writeFileSync(`${ROOT2}/notes.md`, `# Notes\n\nthe agent rewrote this${'\n'.repeat(writes)}`)
-      rewritten = await until(
-        async () => (await editorText()).includes('the agent rewrote this'),
-        40
-      )
-    }
+    // The panel reconciles once its watch is set, so an edit made in that moment is seen.
+    writeFileSync(`${ROOT2}/notes.md`, '# Notes\n\nthe agent rewrote this\n')
     t.check(
       'an agent’s edit to a Markdown file reloads it too',
-      !!rewritten,
-      `${await editorText()} (after ${writes} write${writes === 1 ? '' : 's'})`
+      !!(await until(async () => (await editorText()).includes('the agent rewrote this'))),
+      await editorText()
     )
 
     // A file gone for a moment (a checkout, an agent's rm then write) never

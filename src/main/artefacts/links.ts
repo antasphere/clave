@@ -7,11 +7,15 @@
  * Kept over a storage of one text so the rules run in tests without a disk.
  * An unreadable document reads as empty, said once in the log, and the next
  * write replaces it: a broken file must never stop an agent from opening a
- * page. The document keeps at most `MAX_LINKS` links, the oldest by
- * `openedAt` going first, so a server that runs for months never grows it
- * without end. That is the document's only bound: the service never drops
- * a link because it does not know its session yet (a terminal tab is known
- * by its id only once a window has taken it back after a restart).
+ * page. The document keeps at most `MAX_LINKS` links, so a server that runs
+ * for months never grows it without end. Over that bound the links of the
+ * sessions the caller does not spare go first, oldest by `openedAt` first,
+ * and a spared session's link goes only when every link left is spared: the
+ * service spares the sessions it knows, so tabs closed for good make room
+ * before a tab that still runs loses its page. The link being set is never
+ * the one evicted. That is the document's only bound: the service never
+ * drops a link because it does not know its session yet (a terminal tab is
+ * known by its id only once a window has taken it back after a restart).
  */
 import { randomBytes } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -60,14 +64,24 @@ export class ArtefactLinks {
     return this.read()[sessionId]
   }
 
-  set(sessionId: string, link: ArtefactLink): void {
+  /**
+   * Sets a session's link. `spare` names the sessions whose links are
+   * evicted last when the document is over its bound; without it every link
+   * is evicted by age alone.
+   */
+  set(sessionId: string, link: ArtefactLink, spare?: (sessionId: string) => boolean): void {
     const links = { ...this.read(), [sessionId]: link }
-    const ids = Object.keys(links)
-    if (ids.length > MAX_LINKS) {
-      const oldest = ids
-        .sort((a, b) => (links[a]!.openedAt < links[b]!.openedAt ? -1 : 1))
-        .slice(0, ids.length - MAX_LINKS)
-      for (const id of oldest) delete links[id]
+    const excess = Object.keys(links).length - MAX_LINKS
+    if (excess > 0) {
+      const byAge = (a: string, b: string): number =>
+        links[a]!.openedAt < links[b]!.openedAt ? -1 : 1
+      // The link being set is never a candidate, whatever its openedAt says.
+      const spared: string[] = []
+      const unspared: string[] = []
+      for (const id of Object.keys(links))
+        if (id !== sessionId) (spare?.(id) ? spared : unspared).push(id)
+      const evicted = [...unspared.sort(byAge), ...spared.sort(byAge)].slice(0, excess)
+      for (const id of evicted) delete links[id]
     }
     this.write(links)
   }

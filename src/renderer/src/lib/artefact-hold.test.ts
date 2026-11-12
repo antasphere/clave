@@ -113,6 +113,25 @@ describe('the hold loop of an artefact frame', () => {
     loop.stop()
   })
 
+  it('a wake-up after an answer clears the armed renewal: the next one counts from its own answer', async () => {
+    const f = fake()
+    const loop = startHoldLoop(f.deps)
+    await f.calls[0]!.answer(answer('h1'))
+    // The renewal is armed for TTL / 3 from now; the server comes back earlier.
+    await vi.advanceTimersByTimeAsync(10_000)
+    loop.wake()
+    expect(f.calls).toHaveLength(2)
+    await f.calls[1]!.answer(answer('h1'))
+    // The old renewal's time comes: no call, it was cleared by the wake-up.
+    await vi.advanceTimersByTimeAsync(TTL / 3 - 10_000)
+    expect(f.calls).toHaveLength(2)
+    // The renewal counted from the wake-up's answer.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(f.calls).toHaveLength(3)
+    expect(f.maxInFlight()).toBe(1)
+    loop.stop()
+  })
+
   it('releases the held id when it stops, and calls no more', async () => {
     const f = fake()
     const loop = startHoldLoop(f.deps)

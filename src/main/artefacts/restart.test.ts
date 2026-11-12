@@ -59,7 +59,11 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
 
-describe.skipIf(!isTmuxAvailable())('an artefact link across a restart', () => {
+// The skip stays: the backend looks for tmux by reading the PATH's folders on
+// disk, not through child_process, so the interception above cannot answer it.
+const SUITE =
+  'an artefact link across a restart (skipped where tmux is not on the PATH: the backend finds it on disk, which no tmux call intercepted here can answer)'
+describe.skipIf(!isTmuxAvailable())(SUITE, () => {
   it('keeps the link of a tmux terminal tab that the restarted server does not know yet', async () => {
     const dir = tempDataDir()
     dirs.push(dir)
