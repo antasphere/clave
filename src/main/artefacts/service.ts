@@ -12,6 +12,14 @@
  * stopped and its lease given back. A preview that dies under its holders is said to
  * them (`artefact.preview_exited`): they hold again and a new one starts.
  *
+ * A link is never dropped because the server does not know its session.
+ * "Not known" is not "closed": a terminal tab that runs in tmux is found by
+ * its id only once a window has taken it back, long after this service
+ * starts, so a link dropped then would be lost at every restart. A window
+ * shows an artefact only for a session it lists, so a link whose tab is
+ * gone is shown nowhere; what bounds the document is `MAX_LINKS` in
+ * `links.ts`, the oldest link going first.
+ *
  * Built by both entries, in-process by main and standalone by
  * `server-entry.ts`, over the entry's data folder. Imports no Electron,
  * directly or through anything it imports (`service-graph.test.ts`).
@@ -435,15 +443,6 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     )
   }
 
-  /** Drop the links whose session this server no longer knows. */
-  const dropUnknown = (): void => {
-    for (const sessionId of Object.keys(deps.links.all()))
-      if (!deps.sessions.knows(sessionId)) {
-        dropSessionHolds(sessionId)
-        deps.links.remove(sessionId)
-      }
-  }
-
   let sweeper: ReturnType<typeof setInterval> | null = null
   let stopStates: (() => void) | null = null
 
@@ -492,10 +491,9 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       if (holds.get(holdId)?.sessionId === sessionId) dropHold(holdId)
     },
     saveVersion,
-    list: async () => {
-      dropUnknown()
-      return Object.entries(deps.links.all()).map(([sessionId, link]) => ({ sessionId, ...link }))
-    },
+    // Every link of the document, whether its session is known yet or not.
+    list: async () =>
+      Object.entries(deps.links.all()).map(([sessionId, link]) => ({ sessionId, ...link })),
     slidelessState: async () => state(),
     installSlideless: () => install(),
     subscribe: (listener) => {
@@ -508,7 +506,6 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     start: () => {
       writePreviewHost(deps.dataDir)
       hostWritten = true
-      dropUnknown()
       stopStates ??= deps.sessions.onState(onState)
       if (!sweeper) {
         sweeper = setInterval(sweep, SWEEP_MS)

@@ -42,6 +42,7 @@ beforeAll(async () => {
   forwards = new LoopbackForwards()
   opened = await forwards.open({
     key: `s1:${lease}`,
+    label: 's1',
     lease,
     upstream: async () => ({ url: server.url, token: server.token })
   })
@@ -249,6 +250,7 @@ describe('the forward chain', () => {
     let token = 'not-the-token'
     const changing = await forwards.open({
       key: `s-change:${lease}`,
+      label: 's-change',
       lease,
       upstream: async () => ({ url: server.url, token })
     })
@@ -265,6 +267,7 @@ describe('the forward chain', () => {
     const off = forwards.onChange(() => (changes += 1))
     const input = {
       key: `s-shared:${lease}`,
+      label: 's-shared',
       lease,
       upstream: async () => ({ url: server.url, token: server.token })
     }
@@ -292,6 +295,7 @@ describe('the forward chain when the server cannot show the page', () => {
     const ownForwards = new LoopbackForwards()
     const forward = await ownForwards.open({
       key: `mid:${ownLease}`,
+      label: 'mid',
       lease: ownLease,
       upstream: async () => ({ url: ownServer.url, token: ownServer.token })
     })
@@ -340,6 +344,7 @@ describe('the forward chain when the server cannot show the page', () => {
     const stopped = await startEmbedded({ ports: { sessions: new FakeSource(), forwards: own } })
     const forward = await forwards.open({
       key: `s-stop:${ownLease}`,
+      label: 's-stop',
       lease: ownLease,
       upstream: async () => ({ url: stopped.url, token: stopped.token })
     })
@@ -360,6 +365,7 @@ describe('the forward chain when the server cannot show the page', () => {
   it('a refused token: the refused page, with no refresh', async () => {
     const forward = await forwards.open({
       key: `s-refused:${lease}`,
+      label: 's-refused',
       lease,
       upstream: async () => ({ url: server.url, token: 'a-token-the-server-never-gave' })
     })
@@ -376,6 +382,7 @@ describe('the forward chain when the server cannot show the page', () => {
     const leased = registry.register(target.port)
     const forward = await forwards.open({
       key: `s-released:${leased.lease}`,
+      label: 's-released',
       lease: leased.lease,
       upstream: async () => ({ url: server.url, token: server.token })
     })
@@ -389,6 +396,7 @@ describe('the forward chain when the server cannot show the page', () => {
     // The target's own 404 is not an away: it passes untouched.
     const live = await forwards.open({
       key: `s-live:${lease}`,
+      label: 's-live',
       lease,
       upstream: async () => ({ url: server.url, token: server.token })
     })

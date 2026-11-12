@@ -28,6 +28,7 @@ import { type OwnServerName, ownServerName as keptServerName } from './server-na
 import type { EmbeddedServer, ServerPorts } from '@clave/server'
 import type { ForwardRegistry } from '@clave/server/forward-registry'
 import type { ArtefactServiceHandle } from '../artefacts/service'
+import { installE2eHooks } from '../sessions/e2e-hooks'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
 import {
   type ClaveServerEndpoint,
@@ -190,6 +191,8 @@ async function inProcessArtefacts(
       import('@clave/server/forward-registry')
     ])
   const forwards = new ForwardRegistry()
+  // Under test mode only: a spec registers a target of its own on this server.
+  installE2eHooks({ forwards })
   const service = createArtefactService({
     dataDir: options.dataDir,
     execPath: process.execPath,

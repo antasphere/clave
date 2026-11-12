@@ -48,6 +48,9 @@ export interface ForwardUpstream {
 export interface OpenForwardInput {
   /** One listener per key; a second open of the same key joins it. */
   readonly key: string
+  /** What the log calls this forward (the server's id): never the key,
+   *  which holds the lease. */
+  readonly label: string
   readonly lease: string
   /** Asked at every request, so a token changed in Settings is used at once. */
   readonly upstream: () => Promise<ForwardUpstream>
@@ -82,6 +85,7 @@ const DROPPED_UP = new Set([
 
 interface Listener {
   readonly key: string
+  readonly label: string
   readonly lease: string
   readonly port: number
   readonly secret: string
@@ -192,6 +196,7 @@ export class LoopbackForwards {
     })
     const listener: Listener = {
       key: input.key,
+      label: input.label,
       lease: input.lease,
       port: (server.address() as AddressInfo).port,
       secret: randomBytes(32).toString('hex'),
@@ -319,7 +324,7 @@ export class LoopbackForwards {
     void listener.upstream().then(
       (upstream) => this.relay(listener, req, res, upstream),
       () => {
-        this.log(`[forwards] ${listener.key}: the server's address could not be read`)
+        this.log(`[forwards] ${listener.label}: the server's address could not be read`)
         req.resume()
         this.away(req, res, 'unreachable')
       }
@@ -367,7 +372,7 @@ export class LoopbackForwards {
     })
     out.on('error', () => {
       if (!res.headersSent) {
-        this.log(`[forwards] ${listener.key}: the server did not answer`)
+        this.log(`[forwards] ${listener.label}: the server did not answer`)
         this.away(req, res, 'unreachable')
       } else res.destroy()
     })

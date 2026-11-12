@@ -9,6 +9,7 @@ import { ipcMain, type WebContents } from 'electron'
 import log from 'electron-log/main'
 import { isForwardLease } from '@clave/contract/forward'
 import { LoopbackForwards, type OpenedForward } from './loopback-forwards'
+import { installE2eHooks } from '../sessions/e2e-hooks'
 
 export const loopbackForwards = new LoopbackForwards({ log: (line) => log.info(line) })
 
@@ -53,6 +54,7 @@ export function registerForwardHandlers(
     const key = `${serverId}:${lease}`
     const opened = await loopbackForwards.open({
       key,
+      label: serverId,
       lease,
       upstream: () => endpointOf(serverId)
     })
@@ -74,5 +76,19 @@ export function registerForwardHandlers(
     const one = opened?.pop()
     one?.release()
     if (held && opened && opened.length === 0) held.delete(key)
+  })
+  // Under test mode only (`installE2eHooks` does nothing otherwise): a forward
+  // opened the way `forwards:open` opens one, for a spec that frames it in a
+  // window by hand. It is held until the app quits.
+  installE2eHooks({
+    openForward: async (serverId, lease) => {
+      const opened = await loopbackForwards.open({
+        key: `${serverId}:${lease}`,
+        label: serverId,
+        lease,
+        upstream: () => endpointOf(serverId)
+      })
+      return opened.url
+    }
   })
 }

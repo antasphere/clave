@@ -4,19 +4,12 @@ import type { Artefact } from '@clave/contract/artefacts/model'
 import { initArtefacts, ownerOfSession, useArtefactStore } from '../../store/artefact-store'
 import { useFleetStore } from '../../store/fleet-store'
 import { serverNameOf } from '../../lib/drop-refusal'
+import { startHoldLoop } from '../../lib/artefact-hold'
 import { useFileChanged } from '../../hooks/use-file-changed'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
 
 /** How many times a minute the frame holds again a preview that died under it. */
 const RESTART_LIMIT = 3
-/** How often a refused or failed hold is tried again while the frame is mounted. */
-const RETRY_MS = 10_000
-
-const messageOf = (error: unknown): string =>
-  (error instanceof Error ? error.message : String(error)).replace(
-    /^Error invoking remote method '[^']+': (?:Error: )?/,
-    ''
-  )
 
 /**
  * The frame of a session's HTML artefact (PRDCT-4474). The server the
@@ -93,43 +86,21 @@ export function SlidelessArtefact({
 
   useEffect(() => {
     if (gaveUp) return
-    let cancelled = false
-    let holdId: string | undefined
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const take = async (): Promise<void> => {
-      try {
-        const answer = await window.electronAPI.artefacts.hold(sessionId, holdId)
-        if (cancelled) {
-          void window.electronAPI.artefacts.release(sessionId, answer.holdId).catch(() => {})
-          return
-        }
-        holdId = answer.holdId
-        // A renewal that answers another address (the server started the
-        // preview again) re-keys the frame on it.
+    // One hold call at a time (`startHoldLoop`): a wake-up during a call in
+    // flight runs one more call after it, never a second hold at once.
+    const loop = startHoldLoop({
+      hold: (holdId) => window.electronAPI.artefacts.hold(sessionId, holdId),
+      release: (holdId) => window.electronAPI.artefacts.release(sessionId, holdId),
+      onUrl: (url) =>
         setHeld((prev) =>
-          prev?.url === answer.url && prev.openedAt === openedAt
-            ? prev
-            : { openedAt, url: answer.url }
-        )
-        timer = setTimeout(() => void take(), Math.max(1000, answer.ttlMs / 3))
-      } catch (error) {
-        if (cancelled) return
-        // The first hold refused shows why; a renewal that fails keeps the
-        // frame (the forward's own page says the server is away) and tries again.
-        if (holdId === undefined) setHeld({ openedAt, error: messageOf(error) })
-        timer = setTimeout(() => void take(), RETRY_MS)
-      }
-    }
-    wake.current = () => {
-      clearTimeout(timer)
-      void take()
-    }
-    void take()
+          prev?.url === url && prev.openedAt === openedAt ? prev : { openedAt, url }
+        ),
+      onRefused: (error) => setHeld({ openedAt, error })
+    })
+    wake.current = loop.wake
     return () => {
       wake.current = null
-      cancelled = true
-      clearTimeout(timer)
-      if (holdId) void window.electronAPI.artefacts.release(sessionId, holdId).catch(() => {})
+      loop.stop()
     }
   }, [sessionId, openedAt, generation, gaveUp, ready])
 

@@ -9,7 +9,9 @@
  * write replaces it: a broken file must never stop an agent from opening a
  * page. The document keeps at most `MAX_LINKS` links, the oldest by
  * `openedAt` going first, so a server that runs for months never grows it
- * without end.
+ * without end. That is the document's only bound: the service never drops
+ * a link because it does not know its session yet (a terminal tab is known
+ * by its id only once a window has taken it back after a restart).
  */
 import { randomBytes } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'

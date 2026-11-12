@@ -20,7 +20,11 @@
  *     server's disk changes the text without the panel loading again;
  *  4. the frame's own Save version saves on the server: one more version;
  *  5. a plain request to the Mac's port from this process is refused (403):
- *     the port is the windows' alone;
+ *     the port is the windows' alone; a page of a target this spec serves,
+ *     registered on the server and framed in the Mac's window, opens a
+ *     WebSocket that echoes across both hops (the window gate stamps the
+ *     handshake a real window sends), and the same handshake from this
+ *     process is refused;
  *  6. the server stopped, the frame says it cannot be reached; started again
  *     on the same port and data folder, the deck shows again unopened;
  *  7. hidden with its button, brought back by the chip; a second open on
@@ -32,6 +36,7 @@
  * its server is back.
  */
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 import {
   existsSync,
   mkdirSync,
@@ -49,6 +54,7 @@ import {
   showServer,
   step
 } from './fixtures/fleet-world.mjs'
+import { WebSocket, WebSocketServer } from 'ws'
 import { REPO, fixturePath, until } from './harness.mjs'
 
 const CLI =
@@ -83,6 +89,59 @@ function deck(folder, text) {
   mkdirSync(folder, { recursive: true })
   writeFileSync(path.join(folder, 'index.html'), `<!doctype html><h1 id="t">${text}</h1>`)
 }
+
+/** What the target's page says once its socket has answered. */
+const SOCKET_TEXT = 'ping from the window'
+const SOCKET_PAGE = `<!doctype html><meta charset="utf-8"><title>socket</title>
+<h1 id="loaded">page loaded</h1><p id="echo"></p>
+<script>
+const echo = document.getElementById('echo')
+const ws = new WebSocket('ws://' + location.host + '/ws')
+ws.onopen = () => ws.send(${JSON.stringify(SOCKET_TEXT)})
+ws.onmessage = (event) => { echo.textContent = String(event.data) }
+ws.onerror = () => { echo.textContent = 'socket error' }
+</script>`
+
+/** A target on this process's loopback: one page at `/`, an echo of every frame on `/ws`. */
+async function socketTarget() {
+  const server = createServer((req, res) => {
+    if (req.url === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(SOCKET_PAGE)
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  const sockets = new WebSocketServer({ server, path: '/ws' })
+  sockets.on('connection', (ws) => ws.on('message', (data, binary) => ws.send(data, { binary })))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    port: server.address().port,
+    close: async () => {
+      for (const client of sockets.clients) client.terminate()
+      await new Promise((resolve) => sockets.close(() => resolve()))
+      server.closeAllConnections()
+      await new Promise((resolve) => server.close(() => resolve()))
+    }
+  }
+}
+
+/** The status a WebSocket handshake gets from this process, with no window header. */
+const handshakeStatus = (url) =>
+  new Promise((resolve) => {
+    const ws = new WebSocket(url)
+    ws.once('open', () => {
+      ws.terminate()
+      resolve(101)
+    })
+    ws.once('unexpected-response', (_req, res) => {
+      res.resume()
+      ws.terminate()
+      resolve(res.statusCode ?? 0)
+    })
+    ws.once('error', () => resolve(0))
+  })
 
 /** Wait for `fn` to answer true, `ms` at most. */
 async function within(ms, fn) {
@@ -228,6 +287,51 @@ export async function run(t) {
       () => 0
     )
     t.equal('a plain request to the Mac’s port without the window header is refused', stranger, 403)
+
+    // A socket a real Clave window opens: a page of this spec's own target,
+    // registered on the server, forwarded to the Mac the way the window's
+    // IPC handler forwards, and framed in the Mac's window by hand.
+    const target = await socketTarget()
+    try {
+      const lease = await server.fixture.evaluate(
+        (port) => globalThis.__claveE2E.forwards.register(port).lease,
+        target.port
+      )
+      const forwarded = await mac.app.evaluate(
+        (_electron, { serverId, lease }) => globalThis.__claveE2E.openForward(serverId, lease),
+        { serverId: mac.owners[0].id, lease }
+      )
+      await mac.win.evaluate((url) => {
+        const frame = document.createElement('iframe')
+        frame.id = 'e2e-socket-frame'
+        frame.src = url
+        document.body.appendChild(frame)
+      }, forwarded)
+      const inFrame = (selector) =>
+        mac.win
+          .frameLocator('#e2e-socket-frame')
+          .locator(selector)
+          .textContent({ timeout: 1000 })
+          .catch(() => null)
+      t.equal(
+        'a page behind a forward loads in a Clave window',
+        await until(() => inFrame('#loaded'), { tries: 150, gapMs: 100 }),
+        'page loaded'
+      )
+      t.equal(
+        'a socket the page opens echoes back across both hops',
+        await until(async () => (await inFrame('#echo')) || null, { tries: 150, gapMs: 100 }),
+        SOCKET_TEXT
+      )
+      t.equal(
+        'a socket from outside the window is refused',
+        await handshakeStatus(`${forwarded.replace(/^http/, 'ws')}ws`),
+        403
+      )
+      await mac.win.evaluate(() => document.getElementById('e2e-socket-frame')?.remove())
+    } finally {
+      await target.close()
+    }
 
     // ── 6. The server away, then back on the same port and data folder ──
     await step('the server stops', () => server.stop())

@@ -109,7 +109,12 @@ try {
   await api('/artefacts/open', { sessionId: SESSION, path: deck })
   const held = await api('/artefacts/hold', { sessionId: SESSION })
   const slidelessPort = Number(new URL(held.url).port)
-  const opened = await forwards.open({ key: `check:${held.lease}`, lease: held.lease, upstream })
+  const opened = await forwards.open({
+    key: `check:${held.lease}`,
+    label: 'check',
+    lease: held.lease,
+    upstream
+  })
   const macPort = opened.port
   const macHost = `127.0.0.1:${macPort}`
   const windowHeader = { [WINDOW_HEADER]: forwards.secrets().get(macPort) }
@@ -269,6 +274,7 @@ try {
   const second = registry.register(target.port)
   const socketForward = await forwards.open({
     key: `check:${second.lease}`,
+    label: 'check',
     lease: second.lease,
     upstream
   })

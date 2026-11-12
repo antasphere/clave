@@ -11,6 +11,17 @@ describe('the forward registry', () => {
     expect(isForwardLease(one.lease)).toBe(true)
     expect(two.lease).not.toBe(one.lease)
   })
+  it('mints a lease with no fixed part: every position varies', () => {
+    // A lease is the only name of a forward the server hands out: a part
+    // of it that never changes is a part a guess does not have to find.
+    const registry = new ForwardRegistry()
+    const leases = Array.from({ length: 256 }, () => registry.register(4000).lease)
+    expect(new Set(leases).size).toBe(256)
+    for (let position = 0; position < 32; position++) {
+      const seen = new Set(leases.map((lease) => lease[position]))
+      expect(seen.size, `position ${position}`).toBeGreaterThanOrEqual(8)
+    }
+  })
   it('resolves a lease to its port on loopback, and nothing else', () => {
     const registry = new ForwardRegistry()
     const { lease } = registry.register(4123)

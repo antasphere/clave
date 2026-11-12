@@ -330,6 +330,53 @@ describe('holding a preview', () => {
     expect(forwards.resolve(first.lease)).toEqual({ port: Number(new URL(first.url).port) })
   })
 
+  it('a renewal extends the hold: renewed at 60 s, it outlives its first 90 s', async () => {
+    const { service, deck, forwards, setNow } = setup()
+    await service.open('s1', deck)
+    const held = await service.hold('s1')
+    setNow(START + 60_000)
+    expect((await service.hold('s1', held.holdId)).holdId).toBe(held.holdId)
+    // Past the first expiry: the renewed hold is still there.
+    setNow(START + 100_000)
+    service.sweep()
+    // The renewed hold lapsed at 150 s, so the preview has waited 15 s only.
+    // Had the renewal extended nothing, it would have lapsed at the sweep of
+    // 100 s and the preview, idle since then, would be stopped by now.
+    setNow(START + 165_000)
+    service.sweep()
+    expect(forwards.resolve(held.lease)).toEqual({ port: Number(new URL(held.url).port) })
+  })
+
+  it("a hold is its session's: another session naming it does not release it", async () => {
+    const { service, deck, forwards, setNow } = setup()
+    await service.open('s1', deck)
+    await service.open('s2', deck)
+    const mine = await service.hold('s1')
+    const theirs = await service.hold('s2')
+    // s2 names s1's hold: nothing changes, s1 still holds the preview after
+    // s2 lets go of its own and the minute has passed.
+    await service.release('s2', mine.holdId)
+    await service.release('s2', theirs.holdId)
+    setNow(START + LINGER_MS)
+    service.sweep()
+    expect(forwards.resolve(mine.lease)).toBeDefined()
+  })
+
+  it("a renewal naming another session's hold mints a new one and leaves the first alive", async () => {
+    const { service, deck, forwards, setNow } = setup()
+    await service.open('s1', deck)
+    await service.open('s2', deck)
+    const mine = await service.hold('s1')
+    const other = await service.hold('s2', mine.holdId)
+    expect(other.holdId).not.toBe(mine.holdId)
+    // s2 lets go of the hold it was given: s1's own still holds the preview
+    // a minute later.
+    await service.release('s2', other.holdId)
+    setNow(START + LINGER_MS)
+    service.sweep()
+    expect(forwards.resolve(mine.lease)).toBeDefined()
+  })
+
   it('keeps a preview a minute after its last release, joins it when held again, then stops it; sweeps a hold past its time', async () => {
     const { service, deck, forwards, children, setNow } = setup()
     await service.open('s1', deck)
@@ -461,17 +508,24 @@ describe('a version at each finished turn', () => {
   })
 })
 
-describe('the links of sessions the server no longer knows', () => {
-  it('are dropped by list() and by start()', async () => {
-    const { service, deck, known, storage } = setup()
+describe('the links of sessions the server does not know yet', () => {
+  it('are kept by start(), listed, and given to the session once it is known: a hold then works', async () => {
+    const { service, deck, known, storage, forwards } = setup()
     await service.open('s1', deck)
     await service.open('s2', deck)
+    // After a restart a terminal tab is known by its id only once a window
+    // has taken it back: until then the server does not know it.
     known.delete('s1')
-    expect((await service.list()).map((a) => a.sessionId)).toEqual(['s2'])
-    expect(Object.keys(JSON.parse(storage.text!).artefacts)).toEqual(['s2'])
     known.delete('s2')
     service.start()
-    expect(JSON.parse(storage.text!).artefacts).toEqual({})
+    expect(Object.keys(JSON.parse(storage.text!).artefacts).sort()).toEqual(['s1', 's2'])
+    expect((await service.list()).map((a) => a.sessionId).sort()).toEqual(['s1', 's2'])
+    expect(Object.keys(JSON.parse(storage.text!).artefacts).sort()).toEqual(['s1', 's2'])
+    // The window takes the tab back: the session finds its own link.
+    known.add('s1')
+    const held = await service.hold('s1')
+    expect(forwards.resolve(held.lease)).toEqual({ port: Number(new URL(held.url).port) })
+    expect((await service.list()).find((a) => a.sessionId === 's1')?.target).toBe(deck)
   })
 })
 

@@ -6,7 +6,9 @@
 // Slideless, an edit reloads it, and each finished turn (the Stop hook's word,
 // written where Claude's hook writes it) saves a version ON THE SERVER, the
 // panel hidden or not: the window saves nothing. The side panel refuses the
-// folder with the sentence that names the tool. Part two boots a Clave with no
+// folder with the sentence that names the tool. The app is then quit and
+// launched again on the same data folder: the tab comes back, and its artefact
+// with it, the agent opening nothing again. Part two boots a Clave with no
 // registry: the panel names this Mac in the install card and shows the page
 // under it as before, following its file; Markdown still opens in the side
 // panel and follows its file (PRDCT-4261). Part three: a preview that dies is
@@ -214,6 +216,8 @@ export async function run(t, server = 'in-process') {
   seedTrustedRoots(DIR, [ROOT])
   const reg = await registry()
   let liveSrc = ''
+  /** The tab still showing the folder at the quit: it comes back with the next launch. */
+  let keptId = null
   let { app, win } = await launchApp(DIR, {
     server,
     env: { CLAVE_TEST_SLIDELESS_REGISTRY: reg.url, CLAVE_SLIDELESS_CLI: '' }
@@ -338,7 +342,8 @@ export async function run(t, server = 'in-process') {
     t.check('closing the session stops its Slideless preview', !!stopped)
 
     // Another agent shows the same folder: one preview again, for the quit below.
-    const { client: client2 } = await agentClient(app, win, DIR)
+    const { agent: agent2, client: client2 } = await agentClient(app, win, DIR)
+    keptId = agent2?.sessionId ?? null
     await client2.call('clave_open_artefact', { path: BRIEF })
     await frame.waitFor({ state: 'visible', timeout: 20000 })
     liveSrc = await frame.getAttribute('src')
@@ -360,6 +365,47 @@ export async function run(t, server = 'in-process') {
       : true
   )
   t.check('quitting Clave stops every Slideless preview it started', !!quitDown, liveSrc)
+
+  // The same Clave launched again: the tab that showed the folder comes back
+  // (a terminal tab, kept by tmux across the quit), and its artefact with it,
+  // the agent opening nothing. The server finds such a tab's record by its id
+  // only once the window has taken it back, so a server that forgot the links
+  // of the sessions it did not know at start lost this one.
+  ;({ app, win } = await launchApp(DIR, {
+    server,
+    settleMs: 6000,
+    env: { CLAVE_TEST_SLIDELESS_REGISTRY: '', CLAVE_SLIDELESS_CLI: '' }
+  }))
+  try {
+    const live = () =>
+      win.evaluate(() => window.electronAPI.sessionsList().then((all) => all.map((s) => s.id)))
+    const back = await until(async () => ((await live()).includes(keptId) ? true : null), 150)
+    t.check('the tab that showed the folder comes back after a restart', !!back, {
+      wanted: keptId,
+      live: await live()
+    })
+    const panel = win.locator('[data-testid="artefact-panel"]')
+    const shownAgain = await panel
+      .waitFor({ state: 'visible', timeout: 20000 })
+      .then(() => true)
+      .catch(() => false)
+    t.check('the artefact comes back with its tab after a restart', shownAgain)
+    const deckAgain = () =>
+      win
+        .frameLocator('[data-testid="slideless-artefact"]')
+        .frameLocator('#deck')
+        .locator('#t')
+        .textContent({ timeout: 2000 })
+        .catch(() => null)
+    t.equal(
+      'its preview shows the deck again',
+      await until(async () => ((await deckAgain()) === 'edited while hidden' ? 'yes' : null), 200),
+      'yes'
+    )
+    if (keptId) await callMcp(app, 'closeSession', { sessionId: keptId })
+  } finally {
+    await app.close()
+  }
 
   // ── Part two: no Slideless, the page as before under the install card,
   // naming this Mac; it still follows its file (PRDCT-4261). Markdown keeps
@@ -427,11 +473,26 @@ export async function run(t, server = 'in-process') {
       'it shows the file',
       !!(await until(async () => (await editorText()).includes('first words')))
     )
-    writeFileSync(`${ROOT2}/notes.md`, '# Notes\n\nthe agent rewrote this\n')
+    // With the server apart from the app, the panel's watch on its file is
+    // set a moment after the panel shows (a request to the server), and an
+    // edit made in that moment is seen only at the next one: under load this
+    // check failed once in about six runs on its first write. The file is
+    // therefore written again, at most three times, until the panel follows;
+    // the count is said, so a first write that was missed stays in sight.
+    let writes = 0
+    let rewritten = null
+    while (!rewritten && writes < 3) {
+      writes++
+      writeFileSync(`${ROOT2}/notes.md`, `# Notes\n\nthe agent rewrote this${'\n'.repeat(writes)}`)
+      rewritten = await until(
+        async () => (await editorText()).includes('the agent rewrote this'),
+        40
+      )
+    }
     t.check(
       'an agent’s edit to a Markdown file reloads it too',
-      !!(await until(async () => (await editorText()).includes('the agent rewrote this'))),
-      await editorText()
+      !!rewritten,
+      `${await editorText()} (after ${writes} write${writes === 1 ? '' : 's'})`
     )
 
     // A file gone for a moment (a checkout, an agent's rm then write) never

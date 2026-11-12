@@ -446,6 +446,8 @@ async function main(): Promise<void> {
   // was told (`--node`, as the terminal process gets it) or its own; a
   // preview a window holds reaches it through `/forward/<lease>/…`.
   const forwards = new ForwardRegistry()
+  // Under test mode only: a spec registers a target of its own on this server.
+  installE2eHooks({ forwards })
   const recordOf = sessionLaunchOf(ptyManager)
   const artefacts = createArtefactService({
     dataDir,
