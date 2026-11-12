@@ -32,7 +32,7 @@ import { providerSwitchOptions } from './provider-switch'
 import { conversationIdOf } from '../../shared/runtime-choices'
 import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
 // ── The mobile wave, lane B: a new session's write ledger starts complete ──
-import { initializeSessionWrites } from '../server/session-events'
+import { initializeSessionWrites, sessionRegistered } from '../server/session-events'
 
 export type SessionInfoResult = {
   id: string
@@ -183,6 +183,7 @@ export async function spawnSession(
     )
   }
 
+  sessionRegistered(session.id)
   return {
     id: session.id,
     cwd: session.cwd,

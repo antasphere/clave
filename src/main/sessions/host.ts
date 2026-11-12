@@ -232,11 +232,16 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       return project(manager.get(id) ?? session)
     },
     // ── Wave 6, lane A: the window's name and page, on the record only ──
-    keepOnRecord: (id, { name, page, claudeSessionId, workspaceId }) => {
+    keepOnRecord: (id, { name, page, claudeSessionId, workspaceId, window }) => {
       if (name) ptyManager.setSessionDisplayName(id, name.displayName, name.userRenamed)
       if (page !== undefined) ptyManager.setSessionViewRecord(id, page)
       if (claudeSessionId !== undefined) ptyManager.setSessionClaudeSessionId(id, claudeSessionId)
       if (workspaceId !== undefined) ptyManager.setSessionWorkspace(id, workspaceId)
+      if (window) {
+        const record = ptyManager.getSessionRecord(id)
+        if (record && (record.windowKey || null) === window.expectedKey)
+          ptyManager.setSessionWindowKey(id, window.key)
+      }
     },
     // ── PRDCT-4123: which work a session does, on the records ──
     // The rule (`work-rules.ts`) reads every record this host keeps, the

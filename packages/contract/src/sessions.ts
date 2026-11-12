@@ -1010,7 +1010,12 @@ export const SessionRecordFields = Schema.Struct({
   name: Schema.optional(SessionRecordName),
   page: Schema.optional(Schema.NullOr(SessionRecordView)),
   claudeSessionId: Schema.optional(Schema.NonEmptyString),
-  workspaceId: Schema.optional(Schema.NullOr(Schema.String))
+  workspaceId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Claim an orphan for a desktop window without replacing its process.
+   *  The expected stamp makes a stale discovery unable to undo a move. */
+  window: Schema.optional(
+    Schema.Struct({ key: Schema.NonEmptyString, expectedKey: Schema.NullOr(Schema.String) })
+  )
 })
 export type SessionRecordFields = typeof SessionRecordFields.Type
 /**

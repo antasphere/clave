@@ -1294,6 +1294,10 @@ export const useSessionStore = create<SessionState>((set) => ({
           }
         : {}
 
+      // Discovery can place a hosted chat while the launch reply is still
+      // on its way. The explicit launch still selects it, but adds no row.
+      if (state.sessions.some((s) => s.id === session.id)) return { ...focusPatch }
+
       // FIRST ROW, top level, always. A new tab used to be appended at the
       // bottom and, when the whole selection sat in one group, nested into
       // that group — so where a launch landed depended on where you happened
@@ -1311,8 +1315,8 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   addSessionInGroup: (session, groupId) =>
     set((state) => {
-      if (state.sessions.some((s) => s.id === session.id)) return state
       const newSession = normalizeSession(session)
+      const existing = state.sessions.some((s) => s.id === session.id)
       const visible = inActiveWorkspace(newSession, useWorkspaceStore.getState().activeWorkspaceId)
       const focusPatch = visible
         ? {
@@ -1324,20 +1328,26 @@ export const useSessionStore = create<SessionState>((set) => ({
       const target = groupId
         ? state.groups.find((g) => g.id === groupId && ownerOf(g.id) === ownerOf(session.id))
         : undefined
+      if (existing && target?.sessionIds.includes(session.id)) return { ...focusPatch }
       // Top of wherever it lands — the group's first row, or the sidebar's,
       // the same rule addSession follows. A drag DROP onto a group still
       // appends (moveLayoutItems, position 'inside'): a hand aiming at a
       // group is placing the row, and it lands under what is already there.
       if (target) {
         return {
-          sessions: [...state.sessions, newSession],
+          sessions: existing ? state.sessions : [...state.sessions, newSession],
           ...focusPatch,
-          groups: state.groups.map((g) =>
-            g.id === target.id ? { ...g, sessionIds: [session.id, ...g.sessionIds] } : g
-          ),
-          displayOrder: getDisplayOrder(state)
+          groups: state.groups.map((g) => ({
+            ...g,
+            sessionIds:
+              g.id === target.id
+                ? [session.id, ...g.sessionIds.filter((id) => id !== session.id)]
+                : g.sessionIds.filter((id) => id !== session.id)
+          })),
+          displayOrder: getDisplayOrder(state).filter((id) => id !== session.id)
         }
       }
+      if (existing) return { ...focusPatch }
       return {
         sessions: [...state.sessions, newSession],
         ...focusPatch,

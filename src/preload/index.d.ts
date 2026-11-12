@@ -985,6 +985,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
+  /** Claim local running orphan chats for the primary window, without spawning. */
+  adoptRunningChats: () => Promise<SessionRecord[]>
+  onSessionRegistered: (callback: () => void) => () => void
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>

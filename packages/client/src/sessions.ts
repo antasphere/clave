@@ -181,7 +181,8 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
           ...(fields.name !== undefined && { name: fields.name }),
           ...(fields.page !== undefined && { page: fields.page }),
           ...(fields.claudeSessionId !== undefined && { claudeSessionId: fields.claudeSessionId }),
-          ...(fields.workspaceId !== undefined && { workspaceId: fields.workspaceId })
+          ...(fields.workspaceId !== undefined && { workspaceId: fields.workspaceId }),
+          ...(fields.window !== undefined && { window: fields.window })
         }
       })
     ).then(() => undefined),
