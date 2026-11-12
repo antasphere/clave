@@ -65,12 +65,24 @@ describe('the road a request takes (pure)', () => {
     [`/m/${ID}x/sessions`, refused],
     [`/m/${ID.slice(0, -1)}/sessions`, refused]
   ] as const)('%s', (url, expected) => {
-    expect(roadRoute(url, ID)).toEqual(expected)
+    expect(roadRoute(url, () => ID)).toEqual(expected)
   })
   it('refuses every road when the server has no machine id it can trust', () => {
-    expect(roadRoute(`/m/${ID}/sessions`, null)).toEqual(refused)
-    expect(roadRoute('/machines', null)).toEqual({ kind: 'machines' })
-    expect(roadRoute('/sessions', null)).toEqual(pass)
+    expect(roadRoute(`/m/${ID}/sessions`, () => null)).toEqual(refused)
+    expect(roadRoute('/machines', () => null)).toEqual({ kind: 'machines' })
+    expect(roadRoute('/sessions', () => null)).toEqual(pass)
+  })
+  it('asks for the machine id only for a request on the road', () => {
+    let asked = 0
+    const id = (): string => {
+      asked += 1
+      return ID
+    }
+    for (const url of ['/sessions', '/machines', '/devices/pair', '/mx/a', '/push'])
+      roadRoute(url, id)
+    expect(asked).toBe(0)
+    roadRoute(`/m/${ID}/sessions`, id)
+    expect(asked).toBe(1)
   })
 })
 
@@ -286,6 +298,23 @@ describe('GET /machines', () => {
     expect((await raw(server.url, 'GET', `/m/${ID}/sessions`, bearer(server.token))).status).toBe(
       404
     )
+  })
+
+  it('reads the machine id for no request outside the road, so none is minted by them', async () => {
+    let reads = 0
+    const { server } = await start({
+      machineId: () => {
+        reads += 1
+        return ID
+      }
+    })
+    expect((await raw(server.url, 'GET', '/sessions', bearer(server.token))).status).toBe(200)
+    expect((await raw(server.url, 'GET', '/health/ready')).status).toBe(200)
+    expect(reads).toBe(0)
+    expect((await raw(server.url, 'GET', `/m/${ID}/sessions`, bearer(server.token))).status).toBe(
+      200
+    )
+    expect(reads).toBeGreaterThan(0)
   })
 
   it('refuses the road when the machine id cannot be read, rather than inventing one', async () => {

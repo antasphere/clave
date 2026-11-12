@@ -58,19 +58,22 @@ export type RoadRoute =
 
 /**
  * What the road makes of a request URL (path and query, as the listener
- * hands it over), given this server's machine id or null when it has none
- * it can trust. Pure; the one place the alias is decided.
+ * hands it over). `machineId` answers this server's machine id, or null when
+ * it has none it can trust; it is asked only for a request on the road
+ * (`/m/...`), so no other request reads or mints it. The one place the alias
+ * is decided.
  */
-export function roadRoute(url: string, machineId: string | null): RoadRoute {
+export function roadRoute(url: string, machineId: () => string | null): RoadRoute {
   const cut = url.indexOf('?')
   const path = cut === -1 ? url : url.slice(0, cut)
   const query = cut === -1 ? '' : url.slice(cut)
   if (path === MACHINES_PATH) return { kind: 'machines' }
   if (path !== '/m' && !path.startsWith('/m/')) return { kind: 'pass' }
-  if (machineId === null) return { kind: 'refused' }
+  const id = machineId()
+  if (id === null) return { kind: 'refused' }
   const rest = path.slice('/m/'.length)
   const slash = rest.indexOf('/')
-  if (slash === -1 || rest.slice(0, slash) !== machineId) return { kind: 'refused' }
+  if (slash === -1 || rest.slice(0, slash) !== id) return { kind: 'refused' }
   const inner = rest.slice(slash)
   if (
     !inner
@@ -197,7 +200,7 @@ export function phoneRoad(port: DevicesPortService): PhoneRoadService {
   return {
     wrap: (app) =>
       Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
-        const route = roadRoute(request.url, machineId())
+        const route = roadRoute(request.url, machineId)
         switch (route.kind) {
           case 'pass':
             return app
