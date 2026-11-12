@@ -321,6 +321,22 @@ export async function run(t) {
     )
     assert.equal(await restored.getByText(overlap, { exact: true }).count(), 2)
     assert.equal(await restored.getByText('Fixture reply: ' + missed, { exact: true }).count(), 1)
+    const turns = [text, 'continuation after desktop reconnect', missed, overlap, overlap]
+    const rendered = await restored.locator('article[data-role]').evaluateAll((elements) =>
+      elements.map((element) => ({
+        role: element.getAttribute('data-role'),
+        text: element.textContent.trim()
+      }))
+    )
+    assert.deepEqual(
+      rendered,
+      turns.flatMap((turn) => [
+        { role: 'user', text: turn },
+        { role: 'assistant', text: 'Fixture reply: ' + turn }
+      ]),
+      'snapshot and live messages render in their original conversation order'
+    )
+    proof.snapshotLiveHandoffOrder = rendered
     proof.snapshotLiveHandoffPreservedDistinctIdenticalTurns = true
     t.check(
       'frames arriving during a held snapshot render in order, with two identical turns kept distinct',

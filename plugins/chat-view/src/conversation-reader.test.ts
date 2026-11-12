@@ -308,6 +308,40 @@ describe('the positioned snapshot/live handoff', () => {
     await settle()
     expect(h.entries()).toHaveLength(2)
   })
+  it('rejects a refresh behind the live cursor without rolling back the visible conversation', async () => {
+    vi.useFakeTimers()
+    const stale = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockResolvedValueOnce(page([1, 2, 3]))
+        .mockImplementationOnce(() => stale.promise)
+        .mockResolvedValue(page([1, 2, 3, 4, 5]))
+    )
+    h.reader.start()
+    await settle()
+    h.reader.stream(frame(4, 'four'))
+    h.reader.stream(frame(5, 'five'))
+    const visible = h.entries()
+    expect(visible).toHaveLength(5)
+
+    h.reader.retry()
+    stale.resolve(page([1, 2, 3]))
+    await settle()
+    expect(h.entries()).toEqual(visible)
+    expect(h.entries().slice(-2)).toMatchObject([{ text: 'four' }, { text: 'five' }])
+    expect(h.snapshot).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(h.timeline).toHaveBeenCalledTimes(3)
+    expect(h.snapshot).toHaveBeenCalledTimes(2)
+    expect(h.entries()).toHaveLength(5)
+    h.reader.stream(frame(6, 'after recovery'))
+    expect(h.entries()).toHaveLength(6)
+    expect(h.entries().at(-1)).toMatchObject({ text: 'after recovery' })
+    expect(h.history).not.toHaveBeenCalled()
+    expect(h.failed).not.toHaveBeenCalled()
+  })
   it('takes a new generation snapshot, clearing old entries even when the new snapshot is empty', async () => {
     const h = setup(
       vi
