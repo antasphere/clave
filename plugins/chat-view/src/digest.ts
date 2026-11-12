@@ -7,6 +7,7 @@ import type {
   DigestResult
 } from '../../../src/shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestResult } from '../../../src/shared/work-digest'
+import type { PageTitleDone, PageTitleResult } from '../../../src/shared/page-title'
 import type { DigestFailureReason } from '../../../src/shared/exchange-digest'
 
 /**
@@ -35,7 +36,10 @@ import type { DigestFailureReason } from '../../../src/shared/exchange-digest'
  *    again" asks at once, and a view that asks again (a remount, the tab
  *    reopened) re-asks a failure older than DIGEST_RETRY_AFTER_MS. A failure
  *    no ask can mend (the server needs an update, it no longer has the tab)
- *    offers no "Ask again" and is not re-asked (`canAskAgain`).
+ *    offers no "Ask again" and is not re-asked (`canAskAgain`);
+ *  - a read the host turned away because too many of its kind were waiting
+ *    (`busy`) is asked again by itself after DIGEST_BUSY_RETRY_MS, while its
+ *    card is still in view, without waiting for the view to ask.
  */
 
 /** How long a card must hold still before its digest is asked for: a burst
@@ -46,6 +50,9 @@ export const DIGEST_GIVE_UP_MS = 90_000
 /** How old a failure must be before a view asking again re-asks it on its
  *  own: a failing account is not asked once per render. */
 export const DIGEST_RETRY_AFTER_MS = 60_000
+/** How long a read the host found busy waits before it is asked again: the
+ *  reads ahead of it are a few seconds each, so a place frees soon. */
+export const DIGEST_BUSY_RETRY_MS = 4_000
 
 /** Why a read failed, as the card says it. */
 export type DigestFailure = DigestFailureReason | 'unanswered'
@@ -82,7 +89,7 @@ export const DIGEST_SLOW_LINE = 'Still reading: this is taking long.'
 export type DigestCard = 'exchange' | 'work'
 
 /** What a failure says after its opening, in words for anyone. */
-function failureWords(reason: DigestFailure | undefined): string {
+export function digestFailureWords(reason: DigestFailure | undefined): string {
   switch (reason) {
     case 'limit':
       return 'this account is at its limit.'
@@ -119,7 +126,7 @@ export function digestFailureLine(
     return card === 'work'
       ? 'No title: titles are switched off in Settings.'
       : 'Not read: digests are switched off in Settings.'
-  return `${card === 'work' ? 'No title' : 'Not read'}: ${failureWords(reason)}`
+  return `${card === 'work' ? 'No title' : 'Not read'}: ${digestFailureWords(reason)}`
 }
 
 export type DigestStateOf<Done> =
@@ -148,7 +155,9 @@ export interface DigestItem<Payload> {
   payload: Payload
 }
 
-const idOf = (sessionId: string, key: string): string => `${sessionId}|${key}`
+/** Where a card's state is kept in its family's store: by tab and key. */
+export const digestIdOf = (sessionId: string, key: string): string => `${sessionId}|${key}`
+const idOf = digestIdOf
 
 /** One family of digests: how to load what is filed for a tab, and how to
  *  ask for one. The `useDigests` hook is the view's, `useState` the card's. */
@@ -162,6 +171,9 @@ export function createDigests<Payload, Done>(api: {
   ) =>
     | Promise<{ ok: true } | { ok: false; error: string; reason?: DigestFailureReason }>
     | undefined
+  /** How long a card holds still before its read is asked: DIGEST_SETTLE_MS
+   *  unless the family says otherwise (a page's title is asked at once). */
+  settleMs?: number
 }): {
   useStore: UseBoundStore<StoreApi<DigestStore<Done>>>
   useState: (sessionId: string, key: string, enabled: boolean) => DigestStateOf<Done>
@@ -200,6 +212,14 @@ export function createDigests<Payload, Done>(api: {
   >()
   /** Each card's latest ask: an answer of an older one is not applied. */
   const asks = new Map<string, number>()
+  /** The busy reads waiting to be asked again, by card. */
+  const busyRetries = new Map<string, ReturnType<typeof setTimeout>>()
+  const clearBusyRetry = (id: string): void => {
+    const timer = busyRetries.get(id)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    busyRetries.delete(id)
+  }
   const failed = (reason?: DigestFailure): DigestStateOf<Done> => ({
     state: 'failed',
     reason,
@@ -223,10 +243,13 @@ export function createDigests<Payload, Done>(api: {
       !(
         state.state === 'failed' &&
         canAskAgain(state.reason) &&
-        (now || Date.now() - state.at >= DIGEST_RETRY_AFTER_MS)
+        (now ||
+          Date.now() - state.at >=
+            (state.reason === 'busy' ? DIGEST_BUSY_RETRY_MS : DIGEST_RETRY_AFTER_MS))
       )
     )
       return
+    clearBusyRetry(id)
     asked.set(id, { sessionId, item, launch })
     const generation = (asks.get(id) ?? 0) + 1
     asks.set(id, generation)
@@ -266,9 +289,18 @@ export function createDigests<Payload, Done>(api: {
                   ? { state: 'done', result: result as unknown as Done, fresh: true }
                   : failed(result.reason)
               )
+            // Turned away for a moment: asked again by itself, while in view.
+            if (!result.ok && result.reason === 'busy')
+              busyRetries.set(
+                id,
+                setTimeout(() => {
+                  busyRetries.delete(id)
+                  if (current.get(sessionId)?.has(item.key)) ask(sessionId, item, launch, true)
+                }, DIGEST_BUSY_RETRY_MS)
+              )
           })
       },
-      now ? 0 : DIGEST_SETTLE_MS
+      now ? 0 : (api.settleMs ?? DIGEST_SETTLE_MS)
     )
   }
 
@@ -303,7 +335,11 @@ export function createDigests<Payload, Done>(api: {
     launch: DigestLaunch
   ): void => {
     watchServer()
-    current.set(sessionId, new Set(items.map((item) => item.key)))
+    const keys = new Set(items.map((item) => item.key))
+    // A card that left the view is not asked again by itself.
+    for (const key of current.get(sessionId) ?? [])
+      if (!keys.has(key)) clearBusyRetry(idOf(sessionId, key))
+    current.set(sessionId, keys)
     if (!useStore.getState().loaded[sessionId]) return
     for (const item of items) ask(sessionId, item, launch)
   }
@@ -409,6 +445,48 @@ export function useStretchDigests(
   stretches.useDigests(
     sessionId,
     items.map((s) => ({ key: s.key, payload: { notes: s.notes, tools: s.tools } })),
+    launch
+  )
+}
+
+/* The page titles: Folio's page heads (PRDCT-4412). A page shows the first
+   sentence of its question at once, and a title a helper wrote in its place
+   once it is read (`lab/PageTitle.tsx`). Asked the moment the page exists:
+   a question does not change once it is sent, so there is no burst to wait
+   out. */
+
+/** One page the view wants titled: its title's key (`Page.titleKey`) and
+ *  the question, as the reader wrote it. */
+export interface TitlePage {
+  key: string
+  message: string
+}
+
+const titles = createDigests<{ message: string }, PageTitleDone>({
+  filed: (sessionId) => window.electronAPI?.pageTitlesOf?.(sessionId),
+  read: (sessionId, key, launch, payload): Promise<PageTitleResult> | undefined =>
+    window.electronAPI?.pageTitle?.({ sessionId, key, launch, message: payload.message }),
+  settleMs: 0
+})
+
+export const usePageTitleStore = titles.useStore
+
+/** Where a page's title stands, for its head. */
+export const usePageTitleState = titles.useState
+
+/** Ask a page's failed title again. */
+export const retryPageTitle = titles.retry
+
+/** The view's side of the page titles: every page with a question is
+ *  titled, whether or not it is the page on screen. */
+export function usePageTitles(
+  sessionId: string,
+  items: readonly TitlePage[],
+  launch: DigestLaunch
+): void {
+  titles.useDigests(
+    sessionId,
+    items.map((item) => ({ key: item.key, payload: { message: item.message } })),
     launch
   )
 }

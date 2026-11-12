@@ -223,8 +223,11 @@ reads the provider's side off the echo adapter's reply.
 
 `clave.chat-view/lab`, titled Folio (`src/lab/`, its name and one-line pitch in
 `src/lab/meta.ts`, which the first-run onboarding reads). The conversation is a
-book of pages, one per question: the reader's message is the page's title (its
-first sentence, `headline`), the agent's answer is written on the page as a
+book of pages, one per question: the page's title is the reader's message, its
+first sentence (`headline`) at once, then the title a helper wrote for it,
+rewritten in place over the first sentence (`PageTitle.tsx`, `reveal.ts`; a
+title already filed is just shown, and the whole message then sits under it),
+and the agent's answer is written on the page as a
 document, and what the agent did on the way (calls, approvals) sits in the
 margin beside the paragraph it led to; a call in the margin opens to the
 transcript's own `ToolPanel`. A message sent before any answer joins the
@@ -232,9 +235,51 @@ question it follows. The spine at the top has one tick per page, its height the
 length of the answer; the arrows (or Option and the arrows from an empty
 composer), the ticks and the contents turn pages, and the page being written is
 followed until the reader turns away, with a way back while they are elsewhere.
-A finished page can be read aloud through the system voice (Web Speech
-synthesis, `speech.ts` takes the markdown out and cuts the utterances), and the
-speaker toggle in the composer's footer reads each new answer as it finishes.
+A finished page can be read aloud: the reading first asks for the page's spoken
+rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
+markdown, no code read out, the lists said as sentences, filed so a page read
+before is spoken at once), and speaks it; when none comes, it reads the page as
+written (`speech.ts` takes the markdown out and cuts the utterances) and the
+voice card says why. The speaker toggle in the composer's footer reads each new
+answer as it finishes.
+
+The VOICE CARD (`src/lab/VoiceCard.tsx`, its words in `voice-card.ts`,
+PRDCT-4430) is the one place a person reads and drives the reading: in the
+page's margin at its head, above the tool notes, on every finished page. Idle,
+it says which voice will read before a click: a tab on this Mac reads this
+Mac's ElevenLabs status once per page view (`loadIntegrations`, a local read),
+"Ada · ElevenLabs on this Mac" or "The Mac's voice" with why under it ("No
+ElevenLabs on this server", "No voice chosen on this server"); a server tab
+says what its last reading heard, else "The server's voice, if it has one".
+"Ready" when the spoken version is already filed, "Reads new answers" when the
+composer's toggle is on. Then each step, named and timed, with Cancel:
+"Rewriting for the voice" (step 1 of 2, the spoken rendering), "Creating the
+voice with Ada" (step 2 of 2, the first part asked of ElevenLabs; skipped when
+this Mac's status already says it has none). Then the player: Play/Pause,
+Stop, "Block 3 of 8", the bar, the voice and the time. When the Mac's voice
+reads, one line in the accent of a note says why ("Reading with the Mac's
+voice: the ElevenLabs credits are spent"), never an error. Read to its end,
+the card offers "Listen again". The figure is the Integrations card's drawing
+at the margin's size and says the step: the pen over the line being read, the
+wave drawing itself, the wave breathing while it plays; still under reduced
+motion. The card carries `data-voice-state` (idle, rewriting, creating,
+playing, paused) and each step `data-step`, for the specs. The page's foot
+keeps only Copy the answer and the steps count.
+
+The reading is a player, by block (PRDCT-4430). One split, `splitBlocks` in
+`src/shared/spoken-rendering.ts`, cuts an answer into its top-level blocks (a
+paragraph, a heading, a list, a table, a fence, a quote); the page renders
+each block on its own (`data-block`, numbered across the page's prose), and
+the spoken rendering is asked on those same blocks, numbered, and answered
+block by block (a reply whose numbers do not match is asked again, then the
+page is read as written, by the same blocks). The voice speaks one part per
+block (`audio.ts`, a long block in several parts), so the block being read is
+known and washed in the accent, brought into view unless the reader scrolled
+in the last three seconds. The card's control plays and pauses (the
+ElevenLabs element and the system voice alike), Stop ends the reading, a click
+on a block reads from it, and the card's bar has one tick per block, a click
+or a drag (or the arrows) going to a block, with the time once known
+(`progress.ts`). A rendering filed before the blocks plays whole, nothing lit.
 
 It keeps the same reducer, subscription order and composer as the Chat view
 (`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Run baseline before extraction, then compare after building. PNGs live only
 // in the OS temp directory and are removed after comparison, even on failure.
 import assert from 'node:assert/strict'

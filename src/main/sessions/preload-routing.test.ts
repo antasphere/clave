@@ -317,7 +317,11 @@ describe('the preload routes a tab’s digests to the server that runs it (PRDCT
     exchange: vi.fn(async () => ({ ok: true, needsYou: false, summary: 'server', message: null })),
     exchangesOf: vi.fn(async () => ({})),
     work: vi.fn(async () => ({ ok: true, title: 'server', needsYou: false, note: null })),
-    workOf: vi.fn(async () => ({}))
+    workOf: vi.fn(async () => ({})),
+    spoken: vi.fn(async () => ({ ok: true, text: 'server' })),
+    spokenOf: vi.fn(async () => ({})),
+    title: vi.fn(async () => ({ ok: true, title: 'server' })),
+    titleOf: vi.fn(async () => ({}))
   })
 
   it('reads them in main over IPC, launch and all, while main names no server', async () => {
@@ -326,13 +330,21 @@ describe('the preload routes a tab’s digests to the server that runs it (PRDCT
     await api.exchangeDigestsOf('s1')
     await api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 })
     await api.workDigestsOf('s1')
+    await api.spokenRendering({ sessionId: 's1', key: 'spoken-1-a', launch, markdown: 'm' })
+    await api.spokenRenderingsOf('s1')
+    await api.pageTitle({ sessionId: 's1', key: 'title-1-a', launch, message: 'q' })
+    await api.pageTitlesOf('s1')
     expect(
       mocks.invoke.mock.calls.filter(([c]) => c !== 'server:endpoint' && c !== 'server:external')
     ).toEqual([
       ['exchanges:digest', { sessionId: 's1', key: 'k', launch, messages }],
       ['exchanges:digests-of', 's1'],
       ['work:digest', { sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 }],
-      ['work:digests-of', 's1']
+      ['work:digests-of', 's1'],
+      ['spoken:rendering', { sessionId: 's1', key: 'spoken-1-a', launch, markdown: 'm' }],
+      ['spoken:renderings-of', 's1'],
+      ['pages:title', { sessionId: 's1', key: 'title-1-a', launch, message: 'q' }],
+      ['pages:titles-of', 's1']
     ])
   })
 
@@ -365,7 +377,27 @@ describe('the preload routes a tab’s digests to the server that runs it (PRDCT
         tools: 1
       })
       expect(server.workOf).toHaveBeenCalledExactlyOnceWith('s1')
-      expect(channels().filter((c) => /digest/.test(c))).toEqual([])
+      expect(
+        await api.spokenRendering({ sessionId: 's1', key: 'spoken-1-a', launch, markdown: 'm' })
+      ).toMatchObject({ text: 'server' })
+      await api.spokenRenderingsOf('s1')
+      expect(
+        await api.pageTitle({ sessionId: 's1', key: 'title-1-a', launch, message: 'q' })
+      ).toMatchObject({ title: 'server' })
+      await api.pageTitlesOf('s1')
+      expect(server.spoken).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'spoken-1-a',
+        markdown: 'm'
+      })
+      expect(server.spokenOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(server.title).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'title-1-a',
+        message: 'q'
+      })
+      expect(server.titleOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(channels().filter((c) => /digest|spoken|pages:/.test(c))).toEqual([])
     })
 })
 

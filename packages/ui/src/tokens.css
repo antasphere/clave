@@ -292,6 +292,12 @@
   --ease-out-settle: cubic-bezier(0.32, 1.18, 0.6, 1);
 
   --animate-fade-in: fade-in 150ms var(--ease-out-expo);
+
+  /* The beats of the drawings in the house hand: the pen's stroke, a figure
+     breathing at rest, a quicker breath while it works. */
+  --beat-pen: 1.6s;
+  --beat-breathe: 1.8s;
+  --beat-breathe-quick: 1.4s;
 }
 
 /* Dark theme (default) */

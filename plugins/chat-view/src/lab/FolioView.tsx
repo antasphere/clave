@@ -58,6 +58,9 @@ import { ContinuedFromCard, ProviderSwitch } from '../ProviderSwitch'
 import { midTurn, noteAgentName, useProviderSwitch } from '../use-provider-switch'
 import { providerLabel } from '../models'
 import { useViewSessionStore } from '../../../../src/renderer/src/views/session-store'
+import { useSessionStore } from '../../../../src/renderer/src/store/session-store'
+import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
+import { digestIdOf, usePageTitles, usePageTitleStore } from '../digest'
 import { EffortMenu } from '../EffortMenu'
 import { ContextMeter } from '../TerminalStatus'
 import { WorkCards } from '../WorkCards'
@@ -67,8 +70,11 @@ import { PastFailed } from '../EarlierLoading'
 import { pastHead } from '../past'
 import { FolioDrawing } from './FolioDrawing'
 import {
+  briefFor,
   buildPages,
   currentPage,
+  entryBlocks,
+  firstBlocks,
   STATUS_WORDS,
   turnPage,
   type Note,
@@ -76,7 +82,11 @@ import {
   type PageRow
 } from './pages'
 import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
+import { fallbackLine, useSpokenRenderings } from './spoken'
+import { FolioLoader, PageTitle } from './PageTitle'
+import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
+import { VoiceCard } from './VoiceCard'
 import { LAB_VIEW } from './meta'
 
 /* Folio: the conversation as a book of pages, one per question. The reader's
@@ -107,17 +117,49 @@ function clock(at: number): string {
     : `${then.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${time}`
 }
 
-/** The answer's prose, memoised on its entry: a streamed delta re-renders the
- *  paragraph it grows and nothing else on the page. */
+/** One block of the answer (PRDCT-4430): the page renders each block of
+ *  `splitBlocks` on its own, numbered across the page (`data-block`), so the
+ *  voice reading block n lights block n (`data-reading`). Memoised: a streamed
+ *  delta re-renders the block it grows and nothing else. */
+const Block = memo(function Block({
+  n,
+  markdown,
+  reading,
+  streaming,
+  components
+}: {
+  n: number
+  markdown: string
+  reading: boolean
+  streaming: boolean
+  components: Components
+}): React.JSX.Element {
+  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  return (
+    <div className="folio-block" data-block={n} data-reading={reading ? 'true' : undefined}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  )
+})
+
+/** The answer's prose, memoised on its entry, written block by block from
+ *  `first` (the number of its first block on the page); `reading` is the
+ *  block the voice reads, when it is one of this entry's. */
 const Prose = memo(function Prose({
   entry,
+  first,
+  reading,
   onError
 }: {
   entry: Extract<Entry, { kind: 'assistant' }>
+  first: number
+  reading: number | null
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const streaming = !entry.final
-  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  const blocks = useMemo(() => entryBlocks(entry.text), [entry.text])
   const components = useMemo<Components>(
     () => ({
       code: ChatCode,
@@ -145,9 +187,17 @@ const Prose = memo(function Prose({
   )
   return (
     <div className="chat-prose folio-prose" data-streaming={streaming ? 'true' : undefined}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-        {entry.text}
-      </ReactMarkdown>
+      {blocks.map((markdown, i) => (
+        <Block
+          // By position: a streamed block keeps its element as it grows.
+          key={i}
+          n={first + i}
+          markdown={markdown}
+          reading={reading === first + i}
+          streaming={streaming && i === blocks.length - 1}
+          components={components}
+        />
+      ))}
     </div>
   )
 })
@@ -188,10 +238,16 @@ function ToolNote({
 function Line({
   row,
   pen,
+  first,
+  reading,
   onError
 }: {
   row: PageRow
   pen: boolean
+  /** The number of the row's first block on the page. */
+  first: number
+  /** The block the voice reads, when it is one of this row's. */
+  reading: number | null
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const [opened, setOpened] = useState<string | null>(null)
@@ -204,7 +260,7 @@ function Line({
   return (
     <div className="folio-line" data-notes={row.notes.length > 0 ? 'true' : undefined}>
       <div className="folio-text">
-        {row.prose && <Prose entry={row.prose} onError={onError} />}
+        {row.prose && <Prose entry={row.prose} first={first} reading={reading} onError={onError} />}
         {row.error && (
           <div className="chat-notice" data-tone="error" role="alert">
             {row.error.message}
@@ -247,8 +303,20 @@ function Line({
 
 /** The question at the head of a page: who asked when it was another tab, the
  *  title, and the whole message under it when it says more than the title. */
-function PageHead({ page, of }: { page: Page; of: number }): React.JSX.Element {
+function PageHead({
+  page,
+  of,
+  title,
+  sessionId
+}: {
+  page: Page
+  of: number
+  /** The title the page has now: the written one once it is done. */
+  title: string
+  sessionId: string
+}): React.JSX.Element {
   const [whole, setWhole] = useState(false)
+  const brief = briefFor(page, title)
   const files = page.question.flatMap((q) => q.attachments ?? [])
   const status = STATUS_WORDS[page.status]
   return (
@@ -265,11 +333,11 @@ function PageHead({ page, of }: { page: Page; of: number }): React.JSX.Element {
         )}
       </p>
       {page.from !== undefined && <SenderChip sender={page.from} />}
-      <h2 className="folio-title">{page.title}</h2>
-      {page.brief && (
+      <PageTitle sessionId={sessionId} page={page} />
+      {brief && (
         <div className="folio-brief" data-whole={whole ? 'true' : undefined}>
-          <p>{page.brief}</p>
-          {page.brief.length > 280 && (
+          <p>{brief}</p>
+          {brief.length > 280 && (
             <button type="button" className="folio-link" onClick={() => setWhole((w) => !w)}>
               {whole ? 'Show less' : 'Show the whole message'}
             </button>
@@ -301,41 +369,137 @@ function CopyAnswer({ text }: { text: string }): React.JSX.Element {
   )
 }
 
+/** What the composer's speaker toggle says on hover while a page is read:
+ *  the step, or the voice (the server's ElevenLabs voice, or the Mac's and
+ *  why, PRDCT-4411). The voice card says the same on the page. */
+function readTitle(reading: Reading | null): string | undefined {
+  if (!reading) return undefined
+  if (reading.phase === 'preparing')
+    return reading.step === 'creating' ? 'Creating the voice…' : 'Rewriting for the voice…'
+  const voice =
+    reading.voice === 'elevenlabs'
+      ? 'Reading with ElevenLabs'
+      : reading.voice === 'system' && reading.why
+        ? `Reading with the Mac's voice: ${reading.why}`
+        : 'Reading'
+  return reading.fallback ? `${voice}. ${fallbackLine(reading.fallback)}` : voice
+}
+
+/** How long after the reader scrolls the page the voice leaves it where they
+ *  put it: the block being read is brought into view only after that. */
+const READER_SCROLL_MS = 3_000
+
 /** The page on screen. Keyed by its page by the caller, so turning to another
  *  plays the turn once; growing in place plays nothing. */
 function PageView({
   page,
   of,
+  title,
+  sessionId,
   direction,
   voice,
+  autoRead,
   onError
 }: {
   page: Page
   of: number
+  title: string
+  sessionId: string
   direction: number
-  voice: {
-    supported: boolean
-    reading: Reading | null
-    read: (key: string, markdown: string) => void
-    stop: () => void
-  }
+  voice: ReturnType<typeof useReadAloud>
+  autoRead: boolean
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const live = page.status === 'writing' || page.status === 'working'
   const lastRow = page.rows.at(-1)
   const penOnLast = live && !!lastRow
   const reading = voice.reading?.key === page.key ? voice.reading : null
+  const lit = reading?.block ?? null
+  // Each row's first block, and so which row holds the block being read.
+  const firsts = useMemo(() => firstBlocks(page), [page])
+  const rowsWithProse = useMemo(() => [...firsts.keys()], [firsts])
+  const rowReading = (rowKey: string): number | null => {
+    if (lit === null) return null
+    const at = rowsWithProse.indexOf(rowKey)
+    if (at < 0) return null
+    const first = firsts.get(rowKey) ?? 0
+    const next = at + 1 < rowsWithProse.length ? firsts.get(rowsWithProse[at + 1])! : Infinity
+    return lit >= first && lit < next ? lit : null
+  }
+
+  // The block being read comes into view, unless the reader scrolled the page
+  // in the last few seconds: their place wins.
+  const body = useRef<HTMLDivElement>(null)
+  const userScrolledAt = useRef(0)
+  const active = reading !== null
+  useEffect(() => {
+    if (!active) return
+    const mark = (): void => {
+      userScrolledAt.current = Date.now()
+    }
+    const keys = (event: KeyboardEvent): void => {
+      if (/^(PageUp|PageDown|Home|End|ArrowUp|ArrowDown)$/.test(event.key)) mark()
+    }
+    window.addEventListener('wheel', mark, { passive: true, capture: true })
+    window.addEventListener('touchmove', mark, { passive: true, capture: true })
+    window.addEventListener('keydown', keys, { capture: true })
+    return () => {
+      window.removeEventListener('wheel', mark, { capture: true })
+      window.removeEventListener('touchmove', mark, { capture: true })
+      window.removeEventListener('keydown', keys, { capture: true })
+    }
+  }, [active])
+  useEffect(() => {
+    if (lit === null) return
+    if (Date.now() - userScrolledAt.current < READER_SCROLL_MS) return
+    const block = body.current?.querySelector<HTMLElement>(`[data-block="${lit}"]`)
+    block?.scrollIntoView?.({ block: 'nearest' })
+  }, [lit])
+
+  const finished = !live && !!page.answer
+  // A click on a block reads from it: a reading of this page moves there, any
+  // other starts one. A link, a button or a field keeps its own click, and a
+  // selection made by dragging is not a click on a block.
+  const onBodyClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (!finished || !voice.supported) return
+    const target = event.target as HTMLElement
+    if (target.closest('a, button, summary, input, textarea, select, label')) return
+    const block = target.closest<HTMLElement>('.folio-block')
+    if (!block) return
+    const selection = window.getSelection?.()
+    if (selection && !selection.isCollapsed && selection.toString().trim()) return
+    const n = Number(block.dataset.block)
+    if (!Number.isInteger(n) || n < 1) return
+    voice.readFrom(page.key, page.spoken, n)
+  }
   return (
     <article
       className="folio-page"
       data-direction={direction < 0 ? 'back' : 'forward'}
       data-status={page.status}
-      aria-label={`Page ${page.number}: ${page.title}`}
+      aria-label={`Page ${page.number}: ${title}`}
     >
-      <PageHead page={page} of={of} />
-      <div className="folio-body">
+      <div className="folio-top" data-card={finished && voice.supported ? 'true' : undefined}>
+        <PageHead page={page} of={of} title={title} sessionId={sessionId} />
+        {finished && voice.supported && (
+          <VoiceCard page={page} sessionId={sessionId} voice={voice} autoRead={autoRead} />
+        )}
+      </div>
+      <div
+        ref={body}
+        className="folio-body"
+        data-player={reading ? 'true' : undefined}
+        onClick={onBodyClick}
+      >
         {page.rows.map((row) => (
-          <Line key={row.key} row={row} pen={penOnLast && row === lastRow} onError={onError} />
+          <Line
+            key={row.key}
+            row={row}
+            pen={penOnLast && row === lastRow}
+            first={firsts.get(row.key) ?? 0}
+            reading={rowReading(row.key)}
+            onError={onError}
+          />
         ))}
         {live && !lastRow && (
           <div className="folio-line">
@@ -348,27 +512,8 @@ function PageView({
           <p className="folio-aside">Stopped before it finished.</p>
         )}
       </div>
-      {!live && page.answer && (
+      {finished && (
         <footer className="folio-foot">
-          {voice.supported &&
-            (reading ? (
-              <button type="button" className="folio-action" data-on="true" onClick={voice.stop}>
-                <StopIcon aria-hidden="true" />
-                Stop reading
-                <span className="folio-action-count">
-                  {reading.at + 1}/{reading.of}
-                </span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="folio-action"
-                onClick={() => voice.read(page.key, page.answer)}
-              >
-                <SpeakerWaveIcon aria-hidden="true" />
-                Read it to me
-              </button>
-            ))}
           <CopyAnswer text={page.answer} />
           {page.tools > 0 && (
             <span className="folio-tally">
@@ -391,12 +536,15 @@ const tickHeight = (page: Page): number =>
 function Spine({
   pages,
   current,
+  titleOf,
   more,
   onTurn,
   onEarlier
 }: {
   pages: Page[]
   current: Page
+  /** A page's title now: the written one once done, else the stand-in. */
+  titleOf: (page: Page) => string
   more: boolean
   onTurn: (key: string) => void
   onEarlier: () => void
@@ -453,8 +601,8 @@ function Spine({
             className="folio-tick"
             data-status={page.status}
             aria-current={page === current ? 'page' : undefined}
-            aria-label={`Page ${page.number}: ${page.title}`}
-            title={`${page.number}. ${page.title}`}
+            aria-label={`Page ${page.number}: ${titleOf(page)}`}
+            title={`${page.number}. ${titleOf(page)}`}
             style={{ '--tick': `${tickHeight(page)}%` } as React.CSSProperties}
             onClick={() => onTurn(page.key)}
           >
@@ -518,7 +666,7 @@ function Spine({
                   }}
                 >
                   <span className="folio-contents-number">{page.number}</span>
-                  <span className="folio-contents-title">{page.title}</span>
+                  <span className="folio-contents-title">{titleOf(page)}</span>
                   {STATUS_WORDS[page.status] && (
                     <span className="folio-status" data-status={page.status}>
                       {STATUS_WORDS[page.status]}
@@ -666,9 +814,44 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   const live = page?.status === 'writing' || page?.status === 'working'
   const scroll = usePageScroll(page?.key ?? null, live, page, visible)
 
+  // The helpers (a page's title, its spoken rendering) run the agent the tab
+  // runs, on its account, as the Chat view's digests do: the store's record
+  // of the tab carries what the view's session does not.
+  const workspaceId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.workspaceId
+  )
+  const launchProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.launchProfileId
+  )
+  const claudeProfileId = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeProfileId
+  )
+  const configDir = useSessionStore(
+    (s) => s.sessions.find((x) => x.id === session.id)?.claudeConfigDir
+  )
+  const launch = useMemo<DigestLaunch>(
+    () => ({ workspaceId, launchProfileId, claudeProfileId, configDir }),
+    [workspaceId, launchProfileId, claudeProfileId, configDir]
+  )
+  // Every page with a question is titled by a helper (PRDCT-4412), whether or
+  // not it is the page on screen; the head shows the first sentence until then.
+  const titleItems = useMemo(
+    () => pages.flatMap((p) => (p.titleKey ? [{ key: p.titleKey, message: p.message }] : [])),
+    [pages]
+  )
+  usePageTitles(session.id, titleItems, launch)
+  const titleStates = usePageTitleStore((s) => s.states)
+  const titleOf = useCallback(
+    (p: Page): string =>
+      shownTitle(p, p.titleKey ? titleStates[digestIdOf(session.id, p.titleKey)] : undefined),
+    [titleStates, session.id]
+  )
+
   // Reading aloud: on the reader's ask, and, when they asked for it, each new
-  // answer as it is finished while this pane is on screen.
-  const voice = useReadAloud()
+  // answer as it is finished while this pane is on screen, from its spoken
+  // rendering (PRDCT-4409), as written when none can be had.
+  useSpokenRenderings(session.id)
+  const voice = useReadAloud({ sessionId: session.id, launch })
   const [autoRead, setAutoRead] = useAutoRead()
   // Switched to another view, the pane stops reading: a voice nobody can see
   // the source of, or stop, is not a reading.
@@ -688,7 +871,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     if (writing.current !== latest.key) return
     writing.current = null
     if (latest.status === 'done' && autoRead && visible && latest.answer)
-      read(latest.key, latest.answer)
+      read(latest.key, latest.spoken)
   }, [latest, autoRead, visible, read])
 
   const pane = useRef<HTMLDivElement>(null)
@@ -901,6 +1084,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
         <Spine
           pages={pages}
           current={page}
+          titleOf={titleOf}
           more={!!earlier}
           onTurn={turn}
           onEarlier={() => void earlier?.().catch(report)}
@@ -923,8 +1107,11 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
                 key={page.key}
                 page={page}
                 of={pages.length}
+                title={titleOf(page)}
+                sessionId={session.id}
                 direction={turned.direction}
                 voice={voice}
+                autoRead={autoRead}
                 onError={report}
               />
             )}
@@ -1106,14 +1293,19 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
                 className="chat-composer-tool folio-voice-toggle"
                 aria-pressed={autoRead}
                 aria-label="Read new answers aloud"
-                title={autoRead ? 'New answers are read aloud' : 'Read new answers aloud'}
+                title={
+                  readTitle(voice.reading) ??
+                  (autoRead ? 'New answers are read aloud' : 'Read new answers aloud')
+                }
                 data-on={autoRead ? 'true' : undefined}
+                data-phase={voice.reading?.phase}
                 onClick={() => {
                   if (autoRead) voice.stop()
                   setAutoRead(!autoRead)
                 }}
               >
                 <SpeakerWaveIcon />
+                {voice.reading?.phase === 'preparing' && <FolioLoader />}
               </button>
             )}
             <ContextMeter

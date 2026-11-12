@@ -1,7 +1,7 @@
 /**
  * The settings domains of the wire contract: accounts (Claude and Codex, the
- * login jobs, the usage reads), launch profiles, the helpers, preferences and
- * workspaces.
+ * login jobs, the usage reads), launch profiles, the helpers, the integrations,
+ * preferences and workspaces.
  * Lane C's folder; the root exports it as `Settings` once it is on dev, and
  * spreads `SettingsEvent.members` into the server's event union.
  */
@@ -20,6 +20,7 @@ export * from './accounts'
 export * from './antasphere'
 export * from './failures'
 export * from './helpers'
+export * from './integrations'
 export * from './launch-profiles'
 export * from './preferences'
 export * from './workspaces'

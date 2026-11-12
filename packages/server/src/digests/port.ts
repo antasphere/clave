@@ -14,6 +14,10 @@ import { CapabilityUnavailable } from '@clave/contract/errors'
 import type {
   ExchangeDigestRead,
   ExchangeDigestResult,
+  PageTitleRead,
+  PageTitleResult,
+  SpokenRenderingRead,
+  SpokenResult,
   WorkDigestRead,
   WorkDigestResult
 } from '@clave/contract/digests'
@@ -31,6 +35,15 @@ export interface DigestsService {
   readonly workDigestsOf: (
     sessionId: string
   ) => Record<string, Done<WorkDigestResult>> | Promise<Record<string, Done<WorkDigestResult>>>
+  /** Folio's two reads: an answer written for the ear, a page's title. */
+  readonly spoken: (request: SpokenRenderingRead) => Promise<SpokenResult>
+  readonly spokenOf: (
+    sessionId: string
+  ) => Record<string, Done<SpokenResult>> | Promise<Record<string, Done<SpokenResult>>>
+  readonly pageTitle: (request: PageTitleRead) => Promise<PageTitleResult>
+  readonly pageTitlesOf: (
+    sessionId: string
+  ) => Record<string, Done<PageTitleResult>> | Promise<Record<string, Done<PageTitleResult>>>
 }
 
 const NO_DIGESTS = new CapabilityUnavailable({
@@ -51,6 +64,10 @@ export class DigestsPort extends Context.Tag('@clave/server/Digests')<
     exchangeDigest: refuse,
     exchangeDigestsOf: refuse,
     workDigest: refuse,
-    workDigestsOf: refuse
+    workDigestsOf: refuse,
+    spoken: refuse,
+    spokenOf: refuse,
+    pageTitle: refuse,
+    pageTitlesOf: refuse
   }
 }

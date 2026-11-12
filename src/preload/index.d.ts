@@ -65,6 +65,7 @@ import type {
   HelperPreference,
   HelperPreferencePatch
 } from '../shared/helper-preferences'
+import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -75,6 +76,7 @@ import type {
 export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
 export type { HelperAccount, HelperPreference, HelperPreferencePatch }
+export type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus }
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -736,6 +738,9 @@ import type {
 } from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
+import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { SpeakRequest, SpeakResult } from '../shared/speech'
+import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -892,6 +897,23 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `fleetHelpers` / `fleetHelperSet`. */
   helpersList: () => Promise<HelperPreference[]>
   helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's integrations (PRDCT-4410): the ElevenLabs key sealed on the
+   *  machine, its account check, the voice and model. Every write answers
+   *  the status, which never carries the key. A server's are
+   *  `fleetIntegrations` and the `fleetElevenLabs*` members. */
+  integrationsRead: () => Promise<IntegrationsStatus>
+  elevenLabsSetKey: (apiKey: string) => Promise<IntegrationsStatus>
+  elevenLabsCheck: () => Promise<IntegrationsStatus>
+  elevenLabsRemove: () => Promise<IntegrationsStatus>
+  elevenLabsSetVoice: (
+    voiceId: string,
+    voiceName: string,
+    modelId: ElevenLabsModelId | undefined
+  ) => Promise<IntegrationsStatus>
+  elevenLabsVoices: () => Promise<{ voices: ElevenLabsVoice[] }>
+  /** A voice's preview sample, fetched by this Mac's server (PRDCT-4411).
+   *  A failure is a result, never a rejection. */
+  elevenLabsPreview: (voiceId: string) => Promise<SpeakResult>
   spawnSession: (
     cwd: string,
     options?: {
@@ -1179,6 +1201,21 @@ export interface ElectronAPI extends FleetDesktopAPI {
   workDigest: (request: WorkDigestRequest) => Promise<WorkDigestResult>
   /** Every work digest already read for a tab, by the key of its notes. */
   workDigestsOf: (sessionId: string) => Promise<Record<string, WorkDigestDone>>
+  /** Folio: a finished answer written for the ear, to be read aloud, keyed
+   *  by its clipped markdown (`spokenKey`). A failure is a result, never a
+   *  rejection. */
+  spokenRendering: (request: SpokenRequest) => Promise<SpokenResult>
+  /** Every spoken rendering already read for a tab, by key. */
+  spokenRenderingsOf: (sessionId: string) => Promise<Record<string, SpokenDone>>
+  /** Folio: the title of a page, from the reader's clipped message
+   *  (`pageTitleKey`). A failure is a result, never a rejection. */
+  /** Folio: a part of a page's spoken rendering in the ElevenLabs voice of
+   *  the server the tab runs on (PRDCT-4411). A failure is a result with its
+   *  reason (no key, no voice, refused, credits spent…), never a rejection. */
+  speakText: (request: SpeakRequest) => Promise<SpeakResult>
+  pageTitle: (request: PageTitleRequest) => Promise<PageTitleResult>
+  /** Every page title already read for a tab, by key. */
+  pageTitlesOf: (sessionId: string) => Promise<Record<string, PageTitleDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>

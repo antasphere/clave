@@ -37,6 +37,14 @@ describe('the digests of the client', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'outdated' })
     await expect(api.digests.exchangesOf('s')).resolves.toEqual({})
     await expect(api.digests.workOf('s')).resolves.toEqual({})
+    await expect(
+      api.digests.spoken({ sessionId: 's', key: 'spoken-1-x', markdown: 'm' })
+    ).resolves.toMatchObject({ ok: false, reason: 'outdated' })
+    await expect(
+      api.digests.title({ sessionId: 's', key: 'title-1-x', message: 'm' })
+    ).resolves.toMatchObject({ ok: false, reason: 'outdated' })
+    await expect(api.digests.spokenOf('s')).resolves.toEqual({})
+    await expect(api.digests.titleOf('s')).resolves.toEqual({})
   })
 
   it("an older server's 404 reads as outdated", async () => {
@@ -53,6 +61,10 @@ describe('the digests of the client', () => {
       reason: 'outdated'
     })
     await expect(api.digests.exchangesOf('s')).resolves.toEqual({})
+    await expect(
+      api.digests.spoken({ sessionId: 's', key: 'spoken-1-x', markdown: 'm' })
+    ).resolves.toMatchObject({ ok: false, reason: 'outdated' })
+    await expect(api.digests.titleOf('s')).resolves.toEqual({})
   })
 
   it('a server that does not answer is still thrown, not outdated', async () => {
@@ -68,6 +80,12 @@ describe('the digests of the client', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'refused' })
     await expect(
       api.digests.work({ sessionId: 's', key: '1-x', notes: [], tools: 0 })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    await expect(
+      api.digests.spoken({ sessionId: 's', key: 'title-1-x', markdown: 'm' })
+    ).resolves.toMatchObject({ ok: false, reason: 'refused' })
+    await expect(
+      api.digests.title({ sessionId: 's', key: 'spoken-1-x', message: 'm' })
     ).resolves.toMatchObject({ ok: false, reason: 'refused' })
   })
 })

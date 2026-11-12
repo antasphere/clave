@@ -4,7 +4,9 @@ import {
   DIGEST_MAX_MESSAGES as WIRE_MESSAGES,
   DIGEST_MAX_NOTE as WIRE_NOTE,
   DIGEST_MAX_NOTES as WIRE_NOTES,
-  DIGEST_MAX_TEXT as WIRE_TEXT
+  DIGEST_MAX_SPOKEN as WIRE_SPOKEN,
+  DIGEST_MAX_TEXT as WIRE_TEXT,
+  DIGEST_MAX_TITLE_MESSAGE as WIRE_TITLE_MESSAGE
 } from '@clave/contract/digests'
 import {
   DIGEST_MAX_CHARS,
@@ -14,6 +16,9 @@ import {
   digestKey
 } from '../shared/exchange-digest'
 import { MAX_NOTES, MAX_NOTE_CHARS, clipNotes, workDigestKey } from '../shared/work-digest'
+import { clipText } from '../shared/helper-prompt'
+import { SPOKEN_MAX_CHARS } from '../shared/spoken-rendering'
+import { PAGE_TITLE_MESSAGE_CHARS } from '../shared/page-title'
 
 /**
  * The one clip of what a digest reads (PRDCT-4327): the view applies it
@@ -57,5 +62,12 @@ describe('the digest clip', () => {
     expect(WIRE_FROM).toBeGreaterThanOrEqual(DIGEST_MAX_FROM + 1)
     expect(WIRE_NOTES).toBeGreaterThanOrEqual(MAX_NOTES)
     expect(WIRE_NOTE).toBeGreaterThanOrEqual(MAX_NOTE_CHARS + 1)
+    // Folio's reads: an answer and a message, each clipped with `clipText`.
+    expect(WIRE_SPOKEN).toBeGreaterThanOrEqual(
+      clipText('a'.repeat(SPOKEN_MAX_CHARS * 2), SPOKEN_MAX_CHARS).length
+    )
+    expect(WIRE_TITLE_MESSAGE).toBeGreaterThanOrEqual(
+      clipText('a'.repeat(PAGE_TITLE_MESSAGE_CHARS * 2), PAGE_TITLE_MESSAGE_CHARS).length
+    )
   })
 })
