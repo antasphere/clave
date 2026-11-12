@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { chatDefaultFor, resolveSpawnModes, resolveProfileRef } from './open-session-modes'
+import {
+  chatDefaultFor,
+  chatOfInteractionMode,
+  resolveSpawnModes,
+  resolveProfileRef
+} from './open-session-modes'
 import type { LaunchProfilePreferences } from '../../../shared/agent-launch'
 
 describe('clave_open_session spawn modes', () => {
@@ -9,6 +14,17 @@ describe('clave_open_session spawn modes', () => {
     expect(modes.claudeMode).toBe(false)
     expect(modes.dangerousMode).toBe(true)
     expect(modes.family).toBe('codex')
+  })
+  it('opens OpenCode in its own mode, with --auto as its skip-approvals flag and no model', () => {
+    const modes = resolveSpawnModes({ mode: 'opencode', dangerous: true, model: 'x/y' })
+    expect(modes).toMatchObject({
+      opencodeMode: true,
+      piMode: false,
+      claudeMode: false,
+      dangerousMode: true,
+      family: 'opencode'
+    })
+    expect(modes.model).toBeUndefined()
   })
   it('keeps the flag for claude', () => {
     expect(resolveSpawnModes({ mode: 'claude', dangerous: true }).dangerousMode).toBe(true)
@@ -52,8 +68,8 @@ describe('clave_open_session chat view', () => {
     expect(resolveProfileRef({ mode: 'claude', chat: true })).toBe('claude-chat')
     expect(resolveProfileRef({ mode: 'codex', chat: true })).toBe('codex-chat')
   })
-  it('leaves the profile alone without chat', () => {
-    expect(resolveProfileRef({ mode: 'claude' })).toBeUndefined()
+  it('leaves the profile alone with chat: false', () => {
+    expect(resolveProfileRef({ mode: 'claude', chat: false })).toBeUndefined()
     expect(resolveProfileRef({ mode: 'claude', chat: false, profile: 'mine' })).toBe('mine')
   })
   it('accepts the chat profile named alongside chat', () => {
@@ -70,6 +86,61 @@ describe('clave_open_session chat view', () => {
     expect(() => resolveProfileRef({ chat: true, profile: 'builtin-claude' })).toThrow(
       /drop profile/
     )
+  })
+})
+
+/* An omitted chat opens the way the person's launcher does (PRDCT-4175,
+   PRDCT-4425): until 11 November 2026 it always meant the terminal. */
+describe('clave_open_session without chat follows the interaction mode', () => {
+  it('claude: a chat mode opens the chat default, terminal its terminal profile, chat: false the terminal', () => {
+    expect(resolveProfileRef({ mode: 'claude' }, 'chat:claude:mine', 'enclave')).toBe(
+      'chat:claude:mine'
+    )
+    expect(resolveProfileRef({ mode: 'claude' }, 'builtin-claude', 'chat')).toBe('claude-chat')
+    expect(resolveProfileRef({}, undefined, 'folio')).toBe('claude-chat')
+    expect(resolveProfileRef({ mode: 'claude' }, 'chat:claude:mine', 'terminal')).toBeUndefined()
+    expect(
+      resolveProfileRef({ mode: 'claude', chat: false }, 'claude-chat', 'chat')
+    ).toBeUndefined()
+    expect(resolveProfileRef({ mode: 'claude', chat: true }, undefined, 'terminal')).toBe(
+      'claude-chat'
+    )
+  })
+  it('codex: the same three cases', () => {
+    expect(resolveProfileRef({ mode: 'codex' }, 'chat:codex:yolo', 'chat')).toBe('chat:codex:yolo')
+    expect(resolveProfileRef({ mode: 'codex' }, 'chat:codex:yolo', 'terminal')).toBeUndefined()
+    expect(resolveProfileRef({ mode: 'codex', chat: false }, 'chat:codex:yolo', 'chat')).toBe(
+      undefined
+    )
+    expect(resolveProfileRef({ mode: 'codex', chat: true }, undefined, 'terminal')).toBe(
+      'codex-chat'
+    )
+  })
+  it('pi has no chat view: its terminal profile in every mode, chat: true still refused', () => {
+    expect(resolveProfileRef({ mode: 'pi' }, undefined, 'chat')).toBeUndefined()
+    expect(resolveProfileRef({ mode: 'pi' }, undefined, 'terminal')).toBeUndefined()
+    expect(resolveProfileRef({ mode: 'pi', chat: false }, undefined, 'chat')).toBeUndefined()
+    expect(() => resolveProfileRef({ mode: 'pi', chat: true }, undefined, 'chat')).toThrow(
+      /no chat view/
+    )
+  })
+  it('honours an explicit profile as is, whatever the mode', () => {
+    expect(resolveProfileRef({ mode: 'codex', profile: 'mine' }, 'codex-chat', 'chat')).toBe('mine')
+    expect(
+      resolveProfileRef({ mode: 'claude', profile: 'claude-chat' }, undefined, 'terminal')
+    ).toBe('claude-chat')
+  })
+  it('keeps the terminal for a caller that names no mode, as before', () => {
+    expect(resolveProfileRef({ mode: 'codex' }, 'chat:codex:yolo')).toBeUndefined()
+  })
+  it('turns an omitted chat into the explicit one the roads after main receive', () => {
+    expect(chatOfInteractionMode({ mode: 'claude' }, 'enclave')).toBe(true)
+    expect(chatOfInteractionMode({}, 'terminal')).toBe(false)
+    expect(chatOfInteractionMode({ mode: 'codex', chat: false }, 'chat')).toBe(false)
+    expect(chatOfInteractionMode({ mode: 'codex', chat: true }, 'terminal')).toBe(true)
+    expect(chatOfInteractionMode({ mode: 'codex', profile: 'mine' }, 'chat')).toBeUndefined()
+    expect(chatOfInteractionMode({ mode: 'pi' }, 'chat')).toBeUndefined()
+    expect(chatOfInteractionMode({ mode: 'terminal' }, 'chat')).toBeUndefined()
   })
 })
 

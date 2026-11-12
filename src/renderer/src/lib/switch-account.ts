@@ -14,7 +14,7 @@ import {
   getCodexAccount,
   resolveCodexAccount
 } from '../store/codex-account-store'
-import { claudeUsageForModel, type AccountUsageSummary } from '../store/usage-store'
+import { capStatusLine, claudeUsageForModel, type AccountUsageSummary } from '../store/usage-store'
 import {
   explicitAccountId,
   isExhausted,
@@ -217,6 +217,57 @@ function poolUsageForModel(
   model: string | undefined
 ): Record<string, AccountUsageSummary | undefined> {
   return viewUsageForModel(ownerAccountView(LOCAL_SERVER_ID, provider), model)
+}
+
+/** One connection the launcher offers for a model (PRDCT-4423). */
+export interface ModelConnection {
+  id: string
+  label: string
+  /** The account's caps as seen for the model, one line ("60% left ·
+   *  Overall"), or null before a read. */
+  headroom: string | null
+  summary: AccountUsageSummary | undefined
+  /** It can sign in and the model's caps are not spent (an API key is
+   *  always open: it pays per use). */
+  usable: boolean
+  /** The account a launch naming none would land on for this model. */
+  suggested: boolean
+}
+
+/** The connections a launch of `model` could run on, in the pool's order,
+ *  each judged for that model the way `accountForLaunch` judges it: on this
+ *  Mac the suggested one IS the account a launch naming no account lands
+ *  on; on a server (`owner`) the open account the pool would spend first,
+ *  since the server's own pool makes the pick. No usable entry means no
+ *  connection of the provider can run the model now. */
+export function connectionsForModel(
+  provider: AccountProvider,
+  model: string | undefined,
+  owner: string = LOCAL_SERVER_ID
+): ModelConnection[] {
+  const view = ownerAccountView(owner, provider)
+  const pool = poolOf(view)
+  const usage = viewUsageForModel(view, model)
+  const open = (a: PoolAccount): boolean =>
+    a.usable && (a.fallback === true || !isExhausted(usage[a.id]))
+  let suggestedId: string | undefined
+  if (owner === LOCAL_SERVER_ID) {
+    const pick =
+      provider === 'codex'
+        ? accountForLaunch('codex', undefined, model)
+        : accountForLaunch('claude', undefined, model)
+    suggestedId = pool.some((a) => a.id === pick.id && open(a)) ? pick.id : undefined
+  } else {
+    suggestedId = switchTargets(pool, usage).find((t) => t.suggested)?.id
+  }
+  return pool.map((a) => ({
+    id: a.id,
+    label: view.accounts.find((account) => account.id === a.id)?.label ?? a.id,
+    headroom: capStatusLine(usage[a.id]),
+    summary: usage[a.id],
+    usable: open(a),
+    suggested: a.id === suggestedId
+  }))
 }
 
 /** One account a session could move to, as the Switch account menu draws it. */

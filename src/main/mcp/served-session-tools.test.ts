@@ -1044,6 +1044,7 @@ describe('opening a session', () => {
           antigravityMode: false,
           codexMode: false,
           piMode: false,
+          opencodeMode: false,
           dangerousMode: true,
           model: 'opus',
           launchProfileId: 'claude-chat',

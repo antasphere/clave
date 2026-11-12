@@ -160,6 +160,7 @@ export function applyFleetSnapshot(snapshot: FleetSnapshot): void {
         antigravityMode: record?.antigravityMode ?? wire?.provider === 'antigravity',
         codexMode: record?.codexMode ?? wire?.provider === 'codex',
         piMode: record?.piMode ?? wire?.provider === 'pi',
+        opencodeMode: record?.opencodeMode ?? wire?.provider === 'opencode',
         claudeAgentsMode: record?.claudeAgentsMode ?? false,
         dangerousMode: record?.dangerousMode ?? false,
         sessionType: 'local',

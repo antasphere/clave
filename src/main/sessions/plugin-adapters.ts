@@ -76,7 +76,8 @@ const RESERVED_PROFILE_IDS = new Set([
   'builtin-claude',
   'builtin-antigravity',
   'builtin-codex',
-  'builtin-pi'
+  'builtin-pi',
+  'builtin-opencode'
 ])
 /** Emissions kept while no consumer is bound yet; a session that floods is not a reason to grow. */
 const BUFFER_LIMIT = 1000

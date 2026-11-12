@@ -61,6 +61,7 @@ export interface OngoingSessionLike {
   alive: boolean
   claudeMode: boolean
   piMode?: boolean
+  opencodeMode?: boolean
   claudeAgentsMode?: boolean
   dangerousMode: boolean
   claudeSessionId: string | null

@@ -131,6 +131,7 @@ export async function spawnSession(
     !options?.antigravityMode &&
     !options?.codexMode &&
     !options?.piMode &&
+    !options?.opencodeMode &&
     !options?.claudeAgentsMode
   const isResumed = !!options?.resumeSessionId
 

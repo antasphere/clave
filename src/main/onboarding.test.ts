@@ -33,9 +33,11 @@ import {
   folderNameOf,
   getOnboardingState,
   installAgent,
+  installCommandFor,
   releaseOnboardingWindow,
   runInstaller
 } from './onboarding'
+import { HARNESS_BY_ID } from '../shared/harness'
 
 /**
  * The first-run walk's rules in main: an agent is found the way a login shell
@@ -66,6 +68,32 @@ describe('findOnPath', () => {
     expect(findOnPath('claude', dir)).toBeNull()
     expect(findOnPath('claude', undefined)).toBeNull()
     expect(findOnPath('claude', '::')).toBeNull()
+  })
+})
+
+describe('installCommandFor', () => {
+  it("installs each of the four harnesses by the table's line, Codex by what the Mac has", () => {
+    const npm = binDir('npm')
+    const brew = binDir('brew')
+    const none = binDir()
+    for (const pathValue of [npm, brew, none]) {
+      expect(installCommandFor('claude', pathValue)).toBe(HARNESS_BY_ID.claude.install)
+      expect(installCommandFor('antigravity', pathValue)).toBe(HARNESS_BY_ID.antigravity.install)
+    }
+    expect(installCommandFor('codex', `${npm}:${brew}`)).toBe('npm install -g @openai/codex')
+    expect(installCommandFor('codex', brew)).toBe('brew install --cask codex')
+    expect(installCommandFor('codex', none)).toBeNull()
+    // Pi's line is an npm install: it needs npm on the PATH, like Codex.
+    expect(installCommandFor('pi', npm)).toBe(HARNESS_BY_ID.pi.install)
+    expect(installCommandFor('pi', brew)).toBeNull()
+  })
+
+  it('refuses an install with nothing to run it, in plain words', async () => {
+    login.env = { PATH: binDir() }
+    const result = await installAgent('pi')
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('Pi needs npm to install from here.')
+    expect(result.agents.map((a) => a.id)).toEqual(['claude', 'codex'])
   })
 })
 

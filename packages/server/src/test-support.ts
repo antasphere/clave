@@ -60,6 +60,7 @@ export const aRecord = (id: string, windowKey?: string): SessionRecord => ({
   antigravityMode: false,
   codexMode: false,
   piMode: false,
+  opencodeMode: false,
   claudeAgentsMode: false,
   dangerousMode: false,
   ...(windowKey !== undefined && windowKey !== '' && { windowKey })

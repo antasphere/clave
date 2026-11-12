@@ -452,6 +452,7 @@ export const SpawnOptions = Schema.Struct({
   antigravityMode: Schema.optional(Schema.Boolean),
   codexMode: Schema.optional(Schema.Boolean),
   piMode: Schema.optional(Schema.Boolean),
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.optional(Schema.Boolean),
   resumeSessionId: Schema.optional(Schema.String),
   claudeSessionId: Schema.optional(Schema.String),
@@ -470,13 +471,15 @@ export const SpawnOptions = Schema.Struct({
   // ── ADR 0004: what a routine run declares beyond a tab's launch ──
   /** Claude's reasoning effort to start on (`--effort`); a chat defaults to the last picked. */
   effort: Schema.optional(Schema.String),
-  /** The permission mode a Claude session without `dangerousMode` asks under:
-   *  the CLI's `--permission-mode` values short of bypass, which is
-   *  `dangerousMode`. `auto` and `dontAsk` joined so a Resume brings a chat
-   *  back in the mode it was running (PRDCT-4191). */
-  permissionMode: Schema.optional(
-    Schema.Literal('default', 'acceptEdits', 'plan', 'auto', 'dontAsk')
-  ),
+  /** The permission rung a session without `dangerousMode` starts on, by the
+   *  CLI's own name: Claude's `--permission-mode` values (`auto` and `dontAsk`
+   *  joined so a Resume brings a chat back in the mode it was running,
+   *  PRDCT-4191), Codex's sandbox names (`workspace-write`, …), Antigravity's
+   *  modes (`accept-edits`, …): the harness table (`shared/harness.ts`) owns
+   *  the ladders, and the spawn validates the rung against the harness it
+   *  launches (PRDCT-4424; until 11 November 2026 the five Claude names were
+   *  the whole list and every other rung was refused on the wire). */
+  permissionMode: Schema.optional(Schema.String.pipe(Schema.maxLength(64))),
   /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`). */
   pluginDir: Schema.optional(Schema.String),
   /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
@@ -707,6 +710,8 @@ export const SessionRecord = Schema.Struct({
   antigravityMode: Schema.Boolean,
   codexMode: Schema.Boolean,
   piMode: Schema.Boolean,
+  /** Optional on the wire: a record from a host before OpenCode has none. */
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.Boolean,
   dangerousMode: Schema.Boolean,
   model: Schema.optional(Schema.String),

@@ -265,8 +265,15 @@ export async function sendToTarget(
   const after = await host.get(target.id)
   const stillAlive = after !== null && after.state !== 'ended'
   // Transport capture (observability): once the submit landed, with the
-  // delivery as it stood; a Pi tab on either side is not captured.
-  if (io.capture && sender && outcome.submitted && host.modeOf(sender) !== 'pi' && mode !== 'pi') {
+  // delivery as it stood; a Pi or OpenCode tab on either side is not captured.
+  const uncaptured = (m: string): boolean => m === 'pi' || m === 'opencode'
+  if (
+    io.capture &&
+    sender &&
+    outcome.submitted &&
+    !uncaptured(host.modeOf(sender)) &&
+    !uncaptured(mode)
+  ) {
     io.capture({
       sender,
       target,

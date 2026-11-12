@@ -23,7 +23,7 @@ const WS = {
   createdAt: 1
 }
 const TOKEN = 'sk-ant-oat01-recommended-fixture-token-0123456789'
-const LABEL = 'Use the recommended account for new sessions'
+const LABEL = 'Use the recommended connection for new sessions'
 
 export async function run(t) {
   mkdirSync(ROOT, { recursive: true })

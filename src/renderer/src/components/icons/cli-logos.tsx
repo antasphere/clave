@@ -98,3 +98,20 @@ export function PiLogo({ className }: { className?: string }): React.JSX.Element
     </svg>
   )
 }
+
+/** OpenCode: a simple mark of our own, a framed block (a terminal's frame
+ *  around the cursor), drawn in the style of `PiLogo`. No external asset. */
+export function OpenCodeLogo({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 800 800"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path fill="currentColor" fillRule="evenodd" d="M165 120H635V680H165ZM282 237V563H518V237Z" />
+      <path fill="currentColor" d="M282 400H518V563H282Z" />
+    </svg>
+  )
+}

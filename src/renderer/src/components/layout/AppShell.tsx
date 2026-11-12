@@ -28,6 +28,7 @@ import { useTrafficLights } from '../../hooks/use-traffic-lights'
 import { launchSession } from '../../lib/launch-session'
 import { loadLaunchPrefs } from '../../store/launch-prefs'
 import { loadLaunchProfiles } from '../../store/launch-profile-store'
+import { useLaunchSettingsStore } from '../../store/launch-settings-store'
 import { TerminalGrid } from './TerminalGrid'
 import { SettingsPanel } from '../settings/SettingsPanel'
 import { SettingsSidebar } from '../settings/SettingsSidebar'
@@ -232,6 +233,7 @@ export function AppShell(): React.JSX.Element {
     // whether it lands before or after the workspace registry.
     void loadLaunchPrefs()
     void loadLaunchProfiles()
+    void useLaunchSettingsStore.getState().load()
   }, [])
 
   useEffect(() => {
@@ -638,6 +640,8 @@ export function AppShell(): React.JSX.Element {
       newYoloCodexAtFolder: () => launch({ kind: 'codex', dangerousMode: true }, 'ask'),
       newPi: () => launch({ kind: 'pi', dangerousMode: false }, 'workspace-root'),
       newPiAtFolder: () => launch({ kind: 'pi', dangerousMode: false }, 'ask'),
+      newOpencode: () => launch({ kind: 'opencode', dangerousMode: false }, 'workspace-root'),
+      newOpencodeAtFolder: () => launch({ kind: 'opencode', dangerousMode: false }, 'ask'),
       toggleSidebar: () => toggleSidebar(),
       toggleSidePanel: () => toggleFileTree(),
       openFilePalette: () => toggleFilePalette(),

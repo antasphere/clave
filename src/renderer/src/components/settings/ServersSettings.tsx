@@ -127,8 +127,8 @@ function ServerOverview({
         </button>
       </SettingsRow>
       <SettingsRow
-        label="Accounts"
-        description={`The Claude and Codex accounts signed in on the server. Sessions started there use them.${notice ? ` ${notice}` : ''}`}
+        label="Connections"
+        description={`The Claude and Codex connections signed in on the server. Sessions started there use them.${notice ? ` ${notice}` : ''}`}
         tags={
           read && (
             <>

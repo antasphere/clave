@@ -66,7 +66,7 @@ import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../sh
 import {
   ONBOARDING_IPC,
   type OnboardingAgent,
-  type OnboardingAgentId,
+  type InstallableAgentId,
   type OnboardingInstallResult,
   type OnboardingState
 } from '../shared/onboarding'
@@ -1405,6 +1405,7 @@ const electronAPI = {
         antigravityMode?: boolean
         codexMode?: boolean
         piMode?: boolean
+        opencodeMode?: boolean
         claudeAgentsMode?: boolean
         resumeSessionId?: string
         claudeSessionId?: string
@@ -2113,7 +2114,7 @@ const electronAPI = {
   onboardingGetState: () => ipcRenderer.invoke(ONBOARDING_IPC.getState) as Promise<OnboardingState>,
   onboardingAgents: (fresh?: boolean) =>
     ipcRenderer.invoke(ONBOARDING_IPC.agents, fresh === true) as Promise<OnboardingAgent[]>,
-  onboardingInstall: (id: OnboardingAgentId) =>
+  onboardingInstall: (id: InstallableAgentId) =>
     ipcRenderer.invoke(ONBOARDING_IPC.install, id) as Promise<OnboardingInstallResult>,
   onboardingComplete: () => ipcRenderer.invoke(ONBOARDING_IPC.complete) as Promise<void>,
   onboardingSetChatView: (viewId: string) =>
@@ -2856,6 +2857,27 @@ const electronAPI = {
     ipcRenderer.invoke('preferences:set', key, value),
   onRecommendedAccountChanged: (callback: (enabled: boolean) => void) =>
     createIpcListener<[boolean]>('accounts:recommended-launch-changed', callback),
+  // ── Launch settings (src/main/launch-settings.ts): the interaction mode and
+  // the per-harness preferred model and permission rung, one record ──
+  launchSettingsGet: () =>
+    ipcRenderer.invoke('launch-settings:get') as Promise<
+      import('../shared/harness').LaunchSettings
+    >,
+  launchSettingsSet: (patch: import('../shared/harness').LaunchSettingsPatch) =>
+    ipcRenderer.invoke('launch-settings:set', patch) as Promise<
+      import('../shared/harness').LaunchSettings
+    >,
+  onLaunchSettingsChanged: (
+    callback: (settings: import('../shared/harness').LaunchSettings) => void
+  ) =>
+    createIpcListener<[import('../shared/harness').LaunchSettings]>(
+      'launch-settings:changed',
+      callback
+    ),
+  /** The model a fresh chat on this adapter starts on, as main remembers it
+   *  (PRDCT-4420): the one read, from the file it is written to. */
+  launchRememberedModel: (adapterId: string) =>
+    ipcRenderer.invoke('launch-settings:remembered-model', adapterId) as Promise<string | null>,
   // ── Microphone (the Audio settings page's OS surface) ──
   getMicAccess: () => ipcRenderer.invoke(MIC_GET_ACCESS_CHANNEL) as Promise<MicAccessState>,
   requestMicAccess: () => ipcRenderer.invoke(MIC_REQUEST_ACCESS_CHANNEL) as Promise<MicAccessState>,

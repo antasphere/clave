@@ -1,32 +1,65 @@
+import {
+  interactionModeOfView,
+  isInteractionMode,
+  viewOfInteractionMode,
+  type InteractionMode
+} from '../../shared/harness'
 import { preferencesManager } from '../preferences-manager'
+
+/** The person's interaction mode, read where `getLaunchSettings` reads it
+ *  (`launch-settings.ts`) but without its Electron half: the session host
+ *  runs in the standalone server too, which never loads Electron. */
+export function interactionModeSetting(): InteractionMode {
+  const mode = preferencesManager.get('interactionMode')
+  return isInteractionMode(mode) ? mode : 'chat'
+}
 
 /** `<pluginId>/<viewId>`, both halves non-empty: the shape `setView` accepts. */
 const VIEW_ID = /^[^/\s]+\/[^/\s]+$/
 const pluginOf = (viewId: string): string => viewId.split('/')[0]
+/** The view a chat spawn opens in when the mode is `terminal`: only an
+ *  explicit `chat: true` makes one then. */
+const CHAT_VIEW = 'clave.chat-view/chat'
 
 /**
- * The view a new chat opens in: the last one the reader picked in a pane's
- * view picker (Chat, Terminal…), so a reader who settled on one is
- * not sent back to the profile's default on every new tab. Clearing a
- * session's view (a null pick) forgets nothing: that is the host resetting a
- * pane, not the reader choosing.
+ * A pane's view pick. Until 11 November 2026 it was written to the
+ * `chatView` preference and every new chat opened in the last pick, so the
+ * one setting a person chose (the interaction mode, PRDCT-4425) was
+ * overwritten by whichever tab they last switched (PRDCT-4175). The pick is
+ * that tab's alone now, kept on its record by the host; this stays for the
+ * callers that still report it (`sessions/host.ts`, `onboarding.ts`) and
+ * writes nothing.
  */
 export function rememberChatView(viewId: string | null): void {
-  if (viewId === null || !VIEW_ID.test(viewId)) return
-  preferencesManager.set('chatView', viewId)
+  void viewId
 }
 
 /**
- * The view a session launched on a profile opens in. The remembered pick wins
- * over the profile's own default only when both come from the same plugin: a
- * profile that names another plugin's view (a plugin adapter's own page) keeps
- * it. A profile that names none takes the pick; if the session cannot render
- * it, resolution in the renderer falls back as it does for any stale choice.
+ * The old `chatView` pick, moved once into the interaction mode: a person
+ * who had settled on a view keeps opening in it. Only while the mode is
+ * still its default (`chat`), the sign it was never chosen, and the old key
+ * is cleared so the move happens once.
+ */
+export function migrateChatView(): void {
+  const old = preferencesManager.get('chatView')
+  if (old === null || old === undefined) return
+  const mode = typeof old === 'string' ? interactionModeOfView(old) : undefined
+  if (mode && preferencesManager.get('interactionMode') === 'chat')
+    preferencesManager.set('interactionMode', mode)
+  preferencesManager.set('chatView', null)
+}
+
+/**
+ * The view a chat session launched on a profile opens in: a profile that
+ * names another plugin's view (a plugin adapter's own page) keeps it; else
+ * the view of the person's interaction mode; else, the mode being the
+ * terminal on a chat spawn (only an explicit `chat: true` makes one), the
+ * Chat view.
  */
 export function initialChatView(profileDefault: string | undefined): string | undefined {
-  const remembered = preferencesManager.get('chatView')
-  // The file is the user's to edit: a value of the wrong shape is ignored.
-  if (typeof remembered !== 'string' || !VIEW_ID.test(remembered)) return profileDefault
-  if (profileDefault && pluginOf(profileDefault) !== pluginOf(remembered)) return profileDefault
-  return remembered
+  migrateChatView()
+  const view = viewOfInteractionMode(interactionModeSetting()) ?? CHAT_VIEW
+  if (profileDefault && VIEW_ID.test(profileDefault) && pluginOf(profileDefault) !== pluginOf(view))
+    return profileDefault
+  return view
 }

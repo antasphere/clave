@@ -6,6 +6,7 @@ export interface TrailSession {
   claudeSessionId?: string | null
   piSessionId?: string | null
   piMode?: boolean
+  opencodeMode?: boolean
   claudeConfigDir?: string
 }
 

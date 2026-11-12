@@ -44,7 +44,7 @@ const ALLOWED: Record<string, { reason: string; reads: number }> = {
   'src/renderer/src/lib/session-accounts.ts': { reason: 'the seam itself', reads: 18 },
   'src/renderer/src/lib/switch-account.ts': {
     reason: 'the pool of a LAUNCH on this Mac; every session reader in it goes through the seam',
-    reads: 23
+    reads: 25
   },
   'src/renderer/src/lib/account-policy.ts': {
     reason: 'subscribes to this Mac’s stores to wake the policy; reads a tab through the seam',

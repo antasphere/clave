@@ -191,7 +191,7 @@ export type TriageWindowListing = { windowId: number } & TriageSource<{
   groups: TriageListedGroup[]
 }>
 
-export type TriageRecordKind = 'claude' | 'codex' | 'antigravity' | 'pi' | 'terminal'
+export type TriageRecordKind = 'claude' | 'codex' | 'antigravity' | 'pi' | 'opencode' | 'terminal'
 
 /** A session record on disk, read without the recovery path that prunes them. */
 export interface TriageRecord {

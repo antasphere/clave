@@ -138,7 +138,7 @@ export function ServerAgentsSettings({ serverId }: { serverId: string }): ReactE
   }
   if (!page.connected || settings.status === 'error')
     return (
-      <SettingsPage title="Agents" description={`The launch profiles of ${page.name}.`}>
+      <SettingsPage title="Harnesses" description={`The launch profiles of ${page.name}.`}>
         <ServerNotice serverId={serverId} {...page} />
       </SettingsPage>
     )
@@ -275,7 +275,7 @@ export function ServerAccountsSettings({ serverId }: { serverId: string }): Reac
   const { settings, name } = page
   return (
     <SettingsPage
-      title="Accounts"
+      title="Connections"
       description={`The Claude and Codex accounts signed in on ${name}. Sessions started there run on them, in this order.`}
       testId="accounts"
     >

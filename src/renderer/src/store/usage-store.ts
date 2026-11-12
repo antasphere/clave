@@ -31,6 +31,7 @@ export function usageProviderForSession(
         | 'claudeAgentsMode'
         | 'codexMode'
         | 'piMode'
+        | 'opencodeMode'
         | 'antigravityMode'
       >
     | undefined

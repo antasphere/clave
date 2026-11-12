@@ -26,12 +26,17 @@ export function NewSessionButton(): React.JSX.Element {
 
       const state = useSessionStore.getState()
       const otherProvider =
-        state.antigravityMode || state.codexMode || state.piMode || state.claudeAgentsMode
+        state.antigravityMode ||
+        state.codexMode ||
+        state.piMode ||
+        state.opencodeMode ||
+        state.claudeAgentsMode
       const sessionInfo = await window.electronAPI.spawnSession(folderPath, {
         claudeMode: otherProvider ? false : state.claudeMode,
         antigravityMode: state.antigravityMode,
         codexMode: state.codexMode,
         piMode: state.piMode,
+        opencodeMode: state.opencodeMode,
         claudeAgentsMode: state.claudeAgentsMode,
         dangerousMode: state.dangerousMode
       })
@@ -47,6 +52,7 @@ export function NewSessionButton(): React.JSX.Element {
         antigravityMode: state.antigravityMode,
         codexMode: state.codexMode,
         piMode: state.piMode,
+        opencodeMode: state.opencodeMode,
         claudeAgentsMode: state.claudeAgentsMode,
         dangerousMode: state.dangerousMode,
         model: sessionInfo.model,

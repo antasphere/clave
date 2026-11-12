@@ -40,10 +40,10 @@ const GROUPS: { label: string; rows: Row[] }[] = [
   {
     label: 'Agents',
     rows: [
-      { id: 'agents', label: 'Agents', icon: CpuChipIcon },
+      { id: 'agents', label: 'Harnesses', icon: CpuChipIcon },
       { id: 'helpers', label: 'Helpers', icon: SparklesIcon },
       { id: 'integrations', label: 'Integrations', icon: SquaresPlusIcon },
-      { id: 'accounts', label: 'Accounts', icon: UserCircleIcon },
+      { id: 'accounts', label: 'Connections', icon: UserCircleIcon },
       { id: 'usage', label: 'Usage', icon: ChartBarIcon },
       { id: 'activity', label: 'Activity', icon: ClockIcon }
     ]

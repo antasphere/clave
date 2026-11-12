@@ -48,6 +48,7 @@ type StatusFields = Pick<
   | 'antigravityMode'
   | 'codexMode'
   | 'piMode'
+  | 'opencodeMode'
 >
 
 /** Whether the session reports a lifecycle (working / blocked / done) Clave can
@@ -59,7 +60,8 @@ export function hasLifecycleState(session: StatusFields): boolean {
     !session.claudeAgentsMode &&
     !session.antigravityMode &&
     !session.codexMode &&
-    !session.piMode
+    !session.piMode &&
+    !session.opencodeMode
   return claudeCode || session.codexMode === true || session.piMode === true
 }
 

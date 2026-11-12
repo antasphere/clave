@@ -60,7 +60,9 @@ import {
   Radio
 } from './primitives'
 import { KeymapSettings } from './KeymapSettings'
-import { AgentsSettings } from './AgentsSettings'
+import { HarnessesSettings } from './HarnessesSettings'
+import { useLaunchSettingsStore } from '../../store/launch-settings-store'
+import { INTERACTION_MODES, type InteractionMode } from '../../../../shared/harness'
 import { HelpersSettings } from './HelpersSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
 import { AudioSettings } from './AudioSettings'
@@ -227,6 +229,9 @@ export function SettingsPanel(): React.JSX.Element {
   useEffect(() => {
     startSettingsMachineGuard()
     startServerSettingsEvents()
+    // The launch settings (interaction mode, per-harness model and
+    // permissions) read by General and Harnesses; cheap and idempotent.
+    if (!useLaunchSettingsStore.getState().loaded) void useLaunchSettingsStore.getState().load()
   }, [])
 
   return (
@@ -234,7 +239,7 @@ export function SettingsPanel(): React.JSX.Element {
       <div className="max-w-3xl mx-auto w-full">
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' &&
-          (server ? <ServerAgentsSettings serverId={server} /> : <AgentsSettings />)}
+          (server ? <ServerAgentsSettings serverId={server} /> : <HarnessesSettings />)}
         {settingsSection === 'helpers' &&
           (server ? <ServerHelpersSettings serverId={server} /> : <HelpersSettings />)}
         {settingsSection === 'integrations' &&
@@ -697,6 +702,8 @@ function ActivitySettings(): React.JSX.Element {
 }
 
 function SessionsSection(): React.JSX.Element {
+  const interactionMode = useLaunchSettingsStore((s) => s.interactionMode)
+  const setInteractionMode = useLaunchSettingsStore((s) => s.setInteractionMode)
   const tmuxMode = useSessionStore((s) => s.tmuxMode)
   const setTmuxMode = useSessionStore((s) => s.setTmuxMode)
   const [tmuxAvailable, setTmuxAvailable] = useState<boolean | null>(null)
@@ -716,6 +723,22 @@ function SessionsSection(): React.JSX.Element {
   return (
     <SettingsSection title="Sessions">
       <SettingsCard>
+        <SettingsRow
+          label="How a new conversation opens"
+          description="A chat view, or the harness's own screen in a terminal. A tab can still switch among the chat views from its header."
+        >
+          <SettingsSelect<InteractionMode>
+            value={interactionMode}
+            options={INTERACTION_MODES.map((mode) => ({
+              value: mode.id,
+              label: mode.title,
+              hint: mode.tagline
+            }))}
+            onChange={(mode) => void setInteractionMode(mode)}
+            ariaLabel="How a new conversation opens"
+            testId="interaction-mode"
+          />
+        </SettingsRow>
         <ToggleRow
           label="Persistent sessions (tmux)"
           description={

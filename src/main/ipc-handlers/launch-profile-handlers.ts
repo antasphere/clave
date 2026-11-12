@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { shellSettingsSource as settings } from '../settings/shell-source'
 import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
 
-const FAMILIES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi'])
+const FAMILIES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi', 'opencode'])
 function family(value: unknown): LauncherFamily {
   if (!FAMILIES.has(value as LauncherFamily)) throw new Error('Invalid launcher family')
   return value as LauncherFamily

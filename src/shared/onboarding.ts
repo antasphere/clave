@@ -2,6 +2,19 @@
  *  the window (`components/onboarding/`). */
 export type OnboardingAgentId = 'claude' | 'codex'
 
+/** Every harness the installer can put on this Mac (`HARNESSES`): the walk's
+ *  two, plus Antigravity, Pi and OpenCode for Settings → Harnesses (PRDCT-4424). The
+ *  walk itself keeps to `OnboardingAgentId`, whose cards it draws by id. */
+export type InstallableAgentId = OnboardingAgentId | 'antigravity' | 'pi' | 'opencode'
+
+export const INSTALLABLE_AGENT_IDS: readonly InstallableAgentId[] = [
+  'claude',
+  'codex',
+  'antigravity',
+  'pi',
+  'opencode'
+]
+
 export interface OnboardingState {
   /** True until the walk is finished or skipped, on a first install only. */
   show: boolean

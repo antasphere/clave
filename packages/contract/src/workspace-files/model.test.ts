@@ -35,6 +35,7 @@ describe('the .clave wire shape', () => {
         'cwd',
         'dangerousMode',
         'name',
+        'opencodeMode',
         'piMode',
         'prompt',
         'rootSession'
