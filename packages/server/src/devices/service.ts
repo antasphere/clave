@@ -41,9 +41,24 @@ export interface PairingRequestInput {
   readonly device: DeviceDescription
 }
 
+/** A phone a credential belongs to; `suspended` while the account that approved it is not
+ *  the one signed in on this server (signed out, or another account): refused, never revoked. */
+export interface DeviceAuthentication {
+  readonly deviceId: string
+  readonly suspended: boolean
+}
+
+/** How often the owner is read again while a push channel listens for its changes. */
+export const OWNER_POLL_MS = 1000
+
 export interface DeviceSessionsService {
-  /** The phone a presented credential belongs to, or null. */
-  readonly authenticate: (presented: string) => { readonly deviceId: string } | null
+  /** The phone a presented credential belongs to, with the owner read now; null for an
+   *  unknown credential and for a record bound to no owner (it pairs again). */
+  readonly authenticate: (presented: string) => Promise<DeviceAuthentication | null>
+  /** Whether the phone is suspended now, by the owner last read (the push channel's check). */
+  readonly isSuspended: (deviceId: string) => boolean
+  /** Told when the signed-in owner changes; while anyone listens it is read every second. */
+  readonly onOwnerChanged: (listener: () => void) => Unsubscribe
   /** The phone made an authenticated call; its last-seen time, once a minute. */
   readonly touch: (deviceId: string) => void
   /** Told of every revocation, for the sockets to close. */
@@ -57,12 +72,12 @@ export interface DeviceSessionsService {
   readonly requestPairing: (
     input: PairingRequestInput
   ) => Promise<{ pairingId: string; expiresAt: number }>
-  readonly readPairing: (id: string) => {
+  readonly readPairing: (id: string) => Promise<{
     status: PairingStatus
     deviceSession?: DeviceSessionView
-  }
-  readonly list: () => DevicesView
-  readonly approve: (pairingId: string) => DeviceView
+  }>
+  readonly list: () => Promise<DevicesView>
+  readonly approve: (pairingId: string) => Promise<DeviceView>
   readonly refuse: (pairingId: string) => void
   readonly revoke: (deviceId: string) => void
   readonly me: (deviceId: string) => DeviceView
@@ -159,11 +174,64 @@ export function makeDeviceSessions(
     id: options.serverId,
     name: port.serverName()
   })
+  // ── PRDCT-4448: a phone is the account's that approved it. The owner is read fresh at
+  // every pairing step and every authentication, and kept for the push channel's checks. ──
+  let cachedOwner: string | null | undefined
+  const ownerListeners = new Set<() => void>()
+  let poll: ReturnType<typeof setInterval> | null = null
+  const ownerNow = async (): Promise<string | null> => {
+    let owner: string | null
+    try {
+      const read = await port.owner()
+      owner = typeof read === 'string' && read !== '' ? read : null
+    } catch {
+      owner = null
+    }
+    const before = cachedOwner
+    cachedOwner = owner
+    if (before !== undefined && before !== owner)
+      for (const listener of [...ownerListeners]) {
+        try {
+          listener()
+        } catch (error) {
+          console.error('[clave-server] owner listener failed', error)
+        }
+      }
+    return owner
+  }
 
   return {
-    authenticate: (presented) => {
+    authenticate: async (presented) => {
       const device = store.authenticate(presented)
-      return device ? { deviceId: device.id } : null
+      // Unknown, or bound to no owner (paired before the binding): it pairs again.
+      if (!device || device.owner === undefined) return null
+      const owner = await ownerNow()
+      return { deviceId: device.id, suspended: owner === null || owner !== device.owner }
+    },
+    isSuspended: (deviceId) => {
+      const device = store.get(deviceId)
+      return (
+        device === undefined ||
+        device.owner === undefined ||
+        cachedOwner === undefined ||
+        cachedOwner === null ||
+        device.owner !== cachedOwner
+      )
+    },
+    onOwnerChanged: (listener) => {
+      ownerListeners.add(listener)
+      if (!poll) {
+        poll = setInterval(() => void ownerNow(), OWNER_POLL_MS)
+        poll.unref?.()
+      }
+      void ownerNow()
+      return () => {
+        ownerListeners.delete(listener)
+        if (ownerListeners.size === 0 && poll) {
+          clearInterval(poll)
+          poll = null
+        }
+      }
     },
     touch: (deviceId) => {
       if (store.touch(deviceId)) changed()
@@ -189,7 +257,7 @@ export function makeDeviceSessions(
     requestPairing: async (input) => {
       // The owner first, before anything is fetched: a signed-out server
       // never calls the hub on a stranger's say-so.
-      const ownerSubject = await port.owner()
+      const ownerSubject = await ownerNow()
       if (ownerSubject === null)
         throw new CapabilityUnavailable({
           capability: 'devices',
@@ -216,6 +284,12 @@ export function makeDeviceSessions(
           throw new CapabilityUnavailable({ capability: 'devices', message: error.message })
         throw error
       }
+      // Read again: an account that changed while the keys were fetched gets nobody's phone.
+      if ((await ownerNow()) !== ownerSubject)
+        throw new DevicePairingRefused({
+          check: 'subject',
+          message: 'The Antasphere account on this server changed while the phone asked; ask again.'
+        })
       const pairing = desk.request(ownerSubject, input.device)
       if (!pairing)
         throw new DevicePairingRefused({
@@ -238,10 +312,19 @@ export function makeDeviceSessions(
       changed()
       return pairing
     },
-    readPairing: (id) => desk.read(id),
-    list: () => ({ revision, devices: store.list(), pending: desk.pending() }),
-    approve: (pairingId) => {
-      const device = desk.approve(pairingId, (description) => store.create(description), server())
+    readPairing: async (id) => desk.read(id, await ownerNow()),
+    list: async () => {
+      const owner = await ownerNow()
+      return { revision, devices: store.listOf(owner), pending: desk.pending(owner) }
+    },
+    approve: async (pairingId) => {
+      const owner = await ownerNow()
+      const device = desk.approve(
+        pairingId,
+        (description, subject) => store.create(description, subject),
+        server(),
+        owner
+      )
       if (!device)
         throw new DevicePairingNotFound({
           id: pairingId,

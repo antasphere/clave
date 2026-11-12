@@ -92,12 +92,14 @@ export const deviceHandlers = [
     )
   ),
   QueryHandler.make(ReadDevicePairing, (p) =>
-    Effect.map(DeviceSessions, (devices) => devices.readPairing(p.id))
+    Effect.flatMap(DeviceSessions, (devices) => Effect.promise(() => devices.readPairing(p.id)))
   ),
-  QueryHandler.make(ListDevices, () => Effect.map(DeviceSessions, (devices) => devices.list())),
+  QueryHandler.make(ListDevices, () =>
+    Effect.flatMap(DeviceSessions, (devices) => Effect.promise(() => devices.list()))
+  ),
   CommandHandler.make(ApproveDevicePairing, (p) =>
     Effect.flatMap(DeviceSessions, (devices) =>
-      attempt([DevicePairingNotFound], () => devices.approve(p.pairingId))
+      attemptAsync([DevicePairingNotFound], () => devices.approve(p.pairingId))
     )
   ),
   CommandHandler.make(RefuseDevicePairing, (p) =>

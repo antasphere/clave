@@ -244,6 +244,12 @@ export const DevicePairingRequested = Schema.TaggedStruct('devices.pairing_reque
  *  (4000 to 4999 are an application's own; the others are in `push.ts`). */
 export const CLOSE_DEVICE_REVOKED = 4011
 
+/** The close code a phone's socket gets while it is suspended (PRDCT-4448): the account that
+ *  approved it is not the one signed in now. WebSocket's own "try again later": the phones
+ *  treat it as transient and reconnect, unlike 4001 and 4011, so the same account signing
+ *  back in lets them in again with no new pairing. */
+export const CLOSE_DEVICE_SUSPENDED = 1013
+
 /** The path a phone pairs on; the only routes of this module that take no bearer. */
 export const DEVICE_PAIR_PATH = '/devices/pair'
 

@@ -11,7 +11,7 @@ describe('the device store', () => {
     const storage = memoryDeviceStorage()
     const clock = { now: 1_000 }
     const store = new DeviceStore(storage, () => clock.now)
-    const { device, token } = store.create(PHONE)
+    const { device, token } = store.create(PHONE, 'owner-subject')
     expect(token).toMatch(/^[0-9a-f]{64}$/)
     expect(device.tokenHash).toBe(hashToken(token))
     const text = storage.read()!
@@ -31,7 +31,7 @@ describe('the device store', () => {
     const storage = memoryDeviceStorage()
     const clock = { now: 10_000 }
     const store = new DeviceStore(storage, () => clock.now)
-    const { device } = store.create(PHONE)
+    const { device } = store.create(PHONE, 'owner-subject')
     expect(store.touch(device.id)).toBe(true)
     expect(store.get(device.id)?.lastSeenAt).toBe(10_000)
     clock.now += LAST_SEEN_FLOOR_MS - 1
@@ -44,7 +44,7 @@ describe('the device store', () => {
   it('revokes a device for good, and its token with it', () => {
     const storage = memoryDeviceStorage()
     const store = new DeviceStore(storage)
-    const { device, token } = store.create(PHONE)
+    const { device, token } = store.create(PHONE, 'owner-subject')
     expect(store.revoke(device.id)).toBe(true)
     expect(store.authenticate(token)).toBeNull()
     expect(store.revoke(device.id)).toBe(false)
@@ -56,7 +56,7 @@ describe('the device store', () => {
       const store = new DeviceStore(storage)
       expect(store.list(), broken).toEqual([])
       expect(store.authenticate('anything'), broken).toBeNull()
-      expect(() => store.create(PHONE), broken).toThrow(DeviceStoreBroken)
+      expect(() => store.create(PHONE, 'owner-subject'), broken).toThrow(DeviceStoreBroken)
       expect(storage.read(), broken).toBe(broken)
     }
     const failing = {
@@ -67,7 +67,7 @@ describe('the device store', () => {
     }
     const store = new DeviceStore(failing)
     expect(store.authenticate('anything')).toBeNull()
-    expect(() => store.create(PHONE)).toThrow(DeviceStoreBroken)
+    expect(() => store.create(PHONE, 'owner-subject')).toThrow(DeviceStoreBroken)
   })
   it('tells its listeners what changed, and keeps going when one throws', () => {
     const store = new DeviceStore(memoryDeviceStorage())
@@ -76,7 +76,7 @@ describe('the device store', () => {
       throw new Error('a bad listener')
     })
     store.subscribe((change) => void seen.push(change.kind))
-    const { device } = store.create(PHONE)
+    const { device } = store.create(PHONE, 'owner-subject')
     store.setPushToken(device.id, 'fcm-1', 'android')
     store.touch(device.id)
     store.clearPushToken(device.id)

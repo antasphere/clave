@@ -11,7 +11,13 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { CLOSE_DEVICE_REVOKED, DEVICE_PAIR_PATH } from '@clave/contract/devices'
+import {
+  CLOSE_DEVICE_REVOKED,
+  CLOSE_DEVICE_SUSPENDED,
+  DEVICE_PAIR_PATH
+} from '@clave/contract/devices'
+import { CLOSE_UNAUTHORIZED } from '@clave/contract/push'
+import { hashToken } from './store'
 import { startOidcProvider } from '../../../../tests/e2e/fixtures/oidc-provider.mjs'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource, Peer, aSession } from '../test-support'
@@ -1119,5 +1125,105 @@ describe('the paired phone mobile boundary', () => {
     expect((await w.json('POST', '/devices/revoke', { body: { deviceId } })).status).toBe(204)
     expect((await w.json('GET', path, { token })).status).toBe(401)
     expect((await w.json('GET', '/sessions', { token })).status).toBe(401)
+  })
+})
+
+describe('a phone is the account that approved it (PRDCT-4448)', () => {
+  it('lets only the asking account approve a pending phone, and hands its session to that account only', async () => {
+    const w = await start()
+    const { pairingId } = await w.pair()
+    w.owner.subject = 'another-account'
+    expect((await w.json('GET', '/devices')).body).toMatchObject({ pending: [] })
+    expect((await w.json('POST', '/devices/approve', { body: { pairingId } })).status).toBe(422)
+    w.owner.subject = null
+    expect((await w.json('POST', '/devices/approve', { body: { pairingId } })).status).toBe(422)
+    w.owner.subject = OWNER
+    expect((await w.json('POST', '/devices/approve', { body: { pairingId } })).status).toBe(200)
+    // Approved, then its account signed out before the phone read: the session waits, kept.
+    w.owner.subject = null
+    const held = await w.json('GET', `${DEVICE_PAIR_PATH}?id=${pairingId}`, { token: null })
+    expect(held.body).toEqual({ status: 'pending' })
+    w.owner.subject = OWNER
+    const read = await w.json('GET', `${DEVICE_PAIR_PATH}?id=${pairingId}`, { token: null })
+    expect(read.body).toMatchObject({
+      status: 'approved',
+      deviceSession: { token: expect.any(String) }
+    })
+  })
+
+  it('suspends an approved phone while another account or none is signed in, and lets it back with the same account', async () => {
+    const w = await start()
+    const { token } = await w.device()
+    const sessions = (): Promise<{ status: number; body: unknown }> =>
+      w.json('GET', '/sessions', { token })
+    expect((await sessions()).status).toBe(200)
+    const open = new Peer(w.pushUrl())
+    await open.opened
+    open.send({ _tag: 'hello', token })
+    expect((await open.next())._tag).toBe('welcome')
+    w.owner.subject = null
+    const refused = await sessions()
+    expect(refused.status).toBe(403)
+    expect(JSON.stringify(refused.body)).toContain('another Antasphere account')
+    // Its open socket closes with the code a phone retries on (never 4001 or 4011).
+    expect((await open.closed).code).toBe(CLOSE_DEVICE_SUSPENDED)
+    const hello = new Peer(w.pushUrl())
+    await hello.opened
+    hello.send({ _tag: 'hello', token })
+    expect((await hello.closed).code).toBe(CLOSE_DEVICE_SUSPENDED)
+    w.owner.subject = 'another-account'
+    expect((await sessions()).status).toBe(403)
+    expect((await w.json('GET', '/devices')).body).toMatchObject({ devices: [] })
+    // The same account back: the phone works again, with no new pairing.
+    w.owner.subject = OWNER
+    expect((await sessions()).status).toBe(200)
+    const back = new Peer(w.pushUrl())
+    await back.opened
+    back.send({ _tag: 'hello', token })
+    expect((await back.next())._tag).toBe('welcome')
+    back.ws.close()
+  })
+
+  it('refuses a phone record bound to no owner, as one paired before the binding: it pairs again', async () => {
+    const token = 'a'.repeat(64)
+    const legacy = JSON.stringify({
+      v: 1,
+      devices: [
+        {
+          id: 'dev-legacy',
+          name: 'Old phone',
+          platform: 'android',
+          appVersion: '0.9.0',
+          createdAt: 1,
+          lastSeenAt: null,
+          tokenHash: hashToken(token),
+          push: null
+        }
+      ]
+    })
+    const server = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(aSession('s1')),
+        devices: {
+          storage: memoryDeviceStorage(legacy),
+          owner: () => OWNER,
+          issuer: provider.issuer,
+          serverName: () => 'the-mac'
+        }
+      }
+    })
+    try {
+      const answer = await fetch(`${server.url}/sessions`, {
+        headers: { authorization: `Bearer ${token}` }
+      })
+      expect(answer.status).toBe(401)
+      const peer = new Peer(server.url.replace('http:', 'ws:') + '/push')
+      await peer.opened
+      peer.send({ _tag: 'hello', token })
+      // Final for the phone: this record admits nobody, whoever signs in.
+      expect((await peer.closed).code).toBe(CLOSE_UNAUTHORIZED)
+    } finally {
+      await server.stop()
+    }
   })
 })

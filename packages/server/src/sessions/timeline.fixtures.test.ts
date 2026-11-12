@@ -118,7 +118,8 @@ it('loads sessions/timeline-repeated-messages and verifies HTTP/push snapshot or
         input: { type: 'user_message', text: 'While snapshot response was held' }
       })
     })
-    expect(write.status).toBe(200)
+    // The owner's write it did not identify keeps the old empty answer (PRDCT-4448).
+    expect(write.status).toBe(204)
     await vi.waitFor(() =>
       expect(
         received.some((stream) => stream.kind === 'event' && stream.event.type === 'user_message')

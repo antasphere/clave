@@ -42,7 +42,11 @@ export class PairingDesk {
     device: DeviceDescription
   ): { pairingId: string; expiresAt: number } | null {
     this.sweep()
-    if (this.pending().length >= MAX_PENDING_PAIRINGS) return null
+    // Every account's waiting pairings count against the bound, not only one owner's view.
+    const waiting = [...this.pairings.values()].filter(
+      (pairing) => pairing.status === 'pending' && this.now() < pairing.expiresAt
+    ).length
+    if (waiting >= MAX_PENDING_PAIRINGS) return null
     const requestedAt = this.now()
     const pairing: Pairing = {
       id: `pair-${randomUUID()}`,
@@ -58,12 +62,19 @@ export class PairingDesk {
   }
 
   /** Where a pairing stands; the session once, on the first read after the approval. */
-  read(id: string): { status: PairingStatus; deviceSession?: DeviceSessionView } {
+  read(
+    id: string,
+    owner: string | null
+  ): { status: PairingStatus; deviceSession?: DeviceSessionView } {
     this.sweep()
     const pairing = this.pairings.get(id)
     if (!pairing) return { status: 'expired' }
     if (pairing.status === 'pending')
       return { status: this.now() >= pairing.expiresAt ? 'expired' : 'pending' }
+    // The session is handed out only while the account that asked is the one signed in:
+    // otherwise it waits, kept, for that account to come back (PRDCT-4448).
+    if (pairing.status === 'approved' && pairing.deviceSession && pairing.subject !== owner)
+      return { status: 'pending' }
     if (pairing.status === 'approved' && pairing.deviceSession) {
       const deviceSession = pairing.deviceSession
       pairing.deviceSession = null
@@ -72,11 +83,15 @@ export class PairingDesk {
     return { status: pairing.status }
   }
 
-  pending(): PendingPairingView[] {
+  /** The pairings waiting for `owner`'s word: another account's or nobody's are not listed. */
+  pending(owner: string | null): PendingPairingView[] {
     this.sweep()
     const now = this.now()
     return [...this.pairings.values()]
-      .filter((pairing) => pairing.status === 'pending' && now < pairing.expiresAt)
+      .filter(
+        (pairing) =>
+          pairing.status === 'pending' && now < pairing.expiresAt && pairing.subject === owner
+      )
       .map((pairing) => ({
         id: pairing.id,
         name: pairing.device.name,
@@ -92,12 +107,15 @@ export class PairingDesk {
    *  when the pairing is not pending (unknown, settled, or lapsed). */
   approve<D extends { readonly id: string }>(
     id: string,
-    issue: (device: DeviceDescription) => { device: D; token: string },
-    server: { id: string; name: string }
+    issue: (device: DeviceDescription, subject: string) => { device: D; token: string },
+    server: { id: string; name: string },
+    owner: string | null
   ): D | undefined {
     const pairing = this.livePending(id)
-    if (!pairing) return undefined
-    const { device, token } = issue(pairing.device)
+    // Only the account that asked approves it: another one signed in since, or nobody,
+    // finds nothing waiting (PRDCT-4448).
+    if (!pairing || pairing.subject !== owner) return undefined
+    const { device, token } = issue(pairing.device, pairing.subject)
     pairing.status = 'approved'
     pairing.deviceSession = {
       token,

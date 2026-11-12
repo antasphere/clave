@@ -5,7 +5,7 @@ import { FakeSource, aSession } from '../test-support'
 import { PushHub } from './hub'
 
 describe('device push replay', () => {
-  it('keeps pending desktop requests and private events out of a phone welcome', () => {
+  it('keeps pending desktop requests and private events out of a phone welcome', async () => {
     const touch = vi.fn()
     const hub = new PushHub({
       token: 'owner',
@@ -17,9 +17,12 @@ describe('device push replay', () => {
         subscribe: () => () => {}
       },
       devices: {
-        authenticate: (token) => (token === 'phone' ? { deviceId: 'd1' } : null),
+        authenticate: async (token) =>
+          token === 'phone' ? { deviceId: 'd1', suspended: false } : null,
         touch,
-        onRevoked: () => () => {}
+        onRevoked: () => () => {},
+        isSuspended: () => false,
+        onOwnerChanged: () => () => {}
       }
     })
     const request: ServerFrame = {
@@ -57,6 +60,8 @@ describe('device push replay', () => {
     try {
       const phone = connect('phone')
       const owner = connect('owner')
+      // A phone's hello reads the owner first (PRDCT-4448): its welcome is one task later.
+      await new Promise((resolve) => setTimeout(resolve, 0))
       expect(touch.mock.calls).toEqual([['d1']])
       expect(phone.map((frame) => frame._tag)).toEqual(['welcome', 'event'])
       expect(phone[1]).toEqual(sessionEvent)

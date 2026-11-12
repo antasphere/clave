@@ -21,6 +21,10 @@ export interface StoredDevice {
   /** The SHA-256 of the session token, in hex. */
   readonly tokenHash: string
   readonly push: { readonly token: string; readonly platform: DevicePlatform } | null
+  /** The Antasphere subject of the owner who approved this phone (PRDCT-4448). The phone is
+   *  admitted only while that same account is signed in on this server; a record without it
+   *  (one paired before the binding existed) admits nobody and the phone pairs again. */
+  readonly owner?: string
 }
 
 export type DeviceChange =
@@ -74,6 +78,15 @@ export class DeviceStore {
     return this.load().map(view)
   }
 
+  /** The phones `owner` approved: another account's, or a record bound to nobody, are not listed. */
+  listOf(owner: string | null): DeviceView[] {
+    return owner === null
+      ? []
+      : this.load()
+          .filter((device) => device.owner === owner)
+          .map(view)
+  }
+
   get(id: string): StoredDevice | undefined {
     return this.load().find((device) => device.id === id)
   }
@@ -86,7 +99,7 @@ export class DeviceStore {
   }
 
   /** A new device and its session token, the one time the token exists in clear. */
-  create(description: DeviceDescription): { device: StoredDevice; token: string } {
+  create(description: DeviceDescription, owner: string): { device: StoredDevice; token: string } {
     const devices = this.load()
     if (devices.length >= MAX_DEVICES) throw new Error('Too many paired phones.')
     const token = randomBytes(TOKEN_BYTES).toString('hex')
@@ -98,7 +111,8 @@ export class DeviceStore {
       createdAt: this.now(),
       lastSeenAt: null,
       tokenHash: hashToken(token),
-      push: null
+      push: null,
+      owner
     }
     this.persist([...devices, device])
     this.tell({ kind: 'created', deviceId: device.id })
@@ -188,6 +202,7 @@ export class DeviceStore {
             createdAt: device.createdAt,
             lastSeenAt: device.lastSeenAt,
             tokenHash: device.tokenHash,
+            ...(device.owner !== undefined && { owner: device.owner }),
             push: device.push
           }))
         },
@@ -248,7 +263,10 @@ export class DeviceStore {
           createdAt: value.createdAt,
           lastSeenAt: value.lastSeenAt,
           tokenHash: value.tokenHash,
-          push: push === null ? null : { token: push.token, platform: push.platform }
+          push: push === null ? null : { token: push.token, platform: push.platform },
+          // Tolerant: a record with no owner, or one not readable as one, is kept unbound
+          // (it admits nobody) rather than breaking the whole store.
+          ...(text(value.owner, 512) && { owner: value.owner as string })
         }
       })
       this.index(devices)

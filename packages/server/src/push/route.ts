@@ -55,7 +55,9 @@ export class PushHubService extends Context.Tag('@clave/server/PushHub')<
           devices: {
             authenticate: devices.authenticate,
             touch: devices.touch,
-            onRevoked: devices.onRevoked
+            onRevoked: devices.onRevoked,
+            isSuspended: devices.isSuspended,
+            onOwnerChanged: devices.onOwnerChanged
           }
         })
         yield* Effect.addFinalizer(() => Effect.sync(() => hub.dispose()))

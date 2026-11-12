@@ -46,9 +46,17 @@ export const bearerOf = (header: string | undefined): string | undefined =>
 /** What the token check asks of the devices domain: whether a presented
  *  credential is a phone's session, and to record the phone was seen. */
 export interface DeviceAuth {
-  readonly authenticate: (presented: string) => { readonly deviceId: string } | null
+  /** The phone a credential belongs to, `suspended` while its approving account is not the
+   *  one signed in (PRDCT-4448); null when the credential is nobody's. */
+  readonly authenticate: (
+    presented: string
+  ) => Promise<{ readonly deviceId: string; readonly suspended: boolean } | null>
   readonly touch: (deviceId: string) => void
 }
+
+/** The sentence a suspended phone gets: its pairing is kept, not revoked. */
+export const DEVICE_SUSPENDED_MESSAGE =
+  'This phone is paired with another Antasphere account than the one signed in on this server; sign that account back in to use it.'
 
 /** A middleware that keeps the app's own error and requirement types. */
 export type Wrap = <E, R>(
@@ -74,7 +82,16 @@ export const bearerAuth =
       const header = request.headers['authorization']
       if (tokenMatches(header, token)) return yield* Correlation.within({ actor: OWNER_ACTOR })(app)
       const presented = bearerOf(header)
-      const device = presented === undefined ? null : (devices?.authenticate(presented) ?? null)
+      const device =
+        presented === undefined || !devices
+          ? null
+          : yield* Effect.promise(() => devices.authenticate(presented))
+      // A pause, not a refused credential: the phones show a 403's sentence and keep the
+      // pairing, so the same account signing back in lets them in again (PRDCT-4448).
+      if (device?.suspended)
+        return problemResponse(
+          new ForbiddenProblem({ error: 'Forbidden', message: DEVICE_SUSPENDED_MESSAGE })
+        )
       if (device) {
         if (!deviceMayCall(request.method, path))
           return problemResponse(
