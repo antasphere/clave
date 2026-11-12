@@ -4,6 +4,7 @@ import { DocumentTextIcon, EnvelopeIcon, XMarkIcon } from '@heroicons/react/24/o
 import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../shared/linked-documents'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
 import { useFileChanged } from '../../hooks/use-file-changed'
+import { savesSomething } from '../../lib/linked-status'
 import { ViewModeToggle } from './ViewModeToggle'
 import { IconButton } from '@clave/ui/components'
 import { CodeEditor } from './CodeEditor'
@@ -92,10 +93,9 @@ export function LinkedDocumentPanel({
     if (blocked.current) return
     const reloadsAtCall = reloads.current
     pending.current++
-    // A read of the file from disk saves nothing: the status says Saving
-    // only for what is saved, or it would flash at every open now that the
-    // panel reads again once its watch is set.
-    if (!input.reloadExternal) setStatus('Saving…')
+    // Saving is said only for what is saved (`lib/linked-status.ts`): a read
+    // of the file from disk would flash it at every open.
+    if (savesSomething(input)) setStatus('Saving…')
     setError('')
     setSignatureError('')
     // Keep the visible buffer local while serializing every edit through the main revision boundary.

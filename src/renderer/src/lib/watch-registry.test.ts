@@ -50,4 +50,21 @@ describe('watch registry', () => {
     r.release('/a.md')
     expect(r.watch('/a.md')).toBeUndefined()
   })
+  it("a watch that could not be set is nobody's unhandled rejection, and is still told to whoever asks", async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const r = createWatchRegistry()
+      r.acquire('/gone.md', () => Promise.reject(new Error('no such folder')))
+      // Long enough for Node to report a rejection nobody handled.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(unhandled).toEqual([])
+      await expect(r.watch('/gone.md')).rejects.toThrow('no such folder')
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
 })
