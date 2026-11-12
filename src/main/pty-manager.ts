@@ -785,8 +785,9 @@ class PtyManager {
   setSessionWorkspace = ptyBackend.setSessionWorkspace.bind(ptyBackend)
   setSessionClaudeSessionId = ptyBackend.setSessionClaudeSessionId.bind(ptyBackend)
   listAdoptableSessions = ptyBackend.listAdoptableSessions.bind(ptyBackend)
-  /** The recorded session ids, read without pruning (PRDCT-4448). */
-  recordedSessionIds = ptyBackend.recordedSessionIds.bind(ptyBackend)
+  /** The recorded session ids, read without pruning (PRDCT-4448). Asked of the backend at
+   *  the call, not bound at load: a test's backend need not know it. */
+  recordedSessionIds = (): string[] => ptyBackend.recordedSessionIds()
   discardSessionRecord = ptyBackend.discardSessionRecord.bind(ptyBackend)
 }
 export const ptyManager = new PtyManager()
