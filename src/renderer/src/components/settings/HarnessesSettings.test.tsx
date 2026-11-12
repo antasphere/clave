@@ -19,6 +19,10 @@ const h = vi.hoisted(() => ({
   agents: [] as Partial<AgentUpdateStatus>[],
   harnesses: {} as Record<string, { preferredModel?: string; permissionDefault?: string }>,
   setHarness: vi.fn(async () => undefined),
+  /** The connections a pool holds, as `connectionsForModel` answers: the
+   *  models served (every model when `models` is null), none when empty. */
+  connections: { claude: ['*'], codex: ['*'] } as Record<string, string[]>,
+  openedSettings: [] as string[],
   selects: [] as {
     testId?: string
     value: string
@@ -56,6 +60,30 @@ vi.mock('../../store/launch-settings-store', () => {
     )
   }
 })
+vi.mock('../../lib/switch-account', () => ({
+  connectionsForModel: (pool: string, model: string | undefined) => {
+    const served = h.connections[pool] ?? []
+    const usable = served.includes('*') || model === undefined || served.includes(model)
+    return served.length === 0
+      ? []
+      : [{ id: 'c1', label: 'Work', headroom: null, summary: undefined, usable, suggested: usable }]
+  }
+}))
+vi.mock('../../store/session-store', () => ({
+  useSessionStore: {
+    getState: () => ({
+      openSettings: (section: string) => {
+        h.openedSettings.push(section)
+      }
+    })
+  }
+}))
+vi.mock('./connection-companies', () => ({
+  CONNECTION_COMPANY_BY_POOL: {
+    claude: { id: 'anthropic', name: 'Anthropic', pool: 'claude' },
+    codex: { id: 'openai', name: 'OpenAI', pool: 'codex' }
+  }
+}))
 vi.mock('../../store/workspace-store', () => ({
   useWorkspaceStore: { getState: () => ({ workspaces: [], activeWorkspaceId: null }) }
 }))
@@ -183,13 +211,14 @@ describe('the preferred model', () => {
     expect(select('harness-model-claude')!.value).toBe(CLAUDE_MODELS[1].id)
   })
 
-  it("loads Codex's list lazily, a text field for Pi, nothing for Antigravity", () => {
+  it("loads Codex's list lazily, a sentence for Pi, nothing for Antigravity, never a text field", () => {
     h.agents = ['codex', 'antigravity', 'pi'].map((id) => agent(id, true))
     const html = render()
     expect(html).toContain('data-harness-models-loading')
-    expect(tagWith(html, 'data-harness-model-input="pi"')).toContain('placeholder="provider/model"')
+    expect(html).toContain('runs the model its own configuration names')
+    expect(select('harness-model-pi')).toBeUndefined()
     expect(select('harness-model-antigravity')).toBeUndefined()
-    expect(html).not.toContain('data-harness-model-input="antigravity"')
+    expect(html).not.toContain('data-harness-model-input')
   })
 })
 
@@ -218,5 +247,35 @@ describe('the permissions', () => {
     h.agents = [agent('pi', true)]
     render()
     expect(select('harness-permission-pi')).toBeUndefined()
+  })
+})
+
+describe('the default model comes from the connections', () => {
+  it('says to connect the company, with the way to Connections, when the pool holds none', () => {
+    h.connections = { claude: [], codex: [] }
+    h.agents = ['claude'].map((id) => agent(id, true))
+    const html = render()
+    expect(html).toContain('Connect Anthropic to pick one')
+    expect(tagWith(html, 'data-harness-connect="claude"')).not.toBeNull()
+    expect(h.selects.find((s) => s.testId === 'harness-model-claude')).toBeUndefined()
+    h.connections = { claude: ['*'], codex: ['*'] }
+  })
+  it('lists only the models a usable connection serves', () => {
+    h.connections = { claude: ['claude-opus-5-5', 'claude-sonnet-5-5'], codex: [] }
+    h.agents = ['claude'].map((id) => agent(id, true))
+    render()
+    const select = h.selects.find((s) => s.testId === 'harness-model-claude')!
+    expect(select.options.map((o) => o.value)).toEqual([
+      '__default__',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5'
+    ])
+    h.connections = { claude: ['*'], codex: ['*'] }
+  })
+  it('has no control for Pi, whose model its own configuration names', () => {
+    h.agents = ['pi'].map((id) => agent(id, true))
+    const html = render()
+    expect(html).toContain('runs the model its own configuration names')
+    expect(html).not.toContain('data-harness-model-input')
   })
 })

@@ -13,6 +13,9 @@ import type { ModelOption } from '../../../../shared/session-model'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
+import { useSessionStore } from '../../store/session-store'
+import { connectionsForModel } from '../../lib/switch-account'
+import { CONNECTION_COMPANY_BY_POOL } from './connection-companies'
 import { AgentRow } from './AgentUpdatesSection'
 import { LaunchProfilesFamily } from './AgentsSettings'
 import {
@@ -44,45 +47,6 @@ async function modelsFolder(): Promise<string> {
   return state?.home ?? '/'
 }
 
-/** A text field that writes on Enter or blur: an empty one clears. */
-function ModelTextInput({
-  harness,
-  value,
-  placeholder,
-  onCommit
-}: {
-  harness: Harness
-  value: string
-  placeholder: string
-  onCommit: (value: string | null) => void
-}): React.JSX.Element {
-  const [draft, setDraft] = useState(value)
-  const [synced, setSynced] = useState(value)
-  if (synced !== value) {
-    setSynced(value)
-    setDraft(value)
-  }
-  const commit = (): void => {
-    const next = draft.trim()
-    if (next === value) return
-    onCommit(next.length > 0 ? next : null)
-  }
-  return (
-    <input
-      className="input-compact w-56 font-mono"
-      value={draft}
-      placeholder={placeholder}
-      aria-label={`Preferred model for ${harness.name}`}
-      data-harness-model-input={harness.id}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') commit()
-      }}
-    />
-  )
-}
-
 /** Codex's models, asked of the CLI once when the row first draws. */
 function useCodexModels(enabled: boolean): {
   models: ModelOption[] | null
@@ -110,60 +74,100 @@ function useCodexModels(enabled: boolean): {
   return { models, failed }
 }
 
-/** Preferred model: Default, then the models this harness can be put on. */
-function PreferredModelRow({ harness }: { harness: Harness }): React.JSX.Element | null {
+/** The way to Settings → Connections, from a row that needs one. */
+function ConnectionsLink({ harness }: { harness: Harness }): React.JSX.Element {
+  return (
+    <button
+      className="btn-secondary"
+      onClick={() => useSessionStore.getState().openSettings('accounts')}
+      data-harness-connect={harness.id}
+    >
+      Connections
+    </button>
+  )
+}
+
+/**
+ * Default model: what a click on the harness in the launcher runs, chosen
+ * among the models the person's connections serve, the same list the
+ * launcher offers on hover. A harness whose pool holds no usable connection
+ * has no model to pick: the row says so and points at Connections. A
+ * harness Clave holds no connection for yet (Pi) runs the model its own
+ * config names; one that takes no model on its command line has no row.
+ */
+function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element | null {
   const value = useLaunchSettingsStore((s) => s.harnesses[harness.id]?.preferredModel ?? '')
   const setHarness = useLaunchSettingsStore((s) => s.setHarness)
-  const codex = useCodexModels(harness.id === 'codex')
+  const pool = harness.connectionPool
+  const connected = pool !== null && connectionsForModel(pool, undefined).some((c) => c.usable)
+  const codex = useCodexModels(harness.id === 'codex' && connected)
   if (!harness.takesModel) return null
   const write = (model: string | null): void =>
     void setHarness(harness.id, { preferredModel: model })
-  const description = 'What a click in the launcher runs. Default leaves it to the harness.'
+  const label = 'Default model'
+  const description = `What a click on ${harness.name} in the launcher runs; hovering the row offers the others.`
 
-  let control: React.ReactNode
-  if (harness.id === 'pi' || (harness.id === 'codex' && codex.failed)) {
-    control = (
-      <ModelTextInput
-        harness={harness}
-        value={value}
-        placeholder={harness.id === 'pi' ? 'provider/model' : 'Model id'}
-        onCommit={write}
+  if (pool === null) {
+    return (
+      <SettingsRow
+        label={label}
+        description={`${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`}
       />
     )
-  } else if (harness.id === 'codex' && !codex.models) {
-    control = (
-      <span className="settings-row-value" data-harness-models-loading>
-        Loading…
-      </span>
+  }
+  if (!connected) {
+    const company = CONNECTION_COMPANY_BY_POOL[pool].name
+    return (
+      <SettingsRow
+        label={label}
+        description={`Connect ${company} to pick one: the models offered are the ones your connections serve.`}
+      >
+        <ConnectionsLink harness={harness} />
+      </SettingsRow>
     )
-  } else {
-    const listed: SelectOption<string>[] =
-      harness.id === 'claude'
-        ? CLAUDE_MODELS.map((model) => ({ value: model.id, label: model.name, hint: model.id }))
-        : (codex.models ?? []).map((model) => ({
-            value: model.id,
-            label: model.label,
-            hint: model.hint ?? model.id
-          }))
-    const known = !value || listed.some((option) => option.value === value)
-    const options: SelectOption<string>[] = [
-      { value: DEFAULT, label: 'Default' },
-      ...listed,
-      ...(known ? [] : [{ value, label: value }])
-    ]
-    control = (
+  }
+  if (harness.id === 'codex' && codex.failed) {
+    return (
+      <SettingsRow
+        label={label}
+        description="Codex could not list its models from here; the launcher offers its default."
+      />
+    )
+  }
+  if (harness.id === 'codex' && !codex.models) {
+    return (
+      <SettingsRow label={label} description={description}>
+        <span className="settings-row-value" data-harness-models-loading>
+          Loading…
+        </span>
+      </SettingsRow>
+    )
+  }
+  const listed: SelectOption<string>[] =
+    harness.id === 'claude'
+      ? CLAUDE_MODELS.filter((model) =>
+          connectionsForModel('claude', model.id).some((c) => c.usable)
+        ).map((model) => ({ value: model.id, label: model.name, hint: model.id }))
+      : (codex.models ?? []).map((model) => ({
+          value: model.id,
+          label: model.label,
+          hint: model.hint ?? model.id
+        }))
+  const known = !value || listed.some((option) => option.value === value)
+  const options: SelectOption<string>[] = [
+    { value: DEFAULT, label: 'Default', hint: "The harness's own" },
+    ...listed,
+    ...(known ? [] : [{ value, label: value }])
+  ]
+  return (
+    <SettingsRow label={label} description={description}>
       <SettingsSelect<string>
         value={value || DEFAULT}
         options={options}
         onChange={(next) => write(next === DEFAULT ? null : next)}
-        ariaLabel={`Preferred model for ${harness.name}`}
+        ariaLabel={`Default model for ${harness.name}`}
         testId={`harness-model-${harness.id}`}
       />
-    )
-  }
-  return (
-    <SettingsRow label="Preferred model" description={description}>
-      {control}
     </SettingsRow>
   )
 }
@@ -180,7 +184,7 @@ function PermissionsRow({ harness }: { harness: Harness }): React.JSX.Element | 
   return (
     <SettingsRow
       label="Permissions"
-      description="What a new session may do without asking. Cmd+Y still skips every prompt for one launch."
+      description="What a new session may do without asking. One launch can still skip every prompt (Cmd+Y)."
     >
       <SettingsSelect<string>
         value={value || DEFAULT}
@@ -334,41 +338,45 @@ function HarnessBlock({
         )}
         {!missing && (
           <>
-            <PreferredModelRow harness={harness} />
+            <DefaultModelRow harness={harness} />
             <PermissionsRow harness={harness} />
           </>
         )}
-        <button
-          className="settings-row-action"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          data-harness-advanced={harness.id}
-        >
-          <ChevronRightIcon
-            className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : ''}`}
-            aria-hidden
-          />
-          Advanced: launch profiles
-        </button>
-        {/* The fold opens inside the harness's own card, animated like every
-            fold of the house (420 ms), never as a block below it. */}
-        <AnimatePresence initial={false}>
-          {open && (
-            <motion.div
-              key="advanced"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-              style={{ overflow: 'hidden' }}
-              data-harness-advanced-body={harness.id}
+        {!missing && (
+          <>
+            <button
+              className="settings-row-action"
+              onClick={() => setOpen((value) => !value)}
+              aria-expanded={open}
+              data-harness-advanced={harness.id}
             >
-              <div className="settings-card-inset">
-                <LaunchProfilesFamily family={harness.id} label={harness.name} />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <ChevronRightIcon
+                className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : ''}`}
+                aria-hidden
+              />
+              Advanced: launch profiles
+            </button>
+            {/* The fold opens inside the harness's own card, animated like every
+            fold of the house (420 ms), never as a block below it. */}
+            <AnimatePresence initial={false}>
+              {open && (
+                <motion.div
+                  key="advanced"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ overflow: 'hidden' }}
+                  data-harness-advanced-body={harness.id}
+                >
+                  <div className="settings-card-inset">
+                    <LaunchProfilesFamily family={harness.id} label={harness.name} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
       </SettingsCard>
     </section>
   )
@@ -390,9 +398,17 @@ export function HarnessesSettings(): React.JSX.Element {
   return (
     <SettingsPage
       title="Harnesses"
-      description="The coding tools on this Mac that Clave runs. Each one runs on a connection you pay for; the model is picked when you launch."
+      description="The coding tools on this Mac. Install one; then pick the model a click runs and what a session may do without asking. Who pays is under Connections."
       testId="agents"
     >
+      {HARNESSES.map((harness) => (
+        <HarnessBlock
+          key={harness.id}
+          harness={harness}
+          status={byId.get(harness.id)}
+          autoUpdate={autoUpdate}
+        />
+      ))}
       {supported && (
         <SettingsCard>
           <ToggleRow
@@ -403,14 +419,6 @@ export function HarnessesSettings(): React.JSX.Element {
           />
         </SettingsCard>
       )}
-      {HARNESSES.map((harness) => (
-        <HarnessBlock
-          key={harness.id}
-          harness={harness}
-          status={byId.get(harness.id)}
-          autoUpdate={autoUpdate}
-        />
-      ))}
     </SettingsPage>
   )
 }
