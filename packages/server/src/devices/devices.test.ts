@@ -16,7 +16,7 @@ import {
   CLOSE_DEVICE_SUSPENDED,
   DEVICE_PAIR_PATH
 } from '@clave/contract/devices'
-import { CLOSE_UNAUTHORIZED } from '@clave/contract/push'
+import { CLOSE_UNAUTHORIZED, type ServerFrame } from '@clave/contract/push'
 import { hashToken } from './store'
 import { startOidcProvider } from '../../../../tests/e2e/fixtures/oidc-provider.mjs'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
@@ -24,7 +24,7 @@ import { FakeSource, Peer, aSession } from '../test-support'
 import { memoryDeviceStorage, type DevicesPortService } from './port'
 import { DEVICE_FORBIDDEN_MESSAGE, deviceHearsEvent, deviceMayCall } from './scope'
 import { FIXTURE_PATH } from '../fixtures/route'
-import { makeDeviceSessions } from './service'
+import { OWNER_READ_ATTEMPTS, makeDeviceSessions } from './service'
 import type { ServerPorts } from '../ports'
 import { memoryWriteLedgerStorage, STOPPED_AFTER_DISPATCH } from '../sessions/writes'
 import { FakeSettingsSource } from '../settings/test-support'
@@ -84,6 +84,11 @@ interface World {
   source: FakeSource
   storage: ReturnType<typeof memoryDeviceStorage>
   owner: { subject: string | null }
+  /** The account manager's word (PRDCT-4448): the owner changes and the entry says so at
+   *  once, to whoever listens on the port (with `notices`). */
+  changeOwner: (subject: string | null) => void
+  /** Who listens on the port for the owner's changes now. */
+  noticeListeners: Set<(owner: string | null) => void>
   clock: { now: number }
   relay: { url: string }
   asked: Array<{ name: string; platform: string }>
@@ -118,17 +123,29 @@ async function start(
     issuer?: string
     source?: FakeSource
     ports?: Omit<ServerPorts, 'sessions' | 'devices'>
+    /** The entry tells every change of the owner as it happens (PRDCT-4448). */
+    notices?: boolean
+    /** The entry answers the owner synchronously, at the moment of each check (PRDCT-4448). */
+    fresh?: boolean
   } = {}
 ): Promise<World> {
   const source = options.source ?? new FakeSource(aSession('s1'))
   const storage = memoryDeviceStorage()
   const owner = { subject: options.owner === undefined ? OWNER : options.owner }
+  const noticeListeners = new Set<(owner: string | null) => void>()
   const clock = { now: Date.now() }
   const relay = { url: '' }
   const asked: World['asked'] = []
   const port: DevicesPortService = {
     storage,
     owner: () => owner.subject,
+    ...(options.fresh && { ownerNow: () => owner.subject }),
+    ...(options.notices && {
+      onOwnerChanged: (listener: (owner: string | null) => void) => {
+        noticeListeners.add(listener)
+        return () => void noticeListeners.delete(listener)
+      }
+    }),
     issuer: options.issuer ?? provider.issuer,
     serverName: () => 'the-mac',
     relay: { get: () => relay.url, set: (url) => void (relay.url = url) },
@@ -182,6 +199,11 @@ async function start(
     source,
     storage,
     owner,
+    changeOwner: (subject) => {
+      owner.subject = subject
+      for (const listener of [...noticeListeners]) listener(subject)
+    },
+    noticeListeners,
     clock,
     relay,
     asked,
@@ -1222,6 +1244,419 @@ describe('a phone is the account that approved it (PRDCT-4448)', () => {
       peer.send({ _tag: 'hello', token })
       // Final for the phone: this record admits nobody, whoever signs in.
       expect((await peer.closed).code).toBe(CLOSE_UNAUTHORIZED)
+    } finally {
+      await server.stop()
+    }
+  })
+})
+
+// ── PRDCT-4448: the owner as the server reads it, and its word reaching a phone at once ──
+
+/** A phone record bound to `subject`, under a token the test knows. */
+const BOUND_TOKEN = 'b'.repeat(64)
+const BOUND_ID = 'dev-bound'
+const boundDocument = (subject: string): string =>
+  JSON.stringify({
+    v: 1,
+    devices: [
+      {
+        id: BOUND_ID,
+        name: 'A phone',
+        platform: 'android',
+        appVersion: '1.0.0',
+        createdAt: 1,
+        lastSeenAt: null,
+        tokenHash: hashToken(BOUND_TOKEN),
+        push: null,
+        owner: subject
+      }
+    ]
+  })
+
+/** A port whose owner reads may be held: each read samples the owner as it starts and
+ *  answers when the test lets it (an entry whose read waits on something). With `notices`,
+ *  `change` is the account manager's word: the owner changes and the listeners hear it. */
+function holdingPort(
+  initial: string | null,
+  options: { notices?: boolean; document?: string } = {}
+): {
+  port: DevicesPortService
+  state: { subject: string | null; holding: boolean }
+  held: Array<() => void>
+  listeners: Set<(owner: string | null) => void>
+  change: (subject: string | null) => void
+} {
+  const state = { subject: initial, holding: false }
+  const held: Array<() => void> = []
+  const listeners = new Set<(owner: string | null) => void>()
+  const port: DevicesPortService = {
+    storage: memoryDeviceStorage(options.document ?? null),
+    owner: () => {
+      const sampled = state.subject
+      if (!state.holding) return sampled
+      return new Promise<string | null>((resolve) => held.push(() => resolve(sampled)))
+    },
+    issuer: provider.issuer,
+    serverName: () => 'the-mac',
+    ...(options.notices && {
+      onOwnerChanged: (listener: (owner: string | null) => void) => {
+        listeners.add(listener)
+        return () => void listeners.delete(listener)
+      }
+    })
+  }
+  return {
+    port,
+    state,
+    held,
+    listeners,
+    change: (subject) => {
+      state.subject = subject
+      for (const listener of [...listeners]) listener(subject)
+    }
+  }
+}
+
+/** Everything already queued has run: the callbacks, and the promises they settled. */
+const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+/** Read a peer's frames up to the first of `tag`, and answer it. */
+async function until(peer: Peer, tag: ServerFrame['_tag']): Promise<ServerFrame> {
+  for (;;) {
+    const frame = await peer.next()
+    if (frame._tag === tag) return frame
+  }
+}
+
+/** The frames a peer received and nobody read yet, once nothing more comes for a moment. */
+async function drained(peer: Peer): Promise<ServerFrame[]> {
+  const frames: ServerFrame[] = []
+  for (;;) {
+    try {
+      frames.push(await peer.next(50))
+    } catch {
+      return frames
+    }
+  }
+}
+
+describe('the owner as the server reads it (PRDCT-4448)', () => {
+  it('never lets an older read of the owner land over a newer one', async () => {
+    const h = holdingPort('account-a', { document: boundDocument('account-a') })
+    const devices = makeDeviceSessions(h.port, { serverId: 'srv' })
+    h.state.holding = true
+    // The first read samples account-a; account-b signs in; the second read samples it.
+    const first = devices.authenticate(BOUND_TOKEN)
+    h.state.subject = 'account-b'
+    const second = devices.authenticate(BOUND_TOKEN)
+    expect(h.held).toHaveLength(2)
+    h.held[1]()
+    expect(await second).toEqual({ deviceId: BOUND_ID, suspended: true })
+    // The older read answers last, still saying account-a: it changes nothing.
+    h.held[0]()
+    expect(await first).toEqual({ deviceId: BOUND_ID, suspended: true })
+    expect(devices.isSuspended(BOUND_ID)).toBe(true)
+  })
+
+  it('listens to the account manager’s word while anyone listens to the owner, and only then', () => {
+    const h = holdingPort('account-a', { notices: true })
+    const devices = makeDeviceSessions(h.port, { serverId: 'srv' })
+    expect(h.listeners.size).toBe(0)
+    const offFirst = devices.onOwnerChanged(() => {})
+    const offSecond = devices.onOwnerChanged(() => {})
+    expect(h.listeners.size).toBe(1)
+    offFirst()
+    expect(h.listeners.size).toBe(1)
+    offSecond()
+    expect(h.listeners.size).toBe(0)
+  })
+
+  it('takes the owner the account manager tells at once, before any read answers', async () => {
+    const h = holdingPort('account-a', { notices: true, document: boundDocument('account-a') })
+    const devices = makeDeviceSessions(h.port, { serverId: 'srv' })
+    const told: string[] = []
+    const off = devices.onOwnerChanged(() => told.push('changed'))
+    await settle()
+    expect(devices.isSuspended(BOUND_ID)).toBe(false)
+    // No read answers from here on: only the word can move the owner.
+    h.state.holding = true
+    h.change('account-b')
+    expect(devices.isSuspended(BOUND_ID)).toBe(true)
+    h.change(null)
+    expect(devices.isSuspended(BOUND_ID)).toBe(true)
+    h.change('account-a')
+    expect(devices.isSuspended(BOUND_ID)).toBe(false)
+    expect(told).toEqual(['changed', 'changed', 'changed'])
+    off()
+  })
+
+  it('reads the owner again when the account manager tells of a change while a read is out', async () => {
+    const h = holdingPort('account-a', { notices: true, document: boundDocument('account-a') })
+    const devices = makeDeviceSessions(h.port, { serverId: 'srv' })
+    // The push channel listens, as it does for the whole life of a server.
+    const off = devices.onOwnerChanged(() => {})
+    await settle()
+    h.state.holding = true
+    const pending = devices.authenticate(BOUND_TOKEN)
+    h.change('account-b')
+    // Its answer was sampled before the change: not trusted, the owner is read again.
+    h.held[0]()
+    await settle()
+    expect(h.held).toHaveLength(2)
+    h.held[1]()
+    expect(await pending).toEqual({ deviceId: BOUND_ID, suspended: true })
+    off()
+  })
+
+  it('counts nobody when the account keeps changing under every read', async () => {
+    const h = holdingPort('account-a', { notices: true, document: boundDocument('account-a') })
+    const devices = makeDeviceSessions(h.port, { serverId: 'srv' })
+    const off = devices.onOwnerChanged(() => {})
+    await settle()
+    h.state.holding = true
+    const pending = devices.authenticate(BOUND_TOKEN)
+    // Every read is overtaken by a word; the last word names the phone's own account.
+    for (const [read, next] of [
+      [0, 'account-b'],
+      [1, 'account-c'],
+      [2, 'account-a']
+    ] as const) {
+      h.change(next)
+      h.held[read]()
+      await settle()
+    }
+    expect(h.held).toHaveLength(OWNER_READ_ATTEMPTS)
+    expect(await pending).toEqual({ deviceId: BOUND_ID, suspended: true })
+    off()
+  })
+
+  it('asks an entry that can answer at once for the owner at the moment of every check', async () => {
+    const state = { subject: 'account-a' as string | null }
+    const devices = makeDeviceSessions(
+      {
+        storage: memoryDeviceStorage(boundDocument('account-a')),
+        // A read that lags: it says account-a whatever happened since.
+        owner: () => Promise.resolve('account-a'),
+        ownerNow: () => state.subject,
+        issuer: provider.issuer,
+        serverName: () => 'the-mac'
+      },
+      { serverId: 'srv' }
+    )
+    expect(await devices.authenticate(BOUND_TOKEN)).toEqual({
+      deviceId: BOUND_ID,
+      suspended: false
+    })
+    state.subject = 'account-b'
+    expect(devices.isSuspended(BOUND_ID)).toBe(true)
+    expect(await devices.authenticate(BOUND_TOKEN)).toEqual({ deviceId: BOUND_ID, suspended: true })
+    state.subject = null
+    expect(devices.isSuspended(BOUND_ID)).toBe(true)
+    state.subject = 'account-a'
+    expect(devices.isSuspended(BOUND_ID)).toBe(false)
+  })
+
+  it('approves, and hands out, a pairing only by a read made after the account changed', async () => {
+    const h = holdingPort(OWNER, { notices: true })
+    const devices = makeDeviceSessions(h.port, { serverId: 'srv' })
+    const off = devices.onOwnerChanged(() => {})
+    const { pairingId } = await devices.requestPairing({
+      ...(await mintIdToken(provider)),
+      device: PHONE
+    })
+    // Another account signs in while the approval reads the owner.
+    h.state.holding = true
+    const approval = devices.approve(pairingId)
+    h.change('another-account')
+    h.held[0]()
+    await settle()
+    h.held[1]?.()
+    await expect(approval).rejects.toThrow('no longer waiting')
+    // Approved under its own account, which then signs out while the phone reads the answer.
+    h.state.holding = false
+    h.change(OWNER)
+    await devices.approve(pairingId)
+    h.state.holding = true
+    const read = devices.readPairing(pairingId)
+    h.change(null)
+    h.held[2]()
+    await settle()
+    h.held[3]?.()
+    expect(await read).toEqual({ status: 'pending' })
+    // The same account back: the session waited for it, kept.
+    h.state.holding = false
+    h.change(OWNER)
+    expect(await devices.readPairing(pairingId)).toMatchObject({
+      status: 'approved',
+      deviceSession: { token: expect.any(String) }
+    })
+    off()
+  })
+})
+
+describe('the owner’s word reaches a phone at once (PRDCT-4448)', () => {
+  it('listens to the owner’s word for as long as the server runs', async () => {
+    const w = await start({ notices: true })
+    expect(w.noticeListeners.size).toBe(1)
+    await w.server.stop()
+    world = null
+    expect(w.noticeListeners.size).toBe(0)
+  })
+
+  it.each([
+    ['signs out', null],
+    ['gives way to another account', 'another-account']
+  ])(
+    'closes an open phone the moment its account %s, before it hears one more frame',
+    async (_, next) => {
+      const w = await start({ notices: true })
+      const { token, deviceId } = await w.device()
+      const phone = new Peer(w.pushUrl())
+      await phone.opened
+      phone.send({ _tag: 'hello', token })
+      await until(phone, 'welcome')
+      phone.send({ _tag: 'subscribe', sessionId: 's1' })
+      await until(phone, 'subscribed')
+      // The account manager's word, then a frame at once: no poll ran in between.
+      w.changeOwner(next)
+      w.source.emit('s1', { kind: 'pty', data: new Uint8Array([104, 105]) })
+      expect((await phone.closed).code).toBe(CLOSE_DEVICE_SUSPENDED)
+      expect((await drained(phone)).filter((frame) => frame._tag === 'stream')).toEqual([])
+      // Paused, not revoked: the record is kept for the account to come back to.
+      expect(w.storage.read()).toContain(deviceId)
+    }
+  )
+
+  it('closes an open phone within a second of its account leaving, when the entry gives no word', async () => {
+    // No word and no other call: only the backstop read can see the change.
+    const w = await start()
+    const { token } = await w.device()
+    const phone = new Peer(w.pushUrl())
+    await phone.opened
+    phone.send({ _tag: 'hello', token })
+    await until(phone, 'welcome')
+    const left = Date.now()
+    w.owner.subject = null
+    expect((await phone.closed).code).toBe(CLOSE_DEVICE_SUSPENDED)
+    expect(Date.now() - left).toBeLessThan(3000)
+  })
+
+  it('stops every frame to a phone the moment its account is gone, before the word arrives', async () => {
+    const w = await start({ notices: true, fresh: true })
+    const { token } = await w.device()
+    const phone = new Peer(w.pushUrl())
+    await phone.opened
+    phone.send({ _tag: 'hello', token })
+    await until(phone, 'welcome')
+    phone.send({ _tag: 'subscribe', sessionId: 's1' })
+    await until(phone, 'subscribed')
+    // A sign-out drops the session first, clears the keychain, and only then says so.
+    w.owner.subject = null
+    w.source.emit('s1', { kind: 'pty', data: new Uint8Array([104, 105]) })
+    expect((await drained(phone)).filter((frame) => frame._tag === 'stream')).toEqual([])
+    w.changeOwner(null)
+    expect((await phone.closed).code).toBe(CLOSE_DEVICE_SUSPENDED)
+  })
+
+  it('answers 403 to a phone’s read that its account left while the read was answered', async () => {
+    const w = await start({ notices: true, fresh: true })
+    const { token } = await w.device()
+    let entered!: () => void
+    const reached = new Promise<void>((resolve) => (entered = resolve))
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const models = w.source.models
+    w.source.models = async (id) => {
+      entered()
+      await held
+      return models(id)
+    }
+    const answer = w.json('GET', '/sessions/models?id=s1', { token })
+    await reached
+    w.changeOwner('another-account')
+    release()
+    const { status, body } = await answer
+    expect(status).toBe(403)
+    expect(JSON.stringify(body)).toContain('another Antasphere account')
+    // Its own account back, the same read answers.
+    w.changeOwner(OWNER)
+    expect((await w.json('GET', '/sessions/models?id=s1', { token })).status).toBe(200)
+  })
+
+  it('keeps the true answer of a phone’s write its account left while the write was made', async () => {
+    const w = await start({ notices: true, fresh: true })
+    const { token } = await w.device()
+    let entered!: () => void
+    const reached = new Promise<void>((resolve) => (entered = resolve))
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const write = w.source.write
+    w.source.write = async (id, input) => {
+      entered()
+      await held
+      return write(id, input)
+    }
+    const answer = w.json('POST', '/sessions/write', {
+      token,
+      body: { id: 's1', input: { type: 'bytes', data: 'aGk=' } }
+    })
+    await reached
+    w.changeOwner('another-account')
+    release()
+    // The write landed: its answer says so, whoever is signed in now.
+    expect((await answer).status).toBe(200)
+    expect(w.source.writes).toHaveLength(1)
+  })
+
+  it('never binds a record of no owner to an account that signs in', async () => {
+    const token = 'c'.repeat(64)
+    const storage = memoryDeviceStorage(
+      JSON.stringify({
+        v: 1,
+        devices: [
+          {
+            id: 'dev-legacy',
+            name: 'Old phone',
+            platform: 'android',
+            appVersion: '0.9.0',
+            createdAt: 1,
+            lastSeenAt: null,
+            tokenHash: hashToken(token),
+            push: null
+          }
+        ]
+      })
+    )
+    const owner = { subject: null as string | null }
+    const listeners = new Set<(owner: string | null) => void>()
+    const server = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(aSession('s1')),
+        devices: {
+          storage,
+          owner: () => owner.subject,
+          ownerNow: () => owner.subject,
+          onOwnerChanged: (listener) => {
+            listeners.add(listener)
+            return () => void listeners.delete(listener)
+          },
+          issuer: provider.issuer,
+          serverName: () => 'the-mac'
+        }
+      }
+    })
+    try {
+      owner.subject = OWNER
+      for (const listener of [...listeners]) listener(OWNER)
+      const answer = await fetch(`${server.url}/sessions`, {
+        headers: { authorization: `Bearer ${token}` }
+      })
+      expect(answer.status).toBe(401)
+      const listed = await fetch(`${server.url}/devices`, {
+        headers: { authorization: `Bearer ${server.token}` }
+      })
+      expect(await listed.json()).toMatchObject({ devices: [] })
+      expect(JSON.parse(storage.read()!).devices[0].owner).toBeUndefined()
     } finally {
       await server.stop()
     }

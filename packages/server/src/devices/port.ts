@@ -37,6 +37,15 @@ export interface DevicesPortService {
    *  at every pairing request; null while nobody is. A server with no
    *  owner admits no phone, whatever the token. */
   readonly owner: () => Awaitable<string | null>
+  /** The same owner read synchronously, when the entry can (PRDCT-4448). Present,
+   *  every check reads it at the moment it decides (a frame to a phone, a request,
+   *  a hello, an approval), so no answer is older than the decision. */
+  readonly ownerNow?: () => string | null
+  /** Told the moment the signed-in owner changes, with the owner now (PRDCT-4448):
+   *  the account manager's own word, so an open phone of the account that left is
+   *  closed at once. Absent, the owner is read again every second while a socket
+   *  listens. */
+  readonly onOwnerChanged?: (listener: (owner: string | null) => void) => () => void
   /** The raw `CLAVE_ANTASPHERE_ISSUER` of the entry's environment: absent,
    *  the hub; a loopback test provider otherwise. Validated by the domain
    *  with the account manager's own rule; refused, every token is refused. */

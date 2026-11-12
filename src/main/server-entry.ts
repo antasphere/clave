@@ -105,7 +105,7 @@ import {
   setServerEventPublisher
 } from './server/session-events'
 // ── Mobile wave, lane A: the devices, a phone paired with this server (server/devices-port.ts) ──
-import { devicesPortFor } from './server/devices-port'
+import { accountDevicesPort } from './server/devices-port'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { rememberedSpawnModel } from './sessions/spawn-model'
@@ -477,10 +477,10 @@ async function main(): Promise<void> {
         }
       }),
       // ── Mobile wave, lane A: the devices, this server's own Antasphere login as
-      // the owner (read through the settings source, which serves its status),
-      // the records under `--data-dir`, a line on stderr when a phone asks. ──
-      devices: devicesPortFor({
-        status: () => standalone.settings.antasphere.status(),
+      // the owner (the manager the settings source serves, read at every check and
+      // heard on every change, PRDCT-4448), the records under `--data-dir`, a line
+      // on stderr when a phone asks. ──
+      devices: accountDevicesPort(standalone.antasphere, {
         // ── PRDCT-4448: the phone's road to this server, its version reported ──
         version,
         onPairingRequested: ({ name, platform }) =>

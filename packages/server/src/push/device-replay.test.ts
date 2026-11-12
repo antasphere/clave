@@ -1,8 +1,48 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
+import { CLOSE_DEVICE_SUSPENDED } from '@clave/contract/devices'
 import type { ServerFrame } from '@clave/contract/push'
 import { FakeSource, aSession } from '../test-support'
 import { PushHub } from './hub'
+
+describe('a phone’s welcome (PRDCT-4448)', () => {
+  it('closes a phone whose account left between its check and its welcome', async () => {
+    const touch = vi.fn()
+    const hub = new PushHub({
+      token: 'owner',
+      serverId: 'test',
+      source: new FakeSource(aSession('s1')),
+      events: {
+        stream: 'test',
+        publish: () => Effect.die('unused'),
+        subscribe: () => () => {}
+      },
+      devices: {
+        // The check passed; by the welcome, its account is no longer the one signed in.
+        authenticate: async () => ({ deviceId: 'd1', suspended: false }),
+        touch,
+        onRevoked: () => () => {},
+        isSuspended: () => true,
+        onOwnerChanged: () => () => {}
+      }
+    })
+    try {
+      const frames: ServerFrame[] = []
+      const closes: number[] = []
+      const peer = hub.attach({
+        send: (text) => frames.push(JSON.parse(text)),
+        close: (code) => void closes.push(code)
+      })
+      peer.onMessage(JSON.stringify({ _tag: 'hello', token: 'phone' }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(frames).toEqual([])
+      expect(closes).toEqual([CLOSE_DEVICE_SUSPENDED])
+      expect(touch).not.toHaveBeenCalled()
+    } finally {
+      hub.dispose()
+    }
+  })
+})
 
 describe('device push replay', () => {
   it('keeps pending desktop requests and private events out of a phone welcome', async () => {

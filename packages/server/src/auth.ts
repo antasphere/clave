@@ -5,7 +5,7 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { Effect, Option } from 'effect'
-import type * as HttpApp from '@effect/platform/HttpApp'
+import * as HttpApp from '@effect/platform/HttpApp'
 import * as HttpIncomingMessage from '@effect/platform/HttpIncomingMessage'
 import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
@@ -52,6 +52,9 @@ export interface DeviceAuth {
     presented: string
   ) => Promise<{ readonly deviceId: string; readonly suspended: boolean } | null>
   readonly touch: (deviceId: string) => void
+  /** Whether the phone is suspended at this moment: asked again before a read's answer
+   *  leaves, since its account may have left while it was answered (PRDCT-4448). */
+  readonly isSuspended: (deviceId: string) => boolean
 }
 
 /** The sentence a suspended phone gets: its pairing is kept, not revoked. */
@@ -98,6 +101,23 @@ export const bearerAuth =
             new ForbiddenProblem({ error: 'Forbidden', message: DEVICE_FORBIDDEN_MESSAGE })
           )
         devices!.touch(device.deviceId)
+        // A read whose account left while it was answered goes no further: what a phone
+        // reads is its approving account's (PRDCT-4448). Decided as the answer leaves, by
+        // the pre-response hook: the router's answers do not all come back through this
+        // effect (the CORS headers go the same way). A write keeps its true answer, it
+        // happened.
+        if (request.method === 'GET') {
+          const deviceId = device.deviceId
+          yield* HttpApp.appendPreResponseHandler((_request, response) =>
+            Effect.sync(() =>
+              devices!.isSuspended(deviceId)
+                ? problemResponse(
+                    new ForbiddenProblem({ error: 'Forbidden', message: DEVICE_SUSPENDED_MESSAGE })
+                  )
+                : response
+            )
+          )
+        }
         return yield* Correlation.within({ actor: deviceActor(device.deviceId) })(app)
       }
       return problemResponse(

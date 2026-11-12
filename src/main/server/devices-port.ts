@@ -49,10 +49,13 @@ export function phoneRoadMachineId(): string {
 const ISSUER_ENV = 'CLAVE_ANTASPHERE_ISSUER'
 
 export interface DevicesPortOptions {
-  /** The Antasphere login of the process that owns the server, read at
-   *  every pairing request: signed in, its subject is the owner's; anything
-   *  else (signed out, no manager, a read that throws) means no owner. */
-  readonly status: () => AntasphereAccountStatus | Promise<AntasphereAccountStatus> | null
+  /** The Antasphere login of the process that owns the server, read
+   *  synchronously at every check (PRDCT-4448): signed in, its subject is the
+   *  owner's; anything else (signed out, a login in flight, no manager, a read
+   *  that throws) means no owner. */
+  readonly status: () => AntasphereAccountStatus | null
+  /** Told of every change of that login, as its manager says it (PRDCT-4448). */
+  readonly onStatusChanged?: (listener: (status: AntasphereAccountStatus) => void) => () => void
   readonly env?: NodeJS.ProcessEnv
   readonly onPairingRequested?: DevicesPortService['onPairingRequested']
   /** The version this server reports to a phone on its road (PRDCT-4448);
@@ -60,8 +63,20 @@ export interface DevicesPortOptions {
   readonly version?: string
 }
 
+/** The owner a login status names: its subject while signed in, nobody otherwise. */
+const ownerOf = (status: AntasphereAccountStatus | null): string | null =>
+  status !== null && status.phase === 'signed-in' && status.account ? status.account.subject : null
+
 export function devicesPortFor(options: DevicesPortOptions): DevicesPortService {
   const env = options.env ?? process.env
+  const ownerNow = (): string | null => {
+    try {
+      return ownerOf(options.status())
+    } catch {
+      return null
+    }
+  }
+  const onStatusChanged = options.onStatusChanged
   return {
     storage: {
       read: () => {
@@ -73,16 +88,20 @@ export function devicesPortFor(options: DevicesPortOptions): DevicesPortService 
       },
       write: (text) => lazySettingsPorts.storage.write(DEVICES_DOCUMENT, text, { mode: 0o600 })
     },
-    owner: async () => {
-      try {
-        const status = await options.status()
-        return status !== null && status.phase === 'signed-in' && status.account
-          ? status.account.subject
-          : null
-      } catch {
-        return null
-      }
-    },
+    owner: ownerNow,
+    ownerNow,
+    ...(onStatusChanged && {
+      onOwnerChanged: (listener: (owner: string | null) => void) =>
+        onStatusChanged((status) => {
+          // The manager tells its other listeners (the windows) after this one: a
+          // failure here must not keep the word from them.
+          try {
+            listener(ownerOf(status))
+          } catch (error) {
+            console.error('[clave-server] owner word failed', error)
+          }
+        })
+    }),
     issuer: env[ISSUER_ENV],
     serverName: () => os.hostname(),
     ...(options.version !== undefined && {
@@ -103,4 +122,26 @@ export function devicesPortFor(options: DevicesPortOptions): DevicesPortService 
     }),
     ...(options.onPairingRequested && { onPairingRequested: options.onPairingRequested })
   }
+}
+
+/** An Antasphere account manager as the devices port reads one (`antasphere-account.ts`'s
+ *  `AntasphereAccountManager`): its status now, and its word on every change. */
+export interface AntasphereLogin {
+  status(): AntasphereAccountStatus
+  onChange(listener: (status: AntasphereAccountStatus) => void): () => void
+}
+
+/** The devices port over the Antasphere login of the process that owns the server
+ *  (PRDCT-4448): the shell's own in-process, the standalone server's own when it runs
+ *  alone. Both entries build theirs here, so both read the owner at the moment of every
+ *  check and tell its changes the moment the manager does. */
+export function accountDevicesPort(
+  login: AntasphereLogin | null,
+  options: Omit<DevicesPortOptions, 'status' | 'onStatusChanged'> = {}
+): DevicesPortService {
+  return devicesPortFor({
+    ...options,
+    status: () => login?.status() ?? null,
+    onStatusChanged: (listener) => login?.onChange(listener) ?? (() => {})
+  })
 }

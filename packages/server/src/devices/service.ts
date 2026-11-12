@@ -48,16 +48,23 @@ export interface DeviceAuthentication {
   readonly suspended: boolean
 }
 
-/** How often the owner is read again while a push channel listens for its changes. */
+/** How often the owner is read again while a push channel listens for its changes: the
+ *  backstop of an entry that cannot tell them (PRDCT-4448). */
 export const OWNER_POLL_MS = 1000
+/** A read overtaken by the account manager's word is made again this many times at most;
+ *  past that the owner counts as nobody, for that one check (PRDCT-4448). */
+export const OWNER_READ_ATTEMPTS = 3
 
 export interface DeviceSessionsService {
   /** The phone a presented credential belongs to, with the owner read now; null for an
    *  unknown credential and for a record bound to no owner (it pairs again). */
   readonly authenticate: (presented: string) => Promise<DeviceAuthentication | null>
-  /** Whether the phone is suspended now, by the owner last read (the push channel's check). */
+  /** Whether the phone is suspended now: by the owner read at this moment when the entry
+   *  answers synchronously, by the newest owner known otherwise (the push channel's check
+   *  before every frame, and a request's before its answer leaves). */
   readonly isSuspended: (deviceId: string) => boolean
-  /** Told when the signed-in owner changes; while anyone listens it is read every second. */
+  /** Told when the signed-in owner changes. While anyone listens, the entry's own word is
+   *  heard (the port's `onOwnerChanged`) and the owner is read every second besides. */
   readonly onOwnerChanged: (listener: () => void) => Unsubscribe
   /** The phone made an authenticated call; its last-seen time, once a minute. */
   readonly touch: (deviceId: string) => void
@@ -174,19 +181,36 @@ export function makeDeviceSessions(
     id: options.serverId,
     name: port.serverName()
   })
-  // ── PRDCT-4448: a phone is the account's that approved it. The owner is read fresh at
-  // every pairing step and every authentication, and kept for the push channel's checks. ──
+  // ── PRDCT-4448: a phone is the account's that approved it. The owner is read at every
+  // pairing step and every authentication, and kept for the push channel's checks: read
+  // synchronously at the decision when the entry can (`ownerNow`); otherwise read in
+  // order, an older answer never landing over a newer one, and read again when the
+  // account manager's word (`onOwnerChanged`) arrives while a read is out. ──
   let cachedOwner: string | null | undefined
+  /** Every read and every word takes the next ticket, in the order they start. */
+  let ownerTicket = 0
+  /** The ticket of what the cache holds: nothing older lands over it. */
+  let ownerApplied = 0
+  /** Counts the words heard: a read that spans one may predate the change. */
+  let ownerWords = 0
   const ownerListeners = new Set<() => void>()
   let poll: ReturnType<typeof setInterval> | null = null
-  const ownerNow = async (): Promise<string | null> => {
-    let owner: string | null
+  let offWords: (() => void) | null = null
+  const subjectOf = (read: unknown): string | null =>
+    typeof read === 'string' && read !== '' ? read : null
+  /** The owner as the entry answers it at this moment; undefined when it cannot. */
+  const ownerSync = (): string | null | undefined => {
+    if (!port.ownerNow) return undefined
     try {
-      const read = await port.owner()
-      owner = typeof read === 'string' && read !== '' ? read : null
+      return subjectOf(port.ownerNow())
     } catch {
-      owner = null
+      return null
     }
+  }
+  /** The cache takes `owner` unless something newer is there; a change is told. */
+  const applyOwner = (ticket: number, owner: string | null): boolean => {
+    if (ticket <= ownerApplied) return false
+    ownerApplied = ticket
     const before = cachedOwner
     cachedOwner = owner
     if (before !== undefined && before !== owner)
@@ -197,7 +221,35 @@ export function makeDeviceSessions(
           console.error('[clave-server] owner listener failed', error)
         }
       }
-    return owner
+    return true
+  }
+  const ownerNow = async (): Promise<string | null> => {
+    const now = ownerSync()
+    if (now !== undefined) {
+      applyOwner(++ownerTicket, now)
+      return now
+    }
+    for (let attempt = 0; attempt < OWNER_READ_ATTEMPTS; attempt += 1) {
+      const ticket = ++ownerTicket
+      const words = ownerWords
+      let owner: string | null
+      try {
+        owner = subjectOf(await port.owner())
+      } catch {
+        owner = null
+      }
+      // The account manager spoke while this read was out: its answer may predate the change.
+      if (ownerWords !== words) continue
+      // A newer read landed first: its answer stands.
+      if (!applyOwner(ticket, owner)) return cachedOwner ?? null
+      return owner
+    }
+    return null
+  }
+  /** The account manager's word: the owner now, ahead of every read still out. */
+  const heardWord = (owner: string | null): void => {
+    ownerWords += 1
+    applyOwner(++ownerTicket, subjectOf(owner))
   }
 
   return {
@@ -210,27 +262,26 @@ export function makeDeviceSessions(
     },
     isSuspended: (deviceId) => {
       const device = store.get(deviceId)
-      return (
-        device === undefined ||
-        device.owner === undefined ||
-        cachedOwner === undefined ||
-        cachedOwner === null ||
-        device.owner !== cachedOwner
-      )
+      if (device === undefined || device.owner === undefined) return true
+      const now = ownerSync()
+      const owner = now !== undefined ? now : cachedOwner
+      return owner === undefined || owner === null || device.owner !== owner
     },
     onOwnerChanged: (listener) => {
       ownerListeners.add(listener)
-      if (!poll) {
+      if (ownerListeners.size === 1) {
+        // The entry's own word when it gives one, and a read every second as the backstop.
+        offWords = port.onOwnerChanged?.(heardWord) ?? null
         poll = setInterval(() => void ownerNow(), OWNER_POLL_MS)
         poll.unref?.()
       }
       void ownerNow()
       return () => {
-        ownerListeners.delete(listener)
-        if (ownerListeners.size === 0 && poll) {
-          clearInterval(poll)
-          poll = null
-        }
+        if (!ownerListeners.delete(listener) || ownerListeners.size > 0) return
+        offWords?.()
+        offWords = null
+        if (poll) clearInterval(poll)
+        poll = null
       }
     },
     touch: (deviceId) => {

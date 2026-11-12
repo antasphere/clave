@@ -11,11 +11,11 @@
  */
 import type { DevicesPortService } from '@clave/server'
 import { shellAntasphereAccount } from '../settings/shell-source'
-import { devicesPortFor } from './devices-port'
+import { accountDevicesPort } from './devices-port'
 
+/** The shell's login, read at every check and heard on every change (PRDCT-4448). */
 export function shellDevicesPort(version?: string): DevicesPortService {
-  return devicesPortFor({
-    status: () => shellAntasphereAccount?.status() ?? null,
+  return accountDevicesPort(shellAntasphereAccount, {
     ...(version !== undefined && { version })
   })
 }

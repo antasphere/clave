@@ -187,7 +187,8 @@ export class PushHub {
             peer.authenticating = false
             if (peer.closed) return
             if (!device) return this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
-            if (device.suspended)
+            // Its account may have left since the check: asked again at the welcome itself.
+            if (device.suspended || devices.isSuspended(device.deviceId))
               return this.close(peer, CLOSE_DEVICE_SUSPENDED, 'device suspended')
             peer.deviceId = device.deviceId
             devices.touch(device.deviceId)
