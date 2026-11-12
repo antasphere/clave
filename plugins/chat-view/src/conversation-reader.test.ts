@@ -3,6 +3,7 @@ import type { TimelinePage } from '@clave/contract/timeline'
 import type { SessionPosition, SessionStream } from '../../../src/shared/session-model'
 import {
   conversationReader,
+  HANDOFF_MAX_BYTES,
   HANDOFF_MAX_ITEMS,
   type ConversationReader
 } from './conversation-reader'
@@ -92,6 +93,81 @@ function setup(timeline = vi.fn<() => Promise<TimelinePage | null>>(async () => 
 }
 
 describe('the positioned snapshot/live handoff', () => {
+  it.each([false, true])(
+    'takes the current question definition when an older request reused its id (snapshot includes current: %s)',
+    async (inSnapshot) => {
+      const older = {
+        type: 'permission_request' as const,
+        id: 'reused',
+        description: 'Older public question',
+        options: [{ id: 'answer', label: 'Answer' }],
+        questions: [{ id: 'value', header: 'Older public field', question: 'Value?', options: [] }],
+        input: { turnId: 'older', questions: [{ id: 'value', isSecret: false }] }
+      }
+      const current = {
+        ...older,
+        description: 'Current private question',
+        questions: [
+          { id: 'value', header: 'Current private field', question: 'Value?', options: [] }
+        ],
+        input: { turnId: 'current', questions: [{ id: 'value', isSecret: true }] }
+      }
+      const snapshot: TimelinePage = {
+        ...page([], inSnapshot ? 5 : 4),
+        items: [
+          { event: older, position: position(1) },
+          {
+            event: {
+              type: 'permission_updated',
+              id: older.id,
+              answers: { value: 'old draft' },
+              typed: true
+            },
+            position: position(2)
+          },
+          { event: { type: 'state_change', state: 'done' }, position: position(3) },
+          { event: { type: 'state_change', state: 'blocked' }, position: position(4) },
+          ...(inSnapshot ? [{ event: current, position: position(5) }] : [])
+        ]
+      }
+      const h = setup(vi.fn(async () => snapshot))
+      h.reader.stream({ kind: 'event', event: current })
+      h.reader.start()
+      await settle()
+      expect(h.entries()).toHaveLength(1)
+      expect(h.entries()[0]).toMatchObject({ kind: 'permission', request: current })
+      expect(h.entries()[0]).not.toHaveProperty('typed')
+    }
+  )
+  it('keeps a current question’s typed fields when its subscription definition repeats with another key order', async () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'request',
+      description: 'Choose',
+      options: [{ id: 'allow', label: 'Allow' }],
+      input: { turnId: 'same', itemId: 'same' }
+    }
+    const h = setup(
+      vi.fn(async () => ({ ...page([], 1), items: [{ event: request, position: position(1) }] }))
+    )
+    h.reader.start()
+    await settle()
+    h.reader.stream({
+      kind: 'event',
+      event: {
+        type: 'permission_updated',
+        id: request.id,
+        answers: { choice: 'current draft' },
+        typed: true
+      }
+    })
+    h.reader.stream({
+      kind: 'event',
+      event: { ...request, input: { itemId: 'same', turnId: 'same' } }
+    })
+    expect(h.entries()).toHaveLength(1)
+    expect(h.entries()[0]).toMatchObject({ typed: { choice: 'current draft' } })
+  })
   it('keeps a host pending request and typed fields without duplicating a request already in the timeline', async () => {
     const request = {
       type: 'permission_request' as const,
@@ -287,6 +363,22 @@ describe('the positioned snapshot/live handoff', () => {
     await vi.advanceTimersByTimeAsync(500)
     expect(h.entries()).toHaveLength(2)
   })
+  it('does not retire the current generation when a late old-process frame arrives', async () => {
+    vi.useFakeTimers()
+    const h = setup(vi.fn(async () => page([1], 1, 'current')))
+    h.reader.start()
+    await settle()
+    h.reader.stream(frame(99, 'late old frame', 'old-process'))
+    await settle()
+    h.reader.stream(frame(2, 'current reply', 'current'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(h.entries().map((e) => ('text' in e ? e.text : ''))).toEqual(['same', 'current reply'])
+    expect(h.failed).not.toHaveBeenCalled()
+    const reads = h.timeline.mock.calls.length
+    h.reader.stream(frame(100, 'another old frame', 'old-process'))
+    await settle()
+    expect(h.timeline).toHaveBeenCalledTimes(reads)
+  })
   it('only an explicit unsupported result uses frozen history and preserves buffered legacy live events', async () => {
     const h = setup(vi.fn(async () => null))
     h.reader.start()
@@ -334,6 +426,56 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.entries()).toHaveLength(1)
     expect(h.reader.source().truncated).toBe(true)
     expect(h.snapshot.mock.calls[0][2]).toBe(true)
+  })
+  it.each([1, 2])(
+    'keeps the highest discarded position across %i late-low overflows',
+    async (rounds) => {
+      vi.useFakeTimers()
+      const answer = deferred<TimelinePage | null>()
+      const last = rounds * HANDOFF_MAX_ITEMS + 1
+      const h = setup(
+        vi
+          .fn()
+          .mockImplementationOnce(() => answer.promise)
+          .mockResolvedValue({ ...page([last]), truncated: true })
+      )
+      h.reader.start()
+      for (let round = 0; round < rounds; round++) {
+        for (let n = 2 + round * HANDOFF_MAX_ITEMS; n <= 1 + (round + 1) * HANDOFF_MAX_ITEMS; n++)
+          h.reader.stream(frame(n))
+        h.reader.stream(frame(1))
+      }
+      answer.resolve(page([1]))
+      await settle()
+      expect(h.snapshot).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(h.timeline).toHaveBeenCalledTimes(2)
+      expect(h.entries()).toHaveLength(1)
+      expect(h.reader.source().truncated).toBe(true)
+      h.reader.stream(frame(last + 1, 'after recovery'))
+      expect(h.entries().at(-1)).toMatchObject({ text: 'after recovery' })
+      expect(h.failed).not.toHaveBeenCalled()
+    }
+  )
+  it('requires a byte-overflow snapshot to cover the higher position it discarded', async () => {
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => answer.promise)
+        .mockResolvedValue(page([1, 2]))
+    )
+    h.reader.start()
+    const large = 'x'.repeat(Math.floor(HANDOFF_MAX_BYTES / 4))
+    h.reader.stream(frame(2, large))
+    h.reader.stream(frame(1, large))
+    answer.resolve(page([1]))
+    await settle()
+    expect(h.snapshot).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(h.entries()).toHaveLength(2)
+    expect(h.failed).not.toHaveBeenCalled()
   })
   it('keeps pagination on the positioned source and refuses old-generation pages', async () => {
     const h = setup()

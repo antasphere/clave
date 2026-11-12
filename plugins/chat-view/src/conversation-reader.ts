@@ -81,12 +81,26 @@ export function conversationReader(
     bytes = 0
     dropped = null
   }
+  const discard = (at: SessionPosition | 'legacy'): void => {
+    if (dropped === 'legacy') return
+    if (at === 'legacy' || (dropped && dropped.generation !== at.generation)) {
+      dropped = 'legacy'
+      return
+    }
+    if (!dropped || at.sequence > dropped.sequence) dropped = at
+  }
   const buffer = (frame: Frame): void => {
     const size = JSON.stringify(frame).length * 2
     if (buffered.length >= HANDOFF_MAX_ITEMS || bytes + size > HANDOFF_MAX_BYTES) {
+      // A late duplicate can trigger the bound after higher positions arrived.
+      // Cover every discarded position, including prefixes from earlier overflows.
+      for (const pending of buffered) {
+        if (pending.position) discard(pending.position)
+        else if (!overlay(pending)) discard('legacy')
+      }
+      discard(frame.position ?? 'legacy')
       buffered = []
       bytes = 0
-      dropped = frame.position ?? 'legacy'
     } else {
       buffered.push(frame)
       bytes += size
@@ -120,6 +134,7 @@ export function conversationReader(
     handlers.reading()
     read = readPast(
       async () => {
+        const observedGeneration = generation
         const timeline = await ports.timeline()
         let page: HistoryPage
         let tail: Frame[]
@@ -131,7 +146,12 @@ export function conversationReader(
           tail = ordered(timeline.cursor)
         }
         if (stopped || revision !== version) return
-        if (timeline && generation !== null && timeline.cursor.generation !== generation)
+        if (
+          timeline &&
+          generation !== observedGeneration &&
+          generation !== null &&
+          timeline.cursor.generation !== generation
+        )
           throw new Error('The conversation changed generation while its snapshot was read.')
         if (
           timeline &&
@@ -148,6 +168,9 @@ export function conversationReader(
         )
           throw new Error('The snapshot does not cover the overflowing handoff buffer.')
         mode = timeline ? 'timeline' : 'legacy'
+        // An unknown frame can be a late word from a stopped process. The
+        // snapshot taken after it, not the frame, confirms which generation lives.
+        if (timeline && generation && generation !== timeline.cursor.generation) retire(generation)
         generation = timeline?.cursor.generation ?? null
         if (generation && snapshotGeneration && generation !== snapshotGeneration)
           retire(snapshotGeneration)
@@ -222,7 +245,6 @@ export function conversationReader(
       if (position && retired.has(position.generation)) return
       if (position && generation !== null && position.generation !== generation) {
         // Bounded quarantine for frames from recently retired connections.
-        retire(generation)
         cursor = null
         clear()
         generation = position.generation

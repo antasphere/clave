@@ -11,6 +11,12 @@ import { sameId } from './models'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
+const permissionDefinition = (request: Permission): string =>
+  JSON.stringify(request, (_key, value: unknown) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value
+  )
 /** What a request does, as the session's host read it (PRDCT-4331). */
 export type PermissionReading = Extract<SessionEvent, { type: 'permission_explained' }>
 export type Entry =
@@ -587,10 +593,19 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       else entries[index] = tool
       break
     }
-    case 'permission_request':
-      if (!entries.some((e) => e.kind === 'permission' && e.request.id === event.id))
-        entries.push({ kind: 'permission', request: event, at })
+    case 'permission_request': {
+      const index = entries.findLastIndex(
+        (e) => e.kind === 'permission' && e.request.id === event.id
+      )
+      const previous = entries[index]
+      if (previous?.kind !== 'permission') entries.push({ kind: 'permission', request: event, at })
+      // A restarted provider can reuse an id for a different question. Its
+      // current definition and masking must not inherit the older card's
+      // answers or typing. An identical repeat keeps the current draft.
+      else if (permissionDefinition(previous.request) !== permissionDefinition(event))
+        entries[index] = { kind: 'permission', request: event, at }
       return { ...state, entries, state: 'blocked' }
+    }
     case 'session_meta': {
       // The provider's word on the model. A pick is confirmed by the word
       // that names it (the switch's own echo, or the settings read after it
