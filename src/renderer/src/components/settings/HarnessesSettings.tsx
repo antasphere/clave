@@ -15,6 +15,8 @@ import { useLaunchSettingsStore } from '../../store/launch-settings-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { useSessionStore } from '../../store/session-store'
 import { connectionsForModel } from '../../lib/switch-account'
+import { harnessPresent } from '../../lib/harness-presence'
+import { useLaunchProfileStore } from '../../store/launch-profile-store'
 import { CONNECTION_COMPANY_BY_POOL } from './connection-companies'
 import { AgentRow } from './AgentUpdatesSection'
 import { LaunchProfilesFamily } from './AgentsSettings'
@@ -266,7 +268,10 @@ function HarnessBlock({
   const [install, setInstall] = useState<InstallState>({ busy: false, result: null })
   // Missing only when a CHECK said so: before the first check main reports
   // every harness as not installed with no check time (the verifier's F4).
-  const missing = status?.installed === false && status.lastCheckedAt !== null
+  const ownProfiles = useLaunchProfileStore((s) =>
+    s.preferences.customProfiles.filter((profile) => profile.family === harness.id)
+  )
+  const missing = !harnessPresent(status, ownProfiles)
 
   const runInstall = async (): Promise<void> => {
     setInstall({ busy: true, result: null })

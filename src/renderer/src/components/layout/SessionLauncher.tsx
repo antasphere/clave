@@ -21,6 +21,7 @@ import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models
 import { isChatProfileRef } from '../../../../shared/open-session-modes'
 import type { ModelOption } from '../../../../shared/session-model'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
+import { harnessPresent } from '../../lib/harness-presence'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import { useSessionStore } from '../../store/session-store'
 import {
@@ -210,10 +211,11 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
    *  reports every harness as not installed with no check time, so a harness
    *  not checked yet keeps its row and the menu does not open empty at boot
    *  (found by the end-to-end run of 11 November 2026). */
-  const harnessInstalled = (id: HarnessId): boolean => {
-    const status = agentStatuses.find((entry) => entry.id === id)
-    return !status || status.lastCheckedAt === null || status.installed
-  }
+  const harnessInstalled = (id: HarnessId): boolean =>
+    harnessPresent(
+      agentStatuses.find((entry) => entry.id === id),
+      (launchProfilePreferences?.customProfiles ?? []).filter((profile) => profile.family === id)
+    )
   const installedCount = HARNESSES.filter((harness) => harnessInstalled(harness.id)).length
 
   const connectedRemoteLocations = locations.filter(

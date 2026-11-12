@@ -88,6 +88,10 @@ vi.mock('../../store/workspace-store', () => ({
   useWorkspaceStore: { getState: () => ({ workspaces: [], activeWorkspaceId: null }) }
 }))
 vi.mock('./AgentsSettings', () => ({ LaunchProfilesFamily: () => null }))
+vi.mock('../../store/launch-profile-store', () => ({
+  useLaunchProfileStore: (select: (s: Record<string, unknown>) => unknown) =>
+    select({ preferences: { customProfiles: [] } })
+}))
 vi.mock('./primitives', async (original) => {
   const real = await original<typeof import('./primitives')>()
   return {
