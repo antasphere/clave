@@ -15,7 +15,8 @@ import { RemoteTerminalPanel } from '../terminal/RemoteTerminalPanel'
 import { TerminalErrorBoundary } from '../terminal/TerminalErrorBoundary'
 import { FileViewer } from '../files/FileViewer'
 import { DiffViewer } from '../files/DiffViewer'
-import { EmptyState } from '../ui/EmptyState'
+import { NewSessionButton } from '../session/NewSessionButton'
+import { PaneEmpty } from './PaneEmpty'
 import { GroupViewPanel } from './GroupViewPanel'
 import { SessionViewPanel } from './SessionViewPanel'
 import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
@@ -178,7 +179,11 @@ export function TerminalGrid(): React.JSX.Element {
       : undefined
 
   if (sessions.length === 0 && fileTabs.length === 0) {
-    return <EmptyState />
+    return (
+      <div className="flex-1 flex items-center justify-center overflow-hidden">
+        <PaneEmpty kind="none" action={<NewSessionButton />} />
+      </div>
+    )
   }
 
   // Don't count agent sessions in the grid layout
@@ -198,10 +203,11 @@ export function TerminalGrid(): React.JSX.Element {
           : 'flex-1 relative overflow-hidden'
       }
     >
-      {/* "Select a session" overlay when nothing is selected */}
+      {/* Nothing selected: the pane's empty state, over the mosaic that
+          stays mounted beneath it. */}
       {!hasSelection && !viewGroup && !viewSession && (
-        <div className="absolute inset-0 flex items-center justify-center text-text-tertiary text-sm z-10">
-          Select a session
+        <div className="absolute inset-0 flex items-center justify-center z-10">
+          <PaneEmpty kind="select" />
         </div>
       )}
 
