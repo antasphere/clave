@@ -50,6 +50,12 @@ import {
 import type { LaunchProfile } from '../../shared/agent-launch'
 import { isAccountPoolId, type ConnectionPoolId } from '../../shared/connection'
 import { resolveProfileRef } from '../../shared/open-session-modes'
+import {
+  pinnedPiModels,
+  providerHarnessModels,
+  providerPoolConnections,
+  type ProviderListingDeps
+} from './provider-launch-listing'
 
 export {
   NOT_SERVED,
@@ -434,20 +440,35 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
 async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
   const { shell } = ctx
   const presence = shell.presence?.()
-  const models = new Map<HarnessId, readonly LaunchModel[] | 'unavailable'>()
-  await Promise.all(
-    HARNESSES.filter((h) => h.takesModel).map(async (h) => {
-      const listed = shell.models
-        ? await shell.models(h.id).catch(() => 'unavailable' as const)
-        : 'unavailable'
-      models.set(h.id, listed)
-    })
-  )
   const profiles = (family: HarnessId): readonly LaunchProfile[] =>
     shell.launchProfileRows?.(family) ??
     shell
       .launchProfiles(family)
       .map(({ id, name }) => ({ id, name, family, command: [], additionalArgs: [] }))
+  // Pi's and OpenCode's lists are the daemon's (PRDCT-4496): the default,
+  // the catalogue models of each stored connection's company, Pi's pinned.
+  const listing: ProviderListingDeps = {
+    ...(shell.catalog ? { catalog: (ids) => shell.catalog!(ids) } : {}),
+    ...(shell.providerConnections
+      ? { providerConnections: (harness) => shell.providerConnections!(harness) }
+      : {})
+  }
+  const models = new Map<HarnessId, readonly LaunchModel[] | 'unavailable'>()
+  await Promise.all(
+    HARNESSES.filter((h) => h.takesModel).map(async (h) => {
+      const listed =
+        h.id === 'pi' || h.id === 'opencode'
+          ? await providerHarnessModels(
+              h.id,
+              h.id === 'pi' ? pinnedPiModels(profiles('pi')) : [],
+              listing
+            ).catch(() => 'unavailable' as const)
+          : shell.models
+            ? await shell.models(h.id).catch(() => 'unavailable' as const)
+            : 'unavailable'
+      models.set(h.id, listed)
+    })
+  )
   const workspaceId = (ctx.win ? shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
   return launchOptionsOf({
     machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
@@ -476,9 +497,13 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
     models: (id) => models.get(id) ?? 'unavailable',
     harnessSettings: shell.harnessSettings?.() ?? {},
     interactionMode: shell.interactionMode?.() ?? DEFAULT_INTERACTION_MODE,
-    // The account pools only: this road reads no provider pool's stored
-    // connections (PRDCT-4496; the window's and the daemon's roads do).
-    connections: (pool) => (isAccountPoolId(pool) ? shell.accounts(pool) : []),
+    // A provider pool lists this Mac's stored connections of that company
+    // (PRDCT-4496), as the window's and the daemon's roads do; an account
+    // pool its accounts.
+    connections: (pool) =>
+      isAccountPoolId(pool)
+        ? shell.accounts(pool)
+        : providerPoolConnections(pool, shell.providerConnectionViews?.() ?? []),
     selectedConnectionId: (pool) =>
       isAccountPoolId(pool) ? shell.selectedAccountId(pool) : undefined,
     preferRecommended: shell.useRecommendedAccount?.() ?? false,

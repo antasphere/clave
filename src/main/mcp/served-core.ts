@@ -23,6 +23,9 @@ import type { ServerEvent } from '@clave/contract/events'
 import type { AccountUsageSummary } from '../../shared/account-pool'
 import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
 import type { LaunchModel } from '../../shared/launch-options'
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import type { ProviderCompanyId } from '../models-catalog-overlay'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 
 export const NOT_SERVED: unique symbol = Symbol('not served')
@@ -161,6 +164,17 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   /** The launch profiles of a family as full rows (built-in flag, Pi's
    *  pinned model), built-ins first; `launchProfiles` names them only. */
   launchProfileRows?(family: LauncherFamily): readonly LaunchProfile[]
+  /** The catalogue of those models.dev provider ids (`modelsCatalog.view`),
+   *  for Pi's and OpenCode's model lists (PRDCT-4496); absent, none listed. */
+  catalog?(providerIds: readonly string[]): Promise<ModelsCatalogView>
+  /** The stored connections a Pi or OpenCode launch can run on
+   *  (`providerConnectionsForListing`); absent, none. */
+  providerConnections?(
+    harness: 'pi' | 'opencode'
+  ): readonly { id: string; label: string; company: ProviderCompanyId }[]
+  /** Every stored provider connection, never a key
+   *  (`providerConnectionsManager.list`); absent, no provider pool lists one. */
+  providerConnectionViews?(): readonly ProviderConnectionView[]
 }
 
 export interface ServedContext<W extends ToolWindow = ToolWindow> {

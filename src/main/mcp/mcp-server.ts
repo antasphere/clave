@@ -90,6 +90,9 @@ import { rememberedSpawnModel } from '../sessions/spawn-model'
 import * as os from 'os'
 import { agentUpdateManager } from '../agent-updates'
 import { providerModels } from '../provider-models'
+import { modelsCatalog } from '../models-catalog'
+import { providerConnectionsForListing } from '../provider-injection-spawn'
+import { providerConnectionsManager } from '../provider-connections'
 import { CLAUDE_MODELS } from '../../shared/claude-models'
 import { HARNESSES, type HarnessId } from '../../shared/harness'
 import { accountPoolsOf, type LaunchModel } from '../../shared/launch-options'
@@ -469,13 +472,11 @@ function launchProfileRowsOf(family: LauncherFamily): LaunchProfile[] {
   ].filter((profile) => profile.family === family)
 }
 
-/** The launcher's DEFAULT_MODEL: the harness's own default, no flag passed. */
-const DEFAULT_LAUNCH_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
-
 /** The models the launcher offers on a harness's row (`SessionLauncher.tsx`'s
  *  `modelsFor`), read on this Mac: Claude's from the table, Codex's from its
- *  adapter (unavailable when the list fails or is empty), Pi's default and the
- *  models its saved profiles pin; a harness taking no model, none. */
+ *  adapter (unavailable when the list fails or is empty). Pi's and OpenCode's
+ *  are the served road's own (`provider-launch-listing.ts`, over the shell's
+ *  `catalog` and stored connections); any other harness, none. */
 async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | 'unavailable'> {
   if (harness === 'claude')
     return CLAUDE_MODELS.map((model) => ({
@@ -488,16 +489,6 @@ async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | '
     return models.length > 0
       ? models.map((model) => ({ id: model.id, label: model.label, family: model.label }))
       : 'unavailable'
-  }
-  if (harness === 'pi') {
-    const pinned = [
-      ...new Set(
-        launchProfileRowsOf('pi')
-          .map((profile) => profile.pi?.model)
-          .filter((model): model is string => !!model)
-      )
-    ]
-    return [DEFAULT_LAUNCH_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
   }
   return []
 }
@@ -660,7 +651,11 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
       return undefined
     }
   },
-  launchProfileRows: (family) => launchProfileRowsOf(family)
+  launchProfileRows: (family) => launchProfileRowsOf(family),
+  // Pi's and OpenCode's rows (PRDCT-4496), read as the daemon reads them.
+  catalog: (providerIds) => modelsCatalog.view({ providerIds }),
+  providerConnections: (harness) => providerConnectionsForListing(harness),
+  providerConnectionViews: () => providerConnectionsManager.list()
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
