@@ -125,6 +125,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       const background = manager.background(id)
       if (background.length)
         listener({ kind: 'event', event: { type: 'background_tasks', tasks: background } })
+      // Nor would it name the model: OpenCode and Pi say it once, at the
+      // handshake, to the first pane alone.
+      const meta = manager.meta(id)
+      if (meta) listener({ kind: 'event', event: meta })
       manager.ready(id)
       return off
     },

@@ -383,7 +383,10 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       ...state,
       entries: [...past, ...state.entries],
       first: state.first - past.length,
-      explained: { ...earlier.explained, ...state.explained }
+      explained: { ...earlier.explained, ...state.explained },
+      // The past's word on the model stands until the live one says its own
+      // (PRDCT-4427): an OpenCode or Pi tab says it once.
+      model: state.model ?? earlier.model
     }
   }
   if ('answer' in action) {
