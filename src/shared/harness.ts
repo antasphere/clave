@@ -8,11 +8,12 @@
  *
  * A harness id is a `LauncherFamily` (`agent-launch.ts`): the launch profiles,
  * the spawn and the `.clave` modes keep that name. This table adds what the
- * launcher and the settings need to know about each: which connection pool it
+ * launcher and the settings need to know about each: which connection pools it
  * runs on, whether it has a chat adapter, its own permission ladder and the
  * flag that sets it, and how it is installed.
  */
 import type { LauncherFamily } from './agent-launch'
+import type { ConnectionPoolId } from './connection'
 
 export type HarnessId = LauncherFamily
 
@@ -31,10 +32,12 @@ export interface Harness {
   name: string
   /** The binary on the PATH (`claude`, `codex`, `agy`, `pi`, `opencode`). */
   command: string
-  /** The account pool whose connections this harness runs on (ADR 0002), or
-   *  null for a harness Clave holds no connection for yet (Antigravity, Pi:
-   *  their accounts live inside the CLI). */
-  connectionPool: 'claude' | 'codex' | null
+  /** The pools this harness's connections come from (`connection.ts`, ADR
+   *  0002), in the order the launcher lists them; empty for a harness Clave
+   *  holds no connection for yet (Antigravity, Pi, OpenCode: their accounts
+   *  live inside the CLI). A provider pool of PRDCT-4426 is added to the rows
+   *  of the harnesses that speak its wire format. */
+  connectionPools: readonly ConnectionPoolId[]
   /** A vendor-only harness runs its vendor's models alone: the launcher shows
    *  the models its connected accounts serve and nothing else. An open one
    *  (Pi) runs any provider its own config names. */
@@ -67,7 +70,7 @@ export const HARNESSES: readonly Harness[] = [
     id: 'claude',
     name: 'Claude Code',
     command: 'claude',
-    connectionPool: 'claude',
+    connectionPools: ['claude'],
     vendorOnly: true,
     chatAdapterId: 'claude-chat',
     takesModel: true,
@@ -107,7 +110,7 @@ export const HARNESSES: readonly Harness[] = [
     id: 'codex',
     name: 'Codex',
     command: 'codex',
-    connectionPool: 'codex',
+    connectionPools: ['codex'],
     vendorOnly: true,
     chatAdapterId: 'codex-chat',
     takesModel: true,
@@ -137,7 +140,7 @@ export const HARNESSES: readonly Harness[] = [
     id: 'antigravity',
     name: 'Antigravity',
     command: 'agy',
-    connectionPool: null,
+    connectionPools: [],
     vendorOnly: true,
     chatAdapterId: null,
     takesModel: false,
@@ -168,7 +171,7 @@ export const HARNESSES: readonly Harness[] = [
     id: 'pi',
     name: 'Pi',
     command: 'pi',
-    connectionPool: null,
+    connectionPools: [],
     vendorOnly: false,
     chatAdapterId: null,
     takesModel: true,
@@ -186,7 +189,7 @@ export const HARNESSES: readonly Harness[] = [
     id: 'opencode',
     name: 'OpenCode',
     command: 'opencode',
-    connectionPool: null,
+    connectionPools: [],
     vendorOnly: false,
     chatAdapterId: null,
     takesModel: false,
