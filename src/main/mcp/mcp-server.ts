@@ -1,4 +1,5 @@
 import { linkedDocuments } from '../linked-documents/runtime'
+import { claudeConnection, codexConnection, poolAccountOf } from '../../shared/connection'
 import { linkedOpenSchema, linkedUpdateSchema } from '../../shared/linked-documents'
 import * as http from 'http'
 import * as path from 'path'
@@ -593,25 +594,23 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   // ── Wave 4, lane D: what the last seven tools read of the shell ──
+  // Each row a Connection (lane P's shape) with the pool rule's view over it.
   accounts: (provider) =>
     provider === 'codex'
-      ? codexAccountsManager.list().map((a) => ({
-          id: a.id,
-          label: a.label,
-          usable: a.hasCredential,
-          ...(a.kind === 'apiKey' ? { fallback: true } : {}),
-          ...(summaryOf(codexUsageManager.snapshot()[a.id])
-            ? { usage: summaryOf(codexUsageManager.snapshot()[a.id]) }
-            : {})
-        }))
-      : claudeAccountsManager.list().map((a) => ({
-          id: a.id,
-          label: a.label,
-          usable: a.id === 'default' || (a.hasToken && !a.tokenInvalid),
-          ...(summaryOf(usageManager.snapshot()[a.id])
-            ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
-            : {})
-        })),
+      ? codexAccountsManager.list().map((a) => {
+          const connection = codexConnection(
+            { id: a.id, label: a.label, kind: a.kind, hasCredential: a.hasCredential },
+            summaryOf(codexUsageManager.snapshot()[a.id])
+          )
+          return { ...connection, ...poolAccountOf(connection) }
+        })
+      : claudeAccountsManager.list().map((a) => {
+          const connection = claudeConnection(
+            { id: a.id, label: a.label, hasToken: a.hasToken, tokenInvalid: a.tokenInvalid },
+            summaryOf(usageManager.snapshot()[a.id])
+          )
+          return { ...connection, ...poolAccountOf(connection) }
+        }),
   useRecommendedAccount: () => getPreference('useRecommendedAccount') === true,
   selectedAccountId: (provider) => {
     const raw = getPreference(

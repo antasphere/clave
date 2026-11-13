@@ -103,7 +103,7 @@ describe('serverLaunchOptionsInput', () => {
       { id: 'k1', label: 'Key', usable: true, fallback: true, usage: undefined }
     ])
     expect(input.selectedConnectionId('claude')).toBe('default')
-    expect(input.connections('nope')).toEqual([])
+    expect(input.connections('nope' as never)).toEqual([])
     const claude = answer.harnesses.find((h) => h.id === 'claude')!
     expect(claude.connections.map((c) => [c.id, c.exhausted, c.suggested])).toEqual([
       ['default', true, false],

@@ -13,6 +13,8 @@
  */
 import type { RoutineAgent, RoutineDeclaration, RoutineForm } from '@clave/contract/routines'
 import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import { firstPoolOf } from '../../shared/connection'
+import { poolsOf } from '../../shared/launch-options'
 import type { SpawnOptions } from '@clave/contract/sessions'
 import {
   BUILT_IN_LAUNCH_PROFILES,
@@ -40,7 +42,7 @@ const namesOf = (pick: (h: (typeof HARNESSES)[number]) => boolean): string =>
     .join(', ')
 /** The refusal of an account for a harness Clave holds no connection for. */
 export const accountRefusal = (agent: HarnessId): string =>
-  `The account argument applies to harnesses with a connection pool (${namesOf((h) => h.connectionPool !== null)}); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
+  `The account argument applies to harnesses with a connection pool (${namesOf((h) => poolsOf(h).length > 0)}); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
 /** The refusal of a model for a harness that takes none on its command line. */
 export const modelRefusal = (agent: HarnessId): string =>
   `The model argument applies to harnesses that take a model (${namesOf((h) => h.takesModel)}); ${HARNESS_BY_ID[agent].name} takes none on its command line.`
@@ -110,7 +112,9 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
   const form = (p.form ?? (CHAT_PROFILE_IDS[agent] ? 'chat' : 'terminal')) as RoutineForm
   if (!FORMS.has(form)) return fail(`form "${String(p.form)}" is not chat or terminal`)
   if (form === 'chat' && !CHAT_PROFILE_IDS[agent])
-    return fail(`form "chat" needs agent claude or codex; ${agent} has no chat view`)
+    return fail(
+      `form "chat" needs a harness with a chat view (${namesOf((h) => h.chatAdapterId !== null)}); ${HARNESS_BY_ID[agent as HarnessId].name} has none`
+    )
 
   if (p.dangerousMode === true && !DANGEROUS_MODE_FAMILIES.has(agent as LauncherFamily))
     return fail(`dangerousMode is for claude and codex; ${agent} has no such flag`)
@@ -130,7 +134,7 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
     return fail(`provider is for pi; ${agent} takes none`)
   const harness = HARNESS_BY_ID[agent as HarnessId]
   if (p.model !== undefined && !harness.takesModel) return fail(modelRefusal(harness.id))
-  if (p.account !== undefined && harness.connectionPool === null)
+  if (p.account !== undefined && poolsOf(harness).length === 0)
     return fail(accountRefusal(harness.id))
 
   const modes = resolveSpawnModes({
@@ -182,7 +186,7 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
   // The account (ADR 0002): a harness with a connection pool only, the pool's pick for `any` or nothing.
   let accountFields: SpawnOptions = {}
   let account: string | null = null
-  const pool = harness.connectionPool
+  const pool = firstPoolOf(harness)
   if (pool !== null) {
     try {
       // A routine naming no model runs the one main remembers for its chat:

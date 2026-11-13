@@ -24,6 +24,7 @@ import {
   type PoolAccount
 } from './account-pool'
 import { usageSummaryForModel } from './usage-summary'
+import { poolAccountOf, type Connection, type ConnectionPoolId } from './connection'
 import { isChatProfileRef } from './open-session-modes'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
 
@@ -33,10 +34,13 @@ export interface HarnessPresence {
   readonly version: string | null
   readonly checkedAt: number | null
 }
-/** A pool member with its usage: the shape of ServedPoolAccount (src/main/mcp/served-core.ts:50-58) and, after lane P's merge, of a Connection. */
+/** A pool member with its usage: a `ServedPoolAccount` (served-core.ts) or a
+ *  `Connection` (connection.ts); the facts give both at once, so a row keeps
+ *  `pool`, `company`, `kind`, `reportsUsage` and `usage` as the pool states them. */
 export type PooledConnection = PoolAccount & {
   readonly label: string
   readonly usage?: AccountUsageSummary | undefined
+  readonly reportsUsage?: boolean
 }
 export interface LaunchModel {
   readonly id: string | null
@@ -55,8 +59,8 @@ export interface LaunchOptionsInput {
   readonly models: (harness: HarnessId) => readonly LaunchModel[] | 'unavailable'
   readonly harnessSettings: HarnessSettingsById
   readonly interactionMode: InteractionMode
-  readonly connections: (pool: string) => readonly PooledConnection[]
-  readonly selectedConnectionId: (pool: string) => string | undefined
+  readonly connections: (pool: ConnectionPoolId) => readonly PooledConnection[]
+  readonly selectedConnectionId: (pool: ConnectionPoolId) => string | undefined
   readonly preferRecommended: boolean
   /** The remembered chat model when none is named. */
   readonly launchModel: (pool: string, profileId: string | undefined) => string | undefined
@@ -111,11 +115,10 @@ export interface LaunchOptions {
  *  default, no flag passed. */
 const DEFAULT_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
 
-/** The connection pools a harness runs on, in order. Lane P's
- *  `connectionPools` list replaces this read of `connectionPool` at the
- *  rebase. */
-export function poolsOf(harness: Harness): readonly string[] {
-  return harness.connectionPool ? [harness.connectionPool] : []
+/** The connection pools a harness runs on, in order: the one accessor the
+ *  listing, the routines and the daemon's tools read (`connectionPools`). */
+export function poolsOf(harness: Pick<Harness, 'connectionPools'>): readonly ConnectionPoolId[] {
+  return harness.connectionPools
 }
 
 /** The connection a launch naming none would start on: the served road's
@@ -129,11 +132,11 @@ export function suggestedConnection(
   model: string | undefined
 ): string {
   return pickAccount({
-    accounts: connections.map((c) => ({
-      id: c.id,
-      usable: c.usable,
-      ...(c.fallback ? { fallback: true } : {})
-    })),
+    accounts: connections.map((c) =>
+      'reportsUsage' in c
+        ? poolAccountOf(c as unknown as Connection)
+        : { id: c.id, usable: c.usable, ...(c.fallback ? { fallback: true } : {}) }
+    ),
     usage: Object.fromEntries(connections.map((c) => [c.id, usageSummaryForModel(c.usage, model)])),
     preferredId: selectedId ?? 'default',
     preferRecommended

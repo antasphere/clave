@@ -15,6 +15,7 @@ import { BUILT_IN_LAUNCH_PROFILES, type LaunchProfile } from './agent-launch'
 import { CLAUDE_MODELS } from './claude-models'
 import { usageSummaryOf } from './usage-summary'
 import type { PoolUsageWindow } from './account-pool'
+import { codexConnection, poolAccountOf, type Connection } from './connection'
 
 /**
  * What an agent reads of the launcher (`clave_launch_options`). Silent when
@@ -323,6 +324,77 @@ describe('the connections that pay', () => {
     // Work renews later than Romain's week: the recommendation is Romain's on Opus.
     expect(suggestedConnection([fableOut, open()], 'work', true, OPUS)).toBe('default')
     expect(suggestedConnection([fableOut, open()], 'work', false, OPUS)).toBe('work')
+  })
+})
+
+describe("a key that reports no usage (lane P's Connection rows)", () => {
+  /** A row as the facts give it on both roads: the Connection, with the pool
+   *  rule's view spread over it. */
+  const row = (connection: Connection): PooledConnection & Connection => ({
+    ...connection,
+    ...poolAccountOf(connection)
+  })
+  const chatgpt = (usedPercentage: number): PooledConnection & Connection =>
+    row(
+      codexConnection(
+        { id: 'default', label: 'ChatGPT', kind: 'chatgpt', hasCredential: true },
+        usageSummaryOf({
+          windows: [
+            w({
+              kind: 'session',
+              usedPercentage,
+              severity: usedPercentage >= 100 ? 'critical' : null,
+              resetsAt: now + 2 * H
+            }),
+            w({
+              kind: 'weekly_all',
+              usedPercentage,
+              severity: usedPercentage >= 100 ? 'critical' : null,
+              resetsAt: now + 4 * DAY
+            })
+          ]
+        })
+      )
+    )
+  const apiKey = row(
+    codexConnection({ id: 'key', label: 'API key', kind: 'apiKey', hasCredential: true })
+  )
+  const codexWith = (subscription: PooledConnection & Connection): HarnessOptions =>
+    harness(
+      launchOptions(
+        input({ connections: (pool) => (pool === 'codex' ? [subscription, apiKey] : []) })
+      ),
+      'codex'
+    )
+
+  it('answers a key as never exhausted, no headroom, no windows, its kind and reportsUsage carried through', () => {
+    const [, key] = codexWith(chatgpt(10)).connections
+    expect(key).toMatchObject({
+      id: 'key',
+      pool: 'codex',
+      company: 'openai',
+      kind: 'key',
+      reportsUsage: false,
+      fallback: true,
+      exhausted: false,
+      headroom: null,
+      windows: []
+    })
+    expect(key.usage).toBeUndefined()
+  })
+  it('suggests the subscription while it is open, the key only once every subscription is out', () => {
+    const open = codexWith(chatgpt(10)).connections
+    expect(
+      open.map((c) => [c.id, (c as typeof c & Connection).kind, c.suggested, c.exhausted])
+    ).toEqual([
+      ['default', 'subscription', true, false],
+      ['key', 'key', false, false]
+    ])
+    const out = codexWith(chatgpt(100)).connections
+    expect(out.map((c) => [c.id, c.suggested, c.exhausted])).toEqual([
+      ['default', false, true],
+      ['key', true, false]
+    ])
   })
 })
 

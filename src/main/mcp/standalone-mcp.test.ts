@@ -1,4 +1,6 @@
 import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
+import { codexConnection } from '../../shared/connection'
+import { asPoolRow } from '../routines/facts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { Effect, Layer } from 'effect'
@@ -274,8 +276,10 @@ const CLAUDE_CONNECTIONS: ServedPoolAccount[] = [
     })!
   }
 ]
+/** A Codex API key as the facts give it: lane P's Connection (a key that
+ *  reports no usage) with the pool rule's view spread over it. */
 const CODEX_CONNECTIONS: ServedPoolAccount[] = [
-  { id: 'key', label: 'API key', usable: true, fallback: true }
+  asPoolRow(codexConnection({ id: 'key', label: 'API key', kind: 'apiKey', hasCredential: true }))
 ]
 /** The server's profiles: its Codex chats on the person's own "yolo" (as
  *  the fixture's `chatDefault` says), and a Pi profile pinning a model. */
@@ -1764,6 +1768,9 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(codex.connections).toEqual([
       expect.objectContaining({
         id: 'key',
+        pool: 'codex',
+        kind: 'key',
+        reportsUsage: false,
         fallback: true,
         suggested: true,
         exhausted: false,

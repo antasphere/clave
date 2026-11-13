@@ -38,6 +38,7 @@ import {
   launchModeFields
 } from '../../shared/runtime-choices'
 import { launchOptions, poolsOf } from '../../shared/launch-options'
+import { firstPoolOf } from '../../shared/connection'
 import { pickAccount } from '../../shared/account-pool'
 import { accountRefusal, resolveLaunch, type LaunchRequest } from '../routines/launch'
 import { poolOf, resolveAccountRef, spawnFieldsOf, usageOf } from './served-accounts'
@@ -329,8 +330,7 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. An HTML page, document or deck you made -> clave_open_artefact with its folder (index.html inside): open it ONCE, then edit its files; it reloads itself and keeps a version per turn. ' +
-        'Before opening a tab, or to know which harness, model or connection has room -> clave_launch_options. ' +
+        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. An HTML page, document or deck you made -> clave_open_artefact with its folder (index.html inside): open it ONCE, then edit its files; it reloads itself and keeps a version per turn. Before opening a tab, or to know which harness, model or connection has room -> clave_launch_options. ' +
         ROUTINE_TOOLS_INSTRUCTION.slice(2)
     }
   )
@@ -968,7 +968,7 @@ function buildServer(
         const record = recordOf(id)
         const mode = recordModeOf(record as ServedRecord | undefined, session.provider)
         const harness = HARNESS_BY_ID[(mode === 'claude-agents' ? 'claude' : mode) as HarnessId]
-        const pool = harness?.connectionPool ?? null
+        const pool = harness ? firstPoolOf(harness) : null
         if (!pool)
           throw new Error(
             `Only a tab on a harness with a connection pool (${POOLED_HARNESSES}) runs on a connection`
