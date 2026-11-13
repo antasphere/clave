@@ -994,6 +994,19 @@ describe('the account of a window-road Pi or OpenCode open', () => {
     })
     await openSessionProgrammatically({ cwd: '/repo', mode: 'opencode', account: 'kimi work' })
     expect(spawned()).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    // PRDCT-4496: an agent's model reaches the OpenCode tab on the window's
+    // road; main puts it under the connection's provider (`opencodeModelRef`).
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'opencode',
+      account: 'kimi work',
+      model: 'k-first'
+    })
+    expect(spawned()).toMatchObject({
+      opencodeMode: true,
+      connectionId: 'c-kimi',
+      model: 'k-first'
+    })
     await openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'any' })
     expect(spawned()).toMatchObject({ connectionId: 'c-kimi' })
     // The window's tab names the connection it runs on.

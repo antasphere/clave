@@ -1241,6 +1241,21 @@ describe('opening a session', () => {
       'No stored connection of Pi has its key yet: set one in Settings → Connections.'
     )
     expect(h.argsOf('sessions.start')).toHaveLength(4)
+    // PRDCT-4496: an agent's model reaches an OpenCode tab on the Mac's
+    // served road too, as it is given (main puts a bare id under the
+    // connection's provider).
+    h.w.providerViews = [stored('c-kimi', 'moonshot', 'Kimi work')]
+    await run(h, 'openSession', {
+      cwd: '/p',
+      mode: 'opencode',
+      account: 'c-kimi',
+      model: 'k-first'
+    })
+    expect(opened(4)).toMatchObject({
+      opencodeMode: true,
+      connectionId: 'c-kimi',
+      model: 'k-first'
+    })
   })
   it('a past conversation reopened carries its id to the start, and only then (PRDCT-4236)', async () => {
     const h = setup(world())
