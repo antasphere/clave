@@ -68,11 +68,11 @@ function setup(timeline = vi.fn<() => Promise<TimelinePage | null>>(async () => 
   const reader = conversationReader(
     { timeline, history },
     {
-      page: (p, replace, truncated) => {
+      page: (p, replace, truncated, preserve) => {
         snapshot(p, replace, truncated)
         conversation = reduceConversation(
           conversation,
-          replace ? { snapshot: p.items } : { prepend: p.items }
+          replace ? { snapshot: p.items, preserve } : { prepend: p.items }
         ) as typeof conversation
       },
       event: (item) => {
@@ -95,6 +95,226 @@ function setup(timeline = vi.fn<() => Promise<TimelinePage | null>>(async () => 
     state: () => conversation
   }
 }
+
+describe('hosted drafts across refreshed snapshots', () => {
+  const request = {
+    type: 'permission_request' as const,
+    id: 'clave:refresh',
+    description: 'Your details',
+    input: { tool: 'clave_request_input' },
+    options: [{ id: 'answer', label: 'Approve' }]
+  }
+  const draft = {
+    type: 'permission_updated' as const,
+    id: request.id,
+    answers: { when: 'Tuesday' }
+  }
+  const retained = (key = 'name', value: string | string[] = 'Luca'): TimelinePage => ({
+    ...page([], 2),
+    items: [
+      { event: request, position: position(1) },
+      { event: { ...draft, answers: { [key]: value, when: 'Tuesday' } }, position: position(2) }
+    ]
+  })
+  const form = (h: ReturnType<typeof setup>): Extract<Entry, { kind: 'permission' }> => {
+    const entry = h.entries().find((entry) => entry.kind === 'permission')
+    if (entry?.kind !== 'permission') throw new Error('Missing hosted form')
+    return entry
+  }
+  const mount = async (snapshot = retained()): Promise<ReturnType<typeof setup>> => {
+    const h = setup(vi.fn(async () => snapshot))
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.stream({ kind: 'event', event: draft })
+    h.reader.start()
+    await settle()
+    expect(form(h).draft).toEqual({ when: 'Tuesday' })
+    return h
+  }
+  it.each([
+    { key: 'name', value: 'Luca' },
+    { key: 'colours', value: ['blue'] }
+  ])(
+    'keeps a cleared $key through Retry, gap repair and both reconnect orderings',
+    async ({ key, value }) => {
+      const snapshot = retained(key, value)
+      const h = await mount(snapshot)
+      h.reader.retry()
+      await settle()
+      expect(form(h).draft).toEqual({ when: 'Tuesday' })
+      h.timeline.mockResolvedValue({
+        ...snapshot,
+        cursor: position(4),
+        items: [...snapshot.items, ...page([3, 4]).items]
+      })
+      h.reader.stream(frame(4))
+      await settle()
+      expect(form(h).draft).toEqual({ when: 'Tuesday' })
+      h.reader.reconnect()
+      await settle()
+      expect(form(h).draft).toEqual({ when: 'Tuesday' })
+      h.reader.stream({ kind: 'event', event: request })
+      h.reader.stream({ kind: 'event', event: draft })
+      expect(form(h).draft).toEqual({ when: 'Tuesday' })
+      h.reader.reconnect()
+      h.reader.stream({ kind: 'event', event: request })
+      h.reader.stream({ kind: 'event', event: draft })
+      await settle()
+      expect(form(h).draft).toEqual({ when: 'Tuesday' })
+      expect(h.entries().filter((entry) => entry.kind === 'user')).toHaveLength(2)
+      expect(h.failed).not.toHaveBeenCalled()
+    }
+  )
+  it('takes a later positioned agent fill while retaining other current fields and private typing', async () => {
+    const h = await mount()
+    h.reader.stream({
+      kind: 'event',
+      event: { ...draft, typed: true, answers: { note: 'Private' } }
+    })
+    const update = { ...draft, answers: { name: 'Later agent fill' } }
+    h.timeline.mockResolvedValue({
+      ...retained(),
+      cursor: position(3),
+      items: [...retained().items, { event: update, position: position(3) }]
+    })
+    h.reader.retry()
+    await settle()
+    expect(form(h)).toMatchObject({
+      draft: { name: 'Later agent fill', when: 'Tuesday' },
+      typed: { note: 'Private' }
+    })
+    h.reader.stream({ kind: 'event', event: update, position: position(3) })
+    expect(h.event.mock.calls.filter(([item]) => item.event === update)).toHaveLength(0)
+  })
+  it('takes a full pending form arriving after a reconnect snapshot, including omitted cleared fields', async () => {
+    const h = await mount()
+    h.reader.stream({
+      kind: 'event',
+      event: { ...draft, answers: { name: 'Now filled' } },
+      position: position(3)
+    })
+    h.reader.stream({
+      kind: 'event',
+      event: { ...draft, typed: true, answers: { note: 'Old private text' } }
+    })
+    h.timeline.mockResolvedValue({
+      ...retained(),
+      cursor: position(3),
+      items: [
+        ...retained().items,
+        { event: { ...draft, answers: { name: 'Now filled' } }, position: position(3) }
+      ]
+    })
+    h.reader.reconnect()
+    await settle()
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.stream({ kind: 'event', event: draft })
+    expect(form(h).draft).toEqual({ when: 'Tuesday' })
+    expect(form(h).typed ?? {}).toEqual({})
+  })
+  it('does not carry private form state into a new generation or a changed question', async () => {
+    const h = await mount()
+    h.reader.stream({
+      kind: 'event',
+      event: { ...draft, typed: true, answers: { note: 'Private' } }
+    })
+    const next = retained()
+    h.timeline.mockResolvedValue({
+      ...next,
+      cursor: position(2, 'new'),
+      items: next.items.map((item) => ({
+        ...item,
+        position: position(item.position.sequence, 'new')
+      }))
+    })
+    h.reader.reconnect()
+    await settle()
+    expect(form(h).typed).toBeUndefined()
+    expect(form(h).draft).toEqual({ name: 'Luca', when: 'Tuesday' })
+    h.reader.stream({
+      kind: 'event',
+      event: { ...draft, typed: true, answers: { note: 'New private' } }
+    })
+    h.timeline.mockResolvedValue({
+      ...next,
+      cursor: position(3, 'new'),
+      items: [
+        ...next.items.map((item) => ({
+          ...item,
+          position: position(item.position.sequence, 'new')
+        })),
+        {
+          event: { ...request, description: 'Different private question' },
+          position: position(3, 'new')
+        }
+      ]
+    })
+    h.reader.retry()
+    await settle()
+    expect(form(h).request.description).toBe('Different private question')
+    expect(form(h).typed).toBeUndefined()
+    expect(form(h).draft).toBeUndefined()
+  })
+  it.each([false, true])(
+    'does not preserve an open form over a newer settlement (approved: %s)',
+    async (approved) => {
+      const h = await mount()
+      h.reader.stream({
+        kind: 'event',
+        event: { ...draft, typed: true, answers: { note: 'Private' } }
+      })
+      const settled: SessionEvent = approved
+        ? { ...draft, sent: true, answers: { name: 'Approved' } }
+        : { type: 'permission_withdrawn', id: request.id }
+      h.timeline.mockResolvedValue({
+        ...retained(),
+        cursor: position(3),
+        items: [...retained().items, { event: settled, position: position(3) }]
+      })
+      h.reader.retry()
+      await settle()
+      h.reader.stream({ kind: 'event', event: request })
+      expect(form(h)).toMatchObject(
+        approved
+          ? { answer: 'answer', answers: { name: 'Approved' } }
+          : { abandoned: true, answeredElsewhere: true }
+      )
+    }
+  )
+  it('replays native prompts from the snapshot rather than preserving hosted-only state', async () => {
+    const native = { ...request, input: { turnId: 'native', itemId: 'prompt' } }
+    const snapshot = retained()
+    snapshot.items[0] = { event: native, position: position(1) }
+    const h = setup(vi.fn(async () => snapshot))
+    h.reader.start()
+    await settle()
+    h.reader.stream({
+      kind: 'event',
+      event: { ...draft, typed: true, answers: { name: 'Local native value' } }
+    })
+    h.reader.retry()
+    await settle()
+    expect(form(h).draft).toEqual({ name: 'Luca', when: 'Tuesday' })
+    expect(form(h).typed).toBeUndefined()
+  })
+  it('does not replay an agent fill received before the current subscription overlay', async () => {
+    const pending = deferred<TimelinePage>()
+    const h = setup(vi.fn(() => pending.promise))
+    h.reader.start()
+    h.reader.stream({
+      kind: 'event',
+      event: retained().items[1].event as SessionEvent,
+      position: position(2)
+    })
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.stream({ kind: 'event', event: draft })
+    pending.resolve(retained())
+    await settle()
+    expect(form(h).draft).toEqual({ when: 'Tuesday' })
+    expect(
+      h.event.mock.calls.filter(([item]) => item.event.type === 'permission_updated')
+    ).toHaveLength(1)
+  })
+})
 
 describe('the positioned snapshot/live handoff', () => {
   it.each([false, true])(

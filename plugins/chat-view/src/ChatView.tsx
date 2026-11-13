@@ -541,8 +541,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   useEffect(() => {
     let live = true
     const reader = bindConversation(session.id, {
-      page: (page, replace, incomplete) => {
-        dispatch(replace ? { snapshot: page.items } : { prepend: page.items })
+      page: (page, replace, incomplete, preserve) => {
+        dispatch(replace ? { snapshot: page.items, preserve } : { prepend: page.items })
         dispatchSubagents(replace ? { sync: page.items } : { items: page.items })
         setBefore(page.before)
         setTruncated(incomplete)
@@ -550,8 +550,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         if (usage) dispatchStatus(usage.event)
         setPast('read')
       },
-      event: ({ event, at }) => {
-        dispatch({ event, at })
+      event: ({ event, at, current }) => {
+        dispatch({ event, at, current })
         dispatchStatus(event)
         dispatchSubagents({ event })
       },

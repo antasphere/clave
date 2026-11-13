@@ -46,7 +46,16 @@ export function bindConversation(
     if (!live) return
     connection++
     handlers.reconnected()
-    reader.reconnect()
+    const version = connection
+    // Welcome notifies listeners before PushClient resets its subscription
+    // acknowledgements. Enter on the next microtask, then await the fresh
+    // reply and its complete pending forms before taking the HTTP snapshot.
+    const ready = Promise.resolve().then(async () => {
+      if (!live || connection !== version) return
+      await window.electronAPI.sessionsSubscribe(sessionId)
+      await window.electronAPI.sessionsUnsubscribe(sessionId)
+    })
+    reader.reconnect(ready)
   }
   const localOff = window.electronAPI.onServerConnected(() => {
     if (!isRemoteKey(sessionId)) connected()

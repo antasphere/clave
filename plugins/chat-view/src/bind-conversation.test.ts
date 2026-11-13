@@ -91,6 +91,39 @@ function setup(id = 's'): {
   }
 }
 describe('the native view connection binding', () => {
+  it('waits for the new subscription overlays before reading a reconnect snapshot and balances its temporary subscription', async () => {
+    const h = setup()
+    h.resolve()
+    await settle()
+    let release!: (session: Session) => void
+    h.api.sessionsSubscribe.mockImplementationOnce(
+      () =>
+        new Promise<Session>((done) => {
+          release = done
+        })
+    )
+    h.connected()
+    await settle()
+    expect(h.api.sessionsTimeline).toHaveBeenCalledOnce()
+    h.stream({
+      kind: 'event',
+      event: {
+        type: 'permission_request',
+        id: 'clave:new',
+        input: { tool: 'clave_request_input' },
+        description: 'Current form',
+        options: []
+      }
+    })
+    expect(h.handlers.event).not.toHaveBeenCalled()
+    release({ id: 's', state: 'blocked', run: 4 } as Session)
+    await settle()
+    expect(h.api.sessionsTimeline).toHaveBeenCalledTimes(2)
+    expect(h.handlers.event).toHaveBeenCalledWith(expect.objectContaining({ current: true }))
+    expect(h.api.sessionsUnsubscribe).toHaveBeenCalledTimes(1)
+    h.reader.stop()
+    expect(h.api.sessionsUnsubscribe).toHaveBeenCalledTimes(2)
+  })
   it('listens before subscribe, then snapshots only after the subscription reply, keeping the buffered live tail', async () => {
     const h = setup()
     await settle()

@@ -17,11 +17,12 @@ export interface HistorySource {
 export interface ConversationReader extends PastReader {
   start(): void
   stream(frame: SessionStream): void
-  reconnect(): void
+  reconnect(ready?: Promise<unknown>): void
   source(): HistorySource
 }
 
 type Frame = Extract<SessionStream, { kind: 'event' }>
+export type ConversationItem = HistoryItem & { current?: boolean }
 // The existing host wrappers send these current-state overlays at subscribe
 // time, outside the manager's positioned transcript. They are not message
 // identity and must not select legacy history or prevent a snapshot loading.
@@ -46,8 +47,8 @@ export function conversationReader(
     history(before?: number, limit?: number): Promise<HistoryPage>
   },
   handlers: {
-    page(page: HistoryPage, replace: boolean, truncated: boolean): void
-    event(item: HistoryItem): void
+    page(page: HistoryPage, replace: boolean, truncated: boolean, preserve?: number): void
+    event(item: ConversationItem): void
     reading(): void
     failed(error: unknown): void
   },
@@ -60,6 +61,9 @@ export function conversationReader(
   let read: PastReader | null = null
   let mode: 'unknown' | 'timeline' | 'legacy' = 'unknown'
   let cursor: SessionPosition | null = null
+  // Unlike the connection cursor, this survives reconnect until a snapshot
+  // commits. It names the prefix already reflected in the view's form state.
+  let applied: SessionPosition | null = null
   let generation: string | null = null
   let snapshotGeneration: string | null = null
   let truncated = false
@@ -124,8 +128,13 @@ export function conversationReader(
   }
   const take = (frame: Frame): void => {
     if (stopped) return
-    if (frame.position) cursor = frame.position
-    handlers.event({ event: frame.event })
+    if (frame.position) applied = cursor = frame.position
+    handlers.event({
+      event: frame.event,
+      ...(overlay(frame) &&
+        frame.event.type === 'permission_request' &&
+        inputRequestMeta(frame.event.input) && { current: true })
+    })
   }
   const refresh = (): void => {
     if (stopped || !started) return
@@ -156,8 +165,8 @@ export function conversationReader(
           throw new Error('The conversation changed generation while its snapshot was read.')
         if (
           timeline &&
-          cursor?.generation === timeline.cursor.generation &&
-          timeline.cursor.sequence < cursor.sequence
+          applied?.generation === timeline.cursor.generation &&
+          timeline.cursor.sequence < applied.sequence
         )
           throw new Error('The conversation snapshot is older than the live stream.')
         if (
@@ -207,8 +216,15 @@ export function conversationReader(
         // A hosted request is followed by its complete current draft. Old
         // agent fills can still name fields the person cleared on the server.
         const newerFills = new Map<number, Frame>()
+        let preserve: number | undefined
         if (timeline) {
           page = { ...page, items: page.items.filter((item) => !currentFill(item.event)) }
+          if (applied?.generation === timeline.cursor.generation)
+            preserve = timeline.items.filter(
+              (item) =>
+                !currentFill(item.event as HistoryItem['event']) &&
+                item.position.sequence <= applied!.sequence
+            ).length
           for (const [index, frame] of buffered.entries())
             if (
               currentFill(frame.event) &&
@@ -222,7 +238,8 @@ export function conversationReader(
         reading = false
         // Commit in this same continuation. Deferring the buffer copy to a
         // second promise callback would lose frames arriving between the two.
-        handlers.page(page, timeline !== null || hasPage, truncated)
+        handlers.page(page, timeline !== null || hasPage, truncated, preserve)
+        applied = timeline?.cursor ?? null
         hasPage = true
         for (const frame of overlays) take(frame)
         // A write after the subscription's draft may already be covered by
@@ -295,12 +312,26 @@ export function conversationReader(
         }
       }
     },
-    reconnect: () => {
+    reconnect: (ready) => {
       if (stopped) return
       cursor = null
       generation = null
       clear()
-      refresh()
+      if (!ready) refresh()
+      else {
+        read?.stop()
+        const version = ++revision
+        reading = true
+        handlers.reading()
+        void ready.then(
+          () => {
+            if (!stopped && revision === version) refresh()
+          },
+          (error) => {
+            if (!stopped && revision === version) handlers.failed(error)
+          }
+        )
+      }
     },
     retry: refresh,
     source: () => {

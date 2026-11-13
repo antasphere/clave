@@ -179,7 +179,7 @@ export const emptyConversation: Conversation = {
   explained: {}
 }
 export type Action =
-  | { event: ChatEvent; at?: number }
+  | { event: ChatEvent; at?: number; current?: boolean }
   | { answer: string; optionId: string; answers?: Record<string, string | string[]> }
   | { exit: number }
   /** A page of the conversation's past, oldest first, in front of what is here.
@@ -188,7 +188,7 @@ export type Action =
   | { prepend: HistoryItem[] }
   | { sync: HistoryItem[] }
   /** A positioned snapshot is authoritative, including an empty generation. */
-  | { snapshot: HistoryItem[] }
+  | { snapshot: HistoryItem[]; preserve?: number }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
   /** The reader's typing into an open form was sent to its draft
@@ -367,7 +367,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // read under the live `working` would mark every message as mid-turn.
     // The mode is replayed from no mode, so the past's first word on it is
     // no change; the live word stands when the past says none.
-    const synced = items.reduce(reduceConversation, {
+    const boundary = 'snapshot' in action ? action.preserve : undefined
+    let synced = items.slice(0, boundary).reduce(reduceConversation, {
       ...state,
       entries: [],
       first: 0,
@@ -375,6 +376,30 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       permissionMode: null,
       launchedMode: undefined
     })
+    if (boundary !== undefined) {
+      // Same-generation history cannot recover private typing or fields the
+      // person cleared. Keep the view's current open hosted form at its last
+      // applied position, then replay genuinely newer events over it.
+      synced.entries = synced.entries.map((entry) => {
+        if (
+          entry.kind !== 'permission' ||
+          isSettled(entry) ||
+          !inputRequestMeta(entry.request.input)
+        )
+          return entry
+        const previous = state.entries.findLast(
+          (old) => old.kind === 'permission' && old.request.id === entry.request.id
+        )
+        if (
+          previous?.kind !== 'permission' ||
+          isSettled(previous) ||
+          permissionDefinition(previous.request) !== permissionDefinition(entry.request)
+        )
+          return entry
+        return { ...entry, draft: previous.draft, typed: previous.typed, notes: previous.notes }
+      })
+      synced = items.slice(boundary).reduce(reduceConversation, synced)
+    }
     return {
       ...synced,
       state: state.state,
@@ -608,6 +633,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       // answers or typing. An identical repeat keeps the current draft.
       else if (permissionDefinition(previous.request) !== permissionDefinition(event))
         entries[index] = { kind: 'permission', request: event, at }
+      // The unpositioned subscribe reply begins a complete current hosted
+      // draft, including an empty one. This also applies when it arrives
+      // after the HTTP snapshot. Settled cards cannot be reopened by it.
+      else if (action.current && !isSettled(previous) && inputRequestMeta(event.input))
+        entries[index] = { ...previous, draft: undefined, typed: undefined, notes: undefined }
       return { ...state, entries, state: 'blocked' }
     }
     case 'session_meta': {
