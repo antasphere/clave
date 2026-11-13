@@ -12,7 +12,9 @@
 // Behaviour switches: `ACP_STAND_IN_REFUSE=auth` refuses every session/new
 // (-32000 Not signed in); `ACP_STAND_IN_DELAY_MS` waits before each answer to
 // a prompt; `ACP_STAND_IN_LIST_CURSOR=always` names a next cursor on every
-// session/list page, as OpenCode 2.3.0 does. A prompt containing `slow` waits
+// session/list page, as OpenCode 2.3.0 does; `ACP_STAND_IN_STRAY_UPDATE=1`
+// sends, during each prompt, one `agent_message_chunk` for the session
+// `ses_other` (another session's update). A prompt containing `slow` waits
 // 20 s (cancellable); one containing `ask permission` asks the client first
 // and echoes the option.
 import {
@@ -161,6 +163,13 @@ async function prompt(id, params) {
     if (turn.cancelled) return finish('cancelled')
   }
   say('You said: ')
+  // Another session's text in the middle of this prompt, as a subagent's
+  // child session streams beside its parent's.
+  if (process.env.ACP_STAND_IN_STRAY_UPDATE === '1')
+    update('ses_other', {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'stray text of another session' }
+    })
   const half = Math.ceil(text.length / 2)
   say(text.slice(0, half))
   say(text.slice(half))

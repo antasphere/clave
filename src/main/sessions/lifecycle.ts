@@ -296,14 +296,20 @@ function planFromRecord(
     const conversationId = resume ?? conversationIdOf(record)
     const moved = transportSwitchOptions(
       options,
-      transportTarget({ adapterId, viewId, model }, conversationId, family, (conversation) =>
-        ptyManager.hasClaudeTranscript(conversation, record.cwd, record.configDir)
+      transportTarget(
+        { adapterId, viewId, model },
+        conversationId,
+        family,
+        (conversation) =>
+          !!family && ptyManager.hasConversation(family, conversation, record.cwd, record.configDir)
       )
     )
     return {
       cwd: record.cwd,
+      // The terminal the chat's saved profile names (transportSwitchOptions),
+      // else the family's selected one in its terminal form.
       options:
-        adapterId === 'pty' && family
+        adapterId === 'pty' && family && moved.launchProfileId === undefined
           ? { ...moved, launchProfileId: ptyManager.terminalProfileFor(family, moved.workspaceId) }
           : moved,
       resumed: conversationId != null,

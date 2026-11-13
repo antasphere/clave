@@ -7,12 +7,15 @@
 //
 // State lives in `--session-dir` when given, else `PI_STAND_IN_STATE`:
 //   frames.jsonl                  every frame received, `{ t, frame }` per line
-//   <timestamp>_<id>.jsonl        each session in Pi's own file format (v3)
+//   <timestamp>_<id>.jsonl        each session in Pi's own file format (v3),
+//                                 written at its first message, as Pi does
 //
 // Behaviour switches: `PI_STAND_IN_DELAY_MS` waits between the events of a
 // run; `PI_STAND_IN_NO_MODEL=1` leaves the model out of `get_state` and fails
 // every prompt with `No model selected`; `PI_STAND_IN_STREAMING_ONCE=1` refuses
-// the first prompt with `Agent is streaming` and runs nothing. A prompt containing `slow` waits 20 s
+// the first prompt with `Agent is streaming` and runs nothing;
+// `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
+// and starts nothing (else it starts a run). A prompt containing `slow` waits 20 s
 // before its first text delta (an abort cuts it short); `ask extension` asks a
 // confirm dialog first and echoes the answer; `notify extension` sends a
 // notify; `fail provider` ends its message with a provider error; `retry`
@@ -60,6 +63,7 @@ const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.PI_STAND_IN_DELAY_MS ?? 0) || 0
 const noModel = process.env.PI_STAND_IN_NO_MODEL === '1'
 let streamingOnce = process.env.PI_STAND_IN_STREAMING_ONCE === '1'
+const idleSteer = process.env.PI_STAND_IN_IDLE_STEER
 
 const LEVELS = ['low', 'high', 'max']
 const modelObject = (id) => ({
@@ -101,6 +105,12 @@ const entryId = () => randomBytes(4).toString('hex')
 const session = {
   id: '',
   file: undefined,
+  // Whether the file is on disk: Pi writes it at the session's first
+  // message (the header, then every entry so far), never at its creation
+  // (PRDCT-4427, verifier round 1 Major 2). Until then `--session <id>`
+  // finds nothing.
+  written: false,
+  header: undefined,
   entries: [],
   name: undefined,
   model: undefined,
@@ -121,14 +131,20 @@ const headerOf = (file) => {
 }
 const fileFor = (id) => sessionFiles().find((file) => headerOf(file)?.id === id)
 
-function writeLine(value) {
-  if (session.file) appendFileSync(session.file, `${JSON.stringify(value)}\n`)
-}
 function append(entry) {
   const parentId = session.entries.length ? session.entries[session.entries.length - 1].id : null
   const full = { type: entry.type, id: entryId(), parentId, timestamp: now(), ...entry }
   session.entries.push(full)
-  writeLine(full)
+  if (!session.file) return full
+  if (session.written) appendFileSync(session.file, `${JSON.stringify(full)}\n`)
+  else if (full.type === 'message') {
+    // The first message: the file appears, the header then every entry.
+    session.written = true
+    appendFileSync(
+      session.file,
+      [session.header, ...session.entries].map((line) => `${JSON.stringify(line)}\n`).join('')
+    )
+  }
   return full
 }
 function create(id) {
@@ -139,7 +155,8 @@ function create(id) {
   session.file = noSession
     ? undefined
     : path.join(stateDir, `${timestamp.replace(/[:.]/g, '-')}_${id}.jsonl`)
-  writeLine({ type: 'session', version: 3, id, timestamp, cwd: process.cwd() })
+  session.written = false
+  session.header = { type: 'session', version: 3, id, timestamp, cwd: process.cwd() }
   if (session.model)
     append({ type: 'model_change', provider: session.model.provider, modelId: session.model.id })
 }
@@ -150,6 +167,8 @@ function open(file) {
     .map((line) => JSON.parse(line))
   session.id = lines[0].id
   session.file = file
+  session.written = true
+  session.header = lines[0]
   session.entries = lines.slice(1)
   session.name = undefined
   for (const entry of session.entries) {
@@ -578,6 +597,8 @@ function handle(frame) {
     case 'follow_up': {
       const text = String(frame.message ?? '')
       if (run) return queue(type === 'steer' ? steering : followUp, text, id, type)
+      // Idle, told to: the steer is answered queued and nothing starts.
+      if (type === 'steer' && idleSteer === 'queue') return ok(id, type, { disposition: 'queued' })
       // Idle: nothing to steer, so the message starts a run of its own.
       if (noModel || !session.model) return fail(id, type, 'No model selected')
       ok(id, type, { disposition: 'queued' })

@@ -35,7 +35,7 @@ import {
 } from '@clave/session-bridge'
 import type { ContinuedFrom, ProviderOverride } from '@clave/contract/sessions'
 import type { PtySpawnOptions } from './adapters/pty-backend'
-import type { LauncherFamily } from '../../shared/agent-launch'
+import { chatProfileSource, type LauncherFamily } from '../../shared/agent-launch'
 import { HARNESS_BY_ID } from '../../shared/harness'
 import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
 
@@ -295,34 +295,51 @@ export const NO_CONVERSATION_TO_CARRY =
 
 /** Where a transport switch takes the conversation: into a chat only when
  *  there is one to resume (resume or refuse, never a silent fresh chat,
- *  amendment 1); into a Claude terminal resumed when its transcript exists,
- *  else started under the same session id (`--session-id`, amendment 2);
- *  into another family's terminal resumed on the conversation found (a
- *  Codex thread). `hasTranscript` is the Claude transcript guard, given by
- *  the caller (`findTranscript`), so the rule stays pure. */
+ *  amendment 1); into a terminal resumed when the harness's CLI has the
+ *  conversation on disk (`hasConversation`, the family's own guard given by
+ *  the caller: Claude's transcript, Pi's session file, Codex's rollout), so
+ *  the rule stays pure. When it has none: Claude and Pi start their terminal
+ *  under the same id (`--session-id`, amendment 2), a Codex terminal starts
+ *  fresh (its CLI takes no id of ours, and a thread with no rollout cannot be
+ *  resumed), and OpenCode always resumes (its TUI finds the session by id in
+ *  its own storage; no file to check). */
 export function transportTarget(
   target: { adapterId: string; viewId?: string; model?: string },
   conversationId: string | undefined,
   family: LauncherFamily | null,
-  hasTranscript: (conversationId: string) => boolean
+  hasConversation: (conversationId: string) => boolean
 ): { adapterId: string; resume?: string; sessionId?: string; viewId?: string; model?: string } {
   if (target.adapterId !== 'pty') {
     if (!conversationId) throw new Error(NO_CONVERSATION_TO_CARRY)
     return { ...target, resume: conversationId }
   }
   if (!conversationId) return target
-  if (family !== 'claude' || hasTranscript(conversationId))
+  if (family === 'opencode' || hasConversation(conversationId))
     return { ...target, resume: conversationId }
-  return { ...target, sessionId: conversationId }
+  if (family === 'claude' || family === 'pi') return { ...target, sessionId: conversationId }
+  return target
+}
+
+/** The saved profile a launch profile id names for the family, the one whose
+ *  chat form `chat:<family>:<id>` exists: never the family's built-in
+ *  terminal, never a chat id already (lane D, PRDCT-4427, verifier round 1
+ *  Minor 3). */
+function savedProfileOf(id: string | undefined, family: LauncherFamily): string | undefined {
+  if (!id || id === `builtin-${family}` || chatProfileSource(id)) return undefined
+  if (Object.values(CHAT_PROFILE_IDS).includes(id)) return undefined
+  return chatProfileSource(`chat:${family}:${id}`) ? id : undefined
 }
 
 /** The restart's spawn rebuilt for the other transport of the same harness.
- *  To the terminal: the family's selected profile resolved by the spawn, the
- *  conversation resumed when it exists (`resume`), else started under its id
- *  (`sessionId`, Claude's `--session-id`), the chat's mode kept only when the
- *  CLI's flag takes it. To the chat: the family's chat profile, the
- *  conversation resumed, the view the tab opens in. The account, the
- *  dangerous flag, the tab's lineage and work stay either way. */
+ *  To the terminal: the saved profile the chat ran the chat form of
+ *  (`chat:<family>:<id>` → `<id>`), else left to the caller (the family's
+ *  selected terminal profile), the conversation resumed when it exists
+ *  (`resume`), else started under its id (`sessionId`: Claude's and Pi's
+ *  `--session-id`), the chat's mode kept only when the CLI's flag takes it.
+ *  To the chat: the chat form of the saved profile the terminal ran, else the
+ *  family's chat profile, the conversation resumed, the view the tab opens
+ *  in. The account, the dangerous flag, the tab's lineage and work stay
+ *  either way. */
 export function transportSwitchOptions(
   previous: PtySpawnOptions,
   target: {
@@ -341,13 +358,15 @@ export function transportSwitchOptions(
     const rung =
       previous.permissionMode !== undefined &&
       harness.permissionRungs.some((entry) => entry.id === previous.permissionMode)
+    const source = chatProfileSource(previous.launchProfileId)
+    const startUnder = target.resume ? undefined : target.sessionId
     return {
       ...previous,
-      launchProfileId: undefined,
+      launchProfileId: source?.family === family ? source.id : undefined,
       launchProfile: undefined,
       resumeSessionId: target.resume,
-      claudeSessionId: target.resume ? undefined : target.sessionId,
-      piSessionId: undefined,
+      claudeSessionId: family === 'claude' ? startUnder : undefined,
+      piSessionId: family === 'pi' ? startUnder : undefined,
       viewId: undefined,
       initialPrompt: undefined,
       initialInput: undefined,
@@ -356,10 +375,11 @@ export function transportSwitchOptions(
       permissionMode: rung ? previous.permissionMode : undefined
     }
   }
-  if (target.adapterId === harness.chatAdapterId)
+  if (target.adapterId === harness.chatAdapterId) {
+    const saved = savedProfileOf(previous.launchProfileId, family)
     return {
       ...previous,
-      launchProfileId: CHAT_PROFILE_IDS[family],
+      launchProfileId: saved ? `chat:${family}:${saved}` : CHAT_PROFILE_IDS[family],
       launchProfile: undefined,
       resumeSessionId: target.resume,
       claudeSessionId: undefined,
@@ -373,5 +393,6 @@ export function transportSwitchOptions(
       effort: undefined,
       permissionMode: undefined
     }
+  }
   throw new Error(`"${target.adapterId}" is not a transport of the ${family} harness.`)
 }

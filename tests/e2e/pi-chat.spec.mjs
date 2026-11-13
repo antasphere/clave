@@ -298,6 +298,48 @@ export async function run(t) {
       { tries: 60 }
     )
     t.check('the pane shows the conversation’s past', !!shown, (await chatText(id)).slice(0, 600))
+
+    // ── 7. A Pi chat moved to its terminal before any message: started under
+    // its id (`--session-id`), never `--session` on a file Pi has not
+    // written (verifier round 1, Major 2) ──
+    const quiet = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: true,
+      name: 'Pi quiet'
+    })
+    const quietId = quiet.sessionId
+    t.check('a second Pi chat opened', !!quietId, quiet)
+    await callMcp(app, 'focus', { sessionId: quietId })
+    await chat(quietId).waitFor({ timeout: 20_000 })
+    const quietRecord = await until(async () => records(quietId).find((r) => r.piSessionId))
+    const quietSession = quietRecord?.piSessionId
+    t.check('its record names its Pi session', !!quietSession, records(quietId))
+    const noFile = !(
+      existsSync(STATE) &&
+      readdirSync(STATE).some((name) => name.endsWith(`_${quietSession}.jsonl`))
+    )
+    t.check('Pi wrote no session file for it (no message yet)', noFile)
+    const argvBefore = lines(TUI_ARGV).length
+    await pane(quietId).getByLabel('Session menu', { exact: true }).click()
+    const quietTerminalTile = win.locator('.view-tile[data-transport="pty"]')
+    await quietTerminalTile.waitFor()
+    await win.waitForTimeout(300)
+    await quietTerminalTile.click({ force: true })
+    const quietTerminal = await until(() => isTerminalPane(quietId), { tries: 80 })
+    t.check('the quiet chat is now a terminal pane', !!quietTerminal)
+    const quietArgv = await until(
+      () => (lines(TUI_ARGV).length > argvBefore ? lines(TUI_ARGV).slice(argvBefore) : null),
+      { tries: 80 }
+    )
+    t.check(
+      'the terminal is `pi --session-id <its session>`, not `--session`',
+      quietArgv?.length === 1 &&
+        quietArgv[0][quietArgv[0].indexOf('--session-id') + 1] === quietSession &&
+        !quietArgv[0].includes('--session'),
+      quietArgv
+    )
+    await win.keyboard.press('Escape')
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
     if (app) await app.close()

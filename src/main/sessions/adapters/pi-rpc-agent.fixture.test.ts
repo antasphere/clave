@@ -102,7 +102,7 @@ describe('the stand-in Pi', () => {
     expect(noState.status).toBe(2)
   })
 
-  it('get_state names the session, its file and the model', async () => {
+  it('get_state names the session, its file and the model; the file appears at the first message, as Pi writes it', async () => {
     const state = stateDir()
     const pi = standIn(state, ['--session-id', 'ses-one', '--thinking', 'low'])
     const data = (await pi.connection.command('get_state')) as Record<string, unknown>
@@ -114,8 +114,23 @@ describe('the stand-in Pi', () => {
       sessionFile: expect.stringMatching(/_ses-one\.jsonl$/),
       messageCount: 0
     })
-    const header = JSON.parse(readFileSync(data.sessionFile as string, 'utf8').split('\n')[0])
-    expect(header).toMatchObject({ type: 'session', version: 3, id: 'ses-one' })
+    // Verifier round 1, Major 2: no file before the first message.
+    expect(existsSync(data.sessionFile as string)).toBe(false)
+    await pi.connection.command('prompt', { message: 'hello' })
+    await expect.poll(() => settled(pi)).toBe(true)
+    const lines = readFileSync(data.sessionFile as string, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(lines[0]).toMatchObject({ type: 'session', version: 3, id: 'ses-one' })
+    // The header, the model chosen at creation, then the messages in order.
+    expect(lines.slice(1).map((entry) => entry.type)).toEqual([
+      'model_change',
+      'message',
+      'message',
+      'message',
+      'message'
+    ])
     await expect(pi.connection.command('get_commands')).resolves.toMatchObject({
       commands: [
         { name: 'init', source: 'prompt' },
@@ -304,6 +319,26 @@ describe('the stand-in Pi', () => {
       .filter((e) => e.type === 'message_end' && (e.message as { role: string }).role === 'user')
       .map((e) => (e.message as { content: string }).content)
     expect(users).toEqual(['first', 'steered'])
+  })
+
+  it('a steer while idle starts a run, or with PI_STAND_IN_IDLE_STEER=queue is answered queued and starts nothing', async () => {
+    const started = standIn(stateDir())
+    await expect(started.connection.command('steer', { message: 'go' })).resolves.toEqual({
+      disposition: 'queued'
+    })
+    await expect.poll(() => settled(started)).toBe(true)
+    const queued = standIn(stateDir(), ['--session-id', 'ses-one'], {
+      PI_STAND_IN_IDLE_STEER: 'queue'
+    })
+    await expect(queued.connection.command('steer', { message: 'lost' })).resolves.toEqual({
+      disposition: 'queued'
+    })
+    await new Promise((r) => setTimeout(r, 150))
+    expect(queued.events.some((e) => e.type === 'agent_start')).toBe(false)
+    await expect(queued.connection.command('get_state')).resolves.toMatchObject({
+      isStreaming: false,
+      messageCount: 0
+    })
   })
 
   it('set_model switches to a listed model and refuses another; thinking levels likewise', async () => {

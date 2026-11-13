@@ -71,9 +71,17 @@ function standIn(state: string, env: Record<string, string> = {}, args = ['acp']
 const init = { protocolVersion: 1, clientCapabilities: { fs: {}, terminal: false } }
 type Opened = { sessionId: string; configOptions: { currentValue: string }[] }
 
+/** A session opened, its `available_commands_update` arrived: the stand-in
+ *  sends it right after the answer, so it may land in a later chunk than the
+ *  answer, and a test that clears the notifications then would see it among
+ *  its prompt's (verifier round 1, Minor 5). */
 async function open(agent: StandIn, cwd = '/tmp/project'): Promise<Opened> {
   await agent.connection.request('initialize', init)
-  return (await agent.connection.request('session/new', { cwd, mcpServers: [] })) as Opened
+  const opened = (await agent.connection.request('session/new', { cwd, mcpServers: [] })) as Opened
+  await expect
+    .poll(() => agent.updates().some((u) => u.sessionUpdate === 'available_commands_update'))
+    .toBe(true)
+  return opened
 }
 const say = (agent: StandIn, sessionId: string, text: string): Promise<unknown> =>
   agent.connection.request(
@@ -174,6 +182,28 @@ describe('the ACP stand-in agent', () => {
     ])
     for (const n of agent.notifications)
       expect(n).toMatchObject({ method: 'session/update', params: { sessionId } })
+  })
+
+  it('sends one update for another session during a prompt when told to (ACP_STAND_IN_STRAY_UPDATE)', async () => {
+    const agent = standIn(stateDir(), { ACP_STAND_IN_STRAY_UPDATE: '1' })
+    const { sessionId } = await open(agent)
+    agent.notifications.length = 0
+    await say(agent, sessionId, 'hello')
+    const strays = agent.notifications.filter(
+      (n) => (n.params as { sessionId: string }).sessionId !== sessionId
+    )
+    expect(strays).toEqual([
+      {
+        method: 'session/update',
+        params: {
+          sessionId: 'ses_other',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'stray text of another session' }
+          }
+        }
+      }
+    ])
   })
 
   it('asks permission and echoes the chosen option', async () => {

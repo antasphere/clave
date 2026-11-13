@@ -5,9 +5,11 @@
 // `opencode --session <id>`) records its argv and waits. An OpenCode chat
 // answers one message with a tool card, its record keeps the OpenCode
 // session the agent opened; the pane menu's « Terminal » restarts the SAME
-// tab as an OpenCode terminal on that session (`--session <id>`); « Chat » on
-// that terminal is refused (the terminal's record carries no OpenCode id
-// yet, PRDCT-4509); and an OpenCode chat comes back after a relaunch on the
+// tab as an OpenCode terminal on that session (`--session <id>`), its record
+// keeping the id; « Chat » on that terminal brings the same tab back into
+// the chat on that session (`session/load`, its past shown); « Chat » on an
+// OpenCode terminal that was never a chat is refused (nothing to carry); and
+// an OpenCode chat comes back after a relaunch on the
 // same user-data folder, its session loaded (`session/load`) and its past
 // shown. Pinned to the in-process server like chat-terminal-switch: the stub
 // is found on the PATH the app was launched with. tmux is off for the run.
@@ -218,15 +220,72 @@ export async function run(t) {
     const listed = (await callMcp(app, 'list', {})).sessions.find((s) => s.id === id)
     t.check('the tab keeps its id', !!listed, listed)
 
-    // ── 5. « Chat » on that terminal: refused, the reason on the row ──
+    // The terminal's record keeps the OpenCode session it resumed (verifier
+    // round 1, Major 1): a Resume or a restore of the terminal resumes it.
+    const terminalRecord = await until(async () =>
+      records(id).find((r) => r.adapterId === 'pty' && r.opencodeSessionId === conversation)
+    )
+    t.check('the terminal’s record carries the OpenCode session', !!terminalRecord, records(id))
+
+    // ── 5. « Chat » on that terminal: the same tab back in the chat, on the same session ──
     await win.keyboard.press('Escape')
+    const chatTileOf = () =>
+      win
+        .locator('.view-tile[data-transport="events"]')
+        .filter({ has: win.locator('.view-tile-name', { hasText: /^Chat$/ }) })
+    const framesBeforeChat = lines(FRAMES).length
     await tile(id).getByLabel('Terminal session menu', { exact: true }).click()
-    const chatTile = win
-      .locator('.view-tile[data-transport="events"]')
-      .filter({ has: win.locator('.view-tile-name', { hasText: /^Chat$/ }) })
-    await chatTile.waitFor()
+    await chatTileOf().waitFor()
     await win.waitForTimeout(300)
-    await chatTile.click({ force: true })
+    await chatTileOf().click({ force: true })
+    await chat(id).waitFor({ timeout: 20_000 })
+    t.check('the same tab is a chat again', (await pane(id).count()) === 1)
+    const reloaded = await until(
+      () =>
+        lines(FRAMES)
+          .slice(framesBeforeChat)
+          .find(
+            (f) => f.frame?.method === 'session/load' && f.frame?.params?.sessionId === conversation
+          ) ?? null,
+      { tries: 80 }
+    )
+    t.check(
+      'the agent was asked to load the chat’s session (session/load)',
+      !!reloaded,
+      lines(FRAMES).slice(framesBeforeChat)
+    )
+    const history = await until(
+      async () =>
+        (await chat(id)
+          .getByText('You said: hello from the spec')
+          .count()
+          .catch(() => 0)) > 0,
+      { tries: 60 }
+    )
+    t.check(
+      'the chat shows the conversation’s past',
+      !!history,
+      await chat(id)
+        .innerText()
+        .catch(() => '')
+    )
+
+    // ── 5b. « Chat » on a terminal that was never a chat: refused, the reason on the row ──
+    const fresh = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'opencode',
+      chat: false,
+      name: 'OpenCode terminal'
+    })
+    const freshId = fresh.sessionId
+    t.check('an OpenCode terminal opened', !!freshId, fresh)
+    await callMcp(app, 'focus', { sessionId: freshId })
+    const freshIsTerminal = await until(() => isTerminalPane(freshId), { tries: 80 })
+    t.check('it is a terminal pane', !!freshIsTerminal)
+    await tile(freshId).getByLabel('Terminal session menu', { exact: true }).click()
+    await chatTileOf().waitFor()
+    await win.waitForTimeout(300)
+    await chatTileOf().click({ force: true })
     const refusal = await until(
       async () => {
         const text = await win
@@ -238,7 +297,7 @@ export async function run(t) {
       { tries: 60 }
     )
     t.check('the move into a chat is refused, the reason shown', !!refusal)
-    t.check('the tab is still a terminal', await isTerminalPane(id))
+    t.check('the tab is still a terminal', await isTerminalPane(freshId))
     await win.keyboard.press('Escape')
 
     // ── 6. An OpenCode chat comes back after a relaunch ──

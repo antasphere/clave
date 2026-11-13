@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
   transcript: true,
+  // The terminal form of the family's selected profile (lane D, PRDCT-4427):
+  // undefined when the selection is a terminal, left to the spawn.
+  terminalProfile: vi.fn<(family: string) => string | undefined>(() => undefined),
   writes: [] as [string, string][],
   states: new Map<string, { state: string; transport: string; viewId?: string }>(),
   preference: vi.fn<(key: string) => unknown>(() => undefined),
@@ -50,8 +53,8 @@ vi.mock('../pty-manager', () => ({
     listAdoptableSessions: () => mocks.adoptable,
     setSessionDisplayName: mocks.setSessionDisplayName,
     setSessionViewRecord: mocks.setSessionViewRecord,
-    hasClaudeTranscript: () => mocks.transcript,
-    terminalProfileFor: () => undefined,
+    hasConversation: () => mocks.transcript,
+    terminalProfileFor: (family: string) => mocks.terminalProfile(family),
     getSession: (id: string) => (mocks.states.has(id) ? { id, alive: true } : undefined),
     write: (id: string, data: string) => void mocks.writes.push([id, data])
   }
@@ -546,7 +549,8 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     const [, chat] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
     expect(chat).toMatchObject({
       adoptSessionId: id,
-      launchProfileId: 'claude-chat',
+      // The chat form of the saved profile the terminal ran (verifier round 1, Minor 3).
+      launchProfileId: 'chat:claude:claude-default',
       resumeSessionId: 'conv-1',
       viewId: 'clave.chat-view/lab',
       claudeProfileId: 'work'
@@ -575,6 +579,53 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     await expect(restartSession(id, { adapterId: 'codex-chat' })).rejects.toThrow(
       'This terminal has no conversation to carry into a chat yet.'
     )
+  })
+  // Lane D (PRDCT-4427, verifier round 1 Minor 2 and mutation 5).
+  const stoppedChat = (id: string): Record<string, unknown> => ({
+    id,
+    adapterId: 'claude-chat',
+    cwd: '/work/app',
+    folderName: 'app',
+    claudeMode: true,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    claudeSessionId: 'conv-1',
+    launchProfileId: 'claude-chat'
+  })
+  it("moves a stopped Claude chat to the terminal's profile when the workspace's selected profile is the chat one (lane D, PRDCT-4427)", async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(stoppedChat(id))
+    // The selection is the chat: its terminal form is the built-in terminal.
+    mocks.terminalProfile.mockImplementationOnce((family) => `builtin-${family}`)
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      claudeMode: true,
+      launchProfileId: 'builtin-claude',
+      resumeSessionId: 'conv-1'
+    })
+    expect(mocks.terminalProfile).toHaveBeenCalledWith('claude')
+  })
+  it('a stopped chat moved to the terminal comes back with no view, even while its stopped handle is held (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(stoppedChat(id))
+    // The ended chat's handle still names the view it was read in.
+    mocks.states.set(id, { state: 'ended', transport: 'events', viewId: 'clave.chat-view/lab' })
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options.viewId).toBeUndefined()
+    expect(options.resumeSessionId).toBe('conv-1')
+    mocks.states.delete(id)
   })
 
   it('finds a record keyed by its tmux name, spawns under the window that placed it, and offers the tmux name (round 2, N-F1, N-F2, N-F5)', async () => {

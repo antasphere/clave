@@ -1337,6 +1337,8 @@ export class PtyBackend {
       codexMode: useCodexMode,
       piMode: usePiMode,
       opencodeMode: useOpencodeMode,
+      // Lane D (PRDCT-4427): the OpenCode session the terminal resumed, kept for its next Resume.
+      opencodeSessionId: options?.opencodeMode ? options.resumeSessionId : undefined,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,
@@ -1751,7 +1753,7 @@ export class PtyBackend {
   /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes,
    *  from its `session_meta`. Mirrors setSessionCodexThreadId. */
   setSessionOpencodeSessionId(id: string, sessionId: string): void {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return
+    if (!OPENCODE_SESSION_ID_RE.test(sessionId)) return
     const key = this.recordKeyForSession(id)
     if (!key) return
     const meta = readSessionRecord(key)

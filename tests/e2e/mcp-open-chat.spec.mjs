@@ -146,7 +146,13 @@ export async function run(t) {
       plainRecord
     )
 
-    const refused = await client.call('clave_open_session', { cwd: ROOT, mode: 'pi', chat: true })
+    // Antigravity is the one harness left without a chat view since OpenCode
+    // and Pi gained theirs (PRDCT-4427); the refusal comes before any spawn.
+    const refused = await client.call('clave_open_session', {
+      cwd: ROOT,
+      mode: 'antigravity',
+      chat: true
+    })
     t.check(
       'chat on a mode with no chat view is refused, not opened as a terminal',
       toolErrored(refused) && /no chat view/.test(JSON.stringify(refused)),

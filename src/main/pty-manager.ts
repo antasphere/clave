@@ -788,10 +788,21 @@ class PtyManager {
     return events.sourceProfileId ?? `builtin-${family}`
   }
 
-  /** Whether Claude wrote a transcript for this conversation (lane D,
-   *  PRDCT-4427): what decides a terminal resumes it or starts under its id. */
-  hasClaudeTranscript(conversationId: string, cwd: string, configDir?: string): boolean {
-    return findTranscript(conversationId, cwd, configDir) !== null
+  /** Whether the family's CLI has this conversation on disk (lane D,
+   *  PRDCT-4427): what decides a terminal resumes it or starts without it.
+   *  Claude's transcript, Pi's session file (written at the first message),
+   *  Codex's rollout; an OpenCode session is resumed by id from OpenCode's
+   *  own storage, with no file of ours to check. */
+  hasConversation(
+    family: LauncherFamily,
+    conversationId: string,
+    cwd: string,
+    configDir?: string
+  ): boolean {
+    if (family === 'claude') return findTranscript(conversationId, cwd, configDir) !== null
+    if (family === 'pi') return findPiSession(conversationId, cwd, getLoginShellEnv()) !== null
+    if (family === 'codex') return hasCodexRollout(conversationId, codexRoot(getLoginShellEnv()))
+    return family === 'opencode'
   }
 
   /** The conversation a session would resume: Claude's session id, a Codex
@@ -810,6 +821,13 @@ class PtyManager {
     const opencodeSession = this.opencodeSessions.get(id)
     if (opencodeSession) return opencodeSession
     const spawn = this.spawns.get(id)
+    // Lane D (PRDCT-4427, verifier round 1 Major 1): an OpenCode terminal's
+    // session, the one it was started on (`--session <id>`), else the one its
+    // record kept; the chat's map entry went with the chat's kill.
+    if (spawn?.options?.opencodeMode)
+      return (
+        spawn.options.resumeSessionId ?? ptyBackend.getSessionRecord(id)?.opencodeSessionId ?? null
+      )
     if (spawn?.options?.codexMode && session.startedAt) {
       return findCodexThreadForSession(
         session.cwd,
@@ -906,13 +924,16 @@ class PtyManager {
           { adapterId, viewId, model },
           resume ?? conversationId ?? undefined,
           family,
-          (conversation) => this.hasClaudeTranscript(conversation, spawn.cwd, options.configDir)
+          (conversation) =>
+            !!family && this.hasConversation(family, conversation, spawn.cwd, options.configDir)
         )
       )
       return {
         cwd: spawn.cwd,
+        // The terminal the chat's saved profile names (transportSwitchOptions),
+        // else the family's selected one in its terminal form.
         options:
-          adapterId === 'pty' && family
+          adapterId === 'pty' && family && moved.launchProfileId === undefined
             ? { ...moved, launchProfileId: this.terminalProfileFor(family, moved.workspaceId) }
             : moved,
         resumed: (resume ?? conversationId) != null,

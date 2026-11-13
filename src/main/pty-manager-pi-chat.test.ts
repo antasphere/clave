@@ -292,21 +292,34 @@ describe('a Pi chat spawn (lane D, PRDCT-4427)', () => {
 })
 
 describe('a Pi chat to its terminal and back (lane D, PRDCT-4427)', () => {
-  it('plans piMode with the Pi session resumed, no profile named', async () => {
+  // Verifier round 1, Major 2: Pi writes its session file at the first
+  // message; `--session <id>` on a session with no file exits 1.
+  it('plans piMode under the same Pi session id (--session-id) when Pi wrote no file yet, no profile named', async () => {
     const session = await openPiChat()
     const id = after(configured().command, '--session-id')
     mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
       key === session.id ? { id: session.id, adapterId: 'pi-chat' } : null) as never)
     const plan = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })
-    expect(plan).toMatchObject({ resumed: true, keepView: false })
+    expect(plan).toMatchObject({ keepView: false })
     expect(plan?.options).toMatchObject({
       piMode: true,
-      resumeSessionId: id,
+      piSessionId: id,
       adoptSessionId: session.id
     })
+    expect(plan?.options.resumeSessionId).toBeUndefined()
     // The terminal profile is the family's selected one, resolved by the spawn.
     expect(plan?.options.launchProfileId).toBeUndefined()
     expect(plan?.options.viewId).toBeUndefined()
+  })
+  it('plans piMode with the Pi session resumed (--session) once Pi wrote its file', async () => {
+    const session = await openPiChat()
+    const id = after(configured().command, '--session-id')!
+    writePiSession(id)
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id ? { id: session.id, adapterId: 'pi-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })
+    expect(plan).toMatchObject({ resumed: true, keepView: false })
+    expect(plan?.options).toMatchObject({ piMode: true, resumeSessionId: id })
     expect(plan?.options.piSessionId).toBeUndefined()
   })
   it("a Pi terminal's session goes into the chat on the same id", async () => {

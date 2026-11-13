@@ -398,6 +398,46 @@ describe('the session records', () => {
     expect(fs.existsSync(recordFile('66666666-6666-4666-8666-666666666666'))).toBe(false)
   })
 
+  // Lane D (PRDCT-4427, verifier round 1 Major 1 and mutation 19).
+  it("keep the OpenCode session an OpenCode terminal resumed, for the terminal's next Resume", () => {
+    const resumed = backend.spawn(cwd, {
+      claudeMode: false,
+      opencodeMode: true,
+      tmuxMode: false,
+      resumeSessionId: 'ses_0123456789abcdef'
+    })
+    expect(readRecord(resumed.id)).toMatchObject({
+      adapterId: 'pty',
+      opencodeMode: true,
+      opencodeSessionId: 'ses_0123456789abcdef'
+    })
+    const fresh = backend.spawn(cwd, { claudeMode: false, opencodeMode: true, tmuxMode: false })
+    expect(readRecord(fresh.id)).not.toHaveProperty('opencodeSessionId')
+  })
+
+  it('take an OpenCode session id only in the shape its CLI takes on --session', () => {
+    const id = '77777777-7777-4777-8777-777777777777'
+    backend.writeEventSessionRecord({
+      id,
+      adapterId: 'opencode-chat',
+      transport: 'events',
+      cwd,
+      folderName: 'x',
+      claudeMode: false,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      opencodeMode: true,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    // A leading dash would read as a flag on the TUI's command line.
+    backend.setSessionOpencodeSessionId(id, '-bad')
+    expect(readRecord(id)).not.toHaveProperty('opencodeSessionId')
+    backend.setSessionOpencodeSessionId(id, 'ses_ok-1')
+    expect(readRecord(id).opencodeSessionId).toBe('ses_ok-1')
+  })
+
   it('keep the tab that opened a session, nested or not, across an adoption (PRDCT-4192)', () => {
     const opener = backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
     const opened = backend.spawn(cwd, { claudeMode: false, tmuxMode: false, openedBy: opener.id })

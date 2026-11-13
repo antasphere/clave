@@ -371,7 +371,7 @@ describe('the transport switch: the same harness, chat to terminal and back (lan
     autoExecute: true,
     workspaceId: 'ws'
   }
-  it('to the chat: the family’s chat profile, the conversation resumed, the view it opens in, the terminal’s launch words dropped, the account kept', () => {
+  it('to the chat: the chat form of the terminal’s saved profile, the conversation resumed, the view it opens in, the terminal’s launch words dropped, the account kept', () => {
     const options = transportSwitchOptions(terminal, {
       adapterId: 'codex-chat',
       resume: 'thread-9',
@@ -379,7 +379,8 @@ describe('the transport switch: the same harness, chat to terminal and back (lan
     })
     expect(options).toMatchObject({
       codexMode: true,
-      launchProfileId: 'codex-chat',
+      // The saved profile the terminal ran, in its chat form (verifier round 1, Minor 3).
+      launchProfileId: 'chat:codex:codex-default',
       resumeSessionId: 'thread-9',
       viewId: 'clave.chat-view/folio',
       model: 'gpt-5.5',
@@ -419,11 +420,100 @@ describe('the transport switch: the same harness, chat to terminal and back (lan
       adapterId: 'pty',
       sessionId: 'c'
     })
-    // A Codex thread was found by its rollout: it is resumed as it is.
-    expect(transportTarget({ adapterId: 'pty' }, 't', 'codex', () => false)).toEqual({
+  })
+  // Lane D (PRDCT-4427, verifier round 1 Major 2 and Minor 4): the guard of every family.
+  it('resumes a Pi session in the terminal only when its file exists, else starts under its id', () => {
+    expect(transportTarget({ adapterId: 'pty' }, 'p1', 'pi', () => true)).toEqual({
+      adapterId: 'pty',
+      resume: 'p1'
+    })
+    expect(transportTarget({ adapterId: 'pty' }, 'p1', 'pi', () => false)).toEqual({
+      adapterId: 'pty',
+      sessionId: 'p1'
+    })
+  })
+  it('resumes a Codex thread in the terminal only when its rollout exists, else opens a fresh Codex terminal', () => {
+    expect(transportTarget({ adapterId: 'pty' }, 't', 'codex', () => true)).toEqual({
       adapterId: 'pty',
       resume: 't'
     })
+    expect(transportTarget({ adapterId: 'pty' }, 't', 'codex', () => false)).toEqual({
+      adapterId: 'pty'
+    })
+  })
+  it('always resumes an OpenCode session in the terminal: its TUI finds it by id, no file to check', () => {
+    let asked = false
+    const none = (): boolean => {
+      asked = true
+      return false
+    }
+    expect(transportTarget({ adapterId: 'pty' }, 'ses_1', 'opencode', none)).toEqual({
+      adapterId: 'pty',
+      resume: 'ses_1'
+    })
+    expect(transportTarget({ adapterId: 'pty' }, 'ses_1', 'opencode', () => true)).toEqual({
+      adapterId: 'pty',
+      resume: 'ses_1'
+    })
+    expect(asked).toBe(false)
+  })
+  it('starts a terminal under the id with the flag of its own family alone', () => {
+    const pi = transportSwitchOptions(
+      { claudeMode: false, piMode: true, launchProfileId: 'pi-chat' },
+      { adapterId: 'pty', sessionId: 'p1' }
+    )
+    expect(pi.piSessionId).toBe('p1')
+    expect(pi.claudeSessionId).toBeUndefined()
+    expect(pi.resumeSessionId).toBeUndefined()
+    const claude = transportSwitchOptions(chat, { adapterId: 'pty', sessionId: 'c1' })
+    expect(claude.claudeSessionId).toBe('c1')
+    expect(claude.piSessionId).toBeUndefined()
+    const codex = transportSwitchOptions(
+      { claudeMode: false, codexMode: true, launchProfileId: 'codex-chat' },
+      { adapterId: 'pty', sessionId: 't1' }
+    )
+    expect(codex.claudeSessionId).toBeUndefined()
+    expect(codex.piSessionId).toBeUndefined()
+    // A resume wins: the CLI takes one or the other.
+    const resumed = transportSwitchOptions(
+      { claudeMode: false, piMode: true, launchProfileId: 'pi-chat' },
+      { adapterId: 'pty', resume: 'p1', sessionId: 'p1' }
+    )
+    expect(resumed.piSessionId).toBeUndefined()
+    expect(resumed.resumeSessionId).toBe('p1')
+  })
+  // Lane D (PRDCT-4427, verifier round 1 Minor 3): the profile follows the tab.
+  it('carries a saved profile across the round trip: its chat form into the chat, the saved id back to the terminal', () => {
+    const toChat = transportSwitchOptions(
+      { claudeMode: false, piMode: true, launchProfileId: 'my-pi' },
+      { adapterId: 'pi-chat', resume: 'p1' }
+    )
+    expect(toChat.launchProfileId).toBe('chat:pi:my-pi')
+    const back = transportSwitchOptions(toChat, { adapterId: 'pty', resume: 'p1' })
+    expect(back.launchProfileId).toBe('my-pi')
+    // The built-in terminal, a terminal that named none, and a chat id already
+    // land on the family's built-in chat.
+    for (const launchProfileId of ['builtin-pi', undefined, 'pi-chat', 'chat:pi:other'])
+      expect(
+        transportSwitchOptions(
+          { claudeMode: false, piMode: true, launchProfileId },
+          { adapterId: 'pi-chat', resume: 'p1' }
+        ).launchProfileId,
+        String(launchProfileId)
+      ).toBe('pi-chat')
+    // The built-in chat back, or another family's chat form: left to the caller.
+    expect(
+      transportSwitchOptions(
+        { claudeMode: false, piMode: true, launchProfileId: 'pi-chat' },
+        { adapterId: 'pty', resume: 'p1' }
+      ).launchProfileId
+    ).toBeUndefined()
+    expect(
+      transportSwitchOptions(
+        { claudeMode: false, piMode: true, launchProfileId: 'chat:codex:mine' },
+        { adapterId: 'pty', resume: 'p1' }
+      ).launchProfileId
+    ).toBeUndefined()
   })
   it('throws on a target that is neither transport of the harness, and for a plain terminal', () => {
     expect(() => transportSwitchOptions(chat, { adapterId: 'codex-chat', resume: 'x' })).toThrow(
@@ -525,9 +615,8 @@ describe('the provider switch knows Pi (lane D, PRDCT-4427)', () => {
     expect(isTransportSwitch('pty', 'pi-chat', 'pi')).toBe(true)
     expect(isTransportSwitch('pty', 'pi-chat', 'opencode')).toBe(false)
   })
-  it("resumes Pi's session either way, its terminal never started under the id", () => {
-    const none = (): boolean => false
-    expect(transportTarget({ adapterId: 'pty' }, 'p1', 'pi', none)).toEqual({
+  it("resumes Pi's session either way once Pi wrote its file", () => {
+    expect(transportTarget({ adapterId: 'pty' }, 'p1', 'pi', () => true)).toEqual({
       adapterId: 'pty',
       resume: 'p1'
     })

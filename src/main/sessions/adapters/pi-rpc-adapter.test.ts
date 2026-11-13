@@ -247,6 +247,42 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     ])
   })
 
+  // Verifier round 1, gap (mutation 27): Pi's run settled while the steer was
+  // on its way; Pi answers it queued and starts nothing (PI_STAND_IN_IDLE_STEER).
+  it('a steer Pi answers queued while idle, with no run starting, goes once more as prompt, and the echo arrives', async () => {
+    const s = await open({}, { env: { PI_STAND_IN_IDLE_STEER: 'queue' } })
+    await expect.poll(() => types(s.state).includes('get_commands')).toBe(true)
+    const internal = (
+      s.adapter as unknown as {
+        handles: Map<
+          string,
+          {
+            runActive: boolean
+            connection: { command: (type: string, ...rest: unknown[]) => Promise<unknown> }
+          }
+        >
+      }
+    ).handles.get(s.handle.id)!
+    // The adapter still reads Pi's run as going: the message goes as a steer,
+    // and Pi's agent_settled lands before the steer's answer.
+    internal.runActive = true
+    const command = internal.connection.command.bind(internal.connection)
+    internal.connection.command = (type, ...rest) => {
+      if (type === 'steer') internal.runActive = false
+      return command(type, ...rest)
+    }
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+    await expect.poll(() => done(s.events), { timeout: 3000 }).toBe(true)
+    const sent = frames(s.state).filter((f) => f.type === 'prompt' || f.type === 'steer')
+    expect(sent.map((f) => [f.type, f.message])).toEqual([
+      ['steer', 'hello'],
+      ['prompt', 'hello']
+    ])
+    expect(notices(s.events)).toEqual([])
+    expect(s.events).toContainEqual({ type: 'assistant_text', delta: 'hello', final: false })
+  })
+
   it('a prompt Pi refuses as streaming goes once more as steer, and the echo arrives', async () => {
     const s = await open({}, { env: { PI_STAND_IN_STREAMING_ONCE: '1' } })
     s.events.length = 0

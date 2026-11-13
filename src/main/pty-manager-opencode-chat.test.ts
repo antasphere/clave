@@ -334,4 +334,53 @@ describe('an OpenCode chat to its terminal (lane D, PRDCT-4427)', () => {
     expect(plan?.options.viewId).toBeUndefined()
     expect(plan?.options.claudeSessionId).toBeUndefined()
   })
+  // Verifier round 1, Major 1: the chat's map entry goes with the chat's kill;
+  // the terminal's Resume still has the OpenCode session to resume.
+  it("the terminal's Resume plans the same OpenCode session, from its spawn, else its record", async () => {
+    const session = await openOpencodeChat()
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', providerSessionId: OPENCODE_SESSION }
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id ? { id: session.id, adapterId: 'opencode-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })!
+    // The restart: the chat killed for good, the terminal spawned on the plan.
+    await ptyManager.kill(session.id, true)
+    const terminal = {
+      id: session.id,
+      cwd: '/project',
+      folderName: 'project',
+      alive: true,
+      ptyProcess: null
+    }
+    vi.mocked(mocks.pty.prepare).mockImplementation((() => terminal) as never)
+    mocks.backend.getSession.mockImplementation(((key: string) =>
+      key === session.id ? terminal : undefined) as never)
+    await ptyManager.spawn(plan.cwd, plan.options)
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id
+        ? {
+            id: session.id,
+            adapterId: 'pty',
+            opencodeMode: true,
+            opencodeSessionId: OPENCODE_SESSION
+          }
+        : null) as never)
+    expect(ptyManager.conversationIdOf(session.id)).toBe(OPENCODE_SESSION)
+    const resume = ptyManager.restartSpawn(session.id, { onlyIfStopped: true })
+    expect(resume?.options).toMatchObject({ opencodeMode: true, resumeSessionId: OPENCODE_SESSION })
+    expect(resume?.resumed).toBe(true)
+    // A terminal spawned with no id of its own: the record's.
+    await ptyManager.kill(session.id, true)
+    await ptyManager.spawn('/project', { claudeMode: false, opencodeMode: true })
+    expect(
+      ptyManager.restartSpawn(session.id, { onlyIfStopped: true })?.options.resumeSessionId
+    ).toBe(OPENCODE_SESSION)
+  })
 })

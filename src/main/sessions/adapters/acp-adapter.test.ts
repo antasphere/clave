@@ -215,6 +215,39 @@ describe('AcpAdapter against the stand-in agent', () => {
     ])
   })
 
+  // Verifier round 1, gap (mutation 22): the protocol asks a client that
+  // cancels a turn to settle its open permission requests as cancelled.
+  it('an interrupt while a permission is asked answers it cancelled and withdraws the card', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'ask permission' })
+    await expect.poll(() => s.events.some((e) => e.type === 'permission_request')).toBe(true)
+    const request = s.events.find((e) => e.type === 'permission_request') as { id: string }
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    await expect
+      .poll(() =>
+        frames(s.state).find(
+          (f) => (f as { id?: unknown }).id === JSON.parse(request.id) && !f.method
+        )
+      )
+      .toMatchObject({ result: { outcome: { outcome: 'cancelled' } } })
+    expect(s.events).toContainEqual({ type: 'permission_withdrawn', id: request.id })
+    expect(frames(s.state).some((f) => f.method === 'session/cancel')).toBe(true)
+    await expect.poll(() => done(s.events)).toBe(true)
+  })
+
+  // Verifier round 1, gap (mutation 25): OpenCode streams its subagents'
+  // child sessions beside the parent's; only the tab's own session is shown.
+  it("ignores a session/update of another session, a subagent's text never in the chat", async () => {
+    const s = await open({}, { env: { ACP_STAND_IN_STRAY_UPDATE: '1' } })
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+    await expect.poll(() => done(s.events)).toBe(true)
+    expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(true)
+    expect(
+      s.events.filter((e) => e.type === 'assistant_text').map((e) => (e as { delta: string }).delta)
+    ).toEqual(['You said: ', 'hel', 'lo', ''])
+  })
+
   it('set_model sends set_config_option and names the new model', async () => {
     const s = await open()
     s.events.length = 0
