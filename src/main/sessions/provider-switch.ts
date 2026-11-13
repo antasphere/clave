@@ -19,6 +19,12 @@
  *   message carries the conversation as Markdown, the files the agent
  *   touched and where the full tape was written. Every other direction, and
  *   the fallback when the conversion is refused or the read-back fails.
+ *
+ * A third road never reconstructs anything (PRDCT-4427): the **transport
+ * switch**. The tab goes from its chat to its terminal and back on the same
+ * harness, the same conversation resumed the way its CLI resumes it (Claude's
+ * `--resume <id>`, Codex's `resume <id>`, the chat adapter's own resume);
+ * only the transport changes. Nothing is converted, nothing handed off.
  */
 import {
   readClaude,
@@ -29,6 +35,9 @@ import {
 } from '@clave/session-bridge'
 import type { ContinuedFrom, ProviderOverride } from '@clave/contract/sessions'
 import type { PtySpawnOptions } from './adapters/pty-backend'
+import type { LauncherFamily } from '../../shared/agent-launch'
+import { HARNESS_BY_ID } from '../../shared/harness'
+import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
 
 /** The built-in chat adapters and the launch profile each is reached by; a
  *  plugin's adapter is its own profile id. */
@@ -223,4 +232,130 @@ export function planRoad(facts: {
     to: { adapterId: facts.toAdapterId, provider: providerOf(facts.toAdapterId) },
     ...road
   }
+}
+
+// ── Lane D (PRDCT-4427): the transport switch, chat to terminal and back ──
+
+/** The harness family a spawn runs; null for a plain terminal. */
+export function familyOfOptions(previous: {
+  claudeMode?: boolean
+  codexMode?: boolean
+  piMode?: boolean
+  opencodeMode?: boolean
+  antigravityMode?: boolean
+  claudeAgentsMode?: boolean
+}): LauncherFamily | null {
+  if (previous.codexMode) return 'codex'
+  if (previous.piMode) return 'pi'
+  if (previous.opencodeMode) return 'opencode'
+  if (previous.antigravityMode) return 'antigravity'
+  if (previous.claudeAgentsMode) return 'claude'
+  if (previous.claudeMode === false) return null
+  return 'claude'
+}
+
+/** A move between the family's terminal (`pty`) and its own chat adapter,
+ *  either way: the same harness, only the transport changes. Never between
+ *  two chats (a provider switch), never for a plain terminal or a family
+ *  with no chat adapter. */
+export function isTransportSwitch(
+  fromAdapterId: string | undefined,
+  toAdapterId: string,
+  family: LauncherFamily | null
+): boolean {
+  if (!family) return false
+  const chat = HARNESS_BY_ID[family].chatAdapterId
+  if (!chat) return false
+  return (
+    (fromAdapterId === 'pty' && toAdapterId === chat) ||
+    (fromAdapterId === chat && toAdapterId === 'pty')
+  )
+}
+
+/** The refusal of a terminal-to-chat move with no conversation to carry:
+ *  resume or refuse, never a silent fresh chat (lane D, amendment 1). */
+export const NO_CONVERSATION_TO_CARRY =
+  'This terminal has no conversation to carry into a chat yet.'
+
+/** Where a transport switch takes the conversation: into a chat only when
+ *  there is one to resume (resume or refuse, never a silent fresh chat,
+ *  amendment 1); into a Claude terminal resumed when its transcript exists,
+ *  else started under the same session id (`--session-id`, amendment 2);
+ *  into another family's terminal resumed on the conversation found (a
+ *  Codex thread). `hasTranscript` is the Claude transcript guard, given by
+ *  the caller (`findTranscript`), so the rule stays pure. */
+export function transportTarget(
+  target: { adapterId: string; viewId?: string; model?: string },
+  conversationId: string | undefined,
+  family: LauncherFamily | null,
+  hasTranscript: (conversationId: string) => boolean
+): { adapterId: string; resume?: string; sessionId?: string; viewId?: string; model?: string } {
+  if (target.adapterId !== 'pty') {
+    if (!conversationId) throw new Error(NO_CONVERSATION_TO_CARRY)
+    return { ...target, resume: conversationId }
+  }
+  if (!conversationId) return target
+  if (family !== 'claude' || hasTranscript(conversationId))
+    return { ...target, resume: conversationId }
+  return { ...target, sessionId: conversationId }
+}
+
+/** The restart's spawn rebuilt for the other transport of the same harness.
+ *  To the terminal: the family's selected profile resolved by the spawn, the
+ *  conversation resumed when it exists (`resume`), else started under its id
+ *  (`sessionId`, Claude's `--session-id`), the chat's mode kept only when the
+ *  CLI's flag takes it. To the chat: the family's chat profile, the
+ *  conversation resumed, the view the tab opens in. The account, the
+ *  dangerous flag, the tab's lineage and work stay either way. */
+export function transportSwitchOptions(
+  previous: PtySpawnOptions,
+  target: {
+    adapterId: string
+    resume?: string
+    sessionId?: string
+    viewId?: string
+    model?: string
+  }
+): PtySpawnOptions {
+  const family = familyOfOptions(previous)
+  const harness = family ? HARNESS_BY_ID[family] : null
+  if (!family || !harness?.chatAdapterId)
+    throw new Error('A transport switch needs a harness with a chat adapter.')
+  if (target.adapterId === 'pty') {
+    const rung =
+      previous.permissionMode !== undefined &&
+      harness.permissionRungs.some((entry) => entry.id === previous.permissionMode)
+    return {
+      ...previous,
+      launchProfileId: undefined,
+      launchProfile: undefined,
+      resumeSessionId: target.resume,
+      claudeSessionId: target.resume ? undefined : target.sessionId,
+      piSessionId: undefined,
+      viewId: undefined,
+      initialPrompt: undefined,
+      initialInput: undefined,
+      effort: undefined,
+      model: target.model ?? previous.model,
+      permissionMode: rung ? previous.permissionMode : undefined
+    }
+  }
+  if (target.adapterId === harness.chatAdapterId)
+    return {
+      ...previous,
+      launchProfileId: CHAT_PROFILE_IDS[family],
+      launchProfile: undefined,
+      resumeSessionId: target.resume,
+      claudeSessionId: undefined,
+      piSessionId: undefined,
+      viewId: target.viewId,
+      model: target.model ?? previous.model,
+      initialPrompt: undefined,
+      initialCommand: undefined,
+      autoExecute: undefined,
+      initialInput: undefined,
+      effort: undefined,
+      permissionMode: undefined
+    }
+  throw new Error(`"${target.adapterId}" is not a transport of the ${family} harness.`)
 }

@@ -166,6 +166,9 @@ export interface RestartOverridesInput {
   /** The first message of the fresh conversation when nothing is resumed (the handoff). */
   firstMessage?: string
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId?: string
 }
 
 /** The server a History row's conversation ran on (PRDCT-4321): absent for

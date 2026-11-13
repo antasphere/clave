@@ -77,6 +77,15 @@ export function availableViews(
       }))
   })
 }
+/** The views a chat session may be read in, for a tab that is not a chat yet
+ *  (lane D, PRDCT-4427): a terminal tab's menu lists them as the chats it can
+ *  become. The same filter as `availableViews` for a session on `events`. */
+export function chatViewsFor(
+  plugins: PluginRecord[],
+  implemented: ReadonlySet<string>
+): AvailableView[] {
+  return availableViews({ transport: 'events' } as Session, plugins, implemented)
+}
 /** Which view this session is read in. The session's own choice wins; a choice
  *  whose plugin is gone, disabled or no longer contributing that view falls back
  *  to the first view that renders the transport, and no view at all returns

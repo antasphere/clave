@@ -912,7 +912,10 @@ export const ProviderOverride = Schema.Struct({
   model: Schema.optional(Schema.String),
   resume: Schema.optional(Schema.String),
   firstMessage: Schema.optional(Schema.String),
-  continuedFrom: Schema.optional(ContinuedFrom)
+  continuedFrom: Schema.optional(ContinuedFrom),
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId: Schema.optional(Schema.NonEmptyString)
 })
 export type ProviderOverride = typeof ProviderOverride.Type
 /** Correlates one caller's answer and event; never a spawn override. */

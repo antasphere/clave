@@ -65,7 +65,13 @@ function permissionDefaultFor(family: LauncherFamily): string | undefined {
 }
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
-import { providerSwitchOptions } from './sessions/provider-switch'
+import {
+  familyOfOptions,
+  isTransportSwitch,
+  providerSwitchOptions,
+  transportSwitchOptions,
+  transportTarget
+} from './sessions/provider-switch'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -126,6 +132,10 @@ export interface RestartOverrides {
   resume?: string
   firstMessage?: string
   continuedFrom?: ContinuedFrom
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto its
+   *  family's chat adapter (`<pluginId>/<viewId>`); ignored on a move to the
+   *  terminal. */
+  viewId?: string
 }
 
 class PtyManager {
@@ -667,6 +677,30 @@ class PtyManager {
     }
   }
 
+  /** The profile a move to the terminal lands on (lane D, PRDCT-4427): left
+   *  to the spawn (undefined) when the family's selected profile is a
+   *  terminal; its terminal form when the selection is a chat (a saved
+   *  profile's `chat:<family>:<id>` is `<id>`; the built-in chat or a
+   *  plugin's adapter is the family's built-in terminal), or the move would
+   *  land in a chat again. */
+  terminalProfileFor(family: LauncherFamily, workspaceId?: string): string | undefined {
+    let selected: string
+    try {
+      selected = launchProfileManager.resolve(family, workspaceId).id
+    } catch {
+      return `builtin-${family}`
+    }
+    const events = eventsProfile(selected)
+    if (!events) return undefined
+    return events.sourceProfileId ?? `builtin-${family}`
+  }
+
+  /** Whether Claude wrote a transcript for this conversation (lane D,
+   *  PRDCT-4427): what decides a terminal resumes it or starts under its id. */
+  hasClaudeTranscript(conversationId: string, cwd: string, configDir?: string): boolean {
+    return findTranscript(conversationId, cwd, configDir) !== null
+  }
+
   /** The conversation a session would resume: Claude's session id, a Codex
    *  chat's thread, or the rollout a Codex terminal wrote (found by its cwd
    *  and start). Null when the session has nothing to resume. */
@@ -697,7 +731,7 @@ class PtyManager {
   restartSpawn(
     id: string,
     overrides: RestartOverrides
-  ): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
+  ): { cwd: string; options: PtySpawnOptions; resumed: boolean; keepView: boolean } | null {
     const spawn = this.spawns.get(id)
     if (!spawn) return null
     // A restart closes the report: the resend, when one is owed, rides it.
@@ -716,6 +750,7 @@ class PtyManager {
       resume,
       firstMessage,
       continuedFrom: continued,
+      viewId,
       ...requested
     } = overrides
     void _onlyIfStopped
@@ -760,6 +795,31 @@ class PtyManager {
       ...(record?.continuedFrom ? { continuedFrom: record.continuedFrom } : {}),
       ...account
     }
+    // The same harness on its other transport (lane D, PRDCT-4427): chat to
+    // terminal or back, the conversation resumed the way its CLI resumes it.
+    // The chat view the tab was read in does not follow it into a terminal.
+    const from = record?.adapterId ?? sessionManager.get(id)?.adapterId
+    const family = familyOfOptions(previous)
+    if (switching && isTransportSwitch(from, adapterId, family)) {
+      const moved = transportSwitchOptions(
+        options,
+        transportTarget(
+          { adapterId, viewId, model },
+          resume ?? conversationId ?? undefined,
+          family,
+          (conversation) => this.hasClaudeTranscript(conversation, spawn.cwd, options.configDir)
+        )
+      )
+      return {
+        cwd: spawn.cwd,
+        options:
+          adapterId === 'pty' && family
+            ? { ...moved, launchProfileId: this.terminalProfileFor(family, moved.workspaceId) }
+            : moved,
+        resumed: (resume ?? conversationId) != null,
+        keepView: false
+      }
+    }
     if (switching) {
       return {
         cwd: spawn.cwd,
@@ -770,10 +830,11 @@ class PtyManager {
           firstMessage,
           continuedFrom: continued
         }),
-        resumed: resume !== undefined
+        resumed: resume !== undefined,
+        keepView: true
       }
     }
-    return { cwd: spawn.cwd, options, resumed: conversationId !== null }
+    return { cwd: spawn.cwd, options, resumed: conversationId !== null, keepView: true }
   }
 
   /** `kill`, resolved once a tmux-backed process is really gone. */

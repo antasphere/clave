@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   continuedFrom,
+  familyOfOptions,
   firstTurn,
+  isTransportSwitch,
   launchProfileFor,
   planRoad,
   providerOf,
   providerSwitchOptions,
-  switchRoad
+  switchRoad,
+  transportSwitchOptions,
+  transportTarget
 } from './provider-switch'
 import type { PtySpawnOptions } from './adapters/pty-backend'
 
@@ -249,5 +253,183 @@ describe('the message the cap rejected crosses the move once, as the first turn 
     })
     expect(handed.initialPrompt).toBe('handoff')
     expect(handed.initialInput).toBeUndefined()
+  })
+})
+
+describe('the transport switch: the same harness, chat to terminal and back (lane D, PRDCT-4427)', () => {
+  it('reads the harness family a spawn runs, null for a plain terminal', () => {
+    expect(familyOfOptions({ claudeMode: true })).toBe('claude')
+    expect(familyOfOptions({})).toBe('claude')
+    expect(familyOfOptions({ claudeMode: false, claudeAgentsMode: true })).toBe('claude')
+    expect(familyOfOptions({ claudeMode: false, codexMode: true })).toBe('codex')
+    expect(familyOfOptions({ claudeMode: false, piMode: true })).toBe('pi')
+    expect(familyOfOptions({ claudeMode: false, opencodeMode: true })).toBe('opencode')
+    expect(familyOfOptions({ claudeMode: false, antigravityMode: true })).toBe('antigravity')
+    expect(familyOfOptions({ claudeMode: false })).toBeNull()
+  })
+  it('is a transport switch only between the terminal and the same family’s own chat', () => {
+    expect(isTransportSwitch('pty', 'claude-chat', 'claude')).toBe(true)
+    expect(isTransportSwitch('claude-chat', 'pty', 'claude')).toBe(true)
+    expect(isTransportSwitch('pty', 'codex-chat', 'codex')).toBe(true)
+    expect(isTransportSwitch('codex-chat', 'pty', 'codex')).toBe(true)
+    expect(isTransportSwitch('pty', 'codex-chat', 'claude')).toBe(false)
+    expect(isTransportSwitch('claude-chat', 'codex-chat', 'claude')).toBe(false)
+    expect(isTransportSwitch('pty', 'pty', 'claude')).toBe(false)
+    expect(isTransportSwitch('pty', 'claude-chat', null)).toBe(false)
+    expect(isTransportSwitch('pty', 'claude-chat', 'antigravity')).toBe(false)
+  })
+
+  const chat: PtySpawnOptions = {
+    claudeMode: true,
+    codexMode: false,
+    launchProfileId: 'claude-chat',
+    model: 'claude-opus-5-5',
+    effort: 'high',
+    permissionMode: 'plan',
+    dangerousMode: true,
+    claudeProfileId: 'work',
+    claudeProfileLabel: 'Work',
+    configDir: '/cfg/work',
+    resumeSessionId: 'conv-1',
+    adoptSessionId: 'tab-1',
+    workspaceId: 'ws',
+    spawnedBy: 'opener',
+    openedBy: 'agent',
+    viewId: 'clave.chat-view/lab',
+    initialPrompt: 'once',
+    initialInput: { type: 'user_message', text: 'rejected' }
+  }
+  it('to the terminal: the family’s selected profile, the conversation resumed, the chat’s view and prompt and effort dropped, the account and the tab kept', () => {
+    const options = transportSwitchOptions(chat, { adapterId: 'pty', resume: 'conv-1' })
+    expect(options).toMatchObject({
+      claudeMode: true,
+      codexMode: false,
+      resumeSessionId: 'conv-1',
+      model: 'claude-opus-5-5',
+      permissionMode: 'plan',
+      dangerousMode: true,
+      claudeProfileId: 'work',
+      claudeProfileLabel: 'Work',
+      configDir: '/cfg/work',
+      adoptSessionId: 'tab-1',
+      workspaceId: 'ws',
+      spawnedBy: 'opener',
+      openedBy: 'agent'
+    })
+    expect(options.launchProfileId).toBeUndefined()
+    expect(options.launchProfile).toBeUndefined()
+    expect(options.claudeSessionId).toBeUndefined()
+    expect(options.viewId).toBeUndefined()
+    expect(options.initialPrompt).toBeUndefined()
+    expect(options.initialInput).toBeUndefined()
+    expect(options.effort).toBeUndefined()
+  })
+  it('to the terminal: a chat with no transcript starts its terminal under the same Claude session id (amendment 2)', () => {
+    const options = transportSwitchOptions(chat, { adapterId: 'pty', sessionId: 'conv-1' })
+    expect(options.resumeSessionId).toBeUndefined()
+    expect(options.claudeSessionId).toBe('conv-1')
+    // A resume wins over the session id: the CLI takes one or the other.
+    const resumed = transportSwitchOptions(chat, {
+      adapterId: 'pty',
+      resume: 'conv-1',
+      sessionId: 'conv-1'
+    })
+    expect(resumed.claudeSessionId).toBeUndefined()
+  })
+  it('to the terminal: the chat’s mode is kept only when it is a rung of the harness, the model the target names wins', () => {
+    const manual = transportSwitchOptions(
+      { ...chat, permissionMode: 'manual' as PtySpawnOptions['permissionMode'] },
+      { adapterId: 'pty', resume: 'conv-1', model: 'claude-sonnet-5' }
+    )
+    expect(manual.permissionMode).toBeUndefined()
+    expect(manual.model).toBe('claude-sonnet-5')
+    const codex = transportSwitchOptions(
+      {
+        ...chat,
+        claudeMode: false,
+        codexMode: true,
+        permissionMode: 'workspace-write' as PtySpawnOptions['permissionMode']
+      },
+      { adapterId: 'pty', resume: 'thread-1' }
+    )
+    expect(codex.permissionMode).toBe('workspace-write')
+    expect(codex.resumeSessionId).toBe('thread-1')
+  })
+  const terminal: PtySpawnOptions = {
+    claudeMode: false,
+    codexMode: true,
+    launchProfileId: 'codex-default',
+    model: 'gpt-5.5',
+    effort: 'high',
+    permissionMode: 'workspace-write' as PtySpawnOptions['permissionMode'],
+    dangerousMode: false,
+    codexAccountId: 'c1',
+    codexAccountLabel: 'Codex 1',
+    adoptSessionId: 'tab-2',
+    initialCommand: 'ls',
+    autoExecute: true,
+    workspaceId: 'ws'
+  }
+  it('to the chat: the family’s chat profile, the conversation resumed, the view it opens in, the terminal’s launch words dropped, the account kept', () => {
+    const options = transportSwitchOptions(terminal, {
+      adapterId: 'codex-chat',
+      resume: 'thread-9',
+      viewId: 'clave.chat-view/folio'
+    })
+    expect(options).toMatchObject({
+      codexMode: true,
+      launchProfileId: 'codex-chat',
+      resumeSessionId: 'thread-9',
+      viewId: 'clave.chat-view/folio',
+      model: 'gpt-5.5',
+      codexAccountId: 'c1',
+      codexAccountLabel: 'Codex 1',
+      adoptSessionId: 'tab-2',
+      workspaceId: 'ws',
+      dangerousMode: false
+    })
+    expect(options.permissionMode).toBeUndefined()
+    expect(options.effort).toBeUndefined()
+    expect(options.initialCommand).toBeUndefined()
+    expect(options.autoExecute).toBeUndefined()
+    expect(options.claudeSessionId).toBeUndefined()
+    const claude = transportSwitchOptions(chat, { adapterId: 'claude-chat', resume: 'conv-1' })
+    expect(claude.launchProfileId).toBe('claude-chat')
+  })
+  it('takes the conversation into a chat only when there is one, never as a silent fresh chat (amendment 1)', () => {
+    const none = (): boolean => false
+    expect(transportTarget({ adapterId: 'claude-chat', viewId: 'v' }, 'c', 'claude', none)).toEqual(
+      { adapterId: 'claude-chat', viewId: 'v', resume: 'c' }
+    )
+    expect(() => transportTarget({ adapterId: 'codex-chat' }, undefined, 'codex', none)).toThrow(
+      'This terminal has no conversation to carry into a chat yet.'
+    )
+    // A chat that never got a message opens a fresh terminal: nothing is lost.
+    expect(transportTarget({ adapterId: 'pty' }, undefined, 'claude', none)).toEqual({
+      adapterId: 'pty'
+    })
+  })
+  it('resumes a Claude conversation in the terminal only when its transcript exists, else starts under its id (amendment 2)', () => {
+    expect(transportTarget({ adapterId: 'pty' }, 'c', 'claude', () => true)).toEqual({
+      adapterId: 'pty',
+      resume: 'c'
+    })
+    expect(transportTarget({ adapterId: 'pty' }, 'c', 'claude', () => false)).toEqual({
+      adapterId: 'pty',
+      sessionId: 'c'
+    })
+    // A Codex thread was found by its rollout: it is resumed as it is.
+    expect(transportTarget({ adapterId: 'pty' }, 't', 'codex', () => false)).toEqual({
+      adapterId: 'pty',
+      resume: 't'
+    })
+  })
+  it('throws on a target that is neither transport of the harness, and for a plain terminal', () => {
+    expect(() => transportSwitchOptions(chat, { adapterId: 'codex-chat', resume: 'x' })).toThrow(
+      'not a transport'
+    )
+    expect(() =>
+      transportSwitchOptions({ claudeMode: false }, { adapterId: 'pty', resume: 'x' })
+    ).toThrow()
   })
 })
