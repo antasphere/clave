@@ -86,9 +86,10 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   // never under what the readable parts reach, and the same words.
   const partial = readInPart(request, value?.cwd)
   const unverified = (level === null || partial) && !!reading?.sentence
-  const unchecked = partial
-    ? 'Not verified. Clave could not check all of this'
-    : 'Not verified. Clave could not check this'
+  // What Clave's own checks could vouch for, in the reader's words, then
+  // whose reading the sentence is (PRDCT-4489): "Not verified … a model
+  // reads it as" read as jargon on the card.
+  const unchecked = partial ? 'Clave could check only part of this' : 'Clave could not check this'
   // The rules' note, beside the level or the "Not verified" line: what is
   // read may hold a secret. A hint, in the same neutral ink as the level.
   const secrets = maySecrets(request, value?.cwd) && (level !== null || unverified || partial)
@@ -112,7 +113,7 @@ export function PermissionReading({ request }: { request: Permission }): React.J
       )}
       {reading?.sentence ? (
         <p className="chat-permission-sentence" data-verified={unverified ? 'false' : undefined}>
-          {unverified && `${unchecked}; a model reads it as: `}
+          {unverified && `${unchecked}. A model's reading: `}
           {reading.sentence}
           {reading.asked && MATCH_WORDS[reading.asked] && (
             <span className="chat-permission-match" data-asked={reading.asked}>

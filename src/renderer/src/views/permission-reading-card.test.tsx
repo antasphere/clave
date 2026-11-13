@@ -92,7 +92,7 @@ describe('the reading on the card', () => {
       <PermissionReading request={request(UNKNOWN)} />,
       explained({ level: 'reads', sentence: 'Runs the tests. Changes nothing.' })
     )
-    expect(html).toContain('Not verified')
+    expect(html).toContain('Clave could not check this')
     expect(html).not.toContain('Reads only')
     expect(html).toContain('Runs the tests. Changes nothing.')
   })
@@ -103,7 +103,7 @@ describe('the reading on the card', () => {
       explained({ sentence: 'Lists a folder of the project. Changes nothing.' })
     )
     expect(html).toContain(
-      'Not verified. Clave could not check this; a model reads it as: Lists a folder of the project. Changes nothing.'
+      'Clave could not check this. A model&#x27;s reading: Lists a folder of the project. Changes nothing.'
     )
     expect(html).toContain('data-verified="false"')
     // One line, no pill beside the sentence.
@@ -116,7 +116,7 @@ describe('the reading on the card', () => {
     expect(known).not.toContain('could not check')
   })
 
-  it('notes "May show secrets" beside the level, and beside the "Not verified" line', () => {
+  it('notes "May show secrets" beside the level, and beside the "could not check" line', () => {
     const proven = render(<PermissionReading request={request('grep -r KEY .')} />, {
       explained: {},
       cwd: '/repo'
@@ -127,7 +127,7 @@ describe('the reading on the card', () => {
       <PermissionReading request={request('node scripts/show.js .env')} />,
       explained({ sentence: 'Counts the lines of a settings file.' })
     )
-    expect(unverified).toContain('Not verified. Clave could not check this')
+    expect(unverified).toContain('Clave could not check this')
     expect(unverified).toContain('May show secrets')
     const plain = render(<PermissionReading request={request('ls')} />, {
       explained: {},
@@ -164,14 +164,14 @@ describe('the reading on the card', () => {
       // Helper off: no reading ever comes; the card gave up waiting.
       const off = render(<PermissionReading request={request(command)} />, null)
       expect(off).not.toContain('chat-permission-level')
-      expect(off).toContain('Not verified. Clave could not check all of this.')
+      expect(off).toContain('Clave could check only part of this.')
       expect(off).not.toContain('Changes files of the project')
       const failed = render(
         <PermissionReading request={request(command)} />,
         explained({ failed: 'timeout' })
       )
       expect(failed).not.toContain('chat-permission-level')
-      expect(failed).toContain('Not verified. Clave could not check all of this.')
+      expect(failed).toContain('Clave could check only part of this.')
       // The model says it only reads: the floor, and the same words before the sentence.
       const read = render(
         <PermissionReading request={request(command)} />,
@@ -179,7 +179,7 @@ describe('the reading on the card', () => {
       )
       expect(read).toContain('data-level="project"')
       expect(read).toContain(
-        'Not verified. Clave could not check all of this; a model reads it as: Writes a log file.'
+        'Clave could check only part of this. A model&#x27;s reading: Writes a log file.'
       )
       // The model raises it.
       expect(

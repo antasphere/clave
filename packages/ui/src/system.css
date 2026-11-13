@@ -4234,6 +4234,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin: 0;
   color: var(--text-secondary);
 }
+/* Whose words the detail is: the agent's, in the quieter ink. */
+.chat-prompt-detail-who {
+  color: var(--text-tertiary);
+}
 .chat-prompt-step {
   flex-shrink: 0;
   padding: 0 calc(var(--spacing) * 1.5);

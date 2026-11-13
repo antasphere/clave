@@ -167,7 +167,17 @@ function PermissionPrompt({
       {target && <div className="chat-prompt-target">{target}</div>}
       {/* PRDCT-4331: the level at once, then what the request does in plain words. */}
       <PermissionReading request={request} />
-      {request.detail && <p className="chat-prompt-detail">{request.detail}</p>}
+      {/* The agent's own word on the request, said to be its own: the reading
+          above is Clave's and a model's, which never take the agent's word
+          (PRDCT-4489). */}
+      {request.detail && (
+        <p className="chat-prompt-detail">
+          <span className="chat-prompt-detail-who">
+            {agent.charAt(0).toUpperCase() + agent.slice(1)} says:
+          </span>{' '}
+          {request.detail}
+        </p>
+      )}
       {code && (
         <pre className="chat-prompt-code">
           {code.language === 'bash' && <span className="chat-tool-prompt">$ </span>}
