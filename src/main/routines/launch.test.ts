@@ -176,7 +176,8 @@ describe('resolveLaunch', () => {
       facts()
     )
     expect(pi.ok && pi).toMatchObject({
-      form: 'terminal',
+      // Pi has a chat view since PRDCT-4427: a routine naming no form runs in it.
+      form: 'chat',
       spawn: { piMode: true, piThinking: 'high', piProvider: 'anthropic' }
     })
     const agy = resolveLaunch(routine({ agent: 'antigravity' }), facts())
@@ -227,7 +228,8 @@ describe('resolveLaunch', () => {
   it('resolves an OpenCode launch from the harness table: no pool, no model, its skip flag kept', () => {
     const oc = resolveLaunch(routine({ agent: 'opencode', dangerousMode: true }), facts())
     expect(oc.ok && oc).toMatchObject({
-      form: 'terminal',
+      // OpenCode has a chat view since PRDCT-4427: a routine naming no form runs in it.
+      form: 'chat',
       account: null,
       spawn: { opencodeMode: true, dangerousMode: true }
     })
