@@ -23,7 +23,12 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
-import { providerInjectionForSpawn, type ProviderSpawnFields } from './provider-injection-spawn'
+import {
+  piSessionLookupEnv,
+  providerInjectionForSpawn,
+  type ProviderSpawnFields
+} from './provider-injection-spawn'
+import { opencodeConfiguredModel } from './provider-injection'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -377,6 +382,31 @@ class PtyManager {
         options?.viewId ??
         (isEvents ? initialChatView(defaultViewFor(profileId)) : defaultViewFor(profileId))
     }
+    // A Pi or OpenCode chat on a stored connection opens it the way the
+    // terminal does (PRDCT-4496): its variables on the process alone, Pi's
+    // provider on its command line, never on the record. Read from the
+    // options at every spawn, so a key fixed in Settings reaches the next
+    // Resume; a refusal (gone, no key) ends the spawn here, before any
+    // process starts. A chat on no connection keeps the login shell's
+    // environment as it was.
+    const chatConnection: ProviderSpawnFields =
+      isEvents &&
+      options?.connectionId &&
+      (adapter.id === 'opencode-chat' || adapter.id === 'pi-chat')
+        ? await providerInjectionForSpawn(adapter.id === 'pi-chat' ? 'pi' : 'opencode', {
+            connectionId: options.connectionId,
+            model: options.model
+          })
+        : {}
+    const chatEnvAccount = chatConnection.providerEnv
+      ? { providerEnv: chatConnection.providerEnv }
+      : {}
+    // Pi keeps its sessions under the directory it runs in: the connection's,
+    // when the chat names one, so the guard below looks there.
+    const piHome = chatConnection.providerEnv?.PI_CODING_AGENT_DIR
+    const piLookupEnv = piHome
+      ? { ...getLoginShellEnv(), PI_CODING_AGENT_DIR: piHome }
+      : getLoginShellEnv()
     // A restored chat tab that never got a message has an id but no
     // transcript (Claude) or rollout (Codex), and resuming it fails: it
     // relaunches fresh under the same id instead. An OpenCode chat's id is
@@ -391,7 +421,7 @@ class PtyManager {
         // Lane D (PRDCT-4427): a Pi session exists once Pi wrote its file
         // (at the first message); until then the chat starts under its id.
         (adapter.id === 'pi-chat' &&
-          !findPiSession(options.resumeSessionId, cwd, getLoginShellEnv())))
+          !findPiSession(options.resumeSessionId, cwd, piLookupEnv)))
         ? undefined
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {
@@ -416,22 +446,6 @@ class PtyManager {
         options?.initialPrompt
       )
     }
-    // A Pi or OpenCode chat on a stored connection opens it the way the
-    // terminal does (PRDCT-4496): its variables on the process alone, Pi's
-    // provider on its command line, never on the record. A chat on no
-    // connection keeps the login shell's environment as it was.
-    const chatConnection: ProviderSpawnFields =
-      isEvents &&
-      options?.connectionId &&
-      (adapter.id === 'opencode-chat' || adapter.id === 'pi-chat')
-        ? await providerInjectionForSpawn(adapter.id === 'pi-chat' ? 'pi' : 'opencode', {
-            connectionId: options.connectionId,
-            model: options.model
-          })
-        : {}
-    const chatEnvAccount = chatConnection.providerEnv
-      ? { providerEnv: chatConnection.providerEnv }
-      : {}
     // Lane D (PRDCT-4427): the binary and `acp` alone. A saved profile's
     // `additionalArgs` (`--auto`, a `--session`) are the TUI's words, not the
     // protocol's; the ACP agent asks its permissions over the protocol.
@@ -473,7 +487,14 @@ class PtyManager {
           ...record,
           options: {
             resume,
-            model: options?.model,
+            // An OpenCode chat on a connection opens its session on the model
+            // its configuration names, in OpenCode's `provider/model`: that is
+            // the model the adapter expects, so it switches nothing and says
+            // nothing about a bare id OpenCode would not list.
+            model:
+              (adapter.id === 'opencode-chat'
+                ? opencodeConfiguredModel(chatConnection.providerEnv)
+                : undefined) ?? options?.model,
             effort,
             // The echo fixture takes its launch prompt here; Claude's,
             // Codex's, OpenCode's and Pi's come through their configure above.
@@ -824,10 +845,14 @@ class PtyManager {
     family: LauncherFamily,
     conversationId: string,
     cwd: string,
-    configDir?: string
+    configDir?: string,
+    connectionId?: string
   ): boolean {
     if (family === 'claude') return findTranscript(conversationId, cwd, configDir) !== null
-    if (family === 'pi') return findPiSession(conversationId, cwd, getLoginShellEnv()) !== null
+    // A Pi tab on a stored connection runs in the connection's directory, so
+    // its session file is looked for there (PRDCT-4496).
+    if (family === 'pi')
+      return findPiSession(conversationId, cwd, piSessionLookupEnv(connectionId)) !== null
     if (family === 'codex') return hasCodexRollout(conversationId, codexRoot(getLoginShellEnv()))
     return family === 'opencode'
   }
@@ -962,7 +987,14 @@ class PtyManager {
           resume ?? conversationId ?? undefined,
           family,
           (conversation) =>
-            !!family && this.hasConversation(family, conversation, spawn.cwd, options.configDir)
+            !!family &&
+            this.hasConversation(
+              family,
+              conversation,
+              spawn.cwd,
+              options.configDir,
+              options.connectionId
+            )
         ),
         { profileExists: (owner, profileId) => this.profileExists(owner, profileId) }
       )

@@ -15,11 +15,15 @@ vi.mock('./mcp/mcp-runtime', () => ({
 
 import {
   providerConnectionsForListing,
+  piSessionLookupEnv,
   providerInjectionForSpawn,
   setConnectionListingSource
 } from './provider-injection-spawn'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import type { ConnectionForSpawn } from './provider-injection'
-import type { syncPiConnectionDir } from './provider-injection-pi-dir'
+import { syncPiConnectionDir } from './provider-injection-pi-dir'
 import type { CatalogModel } from './models-catalog'
 
 /**
@@ -197,5 +201,48 @@ describe('providerConnectionsForListing', () => {
     } finally {
       setConnectionListingSource(null)
     }
+  })
+})
+
+describe('piSessionLookupEnv (PRDCT-4427)', () => {
+  const lookupDeps = {
+    root: () => '/made-up/pi-connections',
+    loginEnv: () => ({ PATH: '/login/bin', PI_CODING_AGENT_DIR: '/made-up/home/.pi/agent' })
+  }
+  it("puts the connection's own directory over the login shell's, where its Pi runs", () => {
+    expect(piSessionLookupEnv('conn-1', lookupDeps)).toEqual({
+      PATH: '/login/bin',
+      PI_CODING_AGENT_DIR: '/made-up/pi-connections/conn-1'
+    })
+  })
+  it('is the same directory providerInjectionForSpawn hands the process (the real sync)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-pi-lookup-'))
+    try {
+      const root = path.join(tmp, 'pi-connections')
+      const d = deps({ 'conn-1': { ...deepseek, company: 'moonshot' } })
+      const out = await providerInjectionForSpawn(
+        'pi',
+        { connectionId: 'conn-1' },
+        {
+          ...d.all,
+          sync: syncPiConnectionDir,
+          root: () => root,
+          loginEnv: () => ({ PI_CODING_AGENT_DIR: path.join(tmp, 'home-agent') })
+        }
+      )
+      expect(out.providerEnv?.PI_CODING_AGENT_DIR).toBe(path.join(root, 'conn-1'))
+      expect(
+        piSessionLookupEnv('conn-1', { root: () => root, loginEnv: () => ({}) })
+          .PI_CODING_AGENT_DIR
+      ).toBe(out.providerEnv?.PI_CODING_AGENT_DIR)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+  it("keeps the login shell's for a tab on no connection, or an id that names no directory", () => {
+    for (const id of [undefined, '', '.', '..', 'a/b', 'a\\b'])
+      expect(piSessionLookupEnv(id, lookupDeps).PI_CODING_AGENT_DIR).toBe(
+        '/made-up/home/.pi/agent'
+      )
   })
 })

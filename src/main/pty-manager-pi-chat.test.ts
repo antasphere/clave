@@ -88,9 +88,18 @@ const injection = vi.hoisted(() => ({
       kind: string | null,
       options: { connectionId?: string; model?: string }
     ) => Promise<Record<string, unknown>>
-  >(async () => ({}))
+  >(async () => ({})),
+  /** Where a connection's Pi directory lives in these tests: set per test. */
+  connectionsRoot: '' as string
 }))
-vi.mock('./provider-injection-spawn', () => ({ providerInjectionForSpawn: injection.forSpawn }))
+vi.mock('./provider-injection-spawn', () => ({
+  providerInjectionForSpawn: injection.forSpawn,
+  // The real lookup's shape: the connection's directory over the login env.
+  piSessionLookupEnv: (connectionId?: string) =>
+    connectionId
+      ? { ...mocks.loginEnv, PI_CODING_AGENT_DIR: `${injection.connectionsRoot}/${connectionId}` }
+      : { ...mocks.loginEnv }
+}))
 vi.mock('./session-history/codex', () => ({
   codexRoot: () => '/codex/sessions',
   findCodexThreadForSession: () => null,
@@ -337,6 +346,115 @@ describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => 
     expect(after(configured().command, '--provider')).toBe('anthropic')
     expect(mocks.buildSpawnEnv).toHaveBeenLastCalledWith(mocks.loginEnv, {})
     expect(writtenRecord().connectionId).toBeUndefined()
+  })
+  it('the value reaches the environment and nothing else: not the session spec, the adoption, the record or the spawn kept for a restart', async () => {
+    injection.forSpawn.mockResolvedValue({
+      providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
+      piProvider: 'stand-in-provider'
+    })
+    const session = await openPiChat({ connectionId: 'conn-1', connectionLabel: 'Stand-in' })
+    expect(configured().env).toBeDefined()
+    expect(JSON.stringify(mocks.pi.spawn.mock.calls)).not.toContain(STAND_IN_KEY)
+    expect(JSON.stringify(mocks.manager.adopt.mock.calls)).not.toContain(STAND_IN_KEY)
+    expect(JSON.stringify(mocks.backend.writeEventSessionRecord.mock.calls)).not.toContain(
+      STAND_IN_KEY
+    )
+    expect(JSON.stringify(configured().command)).not.toContain(STAND_IN_KEY)
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id ? { id: session.id, adapterId: 'pi-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {})
+    expect(plan?.options).toMatchObject({ connectionId: 'conn-1' })
+    expect(JSON.stringify(plan)).not.toContain(STAND_IN_KEY)
+    // A restart opens the connection again, from the options: never a value
+    // kept from the first spawn.
+    await ptyManager.kill(session.id, true)
+    await ptyManager.spawn(plan!.cwd, plan!.options)
+    expect(injection.forSpawn).toHaveBeenCalledTimes(2)
+    expect(injection.forSpawn).toHaveBeenLastCalledWith('pi', {
+      connectionId: 'conn-1',
+      model: undefined
+    })
+    injection.forSpawn.mockReset()
+    injection.forSpawn.mockImplementation(async () => ({}))
+  })
+  it('a refusal at start (no key yet) ends the spawn before Pi is configured or started', async () => {
+    injection.forSpawn.mockRejectedValueOnce(new Error('The connection has no key yet.'))
+    await expect(openPiChat({ connectionId: 'conn-1' })).rejects.toThrow(
+      /^The connection has no key yet\.$/
+    )
+    expect(mocks.pi.configure).not.toHaveBeenCalled()
+    expect(mocks.pi.spawn).not.toHaveBeenCalled()
+    expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
+  })
+})
+
+// Lane D's note, point 3: Pi keeps a session's file under the directory it
+// runs in. A connection's directory links `sessions` to the person's own only
+// when the person had one at its first sync; a person whose first Pi ran on a
+// connection has a real `sessions` folder in the connection's directory. The
+// guard must look where the process will.
+describe('a Pi chat on a connection resumes from the directory it runs in (PRDCT-4427)', () => {
+  let connectionsRoot: string
+  beforeEach(() => {
+    connectionsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-pi-conn-'))
+    injection.connectionsRoot = connectionsRoot
+  })
+  afterEach(() => {
+    fs.rmSync(connectionsRoot, { recursive: true, force: true })
+    injection.forSpawn.mockReset()
+    injection.forSpawn.mockImplementation(async () => ({}))
+  })
+  function connectionDir(id = 'conn-1'): string {
+    const dir = path.join(connectionsRoot, id)
+    fs.mkdirSync(dir, { recursive: true })
+    injection.forSpawn.mockResolvedValue({
+      providerEnv: { STAND_IN_API_KEY: 'stand-in-key-not-a-secret', PI_CODING_AGENT_DIR: dir },
+      piProvider: 'stand-in-provider'
+    })
+    return dir
+  }
+  function writeSessionIn(home: string, id: string, cwd = '/project'): void {
+    const dir = piSessionDir(cwd, { PI_CODING_AGENT_DIR: home })
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, `2026-11-13T21-00-00-000Z_${id}.jsonl`), '{"type":"session"}\n')
+  }
+  it("resumes (--session) a session Pi wrote in the connection's own sessions folder, the person's home holding none", async () => {
+    const dir = connectionDir()
+    writeSessionIn(dir, PI_SESSION)
+    await openPiChat({ connectionId: 'conn-1', resumeSessionId: PI_SESSION })
+    const { command } = configured()
+    expect(after(command, '--session')).toBe(PI_SESSION)
+    expect(command).not.toContain('--session-id')
+    expect(spawnOptions().resume).toBe(PI_SESSION)
+  })
+  it("resumes through the connection's link to the person's sessions", async () => {
+    const dir = connectionDir()
+    fs.mkdirSync(path.join(piHome, 'sessions'), { recursive: true })
+    fs.symlinkSync(path.join(piHome, 'sessions'), path.join(dir, 'sessions'))
+    writePiSession(PI_SESSION)
+    await openPiChat({ connectionId: 'conn-1', resumeSessionId: PI_SESSION })
+    expect(after(configured().command, '--session')).toBe(PI_SESSION)
+  })
+  it("starts under the id (--session-id) when the file is in the person's home but not where the connection's Pi runs", async () => {
+    const dir = connectionDir()
+    fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true })
+    writePiSession(PI_SESSION)
+    await openPiChat({ connectionId: 'conn-1', resumeSessionId: PI_SESSION })
+    const { command } = configured()
+    expect(after(command, '--session-id')).toBe(PI_SESSION)
+    expect(command).not.toContain('--session')
+    expect(spawnOptions().resume).toBeUndefined()
+  })
+  it("a move to the terminal resumes the session the connection's Pi wrote", async () => {
+    const dir = connectionDir()
+    const session = await openPiChat({ connectionId: 'conn-1' })
+    const id = after(configured().command, '--session-id')!
+    writeSessionIn(dir, id)
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id ? { id: session.id, adapterId: 'pi-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })
+    expect(plan).toMatchObject({ resumed: true })
+    expect(plan?.options).toMatchObject({ piMode: true, resumeSessionId: id, connectionId: 'conn-1' })
   })
 })
 

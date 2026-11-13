@@ -89,7 +89,10 @@ const injection = vi.hoisted(() => ({
     ) => Promise<Record<string, unknown>>
   >(async () => ({}))
 }))
-vi.mock('./provider-injection-spawn', () => ({ providerInjectionForSpawn: injection.forSpawn }))
+vi.mock('./provider-injection-spawn', () => ({
+  providerInjectionForSpawn: injection.forSpawn,
+  piSessionLookupEnv: () => ({ PATH: '/login/bin', LOGIN_SHELL: 'yes' })
+}))
 vi.mock('./session-history/codex', () => ({
   codexRoot: () => '/codex/sessions',
   findCodexThreadForSession: () => null,
@@ -424,6 +427,74 @@ describe('an OpenCode chat on a stored connection (PRDCT-4496 with PRDCT-4427)',
     expect(record).toMatchObject({ connectionId: 'conn-1', connectionLabel: 'Stand-in' })
     expect(JSON.stringify(record)).not.toContain(STAND_IN_KEY)
     expect(JSON.stringify(record)).not.toContain('providerEnv')
+  })
+  // Lane D's note, point 4: the launcher names the bare model (`k3`); the
+  // configuration names it `kimi-code-plan-global/k3`, the form OpenCode
+  // lists and opens the session on. The adapter must be handed that form, or
+  // it asks for `k3`, finds it nowhere and posts a notice.
+  it("hands the adapter the configuration's provider/model, the record keeping the launch's own", async () => {
+    injection.forSpawn.mockResolvedValueOnce({
+      providerEnv: {
+        KIMI_API_KEY: STAND_IN_KEY,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          providers: { 'kimi-code-plan-global': { settings: { apiKey: '{env:KIMI_API_KEY}' } } },
+          enabled_providers: ['kimi-code-plan-global'],
+          model: 'kimi-code-plan-global/k3'
+        })
+      }
+    })
+    await openOpencodeChat({ connectionId: 'conn-1', connectionLabel: 'Kimi', model: 'k3' })
+    expect(injection.forSpawn).toHaveBeenCalledWith('opencode', {
+      connectionId: 'conn-1',
+      model: 'k3'
+    })
+    expect(spawnOptions().model).toBe('kimi-code-plan-global/k3')
+    expect(writtenRecord().model).toBe('k3')
+    expect(JSON.stringify(mocks.opencode.spawn.mock.calls)).not.toContain(STAND_IN_KEY)
+    expect(JSON.stringify(mocks.manager.adopt.mock.calls)).not.toContain(STAND_IN_KEY)
+  })
+  it("a restart after the agent reported its model opens the connection on that model's own form", async () => {
+    injection.forSpawn.mockResolvedValue({ providerEnv: { KIMI_API_KEY: STAND_IN_KEY } })
+    const session = await openOpencodeChat({ connectionId: 'conn-1', model: 'k3' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', model: 'kimi-code-plan-global/k3' }
+    })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenCalledWith(session.id, {
+      model: 'kimi-code-plan-global/k3'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id
+        ? { id: session.id, adapterId: 'opencode-chat', model: 'kimi-code-plan-global/k3' }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { onlyIfStopped: true })
+    await ptyManager.kill(session.id, true)
+    await ptyManager.spawn(plan!.cwd, plan!.options)
+    // providerInjection keeps a model already in that form (its own tests).
+    expect(injection.forSpawn).toHaveBeenLastCalledWith('opencode', {
+      connectionId: 'conn-1',
+      model: 'kimi-code-plan-global/k3'
+    })
+    injection.forSpawn.mockReset()
+    injection.forSpawn.mockImplementation(async () => ({}))
+  })
+  it('a chat on no connection hands the adapter the launch’s model as it is', async () => {
+    await openOpencodeChat({ model: 'stand-in/two' })
+    expect(spawnOptions().model).toBe('stand-in/two')
+  })
+  it('refuses the spawn when the connection has no key yet, in that one sentence', async () => {
+    injection.forSpawn.mockRejectedValueOnce(new Error('The connection has no key yet.'))
+    await expect(openOpencodeChat({ connectionId: 'conn-1' })).rejects.toThrow(
+      /^The connection has no key yet\.$/
+    )
+    expect(mocks.opencode.configure).not.toHaveBeenCalled()
+    expect(mocks.opencode.spawn).not.toHaveBeenCalled()
+    expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
   })
   it('opens nothing for a chat on no connection', async () => {
     await openOpencodeChat({ model: 'stand-in/one' })

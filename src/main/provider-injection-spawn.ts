@@ -74,6 +74,22 @@ export interface ProviderSpawnFields {
   opencodeStandalone?: boolean
 }
 
+/** The environment Pi's session files are looked up in for a tab on this
+ *  connection (or on none): the connection's own directory over the login
+ *  shell's, as its process runs. The directory links `sessions` to the
+ *  person's own only when the person had one at its first sync; a person
+ *  whose first Pi ran on a connection has its sessions there alone. */
+export function piSessionLookupEnv(
+  connectionId: string | undefined,
+  deps: Pick<ProviderInjectionSpawnDeps, 'root' | 'loginEnv'> = {}
+): Record<string, string | undefined> {
+  const loginEnv = (deps.loginEnv ?? getLoginShellEnv)()
+  if (!connectionId || connectionId === '.' || connectionId === '..' || /[/\\]/.test(connectionId))
+    return loginEnv
+  const root = (deps.root ?? (() => lazySettingsPorts.storage.pathOf(PI_CONNECTIONS_DIR)))()
+  return { ...loginEnv, PI_CODING_AGENT_DIR: path.join(root, connectionId) }
+}
+
 export async function providerInjectionForSpawn(
   kind: AgentKind | null,
   options: { connectionId?: string; model?: string },

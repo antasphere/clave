@@ -14,7 +14,11 @@ import { CLAVE_PROVIDER_PREFIX } from '../shared/provider-prefix'
  * the harness is told to read that name, never the value. OpenCode 2.3.0: a
  * `--standalone` TUI reads the tab's environment, `OPENCODE_CONFIG_CONTENT`
  * outranks its stored credential, and the `providers`/`package`/`settings`
- * shape lists the model (checked with `opencode models`). Pi 1.5.2 reads
+ * shape lists the model (checked with `opencode models`); `opencode acp`, the
+ * chat's agent, runs its own private server on that same environment, never
+ * the background service, and its model call carries the tab's value (checked
+ * against a stand-in endpoint, with the service running and with OpenCode's
+ * state folders isolated from it). Pi 1.5.2 reads
  * `models.json` (`"$VAR"`) from its agent directory only, after auth.json:
  * hence a directory of the connection's own (provider-injection-pi-dir.ts).
  */
@@ -69,6 +73,36 @@ const NO_KEY = 'ollama'
 
 export const OPENCODE_CONFIG_ENV = 'OPENCODE_CONFIG_CONTENT'
 
+/** A model as OpenCode names it, `provider/model`. A model already in that
+ *  form for this provider is kept as it is: a restarted chat's model is the
+ *  one the agent reported, `kimi-code-plan-global/k3`, never prefixed twice. */
+export function opencodeModelRef(providerId: string, model: string): string {
+  return model.startsWith(`${providerId}/`) ? model : `${providerId}/${model}`
+}
+
+/** The bare id of a model a harness may report as `provider/model`. */
+function bareModel(providerId: string, model: string | undefined): string | undefined {
+  return model?.startsWith(`${providerId}/`) ? model.slice(providerId.length + 1) : model
+}
+
+/** The model an OpenCode process is configured to start on, read off the
+ *  configuration in its environment: what `opencode acp` opens its session
+ *  on (checked on 2.3.0). Undefined when the configuration names none. */
+export function opencodeConfiguredModel(
+  env: Record<string, string> | undefined
+): string | undefined {
+  const content = env?.[OPENCODE_CONFIG_ENV]
+  if (!content) return undefined
+  try {
+    const parsed: unknown = JSON.parse(content)
+    const model =
+      parsed && typeof parsed === 'object' ? (parsed as { model?: unknown }).model : undefined
+    return typeof model === 'string' && model ? model : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function declaredModels(
   connection: ConnectionForSpawn,
   catalogModels: CatalogModel[] | undefined,
@@ -111,10 +145,14 @@ export function providerInjection(input: {
         piProvider: road.provider,
         piEntry: { providerId: road.provider, entry: { apiKey: `$${road.env}` } }
       }
+    // `enabled_providers` keeps OpenCode on the connection: without it, a
+    // launch that names no model starts on OpenCode's own free models and its
+    // picker offers every other provider it knows (checked on 2.3.0).
     const config: Record<string, unknown> = {
-      providers: { [road.provider]: { settings: { apiKey: `{env:${road.env}}` } } }
+      providers: { [road.provider]: { settings: { apiKey: `{env:${road.env}}` } } },
+      enabled_providers: [road.provider]
     }
-    if (model) config.model = `${road.provider}/${model}`
+    if (model) config.model = opencodeModelRef(road.provider, model)
     env[OPENCODE_CONFIG_ENV] = JSON.stringify(config)
     return { env, opencodeStandalone: true }
   }
@@ -125,7 +163,7 @@ export function providerInjection(input: {
   const { endpoint } = connection
   if (!endpoint) throw new Error('The connection has no endpoint.')
   const name = providerCompany(connection.company).name
-  const models = declaredModels(connection, input.catalogModels, model)
+  const models = declaredModels(connection, input.catalogModels, bareModel(providerId, model))
   const env: Record<string, string> = { [CLAVE_CONNECTION_KEY_ENV]: connection.value ?? NO_KEY }
   if (harness === 'pi') {
     return {
@@ -151,9 +189,10 @@ export function providerInjection(input: {
         settings: { baseURL: endpoint.baseUrl, apiKey: `{env:${CLAVE_CONNECTION_KEY_ENV}}` },
         models: Object.fromEntries(models.map((m) => [m.id, { name: m.name }]))
       }
-    }
+    },
+    enabled_providers: [providerId]
   }
-  if (model) config.model = `${providerId}/${model}`
+  if (model) config.model = opencodeModelRef(providerId, model)
   env[OPENCODE_CONFIG_ENV] = JSON.stringify(config)
   return { env, opencodeStandalone: true }
 }

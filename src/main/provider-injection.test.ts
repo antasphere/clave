@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { providerInjection, type ConnectionForSpawn } from './provider-injection'
+import {
+  opencodeConfiguredModel,
+  opencodeModelRef,
+  providerInjection,
+  type ConnectionForSpawn
+} from './provider-injection'
 import {
   CLAVE_CONNECTION_KEY_ENV,
   PROVIDER_KEY_ENV_VARS,
@@ -132,7 +137,8 @@ describe('a provider the harness ships (rules b and d)', () => {
     const out = providerInjection({ harness: 'opencode', connection: connection('zai') })
     expect(out.env.ZHIPU_API_KEY).toBe(VALUE)
     expect(configOf(out.env)).toEqual({
-      providers: { 'zai-coding-plan': { settings: { apiKey: '{env:ZHIPU_API_KEY}' } } }
+      providers: { 'zai-coding-plan': { settings: { apiKey: '{env:ZHIPU_API_KEY}' } } },
+      enabled_providers: ['zai-coding-plan']
     })
   })
 
@@ -196,6 +202,7 @@ describe('a provider Clave declares (rules c and e)', () => {
           models: { llama: { name: 'llama' } }
         }
       },
+      enabled_providers: ['clave-ollama'],
       model: 'clave-ollama/llama'
     })
   })
@@ -235,5 +242,74 @@ describe('a provider Clave declares (rules c and e)', () => {
     expect(() =>
       providerInjection({ harness: 'pi', connection: connection('alibaba', { endpoint: null }) })
     ).toThrow('The connection has no endpoint.')
+  })
+})
+
+// PRDCT-4427: an OpenCode CHAT on a connection. `opencode acp` 2.3.0 opens its
+// session on the configuration's model and, with no model and no
+// `enabled_providers`, on OpenCode's own free models (checked by hand on the
+// real binary, a made-up key, 13 November 2026).
+describe('OpenCode on a connection stays on it (PRDCT-4427)', () => {
+  it('enables the connection’s provider alone, a road and a declared one alike, with or without a model', () => {
+    for (const model of [undefined, 'k3']) {
+      const road = configOf(
+        providerInjection({ harness: 'opencode', connection: connection('moonshot'), model }).env
+      )
+      expect(road.enabled_providers).toEqual(['kimi-code-plan-global'])
+      const declared = configOf(
+        providerInjection({
+          harness: 'opencode',
+          connection: connection('generic', {
+            endpoint: { wireFormat: 'openai-chat', baseUrl: 'https://example.invalid/v1' }
+          }),
+          model
+        }).env
+      )
+      expect(declared.enabled_providers).toEqual(['clave-generic'])
+    }
+  })
+  it('a model the agent reported back, `provider/model`, is never prefixed twice', () => {
+    const fresh = configOf(
+      providerInjection({ harness: 'opencode', connection: connection('moonshot'), model: 'k3' })
+        .env
+    )
+    const restarted = configOf(
+      providerInjection({
+        harness: 'opencode',
+        connection: connection('moonshot'),
+        model: 'kimi-code-plan-global/k3'
+      }).env
+    )
+    expect(fresh.model).toBe('kimi-code-plan-global/k3')
+    expect(restarted.model).toBe('kimi-code-plan-global/k3')
+    const declared = configOf(
+      providerInjection({
+        harness: 'opencode',
+        connection: connection('ollama', {
+          models: [],
+          endpoint: { wireFormat: 'openai-chat', baseUrl: 'http://127.0.0.1:11434/v1' }
+        }),
+        model: 'clave-ollama/llama'
+      }).env
+    ) as { model: string; providers: Record<string, { models: Record<string, unknown> }> }
+    expect(declared.model).toBe('clave-ollama/llama')
+    expect(Object.keys(declared.providers['clave-ollama'].models)).toEqual(['llama'])
+  })
+  it('opencodeModelRef and opencodeConfiguredModel read the form OpenCode lists', () => {
+    expect(opencodeModelRef('deepseek', 'deepseek-chat')).toBe('deepseek/deepseek-chat')
+    expect(opencodeModelRef('deepseek', 'deepseek/deepseek-chat')).toBe('deepseek/deepseek-chat')
+    const env = providerInjection({
+      harness: 'opencode',
+      connection: connection('deepseek'),
+      model: 'deepseek-chat'
+    }).env
+    expect(opencodeConfiguredModel(env)).toBe('deepseek/deepseek-chat')
+    expect(
+      opencodeConfiguredModel(
+        providerInjection({ harness: 'opencode', connection: connection('deepseek') }).env
+      )
+    ).toBeUndefined()
+    expect(opencodeConfiguredModel(undefined)).toBeUndefined()
+    expect(opencodeConfiguredModel({ OPENCODE_CONFIG_CONTENT: 'not json' })).toBeUndefined()
   })
 })

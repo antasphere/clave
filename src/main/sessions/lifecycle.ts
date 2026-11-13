@@ -301,7 +301,14 @@ function planFromRecord(
         conversationId,
         family,
         (conversation) =>
-          !!family && ptyManager.hasConversation(family, conversation, record.cwd, record.configDir)
+          !!family &&
+          ptyManager.hasConversation(
+            family,
+            conversation,
+            record.cwd,
+            record.configDir,
+            record.connectionId
+          )
       ),
       { profileExists: (owner, profileId) => ptyManager.profileExists(owner, profileId) }
     )
