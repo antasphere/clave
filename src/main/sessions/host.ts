@@ -156,8 +156,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
         // An OpenCode or Pi pick stays the tab's (PRDCT-4427): its models are
         // its connection's provider's, which the next chat may not run on.
         const own = provider === 'opencode' || provider === 'pi'
-        if (adapterId && !own && value.remember !== false)
-          rememberChatModel(adapterId, value.model)
+        if (adapterId && !own && value.remember !== false) rememberChatModel(adapterId, value.model)
         return
       }
       if (value.type === 'set_effort') {

@@ -182,7 +182,9 @@ function modelChoices(option: ConfigOption | undefined): ModelOption[] {
     const slash = c.value.indexOf('/')
     const prefix = slash > 0 ? `${c.value.slice(0, slash)}/` : ''
     const name = prefix && c.name.startsWith(prefix) ? c.name.slice(prefix.length) : c.name
-    return [{ id: c.value, label: name || c.value, ...(c.description ? { hint: c.description } : {}) }]
+    return [
+      { id: c.value, label: name || c.value, ...(c.description ? { hint: c.description } : {}) }
+    ]
   })
 }
 function parseAuthMethods(value: unknown): AuthMethod[] {

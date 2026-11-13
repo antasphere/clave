@@ -184,9 +184,9 @@ describe('acpModelOptions (PRDCT-4427)', () => {
       { id: 'a/x', label: 'X', hint: 'Fast' },
       { id: 'b/y', label: 'Y' }
     ])
-    expect(acpModelOptions([{ id: 'mode', category: 'mode', options: [{ value: 'build' }] }])).toEqual(
-      []
-    )
+    expect(
+      acpModelOptions([{ id: 'mode', category: 'mode', options: [{ value: 'build' }] }])
+    ).toEqual([])
     expect(acpModelOptions(undefined)).toEqual([])
   })
 })
