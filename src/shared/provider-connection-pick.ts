@@ -52,6 +52,19 @@ export function pickProviderConnection<C extends PickableConnection>(
     : { ok: false, reason: 'unknown', labels: connections.map((c) => c.label) }
 }
 
+/** Whether a stored connection is listed under a harness's provider `pool`:
+ *  that company's, serving one of the wire formats the harness speaks. The
+ *  one filter the open (`harnessProviderConnections`) and every listing's
+ *  provider pool rows read, so a connection the open would never land on is
+ *  never suggested. */
+export function servesHarnessPool(
+  view: Pick<ProviderConnectionView, 'company' | 'endpoints'>,
+  pool: string,
+  harness: Pick<Harness, 'wireFormats'>
+): boolean {
+  return view.company === pool && connectionServes(view, harness.wireFormats)
+}
+
 /** A stored connection as the rule reads it, with its company. */
 export type HarnessProviderConnection = PickableConnection & { readonly company: string }
 
@@ -69,7 +82,7 @@ export function harnessProviderConnections(
   const pools: readonly string[] = harness.connectionPools
   return pools.flatMap((pool) =>
     views
-      .filter((view) => view.company === pool && connectionServes(view, harness.wireFormats))
+      .filter((view) => servesHarnessPool(view, pool, harness))
       .map((view) => ({
         id: view.id,
         label: view.label,

@@ -21,6 +21,7 @@ import {
   HARNESSES,
   isInteractionMode,
   sanitizeHarnessSettings,
+  type Harness,
   type HarnessId,
   type HarnessSettingsById,
   type InteractionMode
@@ -55,9 +56,10 @@ export interface StandaloneLaunchFacts extends LaunchFacts {
   interactionMode(): InteractionMode
   /** The server's own account switch mode (it has no workspace of its own). */
   switchMode(): AccountSwitchMode
-  /** A provider pool's stored connections (PRDCT-4496): that company's, in
-   *  the store's order, as the one shape of a connection. */
-  providerPool?(pool: ConnectionPoolId): readonly Connection[]
+  /** A provider pool's stored connections for `harness` (PRDCT-4496): that
+   *  company's serving a wire format the harness speaks, in the store's
+   *  order, as the one shape of a connection. */
+  providerPool?(pool: ConnectionPoolId, harness: Harness): readonly Connection[]
   now(): number
 }
 
@@ -147,7 +149,8 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
     },
     // The Mac's shell `switchMode(workspaceId)` with no workspace: the global one, else propose.
     switchMode: () => switchModeOf(deps.preferences('accountSwitchMode')) ?? 'propose',
-    providerPool: (pool) => providerPoolConnections(pool, deps.providerConnectionViews?.() ?? []),
+    providerPool: (pool, harness) =>
+      providerPoolConnections(pool, deps.providerConnectionViews?.() ?? [], harness),
     now: deps.now ?? (() => Date.now())
   }
 }
@@ -218,8 +221,8 @@ export function launchOptionsInput(
     interactionMode: facts.interactionMode(),
     // A provider pool lists the server's stored connections of that company
     // (PRDCT-4496); an account pool its accounts.
-    connections: (pool) =>
-      isAccountPoolId(pool) ? facts.accounts(pool) : (facts.providerPool?.(pool) ?? []),
+    connections: (pool, harness) =>
+      isAccountPoolId(pool) ? facts.accounts(pool) : (facts.providerPool?.(pool, harness) ?? []),
     selectedConnectionId: (pool) =>
       isAccountPoolId(pool) ? facts.selectedAccountId(pool) : undefined,
     preferRecommended: facts.useRecommendedAccount?.() ?? false,

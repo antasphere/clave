@@ -93,7 +93,7 @@ import { providerModels } from '../provider-models'
 import { modelsCatalog } from '../models-catalog'
 import { providerConnectionsForListing } from '../provider-injection-spawn'
 import { providerConnectionsManager } from '../provider-connections'
-import { listedProviderConnection } from '../../shared/provider-connection-pick'
+import { servedAccountOf } from './provider-launch-listing'
 import { CLAUDE_MODELS } from '../../shared/claude-models'
 import { HARNESSES, type HarnessId } from '../../shared/harness'
 import { accountPoolsOf, poolsOf, type LaunchModel } from '../../shared/launch-options'
@@ -553,32 +553,22 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
           !!r && r.link?.kind === 'session-view' && r.link.ownerId === ownerId
       )
       .map((r) => r.id),
-  accountOf: (record) => {
-    if (record.codexMode) {
-      const id = record.codexAccountId ?? 'default'
-      const account = codexAccountsManager.get(id)
-      const read = codexUsageManager.snapshot()[id]
-      return {
-        id,
-        label: account?.label ?? record.codexAccountLabel ?? 'Removed account',
-        // Codex's model buckets (Spark) are families too: judged for the tab's model.
-        exhausted: exhaustedFrom(read, { model: record.model })
-      }
-    }
-    if (record.claudeMode || record.claudeAgentsMode) {
-      const id = record.claudeProfileId ?? 'default'
-      const account = claudeAccountsManager.get(id)
-      const read = usageManager.snapshot()[id]
-      return {
-        id,
-        label: account?.label ?? record.claudeProfileLabel ?? 'Removed account',
-        exhausted: exhaustedFrom(read, { model: record.model })
-      }
-    }
-    // A Pi or OpenCode tab on a stored connection (PRDCT-4496), reported the
-    // way a Claude tab's account is: the store's label first, never exhausted.
-    return listedProviderConnection(record, (id) => providerConnectionsManager.get(id)?.label)
-  },
+  // The rule is `servedAccountOf`'s (provider-launch-listing.ts): a Pi or
+  // OpenCode tab on a stored connection (PRDCT-4496) is reported the way a
+  // Claude tab's account is, the store's label first, never exhausted.
+  accountOf: (record) =>
+    servedAccountOf(record, {
+      accountLabel: (pool, id) =>
+        pool === 'codex'
+          ? codexAccountsManager.get(id)?.label
+          : claudeAccountsManager.get(id)?.label,
+      exhausted: (pool, id, model) =>
+        exhaustedFrom(
+          pool === 'codex' ? codexUsageManager.snapshot()[id] : usageManager.snapshot()[id],
+          { model }
+        ),
+      providerConnectionLabel: (id) => providerConnectionsManager.get(id)?.label
+    }),
   statKind: async (absPath) => {
     try {
       const stat = await fs.promises.stat(absPath)

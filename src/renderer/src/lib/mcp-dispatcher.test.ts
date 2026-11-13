@@ -78,6 +78,9 @@ import { useAccountPolicyStore } from '../store/account-policy-store'
 import { DEFAULT_INTERACTION_MODE, HARNESSES } from '../../../shared/harness'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { launchOptions, type LaunchOptionsInput } from '../../../shared/launch-options'
+import { servesHarnessPool } from '../../../shared/provider-connection-pick'
+import { providerConnection } from '../../../shared/provider-connection'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
@@ -1013,6 +1016,12 @@ describe('the account of a window-road Pi or OpenCode open', () => {
     await expect(
       openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'any' })
     ).rejects.toThrow('No stored connection serves Pi yet: add one in Settings → Connections.')
+    // A harness with no pool: the sentence every other road says.
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'antigravity', account: 'x' })
+    ).rejects.toThrow(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
+    )
     expect(spawnSession.mock.calls.length).toBe(before)
   })
 })
@@ -1277,5 +1286,124 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
     } finally {
       unsubscribe()
     }
+  })
+})
+
+// Lane C of the harness wave (PRDCT-4496), verifier's F1: the window's listing
+// and its open read the same list of a server's stored connections.
+describe("clave_launch_options and clave_open_session agree on a server's stored connection", () => {
+  afterEach(() => {
+    useFleetStore.setState({ connections: [], statuses: {} } as never)
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    launchInput.server.mockReset()
+  })
+
+  it('reads the list the window does not hold yet, and suggests the connection `any` lands on', async () => {
+    const kimi = {
+      id: 'c-kimi',
+      label: 'Kimi work',
+      company: 'moonshot',
+      pool: 'moonshot',
+      kind: 'key',
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+      needsKey: true,
+      hasKey: true,
+      keySetAt: 1,
+      createdAt: 0
+    }
+    // The fake machine: one keyed Kimi connection on `srv`, none held by the window.
+    const fleetProviderConnections = vi.fn(async (machine: string) =>
+      machine === 'srv' ? [kimi] : []
+    )
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    useFleetStore.setState({
+      connections: [{ id: 'srv', name: 'Studio box', url: 'http://srv', enabled: true }] as never,
+      statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+    })
+    const fleetStart = vi.fn(async (serverId: string, cwd: string, options: unknown) => ({
+      id: resourceKey('session', serverId, 'pi-tab'),
+      cwd,
+      options,
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    }))
+    Object.assign(globals.window.electronAPI, {
+      fleetProviderConnections,
+      fleetStart,
+      fleetSnapshot: vi.fn(async () => undefined),
+      fleetLaunchSettings: vi.fn(async () => ({
+        profiles: preferences({}),
+        claudeAccounts: [],
+        codexAccounts: []
+      })),
+      resizeSession: vi.fn(),
+      setSessionDisplayName: vi.fn(async () => undefined)
+    })
+    // The server's input as the window builds it (`poolConnections`, whose
+    // module loads the usage store and cannot load here): its provider pools
+    // read from lane B's store at listing time; no account pool here.
+    launchInput.server.mockImplementation(
+      (serverId: string): LaunchOptionsInput => ({
+        machine: { id: serverId, name: 'Studio box' },
+        harnesses: HARNESSES,
+        presence: () => undefined,
+        profiles: () => [],
+        defaultProfileId: () => undefined,
+        openProfileId: () => undefined,
+        models: () => 'unavailable',
+        harnessSettings: {},
+        interactionMode: 'chat',
+        connections: (pool, harness) =>
+          pool === 'claude' || pool === 'codex'
+            ? []
+            : (
+                (useProviderConnectionsStore.getState().byMachine[serverId]?.connections ??
+                  []) as unknown as ProviderConnectionView[]
+              )
+                .filter((view) => servesHarnessPool(view, pool, harness))
+                .map(providerConnection),
+        selectedConnectionId: () => undefined,
+        preferRecommended: false,
+        launchModel: () => undefined,
+        now: 1
+      })
+    )
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    let listed: { id: string; suggested: boolean }[] = []
+    try {
+      receive({ requestId: 'options', command: 'launchOptions', payload: { server: 'srv' } })
+      const answer = await response
+      expect(answer).toMatchObject({ ok: true })
+      const pi = (
+        answer.result as {
+          harnesses: { id: string; connections: { id: string; suggested: boolean }[] }[]
+        }
+      ).harnesses.find((h) => h.id === 'pi')!
+      listed = pi.connections
+    } finally {
+      unsubscribe()
+    }
+    expect(fleetProviderConnections).toHaveBeenCalledWith('srv')
+    expect(listed.map((c) => [c.id, c.suggested])).toEqual([['c-kimi', true]])
+    await openSessionProgrammatically({
+      cwd: '/srv/repo',
+      server: 'srv',
+      mode: 'pi',
+      account: 'any'
+    })
+    const started = fleetStart.mock.calls.at(-1)![2] as Record<string, unknown>
+    expect(started.connectionId).toBe(listed.find((c) => c.suggested)?.id)
+    // Read once: the open found the list the listing read.
+    expect(fleetProviderConnections).toHaveBeenCalledTimes(1)
   })
 })

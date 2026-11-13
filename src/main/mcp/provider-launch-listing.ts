@@ -11,6 +11,10 @@ import type { LaunchModel } from '../../shared/launch-options'
 import { modelsForProviderConnections } from '../../shared/launch-models'
 import { isAccountPoolId, type Connection, type ConnectionPoolId } from '../../shared/connection'
 import { providerConnection } from '../../shared/provider-connection'
+import { listedProviderConnection, servesHarnessPool } from '../../shared/provider-connection-pick'
+import type { Harness } from '../../shared/harness'
+import type { SessionRecord } from '@clave/contract/sessions'
+import type { AccountProvider, ServedAccount } from './served-core'
 import { PROVIDER_LISTING_FACTS, type ProviderCompanyId } from '../models-catalog-overlay'
 
 /** The launcher's DEFAULT_MODEL: the harness's own default, no flag passed. */
@@ -72,13 +76,65 @@ export async function providerHarnessModels(
   return rows.map((row) => ({ id: row.id ?? null, label: row.label, family: row.family }))
 }
 
-/** A provider pool's stored connections: that company's, in the store's
- *  order, as the one shape of a connection. An account pool has none here. */
+/** A provider pool's stored connections for `harness`: that company's,
+ *  serving a wire format the harness speaks (`servesHarnessPool`, the open's
+ *  own filter), in the store's order, as the one shape of a connection. An
+ *  account pool has none here. */
 export function providerPoolConnections(
   pool: ConnectionPoolId,
-  views: readonly ProviderConnectionView[]
+  views: readonly ProviderConnectionView[],
+  harness: Pick<Harness, 'wireFormats'>
 ): Connection[] {
   return isAccountPoolId(pool)
     ? []
-    : views.filter((view) => view.company === pool).map(providerConnection)
+    : views.filter((view) => servesHarnessPool(view, pool, harness)).map(providerConnection)
+}
+
+/** What `servedAccountOf` reads of the Mac's stores. */
+export interface ServedAccountReads {
+  /** An account's current label in its pool; undefined once removed. */
+  accountLabel(pool: AccountProvider, id: string): string | undefined
+  /** Whether the account's last usage read says it is about to stop for `model`. */
+  exhausted(pool: AccountProvider, id: string, model: string | undefined): boolean
+  /** A stored provider connection's current label; undefined once removed. */
+  providerConnectionLabel(id: string): string | undefined
+}
+
+/** The connection a tab runs on as the Mac's served `clave_list` reports it
+ *  (`ServedShell.accountOf`): a Claude or Codex tab's account (its id, else
+ *  `default`, the store's label, else the one the record kept, and whether it
+ *  is about to stop for the tab's model); a Pi or OpenCode tab's stored
+ *  connection (PRDCT-4496, `listedProviderConnection`); null for the rest. */
+export function servedAccountOf(
+  record: Pick<
+    SessionRecord,
+    | 'codexMode'
+    | 'claudeMode'
+    | 'claudeAgentsMode'
+    | 'piMode'
+    | 'opencodeMode'
+    | 'model'
+    | 'codexAccountId'
+    | 'codexAccountLabel'
+    | 'claudeProfileId'
+    | 'claudeProfileLabel'
+    | 'connectionId'
+    | 'connectionLabel'
+  >,
+  reads: ServedAccountReads
+): ServedAccount | null {
+  const pool: AccountProvider | null = record.codexMode
+    ? 'codex'
+    : record.claudeMode || record.claudeAgentsMode
+      ? 'claude'
+      : null
+  if (!pool) return listedProviderConnection(record, (id) => reads.providerConnectionLabel(id))
+  const id = (pool === 'codex' ? record.codexAccountId : record.claudeProfileId) ?? 'default'
+  const kept = pool === 'codex' ? record.codexAccountLabel : record.claudeProfileLabel
+  return {
+    id,
+    label: reads.accountLabel(pool, id) ?? kept ?? 'Removed account',
+    // Codex's model buckets (Spark) are families too: judged for the tab's model.
+    exhausted: reads.exhausted(pool, id, record.model ?? undefined)
+  }
 }

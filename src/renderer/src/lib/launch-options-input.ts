@@ -19,6 +19,7 @@ import { CLAUDE_MODELS } from '../../../shared/claude-models'
 import {
   HARNESSES,
   HARNESS_BY_ID,
+  type Harness,
   type HarnessId,
   type HarnessSettingsById,
   type InteractionMode
@@ -33,6 +34,7 @@ import { modelsForProviderConnections } from '../../../shared/launch-models'
 import { PROVIDER_LISTING_FACTS } from '../../../main/models-catalog-overlay'
 import { isAccountPoolId, isConnectionPoolId } from '../../../shared/connection'
 import { providerConnection } from '../../../shared/provider-connection'
+import { servesHarnessPool } from '../../../shared/provider-connection-pick'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import type { ServerSettings } from '../store/server-settings-state'
@@ -112,12 +114,14 @@ export function launchModelsOf(
 /** One owner's pool as the shared function reads it: the pool's order, who
  *  can sign in, the API keys as fallback, each account's own usage. A
  *  provider pool (PRDCT-4496) is the owner's stored connections of that
- *  company, as the one shape of a connection (`providerConnection`), from
- *  lane B's store unless `providers` is given. */
+ *  company serving a wire format `harness` speaks (`servesHarnessPool`, the
+ *  open's own filter), as the one shape of a connection
+ *  (`providerConnection`), from lane B's store unless `providers` is given. */
 export function poolConnections(
   sources: AccountSources,
   owner: string,
   pool: string,
+  harness: Pick<Harness, 'wireFormats'>,
   providers?: readonly ProviderConnectionView[]
 ): PooledConnection[] {
   if (isConnectionPoolId(pool) && !isAccountPoolId(pool))
@@ -128,7 +132,7 @@ export function poolConnections(
         | undefined) ??
       []
     )
-      .filter((view) => view.company === pool)
+      .filter((view) => servesHarnessPool(view, pool, harness))
       .map(providerConnection)
   if (pool !== 'claude' && pool !== 'codex') return []
   const view = ownerViewFrom(sources, owner, pool as AccountProvider)
@@ -176,7 +180,7 @@ export function serverLaunchOptionsInput(
     models: (harness) => launchModelsOf(source, harness, facts.codexModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
-    connections: (pool) => poolConnections(sources, serverId, pool),
+    connections: (pool, harness) => poolConnections(sources, serverId, pool, harness),
     selectedConnectionId: (pool) =>
       isPool(pool) ? (source.selectedAccountId(pool) ?? undefined) : undefined,
     preferRecommended: false,
@@ -224,7 +228,7 @@ export function localLaunchOptionsInput(
     models: (harness) => launchModelsOf(source, harness, facts.codexModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
-    connections: (pool) => poolConnections(sources, LOCAL_SERVER_ID, pool),
+    connections: (pool, harness) => poolConnections(sources, LOCAL_SERVER_ID, pool, harness),
     selectedConnectionId: (pool) =>
       isPool(pool) ? (source.selectedAccountId(pool) ?? undefined) : undefined,
     preferRecommended: facts.preferRecommended,

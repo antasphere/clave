@@ -7,7 +7,8 @@ import { resolveSessionTarget } from './mcp-session-target'
 import {
   assertServerConnected,
   machineProviderConnection,
-  openFleetSession
+  openFleetSession,
+  readProviderConnections
 } from './mcp-fleet-session'
 import { ownerOf } from './fleet-identity'
 import { flushLinkedDocument } from '../store/linked-document-store'
@@ -59,7 +60,7 @@ import {
   workToolAnswer
 } from '../../../shared/work-tools'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
-import { launchOptions } from '../../../shared/launch-options'
+import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
 import type { CodexModels } from './launch-options-input'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { useAgentUpdatesStore } from '../store/agent-updates-store'
@@ -579,9 +580,7 @@ export async function openSessionProgrammatically(payload: {
     : null
   const providerHarness = piMode ? 'pi' : opencodeMode ? 'opencode' : null
   if (payload.account && !claudeMode && !codexMode && !providerHarness) {
-    throw new Error(
-      `The account argument applies to claude, codex, pi and opencode modes only (got mode "${mode}")`
-    )
+    throw new Error(accountArgumentRefusal(mode))
   }
   // Pi and OpenCode run on one of this Mac's stored connections when the
   // account names one (PRDCT-4496); with none, on the login inside the harness.
@@ -1767,6 +1766,10 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
     : 'unavailable'
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
   const facts = { harnessSettings: harnesses, interactionMode, codexModels, now: Date.now() }
+  // The machine's stored connections, read first when the window holds none
+  // (PRDCT-4496), as its open reads them: the provider pools' rows and the
+  // one `account: "any"` lands on come from the same list.
+  await readProviderConnections(serverId).catch(() => undefined)
   if (serverId === LOCAL_SERVER_ID) {
     // Each pool's remembered model on the profile an open naming none
     // resolves (the chat default in a chat interaction mode), as the listing's

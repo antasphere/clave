@@ -11,6 +11,8 @@ import type { LaunchFacts } from '../routines/launch'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { providerConnection } from '../../shared/provider-connection'
 import { launchOptions } from '../../shared/launch-options'
+import { HARNESS_BY_ID } from '../../shared/harness'
+import { resolveProviderConnection } from '../../shared/provider-connection-pick'
 import {
   accountOf,
   launchOptionsInput,
@@ -271,7 +273,7 @@ describe('launchOptionsInput', () => {
       'pi-glm'
     ])
     expect(input.defaultProfileId('codex')).toBe('builtin-codex')
-    expect(input.connections('codex')).toEqual([
+    expect(input.connections('codex', HARNESS_BY_ID.codex)).toEqual([
       { id: 'key', label: 'API key', usable: true, fallback: true }
     ])
   })
@@ -296,13 +298,14 @@ describe('launchOptionsInput', () => {
     const views = [view('k1', 'moonshot'), view('k2', 'moonshot', false), view('o1', 'ollama')]
     const launch = standaloneLaunchFacts(deps({ providerConnectionViews: () => views }))
     const input = launchOptionsInput(launch, undefined, await modelsOfHarnesses(launch))
-    expect(input.connections('moonshot')).toEqual([
+    const piRow = HARNESS_BY_ID.pi
+    expect(input.connections('moonshot', piRow)).toEqual([
       providerConnection(views[0]),
       providerConnection(views[1])
     ])
-    expect(input.connections('moonshot').map((c) => c.usable)).toEqual([true, false])
-    expect(input.connections('ollama').map((c) => c.id)).toEqual(['o1'])
-    expect(input.connections('deepseek')).toEqual([])
+    expect(input.connections('moonshot', piRow).map((c) => c.usable)).toEqual([true, false])
+    expect(input.connections('ollama', piRow).map((c) => c.id)).toEqual(['o1'])
+    expect(input.connections('deepseek', piRow)).toEqual([])
     expect(input.selectedConnectionId('moonshot')).toBeUndefined()
     // The shared function lists them under Pi and OpenCode.
     const pi = launchOptions(input).harnesses.find((h) => h.id === 'pi')!
@@ -313,6 +316,36 @@ describe('launchOptionsInput', () => {
     ])
     // Without the store plugged in, no provider connection at all.
     const bare = standaloneLaunchFacts(deps())
-    expect(launchOptionsInput(bare, undefined, {}).connections('moonshot')).toEqual([])
+    expect(launchOptionsInput(bare, undefined, {}).connections('moonshot', piRow)).toEqual([])
+  })
+
+  it('lists a stored connection under no pool of a harness that speaks none of its wire formats, as the open never lands on it (PRDCT-4496)', async () => {
+    const view = (
+      id: string,
+      wireFormat: 'openai-chat' | 'anthropic-messages'
+    ): ProviderConnectionView =>
+      ({
+        id,
+        label: `${id} label`,
+        company: 'moonshot',
+        kind: 'key',
+        pool: 'moonshot',
+        endpoints: [{ wireFormat, baseUrl: 'https://made-up.invalid/v1' }],
+        needsKey: true,
+        hasKey: true,
+        keySetAt: 1,
+        createdAt: 1
+      }) as ProviderConnectionView
+    const views = [view('chat-only', 'openai-chat'), view('messages', 'anthropic-messages')]
+    const launch = standaloneLaunchFacts(deps({ providerConnectionViews: () => views }))
+    const input = launchOptionsInput(launch, undefined, await modelsOfHarnesses(launch))
+    // A Pi row speaking Anthropic's messages only.
+    const narrow = { ...HARNESS_BY_ID.pi, wireFormats: ['anthropic-messages'] as const }
+    const pi = launchOptions({ ...input, harnesses: [narrow] }).harnesses[0]!
+    expect(pi.connections.map((c) => c.id)).toEqual(['messages'])
+    expect(pi.connections.find((c) => c.suggested)?.id).toBe('messages')
+    // The open's own pick over the same views agrees.
+    const picked = resolveProviderConnection(narrow, views, 'any')
+    expect(picked.ok && picked.connection.id).toBe('messages')
   })
 })

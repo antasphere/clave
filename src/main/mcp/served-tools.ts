@@ -500,10 +500,10 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
     // A provider pool lists this Mac's stored connections of that company
     // (PRDCT-4496), as the window's and the daemon's roads do; an account
     // pool its accounts.
-    connections: (pool) =>
+    connections: (pool, harness) =>
       isAccountPoolId(pool)
         ? shell.accounts(pool)
-        : providerPoolConnections(pool, shell.providerConnectionViews?.() ?? []),
+        : providerPoolConnections(pool, shell.providerConnectionViews?.() ?? [], harness),
     selectedConnectionId: (pool) =>
       isAccountPoolId(pool) ? shell.selectedAccountId(pool) : undefined,
     preferRecommended: shell.useRecommendedAccount?.() ?? false,

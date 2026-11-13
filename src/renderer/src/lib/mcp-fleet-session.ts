@@ -12,6 +12,7 @@ import { describeServerState } from './server-connection-text'
 import { ownerOf } from './fleet-identity'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { HARNESS_BY_ID } from '../../../shared/harness'
+import { accountArgumentRefusal } from '../../../shared/launch-options'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import {
   providerConnectionSpawnFields,
@@ -45,6 +46,17 @@ export function assertServerConnected(serverId: string): void {
   }
 }
 
+/** A machine's stored connections (lane B's store), read once when the
+ *  window holds none of them yet or the entry it holds is still loading: the
+ *  one read the window's open (`machineProviderConnection`) and its
+ *  `clave_launch_options` make, so the listing suggests the connection
+ *  `account: "any"` lands on even before the Connections page was opened. */
+export async function readProviderConnections(machine: string): Promise<void> {
+  const store = useProviderConnectionsStore.getState()
+  const held = store.byMachine[machine]
+  if (!held || held.loading) await store.load(machine)
+}
+
 /** The stored connection an agent's `account` names on a Pi or OpenCode open
  *  (PRDCT-4496), among that machine's (lane B's store, its list read first
  *  when the window holds none yet, as `withoutGoneConnection` does), by the
@@ -55,9 +67,7 @@ export async function machineProviderConnection(
   harness: 'pi' | 'opencode',
   ref: string
 ): Promise<{ connectionId: string; connectionLabel: string }> {
-  const store = useProviderConnectionsStore.getState()
-  const held = store.byMachine[machine]
-  if (!held || held.loading) await store.load(machine)
+  await readProviderConnections(machine)
   const entry = useProviderConnectionsStore.getState().byMachine[machine]
   if (!entry || entry.error)
     throw new Error(entry?.error ?? 'The connections could not be read from this machine.')
@@ -131,9 +141,7 @@ export async function openFleetSession(
   const { family, ...modes } = resolveSpawnModes(payload)
   const providerHarness = modes.piMode ? 'pi' : modes.opencodeMode ? 'opencode' : null
   if (payload.account && !modes.claudeMode && !modes.codexMode && !providerHarness)
-    throw new Error(
-      `The account argument applies to claude, codex, pi and opencode modes only (got mode "${mode}")`
-    )
+    throw new Error(accountArgumentRefusal(mode))
   // Pi and OpenCode run on one of the server's stored connections when the
   // account names one (PRDCT-4496); with none, on the login inside the harness.
   const connection =

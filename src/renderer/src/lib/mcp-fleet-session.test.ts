@@ -223,7 +223,7 @@ describe('MCP fleet session launch', () => {
     )
     // Antigravity has no pool: still refused.
     await expect(open({ mode: 'antigravity', account: 'x' })).rejects.toThrow(
-      'The account argument applies to claude, codex, pi and opencode modes only (got mode "antigravity")'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
     )
     expect(api.fleetStart).toHaveBeenCalledTimes(4)
   })

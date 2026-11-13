@@ -15,7 +15,14 @@
  * Pure: the clock is `input.now`, nothing is imported from main or the
  * renderer.
  */
-import type { Harness, HarnessId, HarnessSettingsById, InteractionMode } from './harness'
+import {
+  HARNESSES,
+  HARNESS_BY_ID,
+  type Harness,
+  type HarnessId,
+  type HarnessSettingsById,
+  type InteractionMode
+} from './harness'
 import { chatProfileSource, type LaunchProfile } from './agent-launch'
 import {
   isExhausted,
@@ -72,7 +79,10 @@ export interface LaunchOptionsInput {
   readonly models: (harness: HarnessId) => readonly LaunchModel[] | 'unavailable'
   readonly harnessSettings: HarnessSettingsById
   readonly interactionMode: InteractionMode
-  readonly connections: (pool: ConnectionPoolId) => readonly PooledConnection[]
+  /** A pool's rows for `harness`: an account pool its accounts; a provider
+   *  pool (PRDCT-4496) the stored connections of that company serving a wire
+   *  format the harness speaks (`servesHarnessPool`), as its open reads them. */
+  readonly connections: (pool: ConnectionPoolId, harness: Harness) => readonly PooledConnection[]
   readonly selectedConnectionId: (pool: ConnectionPoolId) => string | undefined
   readonly preferRecommended: boolean
   /** The remembered chat model when none is named. */
@@ -150,6 +160,22 @@ export function accountPoolsOf(
   return harness.connectionPools.filter(isAccountPoolId)
 }
 
+/** The refusal of an `account` on an open whose mode has no pool, in the one
+ *  sentence every open road says (the Mac's served road, the window's local
+ *  and server opens; the daemon's and a routine's read the same words): the
+ *  harnesses that take one, then why this mode does not (its harness signs
+ *  in by itself, a terminal runs none). `gemini` is Antigravity's alias. */
+export function accountArgumentRefusal(mode: string): string {
+  const pooled = HARNESSES.filter((h) => poolsOf(h).length > 0)
+    .map((h) => h.name)
+    .join(', ')
+  const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
+  const why = harness
+    ? `${harness.name} runs on the login inside the harness.`
+    : `a ${mode} runs no harness.`
+  return `The account argument applies to harnesses with a connection pool (${pooled}); ${why}`
+}
+
 /** The connection a launch naming none would start on: the served road's
  *  `accountForLaunch` rule (`served-accounts.ts`). Each connection judged
  *  for `model`'s caps; the selected one (else `default`) kept while it has
@@ -224,12 +250,14 @@ function harnessOptions(
   // over the same rows in the same order); naming none still runs on the
   // harness's own login.
   const providerPick = pickProviderConnection(
-    pools.filter((pool) => !isAccountPoolId(pool)).flatMap((pool) => input.connections(pool)),
+    pools
+      .filter((pool) => !isAccountPoolId(pool))
+      .flatMap((pool) => input.connections(pool, harness)),
     undefined
   )
   const providerSuggested = providerPick.ok ? providerPick.connection.id : null
   const connections: ConnectionOption[] = pools.flatMap((pool) => {
-    const rows = input.connections(pool)
+    const rows = input.connections(pool, harness)
     const suggested = isAccountPoolId(pool)
       ? suggestedConnection(rows, input.selectedConnectionId(pool), input.preferRecommended, model)
       : providerSuggested
@@ -249,7 +277,7 @@ function harnessOptions(
       windows: windowsOf(c.usage, input.now)
     }))
   })
-  const all = pools.flatMap((pool) => input.connections(pool))
+  const all = pools.flatMap((pool) => input.connections(pool, harness))
 
   const listedModels = harness.takesModel ? input.models(id) : []
   const models: ModelOption[] = (

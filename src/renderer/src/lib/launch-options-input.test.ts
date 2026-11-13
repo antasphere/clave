@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { launchOptions } from '../../../shared/launch-options'
-import { HARNESSES } from '../../../shared/harness'
+import { HARNESSES, HARNESS_BY_ID } from '../../../shared/harness'
+import { resolveProviderConnection } from '../../../shared/provider-connection-pick'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { ServerSettings } from '../store/server-settings-state'
 import type { AccountUsageSummary } from '../store/usage-store'
 import type { ClaudeAccount } from '../../../preload/index.d'
@@ -137,15 +139,17 @@ describe('serverLaunchOptionsInput', () => {
   })
 
   it("builds each pool from the server's accounts and usage, the first listed selected", () => {
-    expect(input.connections('claude').map((c) => [c.id, c.label, c.usable])).toEqual([
+    expect(
+      input.connections('claude', HARNESS_BY_ID.claude).map((c) => [c.id, c.label, c.usable])
+    ).toEqual([
       ['default', 'Default', true],
       ['srv-2', 'Team', true]
     ])
-    expect(input.connections('codex')).toEqual([
+    expect(input.connections('codex', HARNESS_BY_ID.codex)).toEqual([
       { id: 'k1', label: 'Key', usable: true, fallback: true, usage: undefined }
     ])
     expect(input.selectedConnectionId('claude')).toBe('default')
-    expect(input.connections('nope' as never)).toEqual([])
+    expect(input.connections('nope' as never, HARNESS_BY_ID.claude)).toEqual([])
     const claude = answer.harnesses.find((h) => h.id === 'claude')!
     expect(claude.connections.map((c) => [c.id, c.exhausted, c.suggested])).toEqual([
       ['default', true, false],
@@ -264,7 +268,9 @@ describe("Pi's and OpenCode's provider pools (PRDCT-4496)", () => {
         server.harnesses.find((x) => x.id === 'pi')!.connections.map((c) => [c.pool, c.id])
       ).toEqual([['ollama', 'srv-ollama']])
       // The pool answers through the one shape of a connection.
-      expect(poolConnections(local.sources as AccountSources, 'srv', 'ollama')).toEqual([
+      expect(
+        poolConnections(local.sources as AccountSources, 'srv', 'ollama', HARNESS_BY_ID.pi)
+      ).toEqual([
         {
           id: 'srv-ollama',
           label: 'srv-ollama label',
@@ -276,9 +282,42 @@ describe("Pi's and OpenCode's provider pools (PRDCT-4496)", () => {
           usage: undefined
         }
       ])
-      expect(poolConnections(local.sources as AccountSources, 'srv', 'moonshot')).toEqual([])
+      expect(
+        poolConnections(local.sources as AccountSources, 'srv', 'moonshot', HARNESS_BY_ID.pi)
+      ).toEqual([])
     } finally {
       local.sources = before
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+
+  it('lists a stored connection under no pool of a harness that speaks none of its wire formats, as the open never lands on it', () => {
+    const views = [
+      view('chat-only', 'moonshot'),
+      view('messages', 'moonshot', {
+        endpoints: [{ wireFormat: 'anthropic-messages', baseUrl: 'https://made-up.invalid/v1' }]
+      })
+    ]
+    useProviderConnectionsStore.setState({
+      byMachine: { srv: { connections: views, loading: false, error: null } }
+    })
+    try {
+      // A Pi row speaking Anthropic's messages only.
+      const narrow = { ...HARNESS_BY_ID.pi, wireFormats: ['anthropic-messages'] as const }
+      const sources = { claude: [], codex: [], claudeUsage: {}, codexUsage: {}, servers: {} }
+      expect(poolConnections(sources, 'srv', 'moonshot', narrow).map((c) => c.id)).toEqual([
+        'messages'
+      ])
+      const input = serverLaunchOptionsInput('srv', 'Studio box', settings, facts)
+      const pi = launchOptions({ ...input, harnesses: [narrow] }).harnesses[0]!
+      expect(pi.connections.map((c) => [c.id, c.suggested])).toEqual([['messages', true]])
+      const picked = resolveProviderConnection(
+        narrow,
+        views as unknown as ProviderConnectionView[],
+        'any'
+      )
+      expect(picked.ok && picked.connection.id).toBe('messages')
+    } finally {
       useProviderConnectionsStore.setState({ byMachine: {} })
     }
   })

@@ -35,8 +35,8 @@ import {
   usageOf
 } from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
-import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
-import { accountPoolsOf, poolsOf } from '../../shared/launch-options'
+import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
+import { accountArgumentRefusal, accountPoolsOf } from '../../shared/launch-options'
 import {
   providerConnectionSpawnFields,
   resolveProviderConnection
@@ -76,20 +76,6 @@ export const WINDOW_FACT_TIMEOUT_MS = 2_000
 const POOLED_NAMES = HARNESSES.filter((h) => accountPoolsOf(h).length > 0)
   .map((h) => h.name)
   .join(', ')
-/** The harnesses an open takes an account on, by name: every one with a pool,
- *  Pi's and OpenCode's stored connections included (PRDCT-4496). */
-const OPEN_POOLED_NAMES = HARNESSES.filter((h) => poolsOf(h).length > 0)
-  .map((h) => h.name)
-  .join(', ')
-
-/** Why a mode takes no account: its harness signs in by itself, a terminal
- *  runs none. `gemini` is Antigravity's deprecated alias. */
-function noConnectionWhy(mode: string): string {
-  const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
-  return harness
-    ? `${harness.name} runs on the login inside the harness.`
-    : `a ${mode} runs no harness.`
-}
 
 /** The size a session with no pane starts at, as the hidden spawns do. */
 const HIDDEN_COLS = 120
@@ -476,9 +462,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   // Pi and OpenCode take one of this Mac's stored connections (PRDCT-4496).
   const providerHarness = piMode ? HARNESS_BY_ID.pi : opencodeMode ? HARNESS_BY_ID.opencode : null
   if (accountRef && !claudeMode && !codexMode && !providerHarness) {
-    throw new Error(
-      `The account argument applies to harnesses with a connection pool (${OPEN_POOLED_NAMES}); ${noConnectionWhy(mode)}`
-    )
+    throw new Error(accountArgumentRefusal(mode))
   }
   let connectionFields: { connectionId?: string; connectionLabel?: string } = {}
   if (accountRef && providerHarness) {
