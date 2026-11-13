@@ -7,6 +7,7 @@ Clave's companion agent plugin (`clave`, exposing `/clave:create-workspace` and 
 ## Commands
 
 - `npm run dev` — start dev (Electron window + hot reload)
+- `npm run try` — this checkout ready to try, nothing set up by hand (PRDCT-4490, `scripts/try.mjs`): the dev app (hot reload) on a profile of its own, attached to a server of its own, both holding this Mac's Claude accounts (copied into a keychain file of the trial, never the Mac's own) and a scratch workspace. `-- --server` adds a second server from the checkout, already saved in the app (a change to a server tab); `-- --prompt "<text>"` (or `--prompt-file`) opens a Claude chat (Sonnet unless `--model`) whose first message is the demo, its tab selected. Everything lives under `~/.clave/try/<checkout>/` and survives a second run; `npm run try -- --stop` ends it from anywhere. This is how a lane shows its change to a person.
 - `npm run build` — typecheck + build
 - `npm run build:mac` — build + package macOS universal dmg + zip (signed + notarized)
 - `npm run typecheck` — typecheck only
