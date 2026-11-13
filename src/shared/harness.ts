@@ -14,6 +14,8 @@
  */
 import type { LauncherFamily } from './agent-launch'
 import type { ConnectionPoolId } from './connection'
+// ── Lane B (harness wave): provider connections ──
+import type { ProviderWireFormat } from '@clave/contract/settings'
 
 export type HarnessId = LauncherFamily
 
@@ -63,6 +65,11 @@ export interface Harness {
   install: string | null
   /** Where the person reads about the harness. */
   docsUrl: string
+  // ── Lane B (harness wave): provider connections ──
+  /** The wire formats this harness speaks (PRDCT-4426): a stored provider
+   *  connection serves it when one of its endpoints speaks one of them. Empty
+   *  for a vendor-only harness. */
+  wireFormats: readonly ProviderWireFormat[]
 }
 
 export const HARNESSES: readonly Harness[] = [
@@ -104,7 +111,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: 'bypassPermissions',
     install: 'curl -fsSL https://claude.ai/install.sh | bash',
-    docsUrl: 'https://code.claude.com/docs'
+    docsUrl: 'https://code.claude.com/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'codex',
@@ -134,7 +143,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: 'danger-full-access',
     install: null,
-    docsUrl: 'https://learn.chatgpt.com/docs/cli'
+    docsUrl: 'https://learn.chatgpt.com/docs/cli',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'antigravity',
@@ -165,7 +176,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: 'default',
     bypassRung: null,
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    docsUrl: 'https://antigravity.google/docs/cli'
+    docsUrl: 'https://antigravity.google/docs/cli',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'pi',
@@ -179,7 +192,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: null,
     install: 'npm install -g @earendil-works/pi-coding-agent',
-    docsUrl: 'https://pi.dev/docs'
+    docsUrl: 'https://pi.dev/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   },
   {
     // OpenCode 2's TUI takes no model on its command line (`opencode run`
@@ -197,7 +212,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: null,
     install: 'curl -fsSL https://opencode.ai/v2/install | bash',
-    docsUrl: 'https://opencode.ai/docs'
+    docsUrl: 'https://opencode.ai/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   }
 ]
 

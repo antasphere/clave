@@ -9,6 +9,8 @@ import {
 } from '@clave/contract/settings'
 import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
 import { readJson, writeJson } from './ports/storage'
+// ── Lane B (harness wave): provider connections ──
+import { HARNESSES } from '../shared/harness'
 
 /**
  * The provider connections of a machine (PRDCT-4426), owned by the process
@@ -311,11 +313,17 @@ export class ProviderConnectionsManager {
   }
 
   /** The connections that serve the wire formats given (contract
-   *  `connectionServes`). `forHarness(harnessId)`, reading the harness
-   *  table's `wireFormats`, is added once the table carries the field (after
-   *  the rebase on lane P). */
+   *  `connectionServes`). */
   serving(formats: readonly ProviderWireFormat[]): ProviderConnection[] {
     return this.list().filter((c) => connectionServes(c, formats))
+  }
+
+  // ── Lane B (harness wave): provider connections ──
+  /** The connections that serve a harness, through the wire formats its row
+   *  of the harness table speaks. */
+  forHarness(harnessId: string): ProviderConnection[] {
+    const harness = HARNESSES.find((h) => h.id === harnessId)
+    return harness ? this.serving(harness.wireFormats) : []
   }
 }
 

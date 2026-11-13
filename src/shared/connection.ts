@@ -18,11 +18,17 @@
  * on (`Harness.connectionPools`).
  */
 import type { AccountUsageSummary, PoolAccount } from './account-pool'
+// ── Lane B (harness wave): provider connections ──
+import { PROVIDER_COMPANIES, type ProviderCompanyId } from '@clave/contract/settings'
 
 /** The pools Clave holds connections for, typed once. A provider pool of
  *  PRDCT-4426 adds its id here and its row to `CONNECTION_POOLS`; nothing
  *  else names a pool by a string of its own. */
-export type ConnectionPoolId = 'claude' | 'codex'
+export type ConnectionPoolId =
+  | 'claude'
+  | 'codex'
+  // ── Lane B (harness wave): provider connections ──
+  | ProviderCompanyId
 
 /** The company that bills a pool's connections. */
 export interface Company {
@@ -60,8 +66,22 @@ export const CODEX_POOL: ConnectionPool = {
   reportsUsage: true
 }
 
+// ── Lane B (harness wave): provider connections ──
+/** The pools of the provider connections (PRDCT-4426): one per card of the
+ *  catalogue, the company's id as the pool id, none reporting usage. */
+export const PROVIDER_POOLS: readonly ConnectionPool[] = PROVIDER_COMPANIES.map((c) => ({
+  id: c.id,
+  company: { id: c.id, name: c.name },
+  reportsUsage: false
+}))
+
 /** Every pool, in the order Settings → Connections lists the companies. */
-export const CONNECTION_POOLS: readonly ConnectionPool[] = [CLAUDE_POOL, CODEX_POOL]
+export const CONNECTION_POOLS: readonly ConnectionPool[] = [
+  CLAUDE_POOL,
+  CODEX_POOL,
+  // ── Lane B (harness wave): provider connections ──
+  ...PROVIDER_POOLS
+]
 
 export const CONNECTION_POOL_BY_ID: Readonly<Record<ConnectionPoolId, ConnectionPool>> =
   Object.fromEntries(CONNECTION_POOLS.map((pool) => [pool.id, pool])) as Record<

@@ -140,7 +140,13 @@ const UNREADABLE_NO_PLACE = new Set([
   'antasphereAccountDismiss',
   'getCodexUsageLimits',
   'getCodexUsageSnapshot',
-  'getPiUsage'
+  'getPiUsage',
+  // ── Lane B (harness wave): provider connections ──
+  'providerConnectionsList',
+  'providerConnectionAdd',
+  'providerConnectionRename',
+  'providerConnectionRemove',
+  'providerConnectionSetKey'
 ])
 const unreadable = (fn: unknown): boolean => {
   if (typeof fn !== 'function') return false

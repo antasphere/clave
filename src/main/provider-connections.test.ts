@@ -95,6 +95,16 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       expect(anthropic).not.toContain(mistral.id)
     })
 
+    // ── Lane B (harness wave): provider connections ──
+    it('lists the connections that serve a harness, through the wire formats its row speaks', () => {
+      const moonshot = manager.add({ company: 'moonshot' })
+      expect(manager.forHarness('pi').map((c) => c.id)).toContain(moonshot.id)
+      expect(manager.forHarness('opencode').map((c) => c.id)).toContain(moonshot.id)
+      expect(manager.forHarness('claude')).toEqual([])
+      expect(manager.forHarness('antigravity')).toEqual([])
+      expect(manager.forHarness('nope')).toEqual([])
+    })
+
     it('tells its listeners the whole list on every change, until they leave', async () => {
       const seen: ProviderConnection[][] = []
       const off = manager.onChange((list) => seen.push(list))

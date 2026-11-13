@@ -15,6 +15,8 @@ import {
 } from './connection'
 import { HARNESSES, HARNESS_BY_ID } from './harness'
 import { pickAccount, switchTargets, type AccountUsageSummary } from './account-pool'
+// ── Lane B (harness wave): provider connections ──
+import { PROVIDER_COMPANIES } from '@clave/contract/settings'
 
 /** A weekly cap the service calls critical: the pool's rule reads it as out. */
 const spent: AccountUsageSummary = {
@@ -28,10 +30,15 @@ const fresh: AccountUsageSummary = {
 
 describe('the pools', () => {
   it('registers the Claude and Codex pools, each billed by its company and reading usage', () => {
-    expect(CONNECTION_POOLS.map((pool) => pool.id)).toEqual(['claude', 'codex'])
+    expect(CONNECTION_POOLS.map((pool) => pool.id)).toEqual([
+      'claude',
+      'codex',
+      ...PROVIDER_COMPANIES.map((c) => c.id)
+    ])
     expect(CLAUDE_POOL.company).toEqual({ id: 'anthropic', name: 'Anthropic' })
     expect(CODEX_POOL.company).toEqual({ id: 'openai', name: 'OpenAI' })
-    expect(CONNECTION_POOLS.every((pool) => pool.reportsUsage)).toBe(true)
+    expect(CLAUDE_POOL.reportsUsage && CODEX_POOL.reportsUsage).toBe(true)
+    expect(CONNECTION_POOLS.slice(2).some((pool) => pool.reportsUsage)).toBe(false)
     expect(CONNECTION_POOL_BY_ID.claude).toBe(CLAUDE_POOL)
     expect(CONNECTION_POOL_BY_ID.codex).toBe(CODEX_POOL)
   })
