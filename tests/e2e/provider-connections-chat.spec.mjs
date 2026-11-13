@@ -607,8 +607,9 @@ export async function run(t) {
       !/does not offer the model|could not switch to/.test(modelShown),
       scrub(modelShown).slice(0, 600)
     )
-    // A Resume relaunches on the model the agent reported (`provider/model`):
-    // OpenCode is handed it as it is, never prefixed twice.
+    // A Resume relaunches on the tab's model: on a connection the record
+    // keeps the plain id the agent reported under the connection's provider,
+    // and the configuration puts the provider back in front, never twice.
     const ocResumeBefore = seen('opencode').length
     const ocRestarted = await win.evaluate(
       async (id) =>

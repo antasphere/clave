@@ -128,3 +128,28 @@ it('the foot follows the model main pushes after a chip switch', () => {
   for (const cb of g.modelChanged) cb({ id: 'tab', model: 'claude-opus-5-5' })
   expect(capShown()).toBe('Overall')
 })
+
+it('an OpenCode tab’s connection line is a control like the usage lines, not plain text (PRDCT-4427)', () => {
+  useSessionStore.setState({
+    sessions: [
+      {
+        id: 'oc',
+        cwd: '/repo',
+        sessionType: 'local',
+        claudeMode: false,
+        opencodeMode: true,
+        connectionId: 'conn-ds',
+        connectionLabel: 'DeepSeek'
+      } as never
+    ],
+    focusedSessionId: 'oc'
+  })
+  const html = renderToStaticMarkup(<SidebarFooter />)
+  const line = /<(\w+)[^>]*data-connection-line="conn-ds"[^>]*>/.exec(html)
+  // A button (keyboard reach, a click that opens Settings on Connections),
+  // with the class the foot's other lines carry.
+  expect(line?.[1]).toBe('button')
+  expect(line?.[0]).toContain('class="sidebar-footer-line"')
+  expect(line?.[0]).toContain('title="OpenCode · Connection: DeepSeek"')
+  expect(html).toContain('>OpenCode · DeepSeek</span></button>')
+})

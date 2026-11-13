@@ -512,15 +512,18 @@ export function SidebarFooter(): React.ReactElement {
                 </span>
               </button>
             ) : showConnection && connection ? (
-              <span
+              // A control like the usage lines beside it: a click opens
+              // Settings where the connection is managed (Connections).
+              <button
                 className="sidebar-footer-line"
                 data-connection-line={connection.id}
-                title={`Connection: ${connection.label}`}
+                onClick={() => openSettings('accounts')}
+                title={`${focusedSession?.piMode ? 'Pi' : 'OpenCode'} · Connection: ${connection.label}`}
               >
                 <span className="text-[11px] text-text-secondary truncate">
                   {focusedSession?.piMode ? 'Pi' : 'OpenCode'} · {connection.label}
                 </span>
-              </span>
+              </button>
             ) : showWork ? (
               <WorkLine />
             ) : (
