@@ -80,14 +80,14 @@ export async function run(t) {
     console.log(`fixture workspaces/ownership, run ${receipt.runId}, file ${first.fileTabId}`)
     t.equal(
       'A viewer has visible content before switching',
-      await win.locator('.floating-card button[title="Reveal in Finder"]:visible').count(),
+      await win.locator('.floating-card button[aria-label="File menu"]:visible').count(),
       1
     )
     await switchTo(b.id)
     t.equal('A file is absent from B', await drawn(first.fileTabId), 0)
     t.equal(
       'A file content is hidden in B',
-      await win.locator('.floating-card button[title="Reveal in Finder"]:visible').count(),
+      await win.locator('.floating-card button[aria-label="File menu"]:visible').count(),
       0
     )
     const background = await call('clave_open_file', { path: file })

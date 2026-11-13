@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { isAbsolute, join, normalize } from 'path'
 import { gunzipSync } from 'zlib'
-import type { SlidelessState } from '../../shared/slideless'
+import type { SlidelessState } from '@clave/contract/artefacts'
 
 /**
  * The Slideless command line as Clave runs it (PRDCT-4262, Romain's call of

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'fs'
 import { join } from 'path'
+import { ROUTINE_TOOLS_INSTRUCTION } from './routine-tools'
 
 /**
  * The host truncates MCP server instructions at ~2048 characters, silently:
@@ -52,14 +53,33 @@ describe('MCP server instructions', () => {
     expect(at).toBeLessThan(BUDGET / 2)
   })
 
-  it('says how an HTML artefact is made and shown, beside the side panel (PRDCT-4263)', () => {
+  it('says how an HTML artefact is made and shown, beside the side panel (PRDCT-4263, PRDCT-4472)', () => {
     // Every session learns it here or nowhere: a folder with index.html,
-    // opened once, then edited; the panel reloads and keeps the versions.
+    // opened once with clave_open_artefact, then edited; the page reloads
+    // and keeps the versions. The side panel is Markdown and email only.
     const text = instructions()
-    const line = text.split('\n').find((l) => l.includes('clave_open_side_panel')) ?? ''
+    const panel = text.split('\n').find((l) => l.includes('clave_open_side_panel')) ?? ''
+    expect(panel).not.toMatch(/HTML/)
+    const line = text.split('\n').find((l) => l.includes('clave_open_artefact')) ?? ''
     expect(line).toContain('folder with index.html')
     expect(line).toContain('ONCE')
     expect(line).toMatch(/reloads itself/)
     expect(line).toMatch(/version per turn/)
+  })
+
+  it("holds a server's block under the budget, and names clave_open_artefact (PRDCT-4472)", () => {
+    const src = readFileSync(join(__dirname, 'standalone-mcp.ts'), 'utf8')
+    const at = src.indexOf("'Your Clave tools run on this server")
+    const line = src.slice(at, src.indexOf('\n', at))
+    const literal = line.match(/^'((?:[^'\\]|\\.)*)' \+$/)
+    expect(literal).not.toBeNull()
+    expect(src.slice(src.indexOf('\n', at) + 1)).toMatch(
+      /^\s*ROUTINE_TOOLS_INSTRUCTION\.slice\(2\)\n/
+    )
+    const block = literal![1]!.replace(/\\(.)/g, '$1') + ROUTINE_TOOLS_INSTRUCTION.slice(2)
+    expect(block.length).toBeLessThanOrEqual(BUDGET)
+    expect(block).toMatch(
+      /clave_open_artefact with its folder \(index\.html inside\): open it ONCE/
+    )
   })
 })

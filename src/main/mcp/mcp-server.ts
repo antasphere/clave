@@ -37,6 +37,13 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
+import {
+  OPEN_ARTEFACT_DESCRIPTION_DESKTOP,
+  OPEN_ARTEFACT_TOOL,
+  openArtefactSchema,
+  openedAnswer,
+  sidePanelRefusal
+} from './artefact-tool'
 import { type RoutineMachine, registerRoutineTools } from './routine-tools'
 import {
   historyWithServers,
@@ -96,7 +103,8 @@ const MCP_PATH = '/mcp'
 const INSTRUCTIONS = `You run inside Clave, which runs agent sessions as tabs in sidebar groups; you are one of them. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it beside your tab ("the panel"); clave_side_panel reads it back; you send an email yourself, never from the panel. An HTML page or deck is a folder with index.html: open the folder ONCE, then edit its files; it reloads itself and keeps a version per turn.
+- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it beside your tab ("the panel"); clave_side_panel reads it back; you send an email yourself, never from the panel.
+- to SHOW an HTML page or deck -> clave_open_artefact: a folder with index.html, opened ONCE; it reloads itself and keeps a version per turn.
 - they only need to READ a file -> clave_open_file (a tab).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
 - work could run in parallel -> clave_open_session (an agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
@@ -1429,16 +1437,44 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_side_panel',
     {
       description:
-        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. An HTML page, document or deck: pass a FOLDER holding a self-contained index.html (inline style and script, its assets beside it). HTML is shown through Slideless, which Clave runs locally: it reloads on every edit you make to its files and Clave saves a version when each of your turns ends, so open it ONCE and keep editing; never reopen it to refresh. Reopening a path shows the file as it is on disk now. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
+        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
       inputSchema: linkedOpenSchema
     },
     async (args) => {
+      // PRDCT-4472: an HTML page or a folder is an artefact of the server
+      // now, never a panel document; said before anything else is read.
+      const refusal = sidePanelRefusal(args.path)
+      if (refusal) return { content: [{ type: 'text' as const, text: refusal }], isError: true }
       if (!callerSessionId)
         return {
           content: [{ type: 'text' as const, text: 'Requires an authenticated Clave session' }],
           isError: true
         }
       return run('openLinkedDocument', { callerSessionId, input: args })
+    }
+  )
+  // ── PRDCT-4472: a session's HTML artefact, opened on the server the session runs on ──
+  server.registerTool(
+    OPEN_ARTEFACT_TOOL,
+    { description: OPEN_ARTEFACT_DESCRIPTION_DESKTOP, inputSchema: openArtefactSchema },
+    async ({ path: target }) => {
+      try {
+        if (!callerSessionId) throw new Error('Requires an authenticated Clave session')
+        // Through the typed client, as the served tools reach the server;
+        // nothing is focused, the windows hear `artefact.changed`.
+        const api = await serverClient.api()
+        const artefact = await api.artefacts.open(callerSessionId, target)
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(openedAnswer(artefact)) }]
+        }
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) }
+          ],
+          isError: true
+        }
+      }
     }
   )
   server.registerTool(

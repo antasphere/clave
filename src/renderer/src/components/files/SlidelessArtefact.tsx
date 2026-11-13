@@ -1,132 +1,176 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSessionStore } from '../../store/session-store'
-import { initSlideless, useSlidelessStore } from '../../store/slideless-store'
-import { finishesTurn } from '../../lib/tab-status'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import type { Artefact } from '@clave/contract/artefacts/model'
+import { initArtefacts, ownerOfSession, useArtefactStore } from '../../store/artefact-store'
+import { useFleetStore } from '../../store/fleet-store'
+import { serverNameOf } from '../../lib/drop-refusal'
+import { startHoldLoop } from '../../lib/artefact-hold'
+import { useFileChanged } from '../../hooks/use-file-changed'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
+import { shownFor, withVersion } from '../../lib/artefact-version'
 
-/** How many times a minute a view serves again a server that died under it. */
+/** How many times a minute the frame holds again a preview that died under it. */
 const RESTART_LIMIT = 3
 
 /**
- * An HTML artefact shown through Slideless (PRDCT-4262): main runs the
- * Slideless command line Clave installed (`slideless dev` on the folder, or on
- * the one page), and the panel frames its local page, the deck under a version
- * bar that reloads on every edit. Each time the session that opened it ends a
- * turn, a version is saved: one iteration of the agent, one version, nothing
- * asked of the agent. Without a usable command line the page is still shown,
- * as before, under a card that installs it.
+ * The frame of a session's HTML artefact (PRDCT-4474). The server the
+ * session runs on runs the Slideless preview and saves a version at each
+ * finished turn: this frame only HOLDS the preview while it is mounted
+ * (renewing the hold before its time runs out, releasing it on unmount) and
+ * frames the address the window was given, the server's own loopback for a
+ * session of this Mac, a forwarded port of this Mac for a session elsewhere.
+ * Without a ready Slideless on that machine it says so, names the machine,
+ * and shows the plain page under the card when the page is on this Mac.
  */
 export function SlidelessArtefact({
-  target,
-  page,
   sessionId,
-  reloadKey
+  artefact
 }: {
-  /** What Slideless serves and keeps versions of: the folder, or the one page. */
-  target: string
-  /** The page to show when Slideless is not there. */
-  page: string
   sessionId: string
-  /** Bumped when the page changed on disk, for the fallback preview. */
-  reloadKey?: number
+  artefact: Artefact
 }): React.JSX.Element {
-  useEffect(() => initSlideless(), [])
-  const slideless = useSlidelessStore((s) => s.state)
-  const install = useSlidelessStore((s) => s.install)
+  useEffect(() => initArtefacts(), [])
+  const owner = ownerOfSession(sessionId)
+  const own = owner === LOCAL_SERVER_ID
+  const machine = useFleetStore((s) => (own ? 'this Mac' : serverNameOf(s.connections, owner)))
+  const slideless = useArtefactStore((s) => s.slideless[owner])
+  const install = useArtefactStore((s) => s.install)
+  useEffect(() => useArtefactStore.getState().readSlideless(owner), [owner])
   const ready = slideless?.phase === 'ready'
-  const [served, setServed] = useState<{ target: string; url?: string; error?: string } | null>(
-    null
-  )
-  // Bumped when main reports this target's server gone: the effect serves
-  // again, at most RESTART_LIMIT times a minute, so a server that keeps dying
-  // ends with its error on screen rather than a loop.
+
+  const [held, setHeld] = useState<{ openedAt: string; url?: string; error?: string } | null>(null)
+  // Bumped when the server says the preview died: the hold is taken again
+  // without its id, at most RESTART_LIMIT times a minute, so a preview that
+  // keeps dying ends with a sentence on screen rather than a loop.
+  // A session on another server: when that server goes away the frame loads
+  // again, so the forward's own page says it cannot be reached rather than a
+  // stale deck standing as if live; when it is back, the hold is renewed at
+  // once (the server answers a new preview, the frame moves to it).
+  const wake = useRef<(() => void) | null>(null)
+  const [reloads, setReloads] = useState(0)
+  useEffect(() => {
+    if (own) return
+    let connected = true
+    return window.electronAPI.onFleetStatus((status) => {
+      if (status.serverId !== owner) return
+      const now = status.state === 'connected'
+      if (now && !connected) wake.current?.()
+      if (!now && connected) setReloads((r) => r + 1)
+      connected = now
+    })
+  }, [own, owner])
+
+  // A new open by the agent starts afresh: the count is per open.
+  const openedAt = artefact.openedAt
   const [generation, setGeneration] = useState(0)
-  const restarts = useRef<number[]>([])
+  const [gaveUpOn, setGaveUpOn] = useState<string | null>(null)
+  const gaveUp = gaveUpOn === openedAt
+  const restarts = useRef<{ openedAt: string; at: number[] }>({ openedAt, at: [] })
   useEffect(
     () =>
-      window.electronAPI.slideless.onServerExited((exited) => {
-        if (exited !== target) return
+      window.electronAPI.artefacts.onPreviewExited((exited) => {
+        if (exited !== sessionId) return
         const now = Date.now()
-        restarts.current = restarts.current.filter((t) => now - t < 60_000)
-        if (restarts.current.length >= RESTART_LIMIT) {
-          setServed({
-            target,
-            error: 'Slideless stopped again and again; reopen the panel to retry'
-          })
+        const counted =
+          restarts.current.openedAt === openedAt
+            ? restarts.current.at.filter((t) => now - t < 60_000)
+            : []
+        if (counted.length >= RESTART_LIMIT) {
+          setGaveUpOn(openedAt)
           return
         }
-        restarts.current.push(now)
+        restarts.current = { openedAt, at: [...counted, now] }
         setGeneration((g) => g + 1)
       }),
-    [target]
+    [sessionId, openedAt]
   )
 
   useEffect(() => {
-    if (!ready) return
-    let cancelled = false
-    let lease: string | null = null
-    window.electronAPI.slideless
-      .serve(target)
-      .then((served) => {
-        lease = served.lease
-        if (cancelled) void window.electronAPI.slideless.release(target, served.lease)
-        else setServed({ target, url: served.url })
-      })
-      .catch((err: unknown) => {
-        if (!cancelled)
-          setServed({ target, error: err instanceof Error ? err.message : String(err) })
-      })
-    return () => {
-      cancelled = true
-      // The lease names the server this view holds: after a crash it is the
-      // old one, and releasing it leaves another view's new server alone.
-      if (lease) void window.electronAPI.slideless.release(target, lease)
-    }
-  }, [ready, target, generation])
-
-  // One version per finished turn of the session that holds the artefact.
-  const agentState = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.agentState)
-  const previous = useRef(agentState)
-  const url = served?.target === target ? served.url : undefined
-  useEffect(() => {
-    const was = previous.current
-    previous.current = agentState
-    if (!url || !finishesTurn(was, agentState)) return
-    window.electronAPI.slideless.snapshot(target).catch((err: unknown) => {
-      console.warn('[slideless] the turn-end version was not saved:', err)
+    if (gaveUp) return
+    // One hold call at a time (`startHoldLoop`): a wake-up during a call in
+    // flight runs one more call after it, never a second hold at once.
+    const loop = startHoldLoop({
+      hold: (holdId) => window.electronAPI.artefacts.hold(sessionId, holdId),
+      release: (holdId) => window.electronAPI.artefacts.release(sessionId, holdId),
+      onUrl: (url) =>
+        setHeld((prev) =>
+          prev?.url === url && prev.openedAt === openedAt ? prev : { openedAt, url }
+        ),
+      onRefused: (error) => setHeld({ openedAt, error })
     })
-  }, [agentState, target, url])
+    wake.current = loop.wake
+    return () => {
+      wake.current = null
+      loop.stop()
+    }
+  }, [sessionId, openedAt, generation, gaveUp, ready])
 
-  if (ready && url)
+  // The plain page of this Mac follows its file while Slideless is not there.
+  const [reloadKey, setReloadKey] = useState(0)
+  useFileChanged(own && !ready ? artefact.page : null, () => setReloadKey((k) => k + 1))
+
+  const url = held?.openedAt === openedAt ? held.url : undefined
+  // Slideless's own bar is hidden (`bar=0`): the version shown is chosen, and
+  // a version saved, from Clave's bar above (PRDCT-4494); `v` is that choice.
+  const shown = useArtefactStore((s) => shownFor(s.version[sessionId], artefact.openedAt))
+  const setPreviewUrl = useArtefactStore((s) => s.setPreviewUrl)
+  const live = ready && !gaveUp ? (url ?? null) : null
+  useEffect(() => {
+    setPreviewUrl(sessionId, live)
+    return () => setPreviewUrl(sessionId, null)
+  }, [sessionId, live, setPreviewUrl])
+  const framed = url ? withVersion(url, shown) : undefined
+  if (ready && framed && !gaveUp)
     return (
       <iframe
-        key={url}
-        src={url}
+        key={`${framed}#${reloads}`}
+        src={framed}
         data-testid="slideless-artefact"
-        // The local page runs on its own loopback origin, never the app's;
-        // its deck sits in a sandboxed frame of its own inside it.
+        // The preview runs on its own loopback origin, never the app's; its
+        // deck sits in a sandboxed frame of its own inside it.
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
         referrerPolicy="no-referrer"
         className="w-full h-full border-0 bg-white"
-        title={page.split('/').pop() ?? 'Artefact'}
+        title={artefact.title}
       />
     )
 
-  const serveError = ready && served?.target === target ? served.error : undefined
   const phase = slideless?.phase
+  // The card below says why while Slideless is being installed or is not
+  // there; the refusal of a hold is said whenever no card says it already,
+  // which is also the case of a machine whose state could not be read (a
+  // server older than this domain, or one that went away): never a blank pane.
+  const carded = phase !== undefined && phase !== 'ready'
+  const serveError = gaveUp
+    ? 'it stopped again and again. Hide the panel and open it again to retry.'
+    : !carded && held?.openedAt === openedAt
+      ? held.error
+      : undefined
   return (
     <div className="flex flex-col h-full">
       {phase && phase !== 'ready' && (
-        <div className="linked-document-notice" data-testid="slideless-install-card">
+        <div
+          className="linked-document-notice flex items-center gap-2"
+          data-testid="slideless-install-card"
+        >
           <span className="flex-1 min-w-0">
+            {/* A server's page is not drawn under the card (below): the
+                sentence says where it will show rather than what it will do. */}
             {phase === 'installing'
-              ? 'Installing Slideless: this page will reload on every edit and keep a version each turn.'
+              ? own
+                ? `Installing Slideless on ${machine}: this page will reload on every edit and keep a version each turn.`
+                : `Installing Slideless on ${machine}: this page shows here once it is installed.`
               : phase === 'error'
-                ? `Slideless could not be installed: ${slideless?.error ?? 'unknown error'}`
-                : 'Install Slideless to reload this page on every edit and keep a version each turn.'}
+                ? `Slideless could not be installed on ${machine}: ${slideless?.error ?? 'unknown error'}`
+                : own
+                  ? `Install Slideless on ${machine} to reload this page on every edit and keep a version each turn.`
+                  : `Install Slideless on ${machine} to show this page here, reload it on every edit and keep a version each turn.`}
           </span>
           {phase !== 'installing' && (
-            <button className="btn-primary btn-compact" onClick={() => void install()}>
+            <button
+              className="btn-primary btn-compact flex-shrink-0"
+              onClick={() => void install(owner).catch(() => {})}
+            >
               {phase === 'error' ? 'Try again' : 'Install Slideless'}
             </button>
           )}
@@ -137,9 +181,12 @@ export function SlidelessArtefact({
           Slideless could not show this page: {serveError}
         </div>
       )}
-      <div className="flex-1 min-h-0">
-        <HtmlPreviewFrame filePath={page} reloadKey={reloadKey} />
-      </div>
+      {/* A server's page is a file of the server's disk: only this Mac's is shown plain. */}
+      {own && (
+        <div className="flex-1 min-h-0">
+          <HtmlPreviewFrame filePath={artefact.page} reloadKey={reloadKey} />
+        </div>
+      )}
     </div>
   )
 }

@@ -38,6 +38,8 @@ import { routinesClient, type RoutinesClient } from './routines'
 import { digestsClient, type DigestsClient } from './digests'
 // ── PRDCT-4411: the speech ──
 import { speechClient, type SpeechClient } from './speech'
+// ── PRDCT-4472: the artefacts ──
+import { artefactsClient, type ArtefactsClient } from './artefacts'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -98,6 +100,8 @@ export interface ClaveApiClient {
   readonly digests: DigestsClient
   // ── PRDCT-4411: the speech (`./speech.ts`) ──
   readonly speech: SpeechClient
+  // ── PRDCT-4472: the artefacts (`./artefacts.ts`) ──
+  readonly artefacts: ArtefactsClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -186,6 +190,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     digests: digestsClient(call, patientCall),
     // ── PRDCT-4411: the speech ──
     speech: speechClient(call, patientCall),
+    // ── PRDCT-4472: the artefacts ──
+    artefacts: artefactsClient(call, patientCall),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

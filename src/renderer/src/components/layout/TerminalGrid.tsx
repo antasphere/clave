@@ -1,7 +1,10 @@
 import { useViewRegistry } from '../../views/store'
 import { initLinkedDocuments, useLinkedDocumentStore } from '../../store/linked-document-store'
 import { LinkedDocumentPanel } from '../files/LinkedDocumentPanel'
-import { useEffect, useMemo, useState } from 'react'
+import { ArtefactPanel } from '../files/ArtefactPanel'
+import { initArtefacts, isShown, SPLIT_DEFAULT, useArtefactStore } from '../../store/artefact-store'
+import { latestOpenedWins, type PaneLook } from './latest-opened-wins'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useSessionStore,
   getDisplayOrder,
@@ -21,6 +24,7 @@ import { GroupViewPanel } from './GroupViewPanel'
 import { SessionViewPanel } from './SessionViewPanel'
 import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
 import { settleOnReveal } from '../../lib/settle-on-reveal'
+import { nextKept, sameList, type KeptArtefacts } from '../../lib/kept-artefacts'
 
 /**
  * The ids this pane has shown at least once, in order of first appearance.
@@ -45,6 +49,32 @@ function useEverShown(activeId: string | null, valid: (id: string) => boolean): 
   if (live.length !== shown.length || live.some((id, i) => id !== shown[i])) setShown(live)
   return live
 }
+
+/**
+ * The artefacts this pane keeps mounted, the last `limit` shown, most recent
+ * first (PRDCT-4474, Romain's amendment of 13 November 2026). An artefact's
+ * frame unmounted on a change of tab lost its scroll and its page's state, and
+ * loaded again on the way back; the last few now stay mounted, hidden while
+ * their session is not on screen. Each still holds its preview on the server
+ * it runs on, which is why the count is bounded, and why a session closed,
+ * hidden or of another workspace lets its frame go at once.
+ */
+function useRecentlyShown(
+  activeId: string | null,
+  valid: (id: string) => boolean,
+  limit: number
+): string[] {
+  // Derived during render, as useEverShown above, for the same reason. The
+  // order drawn is the order first shown (kept-artefacts.ts): a frame moved in
+  // the page loads again.
+  const [state, setState] = useState<KeptArtefacts>({ kept: [], recent: [] })
+  const next = nextKept(state, activeId, valid, limit)
+  if (!sameList(next.kept, state.kept) || !sameList(next.recent, state.recent)) setState(next)
+  return next.kept
+}
+
+/** How many artefacts stay mounted while their sessions are not on screen. */
+const KEPT_ARTEFACTS = 4
 
 function computeGridLayout(count: number): { cols: number; rows: number } {
   if (count <= 1) return { cols: 1, rows: 1 }
@@ -71,6 +101,35 @@ export function TerminalGrid(): React.JSX.Element {
   const viewPaneIds = useViewPaneIds()
   const linked = useLinkedDocumentStore((s) => s.documents)
   useEffect(() => initLinkedDocuments(), [])
+  // PRDCT-4474: a session's artefact takes the same slot as its linked
+  // document, one or the other, the latest opened (latest-opened-wins.ts).
+  const artefacts = useArtefactStore((s) => s.artefacts)
+  const artefactHidden = useArtefactStore((s) => s.hidden)
+  const artefactSplit = useArtefactStore((s) => s.split)
+  useEffect(() => initArtefacts(), [])
+  const shownArtefacts = useMemo(
+    () =>
+      new Set(
+        Object.values(artefacts)
+          .filter((a) => isShown(a, artefactHidden))
+          .map((a) => a.sessionId)
+      ),
+    [artefacts, artefactHidden]
+  )
+  const lastLook = useRef<PaneLook>({ documents: [], shownArtefacts: new Set() })
+  useEffect(() => {
+    const next: PaneLook = { documents: linked, shownArtefacts }
+    const change = latestOpenedWins(lastLook.current, next)
+    lastLook.current = next
+    for (const doc of change.hideDocuments)
+      void window.electronAPI.linkedDocuments
+        .update(doc.id, doc.revision, { hidden: true })
+        .catch(console.error)
+    for (const sessionId of change.hideArtefacts) {
+      const artefact = useArtefactStore.getState().artefacts[sessionId]
+      if (artefact) useArtefactStore.getState().setHidden(sessionId, artefact.openedAt)
+    }
+  }, [linked, shownArtefacts])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
   const sessions = useSessionStore((s) => s.sessions)
   // Asked again when a tab arrives, and when a restored tab's process is back
@@ -173,10 +232,33 @@ export function TerminalGrid(): React.JSX.Element {
     (id) => !isFileTabId(id) && !agentSessionIds.has(id)
   )
 
-  const linkedActive =
+  const alone =
     selectedSessionIds.length === 1 && !viewGroup && !viewSession
-      ? linked.find((d) => d.sessionId === selectedSessionIds[0] && !d.hidden)
+      ? selectedSessionIds[0]
       : undefined
+  const linkedActive = alone ? linked.find((d) => d.sessionId === alone && !d.hidden) : undefined
+  const artefactActive =
+    alone && !linkedActive && shownArtefacts.has(alone) ? artefacts[alone] : undefined
+  // The share of the pane the session keeps beside its card, and whether one shows.
+  const cardSplit = linkedActive
+    ? linkedActive.split
+    : artefactActive
+      ? (artefactSplit[artefactActive.sessionId] ?? SPLIT_DEFAULT)
+      : undefined
+  const cardActive = cardSplit !== undefined
+  const keptArtefacts = useRecentlyShown(
+    artefactActive?.sessionId ?? null,
+    (id) => {
+      const session = sessions.find((s) => s.id === id)
+      return (
+        !!session &&
+        !!artefacts[id] &&
+        shownArtefacts.has(id) &&
+        inActiveWorkspace(session, activeWorkspaceId)
+      )
+    },
+    KEPT_ARTEFACTS
+  )
 
   if (sessions.length === 0 && fileTabs.length === 0) {
     return (
@@ -198,7 +280,7 @@ export function TerminalGrid(): React.JSX.Element {
   return (
     <div
       className={
-        linkedActive
+        cardActive
           ? 'flex-1 relative overflow-hidden floating-card linked-document-frame'
           : 'flex-1 relative overflow-hidden'
       }
@@ -303,15 +385,69 @@ export function TerminalGrid(): React.JSX.Element {
           <LinkedDocumentPanel document={doc} />
         </div>
       ))}
-      {/* A hidden document is reopened from the session's own header
-          (LinkedDocumentReopen), not from a chip floating over its content. */}
+      {/* The artefacts of the last sessions shown alone in the pane
+          (useRecentlyShown): the one of the session on screen shows, the others
+          stay mounted and hidden, so a change of tab keeps each page where it
+          was. A frame holds its server's preview for as long as it is mounted,
+          and one hidden by its button or past the bound holds nothing. */}
+      {keptArtefacts.map((id) => {
+        const artefact = artefacts[id]
+        const showing = artefactActive?.sessionId === id
+        const split = artefactSplit[id] ?? SPLIT_DEFAULT
+        return (
+          <div
+            key={`artefact:${id}`}
+            className="linked-document-slot"
+            style={{
+              left: `${split * 100}%`,
+              ...(showing ? {} : { visibility: 'hidden', pointerEvents: 'none' })
+            }}
+            aria-hidden={showing ? undefined : true}
+            data-artefact-session={id}
+          >
+            <div
+              className="linked-document-divider"
+              role="separator"
+              aria-label="Resize artefact"
+              aria-orientation="vertical"
+              tabIndex={showing ? 0 : -1}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  useArtefactStore
+                    .getState()
+                    .setSplit(id, split + (event.key === 'ArrowLeft' ? -0.05 : 0.05))
+                }
+              }}
+              onPointerDown={(event) => {
+                event.preventDefault()
+                const parent = event.currentTarget.parentElement?.parentElement
+                if (!parent) return
+                const bounds = parent.getBoundingClientRect()
+                const move = (e: PointerEvent): void => {
+                  useArtefactStore.getState().setSplit(id, (e.clientX - bounds.left) / bounds.width)
+                }
+                const up = (): void => {
+                  window.removeEventListener('pointermove', move)
+                  window.removeEventListener('pointerup', up)
+                }
+                window.addEventListener('pointermove', move)
+                window.addEventListener('pointerup', up)
+              }}
+            />
+            <ArtefactPanel sessionId={id} artefact={artefact} />
+          </div>
+        )
+      })}
+      {/* A hidden document or artefact is reopened from the session's own
+          header (LinkedDocumentReopen), not from a chip floating over its content. */}
 
       {/* Grid renders ALL terminals and ALL file tabs to keep them alive; the
           unselected ones are hidden (see each loop below). */}
       <div
         className="h-full grid gap-2"
         style={{
-          width: linkedActive ? `${linkedActive.split * 100}%` : '100%',
+          width: cardSplit !== undefined ? `${cardSplit * 100}%` : '100%',
           gridTemplateColumns: `repeat(${cols}, 1fr)`,
           gridTemplateRows: `repeat(${rows}, 1fr)`,
           // EITHER view hides the mosaic, and `visibility` (not `display`) is
@@ -368,7 +504,7 @@ export function TerminalGrid(): React.JSX.Element {
               ref={settleOnReveal}
               data-terminal-tile={session.id}
               className={
-                linkedActive
+                cardActive
                   ? 'min-h-0 min-w-0 h-full overflow-hidden'
                   : 'min-h-0 min-w-0 h-full floating-card'
               }

@@ -3,8 +3,8 @@ import { randomUUID } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { createServer } from 'net'
 import { isAbsolute, resolve } from 'path'
-import type { SlidelessSnapshot } from '../../shared/slideless'
-import type { ResolvedCli } from './cli'
+import type { ArtefactVersion, ArtefactVersions } from '@clave/contract/artefacts'
+import type { ResolvedCli } from './slideless-cli'
 
 /**
  * The artefacts Clave shows, each served by one `slideless dev` child
@@ -14,6 +14,12 @@ import type { ResolvedCli } from './cli'
  * Electron's own Node (`ELECTRON_RUN_AS_NODE`), on a free loopback port, its
  * versions kept in Clave's own store; its address is the `url` of the one JSON
  * line it prints on start.
+ *
+ * The child runs under the preview host (`preview-host.ts`, PRDCT-4472) with
+ * its input a pipe this process holds open and never writes to: when this
+ * process ends, however it ends, the pipe closes and the preview ends with
+ * it. A holder here is named `holder`, never `lease`: a lease is the
+ * forwarder's (`ForwardRegistry`), handed to a window by the artefact service.
  *
  * Saving a version is the dev server's own route, `POST /__slideless/snapshot`
  * with the header `x-slideless: snapshot`, called from here: a request from
@@ -25,6 +31,8 @@ export interface ServerDeps {
   fetch: typeof globalThis.fetch
   /** Electron's executable: run as Node through ELECTRON_RUN_AS_NODE. */
   execPath: string
+  /** The preview host the CLI runs under (`preview-host.ts`): it exits when its input closes. */
+  hostPath: string
   /** Where the versions are kept (the CLI's --store). */
   store: string
   /** The CLI to run, or why there is none. */
@@ -47,14 +55,14 @@ interface Running {
   stopped: boolean
   /** Set once the child printed its address: only a server that started can crash. */
   started: boolean
-  /** Who holds this server, by lease: a release with another server's lease does nothing here. */
-  leases: Set<string>
+  /** Who holds this server, by holder: a release with another server's holder does nothing here. */
+  holderIds: Set<string>
 }
 
 export interface Served {
   url: string
   /** What the holder hands back to release: it names this server, not just the target. */
-  lease: string
+  holder: string
 }
 
 const SNAPSHOT_TIMEOUT_MS = 30_000
@@ -87,7 +95,7 @@ export function artefactTarget(raw: string): string {
   return target
 }
 
-export class ArtefactServers {
+export class PreviewServers {
   private readonly running = new Map<string, Running>()
 
   constructor(private readonly deps: ServerDeps) {}
@@ -95,16 +103,16 @@ export class ArtefactServers {
   /** Start (or join) the server of a target and answer its address. */
   async serve(raw: string): Promise<Served> {
     const target = artefactTarget(raw)
-    const lease = randomUUID()
+    const holder = randomUUID()
     const existing = this.running.get(target)
     if (
       existing &&
       !existing.stopped &&
       (existing.child === null || existing.child.exitCode === null)
     ) {
-      existing.leases.add(lease)
+      existing.holderIds.add(holder)
       existing.holders++
-      return { url: await existing.url, lease }
+      return { url: await existing.url, holder }
     }
     const resolved = this.deps.resolveCli()
     if (!resolved.cli) throw new Error(resolved.reason)
@@ -118,7 +126,7 @@ export class ArtefactServers {
       holders: 1,
       stopped: false,
       started: false,
-      leases: new Set([lease])
+      holderIds: new Set([holder])
     }
     entry.url = (async () => {
       const port = await freePort()
@@ -126,6 +134,7 @@ export class ArtefactServers {
       const child = this.deps.spawn(
         this.deps.execPath,
         [
+          this.deps.hostPath,
           cliPath,
           'dev',
           target,
@@ -138,7 +147,9 @@ export class ArtefactServers {
         ],
         {
           env: { ...(this.deps.env ?? process.env), ELECTRON_RUN_AS_NODE: '1' },
-          stdio: ['ignore', 'pipe', 'pipe'],
+          // The input is the host's line to this process: held open, never
+          // written to, closed by the system when this process ends.
+          stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true
         }
       )
@@ -157,7 +168,7 @@ export class ArtefactServers {
     })()
     this.running.set(target, entry)
     try {
-      return { url: await entry.url, lease }
+      return { url: await entry.url, holder }
     } catch (err) {
       this.stop(entry)
       throw err
@@ -165,19 +176,55 @@ export class ArtefactServers {
   }
 
   /**
-   * One holder lets go, by the lease its serve answered; the last one stops
-   * the server. The lease of a server that is gone (it crashed, and another
+   * One holder lets go, by the holder its serve answered; the last one stops
+   * the server. The holder of a server that is gone (it crashed, and another
    * holder serves a new one) does nothing to the new one.
    */
-  release(raw: string, lease: string): void {
+  release(raw: string, holder: string): void {
     const entry = this.running.get(resolve(raw))
-    if (!entry || !entry.leases.delete(lease)) return
+    if (!entry || !entry.holderIds.delete(holder)) return
     entry.holders--
     if (entry.holders <= 0) this.stop(entry)
   }
 
+  /** The versions a served target keeps, as its preview lists them (`GET /__slideless/versions`). */
+  async versions(raw: string): Promise<ArtefactVersions> {
+    const entry = this.running.get(resolve(raw))
+    if (!entry) throw new Error('This artefact is not being served')
+    const base = await entry.url
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), SNAPSHOT_TIMEOUT_MS)
+    try {
+      const res = await this.deps.fetch(`${base}__slideless/versions`, {
+        signal: controller.signal
+      })
+      const body = (await res.json().catch(() => ({}))) as { versions?: unknown; error?: unknown }
+      const listed = Array.isArray(body.versions) ? body.versions : []
+      return {
+        versions: listed.flatMap((v) => {
+          const item = v as { version?: unknown; createdAt?: unknown; fileCount?: unknown }
+          return typeof item.version === 'number'
+            ? [
+                {
+                  version: item.version,
+                  createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
+                  fileCount: typeof item.fileCount === 'number' ? item.fileCount : 0
+                }
+              ]
+            : []
+        }),
+        ...(typeof body.error === 'string' ? { error: body.error } : {}),
+        ...(!res.ok && typeof body.error !== 'string'
+          ? { error: `Versions answered ${res.status}` }
+          : {})
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   /** Save a version of a served target. */
-  async snapshot(raw: string): Promise<SlidelessSnapshot> {
+  async snapshot(raw: string): Promise<ArtefactVersion> {
     const entry = this.running.get(resolve(raw))
     if (!entry) throw new Error('This artefact is not being served')
     const base = await entry.url

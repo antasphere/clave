@@ -240,7 +240,10 @@ function RegisteredSessionView({
               <MagnifyingGlassIcon className="w-4 h-4" />
             </button>
           )}
+          {/* inline-flex: an inline wrapper adds half a pixel of line box to the
+              bar, which then stands taller than a file's (PRDCT-4491). */}
           <span
+            className="inline-flex"
             title={
               terminalSessionId
                 ? terminal

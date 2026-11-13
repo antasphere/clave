@@ -22,6 +22,8 @@ import { GitEvent } from './git'
 import { ServerUpgradeEvent } from './server-info'
 // ── ADR 0004: the routines ──
 import { RoutinesChanged } from './routines/model'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactEvent } from './artefacts'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -126,7 +128,9 @@ export const ServerEvent = Schema.Union(
   // ── Issue #266: the server's self-upgrade changed state ──
   ServerUpgradeEvent,
   // ── ADR 0004: the routines (the routines or their runs changed) ──
-  RoutinesChanged
+  RoutinesChanged,
+  // ── PRDCT-4472: the artefacts (a session's artefact opened or closed, its preview died, Slideless changed state) ──
+  ...ArtefactEvent.members
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type
