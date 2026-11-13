@@ -126,6 +126,68 @@ describe('the machine the page names', () => {
     expect(state().byMachine.local.error).toBeNull()
   })
 
+  it('a key form save keeps the key nowhere in the state', async () => {
+    api.fleetProviderConnectionSetKey.mockResolvedValue(view({ hasKey: true, keySetAt: 3 }))
+    expect(await state().setKey('server-b', 'pc-1', KEY)).toBe(true)
+    expect(api.fleetProviderConnectionSetKey).toHaveBeenCalledWith('server-b', 'pc-1', KEY)
+    expect(state().byMachine['server-b'].connections).toEqual([view({ hasKey: true, keySetAt: 3 })])
+    expect(JSON.stringify(state())).not.toContain(KEY)
+  })
+
+  it('a server’s refusal lands as its message, in the shape the client throws it', async () => {
+    // The client throws the server's declared failure as the tagged error it
+    // is (`SettingsRefused`, its message the sentence meant for the person).
+    const refused = Object.assign(new Error('Pick another label, this one is taken.'), {
+      _tag: 'SettingsRefused',
+      name: 'SettingsRefused'
+    })
+    api.fleetProviderConnectionSetKey.mockRejectedValue(refused)
+    expect(await state().setKey('server-b', 'pc-1', KEY)).toBe(false)
+    expect(state().byMachine['server-b'].error).toBe('Pick another label, this one is taken.')
+    // Its name alone, once it crossed the bridge without its tag.
+    const named = new Error('Only the name says so.')
+    named.name = 'SettingsRefused'
+    api.fleetProviderConnectionRename.mockRejectedValue(named)
+    expect(await state().rename('server-b', 'pc-1', 'x')).toBe(false)
+    expect(state().byMachine['server-b'].error).toBe('Only the name says so.')
+    // Carried as the cause of another error.
+    api.fleetProviderConnectionRemove.mockRejectedValue(
+      new Error('wrapped', { cause: { _tag: 'SettingsRefused', message: 'Carried as a cause.' } })
+    )
+    expect(await state().remove('server-b', 'pc-1')).toBe(false)
+    expect(state().byMachine['server-b'].error).toBe('Carried as a cause.')
+  })
+
+  it('the unknown-connection and the Keychain refusals pass through IPC as their sentences', async () => {
+    api.fleetProviderConnectionSetKey.mockRejectedValue(
+      new Error(
+        "Error invoking remote method 'provider-connections:set-key': Error: Unknown provider connection"
+      )
+    )
+    expect(await state().setKey('local', 'gone', KEY)).toBe(false)
+    expect(state().byMachine.local.error).toBe('Unknown provider connection')
+    api.fleetProviderConnectionSetKey.mockRejectedValue(
+      new Error(
+        "Error invoking remote method 'provider-connections:set-key': Error: A secret outside printable ASCII cannot be filed in the Keychain through security."
+      )
+    )
+    expect(await state().setKey('local', 'pc-1', KEY)).toBe(false)
+    expect(state().byMachine.local.error).toBe(
+      'A secret outside printable ASCII cannot be filed in the Keychain through security.'
+    )
+    // Bare, as the bridge hands a server's message over.
+    api.fleetProviderConnectionSetKey.mockRejectedValue(
+      new Error(
+        'A secret outside printable ASCII cannot be filed in the Keychain through security.'
+      )
+    )
+    expect(await state().setKey('server-b', 'pc-1', KEY)).toBe(false)
+    expect(state().byMachine['server-b'].error).toBe(
+      'A secret outside printable ASCII cannot be filed in the Keychain through security.'
+    )
+    expect(JSON.stringify(state())).not.toContain(KEY)
+  })
+
   it('an unknown error is said with the generic sentence, never raw', async () => {
     api.fleetProviderConnectionSetKey.mockRejectedValue(new Error(`socket closed: ${KEY}`))
     expect(await state().setKey('server-c', 'pc-1', KEY)).toBe(false)

@@ -138,6 +138,48 @@ function seedCodexStub(dir) {
   return dir
 }
 
+/** The daemon's stdout, kept the way its stderr is (`server.stderr()`). The
+ *  harness spawns it and drains its stdout, so the copy is taken inside the
+ *  daemon: a module preloaded through NODE_OPTIONS tees every stdout write to
+ *  a file of the run's own, then takes itself out of the environment so no
+ *  process the daemon starts inherits it. */
+const STDOUT_TEE = [
+  "import { appendFileSync } from 'node:fs'",
+  'const file = process.env.CLAVE_E2E_STDOUT_FILE',
+  'if (file) {',
+  '  const before = process.env.CLAVE_E2E_NODE_OPTIONS_BEFORE',
+  '  delete process.env.CLAVE_E2E_STDOUT_FILE',
+  '  delete process.env.CLAVE_E2E_NODE_OPTIONS_BEFORE',
+  '  if (before) process.env.NODE_OPTIONS = before',
+  '  else delete process.env.NODE_OPTIONS',
+  '  const write = process.stdout.write.bind(process.stdout)',
+  '  process.stdout.write = (chunk, ...rest) => {',
+  "    try { appendFileSync(file, typeof chunk === 'string' ? chunk : Buffer.from(chunk)) } catch {}",
+  '    return write(chunk, ...rest)',
+  '  }',
+  '}'
+].join('\n')
+function withStdoutTee(options, file) {
+  const before = options.env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS ?? ''
+  const tee = `--import=data:text/javascript,${encodeURIComponent(STDOUT_TEE)}`
+  return {
+    ...options,
+    env: {
+      ...options.env,
+      CLAVE_E2E_STDOUT_FILE: file,
+      CLAVE_E2E_NODE_OPTIONS_BEFORE: before,
+      NODE_OPTIONS: before ? `${before} ${tee}` : tee
+    }
+  }
+}
+function stdoutTail(file) {
+  try {
+    return readFileSync(file, 'utf8').slice(-16_384)
+  } catch {
+    return ''
+  }
+}
+
 /**
  * `count` daemons (two by default), each started with the fleet flags plus
  * `serverArgs`; `world.mac(label, { args, env })` adds app flags to a Mac's
@@ -220,11 +262,13 @@ export async function fleetWorld(
     async restart(index) {
       const old = servers[index]
       await old.stop()
+      const stdoutFile = fixturePath(`${run}-${index}-stdout.log`)
       const next = await startE2eServer(`${run}-${index}`, {
-        ...options,
+        ...withStdoutTee(options, stdoutFile),
         keep: true,
         port: Number(new URL(old.url).port)
       })
+      next.stdout = () => stdoutTail(stdoutFile)
       Object.assign(old, next)
       old.fixture = serverFixture(next.url, next.token)
       return old
@@ -331,7 +375,9 @@ export async function fleetWorld(
   }
   try {
     for (let index = 0; index < count; index++) {
-      const server = await startE2eServer(`${run}-${index}`, options)
+      const stdoutFile = fixturePath(`${run}-${index}-stdout.log`)
+      const server = await startE2eServer(`${run}-${index}`, withStdoutTee(options, stdoutFile))
+      server.stdout = () => stdoutTail(stdoutFile)
       servers.push(server)
       server.root = path.join(server.dataDir, 'repo')
       mkdirSync(server.root, { recursive: true })

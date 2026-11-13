@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 
@@ -124,6 +124,17 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
   })
 
   describe('the keys', () => {
+    // The files' mode is applied at creation and masked by the umask: under a
+    // umask of 077 a file written 0o644 would still read 0o600. Forced to 022
+    // here, so the mode checks below go red on any mode wider than 0o600.
+    let previousUmask = 0
+    beforeEach(() => {
+      previousUmask = process.umask(0o022)
+    })
+    afterEach(() => {
+      process.umask(previousUmask)
+    })
+
     it('stores a key sealed, reports it, and hands it back only in main', async () => {
       const work = manager.add({ company: 'moonshot' })
       const view = await manager.setKey(work.id, `  ${KEY}\n`)
@@ -210,6 +221,39 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       expect(await new ProviderConnectionsManager(ports).openKey(work.id)).toBe(KEY)
       expect(await full.openKey(work.id)).toBe(KEY)
       if (standalone) expect([...security().items.values()]).toEqual([KEY])
+    })
+
+    it('a remove that lands during a key save leaves no key behind', async () => {
+      const work = manager.add({ company: 'moonshot' })
+      let release: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const gated = new ProviderConnectionsManager({
+        ...ports,
+        secrets: {
+          available: () => ports.secrets.available(),
+          open: (sealed) => ports.secrets.open(sealed),
+          discard: (sealed) => ports.secrets.discard(sealed),
+          seal: async (plain) => {
+            await gate
+            return ports.secrets.seal(plain)
+          }
+        }
+      })
+      const saving = gated.setKey(work.id, KEY)
+      saving.catch(() => {})
+      // Let the save run up to its seal before the remove lands.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(await gated.remove(work.id)).toBe(true)
+      release()
+      await expect(saving).rejects.toThrow(/No such connection/)
+      expect(gated.list()).toEqual([])
+      expect(new ProviderConnectionsManager(ports).list()).toEqual([])
+      const onDisk = JSON.parse(fs.readFileSync(credentialsPath(), 'utf-8'))
+      expect(Object.keys(onDisk)).not.toContain(work.id)
+      expect(fs.readFileSync(credentialsPath(), 'utf-8')).not.toContain(KEY)
+      if (standalone) expect(security().items.size).toBe(0)
     })
 
     it.runIf(standalone)(

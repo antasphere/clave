@@ -15,7 +15,9 @@ import { connectMac, fleetWorld, openServersPage, request } from './fixtures/fle
 const KEY_MAC = 'sk-test-mac-' + 'm'.repeat(40)
 const KEY_SERVER = 'sk-test-server-' + 's'.repeat(40)
 const KEY_GENERIC = 'sk-test-generic-' + 'g'.repeat(40)
-const KEYS = [KEY_MAC, KEY_SERVER, KEY_GENERIC]
+const KEY_DRAFT = 'sk-test-draft-' + 'd'.repeat(40)
+const KEY_MAC2 = 'sk-test-mac2-' + 'n'.repeat(40)
+const KEYS = [KEY_MAC, KEY_SERVER, KEY_GENERIC, KEY_DRAFT, KEY_MAC2]
 
 const CONNECTIONS_FILE = 'provider-connections.json'
 const CREDENTIALS_FILE = 'provider-connections-credentials.json'
@@ -93,6 +95,18 @@ export async function run(t) {
     const [server] = world.servers
     const mac = await world.mac('a')
     const { win } = mac
+    // The Mac's own output (its main process hosts the in-process server):
+    // Playwright pipes the app's stdout and stderr; both are kept from here.
+    let macOutput = ''
+    const macStreams = []
+    for (const stream of [mac.app.process().stdout, mac.app.process().stderr]) {
+      if (stream && typeof stream.on === 'function' && stream.readable !== false) {
+        stream.on('data', (chunk) => {
+          macOutput += String(chunk)
+        })
+        macStreams.push(stream === mac.app.process().stdout ? 'stdout' : 'stderr')
+      }
+    }
     await connectMac(mac, world.servers, { ui: false })
     const [owner] = mac.owners
 
@@ -226,6 +240,53 @@ export async function run(t) {
       { url: ollamaUrl, keyFields: ollamaKeyFields, state: ollamaState }
     )
 
+    // ── 7b. The key form on the Moonshot row: a cancelled key is gone, a saved one replaces ──
+    const keyButton = page.locator(`[data-provider-key="${moonId}"]`)
+    const keyInput = page.locator('[data-provider-key-input]')
+    await keyButton.click()
+    await keyInput.waitFor()
+    await keyInput.fill(KEY_DRAFT)
+    await page.locator('[data-provider-key-cancel]').click()
+    const draftClosed = await settled(async () => (await keyInput.count()) === 0)
+    await keyButton.click()
+    await keyInput.waitFor()
+    const reopenedValue = await keyInput.inputValue()
+    const draftOnPage =
+      (await win.evaluate(() => document.documentElement.outerHTML)).includes(KEY_DRAFT) ||
+      (await win.evaluate(() => document.body.innerText)).includes(KEY_DRAFT)
+    await keyInput.fill(KEY_MAC2)
+    await page.locator('[data-provider-key-save]').click()
+    const keyFormClosed = await settled(
+      async () => (await page.locator('[data-provider-key-form]').count()) === 0
+    )
+    const replacedState = moonId
+      ? await textOf(page.locator(`[data-provider-connection-key-state="${moonId}"]`))
+      : null
+    const afterReplace = JSON.stringify(await macList(win))
+    const replacePage =
+      (await win.evaluate(() => document.documentElement.outerHTML)) +
+      (await win.evaluate(() => document.body.innerText))
+    t.check(
+      '7b. the key form: a cancelled key does not come back, a saved one leaves "Key stored" and no key anywhere',
+      draftClosed &&
+        reopenedValue === '' &&
+        !draftOnPage &&
+        keyFormClosed &&
+        replacedState === 'Key stored' &&
+        !afterReplace.includes(KEY_MAC) &&
+        !afterReplace.includes(KEY_MAC2) &&
+        !holdsKey(replacePage),
+      {
+        draftClosed,
+        reopenedEmpty: reopenedValue === '',
+        draftOnPage,
+        keyFormClosed,
+        state: holdsKey(replacedState) ? '[key]' : replacedState,
+        inList: holdsKey(afterReplace),
+        onPage: holdsKey(replacePage)
+      }
+    )
+
     // ── The server, from the Mac ──
     await pickMachine(win, /^Personal VPS 1/, owner.id)
     const serverPage = page.locator(`[data-server-settings="${owner.id}"]`)
@@ -311,22 +372,30 @@ export async function run(t) {
     // ── 12. The server's files and output ──
     const serverConnections = findFile(server.dataDir, CONNECTIONS_FILE)
     const serverCredentials = findFile(server.dataDir, CREDENTIALS_FILE)
-    // The daemon's stderr is captured (its last 16 KB); its stdout is drained, not kept.
+    // The daemon's stderr and stdout are both kept (their last 16 KB each).
     const stderr = typeof server.stderr === 'function' ? server.stderr() : ''
+    const stdout = typeof server.stdout === 'function' ? server.stdout() : null
+    // The daemon announces itself on stdout ({"url":…}): its line proves the copy is taken.
+    const stdoutKept = stdout !== null && stdout.includes('"url":')
     t.check(
-      "12. the server's two files exist, neither holds the key, nor does its stderr",
+      "12. the server's two files exist, neither holds the key, nor do its stderr and stdout",
       !!serverConnections &&
         !!serverCredentials &&
         !readText(serverConnections).includes(KEY_SERVER) &&
         !readText(serverCredentials).includes(KEY_SERVER) &&
-        !stderr.includes(KEY_SERVER),
+        !stderr.includes(KEY_SERVER) &&
+        stdoutKept &&
+        !stdout.includes(KEY_SERVER),
       {
         connections: !!serverConnections,
         credentials: !!serverCredentials,
         clearInFiles:
           readText(serverConnections).includes(KEY_SERVER) ||
           readText(serverCredentials).includes(KEY_SERVER),
-        clearInStderr: stderr.includes(KEY_SERVER)
+        clearInStderr: stderr.includes(KEY_SERVER),
+        stdoutKept,
+        stdoutBytes: stdout?.length ?? 0,
+        clearInStdout: !!stdout?.includes(KEY_SERVER)
       }
     )
 
@@ -383,6 +452,30 @@ export async function run(t) {
       }
     )
 
+    // ── 17. A server's push reaches the Mac's page ──
+    // Added on the server by another client, after check 15 so its keychain
+    // arithmetic stands (Mistral here gets no key, so no item is filed), and
+    // removed through the page before the Mac's own checks.
+    const mistralSection = serverPage.locator('[data-provider-company-section="mistral"]')
+    const pushed = await request(server, '/connections/providers', { company: 'mistral' })
+    const pushedShown = await settled(async () => (await mistralSection.count()) === 1)
+    t.check(
+      "17. a connection added on the server by another client appears on the Mac's server page, unprompted",
+      pushedShown && typeof pushed?.id === 'string',
+      { shown: pushedShown, added: typeof pushed?.id === 'string' }
+    )
+    if (pushedShown) {
+      await serverPage.locator(`[data-provider-remove="${pushed.id}"]`).click()
+    } else if (typeof pushed?.id === 'string') {
+      await request(server, '/connections/providers/remove', { id: pushed.id })
+    }
+    const pushedGone = await settled(
+      async () => (await request(server, '/connections/providers')).length === 0
+    )
+    t.check('17b. the pushed connection is removed again, the server lists none', pushedGone, {
+      gone: pushedGone
+    })
+
     // ── 16. Remove on this Mac ──
     await pickMachine(win, 'This Mac', 'local')
     await page.locator('[data-connect]').waitFor()
@@ -398,6 +491,13 @@ export async function run(t) {
       "16. removed on this Mac: the row, the list entry and the credential's id are gone",
       moonGone && moonUnlisted && credentialsForget,
       { rowGone: moonGone, unlisted: moonUnlisted, credentialsForget }
+    )
+
+    // ── 18. The Mac's own output ──
+    t.check(
+      "18. the Mac's own output holds no key",
+      macStreams.length > 0 && !holdsKey(macOutput),
+      { streams: macStreams, bytes: macOutput.length, leaked: holdsKey(macOutput) }
     )
 
     assert.deepEqual(mac.errors, [])

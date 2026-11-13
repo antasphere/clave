@@ -45,20 +45,32 @@ const NEED_UPDATE = 'This server needs an update to show its provider connection
 /** The sentences a machine says that are meant for the person; anything
  *  else (a socket error, a stack) is said with the fallback. */
 const SENTENCES =
-  /^(Paste the key first\.|The base URL must start with http:\/\/ or https:\/\/|Give the base URL and the wire format of the provider\.|No such connection\.|.+ takes no key\.|OS encryption is unavailable here, so the key cannot be stored securely\.|This server needs an update to show its provider connections\.)$/
+  /^(Paste the key first\.|The base URL must start with http:\/\/ or https:\/\/|Give the base URL and the wire format of the provider\.|No such connection\.|Unknown provider connection|A secret outside printable ASCII cannot be filed in the Keychain through security\.|.+ takes no key\.|OS encryption is unavailable here, so the key cannot be stored securely\.|This server needs an update to show its provider connections\.)$/
 
 export const SAVE_FAILED = 'The connection could not be saved.'
 
-function isRefusal(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false
-  const tagged = error as { _tag?: unknown; name?: unknown }
-  return tagged._tag === 'SettingsRefused' || tagged.name === 'SettingsRefused'
+/** The message of a `SettingsRefused` (the server's refusal, in the words
+ *  meant for the person), whatever shape it arrives in: the tagged error the
+ *  client throws (`_tag`, or only its `name` once it crossed the bridge), or
+ *  an error carrying it as its `cause`. Null when it is no refusal. */
+function refusalMessage(error: unknown, depth = 0): string | null {
+  if (!error || typeof error !== 'object' || depth > 3) return null
+  const tagged = error as { _tag?: unknown; name?: unknown; message?: unknown; cause?: unknown }
+  if (
+    (tagged._tag === 'SettingsRefused' || tagged.name === 'SettingsRefused') &&
+    typeof tagged.message === 'string' &&
+    tagged.message.trim()
+  ) {
+    return tagged.message.trim()
+  }
+  return refusalMessage(tagged.cause, depth + 1)
 }
 
 export function providerSentenceOf(error: unknown, fallback: string = SAVE_FAILED): string {
   const message = error instanceof Error ? error.message : ''
   if (message.includes(NEED_UPDATE)) return NEED_UPDATE
-  if (isRefusal(error) && message.trim()) return message.trim()
+  const refused = refusalMessage(error)
+  if (refused) return refused
   // IPC wraps a refusal ("Error invoking remote method '…': Error: <sentence>").
   const sentence = (message.split(/\b(?:Error|SettingsRefused): /).pop() ?? '').trim()
   if (/\bSettingsRefused: /.test(message) && sentence) return sentence

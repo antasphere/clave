@@ -279,6 +279,13 @@ export class ProviderConnectionsManager {
     // Seal first, forget the old one after: a seal that fails (a locked
     // keychain, a denied prompt) must leave the working key in place.
     const sealed = await this.ports.secrets.seal(trimmed)
+    // Checked again after the await: a remove that landed while the seal
+    // waited (a Keychain prompt can take seconds) has already forgotten the
+    // connection, so the new seal is discarded and nothing is written.
+    if (!this.loadConnections().some((c) => c.id === id)) {
+      await this.ports.secrets.discard(sealed)
+      throw new Error('No such connection.')
+    }
     const previous = credentials[id]
     credentials[id] = { apiKey: sealed, setAt: Date.now() }
     try {
