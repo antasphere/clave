@@ -1,0 +1,130 @@
+import { describe, expect, it } from 'vitest'
+import { buildProvenanceHeader } from '../../../src/shared/exchange-provenance'
+import { digestMessages, gist, indexExchanges, recentTimelines } from './exchanges'
+import { clipDigestMessages, digestKey } from '../../../src/shared/exchange-digest'
+import type { Entry } from './reducer'
+import type { DeliveryEntry } from './tools'
+
+let clock = 0
+const from = (name: string, id: string, body: string): DeliveryEntry => ({
+  kind: 'user',
+  text: `${buildProvenanceHeader({ name, id })}\n${body}`,
+  final: true,
+  at: ++clock
+})
+const send = (to: string, message: string, name = 'mcp__clave__clave_send_to_session'): Entry => ({
+  kind: 'tool',
+  id: `t${++clock}`,
+  name,
+  input: { sessionId: to, message },
+  complete: true,
+  at: clock
+})
+const said = (text: string): Entry => ({ kind: 'assistant', text, final: true, at: ++clock })
+
+describe('indexExchanges', () => {
+  it('pairs a message with the send before it to that tab and the send after it', () => {
+    const ack = from('Verifier', 'v1', 'starting')
+    const entries = [send('v1', 'please verify'), ack, said('ok'), send('v1', 'thanks')]
+    const exchange = indexExchanges(entries).get(ack)
+    expect(exchange?.request?.text).toBe('please verify')
+    expect(exchange?.reply?.text).toBe('thanks')
+  })
+
+  it('pairs by the tab id alone, never across tabs', () => {
+    const report = from('Verifier', 'v1', 'report')
+    const deploy = from('Deploy bot', 'd1', 'green')
+    const entries = [send('v1', 'verify'), send('d1', 'deploy'), report, deploy, send('d1', 'nice')]
+    const index = indexExchanges(entries)
+    expect(index.get(report)?.request?.text).toBe('verify')
+    expect(index.get(report)?.reply).toBeUndefined()
+    expect(index.get(deploy)?.request?.text).toBe('deploy')
+    expect(index.get(deploy)?.reply?.text).toBe('nice')
+  })
+
+  it('uses a reply once: it is not also the request of the next message', () => {
+    const first = from('Verifier', 'v1', 'ack')
+    const second = from('Verifier', 'v1', 'report')
+    const index = indexExchanges([first, send('v1', 'thanks'), second])
+    expect(index.get(first)?.reply?.text).toBe('thanks')
+    expect(index.get(second)?.request).toBeUndefined()
+  })
+
+  it('answers the latest message waiting from that tab', () => {
+    const one = from('Verifier', 'v1', 'one')
+    const two = from('Verifier', 'v1', 'two')
+    const index = indexExchanges([one, two, send('v1', 'answer')])
+    expect(index.get(one)?.reply).toBeUndefined()
+    expect(index.get(two)?.reply?.text).toBe('answer')
+  })
+
+  it('reads the bare tool name too, and ignores other tools and odd inputs', () => {
+    const message = from('Verifier', 'v1', 'report')
+    const entries: Entry[] = [
+      send('v1', 'bare', 'clave_send_to_session'),
+      {
+        kind: 'tool',
+        id: 'x',
+        name: 'Bash',
+        input: { sessionId: 'v1', message: 'no' },
+        complete: true,
+        at: ++clock
+      },
+      {
+        kind: 'tool',
+        id: 'y',
+        name: 'clave_send_to_session',
+        input: { sessionId: 'v1' },
+        complete: true,
+        at: ++clock
+      },
+      message
+    ]
+    expect(indexExchanges(entries).get(message)?.request?.text).toBe('bare')
+  })
+
+  it('indexes an anonymous message with nothing around it', () => {
+    const anonymous: DeliveryEntry = {
+      kind: 'user',
+      text: `${buildProvenanceHeader(undefined)}\nhello`,
+      final: true,
+      at: ++clock
+    }
+    expect(indexExchanges([send('v1', 'x'), anonymous]).get(anonymous)).toEqual({})
+  })
+})
+
+describe('gist', () => {
+  it('is the first line worth reading, without its markup', () => {
+    expect(gist('\n\n## Report\nbody')).toBe('Report')
+    expect(gist('- first item\n- second')).toBe('first item')
+    expect(gist('   ')).toBe('')
+  })
+})
+
+describe('recentTimelines', () => {
+  it('is the latest three timelines of the rows, nothing else', () => {
+    const rows = [
+      { key: 'd1', block: { kind: 'delivery-group' } },
+      { key: 't1', block: { kind: 'tool-group' } },
+      { key: 'd2', block: { kind: 'delivery-group' } },
+      { key: 'd3', block: { kind: 'delivery-group' } },
+      { key: 'a1', block: { kind: 'assistant' } },
+      { key: 'd4', block: { kind: 'delivery-group' } }
+    ]
+    expect([...recentTimelines(rows)]).toEqual(['d2', 'd3', 'd4'])
+  })
+})
+
+describe('digestMessages (PRDCT-4327)', () => {
+  it('clips before the key: a pasted log is sent clipped, and the host’s clip of it finds the same key', () => {
+    const messages = Array.from({ length: 35 }, (_, i) =>
+      from('Lane A', 'a1', i === 34 ? 'P'.repeat(300_000) : `step ${i}`)
+    )
+    const sent = digestMessages({ kind: 'delivery-group', messages }, indexExchanges(messages))
+    expect(sent).toHaveLength(30)
+    expect(sent[0].text).toBe('step 5')
+    expect(sent[29].text).toBe(`${'P'.repeat(4_000)}…`)
+    expect(digestKey(clipDigestMessages(sent).messages)).toBe(digestKey(sent))
+  })
+})

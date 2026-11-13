@@ -7,11 +7,23 @@
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import { sessionManager } from './session-manager'
-import { SessionInputSchema } from '../../shared/session-model'
+import { SessionControlSchema, SessionInputSchema } from '../../shared/session-model'
 import type { SessionWrite } from '@clave/contract/sessions'
 import { windowRegistry } from '../window-registry'
 import { hasServerEventPublisher } from '../server/session-events'
 import { getSessionHost } from './host'
+import { lineageParents } from './lineage'
+
+/** A refused write as one line naming the field, not zod's JSON dump. */
+function parseWrite(input: unknown): ReturnType<typeof SessionInputSchema.parse> {
+  const result = SessionInputSchema.safeParse(input)
+  if (result.success) return result.data
+  const issue = result.error.issues[0]
+  const where = issue?.path.length ? `${issue.path.join('.')}: ` : ''
+  throw new Error(
+    `Clave could not send this message (${where}${issue?.message ?? 'invalid input'}).`
+  )
+}
 
 let registered = false
 /** Second consumers have independent subscriptions; destroying their window
@@ -47,6 +59,9 @@ export function registerSessionIpc(): void {
     const key = win && windowRegistry.getKeyForWindow(win.id)
     return key ? getSessionHost().list(key) : []
   })
+  // Which tab opened which (PRDCT-4193): the window's name tie-break reads it
+  // after a reload, its own memory of the opens gone with the page.
+  ipcMain.handle('lineage:parents', () => lineageParents())
   ipcMain.handle('sessions:subscribe', (event, id: string) => {
     if (typeof id !== 'string' || !sessionManager.get(id)) throw new Error('Unknown session')
     const sender = event.sender
@@ -106,7 +121,7 @@ export function registerSessionIpc(): void {
     const write: SessionWrite =
       input instanceof Uint8Array
         ? { type: 'bytes', data: input }
-        : (SessionInputSchema.parse(input) as SessionWrite)
+        : (parseWrite(input) as SessionWrite)
     return getSessionHost().write(id, write)
   })
   ipcMain.handle('sessions:capabilities', (event, id: string) => {
@@ -129,5 +144,11 @@ export function registerSessionIpc(): void {
   ipcMain.handle('sessions:commands', (event, id: string) => {
     owning(event, id)
     return getSessionHost().commands(id)
+  })
+  // A control request to the session's provider: only the closed set the
+  // schema names passes, so a view cannot change the permission mode here.
+  ipcMain.handle('sessions:control', (event, id: string, request: unknown) => {
+    owning(event, id)
+    return getSessionHost().control(id, SessionControlSchema.parse(request))
   })
 }

@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { parseResourceKey, resourceKey } from '@clave/contract/fleet'
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { CodeEditor } from './CodeEditor'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
@@ -9,7 +12,7 @@ interface FileContentProps {
   editor: ReturnType<typeof useFileEditor>
   cwd: string | null
   filePath: string | null
-  /** How markdown renders: page (document column), preview (compact), source (editor). Owned by the header's ViewModeToggle. */
+  /** How markdown renders: page (document column) or source (editor). Owned by the bar's file menu. */
   viewMode?: FileViewMode
   /** Bumped by the header's Reload button; reloads a rendered .html page. */
   reloadKey?: number
@@ -30,6 +33,9 @@ export function FileContent({
   const { fileData, filename, content, setContent, canEdit, isImage, loadError, save } = editor
   const isMarkdown = filePath ? isMarkdownFile(filename) : false
   const isHtml = filePath ? isHtmlFile(filename) : false
+  // Rich documents resolve relative assets in the renderer's filesystem.
+  // Remote documents use the owner-routed editable source instead.
+  const effectiveMode = cwd && isRemoteKey(cwd) ? 'source' : viewMode
   // An empty file has nothing to click: the page editor's entire target is one
   // blank line, and a code editor's is one blank gutter row. The only way a
   // file is empty on this surface is that it was just created, so it opens with
@@ -42,6 +48,8 @@ export function FileContent({
     )
   }
 
+  if (isImage && filePath && cwd && isRemoteKey(cwd))
+    return <FleetImage key={`${cwd}/${filePath}`} cwd={cwd} filePath={filePath} name={filename} />
   if (isImage && filePath) {
     const src = filePath.startsWith('/') ? `file://${filePath}` : `file://${cwd}/${filePath}`
     return (
@@ -54,7 +62,7 @@ export function FileContent({
   // HTML, rendered as a live page — served by the clave-preview protocol, so
   // this works for any size file (the 1MB editor cap below applies to source
   // mode only, where the same editable buffer as any code file takes over).
-  if (isHtml && viewMode === 'rendered' && filePath) {
+  if (isHtml && effectiveMode === 'rendered' && filePath) {
     const abs = filePath.startsWith('/') ? filePath : `${cwd}/${filePath}`
     return (
       <div className="flex-1 min-h-0">
@@ -86,9 +94,9 @@ export function FileContent({
   }
 
   // Markdown page — directly editable (Notion-style) when the file is writable
-  if (isMarkdown && viewMode === 'page' && canEdit) {
+  if (isMarkdown && effectiveMode === 'page' && canEdit) {
     return (
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className="flex-1 overflow-auto overscroll-contain min-h-0">
         <MarkdownPageEditor
           key={`${cwd}/${filePath}`}
           content={content}
@@ -100,15 +108,11 @@ export function FileContent({
     )
   }
 
-  // Markdown, rendered read-only (compact preview, or page for non-writable files)
-  if (isMarkdown && viewMode !== 'source') {
+  // Markdown, rendered read-only: the page of a file that cannot be written
+  if (isMarkdown && effectiveMode !== 'source') {
     return (
-      <div className="flex-1 overflow-auto min-h-0">
-        <MarkdownRenderer
-          content={content}
-          variant={viewMode === 'page' ? 'page' : 'compact'}
-          frontmatter
-        />
+      <div className="flex-1 overflow-auto overscroll-contain min-h-0">
+        <MarkdownRenderer content={content} variant="page" frontmatter />
       </div>
     )
   }
@@ -124,5 +128,46 @@ export function FileContent({
       autoFocus={autoFocus && canEdit}
       className="flex-1 min-h-0"
     />
+  )
+}
+
+function FleetImage({
+  cwd,
+  filePath,
+  name
+}: {
+  cwd: string
+  filePath: string
+  name: string
+}): React.JSX.Element {
+  const [image, setImage] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let current = true
+    const root = parseResourceKey('file', cwd)
+    const path = filePath.startsWith('/') ? filePath : `${root.id.replace(/\/$/, '')}/${filePath}`
+    void window.electronAPI.readImageAsDataUrl(resourceKey('file', root.serverId, path)).then(
+      (value) => {
+        if (current) {
+          setImage(value)
+          setFailed(!value)
+        }
+      },
+      () => {
+        if (current) setFailed(true)
+      }
+    )
+    return () => {
+      current = false
+    }
+  }, [cwd, filePath])
+  return image ? (
+    <div className="p-4 flex justify-center">
+      <img src={image} alt={name} className="max-w-full max-h-[50vh] object-contain" />
+    </div>
+  ) : (
+    <p className="p-4 text-xs text-text-secondary">
+      {failed ? 'Could not preview this image on the server.' : 'Loading image…'}
+    </p>
   )
 }

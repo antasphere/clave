@@ -176,14 +176,155 @@ describe('the settings group of the HTTP API', () => {
   })
 })
 
+describe('the helpers on the server (PRDCT-4330)', () => {
+  it('lists the host’s helpers and writes one field, passing only what was sent', async () => {
+    const listed = await get('/helpers')
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toEqual({ helpers: fake.helperList })
+    const set = await post('/helpers', { helperId: 'tab-title', model: 'sonnet' })
+    expect(set.status).toBe(200)
+    expect(await set.json()).toEqual({
+      helpers: [expect.objectContaining({ id: 'tab-title', model: 'sonnet', enabled: true })]
+    })
+    expect(fake.calls.filter((c) => c.method === 'helpers.set')).toEqual([
+      { method: 'helpers.set', args: ['tab-title', { model: 'sonnet' }] }
+    ])
+    const off = await post('/helpers', {
+      helperId: 'tab-title',
+      enabled: false,
+      model: null,
+      account: { kind: 'account', accountId: 'helpers' }
+    })
+    expect(await off.json()).toEqual({
+      helpers: [
+        expect.objectContaining({
+          enabled: false,
+          model: 'haiku',
+          account: { kind: 'account', accountId: 'helpers' }
+        })
+      ]
+    })
+    expect(fake.calls.at(-1)?.args).toEqual([
+      'tab-title',
+      { enabled: false, model: null, account: { kind: 'account', accountId: 'helpers' } }
+    ])
+  })
+
+  it('refuses an unknown helper with its sentence, and an account it cannot decode', async () => {
+    const unknown = await post('/helpers', { helperId: 'nope', enabled: false })
+    expect(unknown.status).toBe(422)
+    expect(await unknown.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'There is no helper "nope" on this machine.'
+    })
+    expect(
+      (await post('/helpers', { helperId: 'tab-title', account: { kind: 'someone' } })).status
+    ).toBe(400)
+  })
+})
+
+describe('the integrations on the server (PRDCT-4410)', () => {
+  const KEY = 'xi-server-test-key'
+  it('hands the ElevenLabs key to the source and to no answer', async () => {
+    const before = await get('/integrations')
+    expect(before.status).toBe(200)
+    expect(await before.json()).toMatchObject({ elevenLabs: { configured: false } })
+    const set = await post('/integrations/elevenlabs/key', { apiKey: KEY })
+    expect(set.status).toBe(200)
+    const text = await set.text()
+    expect(text).not.toContain(KEY)
+    expect(JSON.parse(text)).toMatchObject({ elevenLabs: { configured: true, tier: 'creator' } })
+    expect(fake.secrets).toEqual([KEY])
+    expect(fake.calls.find((c) => c.method === 'integrations.setElevenLabsKey')?.args).toEqual([])
+    expect(await (await get('/integrations')).text()).not.toContain(KEY)
+  })
+
+  it('checks, lists the voices, sets one with its model, and removes the key', async () => {
+    await post('/integrations/elevenlabs/key', { apiKey: KEY })
+    expect((await post('/integrations/elevenlabs/check', {})).status).toBe(200)
+    const voices = await get('/integrations/elevenlabs/voices')
+    expect(voices.status).toBe(200)
+    expect(await voices.json()).toEqual({
+      voices: [
+        { voiceId: 'v1', name: 'Voice one', category: 'premade', labels: {}, previewUrl: null }
+      ]
+    })
+    const voice = await post('/integrations/elevenlabs/voice', {
+      voiceId: 'v1',
+      voiceName: 'Voice one',
+      modelId: 'eleven_multilingual_v2'
+    })
+    expect(await voice.json()).toMatchObject({
+      elevenLabs: { voiceId: 'v1', voiceName: 'Voice one', modelId: 'eleven_multilingual_v2' }
+    })
+    expect(
+      (
+        await post('/integrations/elevenlabs/voice', {
+          voiceId: 'v1',
+          voiceName: 'Voice one',
+          modelId: 'eleven_v9'
+        })
+      ).status
+    ).toBe(400)
+    const removed = await post('/integrations/elevenlabs/remove', {})
+    expect(await removed.json()).toMatchObject({ elevenLabs: { configured: false } })
+  })
+
+  it('says a refusal in its sentence, and a host with none as unavailable', async () => {
+    const voices = await get('/integrations/elevenlabs/voices')
+    expect(voices.status).toBe(422)
+    expect(await voices.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'No ElevenLabs key on this machine.'
+    })
+    fake.refuse.integrations = true
+    const read = await get('/integrations')
+    expect(read.status).toBe(422)
+    expect(await read.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'integrations'
+    })
+    expect((await post('/integrations/elevenlabs/key', { apiKey: KEY })).status).toBe(422)
+    expect(fake.secrets).toEqual([])
+  })
+})
+
 describe('the settings events on the push channel', () => {
   const welcomed = async (): Promise<Peer> => {
     const peer = new Peer(server.url.replace('http', 'ws') + '/push')
     await peer.opened
     peer.send({ _tag: 'hello', token: server.token, client: 'test' })
     expect(await peer.next()).toMatchObject({ _tag: 'welcome', serverId: server.serverId })
+    expect(await peer.next()).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'workspaces.state_changed', origin: null }
+    })
     return peer
   }
+
+  it('tells each socket the workspace list at its welcome, that socket alone', async () => {
+    await post('/workspaces/registry', {
+      workspaces: [{ id: 'w', name: 'W', rootDir: '/w', profileFile: null, createdAt: 1 }]
+    })
+    const first = await welcomed()
+    const second = new Peer(server.url.replace('http', 'ws') + '/push')
+    await second.opened
+    second.send({ _tag: 'hello', token: server.token, client: 'test' })
+    expect(await second.next()).toMatchObject({ _tag: 'welcome' })
+    expect(await second.next()).toMatchObject({
+      _tag: 'event',
+      seq: 0,
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [{ id: 'w', rootDir: '/w' }],
+        origin: null,
+        revision: 1,
+        instance: 'fake-settings'
+      }
+    })
+    // The first socket hears nothing of the second one's welcome.
+    expect(await first.silence()).toBe(true)
+  })
 
   it('republishes every source event, and nothing for a write that changed nothing', async () => {
     const peer = await welcomed()
@@ -195,10 +336,24 @@ describe('the settings events on the push channel', () => {
 
     const pins = await post('/workspaces/pins', { scope: null, pins: [{ a: 1 }], origin: 'w1' })
     expect(pins.status).toBe(200)
-    expect(await pins.json()).toEqual({ ok: true })
+    // The write answers the state's stamp, and the event carries the same
+    // (PRDCT-3405): what a window compares a fold against.
+    expect(await pins.json()).toEqual({
+      ok: true,
+      workspaces: [],
+      pins: [{ a: 1 }],
+      revision: 1,
+      instance: 'fake-settings'
+    })
     expect(await peer.next()).toMatchObject({
       _tag: 'event',
-      event: { _tag: 'workspaces.state_changed', origin: 'w1', pins: [{ a: 1 }] }
+      event: {
+        _tag: 'workspaces.state_changed',
+        origin: 'w1',
+        pins: [{ a: 1 }],
+        revision: 1,
+        instance: 'fake-settings'
+      }
     })
 
     const refused = await post('/workspaces/pins', { scope: 'bad', pins: [] })
@@ -265,6 +420,10 @@ describe('the Antasphere account on the server (PRDCT-3259)', () => {
     await peer.opened
     peer.send({ _tag: 'hello', token: server.token, client: 'test' })
     expect(await peer.next()).toMatchObject({ _tag: 'welcome' })
+    expect(await peer.next()).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'workspaces.state_changed' }
+    })
     const res = await post('/accounts/antasphere/sign-in', {})
     expect([200, 201]).toContain(res.status)
     const body = (await res.json()) as {

@@ -13,6 +13,7 @@ import {
   callMcp,
   killLeakedE2eTmux,
   launchApp,
+  markHarnessesInstalled,
   seedWorkspaces,
   until,
   userDataDir,
@@ -85,18 +86,23 @@ export async function run(t) {
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].webContents.send('menu:open-settings-section', 'agents')
     })
-    await win.waitForSelector('h2:has-text("Agents")', { timeout: 10_000 })
+    await win.waitForSelector('h2:has-text("Harnesses")', { timeout: 10_000 })
 
-    const familyNames = await win.locator('.settings-section-title').allTextContents()
-    t.check(
-      'settings exposes all four agent families as first-class sections',
-      ['Claude', 'Antigravity', 'Codex', 'Pi'].every((name) => familyNames.includes(name)),
-      familyNames
+    // Settings → Harnesses (PRDCT-4424): one block per harness, each with its
+    // launch profiles in a closed Advanced fold.
+    const harnessIds = await win
+      .locator('section[data-harness]')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-harness')))
+    t.equal(
+      'settings exposes all five harnesses as first-class sections',
+      harnessIds.join(','),
+      'claude,codex,antigravity,pi,opencode'
     )
 
-    const piSection = win.locator('section').filter({
-      has: win.locator('.settings-section-title', { hasText: /^Pi$/ })
-    })
+    const piSection = win.locator('section[data-harness="pi"]')
+    const piFold = piSection.locator('[data-harness-advanced="pi"]')
+    t.equal('the launch profiles start folded', await piFold.getAttribute('aria-expanded'), 'false')
+    await piFold.click()
     await piSection.getByRole('button', { name: 'Add profile' }).click()
     const editor = piSection.locator('.settings-card').last()
     const inputs = editor.locator('input')
@@ -104,8 +110,14 @@ export async function run(t) {
     await inputs.nth(2).fill('anthropic')
     await inputs.nth(3).fill('claude-sonnet-4')
     // The select is the app's own (a menu on a trigger), not a native <select>.
+    // The option is picked by typeahead: with five harnesses on the page the
+    // Pi editor sits low, and in this window the open menu can run past the
+    // viewport, where a pointer click never lands (PRDCT-4424).
     await editor.locator('[data-settings-select="pi-thinking"]').click()
-    await win.getByRole('menuitem', { name: 'high', exact: true }).click()
+    const high = win.getByRole('menuitem', { name: 'high', exact: true })
+    await high.waitFor()
+    await high.focus()
+    await high.press('Enter')
     await editor.getByRole('button', { name: 'Save profile' }).click()
 
     const preferences = await win.evaluate(() => window.electronAPI.launchProfilesList())
@@ -138,13 +150,54 @@ export async function run(t) {
     t.equal('Cmd+Shift+P launches and remembers Pi', await agentButtonLabel(win), 'Pi')
 
     await win.click('.launcher-caret')
-    const menuText = await win.locator('[role="menu"]').allTextContents()
+    await markHarnessesInstalled(win)
+    const rowNames = await win
+      .locator('[data-harness-row]')
+      .evaluateAll((els) =>
+        els.map((el) => [
+          el.getAttribute('data-harness-row'),
+          el.querySelector('span.flex-1')?.textContent?.trim()
+        ])
+      )
+    t.equal(
+      'the launcher lists each harness by its name, Pi, Codex and OpenCode included',
+      JSON.stringify(rowNames),
+      JSON.stringify([
+        ['claude', 'Claude Code'],
+        ['codex', 'Codex'],
+        ['antigravity', 'Antigravity'],
+        ['pi', 'Pi'],
+        ['opencode', 'OpenCode']
+      ])
+    )
+    const menuText = (await win.locator('[role="menu"]').allTextContents()).join(' ')
     t.check(
-      'the launcher exposes Pi, Codex YOLO, and its launch profiles',
-      menuText.some((text) => text.includes('Pi')) &&
-        menuText.some((text) => text.includes('Codex CLI (YOLO)')),
+      'no row is a permission flag: the dangerous launch is the shortcut (Cmd+Y below)',
+      !/YOLO|skip permissions/.test(menuText),
       menuText
     )
+    if (profile) {
+      await win.locator('[data-harness-row="pi"]').hover()
+      const piModel = win.locator('[data-harness-model="claude-sonnet-4"]')
+      t.check(
+        'hovering Pi offers the model its saved profile pins',
+        await piModel.waitFor({ timeout: 5_000 }).then(
+          () => true,
+          () => false
+        )
+      )
+      await win.locator(`[role="menu"] [data-harness-advanced="pi"]`).hover()
+      const entry = win.locator(`[data-launch-profile-entry="${profile.id}"]`)
+      t.check(
+        'and its saved launch profile under Advanced',
+        await entry.waitFor({ timeout: 5_000 }).then(
+          () => true,
+          () => false
+        )
+      )
+    }
+    await win.keyboard.press('Escape')
+    await win.keyboard.press('Escape')
     await win.keyboard.press('Escape')
 
     // ── The profile's command is what runs ──────────────────────────────────
@@ -173,6 +226,9 @@ export async function run(t) {
 
     // ⌘U is the ordinary Codex launch — no profile named at the call site, so
     // the workspace default is what has to be found at the spawn boundary.
+    // The shortcut follows the interaction mode like every road (PRDCT-4425):
+    // Terminal here, so the argv of the wrapper is what is proven.
+    await win.evaluate(() => window.electronAPI.launchSettingsSet({ interactionMode: 'terminal' }))
     await win.keyboard.press('Meta+u')
     const argv = await until(
       () =>

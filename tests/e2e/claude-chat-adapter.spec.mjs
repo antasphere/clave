@@ -149,11 +149,11 @@ setInterval(()=>{},1000);
       await window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'fixture prompt' })
     }, session.id)
     assert.ok(
-      await until(() => win.locator('.sidebar-tab-icon[data-status="working"]').count()),
+      await until(() => win.locator('.sidebar-tab-status[data-status="working"]').count()),
       'working state reaches sidebar'
     )
     assert.ok(
-      await until(() => win.locator('.sidebar-tab-icon[data-status="needs-you"]').count()),
+      await until(() => win.locator('.sidebar-tab-status[data-status="needs-you"]').count()),
       'blocked state reaches sidebar'
     )
     const request = await win.evaluate(() =>
@@ -195,8 +195,8 @@ setInterval(()=>{},1000);
           )
           return (
             record?.state === 'working' &&
-            (await win.locator('.sidebar-tab-icon[data-status="working"]').count()) === 1 &&
-            (await win.locator('.sidebar-tab-icon[data-status="needs-you"]').count()) === 0
+            (await win.locator('.sidebar-tab-status[data-status="working"]').count()) === 1 &&
+            (await win.locator('.sidebar-tab-status[data-status="needs-you"]').count()) === 0
           )
         },
         { gapMs: 25 }
@@ -247,9 +247,9 @@ setInterval(()=>{},1000);
       ['working', 'blocked', 'working', 'done']
     )
     assert.equal(
-      await win.locator('.sidebar-tab-icon[data-status="needs-you"]').count(),
+      await win.locator('.sidebar-tab-status[data-status="needs-you"]').count(),
       0,
-      'the amber logo clears when the kernel finishes the external answer'
+      'the amber question mark clears when the kernel finishes the external answer'
     )
     const inputs = readFileSync(`${ROOT}/input.ndjson`, 'utf8').trim().split('\n').map(JSON.parse)
     assert.equal(inputs[1].response.request_id, request.id)
@@ -284,7 +284,9 @@ setInterval(()=>{},1000);
       ['Opus (1M context)', 'opus[1m]']
     ]) {
       await win.getByRole('button', { name: 'Model', exact: true }).click()
-      const menu = win.locator('.chat-model-menu[role="menu"]')
+      // Provider first, then the model (PRDCT-4300).
+      await win.locator('.chat-model-provider[data-adapter="claude-chat"]').click()
+      const menu = win.locator('.chat-model-menu[role="menu"][aria-label="Models"]')
       await menu.waitFor()
       await menu.getByText(label, { exact: true }).click()
       await menu.waitFor({ state: 'hidden' })

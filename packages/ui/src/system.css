@@ -35,6 +35,18 @@ summary,
   cursor: pointer;
 }
 
+/* The app shell never scrolls: the window is one fixed frame of panes, each
+   with a scroller of its own. That frame is why every pane-level scroller
+   also declares `overscroll-behavior: contain` (`.chat-scroll`, the sidebar
+   viewport, the side panels, the lists in dialogs and popovers). A trackpad
+   gesture that reaches the end of a scroller latches to it only if the
+   scroller does not chain; a chaining one hands the gesture up to this root,
+   which has nothing to give back, and the native macOS rubber-band never
+   shows. Inner scrollers (a code block, a diff, a `pre` in a popover) stay
+   `auto` on the vertical axis so a wheel over them still reaches the pane.
+   The bounce itself is Chromium's own, switched on by the window's
+   `scrollBounce` (src/main/index.ts) and present for non-root scrollers from
+   Chromium 152 (Electron 44); nothing here imitates it. */
 html,
 body,
 #root {
@@ -104,7 +116,8 @@ body,
 .launcher-panel,
 .group-switcher-panel,
 .panel-bar,
-.panel-tabs {
+.panel-tabs,
+.segmented {
   border-radius: var(--frame-radius);
   border: var(--frame-border) solid var(--color-border);
   background-color: color-mix(in srgb, var(--surface-0) 70%, transparent);
@@ -112,7 +125,7 @@ body,
 .frame {
   height: var(--frame-h);
 }
-:is(.frame, .launcher-panel, .group-switcher-panel, .panel-bar, .panel-tabs)
+:is(.frame, .launcher-panel, .group-switcher-panel, .panel-bar, .panel-tabs, .segmented)
   :is(
     .launcher-btn,
     .launcher-icon-btn,
@@ -123,7 +136,8 @@ body,
     .panel-tab,
     .panel-path,
     .btn-icon-md,
-    .search-field
+    .search-field,
+    .segmented-item
   ) {
   height: var(--framed-control-h);
   border-radius: var(--framed-control-radius);
@@ -163,6 +177,7 @@ body,
 .launcher-btn:focus-visible,
 .launcher-icon-btn:focus-visible,
 .launcher-caret:focus-visible,
+.work-card-open:focus-visible,
 .group-switcher-chip:focus-visible,
 .btn-icon:focus-visible,
 .btn-primary:focus-visible,
@@ -186,13 +201,82 @@ body,
   outline-offset: -1.5px;
 }
 
+/* The side panel (Files and Git tabs) follows Appearance → Text size. Its rows
+   are written with fixed Tailwind sizes (text-xs, text-[11px], ...), which the
+   chrome's --ui-text-offset never reached: every label in the app moved but
+   the trees. Here each size the panel uses takes the offset on top. The row
+   height follows Density through --panel-row-h. */
+/* The side panel's panes (PRDCT-4142). Every pane visited stays mounted: the
+   file tree, the git list and a plugin's pane each keep their content, their
+   open rows, their scroll and a typed draft across a tab switch, so a return
+   redraws nothing. The inactive ones are hidden in place with their layout box
+   kept, since a pane taken out of layout (display: none) drops its scroll
+   offset with the box. The hooks behind a hidden pane are told it is inactive
+   and read nothing. */
+.panel-panes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.panel-pane:not([data-active]) {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.side-panel :is(.text-xs) {
+  font-size: calc(0.75rem + var(--ui-text-offset));
+}
+.side-panel :is(.text-sm) {
+  font-size: calc(0.875rem + var(--ui-text-offset));
+}
+.side-panel .text-\[9px\] {
+  font-size: calc(9px + var(--ui-text-offset));
+}
+.side-panel .text-\[10px\] {
+  font-size: calc(10px + var(--ui-text-offset));
+}
+.side-panel .text-\[11px\] {
+  font-size: calc(11px + var(--ui-text-offset));
+}
+.side-panel .text-\[15px\] {
+  font-size: calc(15px + var(--ui-text-offset));
+}
+
+/* A folder of the Files tab whose contents are slow to arrive: its chevron,
+   already turned, pulses, from 400ms on so a fast read never shows it. */
+.tree-chevron[data-loading] {
+  animation: tree-chevron-wait 900ms ease-in-out 400ms infinite;
+}
+@keyframes tree-chevron-wait {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree-chevron[data-loading] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* ── Sidebar items ── */
 
 .sidebar-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* gap-2 */
+  --sidebar-item-gap: 0.5rem; /* gap-2; the close button cancels it while away */
+  gap: var(--sidebar-item-gap);
   height: var(--sidebar-row-h);
   padding: 0 var(--sidebar-row-px);
   border-radius: var(--control-radius);
@@ -210,12 +294,46 @@ body,
   color: var(--text-primary);
   background-color: var(--surface-100);
 }
-/* The row's close button sits as far from the row's right edge as from its
-   top and bottom: its box is pulled into the row's side padding by the
+/* The row's close button (SidebarTabItem). Away, it takes no room at all: no
+   width, and the row's gap cancelled by a negative margin, so the title has
+   the room the invisible box used to hold (PRDCT-4078). Hovering the row
+   slides it in from the right; keyboard focus on the row, or on a control
+   inside it (the button itself stays in the tab order while away), reveals
+   it the same way. Shown, it sits as far from the row's right edge as from
+   its top and bottom: its box is pulled into the row's side padding by the
    difference, so the glyph's inset is (row height - button) / 2 on all three
-   sides, at every density. */
-.sidebar-item-close {
+   sides, at every density. Two classes on purpose: `.btn-icon` and
+   `.btn-icon-xs` set the width further down this file and would win on one. */
+.sidebar-item .sidebar-item-close {
+  width: 0;
+  margin-left: calc(-1 * var(--sidebar-item-gap));
+  margin-right: 0;
+  opacity: 0;
+  transform: translateX(var(--sidebar-item-gap));
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    width 150ms var(--ease-out-expo),
+    margin 150ms var(--ease-out-expo),
+    transform 150ms var(--ease-out-expo),
+    opacity 150ms,
+    color 150ms,
+    background-color 150ms;
+}
+/* Shown, it still cancels the row's gap: the 20px box already carries 3px of
+   air around its 14px glyph, and the status glyph before it its own, so with
+   the 8px gap on top the check and the cross stood ~16px apart, twice the
+   distance between any other two things on the row. Flush boxes put the two
+   glyphs ~8px apart, the row's own rhythm. */
+.sidebar-item:hover .sidebar-item-close,
+.sidebar-item:focus-visible .sidebar-item-close,
+.sidebar-item:has(:focus-visible) .sidebar-item-close {
+  width: var(--control-h-xs);
+  margin-left: calc(-1 * var(--sidebar-item-gap));
   margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
 /* The row an emptied group shows in place of its sessions ("No sessions").
@@ -252,10 +370,11 @@ body,
   height: var(--sidebar-tab-icon-size);
 }
 
-/* The tab's status, carried by its logo one signal at a time
-   (`lib/tab-status.ts`): motion means working, colour means "go look". No
-   dots, no pulses. The ring sits just outside the logo so the mark keeps its
-   size in every state. */
+/* A status carried by a glyph, one signal at a time (`lib/tab-status.ts`):
+   motion means working, colour means "go look". No dots, no pulses. Worn by
+   the subagent selector's attention glyph and the Appearance sample; a
+   session row's own status is `.sidebar-tab-status` below. The ring sits
+   just outside the glyph so the mark keeps its size in every state. */
 .tab-status {
   display: inline-flex;
   align-items: center;
@@ -282,61 +401,173 @@ body,
   border-top-color: currentColor;
   animation: tab-status-spin 0.9s linear infinite;
 }
-/* A logo that opens the row's attached view (SessionItem's SessionIcon): it
-   grows with a small overshoot on hover, so it reads as its own target. */
-.tab-status[data-view] {
-  cursor: pointer;
-  transition:
-    color 300ms,
-    opacity 300ms,
-    transform 420ms cubic-bezier(0.34, 1.9, 0.5, 1);
-}
-/* An invisible hit area the size the logo grows to, so the hover starts where
-   the grown logo WILL be rather than only on the resting mark. (::before is
-   the working ring.) */
-.tab-status[data-view]::after {
-  content: '';
-  position: absolute;
-  inset: -5px;
-  border-radius: 9999px;
-}
-.tab-status[data-view]:hover,
-.tab-status[data-view]:focus-visible {
-  transform: scale(1.3);
-  color: var(--text-primary);
-  outline: none;
-}
-.tab-status[data-view]:active {
-  transform: scale(1.15);
-  transition-duration: 120ms;
-}
 @keyframes tab-status-spin {
   to {
     transform: rotate(360deg);
   }
 }
+
+/* The session row's status, in a trailing column of its own
+   (`tabStatusPresentation` in `lib/tab-status.ts`, PRDCT-3933): one glyph in
+   a slot the size of a tab icon, last before the close button, so every
+   title starts at the row's gutter and the state reads on the right. The
+   slot is kept when there is nothing to say, so the badges before it keep
+   their column from row to row. Colour means "go look": amber for a question
+   waiting on the reader, blue for something new to read; grey otherwise,
+   dimmed once the process has ended. */
+.sidebar-tab-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+  color: var(--sidebar-icon-color);
+  transition:
+    color 300ms,
+    opacity 300ms;
+}
+/* Nothing to say yet, in a pane header only: an empty grey ring the size of
+   the glyphs' own circle, so the place before the title is never blank. */
+.sidebar-tab-placeholder {
+  display: block;
+  flex-shrink: 0;
+  width: 87%;
+  height: 87%;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0.45;
+}
+/* Subagents still at work: their count inside the spinner's ring. */
+.sidebar-tab-status:has(.sidebar-tab-agents) {
+  position: relative;
+}
+.sidebar-tab-agents {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-secondary);
+}
+/* The glyphs and the spinner meet in the middle. An outline check or ? draws
+   its circle on 18 of its 24 units, so at the slot's 15px it read ~11px
+   across while the spinner's ring filled all 15: the working row looked a
+   size bigger than the finished one. The glyph now draws at 115% (its circle
+   ~13px, overflowing the slot evenly, the slot itself unchanged so nothing
+   around it moves) and the spinner at 87% (~13px): one size for every state. */
+.sidebar-tab-status > svg {
+  flex-shrink: 0;
+  width: 115%;
+  height: 115%;
+}
+.sidebar-tab-status[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.sidebar-tab-status[data-tone='blue'] {
+  color: var(--color-status-working);
+}
+.sidebar-tab-status[data-tone='dim'] {
+  opacity: 0.45;
+}
+/* Working: eight fixed segments under an ink that fades around the ring,
+   turned one segment at a time, the way an activity indicator ticks. The
+   element turns in eighths, which leaves the segments where they are and
+   moves the fade alone. */
+.sidebar-tab-spinner {
+  display: block;
+  flex-shrink: 0;
+  width: 87%;
+  height: 87%;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, currentColor 12%, transparent),
+    currentColor
+  );
+  mask:
+    radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)),
+    repeating-conic-gradient(from -11deg, #000 0 22deg, transparent 22deg 45deg);
+  mask-composite: intersect;
+  animation: sidebar-tab-spin 0.8s steps(8, end) infinite;
+}
+@keyframes sidebar-tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* The way to a page attached to the row (SessionItem's SessionViewButton),
+   beside the status: it grows with a small overshoot on hover, so it reads
+   as its own target, over an invisible hit area the size it grows to. */
+.sidebar-tab-view {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+  color: var(--sidebar-icon-color);
+  cursor: pointer;
+  transition:
+    color 300ms,
+    transform 420ms cubic-bezier(0.34, 1.9, 0.5, 1);
+}
+.sidebar-tab-view > svg {
+  width: 100%;
+  height: 100%;
+}
+.sidebar-tab-view::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 9999px;
+}
+.sidebar-tab-view:hover,
+.sidebar-tab-view:focus-visible {
+  transform: scale(1.3);
+  color: var(--text-primary);
+  outline: none;
+}
+/* Appearance → Agent mark: the row's status slot is a mark pack's canvas
+   (the orbs pack draws `thinking-orbs`' 20px preset), fitted to the slot
+   here. Its own motion says working. Rest and work swap with a short fade;
+   the rest mark keeps its full ink — stillness is the signal, and a dimmed
+   15px globe was too faint to read (2026-10-15). */
+.sidebar-tab-status > canvas {
+  width: var(--sidebar-tab-icon-size) !important;
+  height: var(--sidebar-tab-icon-size) !important;
+}
+canvas[data-orb-state] {
+  transition: opacity 300ms;
+}
 @media (prefers-reduced-motion: reduce) {
-  .tab-status[data-status='working']::before {
+  .tab-status[data-status='working']::before,
+  .sidebar-tab-spinner {
     animation-duration: 2.4s;
   }
-  .tab-status[data-view] {
+  .sidebar-tab-view {
     transition-timing-function: ease-out;
+  }
+  /* The close button appears in place: no slide, and no width that grows. */
+  .sidebar-item .sidebar-item-close {
+    transform: none;
+    transition:
+      opacity 150ms,
+      color 150ms,
+      background-color 150ms;
   }
 }
 
-/* The row's right side, before the close button: what still runs in the
-   background, and a warning when the account is at its limit. */
-.tab-background-count {
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: 9999px;
-  background: var(--color-surface-100);
-  font-size: 10.5px;
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-}
+/* The row's right side, before the close button: a warning when the account
+   is at its limit. (Background work no longer has a counter here: subagents
+   keep the spinner turning with their count inside it, commands left running
+   are named in the status glyph's tooltip; tab-status.ts.) */
 .tab-limit-warning {
   display: inline-flex;
   flex-shrink: 0;
@@ -407,8 +638,7 @@ body,
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .launcher-btn:hover {
   color: var(--text-primary);
@@ -443,8 +673,7 @@ body,
   color: var(--text-tertiary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .launcher-caret:hover,
 .launcher-caret[data-state='open'] {
@@ -467,8 +696,7 @@ body,
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .launcher-icon-btn:hover,
 .launcher-icon-btn[data-active='true'] {
@@ -532,13 +760,24 @@ body,
   grid-template-rows: 0fr;
   opacity: 0;
 }
+/* One row that slides sideways rather than wrapping onto new lines: the panel
+   holds a single chip row however many groups run, so the list below never
+   moves when a group starts or stops. The scrollbar is hidden — a trackpad
+   swipe (or the wheel, mapped in GroupSwitcher.tsx) moves it. overflow-y stays
+   hidden so the grid track above can still clip the row on its way out. */
 .group-switcher-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.group-switcher-chips::-webkit-scrollbar {
+  display: none;
 }
 /* Only when there is a head row above them — the margin would otherwise open a
    gap at the top of the panel — and it goes with the row on the way out, so the
@@ -659,7 +898,7 @@ body,
   gap: var(--control-gap);
   flex-shrink: 0;
   min-width: 0;
-  max-width: 100%; /* a long group name wraps the row, never the panel */
+  max-width: 100%; /* a long group name truncates, never widens the panel */
   height: var(--control-h-md);
   padding: 0 var(--control-px); /* px-2 — see .launcher-btn */
   border-radius: var(--radius-control);
@@ -670,8 +909,7 @@ body,
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .group-switcher-chip:hover,
 .panel-tab:hover {
@@ -899,9 +1137,9 @@ body,
    Same size and the same hover fill as the launcher's trailing buttons, so the
    two panels answer to the same touch. */
 /* The panel's icon buttons — the settings gear, the chat door. The same box,
-   radius, press dip and disabled state as .panel-icon-btn, because that is
-   exactly what they are: an icon button inside a --radius-xl panel. Only the
-   hover fill differs, and it differs on purpose (see .sidebar-footer). */
+   radius and disabled state as .panel-icon-btn, because that is exactly what
+   they are: an icon button inside a --radius-xl panel. Only the hover fill
+   differs, and it differs on purpose (see .sidebar-footer). */
 .sidebar-footer-btn {
   display: inline-flex;
   align-items: center;
@@ -914,8 +1152,7 @@ body,
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .sidebar-footer-btn:hover {
   color: var(--text-primary);
@@ -944,9 +1181,7 @@ body,
   height: var(--control-h-md);
   padding: 0 0.375rem;
   border-radius: var(--radius-control);
-  transition:
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: background-color 150ms;
 }
 .sidebar-footer-line:hover {
   background-color: var(--field-fill);
@@ -956,13 +1191,11 @@ body,
 }
 
 /* The avatar's own target. No fill of its own — the tile IS the picture, and a
-   wash over it would be a second field — so it says "live" with the press dip
-   the rest of the family uses. */
+   wash over it would be a second field. */
 .sidebar-footer-avatar {
   position: relative;
   flex-shrink: 0;
   border-radius: var(--radius-lg);
-  transition: scale 120ms var(--ease-out-expo);
 }
 
 /* The name. Its own hover target — clicking it opens settings — but no fill of
@@ -1023,8 +1256,7 @@ body,
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .panel-icon-btn:hover {
   color: var(--text-primary);
@@ -1039,6 +1271,13 @@ body,
 }
 .panel-icon-btn:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A disabled control does not wake up under the pointer (the field guide's
+   "no hover fill"); the hover rule above would otherwise still fill it. */
+.panel-icon-btn:disabled:hover {
+  color: var(--text-tertiary);
+  background-color: transparent;
 }
 
 /* The root chip at the head of the path bar: one letter for which root the
@@ -1291,18 +1530,18 @@ body,
 }
 
 /* ── Overlays: menus, popovers, modals ──
-   One language for every surface that floats above the panels, cut from the
-   same cloth as the launcher/toolbar panels: --radius-xl corners, a 1px
-   --color-border, the panels' own --surface-0 ground, and — because these
-   float rather than sit in the layout — an --overlay-shadow. Rows inside are
-   inset and rounded like .sidebar-item, never full-bleed: the surface holds
-   the rows, the rows do not become the surface.
+   One language for every surface that floats above the panels: the card
+   tier of paper (tokens.css, "Paper") — --radius-xl corners, --card-surface,
+   a 0.5px --edge-color hairline drawn in the shadow instead of a 1px border,
+   and, because these float rather than sit in the layout, an
+   --overlay-shadow. Rows inside are inset and rounded like .sidebar-item,
+   never full-bleed: the surface holds the rows, the rows do not become the
+   surface.
 
-   The ground is the same token the toolbar, the terminal cards and the
-   sidebar's boxes are painted with, so a popover reads as one of those boxes
-   lifted off the page rather than as a different material. It used to sit on
+   It is the settings card's paper, so a menu reads as one of those cards
+   lifted off the page rather than as a different material. It never sits on
    --surface-100, which is the hover fill of the rows inside it: a whole menu
-   the colour of a hovered row, and a shade off every box it opened from.
+   the colour of a hovered row.
 
    Motion: enter/exit run off Radix's data-state with the app's own curve.
    These replaced tailwindcss-animate classes (animate-in/fade-in-0/…) that
@@ -1342,9 +1581,11 @@ body,
    driven popovers reuse the look but bring their own motion). */
 .menu-surface {
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-0);
-  box-shadow: var(--overlay-shadow);
+  background-color: var(--card-surface);
+  /* Paper (tokens.css): the hairline edge in the shadow, not a 1px border. */
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--overlay-shadow);
   overflow: hidden;
   /* Grow from the trigger's edge: Radix's popper publishes the origin. */
   transform-origin: var(--radix-popper-transform-origin, 50% 0%);
@@ -1354,7 +1595,9 @@ body,
    without a scrim. Same material, the modal's heavier shadow: at that size the
    menu shadow reads as a card lying on the page rather than held above it. */
 .menu-surface--sheet {
-  box-shadow: var(--overlay-shadow-lg);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--overlay-shadow-lg);
 }
 .menu-pop[data-state='open'] {
   animation: overlay-in 140ms var(--ease-out-expo);
@@ -1445,14 +1688,92 @@ body,
    means adding it to this selector — src/renderer/src/lib/row-rhythm.test.ts
    finds every full-width class with a hover fill and fails on one left out. */
 :is(.sidebar-item, :has(> .sidebar-item)) + :is(.sidebar-item, :has(> .sidebar-item)),
-.chat-prompt-option + .chat-prompt-option,
-.chat-prompt-choice + .chat-prompt-choice,
-.chat-prompt-choice + .chat-prompt-option {
+.chat-prompt-option + .chat-prompt-option {
   margin-top: var(--row-gap);
 }
 /* Menus read it through --menu-row-gap: Comfortable stacks its menu rows flush. */
 :is(.menu-item, :has(> .menu-item)) + :is(.menu-item, :has(> .menu-item)) {
   margin-top: var(--menu-row-gap);
+}
+
+/* The pane header's session menu (views/SessionMenu.tsx): the views as
+   drawn tiles, then the transcript and session rows. Wide enough for three
+   tiles side by side and a row's hint beside its label. */
+.session-menu {
+  width: 288px;
+}
+.view-tiles {
+  display: grid;
+  grid-template-columns: repeat(var(--view-tiles, 3), minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+/* A tile: the drawing on a paper card, the view's name under it. Hover is the
+   menu row's fill; the view on screen rings its card in the accent, the one
+   place the accent goes, as in the drawing inside it. */
+.view-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 5px 5px 4px;
+  border-radius: var(--control-radius);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-align: center;
+  outline: none;
+  user-select: none;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.view-tile:hover,
+.view-tile[data-highlighted] {
+  background-color: var(--surface-100);
+  color: var(--text-primary);
+}
+.view-tile[data-selected='true'] {
+  color: var(--text-primary);
+}
+.view-tile-art {
+  display: block;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 0.5px var(--edge-color);
+  transition: box-shadow 150ms;
+}
+.view-tile[data-selected='true'] .view-tile-art {
+  box-shadow: 0 0 0 1.5px var(--color-accent);
+}
+.view-tile-art .view-drawing {
+  width: 100%;
+  height: auto;
+}
+.view-tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A row's word on what it just did ("Copied", "Saved", "Failed"), where its
+   hint sits; the check says it to the eye before the menu closes. */
+.session-menu-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.session-menu-note[data-tone='done'] {
+  color: var(--color-status-ready, var(--text-secondary));
+}
+.session-menu-note[data-tone='failed'] {
+  color: var(--color-destructive);
+}
+.session-menu-failure {
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: var(--color-destructive);
 }
 
 /* Hairline between menu sections, inset so it reads as a break in the list
@@ -1488,13 +1809,14 @@ body,
   animation: scrim-out 100ms ease-out forwards;
 }
 
-/* The modal card surface — same corners and border as the panels, lifted by
-   the large overlay shadow. */
+/* The modal card surface — the menus' paper, lifted by the large overlay
+   shadow. */
 .modal-card {
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-0);
-  box-shadow: var(--overlay-shadow-lg);
+  background-color: var(--card-surface);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--overlay-shadow-lg);
   overflow: hidden;
 }
 /* Safe under the translate-utility centering: Tailwind v4 centers via the
@@ -1532,9 +1854,6 @@ body,
   .group-switcher-wrap {
     transition: none;
   }
-  .chat-prompt-page {
-    animation: scrim-in 100ms ease-out;
-  }
 }
 
 /* ── Buttons ── */
@@ -1556,9 +1875,7 @@ body,
   font-weight: var(--font-weight-medium);
   color: var(--color-action-foreground);
   background-color: var(--color-action);
-  transition:
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: background-color 150ms;
 }
 .btn-primary:hover {
   background-color: var(--color-action-hover);
@@ -1568,13 +1885,16 @@ body,
   cursor: not-allowed;
 }
 
-/* Secondary: a neutral raised control, the quieter partner beside a primary.
-   It keeps a body of its own (the raised surface, a hairline edge and a soft
-   drop, all one box-shadow so it takes no layout) because a bare word next to
-   an ink-filled button reads as a label rather than as the other choice. It
-   draws its own edge, so a border utility beside it doubles the line. A
-   control that stands among icons and links in a bar is not this: it takes
-   the borderless family of its box (.panel-icon-btn, .btn-icon, .launcher-btn). */
+/* Secondary: the quieter partner beside a primary, and the key a settings row
+   holds (Edit, Redraw, Import skin). It keeps a body of its own because a bare
+   word next to an ink-filled button reads as a label rather than as the other
+   choice — but the body is a WASH of the ink (--key-wash), not a raised key:
+   no edge and no drop (round 2, 2026-11-07). A paper key with its own hairline
+   and shadow, on a paper card with its own, was three outlined layers for one
+   choice; a tonal step says "press me" with none. The select below is the same
+   key. A control that stands among icons and links in a bar is not this: it
+   takes the borderless family of its box (.panel-icon-btn, .btn-icon,
+   .launcher-btn). */
 .btn-secondary {
   display: inline-flex;
   align-items: center;
@@ -1587,15 +1907,17 @@ body,
   font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
-  background-color: var(--surface-raised);
-  box-shadow: var(--raised-control-shadow);
+  background-color: var(--key-wash);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
-.btn-secondary:hover {
-  background-color: var(--surface-100);
+/* Hover and an open select deepen the same wash a step: the key stays the same
+   shape under the pointer, only more present. */
+.btn-secondary:hover,
+.select-trigger:hover,
+.select-trigger[data-state='open'] {
+  background-color: var(--key-wash-strong);
 }
 .btn-secondary:disabled {
   opacity: 0.4;
@@ -1649,8 +1971,7 @@ body,
   color: var(--text-tertiary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .btn-icon:hover {
   color: var(--text-primary);
@@ -1675,58 +1996,87 @@ body,
   height: var(--control-h-md);
 }
 
-/* Press feedback for the button family — a 3% dip the frame the pointer goes
-   down, released on the shared curve. Buttons only, never list rows: a row of
-   text shrinking under the cursor is noise, a button acknowledging the press
-   is feedback. */
-.btn-primary:active:not(:disabled),
-.btn-secondary:active:not(:disabled),
-.btn-icon:active,
-.btn-add:active,
-.launcher-btn:active:not(:disabled),
-.launcher-caret:active,
-.launcher-icon-btn:active:not(:disabled),
-.group-switcher-chip:active,
-.panel-tab:active,
-.panel-icon-btn:active:not(:disabled),
-.sidebar-footer-btn:active:not(:disabled),
-.sidebar-footer-line:active,
-.sidebar-footer-avatar:active,
-.segmented-item:active,
-.idle-group-start:active {
-  scale: 0.97;
+/* Appearance → Agent mark: the nine orbs to pick from, each drawn live at the
+   avatar preset so the choice is made on the animation itself, not a still. */
+.orb-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: calc(var(--spacing) * 2);
+  width: 100%;
+}
+.orb-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    box-shadow 150ms,
+    background-color 150ms,
+    color 150ms;
+}
+.orb-swatch:hover {
+  background-color: color-mix(in oklab, var(--control-surface), var(--text-primary) 5%);
+  color: var(--text-secondary);
+}
+.orb-swatch[data-selected='true'] {
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1.5px var(--color-accent);
+}
+.orb-swatch-label {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+}
+.orb-swatch canvas {
+  width: 48px !important;
+  height: 48px !important;
 }
 
-/* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
-   in file headers). Items mark their active state via data-active="true". */
+/* Segmented control: every tab-like switch in the app (Page/Preview/Source
+   in a file header, Text size, the side-panel root, a step rail). It IS the
+   right side panel's tab bar (2026-11-07, round 2 of the paper): the frame
+   above (one control tall, the frame's border and ground) holding framed
+   controls one size down, each a .panel-tab — transparent, tertiary ink at
+   the control's label size, the hover fill under the pointer, and the
+   selected one filled --surface-200 in primary ink. No thumb, no shadow: the
+   macOS segmented control it used to be was the one tab bar in the app that
+   did not look like the app's tabs. Items mark their state with
+   data-active="true". */
 .segmented {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
+  height: var(--frame-h);
+  padding: var(--frame-inset);
 }
 .segmented-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--radius-md);
-  font-size: 11px;
+  justify-content: center;
+  gap: var(--control-gap);
+  flex-shrink: 0;
+  padding: 0 var(--control-px);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   color: var(--text-tertiary);
+  background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .segmented-item:hover {
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  background-color: var(--surface-100);
 }
 .segmented-item[data-active='true'] {
-  background-color: var(--surface-200);
   color: var(--text-primary);
+  background-color: var(--surface-200);
 }
 
 /* ── The control spec, as classes a component can wear ──
@@ -1801,9 +2151,7 @@ body,
   border: var(--frame-border) solid var(--border-color);
   background-color: var(--surface-0);
   box-shadow: var(--overlay-shadow);
-  transition:
-    border-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: border-color 150ms;
 }
 .range-field::-moz-range-thumb {
   width: var(--range-thumb);
@@ -1812,9 +2160,7 @@ body,
   border: var(--frame-border) solid var(--border-color);
   background-color: var(--surface-0);
   box-shadow: var(--overlay-shadow);
-  transition:
-    border-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: border-color 150ms;
 }
 .range-field:hover::-webkit-slider-thumb,
 .range-field:focus-visible::-webkit-slider-thumb {
@@ -1823,9 +2169,6 @@ body,
 .range-field:hover::-moz-range-thumb,
 .range-field:focus-visible::-moz-range-thumb {
   border-color: var(--color-accent);
-}
-.range-field:active::-webkit-slider-thumb {
-  scale: 0.94;
 }
 .range-field:focus-visible {
   outline: 2px solid var(--color-ring);
@@ -1887,7 +2230,10 @@ body,
   color: var(--text-primary);
 }
 
-/* Dashed "add" button — full-width row for adding workspaces, locations, etc. */
+/* "Add" button — full-width row for adding workspaces, locations, etc. Not a
+   dashed box any more: an empty slot drawn as an outline was the one dashed
+   line in the app, and it read as clutter beside the paper cards. A ghost row
+   in tertiary ink, with the list row's hover fill, says the same thing. */
 .btn-add {
   width: 100%;
   display: inline-flex;
@@ -1896,86 +2242,83 @@ body,
   gap: 0.5rem; /* gap-2 */
   height: var(--control-h-lg);
   border-radius: var(--radius-lg);
-  border: 1px dashed var(--border-subtle-color);
   font-size: 0.75rem; /* text-xs */
   font-weight: var(--font-weight-medium);
   color: var(--text-tertiary);
   background-color: transparent;
   transition:
     color 150ms,
-    border-color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .btn-add:hover {
   color: var(--text-secondary);
-  border-color: var(--color-border);
   background-color: var(--surface-100);
 }
 
-/* ── Form inputs ── */
+/* ── Form inputs ──
+   A field is the control tier of paper (tokens.css "Paper"): --control-surface
+   edged by the --field-shadow hairline, no border and no grey well. It drops
+   the button's soft drop on purpose: a field is a place you type into, not a
+   key you press, and the two would otherwise read as one control. Focus is
+   --focus-ring, a 1px accent edge with a soft halo, in the box-shadow so it
+   costs no layout and follows the corner. A field marked aria-invalid takes
+   the same ring in the destructive ink. */
+
+.input-field,
+.textarea-field,
+.input-compact {
+  width: 100%;
+  border: 0;
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-primary);
+  outline: none;
+  transition:
+    box-shadow 150ms,
+    background-color 150ms;
+}
+.input-field::placeholder,
+.textarea-field::placeholder,
+.input-compact::placeholder {
+  color: var(--text-tertiary);
+}
+.input-field:focus,
+.textarea-field:focus,
+.input-compact:focus {
+  box-shadow: var(--focus-ring);
+}
+:is(.input-field, .textarea-field, .input-compact)[aria-invalid='true'] {
+  box-shadow:
+    0 0 0 1px var(--color-destructive),
+    0 0 0 4px color-mix(in srgb, var(--color-destructive) 18%, transparent);
+}
+:is(.input-field, .textarea-field, .input-compact):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .input-field {
-  width: 100%;
   height: var(--control-h-lg);
   padding: 0 0.75rem; /* px-3 */
   border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
-  border: 1px solid var(--border-subtle-color);
   font-size: 0.875rem; /* text-sm */
-  color: var(--text-primary);
-  outline: none;
-  transition: border-color 150ms;
-}
-.input-field::placeholder {
-  color: var(--text-tertiary);
-}
-.input-field:focus {
-  border-color: var(--color-accent);
 }
 
 /* Multi-line variant of .input-field — height follows the `rows` attribute */
 .textarea-field {
-  width: 100%;
   padding: 0.5rem 0.75rem; /* py-2 px-3 */
   border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
-  border: 1px solid var(--border-subtle-color);
   font-size: 0.875rem; /* text-sm */
   line-height: 1.625;
-  color: var(--text-primary);
-  outline: none;
   resize: none;
-  transition: border-color 150ms;
-}
-.textarea-field::placeholder {
-  color: var(--text-tertiary);
-}
-.textarea-field:focus {
-  border-color: var(--color-accent);
 }
 
 /* Compact input (inline rename, search) */
 .input-compact {
-  width: 100%;
   height: var(--control-h-md);
   padding: 0 calc(var(--control-px) * 1.5);
   border-radius: var(--control-radius);
-  background-color: var(--surface-100);
-  border: 1px solid var(--border-subtle-color);
   font-size: var(--control-text-sm);
-  color: var(--text-primary);
-  outline: none;
-  transition:
-    border-color 150ms,
-    box-shadow 150ms;
-}
-.input-compact::placeholder {
-  color: var(--text-tertiary);
-}
-.input-compact:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
 }
 /* A compact input carrying an affordance on its trailing edge — a search
    glass, a reveal toggle. The inset has to live here: the design system is
@@ -2006,15 +2349,15 @@ body,
    an account signs in). One class instead of the same two colour utilities
    repeated at every call site. */
 .badge-muted {
-  background-color: var(--surface-200);
-  color: var(--text-tertiary);
+  background-color: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-secondary);
 }
 
 /* ── Settings ──
-   The settings pages, on the same material as the sidebars and the side
-   panel: the panel border (--color-border, not the subtle one), the 10px
-   radius, 28px controls at --radius-lg (a settings control has no panel
-   corner to answer to, BRAND.md), one width and one header shape per page. */
+   The settings pages, in paper (tokens.css "Paper"): each group a card-tier
+   sheet at --radius-xl, 28px controls on the control tier at --radius-lg (a
+   settings control has no panel corner to answer to, BRAND.md), one width
+   and one header shape per page. */
 
 /* The pane every settings page scrolls in. The gutter is RESERVED rather than
    taken when a page happens to overflow: the 6px scrollbar is carved out of the
@@ -2028,6 +2371,7 @@ body,
 .settings-scroller {
   flex: 1 1 0%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: 2rem;
 }
@@ -2042,7 +2386,13 @@ body,
    it appears only once the page has scrolled (`data-scrolled`, set by
    `SettingsPage`), so a page at rest reads exactly as it did. The gap to the
    first section is split: 1rem inside the header, 1.25rem below it, the same
-   2.25rem at rest, and a stuck header no taller than it needs to be. */
+   2.25rem at rest, and a stuck header no taller than it needs to be.
+
+   It also bleeds 1rem past the page column on each side (into the scroller's
+   2rem padding) with the same padding back, so the text stays on the column:
+   the cards' shadows reach past the column's edge, and a header exactly the
+   column's width let them show through on both sides as the cards scrolled
+   under it. */
 .settings-page-header {
   position: sticky;
   top: -2rem;
@@ -2052,6 +2402,8 @@ body,
   justify-content: space-between;
   gap: 1rem;
   margin-top: -2rem;
+  margin-inline: -1rem;
+  padding-inline: 1rem;
   padding-top: 2rem;
   padding-bottom: 1rem;
   margin-bottom: 1.25rem;
@@ -2126,17 +2478,30 @@ body,
   margin-bottom: 0.625rem;
 }
 
-/* Grouped settings sit on the page ground. The outline and quiet row seams
-   establish the group without giving it the sidebar's contrasting fill. */
+/* Grouped settings are a sheet of paper on the page (the card tier,
+   tokens.css "Paper"): a step off the ground, edged by the 0.5px hairline —
+   lying ON the page, so no drop (round 2: a drop is for what floats, the
+   menus and the composer). It used to be a 1px outline on the bare ground,
+   which with the grey fields inside it read as a form kit rather than as
+   Clave.
+
+   The seams between rows are INSET to the row's own padding and drawn in the
+   subtle ink, the way a list's rules sit in the sidebar and the menus: a rule
+   that runs edge to edge cuts the card into boxes, one that stops short of
+   the edges only spaces a list. A background image rather than a border, so
+   it takes no layout and leaves a row's own fill (an inset callout) alone. */
 .settings-card {
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: transparent;
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
 }
 .settings-card > * + *,
 .settings-card-group > * + * {
-  border-top: 1px solid var(--border-subtle-color);
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: calc(100% - 2rem) 1px;
+  background-position: 1rem 0;
+  background-repeat: no-repeat;
 }
 
 /* Single row inside a settings card: text block left, control right */
@@ -2145,8 +2510,11 @@ body,
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  min-height: 3.25rem;
-  padding: 0.875rem 1rem;
+  /* 48px: a one-line row is the chrome's 28px control with 10px of air
+     above and below; it used to be 52px with 14px, which on a page of a
+     dozen rows read as loose rather than calm (round 2). */
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
 }
 .settings-row-title {
   font-size: var(--control-text);
@@ -2176,6 +2544,12 @@ body,
     color 150ms,
     background-color 150ms;
 }
+/* A fold's body inside a card (Settings → Harnesses, Advanced): the card's
+   own paper, inset like a row, under the hairline the card draws between
+   its children. */
+.settings-card-inset {
+  padding: 0.75rem 1rem 1rem;
+}
 .settings-row-action:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
@@ -2201,19 +2575,22 @@ body,
   box-shadow: var(--shadow-md);
 }
 
-/* A callout under a card: a confirmation, a picker, an error. Same material,
-   the tone on the border only. */
+/* A callout under a card: a confirmation, a picker, an error. Same paper as
+   the card; a tone tints the hairline and washes the sheet a breath, so it
+   holds on every theme without a box line or a second edge. */
 .settings-callout {
   padding: 0.75rem 0.875rem;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-50);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
 }
 .settings-callout[data-tone='danger'] {
-  border-color: color-mix(in srgb, var(--color-destructive) 45%, transparent);
+  background-color: color-mix(in srgb, var(--color-destructive) 6%, var(--card-surface));
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-destructive) 40%, transparent);
 }
 .settings-callout[data-tone='accent'] {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background-color: color-mix(in srgb, var(--color-accent) 6%, var(--card-surface));
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 .settings-callout-title {
   font-size: var(--control-text);
@@ -2253,14 +2630,17 @@ body,
 .settings-callout--inset {
   border: 0;
   border-radius: 0;
+  box-shadow: none;
   padding: 0.75rem 0.875rem;
   background-color: color-mix(in srgb, var(--surface-100) 55%, transparent);
 }
 .settings-callout--inset[data-tone='danger'] {
   background-color: color-mix(in srgb, var(--color-destructive) 6%, transparent);
+  box-shadow: none;
 }
 .settings-callout--inset[data-tone='accent'] {
   background-color: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  box-shadow: none;
 }
 
 /* The control slot at the end of a row: the switch, a select, the row's icon
@@ -2270,6 +2650,27 @@ body,
   align-items: center;
   gap: var(--control-gap);
   flex-shrink: 0;
+}
+/* A row whose controls would crush its words (the voice row of an
+   integration: a select and a button): the controls may wrap under one
+   another, right-aligned, and never take the words' column. */
+.settings-row-controls-wrap {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 60%;
+}
+/* The voice select names the voice; the labels sit under it in the menu.
+   Capped, so a long name never pushes the Preview button off the card. */
+.integrations-voice-select {
+  max-width: 16rem;
+}
+.integrations-voice-select .select-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* A value the row only states (the density stop, a token count, "repos"):
    the control's label size in secondary ink, tabular so a column of them
@@ -2289,6 +2690,97 @@ body,
   margin-top: 0.375rem;
 }
 
+/* An integration's card (Settings → Integrations, IntegrationsSettings.tsx):
+   its figure beside the row's words, in the `.chat-drawing` hand
+   (VoiceDrawing.tsx). In full beside the key field while there is no key;
+   small and still beside the account once a key is set. Under the figure's
+   own rules, so every theme and skin restates it. */
+.integration-row {
+  gap: 1.25rem;
+}
+.integration-row > .voice-drawing {
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 30);
+  height: auto;
+}
+.integration-row > .voice-drawing[data-quiet='true'] {
+  align-self: flex-start;
+  width: calc(var(--spacing) * 14);
+  margin-top: 0.125rem;
+}
+/* The account the key answers for: the plan as a chip, the period's
+   characters as a meter (the spent share in the accent over a ruled line),
+   and the same in words, tabular. */
+.integration-account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.integration-tier {
+  text-transform: capitalize;
+}
+.integration-meter {
+  position: relative;
+  display: inline-block;
+  width: calc(var(--spacing) * 16);
+  height: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--text-primary) 14%, transparent);
+  overflow: hidden;
+}
+.integration-meter::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: max(calc(var(--spacing) * 0.5), calc(var(--spent, 0) * 100%));
+  border-radius: inherit;
+  background-color: var(--color-accent);
+}
+/* The Preview button: a speaker at rest; while the sample plays, three of
+   the spine's ticks breathe in turn (PlayingGlyph), the middle in the accent. */
+.integration-preview > svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+  flex-shrink: 0;
+}
+.integration-preview .playing-glyph .ln {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.integration-preview .playing-glyph .ln.ln--c {
+  stroke: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .integration-preview .playing-glyph .ln {
+    animation: playing-glyph-breathe 900ms ease-in-out infinite;
+  }
+  .integration-preview .playing-glyph .ln:nth-child(2) {
+    animation-delay: 150ms;
+  }
+  .integration-preview .playing-glyph .ln:nth-child(3) {
+    animation-delay: 300ms;
+  }
+}
+@keyframes playing-glyph-breathe {
+  0%,
+  100% {
+    scale: 1 1;
+    opacity: 1;
+  }
+  50% {
+    scale: 1 0.45;
+    opacity: 0.55;
+  }
+}
+
 /* A form field's label above its input, in a dialog or a form row. */
 .field-label {
   display: block;
@@ -2299,32 +2791,35 @@ body,
 }
 
 /* The radio: one of a set (the default Claude account, the profile file to
-   adopt). A 14px ring on the field fill, the accent on the ring and a dot
-   inside when chosen; state is data-checked like the switch. */
+   adopt). Off, a 14px ring of the ink on the control paper, no drop;
+   chosen, it fills with the accent and holds the switch's white knob as its
+   dot — the two "on" controls of the system say it the same way. State is
+   data-checked like the switch. */
 .radio {
   position: relative;
   flex-shrink: 0;
   width: 0.875rem;
   height: 0.875rem;
   border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-100);
+  background-color: var(--control-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, transparent);
   transition:
-    border-color 150ms,
+    box-shadow 150ms,
     background-color 150ms;
 }
 .radio:hover {
-  border-color: var(--text-tertiary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 38%, transparent);
 }
 .radio[data-checked='true'] {
-  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  box-shadow: none;
 }
 .radio[data-checked='true']::after {
   content: '';
   position: absolute;
-  inset: 3px;
+  inset: 4px;
   border-radius: 999px;
-  background-color: var(--color-accent);
+  background-color: var(--color-switch-knob);
 }
 
 /* A status said in words at the end of a row (a location's connection). */
@@ -2343,9 +2838,11 @@ body,
   color: var(--color-destructive);
 }
 
-/* The select: a trigger cut like .input-compact with the caret held off the
-   edge, and the app's own menu surface for the options (the native popover
-   drew the browser's chevron against the border and its own list). */
+/* The select: a key that opens a menu, so it is cut like .btn-secondary (the
+   ink wash, no edge; hover with it, above) with the caret held off the edge, and the app's own menu surface for the options
+   (the native popover drew the browser's chevron against the border and its
+   own list). Open, it stays pressed-in like a hover rather than ringing in
+   the accent: the menu under it already says where you are. */
 .select-trigger {
   display: inline-flex;
   align-items: center;
@@ -2354,30 +2851,17 @@ body,
   max-width: 100%;
   padding: 0 0.375rem 0 0.625rem;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border-subtle-color);
-  background-color: var(--surface-100);
-  font-size: 12px;
+  background-color: var(--key-wash);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   transition:
     color 150ms,
-    border-color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
-}
-.select-trigger:hover {
-  border-color: var(--color-border);
-  background-color: var(--surface-200);
-}
-.select-trigger[data-state='open'] {
-  border-color: var(--color-accent);
+    background-color 150ms;
 }
 .select-trigger:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-.select-trigger:active:not(:disabled) {
-  scale: 0.97;
 }
 .select-trigger-label {
   flex: 1;
@@ -2397,9 +2881,10 @@ body,
   min-width: var(--radix-dropdown-menu-trigger-width);
   max-height: min(20rem, var(--radix-dropdown-menu-content-available-height));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .select-option {
-  font-size: 12px;
+  font-size: var(--control-text-sm);
   min-height: var(--control-h-md);
 }
 .select-option-check {
@@ -2412,13 +2897,15 @@ body,
 
 /* The switch: a 28×16 pill, the knob on the token above. State is
    data-checked, like every toggle in the system. */
+/* Off, the track is a well of the ink at low strength rather than the solid
+   surface-300 grey: it sits IN the paper card, the knob sits on it. */
 .switch {
   position: relative;
   flex-shrink: 0;
   width: 1.75rem;
   height: 1rem;
   border-radius: 999px;
-  background-color: var(--surface-300);
+  background-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
   transition: background-color 150ms;
 }
 .switch[data-checked='true'] {
@@ -2436,7 +2923,9 @@ body,
   height: 0.75rem;
   border-radius: 999px;
   background-color: var(--color-switch-knob);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.25);
   transition: translate 150ms var(--ease-out-expo);
 }
 .switch[data-checked='true'] .switch-knob {
@@ -2457,6 +2946,22 @@ body,
   translate: 0.875rem 0;
 }
 
+/* Keyboard focus on the keys. The buttons, the select, the switch and the
+   radio take the fields' --focus-ring (a 1px accent edge and a soft halo)
+   OUTSIDE their edge, instead of the 1.5px outline the flat rows and the tabs
+   draw inside theirs: inside a filled key that line read as a second border,
+   and on the ink button as a blue stripe in the label's way. Declared after
+   every rule that sets their box-shadow, so a checked radio still shows where
+   the keyboard is. */
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.select-trigger:focus-visible,
+.switch:focus-visible,
+.radio:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* A theme's swatch on the Appearance page. The preview inside carries
    data-theme, so it is painted with that theme's own tokens. */
 .theme-swatch {
@@ -2464,18 +2969,19 @@ body,
   min-width: 0;
   padding: 0.25rem;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  background-color: var(--surface-100);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
   transition:
-    border-color 150ms,
+    background-color 150ms,
     box-shadow 150ms;
 }
 .theme-swatch:hover {
-  border-color: var(--text-tertiary);
+  background-color: color-mix(in oklab, var(--control-surface), var(--text-primary) 5%);
 }
+/* Chosen: the accent edge drawn twice as firm as a focus ring, and no halo —
+   a selection is a state that stays, a focus ring is a place that moves. */
 .theme-swatch[data-selected='true'] {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-accent);
 }
 .theme-swatch-preview {
   padding: 0.75rem;
@@ -2511,7 +3017,7 @@ body,
 
 /* ── Extension cards ── */
 /* Grid of clickable cards used in the Extensions browser (marketplaces, plugins,
-   MCP servers). Cards share the recessed look of .settings-card but stand as
+   MCP servers). Cards share the paper of .settings-card but stand as
    independent tiles with a hover affordance when interactive. */
 .extension-grid {
   display: grid;
@@ -2524,19 +3030,18 @@ body,
   gap: 0.375rem;
   text-align: left;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--border-subtle-color);
-  background-color: color-mix(in oklab, var(--surface-100) 55%, transparent);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
   padding: 0.875rem; /* p-3.5 */
   transition:
-    border-color 150ms,
+    box-shadow 150ms,
     background-color 150ms;
 }
 button.extension-card {
   cursor: pointer;
 }
 button.extension-card:hover {
-  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
-  background-color: var(--surface-100);
+  background-color: color-mix(in oklab, var(--card-surface), var(--text-primary) 4%);
 }
 .extension-card-muted {
   opacity: 0.55;
@@ -2576,14 +3081,17 @@ button.extension-card:hover {
    right. The two headers share these classes so they cannot drift apart. The
    row is one control tall plus the 2px inset a box gives its contents. */
 .pane-header {
+  /* The status glyph's centre sits as far from the header's left edge as from
+     its top: half the header's height in from the left, less half the glyph. */
+  --pane-header-h: calc(var(--control-h-md) + var(--spacing));
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--spacing) * 2);
   flex-shrink: 0;
-  min-height: calc(var(--control-h-md) + var(--spacing));
+  min-height: var(--pane-header-h);
   padding: calc(var(--spacing) / 2) calc(var(--spacing) / 2) calc(var(--spacing) / 2)
-    calc(var(--spacing) * 3);
+    calc((var(--pane-header-h) - var(--sidebar-tab-icon-size)) / 2);
   background-color: var(--surface-0);
   border-bottom: thin solid var(--border-subtle-color);
 }
@@ -2640,6 +3148,22 @@ button.extension-card:hover {
   background-color: var(--color-status-working);
   animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+/* The same slot with a mark pack's mark in it (Appearance → Agent mark). */
+.pane-status-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  flex-shrink: 0;
+}
+.pane-status-mark > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.pane-status-mark[data-status='inactive'] {
+  opacity: 0.45;
+}
 
 /* ── Conversation views ──────────────────────────────────────────────────
    The chat view: the host frames it (.chat-host, the pane header above), the
@@ -2690,6 +3214,91 @@ button.extension-card:hover {
   display: none;
 }
 
+/* Find in this session (PaneSearch): a compact field in the pane header,
+   right after the title, so it reads as searching this conversation. */
+.pane-search {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 18rem;
+  min-width: 9rem;
+  height: var(--control-h-sm);
+  padding: 0 2px 0 var(--control-gap);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+  box-shadow: inset 0 0 0 1px var(--border-subtle-color);
+}
+.pane-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.pane-search-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+.pane-search input {
+  flex: 1 1 auto;
+  min-width: 3rem;
+  margin-left: 4px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+.pane-search input::placeholder {
+  color: var(--text-tertiary);
+}
+.pane-search-count {
+  flex-shrink: 0;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+/* While the query settles or older history is read in: a small ring where
+   the count goes, the sidebar's working spinner at the field's scale. */
+.pane-search-spinner {
+  flex-shrink: 0;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0 4px;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  animation: sidebar-tab-spin 0.7s linear infinite;
+}
+.pane-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+}
+.pane-search-btn > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.pane-search-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.pane-search-btn:disabled {
+  opacity: 0.4;
+}
+::highlight(pane-search) {
+  background-color: color-mix(in srgb, var(--color-status-waiting) 30%, transparent);
+}
+::highlight(pane-search-current) {
+  background-color: var(--color-status-waiting);
+  color: var(--surface-0);
+}
+
 /* The transcript */
 .chat-transcript {
   position: relative;
@@ -2703,6 +3312,47 @@ button.extension-card:hover {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* The transcript runs right down to the composer and fades out over its
+   last stretch instead of stopping on a hard edge: the ground's own colour
+   laid over the foot of the transcript. A gradient over it, NOT a mask on the
+   scroller: a masked scroller is repainted on every frame of a scroll, and
+   the scroll stuttered with one (7 November 2026). Above the rows, under the
+   jump-to-end control; it takes no pointer. The column's own foot padding is
+   taller than the fade, so the last line sits clear of it once the reader is
+   at the end.
+
+   The curve (8 November 2026): never whole, and not symmetric. It stops at
+   88% at the composer, so the last line still shows through, falls steeply
+   to about a third over the stretch nearest the composer, then thins out
+   over a long tail. The cosine S it replaced went to 100% and read as a wall
+   painted over the text. Shared by every transcript view (Chat, Enclave,
+   Folio's desk in lab/folio.css) through --transcript-fade-image. */
+:root {
+  --transcript-fade: calc(var(--spacing) * 9);
+  --transcript-fade-image: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--surface-0) 3%, transparent) 20%,
+    color-mix(in srgb, var(--surface-0) 9%, transparent) 40%,
+    color-mix(in srgb, var(--surface-0) 16%, transparent) 55%,
+    color-mix(in srgb, var(--surface-0) 26%, transparent) 68%,
+    color-mix(in srgb, var(--surface-0) 38%, transparent) 78%,
+    color-mix(in srgb, var(--surface-0) 55%, transparent) 86%,
+    color-mix(in srgb, var(--surface-0) 73%, transparent) 93%,
+    color-mix(in srgb, var(--surface-0) 88%, transparent)
+  );
+}
+.chat-transcript::after {
+  content: '';
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--transcript-fade);
+  pointer-events: none;
+  background-image: var(--transcript-fade-image);
 }
 /* The way back down. The transcript follows the stream only while the reader
    is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
@@ -2734,15 +3384,11 @@ button.extension-card:hover {
   animation: chat-rise var(--default-transition-duration) var(--ease-out-expo);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    background-color var(--default-transition-duration);
 }
 .chat-jump-end:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
-}
-.chat-jump-end:active {
-  scale: 0.97;
 }
 @keyframes chat-rise {
   from {
@@ -2786,6 +3432,23 @@ button.extension-card:hover {
     opacity: 0;
     translate: 0 calc(var(--spacing) * -2);
   }
+}
+/* The past of a resumed chat that a round of asking could not read
+   (PRDCT-3526): in the flow at the transcript's head, where the past would
+   be, quiet, with the one action that asks again. */
+.chat-past-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-past-failed > svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex: none;
 }
 .chat-earlier svg {
   width: var(--chat-glyph);
@@ -2938,14 +3601,17 @@ button.chat-turn-from:focus-visible {
    it. It is the wrap's child, so hovering it keeps the wrap hovered. The
    column's gap is one row of meta plus the air above it, so the copy
    button's hover fill never touches the text it copies. */
+/* The line starts flush under the turn and keeps its air as padding, so the
+   pointer moving down from the message onto the copy button never crosses a
+   strip that belongs to neither and drops the hover on the way. */
 .chat-turn-meta {
   position: absolute;
-  top: calc(100% + var(--spacing));
+  top: 100%;
   display: flex;
   align-items: center;
   gap: var(--spacing);
-  height: calc(var(--spacing) * 4);
-  padding: 0 var(--spacing);
+  height: calc(var(--spacing) * 5);
+  padding: var(--spacing) var(--spacing) 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   opacity: 0;
@@ -2961,6 +3627,14 @@ button.chat-turn-from:focus-visible {
 .chat-turn-meta:focus-within {
   opacity: 1;
 }
+/* Each row is its own layer (the list's positioned, contained items), painted
+   in order, and the hover line hangs into the next row's top gap: lift the row
+   whose line is shown above its neighbours, or the next row covers the copy
+   button and takes the pointer the moment it arrives. */
+.chat-rows > :has(.chat-turn-wrap:hover),
+.chat-rows > :has(.chat-turn-meta:focus-within) {
+  z-index: 1;
+}
 .chat-turn-copy {
   display: inline-flex;
   align-items: center;
@@ -2971,15 +3645,11 @@ button.chat-turn-from:focus-visible {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    background-color var(--default-transition-duration);
 }
 .chat-turn-copy:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
-}
-.chat-turn-copy:active:not(:disabled) {
-  scale: 0.97;
 }
 .chat-turn-copy svg {
   width: var(--chat-glyph);
@@ -3020,6 +3690,16 @@ button.chat-turn-from:focus-visible {
 }
 .chat-provider-mark[data-state='working'] {
   animation: chat-breathe 1.4s ease-in-out infinite;
+}
+/* A pack's mark moves on its own; breathing it too would double the signal.
+   The canvas is the library's 20px preset, shown as drawn. */
+.chat-provider-mark[data-mark='pack'] {
+  animation: none;
+  color: var(--text-primary);
+}
+.chat-provider-mark canvas {
+  width: calc(var(--spacing) * 5) !important;
+  height: calc(var(--spacing) * 5) !important;
 }
 @keyframes chat-breathe {
   0%,
@@ -3115,8 +3795,11 @@ button.chat-turn-from:focus-visible {
   border-radius: var(--radius-lg);
   border: thin solid var(--border-subtle-color);
   background-color: var(--surface-50);
-  overflow-x: auto;
-  white-space: pre;
+  /* Long lines wrap instead of scrolling sideways: an answer's code block is
+     mostly prose-like text (an email draft, a command, a path) that should be
+     readable at a glance, the way tool output already reads. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.5;
 }
 .chat-prose pre code {
@@ -3176,10 +3859,37 @@ button.chat-turn-from:focus-visible {
    declared on the open state, so it runs on every opening — a rule that
    stops matching ends it, one that matches again restarts it — and never on
    a row the reader has not touched. */
-details[open] > .chat-tool-items,
 details[open] > .chat-tool-item[data-lone],
 details[open] > .chat-tool-panel {
   animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
+}
+/* A run's calls come in one after another rather than as one block: each
+   row fades and settles a beat after the one above it (chat-stagger-in,
+   below), so opening a run of twenty reads as a list arriving, not a slab
+   appearing. */
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  animation: chat-stagger-in calc(var(--default-transition-duration) * 2) var(--ease-out-expo)
+    backwards;
+  animation-delay: var(--stagger-delay);
+}
+/* The stagger: a row's delay is its place in the list, a fifth of the open
+   transition per row (30ms at the default 150ms), capped at the tenth row so
+   a long run is whole within half a second; the height opens at the default
+   duration, so the first rows land while it is still opening and the rest
+   follow it down. `sibling-index()` reads the place, no markup needed. */
+:root {
+  --stagger-step: calc(var(--default-transition-duration) / 5);
+}
+details[open] > .chat-tool-items > .chat-tool-item,
+.term-tools[open] > .term-tools-body > .term-call {
+  --stagger-delay: calc(min(sibling-index() - 1, 10) * var(--stagger-step));
+}
+@keyframes chat-stagger-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
 }
 @keyframes chat-reveal {
   from {
@@ -3247,6 +3957,24 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-tool-status[data-running='true'] {
   animation: chat-spin 1s linear infinite;
+}
+/* A mark pack's running call (Appearance → Agent mark): the pack's own motion,
+   not the spinner's, in the glyph's box. */
+.chat-tool-status[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: none;
+}
+.chat-tool-status[data-mark='pack'] > canvas,
+.term-call-icon[data-mark='pack'] > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.term-call-icon[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 @keyframes chat-spin {
   to {
@@ -3433,30 +4161,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-primary);
   font-weight: 500;
 }
-/* One question's page. Each step comes in from the right, the swipe that
-   carries the reader through the questions; Back reverses it. Small enough
-   to be felt rather than watched. */
-@keyframes chat-prompt-page-in {
-  from {
-    opacity: 0;
-    transform: translateX(calc(var(--spacing) * 3));
-  }
-}
-@keyframes chat-prompt-page-back {
-  from {
-    opacity: 0;
-    transform: translateX(calc(var(--spacing) * -3));
-  }
-}
-.chat-prompt-page {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) * 2);
-  animation: chat-prompt-page-in 180ms var(--ease-out-expo);
-}
-.chat-prompt-page[data-direction='back'] {
-  animation-name: chat-prompt-page-back;
-}
 .chat-prompt-target {
   margin-top: calc(var(--spacing) * -1);
   font-size: var(--text-xs);
@@ -3466,6 +4170,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-detail {
   margin: 0;
   color: var(--text-secondary);
+}
+/* Whose words the detail is: the agent's, in the quieter ink. */
+.chat-prompt-detail-who {
+  color: var(--text-tertiary);
 }
 .chat-prompt-step {
   flex-shrink: 0;
@@ -3549,51 +4257,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   height: var(--chat-glyph);
   color: var(--text-primary);
 }
-/* One option and what the reader adds to it: the option, a pencil on
-   approach that opens a note, and the note under it once opened. The pencil
-   sits in the option's own row, left of its key, so the option keeps room
-   for it. */
-.chat-prompt-choice {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-.chat-prompt-choice > .chat-prompt-option .chat-prompt-option-text {
-  margin-right: calc(var(--spacing) * 6);
-}
-.chat-prompt-note-btn {
-  position: absolute;
-  right: calc(var(--spacing) * 8.5);
-  top: calc(50% - var(--spacing) * 2.5);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--spacing) * 5);
-  height: calc(var(--spacing) * 5);
-  border-radius: var(--radius-sm);
-  color: var(--text-tertiary);
-  opacity: 0;
-  transition:
-    opacity var(--default-transition-duration),
-    color var(--default-transition-duration),
-    background-color var(--default-transition-duration);
-}
-.chat-prompt-note-btn svg {
-  width: var(--chat-glyph);
-  height: var(--chat-glyph);
-}
-.chat-prompt-choice:hover .chat-prompt-note-btn,
-.chat-prompt-note-btn:focus-visible {
-  opacity: 1;
-}
-.chat-prompt-note-btn:hover {
-  color: var(--text-primary);
-  background-color: var(--surface-100);
-}
-/* Under a multi-select option, the note starts where its label does, past the box. */
-.chat-prompt-choice[data-multi] .chat-prompt-note {
-  margin-left: calc(var(--spacing) * 8.5);
-}
 /* A multi-select's box: empty until picked, the accent's tick once it is. */
 .chat-prompt-box {
   flex-shrink: 0;
@@ -3630,11 +4293,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-family: var(--font-sans);
 }
 
-/* The reader's own words. "Other" is a card whose body IS the field: no
-   inner box, the words sit under the label, and the card's edge firms up
-   while it has the caret. A note is the same field one level down: a soft
-   fill under its option, a step darker while it is written in. Both grow
-   with what is typed and wrap it, up to a few lines, then scroll. */
+/* A field with no box of its own, which grows with what is typed and wraps
+   it, up to a few lines, then scrolls: the search fields of the panels. */
 .chat-prompt-other {
   width: 100%;
   min-height: 0;
@@ -3650,47 +4310,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   resize: none;
   field-sizing: content;
   overflow-y: auto;
+  overscroll-behavior: contain;
   overflow-wrap: anywhere;
   outline: none;
 }
 .chat-prompt-other::placeholder {
   color: var(--text-tertiary);
-}
-.chat-prompt-note {
-  width: auto;
-  margin: calc(var(--spacing) * 1.5) 0 0 calc(var(--spacing) * 2.5);
-  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
-  border-radius: var(--radius-md);
-  background-color: var(--surface-100);
-  transition: background-color var(--default-transition-duration);
-}
-.chat-prompt-note:focus {
-  background-color: var(--surface-200);
-}
-/* The review before sending: each question, quiet, and what was said to it. */
-.chat-prompt-review {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) * 2.5);
-  margin: calc(var(--spacing) * 1) 0 0;
-  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3.5);
-  border-radius: var(--radius-lg);
-  background-color: var(--surface-100);
-}
-.chat-prompt-review-item {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) * 0.5);
-}
-.chat-prompt-review dt {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-.chat-prompt-review dd {
-  margin: 0;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 .chat-prompt-actions {
   display: flex;
@@ -3713,15 +4338,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   color: var(--text-primary);
   white-space: nowrap;
-  transition:
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  transition: background-color var(--default-transition-duration);
 }
 .chat-prompt-btn:hover {
   background-color: var(--surface-100);
-}
-.chat-prompt-btn:active {
-  scale: 0.97;
 }
 /* The prompt's answer (Allow, Submit) is the verb of the card: the ink. */
 .chat-prompt-btn[data-primary='true'] {
@@ -3736,7 +4356,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  scale: none;
 }
 .chat-prompt-key {
   display: inline-flex;
@@ -3754,6 +4373,801 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-prompt-option .chat-prompt-key {
   color: var(--text-tertiary);
+}
+/* The permission card (PRDCT-4483): the question card's buttons
+   (`chat-ask-btn`, the words alone, the keys in the tooltip), the queue level
+   with the question, more air inside the card and above the buttons. */
+.chat-prompt[data-kind='permission'] {
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4);
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-body {
+  gap: calc(var(--spacing) * 2.5);
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-head {
+  align-items: baseline;
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-queue {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chat-prompt[data-kind='permission'] .chat-prompt-actions {
+  gap: calc(var(--spacing) * 2);
+  padding-top: var(--spacing);
+}
+/* ── The question card, inline (PRDCT-4157) ──
+   A question the agent asks is answered where it asked it: in the agent's own
+   column, under its words, with no box around it. At its head a drawing in
+   the chat's hand and the agent's sentence; then the fields down a rail, one
+   seat per field, the accent running down the rail as far as the field the
+   reader is on and all the way once every answer fits (the one place the
+   accent goes); then Skip and Send. The fields are the paper's controls
+   (tokens.css "Paper"); their height, the buttons' height, the air between
+   fields and the inset come from the density tokens (--ask-*), so the card
+   reads as the chrome around it at every preset. Answered, the card gives way
+   to its record. The dock above the composer keeps a tool to allow. */
+.chat-turn-wrap > .chat-prompt[data-inline='true'],
+.chat-row .chat-prompt[data-inline='true'],
+.chat-form-tail .chat-prompt[data-inline='true'] {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--ask-pad) var(--spacing) calc(var(--ask-pad) * 0.5);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  gap: var(--ask-gap);
+}
+.chat-prompt[data-inline='true']:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+.chat-prompt[data-inline='true'] .chat-prompt-body {
+  gap: var(--ask-gap);
+}
+/* The head: the drawing, and the words beside it. */
+.chat-ask-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ask-gap) * 1.25);
+}
+.chat-ask-head .ask-drawing--ask {
+  flex-shrink: 0;
+  width: calc(var(--ask-field-h) * 3.4);
+  height: auto;
+}
+.chat-ask-words {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  flex: 1;
+}
+.chat-prompt-eyebrow {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* What the agent asks, at the size of the card's own fields and of the
+   chat's prose: the eyebrow above says it is the agent asking, the size
+   needs not (PRDCT-4486). */
+.chat-prompt-ask {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The rail: a hairline down the left, a seat per field, the accent drawn
+   down it to --ask-progress (measured by the card) and eased there. */
+.chat-ask-fields {
+  --ask-rail-x: calc(var(--spacing) * 2.5);
+  --ask-seat: calc(var(--spacing) * 4);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ask-gap);
+  margin: 0;
+  padding: 0 0 0 calc(var(--ask-rail-x) * 2 + var(--ask-seat));
+  list-style: none;
+}
+.chat-ask-fields::before,
+.chat-ask-fields::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--ask-rail-x) + var(--ask-seat) / 2 - 0.5px);
+  top: calc(var(--spacing) * 2);
+  width: 1px;
+  border-radius: 1px;
+}
+.chat-ask-fields::before {
+  bottom: calc(var(--spacing) * 2);
+  background-color: color-mix(in oklab, var(--text-primary) 18%, transparent);
+}
+.chat-ask-fields::after {
+  height: max(0px, calc(var(--ask-progress, 0px) - var(--spacing) * 2));
+  background-color: var(--color-accent);
+  transition: height calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+}
+.chat-ask-field {
+  position: relative;
+}
+.chat-ask-seat {
+  position: absolute;
+  left: calc(var(--ask-rail-x) * -1 - var(--ask-seat));
+  top: calc(var(--spacing) * 0.75);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ask-seat);
+  height: var(--ask-seat);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-0);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text-primary) 30%, transparent);
+  color: var(--color-action-foreground);
+  transition:
+    background-color var(--default-transition-duration),
+    box-shadow var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.chat-ask-seat::after {
+  content: '';
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--text-primary) 35%, transparent);
+  transition:
+    background-color var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.chat-ask-field[data-state='active'] .chat-ask-seat {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.chat-ask-field[data-state='active'] .chat-ask-seat::after {
+  background-color: var(--color-accent);
+  scale: 1.25;
+}
+.chat-ask-field[data-state='problem'] .chat-ask-seat {
+  box-shadow: inset 0 0 0 1px var(--color-destructive);
+}
+.chat-ask-field[data-state='problem'] .chat-ask-seat::after {
+  background-color: var(--color-destructive);
+}
+.chat-ask-field[data-state='done'] .chat-ask-seat {
+  background-color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--text-primary);
+}
+.chat-ask-field[data-state='done'] .chat-ask-seat::after {
+  display: none;
+}
+/* The rail's last stop (PRDCT-4417): the row of the buttons that answer,
+   its seat centred on them and the hairline ending there. Empty while an
+   answer is owed, filled in the accent the rail reaches it with once every
+   answer fits. */
+/* The end row is as tall as the buttons on the live card, as a seat on the
+   settled record, which has none. */
+.chat-ask-fields {
+  --ask-end-h: var(--ask-btn-h);
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-fields {
+  --ask-end-h: var(--ask-seat);
+}
+.chat-ask-fields:has(> .chat-ask-end)::before {
+  bottom: calc(var(--ask-end-h) / 2);
+}
+.chat-ask-end {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--ask-end-h);
+}
+.chat-ask-end > .chat-ask-actions {
+  flex-wrap: nowrap;
+  padding-top: 0;
+}
+/* An optional question's way on when there is nothing to say: quiet, under
+   its field, the next question opening on a click (PRDCT-4429). */
+.chat-ask-pass {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.chat-ask-pass:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+/* Why Approve is off: the count of answers owed, a click away from the
+   first of them (PRDCT-4422). */
+.chat-ask-owed {
+  padding: 0 calc(var(--spacing) * 1);
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-ask-owed:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.chat-ask-end > .chat-ask-seat {
+  top: calc(var(--ask-end-h) / 2);
+  translate: 0 -50%;
+}
+.chat-ask-end > .chat-ask-seat::after {
+  scale: 0;
+}
+.chat-ask-end[data-ready='true'] > .chat-ask-seat {
+  background-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.chat-ask-seat svg {
+  width: calc(var(--spacing) * 2.5);
+  height: calc(var(--spacing) * 2.5);
+  stroke-width: 2.5;
+  color: var(--surface-0);
+}
+/* Each field comes in a beat after the one above it, from a touch below. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-field {
+    animation: chat-ask-field-in 560ms var(--ease-out-expo) backwards;
+    animation-delay: calc(120ms + var(--i, 0) * 80ms);
+  }
+  .chat-ask-field[data-state='active'] .chat-ask-seat {
+    animation: chat-ask-seat-pulse 1200ms var(--ease-out-expo) 1;
+  }
+}
+@keyframes chat-ask-field-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* A field the agent set from what the reader said: the seat's tick draws
+   itself, and the field flashes once as the value lands. */
+.chat-ask-flash {
+  position: absolute;
+  inset: calc(var(--spacing) * -1) calc(var(--spacing) * -1.5);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--radius-control);
+  background-color: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  opacity: 0;
+}
+.chat-ask-field > .chat-field-wrap {
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-flash {
+    animation: chat-ask-flash 900ms var(--ease-out-expo) 1;
+  }
+  .chat-ask-field[data-state='done'] .chat-ask-seat svg {
+    animation: chat-ask-tick 360ms var(--ease-out-expo) 1;
+  }
+}
+@keyframes chat-ask-flash {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes chat-ask-tick {
+  from {
+    scale: 0.4;
+    opacity: 0;
+  }
+}
+/* A step already answered, folded into one line above the live question:
+   the question in the label's voice, what was said in the reader's; a click
+   reopens it. */
+.chat-ask-folded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  row-gap: calc(var(--spacing) * 0.5);
+  width: 100%;
+  min-height: var(--ask-seat);
+  padding: calc(var(--spacing) * 0.5) 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-ask-folded:hover .chat-ask-folded-answer {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.chat-ask-folded-question {
+  color: var(--text-tertiary);
+}
+.chat-ask-folded-answer {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.chat-ask-field[data-state='problem'] .chat-ask-folded-answer {
+  color: var(--color-destructive);
+}
+/* A question still to come, below the one being answered: the question
+   alone, a click opens it. */
+.chat-ask-field[data-state='upcoming'] .chat-ask-folded-question {
+  color: var(--text-secondary);
+}
+.chat-ask-field[data-state='upcoming'] .chat-ask-folded:hover .chat-ask-folded-question {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+/* The agent filled the form from what the reader said. */
+.chat-ask-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+/* The rows of the steps layout stand still: a step that closes folds its
+   field away (the open box shrinks and fades) and its answer line in; a
+   step reopened does the reverse. Both boxes are always there, one of them
+   shut. */
+.chat-ask-fold,
+.chat-ask-open {
+  display: grid;
+  transition:
+    grid-template-rows 480ms var(--ease-out-expo),
+    opacity 320ms var(--ease-out-expo),
+    visibility 0s linear 480ms;
+}
+.chat-ask-fold > div,
+.chat-ask-open > div {
+  min-height: 0;
+  overflow: hidden;
+}
+/* Room for the field's focus ring while the box is open, given back as it
+   folds; the clip is what lets the box shut. */
+.chat-ask-open > div {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  padding: 6px;
+  margin: -6px;
+  transition:
+    padding 480ms var(--ease-out-expo),
+    margin 480ms var(--ease-out-expo);
+}
+.chat-ask-fold {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.chat-ask-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s, 0s, 0s;
+  /* A row that arrives grows from shut, as the one above folds. */
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.chat-ask-field[data-folded='true'] .chat-ask-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 120ms, 160ms, 0s;
+}
+.chat-ask-field[data-folded='true'] .chat-ask-open {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.chat-ask-field[data-folded='true'] .chat-ask-open > div {
+  padding: 0;
+  margin: 0;
+}
+/* The step that arrives: its label, its hint and its field come in one after
+   the other, from a touch below. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-ask-open .chat-field-wrap > * {
+    animation: chat-ask-child-in 540ms var(--ease-out-expo) backwards;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(1) {
+    animation-delay: 120ms;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(2) {
+    animation-delay: 210ms;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(3) {
+    animation-delay: 300ms;
+  }
+  .chat-ask-open .chat-field-wrap > :nth-child(n + 4) {
+    animation-delay: 380ms;
+  }
+}
+@keyframes chat-ask-child-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* The agent is reading what the person wrote: the seat of the step they are
+   on turns while it does. */
+.chat-ask-field[data-working='true'] .chat-ask-seat::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid color-mix(in oklab, var(--color-accent) 25%, transparent);
+  border-top-color: var(--color-accent);
+  animation: chat-ask-spin 900ms linear infinite;
+}
+@keyframes chat-ask-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+/* The agent's word under a field it could not fill from what was said. */
+.chat-field-note {
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  line-height: 1.45;
+}
+/* The form once closed: the status beside the eyebrow, every step folded. */
+.chat-ask-status {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.chat-ask-status[data-status='approved'] {
+  color: var(--color-accent);
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-folded {
+  cursor: default;
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-folded:hover .chat-ask-folded-answer {
+  text-decoration: none;
+}
+.chat-prompt-body[data-closed='true'] .chat-ask-folded[data-static='true'] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  row-gap: calc(var(--spacing) * 0.5);
+  min-height: var(--ask-seat);
+  padding: calc(var(--spacing) * 0.5) 0;
+  font-size: var(--text-sm);
+}
+.chat-permission-row[data-form='closed'] {
+  display: block;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+/* The form that floats at the end of the conversation while it is open. */
+.chat-form-tail {
+  padding-top: calc(var(--spacing) * 5);
+  will-change: transform;
+}
+@keyframes chat-ask-seat-pulse {
+  0% {
+    box-shadow:
+      inset 0 0 0 1px var(--color-accent),
+      0 0 0 0 color-mix(in srgb, var(--color-accent) 40%, transparent);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1px var(--color-accent),
+      0 0 0 10px color-mix(in srgb, var(--color-accent) 0%, transparent);
+  }
+}
+.chat-field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.chat-field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 1.5);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+.chat-field-label .chat-prompt-hint {
+  margin-left: 0;
+}
+.chat-field-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+.chat-field {
+  width: 100%;
+  min-height: var(--ask-field-h);
+  padding: 0 calc(var(--control-px) * 1.75);
+  border: 0;
+  border-radius: var(--radius-control);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  outline: none;
+  transition:
+    box-shadow 150ms,
+    background-color 150ms;
+}
+.chat-field::placeholder {
+  color: var(--text-tertiary);
+}
+.chat-field:focus {
+  box-shadow: var(--focus-ring);
+}
+.chat-field[aria-invalid='true'] {
+  box-shadow:
+    0 0 0 1px var(--color-destructive),
+    0 0 0 4px color-mix(in srgb, var(--color-destructive) 18%, transparent);
+}
+.chat-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-field--long {
+  min-height: calc(var(--ask-field-h) * 2.4);
+  max-height: calc(var(--spacing) * 60);
+  padding: calc(var(--spacing) * 2) calc(var(--control-px) * 1.75);
+  resize: none;
+  field-sizing: content;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The answer line under a choice's options (PRDCT-4322): the option picked
+   lands in it to be edited in place, or the person writes their own words.
+   One line that grows with what is typed and wraps it, then scrolls. A
+   textarea sets its text at the top, so the padding is what centres one line
+   in the field's minimum height: the space the line leaves, split in two. */
+.chat-field--answer {
+  display: block;
+  max-height: calc(var(--spacing) * 40);
+  padding: max(calc(var(--spacing) * 1.5), calc((var(--ask-field-h) - 1lh) / 2))
+    calc(var(--control-px) * 1.75);
+  resize: none;
+  field-sizing: content;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+.chat-field[type='date']::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+  cursor: pointer;
+}
+.chat-field-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-field-row .chat-field {
+  flex: 1;
+  min-width: 0;
+}
+/* The card's buttons: a press is a wash of the ink (--key-wash), the verb
+   is the ink itself; both one density step taller than a row's control. */
+.chat-ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding-top: calc(var(--spacing) * 0.5);
+}
+.chat-ask-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--control-gap);
+  height: var(--ask-btn-h);
+  padding: 0 calc(var(--control-px) * 2.25);
+  border: 0;
+  border-radius: var(--radius-control);
+  background-color: var(--key-wash);
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  transition:
+    background-color var(--default-transition-duration),
+    opacity calc(var(--default-transition-duration) * 2);
+}
+.chat-ask-btn:hover:not(:disabled) {
+  background-color: var(--key-wash-strong);
+}
+.chat-ask-btn[data-primary='true'] {
+  background-color: var(--color-action);
+  color: var(--color-action-foreground);
+  padding: 0 calc(var(--control-px) * 2.75);
+}
+.chat-ask-btn[data-primary='true']:hover:not(:disabled) {
+  background-color: var(--color-action-hover);
+}
+.chat-ask-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.chat-ask-btn svg,
+.chat-prompt-btn svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+.chat-field-problem {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  line-height: 1.45;
+}
+.chat-field-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  height: var(--ask-btn-h);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.chat-field-ok svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  color: var(--color-status-ready);
+}
+/* A link to open and come back from: the drawing, the address, two steps. */
+.chat-link {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3.5);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+  border-radius: var(--radius-xl);
+  background-color: color-mix(in oklab, var(--surface-100) 60%, transparent);
+}
+.chat-link .ask-drawing {
+  flex-shrink: 0;
+  width: calc(var(--ask-field-h) * 3);
+  height: auto;
+}
+.chat-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+}
+.chat-link-host {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.chat-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-link .chat-prompt-btn {
+  height: var(--ask-btn-h);
+  padding: 0 calc(var(--control-px) * 2);
+  font-size: var(--control-text);
+  border: 0;
+  background-color: var(--key-wash);
+}
+.chat-link .chat-prompt-btn:hover {
+  background-color: var(--key-wash-strong);
+}
+.chat-link .chat-prompt-btn[data-primary='true'] {
+  background-color: var(--color-action);
+  color: var(--color-action-foreground);
+}
+.chat-link[data-done='true'] .ask-drawing .ln--c {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+}
+/* The record of a form once answered: each question, and what was said,
+   arriving where the card stood. */
+.chat-permission-row[data-kind='question'][data-state='answered'] {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
+}
+.chat-permission-answers {
+  display: flex;
+  flex-direction: column;
+  flex-basis: 100%;
+  gap: calc(var(--spacing) * 0.75);
+  margin: calc(var(--spacing) * 0.5) 0 0;
+  min-width: 0;
+}
+.chat-permission-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.chat-permission-answer dt {
+  color: var(--text-tertiary);
+}
+.chat-permission-answer dd {
+  margin: 0;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The native question drawn inline: its options take the rail's left room
+   and the same air as the card's fields. */
+.chat-prompt[data-inline='true'] .chat-prompt-options {
+  gap: calc(var(--spacing) * 0.5);
+}
+.chat-prompt[data-inline='true'] .chat-prompt-option {
+  min-height: var(--ask-field-h);
+}
+/* The way down when a question waits at the end of the transcript and the
+   reader is up it: the arrow's place and material, widened to say what waits. */
+.chat-waiting {
+  position: absolute;
+  bottom: calc(var(--spacing) * 3);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  width: fit-content;
+  height: var(--control-h-md);
+  margin-inline: auto;
+  padding: 0 calc(var(--control-px) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-raised);
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transition: background-color var(--default-transition-duration);
+}
+.chat-waiting:hover {
+  background-color: var(--surface-100);
+}
+.chat-waiting svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+}
+.chat-waiting svg:first-child {
+  color: var(--color-accent);
 }
 .chat-permission-input pre {
   margin-top: 0;
@@ -3789,6 +5203,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-direction: column;
   max-height: calc(var(--spacing) * 72);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chat-resume-option {
   display: flex;
@@ -3830,6 +5245,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-left: auto;
 }
 
+/* The /mcp and /plugin panels wear the same dock: one row per server or
+   plugin, its name over its state, the actions on the right ending in the
+   switch. A row being worked on dims until the CLI has answered. */
+.chat-control-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  transition: opacity var(--default-transition-duration);
+}
+.chat-control-row + .chat-control-row {
+  margin-top: var(--row-gap);
+}
+.chat-control-row:hover {
+  background-color: var(--surface-100);
+}
+.chat-control-row[data-busy='true'] {
+  opacity: 0.55;
+}
+.chat-control-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.chat-control-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-control-status {
+  color: var(--text-secondary);
+}
+.chat-control-status[data-status='connected'] {
+  color: var(--color-success);
+}
+.chat-control-status[data-status='needs-auth'],
+.chat-control-status[data-status='pending'] {
+  color: var(--color-warning);
+}
+.chat-control-status[data-status='failed'] {
+  color: var(--color-destructive);
+}
+.chat-control-error {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  overflow-wrap: anywhere;
+}
+.chat-control-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 3);
+}
+.chat-control-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.chat-control-note[data-failed='true'] {
+  color: var(--color-destructive);
+}
+
 /* The transcript's record of a request: one muted row, like a tool call. */
 .chat-permission-row {
   display: flex;
@@ -3842,6 +5324,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-permission-row[data-state='waiting'] {
   color: var(--text-secondary);
+}
+/* The glyph stands on the middle of the first line, whatever the line holds
+   (a level pill, a reply that wraps under it): the row aligns to its start,
+   so the glyph takes the line's half-leading as its margin (PRDCT-4483). */
+.chat-permission-row > .chat-tool-status {
+  margin-block: calc((1lh - var(--chat-glyph)) / 2);
 }
 /* The status, what was asked, and the reader's reply. The question keeps to
    one line; the reply is the reader's own words at any length, so it wraps,
@@ -3861,6 +5349,22 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* A run of approvals the reader allowed: one row, led by the shield and read
+   like a run of tools, that opens to one receipt per request, indented under
+   the glyph. */
+.chat-approval-run {
+  align-self: stretch;
+  min-width: 0;
+  font-size: var(--chat-code-size);
+}
+.chat-approval-items {
+  display: flex;
+  flex-direction: column;
+  padding-left: calc(var(--chat-glyph) + var(--spacing) * 2);
+}
+details[open] > .chat-approval-items {
+  animation: chat-reveal var(--default-transition-duration) var(--ease-out-expo);
 }
 
 /* Notices sit in the column's centre, small and grey; an error carries the
@@ -3937,25 +5441,42 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   width: 100%;
   max-width: var(--chat-column);
   margin: 0 auto;
-  padding: var(--spacing) calc(var(--spacing) * 6) calc(var(--spacing) * 3);
+  padding: 0 calc(var(--spacing) * 6) calc(var(--spacing) * 3);
 }
 .chat-composer {
+  /* Above the transcript's fade (.chat-transcript::after, z-index 5): the
+     hairline and the lift are a box-shadow, and the half pixel of it above
+     the box lies over the fade's last, solid stretch, which painted over it
+     and cut the composer's top edge. Lifted on the form alone, not on its
+     wrapper, so the slash menu above keeps its own stacking beside the
+     jump-to-end control. */
+  position: relative;
+  z-index: 6;
   display: flex;
   align-items: flex-end;
   gap: calc(var(--spacing) * 2);
   padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 1.5) calc(var(--spacing) * 1.5)
     calc(var(--spacing) * 3.5);
-  border: thin solid var(--border-subtle-color);
   border-radius: var(--radius-2xl);
   background-color: var(--surface-raised);
-  box-shadow: var(--raised-shadow);
-  transition: border-color var(--default-transition-duration);
+  /* The paper hairline in the shadow rather than a border (tokens.css
+     "Paper"); with the caret in it the edge firms to the full border ink, the
+     same quiet step the composer always took, and a file dragged over it
+     rings it in the accent. */
+  box-shadow:
+    0 0 0 0.5px var(--edge-color),
+    var(--raised-shadow);
+  transition: box-shadow var(--default-transition-duration);
 }
 .chat-composer:focus-within {
-  border-color: var(--color-border);
+  box-shadow:
+    0 0 0 1px var(--color-border),
+    var(--raised-shadow);
 }
 .chat-composer[data-dragging='true'] {
-  border-color: var(--color-accent);
+  box-shadow:
+    0 0 0 1px var(--color-accent),
+    var(--raised-shadow);
 }
 .chat-composer textarea {
   flex: 1;
@@ -3998,8 +5519,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   transition:
     background-color var(--default-transition-duration),
     color var(--default-transition-duration),
-    opacity var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    opacity var(--default-transition-duration);
 }
 .chat-send svg {
   grid-area: 1 / 1;
@@ -4022,9 +5542,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-send:hover {
   background-color: var(--color-action-hover);
 }
-.chat-send:active:not(:disabled) {
-  scale: 0.97;
-}
 /* An empty composer has nothing to send: a grey disc, not a faded ink one.
    The ink at 0.4 over a dark ground is a mid grey anyway, just a muddier one,
    and on the light themes it read as a button that was merely pale. */
@@ -4042,38 +5559,186 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-view {
   position: relative;
 }
+/* The drop: a veil over the pane and one paper card on it, with a drawing in
+   the hand of the products' figures (DropDrawing.tsx) and the words under
+   it. It comes up as the drag comes in; it goes as the drag goes, at once. */
 .chat-drop-overlay {
   position: absolute;
-  inset: calc(var(--spacing) * 3);
+  inset: 0;
   z-index: 30;
   pointer-events: none;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--spacing) * 2);
-  border: calc(var(--spacing) / 2) dashed var(--color-accent);
-  border-radius: var(--radius-2xl);
-  background-color: color-mix(in oklch, var(--surface-raised) 92%, var(--color-accent));
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  /* It comes up as the drag comes in; it goes as the drag goes, at once. */
-  transition:
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  padding: calc(var(--spacing) * 6);
+  background-color: color-mix(in oklab, var(--surface-0) 72%, transparent);
+  backdrop-filter: blur(6px);
+  transition: opacity var(--default-transition-duration) var(--ease-out-expo);
   @starting-style {
     opacity: 0;
-    scale: 0.98;
   }
 }
-.chat-drop-overlay svg {
-  width: calc(var(--spacing) * 6);
-  height: calc(var(--spacing) * 6);
-  color: var(--color-accent);
+.chat-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  width: min(100%, calc(var(--spacing) * 96));
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 7) calc(var(--spacing) * 6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background-color: var(--surface-raised);
+  box-shadow: var(--overlay-shadow-lg);
+  text-align: center;
+  transition:
+    translate calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo),
+    scale calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo);
+  @starting-style {
+    translate: 0 calc(var(--spacing) * 2);
+    scale: 0.97;
+  }
 }
-.chat-drop-overlay span {
+.chat-drop-card .chat-drawing {
+  width: calc(var(--spacing) * 60);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 2);
+}
+.chat-drop-eyebrow {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.chat-drop-card strong {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+.chat-drop-card span {
+  max-width: 36ch;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* The drawing's hand: ink lines at 30–45%, boxes filled with a breath of the
+   ground, the box in front filled with paper so it hides what is behind it,
+   the ringed dot as the focal marker, and the accent on ONE path. The ink
+   is the app's text colour, so the dark set just works. */
+.chat-drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  display: block;
+  overflow: visible;
+}
+.chat-drawing :is(.ln, .bx, .ring, .head) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chat-drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.chat-drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 4 5;
+}
+.chat-drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .bx--front {
+  fill: var(--paper);
+}
+.chat-drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.chat-drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.chat-drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 42%, transparent);
+  stroke-width: 1;
+}
+.chat-drawing .head {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 55%, transparent);
+  stroke-width: 1.1;
+}
+/* the one place the accent goes */
+.chat-drawing .ln--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.chat-drawing .head--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.chat-drawing .dot--c {
+  fill: var(--color-accent);
+}
+.chat-drawing .fan {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+}
+.chat-drawing .fan--back {
+  transform: rotate(7deg);
+}
+.chat-drawing .fan--front {
+  transform: rotate(-5deg);
+}
+.chat-drawing .ring--pulse {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* the accent line draws itself once as the card comes up, measured in its
+   own length (pathLength 1), and the landing pulses once when it arrives */
+.chat-drawing .travel {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-drawing .travel {
+    animation: chat-drawing-draw 900ms var(--ease-out-expo) 180ms 1 backwards;
+  }
+  .chat-drawing .ring--pulse {
+    animation: chat-drawing-pulse 1400ms var(--ease-out-expo) 900ms 1;
+  }
+  .chat-drawing .lift {
+    animation: chat-drawing-lift 700ms var(--ease-out-expo) 1 backwards;
+  }
+}
+@keyframes chat-drawing-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes chat-drawing-pulse {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+@keyframes chat-drawing-lift {
+  from {
+    transform: translate(-36px, 8px);
+  }
 }
 .chat-composer {
   flex-wrap: wrap;
@@ -4082,6 +5747,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-basis: 100%;
   max-height: 30vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--spacing) 0 calc(var(--spacing) * 1.5);
 }
 .chat-attachments {
@@ -4110,6 +5776,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-bottom: calc(var(--spacing) * 1.5);
 }
 .chat-attachment {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4126,40 +5793,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-attachment[data-issue='true'] {
   border-color: var(--color-accent);
 }
+/* The card is the thing to click: the preview button inside it paints
+   nothing of its own, the card takes the hover, and the remove button sits
+   in the card's top-right corner, the card keeping room for it. */
 .chat-attachment-open {
   display: flex;
   align-items: center;
-  gap: calc(var(--spacing) * 2);
+  gap: calc(var(--spacing) * 1.5);
   min-width: 0;
   text-align: left;
-  padding: var(--spacing);
-  border-radius: var(--radius-control);
-  transition: background-color var(--default-transition-duration);
+  padding: 0;
 }
-.chat-attachment-open:hover {
+.chat-attachment:has(> button.chat-attachment-open:hover) {
   background-color: var(--surface-200);
+}
+.chat-attachment:has(> .chat-attachment-remove) {
+  padding-right: calc(var(--spacing) * 6);
+}
+.chat-attachment-remove {
+  position: absolute;
+  top: calc(var(--spacing) * 0.75);
+  right: calc(var(--spacing) * 0.75);
 }
 .chat-attachment-thumb {
   flex-shrink: 0;
-  width: var(--control-h-lg);
-  height: var(--control-h-lg);
+  width: var(--control-h);
+  height: var(--control-h);
   object-fit: cover;
   border-radius: var(--radius-control);
 }
+/* A chip's glyph: a small drawing in the same hand as the drop card, one
+   per family (a page, a frame, a few bars of sound, a folder, a row out of
+   its column), on a tile the size of a thumbnail. */
 .chat-attachment-glyph {
   flex-shrink: 0;
-  width: var(--control-icon);
-  height: var(--control-icon);
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: calc(var(--spacing) * 1.25);
+  border-radius: var(--radius-control);
+  background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
   color: var(--text-tertiary);
+}
+.chat-attachment-thumb {
+  border: 1px solid var(--border-subtle-color);
+}
+/* The label, as the text refers to the record: [Image #1] there, the tag here. */
+.chat-attachment-tag {
+  display: inline-block;
+  margin-right: calc(var(--spacing) * 1.5);
+  padding: 0 calc(var(--spacing) * 1.25);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background-color: var(--surface-raised);
 }
 .chat-attachment-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: var(--spacing);
+  padding: calc(var(--spacing) * 0.5) var(--spacing);
 }
 .chat-attachment-name {
-  max-width: 28ch;
+  max-width: 20ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4167,6 +5867,23 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-attachment-hint {
   color: var(--text-secondary);
+}
+/* A dropped tab of another machine: the machine's name, the way the sidebar
+   badges a server's tab. A tab the receiving agent cannot reach dims its hint. */
+.chat-attachment-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 0.75);
+  max-width: 16ch;
+  margin-right: calc(var(--spacing) * 1.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--text-primary);
+}
+.chat-attachment[data-reach='none'] .chat-attachment-hint {
+  color: var(--text-tertiary);
 }
 .chat-attachment-issue {
   flex-basis: 100%;
@@ -4177,36 +5894,106 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   padding: var(--spacing);
   color: var(--text-secondary);
 }
+/* The preview dialog: the modal card (its corner is the panels'), a head
+   with the record's tile and words, the path under it in a path's hand, the
+   preview in a framed inset on the inner corner, the actions at the foot. */
 .chat-attachment-dialog {
-  width: min(85vw, calc(var(--spacing) * 240));
-  padding: calc(var(--spacing) * 4);
+  width: min(85vw, calc(var(--spacing) * 180));
+  padding: 0;
 }
 .chat-attachment-dialog-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing);
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 4) calc(var(--spacing) * 2);
+}
+.chat-attachment-dialog-tile {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 11);
+  height: calc(var(--spacing) * 11);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
+}
+.chat-attachment-dialog-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.chat-attachment-dialog-tile .chat-attachment-glyph {
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--spacing) * 2.5);
+  border-radius: 0;
+  background: none;
+}
+.chat-attachment-dialog-titles {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.75);
+  min-width: 0;
+}
+.chat-attachment-dialog-titles > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-attachment-dialog-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }
 .chat-attachment-dialog-path {
+  margin: 0;
+  padding: 0 calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
   overflow-wrap: anywhere;
 }
 .chat-attachment-dialog-body {
-  max-height: 65vh;
+  max-height: 60vh;
   overflow: auto;
-  margin: calc(var(--spacing) * 3) 0;
+  overscroll-behavior: contain;
+  margin: 0 calc(var(--spacing) * 4);
+  padding: calc(var(--spacing) * 3);
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
   font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+.chat-attachment-dialog-body[data-kind='image'] {
+  padding: calc(var(--spacing) * 2);
 }
 .chat-attachment-dialog-body img {
   display: block;
   max-width: 100%;
-  max-height: 60vh;
+  max-height: 56vh;
   margin: auto;
+  border-radius: var(--radius-md);
   object-fit: contain;
 }
 .chat-attachment-dialog-body pre {
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
+  line-height: 1.5;
+}
+.chat-attachment-dialog-body p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.chat-attachment-dialog-body pre + p {
+  margin-top: calc(var(--spacing) * 2);
+}
+.chat-attachment-dialog-foot {
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4) calc(var(--spacing) * 4);
 }
 .chat-composer-hint {
   display: inline-flex;
@@ -4225,11 +6012,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
-}
-.chat-composer-tool:active:not(:disabled) {
-  scale: 0.97;
+    background-color var(--default-transition-duration);
 }
 .chat-composer-tool:hover {
   color: var(--text-primary);
@@ -4326,11 +6109,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
-}
-.chat-model-trigger:active:not(:disabled) {
-  scale: 0.97;
+    background-color var(--default-transition-duration);
 }
 .chat-model-trigger:hover,
 .chat-model-trigger[data-state='open'] {
@@ -4359,6 +6138,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   min-width: calc(var(--spacing) * 56);
   max-width: calc(var(--spacing) * 80);
   padding: var(--spacing);
+  /* The menu is a portal outside the chat view: the glyph size its rows'
+     chevrons take (the provider rows, "Earlier versions") rides with it, or
+     the chevron fills the row (integration round 2, F8). */
+  --chat-glyph: calc(var(--spacing) * 3.5);
 }
 .chat-model-option {
   align-items: flex-start;
@@ -4386,6 +6169,65 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+/* The "Earlier versions" row: a submenu trigger drawn as a model row, its
+   chevron where the check of a selected row sits. */
+.chat-model-earlier .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
+/* A provider row of the chip's menu (PRDCT-4300): the tab's own provider
+   carries its model as the hint and reads selected; another provider's row
+   opens that provider's models, a pick there being a move of the tab. */
+.chat-model-provider .chat-model-earlier-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  margin-top: calc(var(--spacing) / 2);
+  color: var(--text-tertiary);
+}
+/* The popover of a move to another provider, in the dock above the
+   composer: the facts as a two-column list, the note's checkbox, the error. */
+.chat-provider-switch-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.chat-provider-switch-facts dt {
+  color: var(--text-tertiary);
+}
+.chat-provider-switch-facts dd {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.chat-provider-switch-note {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chat-provider-switch-note input {
+  margin-top: calc(var(--spacing) / 2);
+}
+.chat-provider-switch-error {
+  color: var(--color-destructive, var(--text-primary));
+}
+/* The card at the head of a conversation that came from another provider:
+   one quiet line, the rows follow. */
+.chat-continued-from {
+  align-self: center;
+  margin: calc(var(--spacing) * 2) 0;
+  padding: calc(var(--spacing) / 2) calc(var(--spacing) * 2.5);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
 
 /* The slash menu: the session's commands above the composer while a "/" is
    being named, on the menu material, anchored to the composer's left edge so
@@ -4409,6 +6251,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-slash-list {
   max-height: calc(var(--spacing) * 72);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chat-slash-option {
   gap: calc(var(--spacing) * 3);
@@ -4429,6 +6272,573 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-tertiary);
 }
 
+/* The exchange timeline (DeliveryStack.tsx): the messages other tabs sent,
+   one compact card per exchange under a drawing (ExchangeDrawing.tsx), joined
+   by a line down the left that starts at the drawing. A card's closed face is
+   a line at the transcript's own size; it opens smoothly onto the exchange
+   whole. The ink is the drawings' (low-opacity text, a breath of paper); the
+   accent stays in the drawing, on the line that carries the meaning. A block
+   the column gains arrives animated (data-arrive), a row mounted again by the
+   virtualiser does not. */
+.exchange-timeline {
+  --exchange-rail: calc(var(--spacing) * 4.5);
+  --exchange-node: calc(var(--spacing) * 2.5);
+  --exchange-ink: color-mix(in oklab, var(--text-primary) 16%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+.terminal-view .exchange-timeline {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+.exchange-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding-bottom: calc(var(--spacing) * 1.5);
+}
+/* The line leaves the drawing's foot and runs into the first card's node. */
+.exchange-head::after {
+  content: '';
+  position: absolute;
+  left: var(--exchange-rail);
+  top: calc(var(--spacing) * 7.5);
+  bottom: 0;
+  border-left: thin solid var(--exchange-ink);
+}
+.exchange-drawing {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+.exchange-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+.exchange-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.exchange-names {
+  color: var(--text-secondary);
+}
+/* The digest, under the senders: room opens for it smoothly once it is
+   being read, and the words settle in when they arrive. */
+.exchange-digest {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-timeline:is([data-digest='reading'], [data-digest='done'], [data-digest='failed'])
+  .exchange-digest {
+  grid-template-rows: 1fr;
+}
+/* A read that could not be made (PRDCT-4327): one quiet line, the reason's
+   class in words, and a plain link-weight "Ask again". On the exchange
+   timeline and on a work card alike. */
+.digest-unread {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: calc(var(--spacing) * 2);
+  margin-top: calc(var(--spacing) / 2);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+.digest-unread-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--default-transition-duration);
+}
+.digest-unread-retry:hover {
+  color: var(--term-ink, var(--text-primary));
+}
+.digest-unread-retry:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+  border-radius: var(--radius-sm);
+}
+.exchange-digest-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.exchange-digest-reading {
+  display: inline-block;
+  font-size: var(--text-xs);
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
+}
+.exchange-digest-text {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: calc(var(--spacing) / 2);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle),
+    background-color var(--default-transition-duration);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+/* Something needs the reader: the ringed marker in its own column, centred
+   on the first line, the words in full ink beside it, on a breath of accent
+   that deepens under the pointer when it opens the message it came from. */
+.exchange-digest-text[data-needs-you] {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--spacing) * 2);
+  align-items: start;
+  width: fit-content;
+  max-width: 100%;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 2.5);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: left;
+  color: var(--term-ink, var(--text-primary));
+}
+button.exchange-digest-text {
+  cursor: pointer;
+}
+button.exchange-digest-text:hover {
+  background-color: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+button.exchange-digest-text:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+}
+.exchange-digest-mark {
+  --size: calc(var(--spacing) * 3.5);
+  inline-size: var(--size);
+  block-size: var(--size);
+  margin-top: calc((1lh - var(--size)) / 2);
+}
+.exchange-digest-words {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.exchange[data-needs-you] .exchange-node {
+  border-color: var(--color-accent);
+  background: radial-gradient(circle, var(--color-accent) 0 32%, transparent 36%), var(--surface-0);
+}
+.exchange[data-needs-you] .exchange-gist {
+  color: var(--text-primary);
+}
+/* The drawing's accent means one of two things, and only those: a digest
+   being read right now (blue, the message travelling the arc, the landing dot
+   breathing) or something here that needs the reader (the landing dot in
+   blue). Otherwise it rests in the plain ink of its other lines: a timeline
+   is not a task with a done state, and a colour that stayed on whatever the
+   digest found read as a state of the conversation. */
+.exchange-drawing .exchange-arc {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+  transition:
+    stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    stroke-width calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-drawing .exchange-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-timeline[data-digest='reading'] .exchange-drawing .exchange-arc {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.exchange-timeline:is([data-digest='reading'], [data-needs-you]) .exchange-drawing .exchange-land {
+  fill: var(--color-accent);
+}
+/* Doubled class: these win over the arrival's one-off draw, which a timeline
+   that has just arrived is also under. Motion only for a reader who allows it. */
+@media (prefers-reduced-motion: no-preference) {
+  .exchange-timeline.chat-delivery-stack[data-digest='reading'] .exchange-drawing .exchange-arc {
+    stroke-dasharray: 0.35 0.65;
+    animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
+  }
+  .exchange-timeline.chat-delivery-stack[data-digest='reading'] .exchange-drawing .exchange-land {
+    animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
+  }
+  .exchange-timeline.chat-delivery-stack[data-digest-fresh] .exchange-drawing .exchange-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      both;
+  }
+}
+@keyframes exchange-breathe {
+  50% {
+    scale: 1.6;
+    opacity: 0.55;
+  }
+}
+@keyframes exchange-travel {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.exchange-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.exchange {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--exchange-rail) * 2) minmax(0, 1fr);
+  padding-bottom: var(--spacing);
+}
+/* The rail, one segment per card, so it ends at the last card's node. */
+.exchange::before {
+  content: '';
+  position: absolute;
+  left: var(--exchange-rail);
+  top: 0;
+  bottom: 0;
+  border-left: thin solid var(--exchange-ink);
+  transform-origin: top;
+}
+.exchange:last-child::before {
+  bottom: auto;
+  height: calc(var(--spacing) * 2 + 0.5lh);
+}
+/* The node: the drawings' ringed dot, on the ground so the rail runs under it. */
+.exchange-node {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  inline-size: var(--exchange-node);
+  block-size: var(--exchange-node);
+  margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--exchange-node) / 2);
+  border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  border-radius: var(--radius-full);
+  background:
+    radial-gradient(
+      circle,
+      color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
+      transparent 36%
+    ),
+    var(--surface-0);
+  transition:
+    border-color var(--default-transition-duration),
+    scale calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+}
+.exchange:hover .exchange-node,
+.exchange:has(.exchange-card[open]) .exchange-node {
+  border-color: color-mix(in oklab, var(--text-primary) 70%, transparent);
+  scale: 1.15;
+}
+.exchange-card {
+  min-width: 0;
+  border: thin solid transparent;
+  border-radius: var(--radius-lg);
+  interpolate-size: allow-keywords;
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    box-shadow calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card:hover {
+  background-color: color-mix(in oklab, var(--surface-100) 70%, transparent);
+}
+.exchange-card[open] {
+  border-color: var(--border-subtle-color);
+  background-color: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+}
+.exchange-summary {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  list-style: none;
+  cursor: pointer;
+  border-radius: inherit;
+  outline: none;
+}
+.exchange-summary::-webkit-details-marker {
+  display: none;
+}
+.exchange-summary:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / -2);
+}
+.exchange-from {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-term-model);
+}
+.exchange-gist {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-ink, var(--text-primary));
+}
+/* Open, the message is right below in full: its first line steps back. */
+.exchange-gist {
+  transition: opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card[open] .exchange-gist {
+  opacity: 0;
+}
+.exchange-status,
+.exchange-time {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.exchange-chevron {
+  flex-shrink: 0;
+  align-self: center;
+  inline-size: var(--chat-glyph);
+  block-size: var(--chat-glyph);
+  color: var(--text-tertiary);
+  transition: rotate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.exchange-card[open] .exchange-chevron {
+  rotate: 180deg;
+}
+/* Opening: the height glides, the exchange settles in under its face. */
+.exchange-card::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    content-visibility calc(var(--default-transition-duration) * 2) allow-discrete;
+}
+.exchange-card[open]::details-content {
+  block-size: auto;
+}
+.exchange-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: var(--spacing) calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1.5);
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+}
+.exchange-card[open] .exchange-body {
+  opacity: 1;
+  translate: 0 0;
+}
+.exchange-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+  padding-left: calc(var(--spacing) * 3);
+  border-left: thin solid var(--exchange-ink);
+}
+.exchange-part[data-theirs] {
+  border-left-color: color-mix(in oklab, var(--color-term-model) 55%, transparent);
+}
+.exchange-part-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.exchange-part-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+}
+.exchange-part[data-theirs] .exchange-part-who {
+  color: var(--color-term-model);
+}
+button.exchange-part-who {
+  cursor: pointer;
+}
+button.exchange-part-who:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.exchange-part-time {
+  font-variant-numeric: tabular-nums;
+}
+.exchange-part-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.exchange-part[data-theirs] .exchange-part-text {
+  color: var(--term-ink, var(--text-primary));
+}
+.exchange-open {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--spacing);
+  margin-left: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) / 2) calc(var(--spacing) * 2);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    translate calc(var(--default-transition-duration) * 2) var(--ease-out-settle);
+}
+.exchange-open:hover {
+  color: var(--text-primary);
+  border-color: var(--color-border);
+  translate: 0 calc(var(--spacing) / -4);
+}
+.exchange-open svg {
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+}
+/* The row another tab opened this one at: a breath of accent that fades, so
+   the eye lands on it (jump.ts). */
+[data-row-index][data-jump-flash] > .chat-row {
+  border-radius: var(--radius-lg);
+  animation: jump-flash calc(var(--default-transition-duration) * 16) var(--ease-out-expo);
+  /* Started in the frame its tab is shown: the reveal leaves it to play
+     (settle-on-reveal.ts, PRDCT-4422). */
+  --reveal-keep: 1;
+}
+@keyframes jump-flash {
+  0%,
+  25% {
+    background-color: color-mix(in oklab, var(--color-accent) 12%, transparent);
+    box-shadow: 0 0 0 calc(var(--spacing) * 2)
+      color-mix(in oklab, var(--color-accent) 12%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 calc(var(--spacing) * 2) transparent;
+  }
+}
+.chat-jump-pill[data-tone='missing'] svg {
+  animation: none;
+}
+.exchange-note {
+  margin: 0;
+  padding-left: calc(var(--spacing) * 3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* Arrival, only for what the column gained: the cards rise in one after the
+   other, each node lands with the slightest overshoot, the rail draws down,
+   and the drawing's arc draws itself and lands on its dot. */
+.chat-row[data-arrive] .exchange {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  transition-delay: calc(var(--default-transition-duration) * 0.4 * var(--exchange-i, 0));
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--spacing);
+  }
+}
+.chat-row[data-arrive] .exchange-node {
+  @starting-style {
+    scale: 0.4;
+  }
+}
+.chat-row[data-arrive] .exchange::before {
+  transition: scale calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+  @starting-style {
+    scale: 1 0;
+  }
+}
+.exchange-drawing .exchange-arc {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.chat-row[data-arrive] .exchange-drawing .exchange-arc {
+  animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo) both;
+}
+.chat-row[data-arrive] .exchange-drawing .exchange-land {
+  animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+    calc(var(--default-transition-duration) * 3) both;
+}
+@keyframes exchange-arc {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes exchange-land {
+  from {
+    scale: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .exchange,
+  .exchange::before,
+  .exchange-node,
+  .exchange-card,
+  .exchange-card::details-content,
+  .exchange-body,
+  .exchange-chevron {
+    transition: none;
+  }
+  .exchange-drawing .exchange-arc,
+  .exchange-drawing .exchange-land,
+  .exchange-digest-reading {
+    animation: none;
+  }
+  .exchange-digest,
+  .exchange-digest-text,
+  .exchange-open {
+    transition: none;
+  }
+  [data-row-index][data-jump-flash] > .chat-row {
+    animation: none;
+    outline: thin solid var(--color-accent);
+  }
+}
+
 /* ── Terminal view ────────────────────────────────────────────────────────
    The chat view's third reading, after Claude Code's TUI: a wider column, the
    prompt between two rules with the send button kept at its right end, the
@@ -4442,9 +6852,13 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    untouched. */
 .terminal-view {
   --chat-column: var(--container-6xl);
+  /* The view's ink: the primary text eased a fifth of the way towards the
+     secondary, so a long transcript reads soft rather than heavy. */
+  --term-ink: color-mix(in oklch, var(--text-primary) 80%, var(--text-secondary));
 }
 .terminal-view .chat-prose {
   font-size: calc(var(--text-sm) + var(--spacing) / 4);
+  color: var(--term-ink);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] {
   align-items: stretch;
@@ -4459,7 +6873,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   right: 0;
   left: auto;
 }
-.terminal-view .chat-turn[data-role='user'] {
+.terminal-view .chat-turn[data-role='user'],
+.terminal-view .term-question-pin {
   position: relative;
   max-width: none;
   padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3.5) calc(var(--spacing) * 2.5)
@@ -4470,11 +6885,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-sm);
   font-weight: 450;
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 /* The caret sits on the message's first line: a box one line tall at the
    padding's edge, the glyph centred in it, whatever the fonts' metrics. */
-.terminal-view .chat-turn[data-role='user']::before {
+.terminal-view .chat-turn[data-role='user']::before,
+.terminal-view .term-question-pin::before {
   content: '❯';
   position: absolute;
   left: calc(var(--spacing) * 3);
@@ -4506,6 +6922,395 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 /* A little more air between one exchange and the next: under the last answer,
    over the next question. Each exchange is one virtualised row. */
+/* ── The agent's working notes, folded (WorkStretch.tsx, PRDCT-4212) ──
+   Once a turn is over, the notes the agent wrote between its tool runs fold
+   into one card: a drawing of a sheet of notes folding into one line, the
+   title the digest read (the first note's first line until it lands), the
+   counts under it, and, when a note needs the reader, that note on the face
+   in a breath of accent. Open, a rail of steps as the exchange timeline's:
+   one node per note, what the agent said and then what it did. The notes
+   inside read smaller and quieter than the answer outside the card. A card
+   that has just folded settles in (data-fresh); one scrolled back into view
+   mounts still. Tokens only, as the whole conversation block. */
+.work-stretch {
+  --stretch-rail: calc(var(--spacing) * 4.5);
+  --stretch-node: calc(var(--spacing) * 2.5);
+  --stretch-ink: color-mix(in oklab, var(--text-primary) 16%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+.terminal-view .work-stretch {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+/* Just folded under the reader's eyes: it settles in, the forms' arrival. */
+.work-stretch[data-fresh] {
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 2);
+  }
+}
+.stretch-card {
+  min-width: 0;
+  border: thin solid transparent;
+  border-radius: var(--radius-lg);
+  interpolate-size: allow-keywords;
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration),
+    box-shadow calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-card:hover {
+  background-color: color-mix(in oklab, var(--surface-100) 70%, transparent);
+}
+.stretch-card[open] {
+  border-color: var(--border-subtle-color);
+  background-color: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+}
+.stretch-summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2.5);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  list-style: none;
+  cursor: pointer;
+  border-radius: inherit;
+  outline: none;
+}
+.stretch-summary::-webkit-details-marker {
+  display: none;
+}
+.stretch-summary:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / -2);
+}
+.stretch-drawing {
+  flex-shrink: 0;
+  align-self: flex-start;
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+.stretch-words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) / 4);
+  min-width: 0;
+  line-height: 1.35;
+}
+.stretch-eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* The title: the first note's first line, then the digest's title landing
+   over it, settling in; both read with the ink of the transcript once read. */
+.stretch-title {
+  display: grid;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.stretch-title[data-read],
+.stretch-card[open] .stretch-title {
+  color: var(--term-ink, var(--text-primary));
+}
+.stretch-title-words {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) / 2);
+  }
+}
+/* While the digest reads, the counts shimmer, as the exchange digest's line does. */
+.work-stretch[data-digest='reading'] .stretch-eyebrow {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer calc(var(--default-transition-duration) * 12) linear infinite;
+}
+/* A note needs the reader: verbatim on the face, the ringed marker beside
+   it in its own column, on a breath of accent. */
+.stretch-flag {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: calc(var(--spacing) * 2);
+  align-items: start;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: calc(var(--spacing) / 2);
+  padding: calc(var(--spacing) * 1.25) calc(var(--spacing) * 2.5) calc(var(--spacing) * 1.25)
+    calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  white-space: normal;
+  color: var(--term-ink, var(--text-primary));
+  transition:
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1.5);
+  }
+}
+.stretch-flag-mark {
+  --size: calc(var(--spacing) * 3.5);
+  inline-size: var(--size);
+  block-size: var(--size);
+  margin-top: calc((1lh - var(--size)) / 2);
+}
+/* The note whole, its lines kept: a note that needs the reader is never cut. */
+.stretch-flag-words {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.stretch-chevron {
+  flex-shrink: 0;
+  inline-size: var(--chat-glyph);
+  block-size: var(--chat-glyph);
+  color: var(--text-tertiary);
+  transition: rotate calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-card[open] .stretch-chevron {
+  rotate: 180deg;
+}
+/* The height glides both ways on the ease-in-out the tool runs use, and the
+   content fades with it; the steps rise in one after another on the way in. */
+.stretch-card::details-content {
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition:
+    block-size calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
+}
+.stretch-card[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 2.25) allow-discrete;
+}
+.stretch-body {
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+}
+.stretch-steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.stretch-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(var(--stretch-rail) * 2) minmax(0, 1fr);
+  padding-bottom: calc(var(--spacing) * 2.5);
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1);
+  /* Closing: every step fades at once while the height folds. */
+  transition:
+    opacity var(--default-transition-duration) var(--term-disclosure-ease),
+    translate var(--default-transition-duration) var(--term-disclosure-ease);
+}
+/* Opening: each step a beat after the one above it, easing in and out, no
+   overshoot. A keyframe, not a transition: a closed card's content is hidden
+   (content-visibility), so a step has no style to transition FROM and would
+   simply appear. The delay is the opening's only, so the close is not
+   staggered. */
+.stretch-card[open] .stretch-step {
+  opacity: 1;
+  translate: 0 0;
+  animation: stretch-step-in calc(var(--default-transition-duration) * 2.5)
+    var(--term-disclosure-ease) backwards;
+  animation-delay: calc(var(--default-transition-duration) * 0.35 * var(--stretch-i, 0));
+}
+@keyframes stretch-step-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
+}
+/* The rail, one segment per step, ending at the last step's node. */
+.stretch-step::before {
+  content: '';
+  position: absolute;
+  left: var(--stretch-rail);
+  top: 0;
+  bottom: 0;
+  border-left: thin solid var(--stretch-ink);
+}
+.stretch-step:first-child::before {
+  top: calc(var(--spacing) * 2 + 0.5lh);
+}
+.stretch-step:last-child::before {
+  bottom: auto;
+  height: calc(var(--spacing) * 2 + 0.5lh);
+}
+.stretch-step:only-child::before {
+  display: none;
+}
+/* The node: the drawings' ringed dot, hollow for a step with no words. */
+.stretch-node {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  inline-size: var(--stretch-node);
+  block-size: var(--stretch-node);
+  margin-top: calc(var(--spacing) * 2 + 0.5lh - var(--stretch-node) / 2);
+  border: thin solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  border-radius: var(--radius-full);
+  background:
+    radial-gradient(
+      circle,
+      color-mix(in oklab, var(--text-primary) 70%, transparent) 0 32%,
+      transparent 36%
+    ),
+    var(--surface-100);
+  transition: border-color var(--default-transition-duration);
+}
+.stretch-step[data-silent] .stretch-node {
+  background: var(--surface-100);
+}
+.stretch-step[data-needs-you] .stretch-node {
+  border-color: var(--color-accent);
+  background:
+    radial-gradient(circle, var(--color-accent) 0 32%, transparent 36%), var(--surface-100);
+}
+.stretch-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+/* Inside the card the notes are what they are, notes: smaller and quieter
+   than the answer outside; the flagged one keeps the transcript's ink. The
+   line under a turn (when, copy) is the transcript's, not a note's. */
+.stretch-step-body .chat-turn-wrap[data-side='start'] .chat-turn {
+  font-size: calc(var(--text-sm) - var(--spacing) / 4);
+  color: var(--text-secondary);
+}
+.stretch-step[data-needs-you] .chat-turn-wrap[data-side='start'] .chat-turn {
+  color: var(--term-ink, var(--text-primary));
+}
+.stretch-step-body .chat-turn-meta {
+  display: none;
+}
+/* The drawing's accent means one of two things: the digest reading now (the
+   fold line travelling, the landing dot breathing) or a note that needs the
+   reader (the landing dot). Otherwise it rests in the plain ink. */
+.stretch-drawing .stretch-fold {
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  transition:
+    stroke calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    stroke-width calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-drawing .stretch-land {
+  fill: color-mix(in oklab, var(--ink) 60%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+}
+.stretch-drawing .stretch-note {
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+.work-stretch[data-digest='reading'] .stretch-drawing .stretch-fold {
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+.work-stretch:is([data-digest='reading'], [data-needs-you]) .stretch-drawing .stretch-land {
+  fill: var(--color-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-stretch[data-digest='reading'] .stretch-drawing .stretch-fold {
+    stroke-dasharray: 0.35 0.65;
+    animation: exchange-travel calc(var(--default-transition-duration) * 8) linear infinite;
+  }
+  .work-stretch[data-digest='reading'] .stretch-drawing .stretch-land {
+    animation: exchange-breathe calc(var(--default-transition-duration) * 8) ease-in-out infinite;
+  }
+  .work-stretch[data-digest-fresh] .stretch-drawing .stretch-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      both;
+  }
+  /* Fresh: the notes write themselves onto the sheet one under the other,
+     then the fold line draws out to the dot and the dot lands. */
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note {
+    animation: stretch-note calc(var(--default-transition-duration) * 3) var(--ease-out-expo) both;
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(3) {
+    animation-delay: calc(var(--default-transition-duration) * 0.6);
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(4) {
+    animation-delay: calc(var(--default-transition-duration) * 1.2);
+  }
+  .work-stretch[data-fresh] .stretch-drawing .stretch-note:nth-child(5) {
+    animation-delay: calc(var(--default-transition-duration) * 1.8);
+  }
+  .work-stretch[data-fresh]:not([data-digest='reading']) .stretch-drawing .stretch-fold {
+    animation: exchange-arc calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
+      calc(var(--default-transition-duration) * 2) both;
+  }
+  .work-stretch[data-fresh]:not([data-digest='reading']) .stretch-drawing .stretch-land {
+    animation: exchange-land calc(var(--default-transition-duration) * 3) var(--ease-out-settle)
+      calc(var(--default-transition-duration) * 6) both;
+  }
+}
+@keyframes stretch-note {
+  from {
+    opacity: 0;
+    scale: 0.4 1;
+  }
+}
+/* Reduced motion: the card, the title and the flag keep their fades and lose
+   their travel in the conversation's own reduced-motion block below; what
+   moves here stops. */
+@media (prefers-reduced-motion: reduce) {
+  .stretch-card,
+  .stretch-card::details-content,
+  .stretch-card[open]::details-content,
+  .stretch-step,
+  .stretch-card[open] .stretch-step,
+  .stretch-chevron {
+    transition: none;
+  }
+  .stretch-card[open] .stretch-step,
+  .stretch-drawing .stretch-fold,
+  .stretch-drawing .stretch-land,
+  .stretch-drawing .stretch-note,
+  .work-stretch[data-digest='reading'] .stretch-eyebrow {
+    animation: none;
+  }
+}
+
 .terminal-view .chat-row:not([data-first]) {
   padding-top: calc(var(--spacing) * 9);
 }
@@ -4581,32 +7386,90 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .terminal-view .term-composer-wrap {
   padding-top: 0;
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'] {
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'],
+.terminal-view .term-question-pin {
   /* Opaque, since the answer scrolls under it: the tint over the ground. */
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] {
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'],
+.terminal-view .term-question-pin[data-from='tab'] {
   --from-tint: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
   background-image: linear-gradient(var(--from-tint), var(--from-tint));
 }
-.terminal-view .chat-turn[data-role='user'][data-from='tab']::before {
+.terminal-view .chat-turn[data-role='user'][data-from='tab']::before,
+.terminal-view .term-question-pin[data-from='tab']::before {
   color: var(--color-term-model);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
   order: 1;
   margin: calc(var(--spacing) * 1.5) 0 0;
 }
-/* A message always stands whole, never scrolling inside its own box. One
-   taller than a share of the pane (question-height.ts sets data-tall) is not
-   pinned: stuck under the top edge it would cover the answer, and its part
-   below the pane could never be read. It scrolls away with its exchange. */
+/* A message never scrolls inside its own box, and stands whole in the flow.
+   One taller than a share of the view (question-height.ts sets data-tall)
+   cannot be pinned whole: it would cover the answer. Its row is pinned with
+   its top risen above the edge by --question-pin-offset, so it sticks only
+   once read past, its foot under the edge; and stuck (question-height.ts
+   sets data-stuck), it shows the preview
+   laid over that foot (.term-question-pin: its first lines, fading out)
+   instead of its own last lines. Nothing changes size, so nothing in the
+   flow moves when it pins. A click on either glides to the other
+   (TermQuestion). */
 .term-question {
   display: flex;
   flex-direction: column;
 }
+.term-question-pin {
+  display: none;
+}
 .terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'][data-tall] {
-  position: relative;
+  top: calc(var(--pin-gap) - var(--question-pin-offset, var(--pin-gap)));
+}
+.terminal-view .chat-turn-wrap[data-tall] .term-question {
+  cursor: pointer;
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall] > .term-question-pin {
+  display: block;
+  position: absolute;
+  z-index: 1;
+  inset-inline: 0;
+  bottom: 0;
+  cursor: pointer;
+  visibility: hidden;
+  opacity: 0;
+  translate: 0 var(--spacing);
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.5) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 3) var(--ease-out-settle),
+    visibility calc(var(--default-transition-duration) * 1.5);
+}
+.term-question-pin::after {
+  content: attr(data-text);
+  display: block;
+  max-height: calc(3 * 1lh);
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  mask-image: linear-gradient(to bottom, black calc(100% - 1lh), transparent);
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall] > :not(.term-question-pin) {
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.5) var(--ease-out-expo),
+    visibility calc(var(--default-transition-duration) * 1.5);
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall][data-stuck] > .term-question-pin {
+  visibility: visible;
+  opacity: 1;
+  translate: 0 0;
+}
+.terminal-view[data-pin] .chat-turn-wrap[data-tall][data-stuck] > :not(.term-question-pin) {
+  visibility: hidden;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-view[data-pin] .chat-turn-wrap[data-tall] > * {
+    transition: none;
+  }
 }
 /* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
    what was done, opening onto one row per call. The title has no kind icon,
@@ -4615,6 +7478,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    a glyph. Both levels open and close by animating their height. */
 .terminal-view {
   interpolate-size: allow-keywords;
+}
+/* An ease-in-out (cubic): the smoothest open and close for a height. Every
+   disclosure that glides (a tool run, a call, a card of working notes) uses it,
+   both ways; none of them springs past its mark. */
+:root {
+  --term-disclosure-ease: cubic-bezier(0.65, 0, 0.35, 1);
 }
 .term-tools,
 .term-call {
@@ -4627,15 +7496,24 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   block-size: 0;
   overflow: clip;
   opacity: 0;
+  /* Both ways the height eases in and out — starts soft, lands soft, never
+     runs past its mark: no spring, no bounce. Closing is a touch quicker. */
   transition:
-    block-size var(--default-transition-duration) var(--ease-out-expo),
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    content-visibility var(--default-transition-duration) allow-discrete;
+    block-size calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 1.75) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 1.75) allow-discrete;
 }
 .term-tools[open]::details-content,
 .term-call[open]::details-content {
   block-size: auto;
   opacity: 1;
+  /* Opening: the same ease-in-out, a little longer. Declared on the open
+     state, so it is the opening's timing; the closed state above carries the
+     closing's. */
+  transition:
+    block-size calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    opacity calc(var(--default-transition-duration) * 2.25) var(--term-disclosure-ease),
+    content-visibility calc(var(--default-transition-duration) * 2.25) allow-discrete;
 }
 .term-tools-row,
 .term-call-row {
@@ -4701,6 +7579,16 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin: calc(var(--spacing) * 0.5) 0 calc(var(--spacing) * 1) calc(var(--chat-glyph) / 2 - 0.5px);
   padding-left: calc(var(--chat-glyph) / 2 + var(--spacing) * 2);
   border-left: thin solid var(--border-subtle-color);
+}
+/* The hairline fades in over the whole stagger rather than being uncovered
+   by the height as it opens, which read as a line drawing itself down. */
+.term-tools[open] > .term-tools-body {
+  animation: term-hairline-in calc(var(--default-transition-duration) * 3) var(--ease-out-expo);
+}
+@keyframes term-hairline-in {
+  from {
+    border-left-color: transparent;
+  }
 }
 .term-call-icon {
   flex-shrink: 0;
@@ -4781,7 +7669,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 @media (prefers-reduced-motion: reduce) {
   .term-tools::details-content,
-  .term-call::details-content {
+  .term-call::details-content,
+  .term-tools[open]::details-content,
+  .term-call[open]::details-content {
     transition-property: opacity, content-visibility;
   }
   .term-tools[data-state='running'] > .term-tools-row .term-tools-title,
@@ -4811,7 +7701,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   transition: border-color var(--default-transition-duration);
 }
 .term-prompt:focus-within {
-  border-color: var(--text-tertiary);
+  /* Focus darkens the two rules only a step: the field is focused nearly
+     all the time, and full tertiary ink made them the heaviest lines on screen. */
+  border-color: color-mix(in oklch, var(--text-tertiary) 35%, transparent);
 }
 .term-prompt[data-dragging='true'] {
   border-color: var(--color-accent);
@@ -4821,7 +7713,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   padding-top: calc(var(--spacing) * 1.25);
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
 }
 .term-prompt textarea {
   flex: 1;
@@ -4836,7 +7728,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--term-ink);
   field-sizing: content;
   overflow-y: auto;
 }
@@ -4863,6 +7755,27 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-secondary);
   white-space: nowrap;
 }
+/* Every item keeps its width: one that could shrink let its text spill over
+   its neighbours (the account's "79% left" over the pin and attach buttons)
+   without the row ever counting as too wide, so useFitRow dropped nothing. */
+.term-status > *,
+.term-status > .term-fit > * {
+  flex-shrink: 0;
+}
+/* An item the row dropped for room (useFitRow in fit.ts). */
+.term-status [data-fit-hidden] {
+  display: none;
+}
+/* A wrapper the row can drop, with no box of its own. */
+.term-fit {
+  display: contents;
+}
+/* The effort and the mode follow the model as one run of chips: their own
+   padding already spaces them, so they give back the row's gap. With the gap
+   on top, the space before the mode read twice the space before the effort. */
+.term-status .term-chip-next {
+  margin-left: calc(var(--spacing) * -3);
+}
 .term-status .chat-composer-tool[data-active] {
   color: var(--color-accent);
 }
@@ -4871,6 +7784,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   align-items: center;
   gap: var(--spacing);
   margin-left: auto;
+  /* Never squeezed: the row drops its other items to keep these two. Its
+     overflow: hidden would otherwise let it shrink to nothing first. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -4918,11 +7834,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .term-mode[data-mode='bypassPermissions'] .chat-model-trigger::before {
   content: '▸▸▸';
-}
-/* The bar's chips hold still under the finger: a press that shrinks the
-   trigger moves the edge its menu is anchored to as the menu opens. */
-.term-status .chat-model-trigger:active:not(:disabled) {
-  scale: none;
 }
 .term-status .chat-model-trigger:hover,
 .term-status .chat-model-trigger[data-state='open'] {
@@ -5025,44 +7936,47 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 /* The subagents, stacked under the status line while they run. Each row
    folds open as its agent starts and shut as it ends (a grid track going
    from 0fr to 1fr), and the stack's own rule and room go with its last row. */
-.term-agents {
+/* The work running now (WorkCards): one card per subagent and per command
+   left running, under the composer of both views. A card is its drawing
+   and two lines of text; the drawing breathes while the work goes on and
+   stills once an agent has been quiet a minute. A card folds open as its
+   work starts and folds shut as it ends, so the strip is held for the
+   length of the fold after a card has gone; the strip folds away with its
+   last card. Clicking a card opens the window onto its work. */
+.work-cards {
   display: grid;
   grid-template-rows: 1fr;
   margin-top: calc(var(--spacing) * 2);
-  padding-top: calc(var(--spacing) * 2);
-  border-top: thin dashed var(--border-subtle-color);
   font-size: var(--text-xs);
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     margin-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    padding-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
-    border-color calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
     opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
   @starting-style {
     grid-template-rows: 0fr;
     margin-top: 0;
-    padding-top: 0;
-    border-color: transparent;
     opacity: 0;
   }
 }
-.term-agents[data-empty] {
+.work-cards[data-empty] {
   grid-template-rows: 0fr;
   margin-top: 0;
-  padding-top: 0;
-  border-color: transparent;
   opacity: 0;
 }
-.term-agents-list {
+.work-cards-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
   min-height: 0;
   overflow: hidden;
   margin: 0;
-  padding: 0 calc(var(--spacing) * 2);
+  padding: 0;
   list-style: none;
 }
-.term-agent {
+.work-card {
   display: grid;
   grid-template-rows: 1fr;
+  inline-size: min(18rem, 100%);
   opacity: 1;
   transition:
     grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
@@ -5072,58 +7986,74 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     opacity: 0;
   }
 }
-.term-agent[data-leaving] {
+.work-card[data-leaving] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
-.term-agent-row {
+.work-card-row {
   display: flex;
-  align-items: baseline;
-  gap: calc(var(--spacing) * 2);
-  min-width: 0;
+  align-items: stretch;
   min-height: 0;
   overflow: hidden;
-  padding: calc(var(--spacing) / 4) 0;
-  white-space: nowrap;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-0);
+  transition: border-color var(--default-transition-duration) var(--ease-out-expo);
 }
-.term-agent-dot {
-  position: relative;
+.work-card-row:hover {
+  border-color: color-mix(in oklab, var(--text-primary) 24%, var(--color-border));
+}
+/* The card's face is the button that opens the window onto its work. It
+   carries the card's inner margin itself, so the whole card is the target,
+   not just its drawing and text. */
+.work-card-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 1.5);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.work-card-open:hover .term-agent-description,
+.work-card-open[data-state='open'] .term-agent-description {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.work-drawing {
   flex-shrink: 0;
-  align-self: center;
-  inline-size: calc(var(--spacing) * 1.5);
-  block-size: calc(var(--spacing) * 1.5);
-  border-radius: var(--radius-full);
-  background-color: var(--color-status-working);
+  inline-size: calc(var(--spacing) * 9);
+  block-size: calc(var(--spacing) * 7.5);
+}
+/* The focal dot breathes while the work goes on; a quiet agent's rests. */
+.work-drawing .work-pulse {
+  transform-origin: center;
   animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
 }
-.term-agent[data-background] .term-agent-dot {
-  background-color: var(--color-term-mode);
-}
-/* Each new step: a ring leaves the dot once. The element is remounted per
-   step, so the one-shot animation is the tick. */
-.term-agent-tick {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: inherit;
-  animation: term-agent-tick calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
-    forwards;
-}
-@keyframes term-agent-tick {
-  from {
-    opacity: 0.8;
-    scale: 1;
-  }
-  to {
-    opacity: 0;
-    scale: 3;
-  }
-}
-/* A minute without a step: the dot stops breathing and dims, and the row
-   says for how long. */
-.term-agent[data-quiet] .term-agent-dot {
+.work-drawing:not([data-working]) .work-pulse {
   animation: none;
-  opacity: 0.4;
+  opacity: 0.45;
+}
+.work-card-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.4;
+}
+.work-card-title {
+  display: flex;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  white-space: nowrap;
 }
 .term-agent-type {
   flex-shrink: 0;
@@ -5135,7 +8065,83 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   text-overflow: ellipsis;
   color: var(--text-primary);
 }
-.term-agent-meta {
+.work-card-meta {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-card-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+/* An agent's model at the end of the second line, clear of the figures, so
+   the title has the card's whole width. Said, not offered: the window the
+   card opens is where it can be changed. */
+.work-card-meta > .work-card-model {
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  padding: 0 0 0 calc(var(--spacing) * 4);
+}
+.work-card-meta > .work-card-model::before {
+  content: none;
+}
+.term-agent-quiet {
+  color: var(--color-warning);
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-drawing .work-pulse {
+    animation: none;
+  }
+}
+/* The window onto a subagent: the transcript's own rows, in a box over the
+   stack, the agent's name and figures on a line at its head. The box is
+   the popover's material; the scroller inside takes the height. */
+.term-peek {
+  /* Portaled out of .chat-host: the transcript's measures come along, the
+     glyph size the tool rows' chevrons and icons read in particular. */
+  --chat-column: 100%;
+  --chat-code-size: calc(var(--text-sm) - var(--spacing) / 4);
+  --chat-glyph: calc(var(--spacing) * 3.5);
+  display: flex;
+  flex-direction: column;
+  inline-size: min(40rem, calc(100vw - 2rem));
+  max-block-size: min(60vh, 36rem);
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.term-peek-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.term-peek-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.term-peek-type {
+  flex-shrink: 0;
+  color: var(--color-term-model);
+}
+.term-peek-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.term-peek-meta {
   display: inline-flex;
   flex-shrink: 0;
   align-items: baseline;
@@ -5143,12 +8149,41 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.term-agent-meta > * + *::before {
+.term-peek-meta > * + *::before {
   content: '·';
   padding-inline: calc(var(--spacing) * 1.5);
 }
-.term-agent-quiet {
-  color: var(--color-warning);
+.term-peek-scroll {
+  min-height: 0;
+  padding: calc(var(--spacing) * 3);
+}
+.term-peek-empty {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+/* The command's full line under the shell window's head, and its output. */
+.term-peek-command {
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-shell-output {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* The model a subagent runs on: a chip opening the relaunch menu when the
    agent can be stopped on its own, plain words when it cannot. */
@@ -5189,6 +8224,9 @@ button.term-agent-model:focus-visible {
   .chat-row[data-arrive] .term-turn > *,
   .chat-prompt,
   .chat-composer-files .chat-attachment,
+  .work-stretch[data-fresh],
+  .stretch-title-words,
+  .stretch-flag,
   .chat-drop-overlay {
     transition-property: opacity;
     @starting-style {
@@ -5197,14 +8235,19 @@ button.term-agent-model:focus-visible {
     }
   }
   .chat-jump-end,
-  details[open] > .chat-tool-items,
   details[open] > .chat-tool-item[data-lone],
   details[open] > .chat-tool-panel {
     animation-name: scrim-in;
   }
+  details[open] > .chat-tool-items > .chat-tool-item,
+  .term-tools[open] > .term-tools-body > .term-call,
+  .term-tools[open] > .term-tools-body {
+    animation: none;
+  }
   .chat-turn-copy[data-copied='true'] svg,
   .chat-send svg,
-  .term-agent-dot {
+  .term-agent-dot,
+  .term-agent-icon {
     animation: none;
     transition-property: opacity;
   }
@@ -5212,4 +8255,535 @@ button.term-agent-model:focus-visible {
   .chat-send[data-kind='stop'] svg[data-glyph='send'] {
     scale: none;
   }
+}
+
+/* ── Routines (ADR 0004) ──
+   A routine's toolbar button and its floating panel. The button is the
+   routine's own icon in its colour, and one signal at a time sits on its
+   corner, drawn with the sidebar's own status glyphs (`RunGlyph`, the same
+   set `SessionStatus` draws): the eight-segment spinner while a run is in
+   flight, then a check, a warning, a question or a cross while the last run
+   is unseen. Motion means working, colour means "go look"; nothing pulses
+   (Romain, 6 November 2026). */
+.routine-glyph[data-tone='running'] {
+  color: var(--color-status-working);
+}
+.routine-glyph[data-tone='ok'] {
+  color: var(--color-status-ready);
+}
+.routine-glyph[data-tone='waiting'],
+.routine-glyph[data-tone='attention'] {
+  color: var(--color-status-waiting);
+}
+.routine-glyph[data-tone='failed'],
+.routine-glyph[data-tone='invalid'] {
+  color: var(--color-destructive);
+}
+.routine-glyph[data-tone='seen'] {
+  opacity: 0.45;
+}
+/* The state view's centrepiece: the same glyph at a heading's size. */
+.routine-glyph[data-size='lg'] {
+  width: calc(var(--spacing) * 6);
+  height: calc(var(--spacing) * 6);
+}
+.routine-glyph[data-size='lg'] > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* On the toolbar icon's corner: a small glyph on a disc of the bar's ground,
+   so it reads over the icon's strokes. */
+.routine-glyph[data-size='badge'] {
+  position: absolute;
+  right: calc(var(--spacing) * 0.25);
+  bottom: calc(var(--spacing) * 0.25);
+  width: calc(var(--spacing) * 2.75);
+  height: calc(var(--spacing) * 2.75);
+  border-radius: 9999px;
+  background-color: var(--surface-0);
+  box-shadow: 0 0 0 1px var(--surface-0);
+}
+.routine-glyph[data-size='badge'] > svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2.25;
+}
+.routine-glyph[data-size='badge'] > .sidebar-tab-spinner {
+  width: 100%;
+  height: 100%;
+}
+/* The panel's state view (a run in flight, a run waiting, no run yet): the
+   chat's empty-state shape, centred in the report area, with the drawing
+   above the words when there is one. */
+.routine-state {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 5);
+  text-align: center;
+}
+.routine-state .chat-drawing {
+  width: calc(var(--spacing) * 44);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+.routine-state strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.routine-state > span:not(.routine-glyph, .routine-meta, .routine-trouble-title) {
+  max-width: 34ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.routine-state[data-tone='waiting'] strong {
+  color: var(--color-status-waiting);
+}
+/* The placeholder under the deck's guest until its first paint: the panel's
+   ground and, after a wait, the spinner and the words. It sits UNDER the
+   guest (a guest paints above every DOM sibling anyway) and stays mounted,
+   hidden once the deck shows, so the layer tree never changes under the
+   guest; the guest's own opacity is what reveals the deck. */
+.routine-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background-color: var(--surface-0);
+}
+/* The veil's words wait: a deck that paints within 700 ms (the popover's
+   rise, the guest's mount, the viewer's answer) shows the panel's ground and
+   then the page, never a flash of "Opening the report"; only a slow viewer
+   earns the spinner and the words, which then fade in. */
+.routine-veil > * {
+  animation: scrim-in 200ms ease-out 700ms both;
+}
+/* The history: menu rows, the tone dot first, the headline, then the time,
+   the duration and the trigger in tabular figures so a column of runs lines
+   up. The same line heads the report card. */
+.routine-meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The panel: a column the size the routine declares. */
+.routine-panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The title, in the manner of a menu's head: the routine's icon on a soft
+   tile in its colour, the name, and one quiet line saying when it runs. */
+.routine-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4) calc(var(--spacing) * 2.5);
+}
+.routine-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 2);
+  height: calc(var(--control-h-md) + var(--spacing) * 2);
+  border-radius: var(--radius-xl);
+  background-color: var(--surface-100);
+}
+.routine-mark > svg {
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+}
+.routine-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.routine-head-title {
+  color: var(--text-primary);
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub {
+  color: var(--text-tertiary);
+  font-size: var(--control-text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-head-sub::first-letter {
+  text-transform: uppercase;
+}
+/* A short list inside a settings row (a server's routines, PRDCT-4244):
+   one line per entry, the name then its facts, no controls. */
+.settings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1);
+  min-width: 0;
+  max-width: calc(var(--spacing) * 90);
+  text-align: left;
+}
+.settings-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-list-main {
+  font-size: var(--control-text);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-list-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The Routines popover (PRDCT-4244): one list of the workspace's routines
+   in sections, one per machine; a row opens the routine's panel in place. */
+.routines-list {
+  width: calc(var(--spacing) * 90);
+  max-width: calc(var(--radix-popover-content-available-width, 100vw) - 12px);
+  max-height: calc(var(--radix-popover-content-available-height, 100vh) - 12px);
+  overflow-y: auto;
+  padding-bottom: calc(var(--spacing) * 2);
+  outline: none;
+}
+/* The pages of the popover as one box (RoutinePages): the frame takes the
+   current page's size at once, so the popover is positioned once per page;
+   the surface inside animates to that size from the frame's top-right
+   corner, the one the popover keeps still, and clips the page sliding out.
+   Both pages hang from that same corner, so the leaving one stays put while
+   the box grows past it. */
+.routines-frame {
+  position: relative;
+}
+.routines-surface {
+  position: absolute;
+  top: 0;
+  right: 0;
+  /* No inset of its own: each page pads itself (the heads, the rows, the
+     form), and a padding here would be animated with the box. */
+  padding: 0;
+  overflow: hidden;
+}
+.routines-page {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: max-content;
+  max-width: 100vw;
+}
+/* The list's head wears the panel's head (a mark, a title, one quiet line),
+   so the two pages share a shape and the slide reads as one head moving. */
+.routines-list-head {
+  padding-bottom: calc(var(--spacing) * 1.5);
+}
+.routines-list-head .routine-mark {
+  color: var(--text-secondary);
+}
+.routines-section + .routines-section {
+  border-top: thin solid var(--border-subtle-color);
+  margin-top: calc(var(--spacing) * 1);
+  padding-top: calc(var(--spacing) * 1);
+}
+.routines-section-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: var(--control-h-md);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2) 0 calc(var(--spacing) * 4);
+}
+.routines-section-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+.routines-section-note {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+.routines-section[data-kind='unknown'] .routines-section-note {
+  color: var(--color-status-waiting);
+}
+.routines-rows {
+  margin: 0;
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2);
+  list-style: none;
+}
+.routine-row {
+  min-height: calc(var(--control-h-md) + var(--spacing) * 3);
+  padding-block: calc(var(--spacing) * 1.5);
+}
+.routine-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--control-h-md) + var(--spacing) * 0.5);
+  height: calc(var(--control-h-md) + var(--spacing) * 0.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+}
+.routine-row-icon > svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+.routine-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.routine-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--text-tertiary);
+}
+.routine-row-sub::first-letter {
+  text-transform: uppercase;
+}
+.routine-row[data-state='invalid'] .routine-row-sub,
+.routine-row[data-state='unreachable'] .routine-row-sub {
+  color: var(--color-destructive);
+}
+.routines-empty {
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  font-size: var(--control-text-sm);
+  color: var(--text-tertiary);
+}
+/* The back chevron before the panel's mark, when the panel replaced the list. */
+.routine-back {
+  margin-left: calc(var(--spacing) * -1.5);
+}
+/* The form a section's “+” opens: the fields in a column, the acts at the foot. */
+.routine-form {
+  display: flex;
+  flex-direction: column;
+  width: calc(var(--spacing) * 100);
+  max-width: calc(var(--radix-popover-content-available-width, 100vw) - 12px);
+  max-height: calc(var(--radix-popover-content-available-height, 100vh) - 12px);
+}
+.routine-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 4) calc(var(--spacing) * 3);
+  overflow-y: auto;
+}
+.routine-form-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--spacing) * 3);
+}
+.routine-form-hint {
+  display: block;
+  margin-top: calc(var(--spacing) * 1);
+  font-size: 11px;
+  font-weight: var(--font-weight-normal);
+  color: var(--text-tertiary);
+}
+.routine-form-hint::first-letter {
+  text-transform: uppercase;
+}
+.routine-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4) calc(var(--spacing) * 3.5);
+  border-top: thin solid var(--border-subtle-color);
+}
+/* The form's pickers (model, account): the settings select cut to the
+   form's input height, filling its column. */
+.routine-form-select {
+  width: 100%;
+  height: var(--control-h-lg);
+  padding: 0 0.5rem 0 0.75rem;
+  border-radius: var(--radius-lg);
+  background-color: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-normal);
+}
+.routine-form-select:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.routine-form-select[data-state='open'] {
+  box-shadow: var(--focus-ring);
+}
+/* One row: the tabs on the left, Run now and the small menu on the right. */
+.routine-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 3) calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-nav-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* The small menu under the More button, held inside the panel (a second
+   portal would read as a click outside the popover and close it). */
+.routine-menu {
+  position: absolute;
+  top: calc(100% + var(--spacing));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--spacing) * 44);
+  padding: var(--surface-inset);
+}
+/* The stage the bodies cross-fade on: one box, each body filling it, so the
+   one leaving and the one arriving overlap. */
+.routine-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.routine-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.routine-note {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 4) 0;
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-50);
+  border: 1px solid var(--border-subtle-color);
+  font-size: var(--control-text-sm);
+}
+.routine-note > .routine-glyph {
+  margin-top: 1px;
+}
+.routine-note-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+}
+.routine-note-text strong {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+.routine-note-text > span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+/* The trouble card: the state view with its drawing, the glyph beside the
+   title, and the raw words folded under Details. */
+.routine-trouble-title {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+}
+/* The exact words the app or the agent gave, kept but quiet: a disclosure,
+   then a small monospace block on the panel's sunken ground, never red. */
+.routine-details {
+  align-self: stretch;
+  max-width: 100%;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.routine-details > summary {
+  width: fit-content;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-tertiary);
+}
+.routine-details > summary:hover {
+  color: var(--text-secondary);
+}
+.routine-details > pre {
+  margin-top: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+  max-height: calc(var(--spacing) * 40);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-inset);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.routine-trouble .routine-details {
+  max-width: 44ch;
+}
+/* The Runs tab: the facts as a quiet two-column list, then the runs. */
+.routine-runs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.routine-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.routine-facts dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.routine-facts dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: var(--control-text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-history {
+  margin: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2);
+  list-style: none;
 }

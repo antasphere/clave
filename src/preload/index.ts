@@ -1,3 +1,6 @@
+import { createFleetDesktop } from './fleet-desktop'
+import type * as NodeClient from '@clave/client/node'
+import type { ElectronAPI } from './index.d'
 import type {
   Session,
   SessionStream,
@@ -5,12 +8,15 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
-import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
+import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -18,19 +24,63 @@ import type {
 } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
+import {
+  SERVER_SILENT,
+  type HelperPreference,
+  type HelperPreferencePatch
+} from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
-import type { SessionInfo } from './index.d'
+import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
+import type {
+  PluginSecretPrompt,
+  ProviderChoice,
+  ProviderSwitchPlan,
+  RestartOverridesInput,
+  SessionInfo
+} from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
-import { dualListener, workspaceStatePick } from './dual-listener'
+import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
 import { createViewRequestTracker } from './view-request-tracker'
-import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
+import {
+  IPC_SERVER_ENDPOINT,
+  IPC_SERVER_ENDPOINT_NAMED,
+  IPC_SERVER_EXTERNAL
+} from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
+import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
+import {
+  MIC_GET_ACCESS_CHANNEL,
+  MIC_REQUEST_ACCESS_CHANNEL,
+  MIC_OPEN_SETTINGS_CHANNEL,
+  MIC_OPEN_SOUND_SETTINGS_CHANNEL,
+  type MicAccessState
+} from '../shared/mic'
+import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../shared/triage'
+import {
+  ONBOARDING_IPC,
+  type OnboardingAgent,
+  type InstallableAgentId,
+  type OnboardingInstallResult,
+  type OnboardingState
+} from '../shared/onboarding'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
+import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { SpeakRequest, SpeakResult } from '../shared/speech'
+import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
+import type {
+  ServerInstallProgress,
+  ServerInstallResult,
+  ServerInstallStatus,
+  TailnetScan
+} from '../shared/server-setup-types'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -58,6 +108,10 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // The client itself (Effect and the framework underneath) loads on the first
 // routed call that finds an endpoint, never at window start: measured at about
 // 700 ms of synchronous requires per window when it was a static import.
+let nodeClient: Promise<typeof NodeClient> | null = null
+const loadNodeClient = (): Promise<typeof NodeClient> =>
+  (nodeClient ??= (async () => await import('@clave/client/node'))())
+
 const serverRouter = createMethodRouter({
   resolve: async (): Promise<Endpoint | null> => {
     const found = (await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as
@@ -80,7 +134,7 @@ const serverRouter = createMethodRouter({
     // page's own fetch be refused by its CSP, with the chat view never
     // mounting behind it). The push socket is opened by the first routed
     // subscription, not before.
-    const { connectThroughNode } = await import('@clave/client/node')
+    const { connectThroughNode } = await loadNodeClient()
     const backing = await connectThroughNode(endpoint, { client: 'clave-preload' })
     // Every push listener waiting for the server joins it now (below).
     queueMicrotask(() => announceServer(backing))
@@ -125,6 +179,12 @@ const announceServer = (backing: Backing): void => {
 const watchForServer = (): void => {
   if (serverBacking || serverWatching) return
   serverWatching = true
+  // Main says when it names the server: ask at once rather than at the next
+  // tick (PRDCT-3527). The tick stays, for a window that missed the word.
+  const named = (): void => {
+    if (!serverBacking) void serverRouter.backing().then((b) => b && announceServer(b), noop)
+  }
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
   const ask = (): void => {
     void serverRouter.backing().then(
       (backing) => {
@@ -196,6 +256,53 @@ const viaServer = <A extends unknown[], R>(
       }
       throw error
     }
+  }
+}
+/** How long a digest call waits for the window's own server before it is
+ *  told the server did not answer (PRDCT-4327): the bound the restore's
+ *  top-up waits for the same server (`listServerRestoreRecords`). */
+const DIGEST_SERVER_WAIT_MS = 15_000
+let digestsExternal: Promise<boolean> | null = null
+/** The server the window will have, or none within `ms`. */
+const serverWithin = (ms: number): Promise<Backing | null> =>
+  new Promise((resolve) => {
+    let settled = false
+    let withdraw: (() => void) | null = null
+    const finish = (value: Backing | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      withdraw?.()
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), ms)
+    withdraw = onServerAvailable((found) => finish(found))
+    if (settled) withdraw()
+  })
+/**
+ * The digests' road (PRDCT-4327). Inside the app (in-process) as every
+ * session call: main over IPC until it names its server, the server after,
+ * one process and one store either way. When the window's sessions live on a
+ * server of their own (separate, attached: `IPC_SERVER_EXTERNAL`, known from
+ * the launch), main is never asked: main does not hold the tab's record, the
+ * account list it belongs to, nor the helpers' settings. The call waits for
+ * that server, DIGEST_SERVER_WAIT_MS at most, and a server that never comes
+ * is a rejection the card says as "the server did not answer".
+ */
+const viaOwnServer = <A extends unknown[], R>(route: {
+  ipc: (...args: A) => Promise<R>
+  server: (backing: Backing, ...args: A) => Promise<R>
+}): ((...args: A) => Promise<R>) => {
+  const routed = viaServer<A, R>(route)
+  return async (...args) => {
+    digestsExternal ??= ipcRenderer.invoke(IPC_SERVER_EXTERNAL).then(
+      (external) => external === true,
+      () => false
+    )
+    if (!(await digestsExternal)) return routed(...args)
+    const backing = serverBacking ?? (await serverWithin(DIGEST_SERVER_WAIT_MS))
+    if (!backing) throw new Error('The server did not answer')
+    return route.server(backing, ...args)
   }
 }
 /** The wire subscriptions `sessionsSubscribe` holds on the server, per session. */
@@ -423,6 +530,19 @@ const serverMode = async (): Promise<ServerMode | null> => {
   if (found?.mode) serverModeKnown = found.mode
   return found?.mode ?? null
 }
+// A window whose sessions are on a server of their own loads the client it
+// will reach it with while the server starts, rather than after: the import
+// is about 400 ms of synchronous requires, which the launch's restore paid
+// after the server had answered (PRDCT-3527). Inside the app it is not
+// loaded at all, as before.
+void Promise.resolve()
+  .then(() => ipcRenderer.invoke(IPC_SERVER_EXTERNAL))
+  .then(
+    (external) => {
+      if (external === true) setTimeout(() => void loadNodeClient().catch(noop), 0)
+    },
+    () => {}
+  )
 // The mode is asked for as the window starts and again whenever the server
 // is announced, so by the time a terminal pane exists it is known: inside
 // the app the pane's calls then stay SYNCHRONOUS sends, as they always were
@@ -431,6 +551,42 @@ const serverMode = async (): Promise<ServerMode | null> => {
 // server road.
 void serverMode()
 const terminalChains = new Map<string, Promise<void>>()
+/**
+ * Where this Mac's helpers run (PRDCT-4330): on the server process behind the
+ * window when there is one (the separate child or an attached daemon, set at
+ * boot: `IPC_SERVER_EXTERNAL`), which owns the helpers' preference and the
+ * accounts; in main only when the server runs inside it (the in-process
+ * server has no git service, so `viaServer` would not do). With a server of
+ * its own that cannot be reached, the call is refused rather than run in
+ * main, which keeps no preference.
+ */
+let serverExternal: Promise<boolean> | null = null
+const viaHelperHost =
+  <A extends unknown[], R>(route: {
+    ipc: (...args: A) => Promise<R>
+    server: (backing: Backing, ...args: A) => Promise<R>
+  }) =>
+  async (...args: A): Promise<R> => {
+    serverExternal ??= Promise.resolve(ipcRenderer.invoke(IPC_SERVER_EXTERNAL)).then(
+      (external) => external === true,
+      () => {
+        serverExternal = null
+        return false
+      }
+    )
+    if (!(await serverExternal)) return route.ipc(...args)
+    // A server that cannot be reached is said in plain words, no address;
+    // its own refusal ("Switched off …") passes through.
+    const backing = await serverRouter.backing().catch(() => null)
+    if (!backing) throw new Error(SERVER_SILENT)
+    try {
+      return await route.server(backing, ...args)
+    } catch (error) {
+      const tag = (error as { _tag?: unknown } | null)?._tag
+      if (tag === 'ServerUnreachable' || tag === 'ServerRefused') throw new Error(SERVER_SILENT)
+      throw error
+    }
+  }
 const viaAttachedServer =
   <A extends unknown[]>(route: {
     ipc: (...args: A) => void
@@ -455,6 +611,19 @@ const viaAttachedServer =
       if (terminalChains.get(id) === next) terminalChains.delete(id)
     }
   }
+
+/** The kill itself, on the host's road (IPC in-process, the server attached). */
+const killSessionOnHost = viaServer<[string], void>({
+  ipc: (id) => ipcRenderer.invoke('pty:kill', id),
+  server: ({ api }, id) => api.sessions.stop(id)
+})
+
+/** A closing tab's launch into the ledger while its record is still there
+ *  (PRDCT-4236): the bridge's `historyRestamp`, and the first step of its
+ *  `killSession`. */
+const historyRestamp = (sessionId: string): Promise<void> =>
+  ipcRenderer.invoke('history:restamp', sessionId)
+
 // ── The session records' road (wave 4, lane C) ──
 // Inside the app the records are main's, and IPC lands on the one instance
 // that applies the window's selection rule itself. Attached, the records are
@@ -470,6 +639,7 @@ const viaAttachedServer =
 // seconds is never clobbered by a late restore (PRDCT-3376). A read BY IDS is
 // the re-home path (post-boot): attached it must reach the server, which owns
 // a moved session's record.
+
 async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
   if (filter && Array.isArray(filter.ids) && (await serverMode()) === 'attached') {
     const backing = await serverRouter.backing()
@@ -490,9 +660,23 @@ async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSess
 async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
   const deadline = Date.now() + 15_000
   let mode = await serverMode()
-  while (mode === null && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    mode = await serverMode()
+  // Asked again every 150 ms, and at once when main names the server.
+  let wake: () => void = noop
+  const named = (): void => wake()
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
+  try {
+    while (mode === null && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150)
+        wake = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+      mode = await serverMode()
+    }
+  } finally {
+    ipcRenderer.removeListener(IPC_SERVER_ENDPOINT_NAMED, named)
   }
   if (mode !== 'attached') return []
   // Ride the server's own arrival (`onServerAvailable`: at once when a backing
@@ -587,6 +771,32 @@ function onServerEventOf<E extends ServerEvent['_tag']>(
     off?.()
   }
 }
+// ── Wave 5, lane C: the plugins' roads (PRDCT-3433) ──
+/** Which session each view lease this window took is on: the lease answer
+ *  names it, and the view's event listener reads the session's own stream. */
+const leaseSessions = new Map<string, string>()
+/** The server's plugin events the shell cannot hear itself when the server
+ *  runs apart from the app: a plugin's notification, which the shell shows,
+ *  and a change of the plugins, on which the shell releases the pages of a
+ *  plugin no longer active. Every window relays them; the shell acts on each
+ *  once, by the event's id. Bound beside the view-request tracker in
+ *  `onMcpCommand`, which every window binds at load and releases with it,
+ *  rather than at module load: a waiter of its own would be one more push
+ *  binding than the window's own listeners account for. */
+const relayPluginEvents = (push: import('@clave/client').PushClient): (() => void) => {
+  // Never throws: a test's partial push client has no `onEvent`.
+  if (typeof push.onEvent !== 'function') return noop
+  return push.onEvent((envelope) => {
+    const event = envelope.event
+    if (event._tag === 'plugins.notified')
+      void ipcRenderer
+        .invoke('plugins:show-notification', envelope.id, event.name, event.title, event.body)
+        .catch(() => undefined)
+    else if (event._tag === 'plugins.changed')
+      void ipcRenderer.invoke('plugins:changed-heard', envelope.id).catch(() => undefined)
+  })
+}
+
 /** A server event about one session, on the push channel. */
 function onSessionEvent<E extends ServerEvent['_tag']>(
   push: import('@clave/client').PushClient,
@@ -723,7 +933,6 @@ const onAccountStatus = (status: unknown): void => {
 const profiles = loose<LaunchProfilePreferences>
 type UsageRead = typeof import('@clave/contract/settings').UsageReadView.Type
 type PiUsageTotals = typeof import('@clave/contract/settings').PiUsageTotalsView.Type
-type AppIcon = typeof import('@clave/contract/settings').AppIconSchema.Type
 type RegistryWriteResult =
   typeof import('@clave/contract/settings').UpdateWorkspaceRegistry.success.Type
 type PinsWriteResult = typeof import('@clave/contract/settings').UpdateWorkspacePins.success.Type
@@ -746,7 +955,8 @@ const workspaceFilesRelay = createReviewRelay({
       folder: review.folder,
       autoCommands: [...review.autoCommands],
       prompts: [...review.prompts],
-      dangerous: review.dangerous
+      dangerous: review.dangerous,
+      ...(review.routines ? { routines: [...review.routines] } : {})
     }) as Promise<{ response: 0 | 1 | 2; checkboxChecked: boolean }>,
   answer: (reviewId, answer) => {
     if (!answerReviewOn) return Promise.reject(new Error('no server to answer the review on'))
@@ -818,6 +1028,21 @@ const watchWorkspaceFilesServer = (): void => {
   onServerAvailable(wireWorkspaceFiles)
 }
 
+/** The same record write on main's copy of the records, BEFORE the
+ *  server's: the window's boot lists the records to bring back from main's
+ *  folder (PRDCT-3530), so a field kept on the server's record alone came
+ *  back stale after a quit (wave 6, lane A), and a server that is down must
+ *  not cost main's copy the write IPC always made (round 4 of the lane's
+ *  verifier). Main writes only a record it has; its refusal is swallowed, the
+ *  server's write still runs and the caller hears the server's answer. */
+const alsoMain = async (channel: string, ...args: unknown[]): Promise<void> => {
+  try {
+    await ipcRenderer.invoke(channel, ...args)
+  } catch {
+    // Main's copy is the boot's fallback source; the server's record stands.
+  }
+}
+
 const electronAPI = {
   // ── The server (lane A): what it refused, for the page's notice ──
   onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
@@ -826,6 +1051,30 @@ const electronAPI = {
       refusalListeners.delete(callback)
     }
   },
+  // ── Wave 6, lane A: the window's server connection, opened or back (PRDCT-3526) ──
+  // Heard when the server becomes available to this window and at every
+  // welcome of its push channel after that (a reconnection included): the
+  // moment a read that was lost while the server was busy or gone is worth
+  // asking again. A window on IPC for good never hears it.
+  onServerConnected: (callback: () => void): (() => void) => {
+    let off: () => void = noop
+    let gone = false
+    const withdraw = onServerAvailable((backing) => {
+      if (gone) return
+      off = backing.push.onStatus((status) => {
+        if (status === 'open') callback()
+      })
+      if (backing.push.status === 'open') callback()
+    })
+    return () => {
+      gone = true
+      withdraw()
+      off()
+    }
+  },
+  // Which tab opened which, as main keeps it (PRDCT-4193): main's own, never
+  // the server's, since it holds the opens this Mac made on other servers.
+  lineageParents: (): Promise<Record<string, string>> => ipcRenderer.invoke('lineage:parents'),
   // ── Sessions (lane A): every call goes to the server once main names it ──
   sessionsList: viaServer<[], Session[]>({
     ipc: () => ipcRenderer.invoke('sessions:list'),
@@ -870,9 +1119,32 @@ const electronAPI = {
     ipc: (id) => ipcRenderer.invoke('sessions:models', id),
     server: async ({ api }, id) => [...(await api.sessions.models(id))] as ModelOption[]
   }),
+  // ── PRDCT-4300: provider then model, and the conversation moves. These
+  // run on this Mac over IPC whatever server holds the sessions: the CLIs,
+  // the transcripts and the account homes are here. ──
+  adaptersList: (): Promise<ProviderChoice[]> => ipcRenderer.invoke('adapters:list'),
+  adaptersModels: (adapterId: string, cwd: string): Promise<ModelOption[]> =>
+    ipcRenderer.invoke('adapters:models', adapterId, cwd),
+  providerSwitchPlan: (sessionId: string, adapterId: string): Promise<ProviderSwitchPlan> =>
+    ipcRenderer.invoke('provider-switch:plan', sessionId, adapterId),
+  providerSwitchConvert: (
+    sessionId: string,
+    target: { codexAccountId?: string; model?: string }
+  ): Promise<{ ok: true; threadId: string } | { ok: false; reason: string }> =>
+    ipcRenderer.invoke('provider-switch:convert', sessionId, target),
+  providerSwitchHandoff: (
+    sessionId: string,
+    tape: string
+  ): Promise<{ path: string; diffStat: string | null }> =>
+    ipcRenderer.invoke('provider-switch:handoff', sessionId, tape),
   sessionsCommands: viaServer<[string], CommandOption[]>({
     ipc: (id) => ipcRenderer.invoke('sessions:commands', id),
     server: async ({ api }, id) => [...(await api.sessions.commands(id))] as CommandOption[]
+  }),
+  sessionsControl: viaServer<[string, SessionControl], Record<string, unknown>>({
+    ipc: (id, request) => ipcRenderer.invoke('sessions:control', id, request),
+    server: ({ api }, id, request) =>
+      api.sessions.control(id, request) as Promise<Record<string, unknown>>
   }),
   sessionsCapabilities: viaServer<[string], { images: boolean }>({
     ipc: (id) => ipcRenderer.invoke('sessions:capabilities', id),
@@ -886,12 +1158,12 @@ const electronAPI = {
   // The composer's files: prepared into a session's attachment records here,
   // read again in main when the message is sent.
   sessionsFiles: {
-    prepare: (sessionId: string, source: AttachmentSource): Promise<Attachment> =>
+    prepare: (sessionId: string, source: AttachmentSource): Promise<FileAttachment> =>
       ipcRenderer.invoke('sessions:files', { type: 'prepare', sessionId, source }),
     pick: (): Promise<string[]> => ipcRenderer.invoke('sessions:files', { type: 'pick' }),
-    preview: (file: Attachment): Promise<AttachmentPreview> =>
+    preview: (file: FileAttachment): Promise<AttachmentPreview> =>
       ipcRenderer.invoke('sessions:files', { type: 'preview', file }),
-    open: (file: Attachment): Promise<void> =>
+    open: (file: FileAttachment): Promise<void> =>
       ipcRenderer.invoke('sessions:files', { type: 'open', file })
   },
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>
@@ -907,27 +1179,132 @@ const electronAPI = {
       () => subscribedVia.get(id) === 'ipc'
     ),
 
-  pluginsList: () => ipcRenderer.invoke('plugins:list'),
-  pluginsViewLease: (pluginId: string, viewId: string, sessionId: string) =>
-    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
-  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) =>
-    ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
-  pluginsViewRevoke: (leaseId: string) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
-  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) =>
-    createIpcListener(`plugins:view-event:${leaseId}`, callback),
-  pluginsEnable: (id: string, grants: import('@clave/plugin-sdk').PluginPermission[]) =>
-    ipcRenderer.invoke('plugins:enable', id, grants),
-  pluginsDisable: (id: string) => ipcRenderer.invoke('plugins:disable', id),
+  // ── Wave 5, lane C: the plugins, served (PRDCT-3433) ──
+  // The store, the host and the view leases are the server's. A page's URL is
+  // the shell's, minted by the preview protocol from the file the server
+  // named and released by the shell when the page is gone, so the lease, the
+  // revoke, the panel and the focus report go through the IPC arms in both
+  // modes: the arms answer from the plugins the boot named. A view's events are the
+  // session's own stream, heard on the transport the session's subscription
+  // is on: the lease fixes the session and this file remembers which, so
+  // nothing per-lease crosses from main. "Link folder…" keeps its IPC road
+  // because the folder dialog is the shell's.
+  pluginsList: viaServer<[], import('../main/plugins/plugin-store').PluginRecord[]>({
+    ipc: () => ipcRenderer.invoke('plugins:list'),
+    server: async ({ api }) =>
+      [
+        ...(await api.plugins.list())
+      ] as unknown as import('../main/plugins/plugin-store').PluginRecord[]
+  }),
+  pluginsViewLease: async (
+    pluginId: string,
+    viewId: string,
+    sessionId: string
+  ): Promise<{ leaseId: string; url: string; sessionId: string }> => {
+    const lease = (await ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId)) as {
+      leaseId: string
+      url: string
+      sessionId: string
+    }
+    leaseSessions.set(lease.leaseId, lease.sessionId)
+    return lease
+  },
+  pluginsViewRequest: viaServer<[string, string, unknown?], unknown>({
+    ipc: (leaseId, method, params) =>
+      ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
+    server: ({ api }, leaseId, method, params) => api.plugins.requestView(leaseId, method, params)
+  }),
+  pluginsViewRevoke: async (leaseId: string): Promise<void> => {
+    leaseSessions.delete(leaseId)
+    await ipcRenderer.invoke('plugins:view-revoke', leaseId)
+  },
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) => {
+    const sessionId = leaseSessions.get(leaseId)
+    if (!sessionId) return noop
+    // The lease's session and no other: the guest never named it, the lease
+    // did. A session nobody in this window subscribed to yet (a surface view
+    // alone on it) is subscribed here and released with the listener.
+    const taken = !subscribedVia.has(sessionId)
+    if (taken) void subscribeRoute(sessionId).catch(() => undefined)
+    const onStream = (stream: SessionStream): void => {
+      if (stream.kind === 'event') callback(stream.event)
+    }
+    const off = onBothTransports(
+      createIpcListener(`sessions:stream:${sessionId}`, onStream),
+      (push) => push.subscribe(sessionId, onStream as (stream: unknown) => void),
+      () => subscribedVia.get(sessionId) === 'ipc'
+    )
+    return () => {
+      off()
+      if (taken) void unsubscribeRoute(sessionId).catch(() => undefined)
+    }
+  },
+  pluginsEnable: viaServer<[string, import('@clave/plugin-sdk').PluginPermission[]], void>({
+    ipc: (id, grants) => ipcRenderer.invoke('plugins:enable', id, grants),
+    server: ({ api }, id, grants) => api.plugins.enable(id, grants)
+  }),
+  pluginsDisable: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('plugins:disable', id),
+    server: ({ api }, id) => api.plugins.disable(id)
+  }),
   pluginsLink: (folder?: string) => ipcRenderer.invoke('plugins:link', folder),
-  pluginsRemove: (id: string) => ipcRenderer.invoke('plugins:remove', id),
-  pluginsCommand: (id: string, command: string) =>
-    ipcRenderer.invoke('plugins:command', id, command),
-  pluginsPanel: (id: string, panel: string) => ipcRenderer.invoke('plugins:panel', id, panel),
-  pluginsContext: (sessionId: string | null) => ipcRenderer.invoke('plugins:context', sessionId),
-  pluginsSecrets: () => ipcRenderer.invoke('plugins:secrets'),
-  pluginsSecretReply: (id: string, value: string | null) =>
-    ipcRenderer.invoke('plugins:secret-reply', id, value),
-  onPluginsChanged: (callback: () => void) => createIpcListener('plugins:changed', callback),
+  pluginsRemove: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('plugins:remove', id),
+    server: ({ api }, id) => api.plugins.remove(id)
+  }),
+  pluginsCommand: viaServer<[string, string], void>({
+    ipc: (id, command) => ipcRenderer.invoke('plugins:command', id, command),
+    server: ({ api }, id, command) => api.plugins.command(id, command)
+  }),
+  pluginsInvokeAction: viaServer<
+    [string, string, import('@clave/plugin-sdk').PluginActionTarget],
+    import('@clave/plugin-sdk').PluginActionResult
+  >({
+    ipc: (pluginId, actionId, target) =>
+      ipcRenderer.invoke('plugins:action-invoke', pluginId, actionId, target),
+    server: ({ api }, pluginId, actionId, target) =>
+      api.plugins.invokeAction(pluginId, actionId, target)
+  }),
+  pluginsPreviewAction: viaServer<
+    [string, string, import('@clave/plugin-sdk').PluginActionTarget],
+    import('@clave/plugin-sdk').PluginActionPreviewRow[]
+  >({
+    ipc: (pluginId, actionId, target) =>
+      ipcRenderer.invoke('plugins:action-preview', pluginId, actionId, target),
+    server: ({ api }, pluginId, actionId, target) =>
+      api.plugins.previewAction(pluginId, actionId, target).then((rows) => [...rows])
+  }),
+  pluginsPanel: (id: string, panel: string) =>
+    ipcRenderer.invoke('plugins:panel', id, panel) as Promise<{ url: string }>,
+  // The focus report goes through the arm in both modes too: the shell keys
+  // the window and clears its report on the window's own `closed` event,
+  // which only the shell sees. A routed call takes the server arm in-process
+  // as well (the in-process server names an endpoint) and skipped that watch.
+  pluginsContext: (sessionId: string | null) =>
+    ipcRenderer.invoke('plugins:context', sessionId) as Promise<void>,
+  pluginsSecrets: viaServer<[], PluginSecretPrompt[]>({
+    ipc: () => ipcRenderer.invoke('plugins:secrets'),
+    server: async ({ api }) => [...(await api.plugins.secrets())] as PluginSecretPrompt[]
+  }),
+  pluginsSecretReply: viaServer<[string, string | null], void>({
+    ipc: (id, value) => ipcRenderer.invoke('plugins:secret-reply', id, value),
+    server: ({ api }, id, value) => api.plugins.replySecret(id, value)
+  }),
+  // The one `plugins.changed` the window hears: IPC from the shell's own
+  // service while the push socket is not open, the push channel while it is.
+  // The event carries nothing, so the pick answers null, never undefined: the
+  // dual listener drops an event whose pick answers undefined, and a window
+  // attached to a server apart heard no plugin change at all. No catch-up at
+  // the welcome: every store re-lists on hearing a change and listed at its
+  // mount, and a welcome's re-list went to five subscribers at once, a
+  // full-tree re-render that landed on a chat's first rows while the
+  // transcript's virtualiser still hid them unmeasured (plugin-views.spec).
+  onPluginsChanged: (callback: () => void) =>
+    viaServerEvent<'plugins.changed', null>(
+      'plugins:changed',
+      'plugins.changed',
+      () => null
+    )(callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
@@ -966,6 +1343,58 @@ const electronAPI = {
     server: async ({ api }, workspaceId, family, profileId) =>
       profiles(await api.settings.launchProfiles.setWorkspace(workspaceId, family, profileId))
   }),
+  // ── Settings: the helpers of this Mac (PRDCT-4330), with a server arm ──
+  helpersList: viaServer<[], HelperPreference[]>({
+    ipc: () => ipcRenderer.invoke('helpers:list'),
+    server: async ({ api }) => loose<HelperPreference[]>(await api.settings.helpers.list())
+  }),
+  helperSet: viaServer<[string, HelperPreferencePatch], HelperPreference[]>({
+    ipc: (helperId, patch) => ipcRenderer.invoke('helpers:set', { helperId, patch }),
+    server: async ({ api }, helperId, patch) =>
+      loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
+  }),
+  // ── Settings: the integrations of this Mac (PRDCT-4410), with a server arm ──
+  // The key goes in once and comes back in no answer, on either road.
+  integrationsRead: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:read'),
+    server: async ({ api }) => loose<IntegrationsStatus>(await api.settings.integrations.read())
+  }),
+  elevenLabsSetKey: viaServer<[string], IntegrationsStatus>({
+    ipc: (apiKey) => ipcRenderer.invoke('integrations:elevenlabs-set-key', apiKey),
+    server: async ({ api }, apiKey) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.setElevenLabsKey(apiKey))
+  }),
+  elevenLabsCheck: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:elevenlabs-check'),
+    server: async ({ api }) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.checkElevenLabs())
+  }),
+  elevenLabsRemove: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:elevenlabs-remove'),
+    server: async ({ api }) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.removeElevenLabsKey())
+  }),
+  elevenLabsSetVoice: viaServer<
+    [string, string, ElevenLabsModelId | undefined],
+    IntegrationsStatus
+  >({
+    ipc: (voiceId, voiceName, modelId) =>
+      ipcRenderer.invoke('integrations:elevenlabs-set-voice', { voiceId, voiceName, modelId }),
+    server: async ({ api }, voiceId, voiceName, modelId) =>
+      loose<IntegrationsStatus>(
+        await api.settings.integrations.setElevenLabsVoice(voiceId, voiceName, modelId)
+      )
+  }),
+  elevenLabsVoices: viaServer<[], { voices: ElevenLabsVoice[] }>({
+    ipc: () => ipcRenderer.invoke('integrations:elevenlabs-voices'),
+    server: async ({ api }) =>
+      loose<{ voices: ElevenLabsVoice[] }>(await api.settings.integrations.listElevenLabsVoices())
+  }),
+  // A voice's preview sample (PRDCT-4411), fetched by this Mac's server.
+  elevenLabsPreview: viaServer<[string], SpeakResult>({
+    ipc: (voiceId) => ipcRenderer.invoke('speech:preview', voiceId),
+    server: async ({ api }, voiceId) => (await api.speech.preview({ voiceId })) as SpeakResult
+  }),
   spawnSession: viaServer<
     [
       string,
@@ -976,11 +1405,13 @@ const electronAPI = {
         antigravityMode?: boolean
         codexMode?: boolean
         piMode?: boolean
+        opencodeMode?: boolean
         claudeAgentsMode?: boolean
         resumeSessionId?: string
         claudeSessionId?: string
         piSessionId?: string
         launchProfileId?: string
+        launchProfile?: LaunchProfile
         piProvider?: string
         piThinking?: import('../shared/agent-launch').PiThinkingLevel
         initialCommand?: string
@@ -992,6 +1423,11 @@ const electronAPI = {
         configDir?: string
         claudeProfileId?: string
         claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+        effort?: string
+        allowDangerous?: boolean
         workspaceId?: string
         link?:
           | { kind: 'group-terminal'; groupId: string; terminalId: string }
@@ -1003,11 +1439,16 @@ const electronAPI = {
   >({
     ipc: (cwd, options) => ipcRenderer.invoke('pty:spawn', cwd, options),
     server: async ({ api }, cwd, options) => {
-      const key = await windowKey()
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      const workspaceId = options?.workspaceId ?? identity?.workspaceId
+      const spawnOptions =
+        workspaceId != null ? { ...options, workspaceId } : options && { ...options }
+      // A Mac-local start resolves its own profile ids on both transports.
+      if (spawnOptions) delete spawnOptions.launchProfile
       return (await api.sessions.start({
         cwd,
-        ...(key && { windowKey: key }),
-        ...(options && { options })
+        ...(identity?.windowKey && { windowKey: identity.windowKey }),
+        ...(spawnOptions && { options: spawnOptions })
       })) as SessionInfo
     }
   }),
@@ -1028,22 +1469,72 @@ const electronAPI = {
     server: ({ api }, id, cols, rows) => api.sessions.resize(id, cols, rows)
   }),
 
-  killSession: viaServer<[string], void>({
-    ipc: (id) => ipcRenderer.invoke('pty:kill', id),
-    server: ({ api }, id) => api.sessions.stop(id)
-  }),
+  // Every close of the window goes through here (the sidebar's, the header's,
+  // the keyboard's, a group's, an Ongoing end, the agent's window road): the
+  // History is told what the tab runs on from its record BEFORE the kill
+  // deletes it (PRDCT-4236, round 7), and never waits long nor fails the
+  // close for it. A tab of a connected server keeps its own History there.
+  killSession: async (id: string): Promise<void> => {
+    if (!id.startsWith('clave-owner:')) await historyRestamp(id).catch(() => undefined)
+    return killSessionOnHost(id)
+  },
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
-  setSessionDisplayName: (id: string, displayName: string | null, userRenamed: boolean) =>
-    ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
-  setSessionViewRecord: (
-    id: string,
-    view: { url: string; title?: string; command?: string; cwd?: string } | null
-  ) => ipcRenderer.invoke('session:set-view', id, view),
+  // A tab's name and page, kept on the records the next launch restores it
+  // from (wave 6, lane A, PRDCT-3526): main's first (`alsoMain`) and the
+  // server's once main names it, because the window's boot still lists the
+  // records to bring back from main's folder (PRDCT-3530) and a tab renamed
+  // on the server's record alone came back under its old name.
+  setSessionDisplayName: viaServer<[string, string | null, boolean], void>({
+    ipc: (id, displayName, userRenamed) =>
+      ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
+    server: async ({ api }, id, displayName, userRenamed) => {
+      await alsoMain('session:set-display-name', id, displayName, userRenamed)
+      await api.sessions.keepOnRecord(id, {
+        name: { displayName, userRenamed: userRenamed === true }
+      })
+    }
+  }),
+  setSessionViewRecord: viaServer<
+    [string, { url: string; title?: string; command?: string; cwd?: string } | null],
+    void
+  >({
+    ipc: (id, view) => ipcRenderer.invoke('session:set-view', id, view),
+    server: async ({ api }, id, view) => {
+      await alsoMain('session:set-view', id, view)
+      await api.sessions.keepOnRecord(id, {
+        page:
+          view && typeof view.url === 'string' && view.url.length > 0
+            ? {
+                url: view.url,
+                ...(typeof view.title === 'string' ? { title: view.title } : {}),
+                ...(typeof view.command === 'string' ? { command: view.command } : {}),
+                ...(typeof view.cwd === 'string' ? { cwd: view.cwd } : {})
+              }
+            : null
+      })
+    }
+  }),
 
-  setSessionWorkspace: (id: string, workspaceId: string | null) =>
-    ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+  // ── PRDCT-4123: which work a tab does, on its record ──
+  // The server's command alone: there is no IPC road for it, since the
+  // server always runs, in-process or attached; a call made before main has
+  // named it is refused rather than kept on main's copy of the record.
+  sessionsChangeWork: viaServer<[string, WorkChange], WorkChangeResult>({
+    ipc: () => Promise.reject(new Error('Clave server is not available')),
+    server: ({ api }, id, change) => api.sessions.changeWork(id, change)
+  }),
+
+  // Kept on the server's record once main names it, like the name (round 1
+  // of wave 6 lane A's verifier): over IPC it reached main's copy only.
+  setSessionWorkspace: viaServer<[string, string | null], void>({
+    ipc: (id, workspaceId) => ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+    server: async ({ api }, id, workspaceId) => {
+      await alsoMain('session:set-workspace', id, workspaceId)
+      await api.sessions.keepOnRecord(id, { workspaceId })
+    }
+  }),
 
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
@@ -1060,6 +1551,7 @@ const electronAPI = {
   // The attached restore top-up: the server's surviving records for this
   // window, empty in-process (PRDCT-3376).
   listServerRestoreRecords: () => listServerRestoreRecords(),
+  serverHasRestoreRecords: () => ipcRenderer.invoke('records:server-has-any') as Promise<boolean>,
   bootRecordsComplete: () => bootRecordsComplete(),
 
   discardSessionRecord: (key: string) => discardSessionRecord(key),
@@ -1092,6 +1584,13 @@ const electronAPI = {
   // anything back. Push only: these facts exist only when a server runs.
   onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) =>
     onServerEventOf('session.renamed', (event) => callback({ id: event.id, name: event.name })),
+  // PRDCT-4123: a tab's work assignment, as the server's record now keeps it.
+  onSessionWorkChanged: (
+    callback: (payload: { id: string; work: WorkAssignment | null }) => void
+  ) =>
+    onServerEventOf('session.work_changed', (event) =>
+      callback({ id: event.id, work: event.work as WorkAssignment | null })
+    ),
   onSessionPageChanged: (
     callback: (payload: {
       id: string
@@ -1106,10 +1605,19 @@ const electronAPI = {
     onServerEventOf('session.typed', (event) => callback({ id: event.id, from: event.from })),
   onSessionRestarting: (callback: (payload: { id: string }) => void) =>
     onServerEventOf('session.restarting', (event) => callback({ id: event.id })),
+  // PRDCT-4256: the model a session runs on, as its provider said it. Main
+  // sends it on both transports (`server/session-events.ts`), and the window
+  // hears one: IPC until the push socket is welcomed, push from then on.
+  onSessionModelChanged: viaServerEvent<'session.model_changed', { id: string; model: string }>(
+    'session:model-changed',
+    'session.model_changed',
+    (event) => ({ id: event.id, model: event.model })
+  ),
   onSessionRestarted: (
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -1119,7 +1627,12 @@ const electronAPI = {
     }) => void
   ) =>
     onServerEventOf('session.restarted', (event) =>
-      callback({ id: event.id, resumed: event.resumed, account: event.account })
+      callback({
+        id: event.id,
+        resumed: event.resumed,
+        account: event.account,
+        requestId: event.requestId
+      })
     ),
   // The pin's link is published on the server in-process and sent to the
   // window over IPC when the app is attached (main publishes nothing there):
@@ -1177,10 +1690,24 @@ const electronAPI = {
         onSessionEvent(push, 'session.plan_detected', sessionId, (event) => callback(event.path))
     ),
 
-  // A chat session's CLI reported its account's limit (ADR 0002): the policy
-  // reads the account and proposes or makes the move.
-  onSessionLimitReported: (callback: (sessionId: string) => void) =>
-    createIpcListener<[string]>('session:limit-reported', callback),
+  // A chat session's CLI reported its account's limit and which cap it hit
+  // (ADR 0002, PRDCT-4302): the policy resolves the scope against the
+  // account's read and offers a model, an account or a provider. Both
+  // transports, as the model change (`session.model_changed`) above.
+  onSessionLimitReported: viaServerEvent<
+    'session.limit_reported',
+    { id: string; report: LimitReport }
+  >('session:limit-reported', 'session.limit_reported', (event) => ({
+    id: event.id,
+    report: reportFromWire(event)
+  })),
+  // The account served the session a turn again (PRDCT-4415): the report the
+  // window holds closes. Both transports, as the report.
+  onSessionLimitCleared: viaServerEvent<'session.limit_cleared', { id: string }>(
+    'session:limit-cleared',
+    'session.limit_cleared',
+    (event) => ({ id: event.id })
+  ),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
     onBothTransports(
       createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),
@@ -1213,6 +1740,8 @@ const electronAPI = {
       callback
     )
     let offPush: (() => void) | null = null
+    // ── Wave 5, lane C: the plugin events ride this window-long binding ──
+    let offPluginEvents: (() => void) | null = null
     const withdraw = onServerAvailable((backing) => {
       const mine = windowKey()
       offPush = backing.push.onRequest((request) => {
@@ -1226,11 +1755,13 @@ const electronAPI = {
           })
         })
       })
+      offPluginEvents = relayPluginEvents(backing.push)
     })
     return () => {
       offIpc()
       withdraw()
       offPush?.()
+      offPluginEvents?.()
     }
   },
 
@@ -1297,9 +1828,14 @@ const electronAPI = {
   // Session history (PRDCT-1738): the ledger row is fire-and-forget like the
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),
+  historyRestamp,
   historyList: () => ipcRenderer.invoke('history:list'),
-  historyConversation: (cwd: string, claudeSessionId: string, provider?: 'claude' | 'pi') =>
-    ipcRenderer.invoke('history:conversation', { cwd, claudeSessionId, provider }),
+  historyConversation: (
+    cwd: string,
+    claudeSessionId: string,
+    provider?: 'claude' | 'pi',
+    configDir?: string
+  ) => ipcRenderer.invoke('history:conversation', { cwd, claudeSessionId, provider, configDir }),
   scrollSessionToText: (id: string, needle: string, fromBottom: number) =>
     ipcRenderer.invoke('session:scroll-to-text', id, needle, fromBottom),
   historySearch: (request: {
@@ -1311,8 +1847,19 @@ const electronAPI = {
   historySearchCancel: (requestId: string) => ipcRenderer.send('history:search-cancel', requestId),
   onHistorySearchHits: (callback: (progress: { requestId: string; hits: unknown[] }) => void) =>
     createIpcListener<[{ requestId: string; hits: unknown[] }]>('history:search-hits', callback),
-  setSessionClaudeSessionId: (id: string, claudeSessionId: string) =>
-    ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+  // A `/clear` rotated the conversation: the record that brings the tab back
+  // follows it, on the server's records once main names it (round 1 of wave 6
+  // lane A's verifier); over IPC it reached main's copy only, and the tab
+  // came back on its conversation from before the clear.
+  setSessionClaudeSessionId: viaServer<[string, string], void>({
+    ipc: (id, claudeSessionId) =>
+      ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+    server: async ({ api }, id, claudeSessionId) => {
+      if (typeof id !== 'string' || typeof claudeSessionId !== 'string' || !claudeSessionId) return
+      await alsoMain('session:set-claude-session-id', id, claudeSessionId)
+      await api.sessions.keepOnRecord(id, { claudeSessionId })
+    }
+  }),
 
   secretList: () => ipcRenderer.invoke('secret:list'),
 
@@ -1323,6 +1870,69 @@ const electronAPI = {
   onSecretRequestsChanged: (callback: (requests: unknown[]) => void) =>
     createIpcListener<[unknown[]]>('secret:requests-changed', callback),
 
+  // ── PRDCT-4474: a session's artefact, on the server the session runs on.
+  // This Mac's own server here, on the digests' road (`viaOwnServer`): main
+  // over IPC until it names its server, the server after. A connected
+  // server's sessions are routed by `createFleetDesktop`. ──
+  artefacts: {
+    list: viaOwnServer<[], Artefact[]>({
+      ipc: () => ipcRenderer.invoke('artefacts:list'),
+      server: async ({ api }) => [...(await api.artefacts.list())]
+    }),
+    // The preview runs on this machine's loopback: its own address is framed as it is.
+    hold: viaOwnServer<[string, string?], { url: string; holdId: string; ttlMs: number }>({
+      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:hold', sessionId, holdId),
+      server: async ({ api }, sessionId, holdId) => {
+        const held = await api.artefacts.hold(sessionId, holdId)
+        return { url: held.url, holdId: held.holdId, ttlMs: held.ttlMs }
+      }
+    }),
+    release: viaOwnServer<[string, string], void>({
+      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:release', sessionId, holdId),
+      server: ({ api }, sessionId, holdId) => api.artefacts.release(sessionId, holdId)
+    }),
+    saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    }),
+    versions: viaOwnServer<[string], ArtefactVersions>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:versions', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.versions(sessionId)
+    }),
+    close: viaOwnServer<[string], void>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.close(sessionId)
+    }),
+    onChanged: viaServerEvent<'artefact.changed', { sessionId: string; artefact: Artefact | null }>(
+      'artefacts:changed',
+      'artefact.changed',
+      (event) => ({
+        sessionId: event.sessionId,
+        artefact: event.artefact
+      })
+    ),
+    onPreviewExited: viaServerEvent<'artefact.preview_exited', string>(
+      'artefacts:preview-exited',
+      'artefact.preview_exited',
+      (event) => event.sessionId
+    ),
+    // This Mac's own copy here; a server's id is the fleet wrapper's to route.
+    slidelessState: viaOwnServer<[string?], SlidelessState>({
+      ipc: () => ipcRenderer.invoke('artefacts:slidelessState'),
+      server: ({ api }) => api.artefacts.slidelessState()
+    }),
+    installSlideless: viaOwnServer<[string?], SlidelessState>({
+      ipc: () => ipcRenderer.invoke('artefacts:installSlideless'),
+      server: ({ api }) => api.artefacts.installSlideless()
+    }),
+    onSlidelessState: viaServerEvent<
+      'slideless.state_changed',
+      { serverId: string | null; state: SlidelessState }
+    >('artefacts:slideless-state', 'slideless.state_changed', (event) => ({
+      serverId: null,
+      state: event.state
+    }))
+  },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),
     setDefaultSignature: (path: string) =>
@@ -1338,6 +1948,66 @@ const electronAPI = {
       ipcRenderer.invoke('linked-documents:choose-files', signature),
     onChanged: (callback: () => void) => createIpcListener<[]>('linked-documents:changed', callback)
   },
+  // ── ADR 0004: the routines, the server's; IPC until the window reaches it ──
+  routinesList: viaServer<[], import('@clave/contract/routines/model').RoutinesListing>({
+    ipc: () => ipcRenderer.invoke('routines:list'),
+    server: ({ api }) => api.routines.list()
+  }),
+  routinesRunNow: viaServer<[string], import('@clave/contract/routines/model').RoutineRun>({
+    ipc: (key) => ipcRenderer.invoke('routines:run-now', key),
+    server: ({ api }, key) => api.routines.runNow(key)
+  }),
+  routinesDismiss: viaServer<[string], void>({
+    ipc: (runId) => ipcRenderer.invoke('routines:dismiss', runId),
+    server: ({ api }, runId) => api.routines.dismiss(runId)
+  }),
+  routinesOpenDiscussion: viaServer<[string, 'panel' | 'tab'], { sessionId: string }>({
+    ipc: async (runId, mode) => {
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      return ipcRenderer.invoke('routines:discussion', runId, identity?.windowKey ?? '', mode)
+    },
+    server: async ({ api }, runId, mode) => {
+      // The window the discussion lands in: this one, by its persisted key.
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      return api.routines.openDiscussion(runId, identity?.windowKey ?? '', mode)
+    }
+  }),
+  // PRDCT-4242: the routines the server keeps in its own store.
+  routinesCreate: viaServer<
+    [import('@clave/contract/routines/model').RoutineCreateInput],
+    import('@clave/contract/routines/model').RoutineView
+  >({
+    ipc: (input) => ipcRenderer.invoke('routines:create', input),
+    server: ({ api }, input) => api.routines.create(input)
+  }),
+  routinesUpdate: viaServer<
+    [string, import('@clave/contract/routines/model').RoutinePatch],
+    import('@clave/contract/routines/model').RoutineView
+  >({
+    ipc: (key, patch) => ipcRenderer.invoke('routines:update', key, patch),
+    server: ({ api }, key, patch) => api.routines.update(key, patch)
+  }),
+  routinesDelete: viaServer<[string], void>({
+    ipc: (key) => ipcRenderer.invoke('routines:delete', key),
+    server: ({ api }, key) => api.routines.delete(key)
+  }),
+  routinesPause: viaServer<[string, boolean], import('@clave/contract/routines/model').RoutineView>(
+    {
+      ipc: (key, paused) => ipcRenderer.invoke('routines:pause', key, paused),
+      server: ({ api }, key, paused) => api.routines.pause(key, paused)
+    }
+  ),
+  // PRDCT-4241: this Mac's own name as a server, the shell's to keep.
+  routinesOwnName: () => ipcRenderer.invoke('routines:own-name'),
+  routinesSetOwnName: (name: string) => ipcRenderer.invoke('routines:set-own-name', name),
+  onRoutinesChanged: (callback: () => void) =>
+    viaServerEvent<'routines.changed', null>(
+      'routines:changed',
+      'routines.changed',
+      () => null
+    )(callback),
+  routinesCacheRemoteDeck: (serverId: string, runId: string, html: string) =>
+    ipcRenderer.invoke('routines:cache-remote-deck', serverId, runId, html),
   copyOfferList: () => ipcRenderer.invoke('copy-offer:list'),
 
   copyOfferCopy: (id: string) => ipcRenderer.invoke('copy-offer:copy', id),
@@ -1364,7 +2034,69 @@ const electronAPI = {
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => ipcRenderer.invoke('session:save-plan', cwd, claudeSessionId, sessionName, extras),
 
+  saveTranscript: (markdown: string, fileName: string) =>
+    ipcRenderer.invoke('session:save-transcript', markdown, fileName),
+
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  // What the reader needs from a run of messages other tabs sent, and the
+  // title of a card of the agent's working notes (PRDCT-4212): one-shot model
+  // calls read by the server that runs the tab, as every session call is
+  // (PRDCT-4327): the server reads them on ITS record of the session (its
+  // account list, its helper settings) and files them in its own data
+  // folder. In-process, main reads them until it names its server
+  // (src/main/exchange-digest.ts); a window whose server is its own process
+  // never asks main (`viaOwnServer`). The launch the view sends is for
+  // main's arm only: the wire carries none.
+  exchangeDigest: viaOwnServer<[DigestRequest], DigestResult>({
+    ipc: (request) => ipcRenderer.invoke('exchanges:digest', request),
+    server: async ({ api }, { sessionId, key, messages }) =>
+      (await api.digests.exchange({ sessionId, key, messages })) as DigestResult
+  }),
+  exchangeDigestsOf: viaOwnServer<[string], Record<string, DigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('exchanges:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.exchangesOf(sessionId)) as Record<string, DigestDone>
+  }),
+  workDigest: viaOwnServer<[WorkDigestRequest], WorkDigestResult>({
+    ipc: (request) => ipcRenderer.invoke('work:digest', request),
+    server: async ({ api }, { sessionId, key, notes, tools }) =>
+      (await api.digests.work({ sessionId, key, notes, tools })) as WorkDigestResult
+  }),
+  workDigestsOf: viaOwnServer<[string], Record<string, WorkDigestDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('work:digests-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.workOf(sessionId)) as Record<string, WorkDigestDone>
+  }),
+  // Folio's two reads, on the same road: an answer written for the ear (read
+  // aloud), and the title of a page from the reader's message.
+  spokenRendering: viaOwnServer<[SpokenRequest], SpokenResult>({
+    ipc: (request) => ipcRenderer.invoke('spoken:rendering', request),
+    server: async ({ api }, { sessionId, key, markdown }) =>
+      (await api.digests.spoken({ sessionId, key, markdown })) as SpokenResult
+  }),
+  spokenRenderingsOf: viaOwnServer<[string], Record<string, SpokenDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('spoken:renderings-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.spokenOf(sessionId)) as Record<string, SpokenDone>
+  }),
+  // Folio's speech (PRDCT-4411): a part of a page's spoken rendering in the
+  // ElevenLabs voice of the server the tab runs on, with that server's key;
+  // the same road as the digests.
+  speakText: viaOwnServer<[SpeakRequest], SpeakResult>({
+    ipc: (request) => ipcRenderer.invoke('speech:speak', request),
+    server: async ({ api }, { sessionId, text }) =>
+      (await api.speech.speak({ sessionId, text })) as SpeakResult
+  }),
+  pageTitle: viaOwnServer<[PageTitleRequest], PageTitleResult>({
+    ipc: (request) => ipcRenderer.invoke('pages:title', request),
+    server: async ({ api }, { sessionId, key, message }) =>
+      (await api.digests.title({ sessionId, key, message })) as PageTitleResult
+  }),
+  pageTitlesOf: viaOwnServer<[string], Record<string, PageTitleDone>>({
+    ipc: (sessionId) => ipcRenderer.invoke('pages:titles-of', sessionId),
+    server: async ({ api }, sessionId) =>
+      (await api.digests.titleOf(sessionId)) as Record<string, PageTitleDone>
+  }),
   // The GitHub pull request panel (plugins/github). Main runs the user's own
   // `gh`; every call answers with a GithubResult rather than throwing, so the
   // panel can tell "gh is missing" from "not signed in" from "gh said no".
@@ -1379,6 +2111,15 @@ const electronAPI = {
   checkPort: (port: number) => ipcRenderer.invoke('net:check-port', port) as Promise<boolean>,
   probeServerUrl: (url: string, timeoutMs?: number) =>
     ipcRenderer.invoke('net:probe-url', url, timeoutMs) as Promise<boolean>,
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  serverSetupScan: () => ipcRenderer.invoke('server-setup:scan') as Promise<TailnetScan>,
+  serverSetupInstallStatus: () =>
+    ipcRenderer.invoke('server-setup:install-status') as Promise<ServerInstallStatus>,
+  serverSetupInstall: () =>
+    ipcRenderer.invoke('server-setup:install') as Promise<ServerInstallResult>,
+  serverSetupCopyToken: () => ipcRenderer.invoke('server-setup:copy-token') as Promise<void>,
+  onServerSetupProgress: (callback: (progress: ServerInstallProgress) => void) =>
+    createIpcListener('server-setup:install-progress', callback),
 
   openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
 
@@ -1386,6 +2127,7 @@ const electronAPI = {
     ipcRenderer.invoke('preview:register', filePath) as Promise<{ url: string }>,
 
   openFolderDialog: (defaultPath?: string) => ipcRenderer.invoke('dialog:openFolder', defaultPath),
+  openFileDialog: (defaultPath?: string) => ipcRenderer.invoke('dialog:openFile', defaultPath),
 
   onUpdateAvailable: (callback: (version: string) => void) =>
     createIpcListener<[string]>('updater:update-available', callback),
@@ -1414,6 +2156,22 @@ const electronAPI = {
   onOpenSettingsSection: (callback: (section: string) => void) =>
     createIpcListener<[string]>('menu:open-settings-section', callback),
 
+  // The menu's "Debug Clave…" (issue #227): the window opens its triage.
+  onOpenTriage: (callback: () => void) => createIpcListener<[]>(TRIAGE_IPC.open, callback),
+
+  // The first-run walk (src/main/onboarding.ts), and Help → Welcome to Clave…
+  onboardingGetState: () => ipcRenderer.invoke(ONBOARDING_IPC.getState) as Promise<OnboardingState>,
+  onboardingAgents: (fresh?: boolean) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.agents, fresh === true) as Promise<OnboardingAgent[]>,
+  onboardingInstall: (id: InstallableAgentId) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.install, id) as Promise<OnboardingInstallResult>,
+  onboardingComplete: () => ipcRenderer.invoke(ONBOARDING_IPC.complete) as Promise<void>,
+  onboardingSetChatView: (viewId: string) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.setChatView, viewId) as Promise<void>,
+  onboardingCreateFolder: (parent: string, name: string) =>
+    ipcRenderer.invoke(ONBOARDING_IPC.createFolder, parent, name) as Promise<string>,
+  onOpenOnboarding: (callback: () => void) => createIpcListener<[]>(ONBOARDING_IPC.open, callback),
+
   onMissionControlEntered: (callback: () => void) =>
     createIpcListener<[]>('mission-control:entered', callback),
   onMissionControlExited: (callback: () => void) =>
@@ -1423,11 +2181,10 @@ const electronAPI = {
   missionControlSetEnabled: (enabled: boolean) =>
     ipcRenderer.invoke('mission-control:set-enabled', enabled),
 
-  // ── Settings (lane D): the app icon ──
-  setAppIcon: viaServer<[string], void>({
-    ipc: (icon) => ipcRenderer.invoke('app:set-icon', icon),
-    server: ({ api }, icon) => api.settings.preferences.setAppIcon(icon as AppIcon)
-  }),
+  // The icon belongs to this Electron shell, like the updater channel,
+  // telemetry consent and Mission Control. A standalone session server has
+  // no Dock. Keep the write and the native consumer in the same process.
+  setAppIcon: (icon: string): Promise<void> => ipcRenderer.invoke('app:set-icon', icon),
   hapticTick: (pattern?: 'alignment' | 'generic' | 'level') =>
     ipcRenderer.send('haptic:tick', pattern ?? 'alignment'),
   getUsername: () => ipcRenderer.invoke('app:get-username') as Promise<string | null>,
@@ -1546,9 +2303,18 @@ const electronAPI = {
   // carries this window's key as its origin, and the change event carries it
   // back so this window drops its own echo, the way the IPC handler skips
   // the sender. ──
-  workspaceLoad: viaServer<[], WorkspaceStateFile>({
+  // ── Paired workspaces (PRDCT-4151): main's document, every window told.
+  // The channel names are `PAIRING_IPC` in `@clave/contract/fleet`, spelled
+  // here because the preload imports nothing of the contract at window
+  // start (lazy-load.test.ts). ──
+  serverPairingsLoad: () => ipcRenderer.invoke('server:pairings:load') as Promise<ServerPairings>,
+  serverPairingsChange: (change: ServerPairingChange) =>
+    ipcRenderer.invoke('server:pairings:change', change) as Promise<ServerPairings>,
+  onServerPairingsChanged: (callback: (state: ServerPairings) => void) =>
+    createIpcListener<[ServerPairings]>('server:pairings:changed', callback),
+  workspaceLoad: viaServer<[], WorkspaceState>({
     ipc: () => ipcRenderer.invoke('workspace:load'),
-    server: async ({ api }) => loose<WorkspaceStateFile>(await api.settings.workspaces.load())
+    server: async ({ api }) => loose<WorkspaceState>(await api.settings.workspaces.load())
   }),
   workspaceUpdateRegistry: viaServer<[unknown[]], RegistryWriteResult>({
     ipc: (workspaces) => ipcRenderer.invoke('workspace:update-registry', workspaces),
@@ -1570,9 +2336,11 @@ const electronAPI = {
       return { ok: true as const }
     }
   }),
-  onWorkspaceStateChanged: (
-    callback: (state: { workspaces: unknown[]; pins: unknown[] }) => void
-  ): (() => void) => {
+  // The value carries the state's stamp (wave 5, lane A, PRDCT-3405): the
+  // renderer drops a fold that is not newer than what it holds, which is
+  // what keeps the catch-up read at a welcome from resetting pins the
+  // window wrote after the read went out.
+  onWorkspaceStateChanged: (callback: (state: WorkspaceStateFold) => void): (() => void) => {
     // This window's key, read once: the echo test needs it synchronously.
     let mine: string | null = null
     void windowKey().then((key) => {
@@ -1584,7 +2352,14 @@ const electronAPI = {
       workspaceStatePick(() => mine),
       async (api) => {
         const state = await api.settings.workspaces.load()
-        return [{ workspaces: [...state.workspaces], pins: [...state.pins] }]
+        return [
+          {
+            workspaces: [...state.workspaces],
+            pins: [...state.pins],
+            revision: state.revision,
+            instance: state.instance
+          }
+        ]
       }
     )(callback)
   },
@@ -1837,18 +2612,69 @@ const electronAPI = {
     async (api) => usageCatchUp(await api.settings.usage.codexSnapshot())
   ),
   // A session moved to another account: the same tab, its process restarted
-  // on the account with the conversation resumed (ADR 0002).
-  restartSession: (
-    id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-    }
-  ) => ipcRenderer.invoke('pty:restart', id, overrides),
+  // on the account with the conversation resumed (ADR 0002). Routed like
+  // every other session call: the restart is the server's `RestartSession`
+  // once the shell names an endpoint. Main's own PTY manager holds no spawn
+  // for a tab the separate server owns, so over IPC alone every switch on a
+  // packaged app (the Switch account menu, the automatic switch at a limit,
+  // the Play button) answered "cannot be restarted from here" and did
+  // nothing; the agent tools' `clave_switch_account` already went this way.
+  // The server publishes `session.restarted` for the move too; the window
+  // applies one or the other, never both (`lib/restart-ownership.ts`).
+  restartSession: viaServer<
+    [string, RestartOverridesInput, string | undefined],
+    (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
+  >({
+    ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
+    server: (
+      { api },
+      id,
+      {
+        resendRejected,
+        onlyIfStopped,
+        adapterId,
+        model,
+        resume,
+        firstMessage,
+        continuedFrom,
+        ...account
+      },
+      requestId
+    ) =>
+      // The provider switch (PRDCT-4300) rides the wire as its own object,
+      // carrying a field only when it is set.
+      (adapterId !== undefined
+        ? api.sessions.restart(
+            id,
+            Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+            resendRejected === true,
+            requestId,
+            onlyIfStopped === true,
+            {
+              adapterId,
+              ...(model !== undefined && { model }),
+              ...(resume !== undefined && { resume }),
+              ...(firstMessage !== undefined && { firstMessage }),
+              ...(continuedFrom !== undefined && { continuedFrom })
+            }
+          )
+        : onlyIfStopped === true
+          ? api.sessions.restart(
+              id,
+              // The wire's account carries a field only when it is set.
+              Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+              resendRejected === true,
+              requestId,
+              true
+            )
+          : api.sessions.restart(
+              id,
+              Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+              resendRejected === true,
+              requestId
+            )
+      ).then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
+  }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),
     server: ({ api }, range) => api.settings.usage.readPi(range).then(loose<PiUsageTotals>)
@@ -1858,9 +2684,15 @@ const electronAPI = {
   gitCheckIgnored: (cwd: string, paths: string[]) =>
     ipcRenderer.invoke('git:check-ignored', cwd, paths),
   getGitStatus: (cwd: string) => ipcRenderer.invoke('git:status', cwd),
+  gitRemoteUrl: (cwd: string) => ipcRenderer.invoke('git:remote-url', cwd),
   getGitStatusBatch: (paths: string[]) => ipcRenderer.invoke('git:status-batch', paths),
   gitFetch: (cwd: string) => ipcRenderer.invoke('git:fetch', cwd),
   gitFetchBatch: (paths: string[]) => ipcRenderer.invoke('git:fetch-batch', paths),
+  gitWatchRepos: (subscriberId: string, paths: string[]) =>
+    ipcRenderer.invoke('git:watch-repos', subscriberId, paths),
+  gitUnwatchRepos: (subscriberId: string) => ipcRenderer.invoke('git:unwatch-repos', subscriberId),
+  onGitReposChanged: (callback: (repos: string[]) => void) =>
+    createIpcListener<[string[]]>('git:repos-changed', callback),
   discoverGitRepos: (cwd: string, force?: boolean) =>
     ipcRenderer.invoke('git:discover-repos', cwd, force),
   gitStage: (cwd: string, files: string[]) => ipcRenderer.invoke('git:stage', cwd, files),
@@ -1884,7 +2716,13 @@ const electronAPI = {
   gitCommitFiles: (cwd: string, hash: string) => ipcRenderer.invoke('git:commit-files', cwd, hash),
   gitCommitDiff: (cwd: string, hash: string, filePath: string) =>
     ipcRenderer.invoke('git:commit-diff', cwd, hash, filePath),
-  gitGenerateCommitMessage: (cwd: string) => ipcRenderer.invoke('git:generate-commit-message', cwd),
+  // The git panel's two one-shots run where this Mac's helpers run
+  // (PRDCT-4330): on the server behind the window when there is one (it owns
+  // the helpers' preference and the accounts), in main when it runs in-process.
+  gitGenerateCommitMessage: viaHelperHost<[string], string>({
+    ipc: (cwd) => ipcRenderer.invoke('git:generate-commit-message', cwd),
+    server: ({ api }, cwd) => api.git.generateCommitMessage(cwd)
+  }),
   gitMagicSync: (repoPaths: string[]) => ipcRenderer.invoke('git:magic-sync', repoPaths),
   gitMagicPull: (repoPaths: string[]) => ipcRenderer.invoke('git:magic-pull', repoPaths),
   gitRefreshRemotes: (repoPaths: string[]) => ipcRenderer.invoke('git:refresh-remotes', repoPaths),
@@ -1892,8 +2730,16 @@ const electronAPI = {
   onGitBatchProgress: (callback: (progress: GitBatchProgress) => void) =>
     createIpcListener<[GitBatchProgress]>('git:batch-progress', callback),
   gitJourney: (cwd: string, maxCount?: number) => ipcRenderer.invoke('git:journey', cwd, maxCount),
-  gitSummarizePush: (cwd: string, commitMessages: string[], diffStats: string) =>
-    ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
+  gitSummarizePush: viaHelperHost<
+    [string, string[], string],
+    { title: string; description: string }
+  >({
+    ipc: (cwd, commitMessages, diffStats) =>
+      ipcRenderer.invoke('git:summarize-push', cwd, commitMessages, diffStats),
+    server: async ({ api }, cwd, commitMessages, diffStats) => ({
+      ...(await api.git.summarizePush(cwd, commitMessages, diffStats))
+    })
+  }),
 
   showNotification: (options: { title: string; body: string; sessionId: string }) =>
     ipcRenderer.invoke('notification:show', options),
@@ -2058,6 +2904,34 @@ const electronAPI = {
   preferencesGet: (key: string) => ipcRenderer.invoke('preferences:get', key),
   preferencesSet: (key: string, value: unknown) =>
     ipcRenderer.invoke('preferences:set', key, value),
+  onRecommendedAccountChanged: (callback: (enabled: boolean) => void) =>
+    createIpcListener<[boolean]>('accounts:recommended-launch-changed', callback),
+  // ── Launch settings (src/main/launch-settings.ts): the interaction mode and
+  // the per-harness preferred model and permission rung, one record ──
+  launchSettingsGet: () =>
+    ipcRenderer.invoke('launch-settings:get') as Promise<
+      import('../shared/harness').LaunchSettings
+    >,
+  launchSettingsSet: (patch: import('../shared/harness').LaunchSettingsPatch) =>
+    ipcRenderer.invoke('launch-settings:set', patch) as Promise<
+      import('../shared/harness').LaunchSettings
+    >,
+  onLaunchSettingsChanged: (
+    callback: (settings: import('../shared/harness').LaunchSettings) => void
+  ) =>
+    createIpcListener<[import('../shared/harness').LaunchSettings]>(
+      'launch-settings:changed',
+      callback
+    ),
+  /** The model a fresh chat on this adapter starts on, as main remembers it
+   *  (PRDCT-4420): the one read, from the file it is written to. */
+  launchRememberedModel: (adapterId: string) =>
+    ipcRenderer.invoke('launch-settings:remembered-model', adapterId) as Promise<string | null>,
+  // ── Microphone (the Audio settings page's OS surface) ──
+  getMicAccess: () => ipcRenderer.invoke(MIC_GET_ACCESS_CHANNEL) as Promise<MicAccessState>,
+  requestMicAccess: () => ipcRenderer.invoke(MIC_REQUEST_ACCESS_CHANNEL) as Promise<MicAccessState>,
+  openMicPrivacySettings: () => ipcRenderer.invoke(MIC_OPEN_SETTINGS_CHANNEL) as Promise<void>,
+  openSoundSettings: () => ipcRenderer.invoke(MIC_OPEN_SOUND_SETTINGS_CHANNEL) as Promise<void>,
   keymapsLoad: () => ipcRenderer.invoke('keymaps:load'),
   keymapsSave: (value: unknown) => ipcRenderer.invoke('keymaps:save', value),
   keymapsImport: () => ipcRenderer.invoke('keymaps:import') as Promise<string | null>,
@@ -2113,14 +2987,30 @@ const electronAPI = {
   feedbackSubmit: (submission: { email: string; message?: string }) =>
     ipcRenderer.invoke('feedback:submit', submission) as Promise<
       { ok: true } | { ok: false; error: string }
-    >
+    >,
+
+  // ── Triage (issue #227): over IPC only, never routed to the server, whose
+  // failure is one of the things a triage must be able to describe ──
+  triagePrepare: () => ipcRenderer.invoke(TRIAGE_IPC.prepare) as Promise<TriagePrepareResult>,
+  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>
 
   // ── Lane D: the settings are served (their methods sit in their sections above) ──
 
   // ── Lane F: the shell ──
 }
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+contextBridge.exposeInMainWorld(
+  'electronAPI',
+  createFleetDesktop(electronAPI as unknown as ElectronAPI, {
+    invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    changed: (callback) => createIpcListener('server:fleet:changed', callback),
+    versions: (callback) => createIpcListener('server:fleet:versions-changed', callback),
+    connect: async (endpoint) => {
+      const { connectThroughNode } = await loadNodeClient()
+      return connectThroughNode(endpoint, { client: 'clave-fleet-preload' })
+    }
+  })
+)
 
 /**
  * `--test-no-activate` again, this time so the RENDERER can see it.

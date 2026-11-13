@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import {
   TrashIcon,
   PlusIcon,
@@ -6,37 +6,39 @@ import {
   XMarkIcon,
   ArrowUpIcon,
   ArrowDownIcon,
-  ClipboardDocumentIcon
+  ClipboardDocumentIcon,
+  SparklesIcon
 } from '@heroicons/react/24/outline'
 import type { UsageError, UsageLimits } from '../../../../preload/index.d'
 import {
   useClaudeProfileStore,
   DEFAULT_CLAUDE_PROFILE_ID,
-  describeClaudeProfileAuth,
+  claudeProfileUsable,
   describeTokenLife,
   type ClaudeProfile
 } from '../../store/claude-profile-store'
 import { useAccountLoginStore } from '../../store/account-login-store'
 import {
   useClaudeAccountsUsage,
-  tightestWindow,
-  shortLabel,
-  formatReset,
-  headroomLabel
+  accountUsageFieldsOf,
+  capStatusLine
 } from '../../store/usage-store'
-import { isExhausted } from '../../lib/account-pool'
-import { ClaudeLogo } from '../icons/cli-logos'
+import { isExhausted, switchTargets } from '../../lib/account-pool'
+import { CONNECTION_COMPANY_BY_POOL } from './connection-companies'
 import { SettingsSection, SettingsCard, SettingsCallout, Radio } from './primitives'
 import { LoginFlow } from './LoginFlow'
 
 /** What a paste came back with, in one line under the form. */
 function describeUsageResult(result: UsageLimits | UsageError): string {
   if ('error' in result) return result.error
-  const tightest = tightestWindow(result.windows)
-  if (!tightest) return 'Token accepted. No usage windows reported yet.'
-  const left = Math.max(0, Math.round(100 - tightest.usedPercentage))
-  const reset = formatReset(tightest.resetsAt)
-  return `Token accepted · ${left}% left · ${shortLabel(tightest)}${reset ? ` · ${reset}` : ''}`
+  // The account view: the shared headroom, then every family that is out.
+  const line = capStatusLine({
+    status: 'ready',
+    error: null,
+    ...accountUsageFieldsOf(result.windows)
+  })
+  if (!line) return 'Token accepted. No usage windows reported yet.'
+  return `Token accepted · ${line}`
 }
 
 /** The paste form, for a new account or a replacement token: the way in
@@ -84,9 +86,9 @@ function TokenForm({
         title={title}
         text={
           <>
-            Run <code>claude setup-token</code> in a terminal signed in to that account and paste
-            the token it prints. Only sessions started on this account use it; your settings,
-            plugins and history stay shared.
+            Run <code>claude setup-token</code> in a terminal signed in to that subscription and
+            paste the token it prints. Only sessions started on this connection use it; your
+            settings, plugins and history stay shared.
           </>
         }
         actions={
@@ -99,7 +101,7 @@ function TokenForm({
               disabled={busy || !token.trim() || (askName && !label.trim())}
               className="btn-primary"
             >
-              {askName ? 'Add account' : 'Save token'}
+              {askName ? 'Add connection' : 'Save token'}
             </button>
           </>
         }
@@ -110,8 +112,8 @@ function TokenForm({
               className="input-compact w-full max-w-72"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Account name"
-              aria-label="Account name"
+              placeholder="Connection name"
+              aria-label="Connection name"
               autoFocus
             />
           )}
@@ -165,8 +167,8 @@ function NameForm({
       <SettingsCallout
         inset
         tone="accent"
-        title="Add an account"
-        text="Name the subscription, then sign in to it in the browser that opens. The token Claude prints is stored here, encrypted, and never shown."
+        title="Add a connection"
+        text="Name the subscription, then sign in to it in the browser that opens. What Claude hands back is stored here, encrypted, and never shown."
         actions={
           <>
             <button onClick={onCancel} className="btn-secondary">
@@ -186,8 +188,8 @@ function NameForm({
           className="input-compact w-full max-w-72 mt-2"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="Account name"
-          aria-label="Account name"
+          placeholder="Connection name"
+          aria-label="Connection name"
           autoFocus
           onKeyDown={(e) => {
             if (e.key === 'Enter') void submit()
@@ -204,6 +206,7 @@ function AccountRow({
   count,
   selected,
   migrated,
+  suggested,
   onSelect,
   onMove,
   onLogin,
@@ -214,6 +217,8 @@ function AccountRow({
   count: number
   selected: boolean
   migrated: boolean
+  /** The open connection the pool would spend first (its week renews soonest). */
+  suggested: boolean
   onSelect: () => void
   onMove: (offset: -1 | 1) => void
   onLogin: () => void
@@ -225,13 +230,13 @@ function AccountRow({
   const summary = useClaudeAccountsUsage((s) => s.byAccount[account.id])
   const isDefault = account.id === DEFAULT_CLAUDE_PROFILE_ID
   const life = describeTokenLife(account)
-  const headroom = headroomLabel(summary)
-  const description = [
-    isDefault ? 'Machine login · ~/.claude' : describeClaudeProfileAuth(account),
-    life,
-    headroom,
-    isExhausted(summary) ? 'at limit' : null
-  ]
+  const { Logo } = CONNECTION_COMPANY_BY_POOL.claude
+  // The shared headroom first, then every family that is out, named with
+  // its return ("60% left · Overall · Fable out · back in 2d 5h"): a family
+  // week spent is not the account out (PRDCT-4253, PRDCT-4254). How the
+  // connection signs in is never on the card (PRDCT-4424): only the Mac's own
+  // login says where it lives.
+  const description = [isDefault ? 'Machine login · ~/.claude' : null, life, capStatusLine(summary)]
     .filter(Boolean)
     .join(' · ')
 
@@ -240,16 +245,18 @@ function AccountRow({
       className="settings-row"
       data-claude-account-row={account.id}
       data-account-exhausted={isExhausted(summary) ? 'true' : undefined}
+      data-account-scoped-out={summary?.scopedOut?.length ? summary.scopedOut.join(' ') : undefined}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <Radio
           checked={selected}
           onSelect={onSelect}
-          title={selected ? 'Account new sessions start on' : 'Start new sessions here'}
+          title={selected ? 'Connection new sessions start on' : 'Start new sessions here'}
           ariaLabel={
-            selected ? 'Account new sessions start on' : `Start new sessions on ${account.label}`
+            selected ? 'Connection new sessions start on' : `Start new sessions on ${account.label}`
           }
         />
+        <Logo className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -260,15 +267,21 @@ function AccountRow({
                 className="input-compact w-full max-w-56"
                 value={account.label}
                 onChange={(e) => updateProfile(account.id, { label: e.target.value })}
-                placeholder="Account name"
-                aria-label="Account name"
+                placeholder="Connection name"
+                aria-label="Connection name"
               />
+            )}
+            {suggested && (
+              <span className="badge account-switch-suggested" data-connection-suggested>
+                <SparklesIcon aria-hidden />
+                Suggested
+              </span>
             )}
             {(migrated || (!isDefault && !account.hasToken)) && (
               <span className="badge badge-muted flex-shrink-0">Needs login</span>
             )}
             {account.tokenInvalid && (
-              <span className="badge badge-muted flex-shrink-0">Token refused</span>
+              <span className="badge badge-muted flex-shrink-0">Sign-in refused</span>
             )}
           </div>
           <p className="settings-row-description truncate">{description}</p>
@@ -330,8 +343,8 @@ function AccountRow({
             <button
               onClick={() => removeProfile(account.id)}
               className="btn-icon btn-icon-sm btn-icon--danger"
-              title="Remove account"
-              aria-label={`Remove account ${account.label}`}
+              title="Remove connection"
+              aria-label={`Remove connection ${account.label}`}
             >
               <TrashIcon className="w-3.5 h-3.5" />
             </button>
@@ -343,11 +356,15 @@ function AccountRow({
 }
 
 /**
- * The Claude accounts: the machine login plus every subscription handed to
- * Clave, in the order the pool walks them (ADR 0002). An account is signed
- * in through the browser, or by pasting a `claude setup-token` token.
+ * The Anthropic connections: the machine login plus every subscription
+ * handed to Clave, in the order the pool walks them (ADR 0002). A connection
+ * is signed in through the browser, or by pasting a `claude setup-token`
+ * token. `pasteRequest` opens the paste form from the page's Connect chooser
+ * (a new number each time it is asked).
  */
-export function ClaudeAccountsSection(): ReactElement {
+export function ClaudeAccountsSection({
+  pasteRequest = 0
+}: { pasteRequest?: number } = {}): ReactElement {
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
   const migratedIds = useClaudeProfileStore((s) => s.migratedIds)
@@ -360,6 +377,20 @@ export function ClaudeAccountsSection(): ReactElement {
   const [form, setForm] = useState<
     { kind: 'add-login' } | { kind: 'add-token' } | { kind: 'replace'; id: string } | null
   >(null)
+  // The chooser's "Paste a token instead": derived during render, the
+  // React-sanctioned shape, rather than a setState inside an effect.
+  const [seenPaste, setSeenPaste] = useState(pasteRequest)
+  if (seenPaste !== pasteRequest) {
+    setSeenPaste(pasteRequest)
+    if (pasteRequest > 0) setForm({ kind: 'add-token' })
+  }
+  const byAccount = useClaudeAccountsUsage((s) => s.byAccount)
+  const suggestedId = useMemo(() => {
+    const pool = profiles.map((p) => ({ id: p.id, usable: claudeProfileUsable(p) }))
+    if (pool.filter((p) => p.usable).length < 2) return null
+    return switchTargets(pool, byAccount).find((t) => t.suggested)?.id ?? null
+  }, [profiles, byAccount])
+  const company = CONNECTION_COMPANY_BY_POOL.claude
 
   const move = (index: number, offset: -1 | 1): void => {
     const ids = profiles.filter((p) => p.id !== DEFAULT_CLAUDE_PROFILE_ID).map((p) => p.id)
@@ -374,11 +405,11 @@ export function ClaudeAccountsSection(): ReactElement {
     <SettingsSection
       title={
         <span className="flex items-center gap-2">
-          <ClaudeLogo className="w-4 h-4 text-text-tertiary" />
-          Claude
+          <company.Logo className="w-4 h-4 text-text-tertiary" />
+          {company.name}
         </span>
       }
-      description="New Claude sessions start on the selected account and move along this list when it is about to hit its limit. Every account shares ~/.claude, so a conversation can carry on under another."
+      description={`${company.hint} New Claude sessions start on the selected connection and move along this list when it is about to hit its limit. Every connection shares ~/.claude, so a conversation can carry on under another.`}
     >
       <SettingsCard>
         {profiles.map((account, index) => (
@@ -389,6 +420,7 @@ export function ClaudeAccountsSection(): ReactElement {
               count={profiles.length}
               selected={account.id === selectedProfileId}
               migrated={migratedIds.includes(account.id)}
+              suggested={account.id === suggestedId}
               onSelect={() => setSelectedProfile(account.id)}
               onMove={(offset) => move(index, offset)}
               onLogin={() => {
@@ -421,7 +453,7 @@ export function ClaudeAccountsSection(): ReactElement {
         )}
         {form?.kind === 'add-token' && (
           <TokenForm
-            title="Add an account with a token"
+            title="Add a connection with a token"
             askName
             onSubmit={async (label, token) => (await addTokenProfile(label, token)).usage}
             onCancel={() => setForm(null)}
@@ -436,15 +468,16 @@ export function ClaudeAccountsSection(): ReactElement {
               data-claude-add-account
             >
               <PlusIcon className="w-4 h-4" />
-              Add account
+              Add connection
             </button>
             <button
               onClick={() => setForm({ kind: 'add-token' })}
               className="settings-row-action"
               title="Paste a token from `claude setup-token` instead of signing in here"
+              data-claude-paste-token
             >
               <ClipboardDocumentIcon className="w-4 h-4" />
-              Add with a token
+              Paste a token instead
             </button>
           </div>
         )}

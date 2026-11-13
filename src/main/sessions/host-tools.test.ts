@@ -10,6 +10,8 @@ import type { SessionManager } from './session-manager'
 const mocks = vi.hoisted(() => ({
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
+  setSessionClaudeSessionId: vi.fn(),
+  setSessionWorkspace: vi.fn(),
   folderName: 'app',
   typed: vi.fn(async () => ({ submitted: true, draftHandling: 'none' as const })),
   notifyChatMessage: vi.fn()
@@ -21,6 +23,8 @@ vi.mock('../pty-manager', () => ({
   ptyManager: {
     setSessionDisplayName: mocks.setSessionDisplayName,
     setSessionViewRecord: mocks.setSessionViewRecord,
+    setSessionClaudeSessionId: mocks.setSessionClaudeSessionId,
+    setSessionWorkspace: mocks.setSessionWorkspace,
     getSession: (id: string) => (id === 'gone' ? undefined : { id, folderName: mocks.folderName })
   }
 }))
@@ -40,6 +44,7 @@ vi.mock('./chat-view-default', () => ({ rememberChatView: vi.fn() }))
 // The records source is an object the host reads lazily; nothing here reaches it.
 vi.mock('./records', () => ({ sessionRecords: {} }))
 import { createSessionHost } from './host'
+import { rememberChatModel } from './chat-model-default'
 
 const sessions = new Map<string, { id: string; transport: string; title: string }>()
 const writes: unknown[] = []
@@ -102,5 +107,66 @@ describe('the page on a tab, and a message typed in', () => {
     expect(writes).toEqual([['c1', { type: 'user_message', text: 'hello' }]])
     expect(mocks.notifyChatMessage).toHaveBeenCalledWith('c1', 'hello', null)
     await expect(host.type('zz', 'x')).rejects.toThrow('Unknown session: zz')
+  })
+})
+
+describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () => {
+  it('writes the name as given, an auto-title included, and the page, each only when sent', () => {
+    host.keepOnRecord('c1', { name: { displayName: 'Lane A', userRenamed: true } })
+    host.keepOnRecord('c1', { name: { displayName: null, userRenamed: false } })
+    expect(mocks.setSessionDisplayName.mock.calls).toEqual([
+      ['c1', 'Lane A', true],
+      ['c1', null, false]
+    ])
+    expect(mocks.setSessionViewRecord).not.toHaveBeenCalled()
+    const page = { url: 'http://127.0.0.1:4826', title: 'Lane A' }
+    host.keepOnRecord('c1', { page })
+    host.keepOnRecord('c1', { page: null })
+    expect(mocks.setSessionViewRecord.mock.calls).toEqual([
+      ['c1', page],
+      ['c1', null]
+    ])
+    expect(mocks.setSessionDisplayName).toHaveBeenCalledTimes(2)
+    expect(mocks.setSessionClaudeSessionId).not.toHaveBeenCalled()
+    expect(mocks.setSessionWorkspace).not.toHaveBeenCalled()
+  })
+  it('follows a /clear and a workspace move, a cleared workspace included', () => {
+    host.keepOnRecord('c1', { claudeSessionId: 'after-clear' })
+    host.keepOnRecord('c1', { workspaceId: 'ws-2' })
+    host.keepOnRecord('c1', { workspaceId: null })
+    expect(mocks.setSessionClaudeSessionId.mock.calls).toEqual([['c1', 'after-clear']])
+    expect(mocks.setSessionWorkspace.mock.calls).toEqual([
+      ['c1', 'ws-2'],
+      ['c1', null]
+    ])
+    expect(mocks.setSessionDisplayName).not.toHaveBeenCalled()
+    expect(mocks.setSessionViewRecord).not.toHaveBeenCalled()
+  })
+})
+
+describe('a model switch through the host (PRDCT-4302)', () => {
+  it("the composer's pick is written and remembered as the next chat's default", async () => {
+    sessions.set('c2', {
+      id: 'c2',
+      transport: 'events',
+      title: 'chat',
+      adapterId: 'claude-chat'
+    } as never)
+    await host.write('c2', { type: 'set_model', model: 'claude-opus-5-5' })
+    expect(writes).toEqual([['c2', { type: 'set_model', model: 'claude-opus-5-5' }]])
+    expect(rememberChatModel).toHaveBeenCalledWith('claude-chat', 'claude-opus-5-5')
+  })
+  it("the policy's move at a cap is written and NOT remembered (remember: false)", async () => {
+    sessions.set('c2', {
+      id: 'c2',
+      transport: 'events',
+      title: 'chat',
+      adapterId: 'claude-chat'
+    } as never)
+    await host.write('c2', { type: 'set_model', model: 'claude-opus-5-5', remember: false })
+    expect(writes).toEqual([
+      ['c2', { type: 'set_model', model: 'claude-opus-5-5', remember: false }]
+    ])
+    expect(rememberChatModel).not.toHaveBeenCalled()
   })
 })

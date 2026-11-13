@@ -1,4 +1,11 @@
-import type { LedgerRow } from './ledger'
+import type { LedgerLaunch, LedgerRow } from './ledger'
+import { DIGEST_HELPER_MARKER } from '../../shared/exchange-digest'
+import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { GIT_HELPER_MARKER } from '../../shared/helper-prompt'
+import { PERMISSION_EXPLAINER_MARKER } from '../../shared/permission-explainer'
+import { SPOKEN_MARKER } from '../../shared/spoken-rendering'
+import { PAGE_TITLE_MARKER } from '../../shared/page-title'
+import { LAUNCH_KEYS } from '../../shared/runtime-choices'
 
 /**
  * The fold: ledger rows (and, as a one-time seed, the exchange-capture
@@ -39,6 +46,25 @@ export interface HistoryEntry {
   /** The last `closed` row's timestamp, or null while never closed (or
    *  re-placed after a close — a resumed tab). */
   closedAt: string | null
+  /** What the conversation was last launched on (PRDCT-4236): bypass, mode,
+   *  effort, account, field by field from the latest row that knew it.
+   *  Absent when no row ever carried one. */
+  launch?: LedgerLaunch
+  /** The account directory the latest row that knew one named
+   *  (PRDCT-4321): where the transcript lives instead of the shared root. */
+  configDir?: string
+  /** The launch profile the latest row that knew one named (PRDCT-4321). */
+  launchProfileId?: string
+}
+
+/** A row's launch fields over the entry's: a field the row carries wins, a
+ *  field it lacks keeps the earlier value. */
+function foldLaunch(entry: HistoryEntry, row: LedgerRow): void {
+  for (const key of LAUNCH_KEYS) {
+    const value = row[key]
+    if (value === undefined) continue
+    entry.launch = { ...entry.launch, [key]: value }
+  }
 }
 
 /** A capture-stream line reduced to what the fold needs. Built by
@@ -144,6 +170,9 @@ export function foldHistory(rows: LedgerRow[]): HistoryEntry[] {
       else entry.groups.push({ id: row.groupId, name: row.groupName ?? '', firstAt: row.ts })
     }
     entry.closedAt = row.kind === 'closed' ? row.ts : null
+    if (row.configDir) entry.configDir = row.configDir
+    if (row.launchProfileId) entry.launchProfileId = row.launchProfileId
+    foldLaunch(entry, row)
   }
   return [...byId.values()]
 }
@@ -159,7 +188,21 @@ export const TITLE_HELPER_MARKER =
 /** Is a store-only transcript one of Clave's own title-helper calls? Judged
  *  by the prompt the helper itself sent, read back off the tail. */
 export function isTitleHelperConversation(lastPrompt: string | null): boolean {
-  return lastPrompt !== null && lastPrompt.trimStart().startsWith(TITLE_HELPER_MARKER)
+  if (lastPrompt === null) return false
+  const prompt = lastPrompt.trimStart()
+  // The exchange and work digests' one-shots too (src/main/exchange-digest.ts),
+  // the git panel's commit message and push summary (src/main/helpers/git.ts),
+  // the permission explainer (src/main/helpers/explainer.ts), and Folio's
+  // spoken renderings and page titles (src/main/helpers/folio.ts).
+  return (
+    prompt.startsWith(TITLE_HELPER_MARKER) ||
+    prompt.startsWith(DIGEST_HELPER_MARKER) ||
+    prompt.startsWith(WORK_DIGEST_MARKER) ||
+    prompt.startsWith(GIT_HELPER_MARKER) ||
+    prompt.startsWith(PERMISSION_EXPLAINER_MARKER) ||
+    prompt.startsWith(SPOKEN_MARKER) ||
+    prompt.startsWith(PAGE_TITLE_MARKER)
+  )
 }
 
 /** The transcripts the ledger does not know: every stem in the store's index

@@ -1,0 +1,210 @@
+{
+  "checkpoint": "5151c41e9e1fc746def610f4cd45db60ed6186f1",
+  "files": [
+    {
+      "original": "plugins/chat-view/src/MarkdownMessage.tsx",
+      "archive": "tests/diagnostics/prefix-cache/plugins/chat-view/src/MarkdownMessage.tsx",
+      "original_sha256": "c2e3e4e32607530042abed310cccd67cb30ee28155bccbeaec2b86b0d01c78bb",
+      "archive_sha256": "c2e3e4e32607530042abed310cccd67cb30ee28155bccbeaec2b86b0d01c78bb",
+      "reverse_sha256": "c2e3e4e32607530042abed310cccd67cb30ee28155bccbeaec2b86b0d01c78bb",
+      "exact_reversible": true,
+      "aliases": [
+        "plugins/chat-view/src/MarkdownMessage.tsx",
+        "tests/diagnostics/prefix-cache/plugins/chat-view/src/MarkdownMessage.tsx"
+      ]
+    },
+    {
+      "original": "plugins/chat-view/src/markdown-parser-reuse.ts",
+      "archive": "tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse.ts",
+      "original_sha256": "244fad8ce7ea8e9ef7dfec0da6fb6b02f1783764d93645b8d9408905981acbd3",
+      "archive_sha256": "244fad8ce7ea8e9ef7dfec0da6fb6b02f1783764d93645b8d9408905981acbd3",
+      "reverse_sha256": "244fad8ce7ea8e9ef7dfec0da6fb6b02f1783764d93645b8d9408905981acbd3",
+      "exact_reversible": true,
+      "aliases": [
+        "plugins/chat-view/src/markdown-parser-reuse.ts",
+        "tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse.ts"
+      ]
+    },
+    {
+      "original": "tests/e2e/native-parser-path.spec.mjs",
+      "archive": "tests/e2e/diagnostics/prefix-cache/native-parser-path.spec.mjs",
+      "original_sha256": "f06fa0f670dfdaca5564395481ceaeefdf3fb1b955ca87e867edc66f27b0efbd",
+      "archive_sha256": "3d09835abe5c4ce4995eebf87c21f187a03179c1692c75aa059ae7ce947f3bd4",
+      "reverse_sha256": "f06fa0f670dfdaca5564395481ceaeefdf3fb1b955ca87e867edc66f27b0efbd",
+      "exact_reversible": true,
+      "aliases": [
+        "tests/e2e/native-parser-path.spec.mjs",
+        "tests/diagnostics/prefix-cache/tests/e2e/native-parser-path.spec.mjs",
+        "tests/e2e/diagnostics/prefix-cache/native-parser-path.spec.mjs"
+      ]
+    },
+    {
+      "original": "tests/e2e/native-parser-checks.mjs",
+      "archive": "tests/e2e/diagnostics/prefix-cache/native-parser-checks.mjs",
+      "original_sha256": "47dc35b187e7e6d890fcc9e6a5ef4d526bd917599290f2445f276d58393bf578",
+      "archive_sha256": "d9a7cfd28b969e877e6d439a7ba715b8513cecc225c64ccec4ec9db43d0f8807",
+      "reverse_sha256": "47dc35b187e7e6d890fcc9e6a5ef4d526bd917599290f2445f276d58393bf578",
+      "exact_reversible": true,
+      "aliases": [
+        "tests/e2e/native-parser-checks.mjs",
+        "tests/diagnostics/prefix-cache/tests/e2e/native-parser-checks.mjs",
+        "tests/e2e/diagnostics/prefix-cache/native-parser-checks.mjs"
+      ]
+    },
+    {
+      "original": "tests/e2e/markdown-parser-lifecycle.spec.mjs",
+      "archive": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle.spec.mjs",
+      "original_sha256": "08a7a3cdc6f6ced10e3164fa1a69ab91bd39f486aaf48f89a504c07f78de8a87",
+      "archive_sha256": "c4529b9416b7c3cd21d7cf3d9930dd8b6ba726c7ddc6eb248b782c9b4ae9a8fc",
+      "reverse_sha256": "08a7a3cdc6f6ced10e3164fa1a69ab91bd39f486aaf48f89a504c07f78de8a87",
+      "exact_reversible": true,
+      "aliases": [
+        "tests/e2e/markdown-parser-lifecycle.spec.mjs",
+        "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle.spec.mjs",
+        "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle.spec.mjs"
+      ]
+    },
+    {
+      "original": "tests/e2e/markdown-parser-lifecycle-fixture.mjs",
+      "archive": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle-fixture.mjs",
+      "original_sha256": "755dedecfdd8f94d866fa7be31793e5d66bf85c9b9268b6bf8935c969e8e7fd8",
+      "archive_sha256": "bc5c7bdd64e0effd83ec792770bbaaf980fd5da308e66063ef0994c59065b4ba",
+      "reverse_sha256": "755dedecfdd8f94d866fa7be31793e5d66bf85c9b9268b6bf8935c969e8e7fd8",
+      "exact_reversible": true,
+      "aliases": [
+        "tests/e2e/markdown-parser-lifecycle-fixture.mjs",
+        "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle-fixture.mjs",
+        "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle-fixture.mjs"
+      ]
+    }
+  ],
+  "mechanical_substitutions": [
+    {
+      "file": "src/renderer/src/views/markdown-parser-reuse-correctness.test.ts",
+      "from": "../../../../plugins/chat-view/src/markdown-parser-reuse",
+      "to": "../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
+    },
+    {
+      "file": "src/renderer/src/views/markdown-parser-deep-test-support.ts",
+      "from": "../../../../plugins/chat-view/src/markdown-parser-reuse",
+      "to": "../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
+    },
+    {
+      "file": "src/renderer/src/views/markdown-parser-reuse.test.ts",
+      "from": "../../../../plugins/chat-view/src/markdown-parser-reuse",
+      "to": "../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
+    },
+    {
+      "file": "scripts/diagnostics/react-ssr-deep-original.test.ts",
+      "from": "../../plugins/chat-view/src/markdown-parser-reuse",
+      "to": "../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
+    },
+    {
+      "file": "scripts/performance/parser-resource-data.test.mjs",
+      "from": "../../plugins/chat-view/src/markdown-parser-reuse",
+      "to": "../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse"
+    },
+    {
+      "file": "tests/e2e/parser-resource-workload.mjs",
+      "from": "./native-parser-checks.mjs",
+      "to": "../diagnostics/prefix-cache/tests/e2e/native-parser-checks.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/native-parser-checks.mjs",
+      "from": "./harness.mjs",
+      "to": "../../../../e2e/harness.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle.spec.mjs",
+      "from": "./harness.mjs",
+      "to": "../../../../e2e/harness.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle.spec.mjs",
+      "from": "./namespace.mjs",
+      "to": "../../../../e2e/namespace.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/native-parser-path.spec.mjs",
+      "from": "./chat-view.spec.mjs",
+      "to": "../../../../e2e/chat-view.spec.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/native-parser-path.spec.mjs",
+      "from": "./harness.mjs",
+      "to": "../../../../e2e/harness.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/native-parser-path.spec.mjs",
+      "from": "./renderer-workload.mjs",
+      "to": "../../../../e2e/renderer-workload.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle.spec.mjs",
+      "from": "tests/e2e/markdown-parser-lifecycle-fixture.mjs",
+      "to": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle-fixture.mjs"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle.spec.mjs",
+      "from": "plugins\\/chat-view\\/src\\/",
+      "to": "tests\\/diagnostics\\/prefix-cache\\/plugins\\/chat-view\\/src\\/"
+    },
+    {
+      "file": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle.spec.mjs",
+      "from": "'../..'",
+      "to": "'../../../../..'"
+    },
+    {
+      "file": "tests/e2e/parser-resource-workload.mjs",
+      "from": "../diagnostics/prefix-cache/tests/e2e/native-parser-checks.mjs",
+      "to": "./diagnostics/prefix-cache/native-parser-checks.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle-fixture.mjs",
+      "from": "../../plugins/chat-view/src/MarkdownMessage",
+      "to": "../../../diagnostics/prefix-cache/plugins/chat-view/src/MarkdownMessage"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/native-parser-checks.mjs",
+      "from": "../../../../e2e/harness.mjs",
+      "to": "../../harness.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle.spec.mjs",
+      "from": "../../../../e2e/harness.mjs",
+      "to": "../../harness.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle.spec.mjs",
+      "from": "../../../../e2e/namespace.mjs",
+      "to": "../../namespace.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle.spec.mjs",
+      "from": "tests/diagnostics/prefix-cache/tests/e2e/markdown-parser-lifecycle-fixture.mjs",
+      "to": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle-fixture.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle.spec.mjs",
+      "from": "'../../../../..'",
+      "to": "'../../../..'"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/native-parser-path.spec.mjs",
+      "from": "../../../../e2e/chat-view.spec.mjs",
+      "to": "../../chat-view.spec.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/native-parser-path.spec.mjs",
+      "from": "../../../../e2e/harness.mjs",
+      "to": "../../harness.mjs"
+    },
+    {
+      "file": "tests/e2e/diagnostics/prefix-cache/native-parser-path.spec.mjs",
+      "from": "../../../../e2e/renderer-workload.mjs",
+      "to": "../../renderer-workload.mjs"
+    }
+  ],
+  "ssr_reverse_sha256": "cf3f5117023b0aa6f3638bfd9b0d4f6f68ae4ddbd7572aa435bda5a99574089b",
+  "ssr_expected": "cf3f5117023b0aa6f3638bfd9b0d4f6f68ae4ddbd7572aa435bda5a99574089b"
+}

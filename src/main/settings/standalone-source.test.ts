@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { usageManager } from '../usage-manager'
+import { codexUsageManager } from '../codex-usage'
 import { resetSettingsPorts } from '../ports'
 import { tempDataDir } from '../ports/testing'
 import { standaloneSettingsSource } from './standalone-source'
+import { helperById, helperConfig, setHelperConfigSource } from '../helpers/registry'
 
 /**
  * The standalone server owns the Antasphere login the way the shell does
@@ -10,7 +13,14 @@ import { standaloneSettingsSource } from './standalone-source'
  * Keychain is touched: the status read asks the port whether it is
  * available and files nothing.
  */
-afterEach(() => resetSettingsPorts())
+beforeEach(() => {
+  vi.spyOn(usageManager, 'startPolling').mockImplementation(() => {})
+  vi.spyOn(codexUsageManager, 'startPolling').mockImplementation(() => {})
+})
+afterEach(() => {
+  resetSettingsPorts()
+  vi.restoreAllMocks()
+})
 
 describe('the standalone settings source', () => {
   it('serves the Antasphere account from its own data directory, and can be shut down', async () => {
@@ -23,6 +33,22 @@ describe('the standalone settings source', () => {
     expect(status).toMatchObject({ phase: 'signed-out', account: null, issuerHost: '127.0.0.1:1' })
     expect(typeof shutdown).toBe('function')
     shutdown()
+  })
+})
+
+describe('the helpers on the standalone server (PRDCT-4330)', () => {
+  it("the runner reads this server's preference, written through its settings source", async () => {
+    const dir = tempDataDir('clave-standalone-helpers-')
+    const { settings, shutdown } = standaloneSettingsSource(dir, {})
+    try {
+      const title = helperById('tab-title')!
+      expect(helperConfig(title).enabled).toBe(true)
+      await settings.helpers.set('tab-title', { enabled: false, model: 'sonnet' })
+      expect(helperConfig(title)).toMatchObject({ enabled: false, model: 'sonnet' })
+    } finally {
+      shutdown()
+      setHelperConfigSource()
+    }
   })
 })
 
@@ -59,6 +85,25 @@ describe('the standalone server’s stdout is the launcher’s protocol', () => 
       err.mockRestore()
       log.mockRestore()
       error.mockRestore()
+    }
+  })
+})
+
+describe('the standalone usage clock', () => {
+  it('starts both provider clocks and stops them with the server', () => {
+    const startClaude = vi.spyOn(usageManager, 'startPolling').mockImplementation(() => {})
+    const startCodex = vi.spyOn(codexUsageManager, 'startPolling').mockImplementation(() => {})
+    const stopClaude = vi.spyOn(usageManager, 'stopPolling')
+    const stopCodex = vi.spyOn(codexUsageManager, 'stopPolling')
+    try {
+      const { shutdown } = standaloneSettingsSource(tempDataDir('clave-usage-clock-'))
+      expect(startClaude).toHaveBeenCalledOnce()
+      expect(startCodex).toHaveBeenCalledOnce()
+      shutdown()
+      expect(stopClaude).toHaveBeenCalledOnce()
+      expect(stopCodex).toHaveBeenCalledOnce()
+    } finally {
+      vi.restoreAllMocks()
     }
   })
 })

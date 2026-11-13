@@ -2,49 +2,145 @@
  * `clave-server`: the server as its own process (ADR 0003).
  *
  *   bun src/main/server-entry.ts --data-dir <dir> [--port <n>] [--token <t>]
- *                                [--terminals <host:port>]
+ *       [--terminal-process <bundle> [--node <exec>]] | [--terminals <host:port>]
+ *       [--parent <pid>]
+ *
+ * `--daemon [--host <Tailscale-IP-or-hostname>] [--token-file <private-file>]`
+ * selects independent server ownership, stable identity/credentials and a
+ * shared sidebar. It forbids --parent and never prints its token. See
+ * docs/server-daemon.md. Without it the app-child protocol below is retained.
+ *
+ * `--app-version <semver>` is the version this server reports (issue #266):
+ * the release's own, since a beta's package.json carries the stable version
+ * it was cut from; without it, the checkout's package.json. A daemon that
+ * `scripts/install-server.sh` installed is also told `--install-name`,
+ * `--install-script` and `--install-ref`, and upgrades itself to the version
+ * a Mac asks for (`server/self-upgrade.ts`); without them it says it cannot.
+ * `--test-upgrade-idle-ms <n>` shortens the minute of no working agent an
+ * upgrade waits for, under `--test-no-activate` only.
  *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
- * both start it this way. It binds 127.0.0.1 on the port given (0, the
- * default, asks the OS), writes `clave-server.json` into `--data-dir` the way
- * the app writes its own, and prints ONE line of JSON on stdout once it
- * listens: `{"url":"http://127.0.0.1:<port>","token":"<token>"}`. Whoever
- * started it reads that line and hands the pair to the app as
- * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it.
+ * both start it this way. Inside the packaged app (wave 5, PRDCT-3434) the
+ * shell starts the same entry from the bundle electron-vite writes,
+ * `out/main/server-entry.js`, under the app's own binary run as Node
+ * (`src/main/server-child.ts`). Either way it binds 127.0.0.1 on the port
+ * given (0, the default, asks the OS), writes `clave-server.json` into
+ * `--data-dir` the way the app writes its own, and prints ONE line of JSON
+ * on stdout once it listens: `{"url":"http://127.0.0.1:<port>","token":"<token>"}`.
+ * Whoever started it reads that line and hands the pair to the app as
+ * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it;
+ * so does the end of the parent named by `--parent`, polled, so an app that
+ * died without a word leaves no server behind.
  *
  * The process runs `@clave/server`, the same package the app runs in-process,
  * over the app's own session host built in this process
  * (`sessions/standalone-host.ts`, wave 3): a chat session runs its CLI as a
  * child of this process, a terminal session gets its process from the
  * terminals port. The terminals come from the terminal process (lane B of
- * wave 3, ADR 0003): with `--terminals <host:port>` and the process's token
- * in `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment),
- * `ports.terminals` is the gRPC port to it, and the server's readiness
- * carries a `terminals` check that turns false when the process stops
- * answering. Without `--terminals` the server runs on `Terminals.none`, said
- * on stderr, and a terminal's first resize answers the declared
- * `CapabilityUnavailable`. A client sees the same API, the same token check
- * and the same push channel as in-process. Nothing here imports
- * Electron.
+ * wave 3, ADR 0003), and since wave 5 this entry OWNS it: with
+ * `--terminal-process <bundle>` it starts the process itself, from that
+ * bundle, under `--node <exec>` when given (the dev script and the harness
+ * name their Node, since the Bun this entry runs under cannot run node-pty)
+ * and under its own executable otherwise (the app's binary as Node), and
+ * starts it again when it dies (`terminal-process/supervisor.ts`): the
+ * terminals it held end with their exit, new sessions start on the new
+ * process, and the readiness check `terminals` answers false in between and
+ * true again after. `--terminals <host:port>` with the process's token in
+ * `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment)
+ * still attaches to a process somebody else started, with no restart.
+ * Without either the server runs on `Terminals.none`, said on stderr, and a
+ * terminal's first resize answers the declared `CapabilityUnavailable`. A
+ * client sees the same API, the same token check and the same push channel
+ * as in-process. Nothing here imports Electron.
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
+import { standaloneSidebar } from './server/standalone-sidebar'
+import { serverOwnedSessionHost } from './sessions/server-owned-host'
+import { runningIn, serverConversations } from './session-history/server-conversations'
+import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
+import { requestAwareSessionHost } from './sessions/request-aware-host'
+import { explainingSessionHost } from './sessions/permission-explanations'
+import { explainerPorts } from './sessions/explain-permission'
+import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
+import { executeSecretAction } from './secret-actions'
 import {
   startEmbedded,
   Terminals,
   grpcTerminals,
   type TerminalsService,
   WorkspaceFiles,
-  fileWorkspaceFilesStorage
+  fileWorkspaceFilesStorage,
+  FileTreeWatcher,
+  createServerFiles,
+  PendingRequests,
+  ServerInfoPort
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
+// ── ADR 0004: the routines, this server's own scheduler ──
+import * as os from 'node:os'
+import { createRoutineService } from './routines/service'
+import { SlidelessPublisher } from './routines/publisher'
+import { ownServerName } from './server/server-name'
+import { launchFactsFromManagers } from './routines/facts'
+import { contractPluginDir, defaultReportDir } from './routines/skill'
+import { claudeAccountsManager } from './claude-accounts'
+import { codexAccountsManager } from './codex-accounts'
+import { usageManager } from './usage-manager'
+import { codexUsageManager } from './codex-usage'
+import { preferencesManager, type Preferences } from './preferences-manager'
+import { fileStorage } from './ports/storage'
+import { lazyTerminalPorts } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
-import { publishSessionStates, setServerEventPublisher } from './server/session-events'
+import {
+  publishSessionStates,
+  sessionLimitCleared,
+  sessionLimitReported,
+  setServerEventPublisher
+} from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
-import { ptyManager } from './pty-manager'
+import { eventsProfile, launchProfileManager } from './launch-profile-manager'
+import { rememberedSpawnModel } from './sessions/spawn-model'
+import { chatDefaultFor } from '../shared/open-session-modes'
+import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
+import { hostDigests, sessionLaunchOf } from './exchange-digest'
+import { hostSpeech } from './speech'
+import {
+  startWatching as startAgentStateWatching,
+  stopWatching as stopAgentStateWatching
+} from './agent-state-manager'
+// ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
+import { ForwardRegistry } from '@clave/server/forward-registry'
+import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
+import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
+// ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+import { standaloneLaunchFacts } from './mcp/standalone-launch-facts'
+import { standaloneHarnessDetection } from './agent-updates/standalone-detection'
+import { providerModels } from './provider-models'
+// ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
+import { standalonePlugins } from './plugins/standalone-plugins'
+// ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
+import { serverGitPort } from './server/git-port'
+// ── Issue #266: the server's version and its self-upgrade (server/self-upgrade.ts) ──
+import {
+  createSelfUpgrade,
+  readInstallFacts,
+  scriptRunner,
+  serverVersion,
+  sessionActivity,
+  upgradeIdleMs,
+  type SelfUpgrade
+} from './server/self-upgrade'
+import { RUN_AS_NODE_ENV, TOKEN_ENV } from './terminal-process/token-env'
+import {
+  spawnTerminalProcess,
+  supervisedTerminals,
+  type SupervisorState
+} from './terminal-process/supervisor'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -53,7 +149,35 @@ function arg(name: string): string | undefined {
   return inline ? inline.slice(name.length + 3) : undefined
 }
 
+// ── Wave 5, lane C: the host's version a plugin's `engines.clave` is judged against ──
+/** The checkout's own version (`package.json` two levels up, from the sources
+ *  and from `out/main` alike); a packaged server passes `--app-version`. */
+function readAppVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf-8')
+    ) as { version?: string }
+    if (typeof pkg.version === 'string' && pkg.version) return pkg.version
+  } catch {
+    /* no package.json beside a packaged server: the flag names the version */
+  }
+  throw new Error(
+    'clave-server: --app-version <version> is required when no package.json is beside the entry'
+  )
+}
+/** How often the parent named by `--parent` is checked for. */
+const PARENT_POLL_MS = 2_000
+
 async function main(): Promise<void> {
+  // Started as Node by the app's own binary: the variable that made it so is
+  // nobody else's (`terminal-process/token-env.ts`), taken out before
+  // anything spawns, as the server's own two variables are by the shell.
+  // The terminal process this entry starts is told it again, explicitly.
+  delete process.env[RUN_AS_NODE_ENV]
+
+  const config = daemonConfig(process.argv.slice(2))
+  // ── Issue #266: the version this server reports, `--app-version` first ──
+  const version = serverVersion(process.argv.slice(2), readAppVersion)
   const dataDir = arg('data-dir')
   if (!dataDir) {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
@@ -64,30 +188,107 @@ async function main(): Promise<void> {
     process.stderr.write(`clave-server: --port must be 0..65535, got ${arg('port')}\n`)
     process.exit(2)
   }
+  const parentRaw = arg('parent')
+  const parent = parentRaw === undefined ? null : Number(parentRaw)
+  if (parent !== null && (!Number.isInteger(parent) || parent <= 0)) {
+    process.stderr.write(`clave-server: --parent must be a pid, got ${parentRaw}\n`)
+    process.exit(2)
+  }
 
-  // ── Lane B: the terminals, over the wire to the terminal process ──
+  const releaseLease = config.daemon ? acquireDaemonLease(dataDir) : undefined
+  if (releaseLease) process.once('exit', releaseLease)
+  const identity = config.daemon ? daemonIdentity(dataDir, arg('token-file')) : undefined
+  // ── PRDCT-4149: this server's own name, what a routine's `server` field names it by ──
+  // `--server-name` (the install script's option) else the machine's hostname
+  // first label only; the id is the daemon's stable one, or the listener's once up.
+  // PRDCT-4241: a name set from Settings is stored under --data-dir and wins
+  // over the flag and the environment from then on (`server/server-name.ts`).
+  const serverName = ownServerName(dataDir, {
+    flag: arg('server-name') ?? null,
+    env: process.env.CLAVE_SERVER_NAME ?? null,
+    hostname: os.hostname()
+  })
+  let listeningServerId: string | null = null
+
+  const log = (line: string): void => {
+    process.stderr.write(`clave-server: ${line}\n`)
+  }
+
+  // ── Wave 6, lane B: the login shell's environment, read while the rest starts (PRDCT-3527) ──
+  // tmux, Claude and Codex are found on its PATH, and a read made when first
+  // needed is synchronous: it froze this server for two seconds at the first
+  // chat a launch restored. Started here, in parallel with the terminal
+  // process and the listener; a spawn waits for it (`sessions/lifecycle.ts`)
+  // and the records listing uses the tmux the last launch found until it is
+  // there (`detectTmux`), so the announcement never waits on it.
+  void loginShellEnvAsync()
+
+  // ── Lane B (wave 3): the terminals, over the wire to the terminal process ──
+  // ── Wave 5: the process started and kept alive by this entry ──
   const terminalsAddress = arg('terminals')
-  const terminalsToken = process.env.CLAVE_TERMINALS_TOKEN
-  delete process.env.CLAVE_TERMINALS_TOKEN
+  const terminalProcessBundle = arg('terminal-process')
+  const terminalsToken = process.env[TOKEN_ENV]
+  delete process.env[TOKEN_ENV]
   let terminals: TerminalsService = Terminals.none
   let closeTerminals: () => Promise<void> = async () => {}
-  if (terminalsAddress !== undefined) {
+  let terminalState: SupervisorState | null = null
+  // The discovery file follows the terminal process (its pid and address
+  // change at every restart); written once the server listens, below.
+  let writeDiscovery: () => void = () => {}
+  if (terminalProcessBundle !== undefined && terminalsAddress !== undefined) {
+    process.stderr.write('clave-server: give --terminal-process or --terminals, not both\n')
+    process.exit(2)
+  }
+  if (terminalProcessBundle !== undefined) {
+    if (!fs.existsSync(terminalProcessBundle)) {
+      process.stderr.write(
+        `clave-server: the terminal process bundle is missing (${terminalProcessBundle}): run \`npx electron-vite build\` first\n`
+      )
+      process.exit(2)
+    }
+    const exec = arg('node') ?? process.execPath
+    // The first start is this entry's to fail on: a server told to run a
+    // terminal process that cannot start exits 2, the code of a command
+    // line it cannot honour, rather than coming up on no terminals.
+    const supervisor = await supervisedTerminals({
+      start: () =>
+        spawnTerminalProcess({
+          exec,
+          bundle: terminalProcessBundle,
+          parent: process.pid,
+          log: (line) => process.stderr.write(`${line}\n`)
+        }),
+      log: (line) => log(`terminals: ${line}`),
+      onChange: (state) => {
+        terminalState = state
+        writeDiscovery()
+      }
+    }).catch((err: Error) => {
+      process.stderr.write(
+        `clave-server: the terminal process did not start: ${err.message.split('\n')[0]}\n`
+      )
+      return process.exit(2)
+    })
+    terminalState = supervisor.state()
+    terminals = supervisor
+    closeTerminals = supervisor.close
+  } else if (terminalsAddress !== undefined) {
     if (!terminalsToken) {
       process.stderr.write(
-        'clave-server: --terminals needs the terminal process token in CLAVE_TERMINALS_TOKEN\n'
+        `clave-server: --terminals needs the terminal process token in ${TOKEN_ENV}\n`
       )
       process.exit(2)
     }
     const port = grpcTerminals({
       address: terminalsAddress,
       token: terminalsToken,
-      log: (line) => process.stderr.write(`clave-server: terminals: ${line}\n`)
+      log: (line) => log(`terminals: ${line}`)
     })
     terminals = port
     closeTerminals = port.close
   } else {
     process.stderr.write(
-      'clave-server: no --terminals given, this server runs no terminals (a spawn answers CapabilityUnavailable)\n'
+      'clave-server: no --terminal-process and no --terminals given, this server runs no terminals (a spawn answers CapabilityUnavailable)\n'
     )
   }
 
@@ -105,26 +306,301 @@ async function main(): Promise<void> {
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
-  const { host: sessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
+  // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
+  // kept after a tab is deleted and served to every connected client.
+  const conversations = sidebar
+    ? serverConversations({
+        dataDir,
+        records: () => originalSessions.listAdoptableRecords(),
+        // A chat whose CLI ended on its own is still held, and is what a
+        // Resume is for: running means a process at work, not ended.
+        running: runningIn(originalSessions),
+        groupOf: (id) => {
+          const group = sidebar.get(SERVER_LAYOUT_KEY).groups.find((g) => g.sessionIds.includes(id))
+          if (!group) return null
+          return {
+            id: group.id,
+            name: group.name,
+            ...(group.workspaceId ? { workspaceId: group.workspaceId } : {})
+          }
+        }
+      })
+    : undefined
+  const owned = sidebar
+    ? serverOwnedSessionHost({
+        host: originalSessions,
+        sidebar,
+        dataDir,
+        conversations,
+        subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+        ready: (id) => sessionManager.ready(id),
+        currentState: (id) => sessionManager.currentState(id)
+      })
+    : undefined
+  const requests = new PendingRequests()
+  const requestHost = requestAwareSessionHost({
+    host: owned?.host ?? originalSessions,
+    requests,
+    subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+    // PRDCT-4157: a request an agent tool puts to the person reaches the
+    // session's open views as the adapter's own questions do.
+    publish: (id, event) => sessionManager.publishHostEvent(id, event),
+    setState: (id, state) => sessionManager.setState(id, state)
+  })
+  // PRDCT-4331: every tool permission read in plain words, here where the
+  // session runs, and the reading sent to every client of the session.
+  const sessions = explainingSessionHost({
+    host: requestHost.host,
+    subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener),
+    publish: (id, event) => sessionManager.publishHostEvent(id, event),
+    ...explainerPorts(requests)
+  }).host
+  installE2eHooks({ sessionHost: sessions })
+  // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
+  // The installed plugins, their host and the view leases are this server's:
+  // the store under `--data-dir/clave-plugins` in test mode (`~/.clave`
+  // otherwise, where the app keeps it), the bundled plugins from
+  // `--plugins-bundled <dir>` (the checkout's `plugins/` by default), the
+  // host's version from `--app-version` (the checkout's package.json by
+  // default), each plugin's `main` in a process forked under Node IPC. Built
+  // AFTER the session host: a plugin's adapters register with this process's
+  // session manager, so a session this server starts can run them.
+  const plugins = standalonePlugins({
+    dataDir,
+    bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
+    version,
+    records: () => sessions.listAdoptableRecords()
+  })
+  installE2eHooks({ plugins })
+  // ── Issue #266: the version, and for a daemon the install script's upgrade ──
+  // An app-run server (the app's child) reports the app's version and
+  // updates with the app; a daemon upgrades itself once no agent works.
+  let selfUpgrade: SelfUpgrade | undefined
+  if (config.daemon) {
+    const facts = readInstallFacts(process.argv.slice(2))
+    selfUpgrade = createSelfUpgrade({
+      version,
+      facts,
+      runner: scriptRunner({ dataDir, name: 'reason' in facts ? 'clave-server' : facts.name }),
+      activity: sessionActivity(sessionManager),
+      idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE),
+      name: serverName,
+      setName: (name) => {
+        const next = serverName.set(name)
+        // The routines re-read their placements against the new name (verifier round 1, F2).
+        void routines.refresh()
+        return next
+      }
+    })
+  }
+  // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
+  const workspaceFilesInstance = new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
+  // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+  // One set of facts for the routines and the agent tools: what a routine
+  // resolves its launch with is what `clave_open_session` resolves a tab
+  // with; the tools add the harnesses detected, the models and the settings.
+  const launchFacts = launchFactsFromManagers({
+    claudeAccounts: claudeAccountsManager,
+    codexAccounts: codexAccountsManager,
+    claudeUsage: usageManager,
+    codexUsage: codexUsageManager,
+    launchProfiles: launchProfileManager,
+    preference: (key) => preferencesManager.get(key as keyof Preferences),
+    launchModel: rememberedSpawnModel
+  })
+  const agentLaunchFacts = standaloneLaunchFacts({
+    facts: launchFacts,
+    detection: standaloneHarnessDetection({ env: process.env, testMode: TEST_NO_ACTIVATE }),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    preferences: (key) => preferencesManager.get(key as keyof Preferences),
+    codexModels: (cwd) => providerModels('codex-chat', cwd),
+    homeDir: os.homedir(),
+    defaultProfile: (family) => launchProfileManager.resolve(family)
+  })
+  // ── ADR 0004: the routines this server schedules, off its own workspace files ──
+  const routines = createRoutineService({
+    sessions,
+    files: workspaceFilesInstance,
+    workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
+    onWorkspacesChanged: (listener) =>
+      standalone.settings.subscribe((event) => {
+        if (event._tag === 'workspaces.state_changed') listener()
+      }),
+    facts: launchFacts,
+    storage: fileStorage(dataDir),
+    dataDir,
+    ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
+    holder: `clave-server:${process.pid}`,
+    pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
+    defaultTemplate: defaultReportDir(path.resolve(__dirname, '..', '..', 'resources')),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    publisher: TEST_NO_ACTIVATE
+      ? false
+      : new SlidelessPublisher({
+          env: () => loginShellEnvAsync(),
+          log: (level, message) =>
+            process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
+        }),
+    viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
+    rehome: (sessionId, windowKey) => ptyManager.setSessionWindowKey(sessionId, windowKey),
+    // A run reports through the agent tools: the daemon's own MCP once it
+    // listens, the attached shell's address once it is announced (round 1,
+    // F1: a run due at launch started with no --mcp-config before this).
+    agentToolsReady: () => lazyTerminalPorts.mcpConfig.ready?.() ?? Promise.resolve(),
+    providerSessionIdOf: (sessionId) => {
+      const record = ptyManager.getSessionRecord(sessionId)
+      return record?.claudeSessionId ?? record?.codexThreadId ?? null
+    },
+    log: (level, message) => process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
+  })
+  installE2eHooks({ routines })
+  // ── PRDCT-4472: a session's HTML artefact, its preview and its versions ──
+  // This server's own: the links in `--data-dir/artefacts.json`, its own copy
+  // of Slideless under `--data-dir/slideless`, run under the Node the entry
+  // was told (`--node`, as the terminal process gets it) or its own; a
+  // preview a window holds reaches it through `/forward/<lease>/…`.
+  const forwards = new ForwardRegistry()
+  // Under test mode only: a spec registers a target of its own on this server.
+  installE2eHooks({ forwards })
+  const recordOf = sessionLaunchOf(ptyManager)
+  const artefacts = createArtefactService({
+    dataDir,
+    execPath: arg('node') ?? process.execPath,
+    env: process.env,
+    links: new ArtefactLinks(fileLinksStorage(path.join(dataDir, 'artefacts.json')), (line) =>
+      log(line)
+    ),
+    forwards,
+    sessions: {
+      knows: (id) => Boolean(recordOf(id)),
+      // Read as `publishSessionStates` reads it (`server/session-events.ts`).
+      onState: (listener) =>
+        sessionManager.subscribeAll((id, stream) => {
+          if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+          listener(id, stream.event.state)
+        })
+    },
+    // A test instance never reaches npm: it installs only from the fixture registry it was given.
+    autoInstall: !TEST_NO_ACTIVATE || Boolean(process.env[REGISTRY_ENV]),
+    log: (line) => log(line)
+  })
   const server = await startEmbedded({
     ports: {
       sessions,
+      requests: requestHost.port,
+      files: createServerFiles({
+        attachmentsRoot: path.join(dataDir, 'session-attachments'),
+        watcher: new FileTreeWatcher()
+      }),
       terminals,
+      ...(sidebar && { sidebar }),
       settings: standalone.settings,
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
       // is published to the clients and the read waits for the answer.
-      workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir)),
+      workspaceFiles: workspaceFilesInstance,
+      // ── ADR 0004: the routines ──
+      routines,
+      // ── PRDCT-4327: the digests a client asks for, read on this server's
+      // own record of the session, filed in its data folder ──
+      digests: hostDigests(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-4411: speech with this server's ElevenLabs key and voice, for
+      // a session it has a record of ──
+      speech: hostSpeech(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
+      artefacts,
+      forwards,
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
-      agentTools
+      // A desktop may still announce its own endpoint for old servers. This
+      // server owns its endpoint and never points local providers at a Mac.
+      agentTools: config.daemon
+        ? { announce: () => {}, resolve: (token) => agentTools.resolve(token) }
+        : agentTools,
+      // ── Wave 5, lane C: the plugins ──
+      plugins,
+      // ── Wave wcs1023, lane C: the git panel on this server's checkouts: the
+      // app's own git implementation, its repo watcher's bursts and a batch's
+      // progress published to every attached client (server/git-port.ts).
+      git: serverGitPort(),
+      // ── PRDCT-4321: this server's own History, the conversations its tabs
+      // ran, for every connected client; none on a server the app runs ──
+      ...(conversations && {
+        history: {
+          list: async () => conversations.list(),
+          search: (request) => conversations.search(request)
+        }
+      }),
+      // ── Issue #266: the server domain ──
+      serverInfo:
+        selfUpgrade ??
+        ServerInfoPort.appRun(version, serverName, (name) => {
+          const next = serverName.set(name)
+          void routines.refresh()
+          return next
+        })
     },
     port,
-    ...(token !== undefined && { token }),
+    host: config.host,
+    ...(identity ?? (token !== undefined ? { token } : {})),
     // ── Lane C of wave 3: the end-to-end fixture route, under the app's own
     // test flag (`--test-no-activate`, passed by the harness and never by
     // the packaged app), so the suite reaches this process as it reaches
     // the app's; off, the route does not exist.
     testFixtures: TEST_NO_ACTIVATE
+  })
+  listeningServerId = server.serverId
+  // ── PRDCT-4472: the preview host written, the stale links dropped, the sweep and the turn saves armed ──
+  artefacts.start()
+
+  const mcp = config.daemon
+    ? await startStandaloneMcp({
+        sessions,
+        agentTools,
+        requests,
+        createHosted: requestHost.createHosted,
+        routines,
+        // PRDCT-4472: `clave_open_artefact`, on this server's own artefacts.
+        artefacts,
+        // PRDCT-4243: the routine tools on this server: its workspaces, its files, its name.
+        routineTools: {
+          workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
+          ownName: () => serverName()
+        },
+        ...(sidebar && { sidebar }),
+        // PRDCT-4321: the History tool and the resume of a deleted tab.
+        ...(conversations && { conversations }),
+        // An agent's profile must belong to the mode it opens (a chat or
+        // plugin profile, or one of this server's custom profiles).
+        profileFamily: (id) =>
+          builtInProfileFamily(id) ??
+          eventsProfile(id)?.family ??
+          launchProfileManager.getPreferences().customProfiles.find((p) => p.id === id)?.family,
+        // The chat this server's launcher would open for a family: its own
+        // default's chat form, the server having one sidebar and no workspace
+        // defaults of its own.
+        chatDefault: (family) =>
+          chatDefaultFor(launchProfileManager.getPreferences(), family, null),
+        // PRDCT-4485: the launcher's choices, for clave_launch_options and the open.
+        launch: agentLaunchFacts,
+        executeSecret: async (action, value) => {
+          const outcome = await executeSecretAction(
+            action,
+            value,
+            action.type === 'run' ? { shell: getUserShell(), env: getLoginShellEnv() } : undefined
+          )
+          if (!outcome.ok) throw new Error('Secret action failed.')
+        }
+      })
+    : undefined
+  if (mcp) agentTools.announce(mcp.url)
+  // The scheduler arms once the server listens and the agent tools have an
+  // address: a run it starts must reach `clave_routine_report`.
+  void routines.start().catch((error) => {
+    process.stderr.write(`clave-server: the routines did not start: ${(error as Error).message}\n`)
   })
 
   // A session's title, plan, clear and state go out as server events to
@@ -132,26 +608,69 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // A tab that runs in a terminal says its state through its lifecycle hooks,
+  // which write under this server's own data folder: they are read here
+  // (PRDCT-4472). Until now only the desktop app read its own folder, so on a
+  // server running on its own such a tab never said a turn had ended, to the
+  // clients (ADR 0003, wave 5, named there as a gap) or to the artefact
+  // service, which saves a version at that moment. A chat's state comes from
+  // its stream and is left alone by the watch.
+  startAgentStateWatching(() => undefined)
+  // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
+  // this in its IPC handlers, which a daemon never registers, so until now a
+  // server's limit reached no client and its chat drew "server ended".
+  const stopLimits = ptyManager.onLimitReported((id, report) => sessionLimitReported(id, report))
+  // The account served a turn again (PRDCT-4415): the clients close the report.
+  const stopCleared = ptyManager.onLimitCleared((id) => sessionLimitCleared(id))
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(
-    tmp,
-    JSON.stringify(
-      { url: server.url, token: server.token, mode: 'standalone', ok: true, pid: process.pid },
-      null,
-      2
-    ),
-    { encoding: 'utf-8', mode: 0o600 }
-  )
-  fs.renameSync(tmp, file)
-  fs.chmodSync(file, 0o600)
+  // What the file says of the terminal process is read by the harness and
+  // the process starter's tests; it carries no token of the process's.
+  writeDiscovery = (): void => {
+    const tmp = `${file}.tmp`
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify(
+        {
+          url: server.url,
+          token: server.token,
+          serverId: server.serverId,
+          ...(mcp && { agentToolsUrl: mcp.url }),
+          daemon: config.daemon,
+          mode: 'standalone',
+          ok: true,
+          pid: process.pid,
+          terminals: terminalState?.address ?? terminalsAddress ?? null,
+          terminalProcessPid: terminalState?.pid ?? null,
+          terminalProcessGeneration: terminalState?.generation ?? null,
+          terminalProcessGivenUp: terminalState?.givenUp ?? null
+        },
+        null,
+        2
+      ),
+      { encoding: 'utf-8', mode: 0o600 }
+    )
+    fs.renameSync(tmp, file)
+    fs.chmodSync(file, 0o600)
+  }
+  writeDiscovery()
 
-  process.stdout.write(JSON.stringify({ url: server.url, token: server.token }) + '\n')
+  process.stdout.write(
+    JSON.stringify(
+      config.daemon
+        ? { url: server.url, serverId: server.serverId }
+        : { url: server.url, token: server.token }
+    ) + '\n'
+  )
   process.stderr.write(
     `clave-server: listening on ${server.url} (data in ${dataDir}` +
-      (terminalsAddress === undefined ? '' : `, terminals at ${terminalsAddress}`) +
+      (terminalState
+        ? `, terminal process ${terminalState.pid} at ${terminalState.address}`
+        : terminalsAddress === undefined
+          ? ''
+          : `, terminals at ${terminalsAddress}`) +
+      (parent === null ? '' : `, parent ${parent}`) +
       ')\n'
   )
 
@@ -168,12 +687,26 @@ async function main(): Promise<void> {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    writeDiscovery = (): void => {}
     process.stderr.write(`clave-server: ${signal}, stopping\n`)
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
     standalone.shutdown()
+    requestHost.close()
+    requests.close()
+    owned?.close()
+    selfUpgrade?.close()
     stopStates()
+    stopAgentStateWatching()
+    stopLimits()
+    stopCleared()
     setServerEventPublisher(null)
+    // ── Wave 5, lane C: the plugin processes go with the server ──
+    plugins.close()
+    // ── ADR 0004: the scheduler's tick and viewer go with the server; the runs die with their sessions ──
+    void routines.close()
+    // ── PRDCT-4472: the previews go before the sessions (the preview host ends them anyway on any exit) ──
+    void artefacts.stop()
     // The sessions go with the server, as they go with the app at its quit
     // (`index.ts`): a chat's CLI is a detached child of this process and
     // would outlive it; a terminal's tmux session is left for the next
@@ -188,6 +721,7 @@ async function main(): Promise<void> {
       /* nothing to remove */
     }
     stopping_sessions
+      .then(() => mcp?.close())
       .then(() => server.stop())
       .then(() => closeTerminals())
       .then(
@@ -197,6 +731,22 @@ async function main(): Promise<void> {
   }
   process.on('SIGTERM', () => stop('SIGTERM'))
   process.on('SIGINT', () => stop('SIGINT'))
+
+  // The parent's end stops this server, the way it stops the terminal
+  // process (`terminal-process/main.ts`): an app that died without a word
+  // leaves no server behind, and no terminal process either, since that one
+  // polls this server.
+  if (parent !== null) {
+    const watch = setInterval(() => {
+      try {
+        process.kill(parent, 0)
+      } catch {
+        clearInterval(watch)
+        stop(`parent ${parent} is gone`)
+      }
+    }, PARENT_POLL_MS)
+    watch.unref()
+  }
 }
 
 main().catch((err) => {

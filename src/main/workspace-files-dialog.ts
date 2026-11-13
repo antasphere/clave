@@ -8,11 +8,14 @@
 import * as path from 'path'
 
 export interface ReviewDisclosure {
+  readonly server?: string
   readonly path: string
   readonly folder: string
   readonly autoCommands: ReadonlyArray<string>
   readonly prompts: ReadonlyArray<string>
   readonly dangerous: boolean
+  /** The routines the file would schedule (ADR 0004), by name; absent from an older server. */
+  readonly routines?: ReadonlyArray<string>
 }
 
 export interface ReviewDialogText {
@@ -39,6 +42,13 @@ export function reviewDialogText(review: ReviewDisclosure): ReviewDialogText {
       })
     )
   }
+  if (review.routines && review.routines.length > 0) {
+    if (detailLines.length > 0) detailLines.push('')
+    detailLines.push(
+      `${review.routines.length} routine${review.routines.length === 1 ? '' : 's'} would run on a schedule, with nobody at the keyboard:`
+    )
+    detailLines.push(...review.routines.map((name) => `  • ${name}`))
+  }
   if (review.dangerous) {
     detailLines.push('')
     detailLines.push(
@@ -47,11 +57,11 @@ export function reviewDialogText(review: ReviewDisclosure): ReviewDialogText {
   }
   return {
     title: 'Review workspace file',
-    message: `“${path.basename(review.path)}” wants to run content automatically.`,
+    message: `“${path.basename(review.path)}”${review.server ? ` on “${review.server}”` : ''} wants to run content automatically.`,
     detail:
       detailLines.join('\n') +
       '\n\nOnly trust this file if you recognise and understand what it would run.',
     buttons: ['Open safely', 'Trust and run', 'Cancel'],
-    checkboxLabel: `Trust all workspace files in “${path.basename(review.folder)}”`
+    checkboxLabel: `Trust all workspace files in “${path.basename(review.folder)}”${review.server ? ` on “${review.server}”` : ''}`
   }
 }

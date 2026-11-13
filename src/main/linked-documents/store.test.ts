@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { LinkedDocumentStore } from './store'
 import { emailSchema } from '../../shared/linked-documents'
 import { importSignature, validateEmailHtml } from './email'
+import { SIDE_PANEL_HTML_REFUSAL } from '../mcp/artefact-tool'
 const dirs: string[] = []
 function fixture(): { root: string; store: LinkedDocumentStore } {
   const root = mkdtempSync(join(tmpdir(), 'clave-linked-'))
@@ -243,4 +244,214 @@ it('rejects contradictory signature choices without mutating draft or preference
   ).rejects.toThrow('Choose signatureMode or signaturePath')
   expect(store.get(draft.id)).toEqual(draft)
   expect(store.getDefaultSignature()).toBeNull()
+})
+
+describe('the side panel follows its file (PRDCT-4261)', () => {
+  it('reloads on the watcher only when the file differs from what the panel holds', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    // Nothing changed: no new revision, nothing re-read.
+    const same = await store.update(doc.id, doc.revision, { reloadExternal: true, ifChanged: true })
+    expect(same.revision).toBe(doc.revision)
+    // The panel's own save writes the file: the watcher that follows is a no-op.
+    const saved = await store.update(doc.id, doc.revision, { content: '# mine' })
+    const after = await store.update(saved.id, saved.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    expect(after.revision).toBe(saved.revision)
+    expect(after.content).toBe('# mine')
+    // An agent rewrites it: the watcher reloads it.
+    writeFileSync(path, '# agent')
+    const reloaded = await store.update(after.id, after.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    expect(reloaded.revision).toBe(after.revision + 1)
+    expect(reloaded.content).toBe('# agent')
+  })
+
+  it('never reloads over a conflict the person has to resolve', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, '# outside')
+    const conflicted = await store.update(doc.id, doc.revision, { content: '# my edit' })
+    expect(conflicted.conflict).toBeTruthy()
+    writeFileSync(path, '# outside again')
+    const kept = await store.update(conflicted.id, conflicted.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    expect(kept.content).toBe('# my edit')
+    expect(kept.conflict).toBeTruthy()
+  })
+
+  it('opening the same file again shows what is on disk now', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
+    const first = await store.open('s1', { path })
+    await store.update(first.id, first.revision, { hidden: true })
+    writeFileSync(path, '# two')
+    const again = await store.open('s1', { path })
+    expect(again.id).toBe(first.id)
+    expect(again.hidden).toBe(false)
+    expect(again.content).toBe('# two')
+    expect(again.revision).toBe(first.revision + 1)
+    // Unchanged on disk: the same revision, only shown again.
+    const third = await store.open('s1', { path })
+    expect(third.revision).toBe(again.revision)
+  })
+
+  it('never opens an HTML page or a folder: that is the session’s artefact (PRDCT-4474)', async () => {
+    const { root, store } = fixture()
+    const folder = join(root, 'brief')
+    mkdirSync(folder)
+    writeFileSync(join(folder, 'index.html'), '<h1>brief</h1>')
+    writeFileSync(join(root, 'page.HTM'), '<h1>page</h1>')
+    for (const path of [folder, join(folder, 'index.html'), join(root, 'page.HTM')])
+      await expect(store.open('s1', { path })).rejects.toThrow(SIDE_PANEL_HTML_REFUSAL)
+    expect(store.list()).toEqual([])
+  })
+
+  it('still opens Markdown and email', async () => {
+    const { root, store } = fixture()
+    writeFileSync(join(root, 'notes.markdown'), '# notes')
+    expect((await store.open('s1', { path: join(root, 'notes.markdown') })).kind).toBe('markdown')
+    expect((await store.open('s2', { email: email() })).kind).toBe('email')
+    expect(
+      store
+        .list()
+        .map((d) => d.kind)
+        .sort()
+    ).toEqual(['email', 'markdown'])
+  })
+
+  it('drops a stored HTML document at load, and leaves its page on disk alone', async () => {
+    const { root, store } = fixture()
+    writeFileSync(join(root, 'notes.md'), '# kept')
+    const kept = await store.open('s1', { path: join(root, 'notes.md') })
+    const page = join(root, 'old.html')
+    writeFileSync(page, '<h1>old</h1>')
+    // A record an earlier build wrote for an HTML page, beside the Markdown one.
+    const id = '00000000-0000-4000-8000-000000000001'
+    const record = { ...kept, id, sessionId: 's2', kind: 'html', path: page, root: root }
+    writeFileSync(join(root, 'store', id + '.json'), JSON.stringify(record))
+    const index = JSON.parse(readFileSync(join(root, 'store', 'index.json'), 'utf8'))
+    writeFileSync(join(root, 'store', 'index.json'), JSON.stringify({ ...index, s2: id }))
+    const reopened = new LinkedDocumentStore(join(root, 'store'))
+    expect(reopened.list().map((d) => d.id)).toEqual([kept.id])
+    expect(existsSync(join(root, 'store', id + '.json'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(root, 'store', 'index.json'), 'utf8'))).toEqual({
+      s1: kept.id
+    })
+    expect(readFileSync(page, 'utf8')).toBe('<h1>old</h1>')
+  })
+})
+
+describe('round 1 of the review (PRDCT-4261, PRDCT-4262)', () => {
+  it('a file gone on the watcher’s call is not an error: the panel keeps what it holds, and follows it back', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    rmSync(path)
+    const kept = await store.update(doc.id, doc.revision, { reloadExternal: true, ifChanged: true })
+    expect(kept.revision).toBe(doc.revision)
+    expect(kept.content).toBe('# one')
+    expect(kept.conflict).toBeUndefined()
+    writeFileSync(path, '# back')
+    const back = await store.update(kept.id, kept.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    expect(back.content).toBe('# back')
+  })
+
+  it('opening the same file again never reloads over a conflict', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, '# outside')
+    const conflicted = await store.update(doc.id, doc.revision, { content: '# my edit' })
+    expect(conflicted.conflict).toBeTruthy()
+    const again = await store.open('s1', { path })
+    expect(again.content).toBe('# my edit')
+    expect(again.conflict).toBeTruthy()
+  })
+})
+
+describe('round 2 of the review: a save typed before a reload landed', () => {
+  it('is kept as a conflict, never written over the file the panel reloaded', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, '# one')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, '# the agent rewrote it')
+    const reloaded = await store.update(doc.id, doc.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    const saved = await store.update(reloaded.id, reloaded.revision, {
+      content: '# one, and my key',
+      stale: true
+    })
+    expect(readFileSync(path, 'utf8')).toBe('# the agent rewrote it')
+    expect(saved.content).toBe('# one, and my key')
+    expect(saved.conflict).toMatch(/changed on disk while you typed/)
+  })
+})
+
+describe('round 3 of the review: a conflict ends only when the file is loaded', () => {
+  it('keeps the agent’s file through every keystroke after a stale save, until the person loads it', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, 'first words')
+    const doc = await store.open('s1', { path })
+    writeFileSync(path, 'the agent rewrote it')
+    const reloaded = await store.update(doc.id, doc.revision, {
+      reloadExternal: true,
+      ifChanged: true
+    })
+    const stale = await store.update(reloaded.id, reloaded.revision, {
+      content: 'Wfirst words',
+      stale: true
+    })
+    expect(stale.conflict).toBeTruthy()
+    const next = await store.update(stale.id, stale.revision, { content: 'WXfirst words' })
+    expect(readFileSync(path, 'utf8')).toBe('the agent rewrote it')
+    expect(next.conflict).toBeTruthy()
+    expect(next.content).toBe('WXfirst words')
+    const loaded = await store.update(next.id, next.revision, { reloadExternal: true })
+    expect(loaded.conflict).toBeUndefined()
+    expect(loaded.content).toBe('the agent rewrote it')
+    const after = await store.update(loaded.id, loaded.revision, {
+      content: 'the agent rewrote it!'
+    })
+    expect(readFileSync(path, 'utf8')).toBe('the agent rewrote it!')
+    expect(after.conflict).toBeUndefined()
+  })
+})
+
+describe('round 4 of the review: a conflict from a passing write error still heals', () => {
+  it('writes again once the cause is gone, while a stale conflict keeps blocking', async () => {
+    const { root, store } = fixture()
+    const path = join(root, 'notes.md')
+    writeFileSync(path, 'one')
+    const doc = await store.open('s1', { path })
+    // An outside writer changes the file, then puts it back: the conflict
+    // its change raised heals on the next keystroke, as it always did.
+    writeFileSync(path, 'someone else')
+    const conflicted = await store.update(doc.id, doc.revision, { content: 'one!' })
+    expect(conflicted.conflict).toBeTruthy()
+    writeFileSync(path, 'one')
+    const healed = await store.update(conflicted.id, conflicted.revision, { content: 'one!!' })
+    expect(healed.conflict).toBeUndefined()
+    expect(readFileSync(path, 'utf8')).toBe('one!!')
+  })
 })

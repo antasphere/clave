@@ -1,8 +1,9 @@
 # Chat view
 
-Two bundled first-party native views for the public `events` transport, chosen
-per session from the pane header: `chat` (this file's subject) and `terminal`
-(`src/TerminalView.tsx`, started as a copy of chat and diverging on purpose). Each
+Three bundled first-party native views for the public `events` transport, chosen
+per session from the pane header: `chat` (this file's subject), `terminal`
+(`src/TerminalView.tsx`, started as a copy of chat and diverging on purpose) and
+`lab`, the experimental one ("Folio", below). Each
 keeps its own reducer and subscription. A third view, `compact` (one line per
 turn), was removed in 2.2: nobody used it. A session that still names it falls
 back to the first view the plugin contributes, which is chat.
@@ -56,6 +57,52 @@ A later `blocked` clears the mark: something is awaited again, and no adapter
 tells the view which request, so the cards it closed on the kernel's word come
 back rather than one of them staying unanswerable for the session's life. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
+
+The WORK RUNNING NOW — the subagents, and the commands left running in the
+background — is a strip of cards under the composer of both views
+(`src/WorkCards.tsx`): one card each, with a drawing of what it is
+(`src/WorkDrawing.tsx`, in the hand of the drop card's drawings, breathing
+while the work goes on), the type and the task or the command's title, and
+the figures (steps, the agent's own context, how long it has run, or how long
+it has been quiet). The cards are the one place that says it: the pane
+header's "in background" chip and the Terminal view's status-line count are
+gone (6 November 2026). Clicking a card opens a window onto its work: an
+agent's (`src/SubAgentPeek.tsx`) shows what it was asked, what it says and
+what it does, as it happens, rendered with the transcript's own rows
+(`src/TerminalEntry.tsx`, the rows moved out of the view for that); a
+command's (`src/ShellPeek.tsx`) shows its full command line and what it has
+written so far, read again every second from the file Claude names for a
+background command (Codex names none; its output lands in the transcript at
+completion). Both are views only, with no field and no button that answers
+anything; the agent reports to the conversation when it is done. An agent's
+log is reduced off the same stream by `src/subagents.ts`: every
+message, text, call and result an adapter stamps with a `parent` (Claude the
+call that started the agent, Codex its thread) goes to that agent's own
+conversation, keyed as the row is (`SubAgent.id`), through the transcript's
+reducer; `reduceConversation` drops a parented event, so an agent's hundred
+calls no longer count into the run the conversation is on, as they did until
+6 November 2026. A page of the past folds in as it arrives; Claude's own
+transcript replay carries nothing of a subagent (sidechains are skipped), so a
+resumed session's finished agents have no log.
+
+The agent's WORKING NOTES — the short lines it writes between its tool runs on
+the way to an answer — fold into ONE CARD once the turn is over (`src/stretches.ts`
+decides, `src/WorkStretch.tsx` draws, PRDCT-4212). The rule reads the turn's
+SHAPE and never its words (the 5 November lesson above): a note is an assistant
+line followed by work in the same turn; a tool run and a permission the agent
+asked for a tool (allowed, refused, left by a stop) are work and fold; a question
+the agent asked, a form and an error are boundaries that stay in the transcript,
+the notes on each side folding into their own cards; the last words of the turn
+never fold; nothing folds while the conversation works or waits; three notes at
+least. The card's face carries the counts and a title read by a one-shot Haiku
+call (`src/shared/work-digest.ts`, run and filed by `src/main/exchange-digest.ts`
+beside the exchange digests, asked for the conversation's latest cards only); a
+note the read flags as needing the reader is shown verbatim on the face, in
+accent, and its step is marked inside. The read may only RAISE visibility, never
+hide. Open, the card is a rail of steps drawn with the view's own rows. The
+preference (`foldWorkNotes`, Settings → Appearance → Conversation, and the
+toolbar button) is the host's; off, the transcript reads as before.
+`tests/e2e/chat-work-stretch.spec.mjs` holds it on the real app, in both views.
 
 A RUN of tool calls — everything between two messages — is one row saying what
 the agent did, counted by kind ("Read 3 files · Ran 1 command"), with a loader
@@ -112,16 +159,133 @@ mounted per session since PRDCT-2610, and an unscoped `.chat-view` killed the se
 half of the script for a whole wave without anyone noticing.
 Screenshot bytes are temporary and no baselines are committed.
 
-## Files on a message
+## Files and sessions on a message
+
+A drag over the pane brings up the drop card: a veil, one paper card, and a
+drawing in the hand of the products' figures (`src/DropDrawing.tsx`, the
+`.chat-drawing` rules in `system.css`: ink at low opacity, boxes filled with
+paper, the ringed dot where the thing lands, the accent on the ONE line it
+travels along, drawn once as the card comes up; words under the drawing, never
+in it). The chips' glyphs are in the same hand, and each chip wears its label
+as a tag. `tests/e2e/look/chat-attachments.spec.mjs` screenshots all of it in
+two themes, for eyes rather than as a check.
 
 A file dropped anywhere on the pane, pasted into the composer, or picked with
 the paperclip becomes a chip above the textarea (`src/Attachments.tsx`): it can
 be previewed, removed, or — when it is an image the adapter cannot take as image
-content — sent as a file reference instead, on the reader's say-so. Chips are
-attachment records from `sessions:files`; the bytes are read by main when the
-message is sent (`src/main/sessions/README.md`, "Attachments"). A sent turn
-shows the same chips as its record. The paths Clave's own file and git panels
-drag as text still land at the caret, since a dragged folder is a path to talk
-about, not a file to attach. `tests/e2e/chat-attachments.spec.mjs` drives all
-of it through the real write IPC and reads the provider's side off the echo
-adapter's reply.
+content — sent as a file reference instead, on the reader's say-so. An image in
+a format no provider takes (HEIC, SVG, AVIF) is a file reference from the
+start: the agent gets its path. Chips are attachment records from
+`sessions:files`; the bytes are read by main when the message is sent
+(`src/main/sessions/README.md`, "Attachments"). A sent turn shows the same
+chips as its record.
+
+A folder is a record of its own: main tells it from a file, and the chip
+names it with its top-level item count (`Folder · 12 items`), its path on
+hover, its listing in the preview, and the marker `[Folder #1]` in the text;
+the provider gets its path under that marker, to list. Every chip says what
+its record is, from the media type its name says (`@clave/contract/attachments`,
+the one table for the Mac, a server and the chips): Image, Video, Audio, PDF,
+Document, Sheet, Slides, Text, Code, Archive, Folder or File, each with a
+glyph in the drop card's hand, and the one figure that matters, its size or
+its item count. The label stays what the record IS to the agent (`Image`,
+`File`, `Folder`, `Session`): a video is a File, a path to read. The paths
+Clave's own file and git panels drag as text land at the caret, the way the
+TUI pastes them. A drop never fails: whatever main refuses that arrived as a
+path — a named pipe, a socket, a file it cannot read — lands in the text as
+that path with the reason reported beside it, and only bytes with no path (a
+pasted image too large) keep the error on their chip.
+
+A sidebar tab dragged onto the pane is a SESSION attachment: the tab's id, name,
+agent and folder, delivered to the agent as a line it can act on with
+`clave_read_session` and `clave_send_to_session` ("finish when these three
+lanes are done"). The sidebar's drag is pointer-based, so the pane does not
+listen for `drop`: it marks its root through `lib/session-drag.ts` and the drag
+hook (`hooks/use-sidebar-dnd.ts`) dispatches enter, leave and drop events on
+it; a group dropped hands over every session it holds.
+
+Every record is labelled as it arrives — `Image #1`, `File #2`, `Session #1`,
+numbered per kind by what the record IS to the agent (a HEIC is a File) — and
+written into the text at the caret as a marker, `[Image #1]`. The chip and the
+marker are one thing: removing the chip takes the marker out of the text, and
+editing the marker out of the text (`[Session #1]` to `[Session #1`) removes
+the chip. Main appends a legend keyed by the markers for the provider. The cap
+is ten attachments per message, files and sessions together. The composer's
+side of all this is `src/composer-attachments.ts`, shared by the chat and
+terminal views; the pure label and marker helpers are in
+`src/shared/attachments.ts`. `tests/e2e/chat-attachments.spec.mjs` drives all
+of it through the real write IPC, the desktop's own drop through the devtools
+protocol (`Input.dispatchDragEvent`, real File objects with their entries) and
+the sidebar's real pointer drag included, and
+reads the provider's side off the echo adapter's reply.
+
+## Folio, the experimental view (`lab`)
+
+`clave.chat-view/lab`, titled Folio (`src/lab/`, its name and one-line pitch in
+`src/lab/meta.ts`, which the first-run onboarding reads). The conversation is a
+book of pages, one per question: the page's title is the reader's message, its
+first sentence (`headline`) at once, then the title a helper wrote for it,
+rewritten in place over the first sentence (`PageTitle.tsx`, `reveal.ts`; a
+title already filed is just shown, and the whole message then sits under it),
+and the agent's answer is written on the page as a
+document, and what the agent did on the way (calls, approvals) sits in the
+margin beside the paragraph it led to; a call in the margin opens to the
+transcript's own `ToolPanel`. A message sent before any answer joins the
+question it follows. The spine at the top has one tick per page, its height the
+length of the answer; the arrows (or Option and the arrows from an empty
+composer), the ticks and the contents turn pages, and the page being written is
+followed until the reader turns away, with a way back while they are elsewhere.
+A finished page can be read aloud: the reading first asks for the page's spoken
+rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
+markdown, no code read out, the lists said as sentences, filed so a page read
+before is spoken at once), and speaks it; when none comes, it reads the page as
+written (`speech.ts` takes the markdown out and cuts the utterances) and the
+voice card says why. The speaker toggle in the composer's footer reads each new
+answer as it finishes.
+
+The VOICE CARD (`src/lab/VoiceCard.tsx`, its words in `voice-card.ts`,
+PRDCT-4430) is the one place a person reads and drives the reading: in the
+page's margin at its head, above the tool notes, on every finished page. Idle,
+it says which voice will read before a click: a tab on this Mac reads this
+Mac's ElevenLabs status once per page view (`loadIntegrations`, a local read),
+"Ada · ElevenLabs on this Mac" or "The Mac's voice" with why under it ("No
+ElevenLabs on this server", "No voice chosen on this server"); a server tab
+says what its last reading heard, else "The server's voice, if it has one".
+"Ready" when the spoken version is already filed, "Reads new answers" when the
+composer's toggle is on. Then each step, named and timed, with Cancel:
+"Rewriting for the voice" (step 1 of 2, the spoken rendering), "Creating the
+voice with Ada" (step 2 of 2, the first part asked of ElevenLabs; skipped when
+this Mac's status already says it has none). Then the player: Play/Pause,
+Stop, "Block 3 of 8", the bar, the voice and the time. When the Mac's voice
+reads, one line in the accent of a note says why ("Reading with the Mac's
+voice: the ElevenLabs credits are spent"), never an error. Read to its end,
+the card offers "Listen again". The figure is the Integrations card's drawing
+at the margin's size and says the step: the pen over the line being read, the
+wave drawing itself, the wave breathing while it plays; still under reduced
+motion. The card carries `data-voice-state` (idle, rewriting, creating,
+playing, paused) and each step `data-step`, for the specs. The page's foot
+keeps only Copy the answer and the steps count.
+
+The reading is a player, by block (PRDCT-4430). One split, `splitBlocks` in
+`src/shared/spoken-rendering.ts`, cuts an answer into its top-level blocks (a
+paragraph, a heading, a list, a table, a fence, a quote); the page renders
+each block on its own (`data-block`, numbered across the page's prose), and
+the spoken rendering is asked on those same blocks, numbered, and answered
+block by block (a reply whose numbers do not match is asked again, then the
+page is read as written, by the same blocks). The voice speaks one part per
+block (`audio.ts`, a long block in several parts), so the block being read is
+known and washed in the accent, brought into view unless the reader scrolled
+in the last three seconds. The card's control plays and pauses (the
+ElevenLabs element and the system voice alike), Stop ends the reading, a click
+on a block reads from it, and the card's bar has one tick per block, a click
+or a drag (or the arrows) going to a block, with the time once known
+(`progress.ts`). A rendering filed before the blocks plays whole, nothing lit.
+
+It keeps the same reducer, subscription order and composer as the Chat view
+(`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,
+menus and work cards are the shared components) and renders only the page on
+screen, so the copy mounted hidden behind another view costs a reducer and no
+rows. Its stylesheet is its own (`src/lab/folio.css`, imported by the view).
+Pages and speech are pure and tested (`src/lab/*.test.ts`). Not yet: the slash
+menu and the host's /resume, /mcp and /plugin panels (a typed command goes to
+the agent as text), and the pane's Find, which searches no page here.

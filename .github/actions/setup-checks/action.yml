@@ -1,0 +1,30 @@
+name: Linux check dependencies
+description: Restore an exact dependency tree or perform the normal clean install
+runs:
+  using: composite
+  steps:
+    # No prefix fallback: native modules and npm's workspace links must match
+    # this OS, Node major, lockfile, manifests and install script exactly.
+    - uses: actions/cache@v4
+      id: dependencies
+      with:
+        path: |
+          node_modules
+          packages/*/node_modules
+        key: linux-checks-v1-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json', '**/package.json', 'scripts/postinstall.cjs', 'electron-builder.yml', '.npmrc', '.github/actions/setup-checks/action.yml') }}
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        # The npm download cache is only needed for a clean install. Avoid
+        # restoring another 300 MB on top of an already installed tree.
+        cache: ${{ steps.dependencies.outputs.cache-hit != 'true' && 'npm' || '' }}
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: '1.4.1'
+    - name: Install dependencies
+      if: steps.dependencies.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci --prefer-offline --no-audit --no-fund
+    - name: Download the Electron binary
+      shell: bash
+      run: npx --no-install install-electron

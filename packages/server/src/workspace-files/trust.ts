@@ -26,12 +26,22 @@ export function describeElevated(result: ClaveFileReadResult): {
   autoCommands: string[]
   prompts: string[]
   dangerous: boolean
+  /** The routines the file would schedule (ADR 0004), by name: each one
+   *  acts with nobody at the keyboard, so the file is elevated by their
+   *  presence alone, and their prompts are listed with the others. */
+  routines: string[]
 } {
   const groups = result.type === 'multi' ? result.groups : [result]
   const autoCommands: string[] = []
   const prompts: string[] = []
+  const routines: string[] = []
   let dangerous = false
   for (const g of groups) {
+    for (const r of g.routines ?? []) {
+      routines.push(r.name)
+      if (r.prompt.trim()) prompts.push(`routine ${r.name}: ${r.prompt}`)
+      if (r.dangerousMode) dangerous = true
+    }
     for (const t of g.terminals) {
       if (t.commandMode === 'auto' && t.command.trim()) autoCommands.push(t.command)
     }
@@ -43,19 +53,22 @@ export function describeElevated(result: ClaveFileReadResult): {
       if (s.prompt && s.prompt.trim()) prompts.push(s.prompt)
     }
   }
-  return { autoCommands, prompts, dangerous }
+  return { autoCommands, prompts, dangerous, routines }
 }
 
 /** Strip elevated behavior: downgrade auto to prefill, disable dangerousMode,
  *  drop auto-submitted prompts (an untrusted file must not drive the agent),
  *  and drop both view declarations, `groupView` and the group's own `view`,
  *  since each renders a page inside Clave on the first group click, which an
- *  untrusted file must not arrange; the terminal itself stays. */
+ *  untrusted file must not arrange; the terminal itself stays. The routines
+ *  (ADR 0004) go whole: an untrusted file may not schedule anything, and a
+ *  routine listed but never run would read as a bug. */
 export function sanitizeElevated(result: ClaveFileReadResult): ClaveFileReadResult {
   const sanitizeGroup = (g: ClaveGroup): ClaveGroup => ({
     ...g,
     prompt: undefined,
     view: undefined,
+    routines: undefined,
     sessions: g.sessions.map((s) => ({ ...s, dangerousMode: false, prompt: undefined })),
     terminals: g.terminals.map((t) => ({
       ...t,

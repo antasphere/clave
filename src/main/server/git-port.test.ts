@@ -1,0 +1,325 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+// The manager reaches into pty-manager for the login shell's env, which pulls
+// in node-pty — a native module built for Electron's ABI, not this runner's.
+// The env it answers is the test's: PATH names a folder holding the `claude`
+// of the case (one that writes, one that refuses, none at all).
+const mocks = vi.hoisted(() => ({
+  env: { ...process.env } as Record<string, string>,
+  shell: '/bin/sh',
+  /** The default launch profile's command: the git helpers start on it. */
+  command: ['claude']
+}))
+vi.mock('../pty-manager', () => ({ getLoginShellEnv: () => mocks.env }))
+// The commit message and the push summary run on the helpers runner
+// (PRDCT-4326), which reads the login env from the PTY backend and, for a
+// command the PATH cannot place, starts the user's login shell. Both are the
+// test's: a login shell would put the machine's own `claude` back on the PATH
+// and the "none" case would call a real model.
+vi.mock('../launch-profile-manager', () => ({
+  launchProfileManager: {
+    resolveClaudeCli: () => ({
+      id: 'default',
+      name: 'Default',
+      family: 'claude',
+      command: mocks.command,
+      additionalArgs: []
+    })
+  }
+}))
+vi.mock('../sessions/adapters/pty-backend', () => ({
+  getLoginShellEnv: () => mocks.env,
+  getUserShell: () => mocks.shell,
+  accountTokenForSpawn: async () => undefined
+}))
+
+import { describeClaudeFailure, serverGitPort, type ServerGitPort } from './git-port'
+import { startEmbedded } from '@clave/server'
+import { FakeSource } from '@clave/server/test-support'
+import type { GitEvent } from '@clave/server'
+
+/**
+ * The daemon's git port over real repositories (wave wcs1023, lane C, #242):
+ * the app's own implementation answers for a checkout on this disk, a change
+ * on the disk is told as `git.repos_changed`, a batch reports its progress,
+ * and a commit message is written by THIS machine's `claude` — or the error
+ * names the server's missing Claude login in one sentence.
+ */
+const git = (cwd: string, ...args: string[]): string =>
+  execFileSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  })
+
+// The temp dir resolved through its symlinks (`/private/tmp` on macOS, where
+// `/tmp` is a link): git names a repo root resolved, and a root that disagrees
+// with the asked path makes every reading look nested. The CI runner's temp
+// dir is wherever the platform puts it.
+const SCRATCH = path.join(realpathSync(tmpdir()), 'clave-wcs-c-unit')
+let root: string
+let repo: string
+let bins: { writing: string; refusing: string; none: string }
+let port: ServerGitPort
+const events: GitEvent[] = []
+
+const stub = (dir: string, body: string): void => {
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, 'claude')
+  writeFileSync(file, `#!/bin/sh\n${body}\n`)
+  chmodSync(file, 0o755)
+}
+const withClaude = (dir: string): void => {
+  mocks.env = { ...process.env, PATH: dir }
+}
+// Ten seconds: a native watch event under a load average above 100 has taken
+// more than four, and an event arriving after a shorter wait leaks into the
+// next test's silence check.
+const until = async (check: () => boolean, ms = 10_000): Promise<boolean> => {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (check()) return true
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return check()
+}
+
+beforeAll(() => {
+  mkdirSync(SCRATCH, { recursive: true })
+  root = mkdtempSync(path.join(SCRATCH, 'port-'))
+  repo = path.join(root, 'repo')
+  mkdirSync(repo)
+  git(repo, 'init', '-q', '-b', 'main')
+  git(repo, 'config', 'user.email', 'test@example.com')
+  git(repo, 'config', 'user.name', 'Test')
+  writeFileSync(path.join(repo, 'README.md'), '# repo\n')
+  git(repo, 'add', '.')
+  git(repo, 'commit', '-qm', 'init')
+  bins = {
+    writing: path.join(root, 'bin-writing'),
+    refusing: path.join(root, 'bin-refusing'),
+    none: path.join(root, 'bin-none')
+  }
+  stub(bins.writing, '/bin/cat >/dev/null; echo "feat: written by the server"')
+  stub(bins.refusing, '/bin/cat >/dev/null; echo "Not logged in · Please run /login" >&2; exit 1')
+  mkdirSync(bins.none, { recursive: true })
+  // A `sh` that drops the login flag: `-l -c <command>` runs as `-c <command>`.
+  const shellDir = path.join(root, 'bin-shell')
+  mkdirSync(shellDir, { recursive: true })
+  mocks.shell = path.join(shellDir, 'sh')
+  writeFileSync(mocks.shell, '#!/bin/sh\nshift\nshift\nexec /bin/sh -c "$1"\n')
+  chmodSync(mocks.shell, 0o755)
+  port = serverGitPort({ debounceMs: 50, maxWaitMs: 200, log: () => {} })
+  port.subscribe((event) => events.push(event))
+})
+afterAll(() => {
+  port?.dispose()
+  if (root) rmSync(root, { recursive: true, force: true })
+})
+
+describe('the daemon’s git port over a real checkout', () => {
+  it('reads, stages and commits on this disk, and the log says so', async () => {
+    writeFileSync(path.join(repo, 'a.txt'), 'one\n')
+    const before = await port.status(repo)
+    expect(before.isRepo).toBe(true)
+    expect(before.repoRoot).toBe(repo)
+    expect(before.files).toEqual([{ path: 'a.txt', status: 'untracked', staged: false }])
+    await port.stage(repo, ['a.txt'])
+    expect((await port.status(repo)).files).toEqual([
+      { path: 'a.txt', status: 'staged', staged: true }
+    ])
+    const commit = await port.commit(repo, 'feat: a')
+    expect(commit.branch).toBe('main')
+    expect(git(repo, 'log', '-1', '--format=%s').trim()).toBe('feat: a')
+    expect((await port.log(repo, 1))[0]).toMatchObject({ message: 'feat: a', hash: commit.hash })
+    expect((await port.statusBatch([repo]))[0]).toMatchObject({ path: repo })
+  })
+
+  it('reads the origin remote as the checkout keeps it, null without one (PRDCT-4151)', async () => {
+    // Its own folder, so the discovery test beside it still finds one repository.
+    const elsewhere = mkdtempSync(path.join(SCRATCH, 'remote-'))
+    try {
+      const clone = path.join(elsewhere, 'clone')
+      git(elsewhere, 'clone', '-q', repo, clone)
+      expect(await port.remote(clone)).toEqual({ url: repo })
+      git(clone, 'remote', 'set-url', 'origin', 'git@example.test:acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'git@example.test:acme/repo.git' })
+      git(clone, 'remote', 'set-url', 'origin', 'https://me:s3cret@example.test/acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'https://example.test/acme/repo.git' })
+      git(clone, 'remote', 'set-url', 'origin', 'https://me:p@ss@example.test/acme/repo.git')
+      expect(await port.remote(clone)).toEqual({ url: 'https://example.test/acme/repo.git' })
+      expect(await port.remote(repo)).toEqual({ url: null })
+      expect(await port.remote(elsewhere)).toEqual({ url: null })
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true })
+    }
+  })
+
+  it('finds the repository under its parent folder', async () => {
+    const found = await port.discover(root, true)
+    expect(found.repos.map((r) => r.path)).toEqual([repo])
+  })
+
+  it('tells a change on the disk as git.repos_changed for a repository a Mac’s map names', async () => {
+    expect(await port.syncWatches('mac-1', 1, [{ id: 'git-status-1', paths: [repo] }])).toEqual([
+      { id: 'git-status-1', paths: [repo] }
+    ])
+    events.length = 0
+    writeFileSync(path.join(repo, 'b.txt'), 'two\n')
+    expect(
+      await until(() =>
+        events.some((e) => e._tag === 'git.repos_changed' && e.repos.includes(repo))
+      ),
+      `expected a repos_changed event, got ${JSON.stringify(events)}`
+    ).toBe(true)
+    await port.syncWatches('mac-1', 2, [])
+  }, 30_000)
+
+  it('applies a namespace’s maps by generation, as a whole, in the order they arrive', async () => {
+    // Generation 3 names the repo; a slower generation 2 (an older map) is
+    // ignored, the repo stays watched.
+    expect(await port.syncWatches('mac-2', 3, [{ id: 'p1', paths: [repo] }])).toEqual([
+      { id: 'p1', paths: [repo] }
+    ])
+    expect(await port.syncWatches('mac-2', 2, [])).toEqual([])
+    events.length = 0
+    writeFileSync(path.join(repo, 'ordered.txt'), 'six\n')
+    expect(
+      await until(() =>
+        events.some((e) => e._tag === 'git.repos_changed' && e.repos.includes(repo))
+      ),
+      'the repository is still watched after the stale map'
+    ).toBe(true)
+    // Generation 4 names another panel only: p1 is dropped with it, and an
+    // even later generation 1 (a straggler) changes nothing either.
+    expect(await port.syncWatches('mac-2', 4, [{ id: 'p2', paths: [] }])).toEqual([
+      { id: 'p2', paths: [] }
+    ])
+    expect(await port.syncWatches('mac-2', 1, [{ id: 'p1', paths: [repo] }])).toEqual([])
+    events.length = 0
+    writeFileSync(path.join(repo, 'ordered.txt'), 'seven\n')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(events.filter((e) => e._tag === 'git.repos_changed')).toEqual([])
+    // Another Mac's namespace is its own: its map does not touch mac-2's.
+    expect(await port.syncWatches('mac-3', 1, [{ id: 'p1', paths: [repo] }])).toEqual([
+      { id: 'p1', paths: [repo] }
+    ])
+    await port.syncWatches('mac-3', 2, [])
+    // Two maps of one namespace sent at once apply in arrival order: the
+    // second, newer one is what stands even though both were in flight.
+    const [first, second] = await Promise.all([
+      port.syncWatches('mac-4', 1, [{ id: 'p1', paths: [repo] }]),
+      port.syncWatches('mac-4', 2, [])
+    ])
+    expect(first).toEqual([{ id: 'p1', paths: [repo] }])
+    expect(second).toEqual([])
+    events.length = 0
+    writeFileSync(path.join(repo, 'ordered.txt'), 'eight\n')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(events.filter((e) => e._tag === 'git.repos_changed')).toEqual([])
+    rmSync(path.join(repo, 'ordered.txt'), { force: true })
+  }, 30_000)
+
+  it('writes the commit message with this machine’s claude', async () => {
+    withClaude(bins.writing)
+    writeFileSync(path.join(repo, 'c.txt'), 'three\n')
+    await port.stage(repo, ['c.txt'])
+    expect(await port.generateCommitMessage(repo)).toBe('feat: written by the server')
+    await port.commit(repo, 'feat: c')
+  })
+
+  it('names the server’s missing Claude login in one sentence', async () => {
+    writeFileSync(path.join(repo, 'd.txt'), 'four\n')
+    await port.stage(repo, ['d.txt'])
+    withClaude(bins.refusing)
+    await expect(port.generateCommitMessage(repo)).rejects.toThrow(
+      'This server\'s Claude is not signed in: run "claude login" on the server to generate commit messages.'
+    )
+    withClaude(bins.none)
+    await expect(port.generateCommitMessage(repo)).rejects.toThrow(
+      'This server has no "claude" command: install Claude Code on the server and sign in to generate commit messages.'
+    )
+    await port.commit(repo, 'feat: d')
+  })
+
+  it('a signed-out Claude on the launch profile is the sentence, refused as declared over HTTP', async () => {
+    // The fleet's regression (PRDCT-4326): the git helpers start on the
+    // default launch profile, so a signed-out Claude THERE must be the
+    // sentence and the 422, even with a `claude` on the PATH that would write.
+    const signedOut = path.join(root, 'profile-signed-out')
+    stub(signedOut, '/bin/cat >/dev/null; echo "Not logged in · Please run /login" >&2; exit 1')
+    mocks.command = [path.join(signedOut, 'claude')]
+    withClaude(bins.writing)
+    writeFileSync(path.join(repo, 'f.txt'), 'six\n')
+    await port.stage(repo, ['f.txt'])
+    const server = await startEmbedded({
+      ports: { sessions: new FakeSource(), git: port },
+      helloTimeoutMs: 200
+    })
+    try {
+      const response = await fetch(`${server.url}/git/generate-commit-message`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: repo })
+      })
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        _tag: 'GitOperationFailed',
+        message:
+          'This server\'s Claude is not signed in: run "claude login" on the server to generate commit messages.'
+      })
+    } finally {
+      await server.stop()
+      mocks.command = ['claude']
+      await port.commit(repo, 'feat: f')
+    }
+  }, 30_000)
+
+  it('reports a Magic sync’s progress and carries the Claude sentence in the repo’s result', async () => {
+    withClaude(bins.refusing)
+    writeFileSync(path.join(repo, 'e.txt'), 'five\n')
+    events.length = 0
+    const results = await port.magicSync([repo], 'mac-test:1')
+    expect(results).toEqual([
+      {
+        repoPath: repo,
+        actions: ['staged'],
+        error:
+          'This server\'s Claude is not signed in: run "claude login" on the server to generate commit messages.'
+      }
+    ])
+    const progress = events.filter((e) => e._tag === 'git.batch_progress')
+    expect(progress.map((e) => (e._tag === 'git.batch_progress' ? e.phase : ''))).toContain(
+      'generating'
+    )
+    expect(progress.at(-1)).toMatchObject({
+      op: 'sync',
+      done: 1,
+      total: 1,
+      repoPath: repo,
+      batchId: 'mac-test:1'
+    })
+    git(repo, 'reset', '-q')
+  })
+})
+
+describe('describeClaudeFailure', () => {
+  it('maps the two ways a server has no Claude login, and leaves the rest as said', () => {
+    expect(describeClaudeFailure('spawn claude ENOENT')).toMatch(/no "claude" command/)
+    expect(
+      describeClaudeFailure('Command failed: claude -p — Invalid API key · Please run /login')
+    ).toMatch(/not signed in/)
+    expect(describeClaudeFailure('Command failed: claude -p — Not logged in')).toMatch(
+      /not signed in/
+    )
+    expect(describeClaudeFailure('Empty response from Claude')).toBe('Empty response from Claude')
+    expect(describeClaudeFailure('No staged changes — stage files first')).toBe(
+      'No staged changes — stage files first'
+    )
+  })
+})

@@ -5,7 +5,7 @@ import { useAccountLoginStore, loginKey, type LoginProvider } from '../../store/
 import {
   useClaudeAccountsUsage,
   useCodexAccountsUsage,
-  headroomLabel
+  capStatusLine
 } from '../../store/usage-store'
 import { SettingsCallout } from './primitives'
 
@@ -33,7 +33,7 @@ export function LoginFlow({
   const [code, setCode] = useState('')
   if (!job) return null
   const summary = provider === 'codex' ? codexSummary : claudeSummary
-  const headroom = headroomLabel(summary)
+  const headroom = capStatusLine(summary)
   const text = describe(job, provider, headroom)
   const running = job.status === 'running'
   return (

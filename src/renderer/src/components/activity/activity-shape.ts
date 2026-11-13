@@ -399,6 +399,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   codex: 'Codex',
   antigravity: 'Antigravity',
   pi: 'Pi',
+  opencode: 'OpenCode',
   terminal: 'Terminal',
   echo: 'Echo'
 }

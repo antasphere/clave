@@ -106,7 +106,7 @@ describe("an agent row's line", () => {
     ).toBe('Homebrew does not have 1 yet.')
     expect(agentStatusLine(agent({ lastUpdatedAt: null }), true)).toBe('Up to date')
     expect(agentStatusLine(agent({ installed: false, lastCheckedAt: null }), true)).toBe(
-      'Not checked yet'
+      'Checking…'
     )
   })
 
@@ -127,5 +127,20 @@ describe("an agent row's line", () => {
     expect(agentStatusLine({ ...lagging, latestVersion: '0.160.0' }, true)).toBe(
       '0.160.0 is available and will be installed shortly'
     )
+  })
+})
+
+describe('the restart hint on a tab of a Clave server (PRDCT-4329)', () => {
+  it('is not drawn from this Mac’s CLI upgrade: the server runs its own', () => {
+    const serverTab = {
+      ...claudeTab,
+      id: 'clave-owner:session:server-studio:00000000-0000-4000-8000-000000000001',
+      sessionType: 'local'
+    }
+    expect(staleAgentRelease(serverTab, [agent({})], undefined)).toBeNull()
+    // The same tab of this Mac still gets it.
+    expect(
+      staleAgentRelease({ ...serverTab, id: 'local-1' }, [agent({})], undefined)
+    ).not.toBeNull()
   })
 })

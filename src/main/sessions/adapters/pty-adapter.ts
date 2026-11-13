@@ -38,7 +38,9 @@ export class PtyAdapter implements SessionAdapter {
       throw new Error('PTY session ids must be UUIDs')
     }
     if (
-      !['terminal', 'claude', 'claude-agents', 'codex', 'antigravity', 'pi'].includes(spec.provider)
+      !['terminal', 'claude', 'claude-agents', 'codex', 'antigravity', 'pi', 'opencode'].includes(
+        spec.provider
+      )
     ) {
       throw new Error(`Unsupported PTY provider: ${spec.provider}`)
     }
@@ -49,6 +51,7 @@ export class PtyAdapter implements SessionAdapter {
       codexMode: spec.provider === 'codex',
       antigravityMode: spec.provider === 'antigravity',
       piMode: spec.provider === 'pi',
+      opencodeMode: spec.provider === 'opencode',
       adoptSessionId: spec.id,
       windowKey: spec.windowKey
     })

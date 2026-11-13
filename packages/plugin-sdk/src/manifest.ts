@@ -114,7 +114,36 @@ const contributions = z
         })
       )
       .default([]),
-    adapters: z.array(adapterContribution).default([])
+    adapters: z.array(adapterContribution).default([]),
+    // A right-click action on a session, a group or a workspace. The plugin's main
+    // registers handlers for it; the host invokes them and opens the page they answer.
+    actions: z
+      .array(
+        z.strictObject({
+          id: identifier,
+          title,
+          icon: z.string().regex(/^[A-Z][A-Za-z0-9]*Icon$/),
+          targets: z.array(z.enum(['session', 'group', 'workspace'])).min(1),
+          preview: z.boolean().optional()
+        })
+      )
+      .default([]),
+    // A mark pack: what stands for an agent (its tab, the pane's status, the
+    // transcript's working mark) and for a tool call in flight, drawn by the
+    // pack instead of the provider's logo and the kind's glyph. Chosen in
+    // Appearance → Agent mark, one pack at a time. Native only: the pack is a
+    // component compiled into the renderer, and a plugin that is not bundled
+    // cannot ship code there, so a linked plugin declaring one is listed but
+    // never drawn.
+    marks: z
+      .array(
+        z.strictObject({
+          id: identifier,
+          title,
+          slots: z.array(z.enum(['agent', 'tool'])).min(1)
+        })
+      )
+      .default([])
   })
   .superRefine((value, context) => {
     for (const [key, entries] of Object.entries(value)) {
@@ -129,6 +158,14 @@ const contributions = z
         ids.add(entry.id)
       })
     }
+    value.actions.forEach((action, index) => {
+      if (new Set(action.targets).size !== action.targets.length)
+        context.addIssue({
+          code: 'custom',
+          path: ['actions', index, 'targets'],
+          message: 'Duplicate target'
+        })
+    })
     // A toolbar entry that runs nothing is a button the user presses for no effect, and the
     // failure is silent: the host refuses an unregistered command and the toolbar looks fine.
     // So every id a toolbar entry will execute — its own, for an action; each item's, for a

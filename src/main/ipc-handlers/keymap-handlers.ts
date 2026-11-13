@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import {
   parseKeymapOverrides,
   resolveKeymapConfig,
@@ -49,7 +50,7 @@ export function registerKeymapHandlers(deps: KeymapHandlerDeps = {}): void {
 
   ipcMain.handle('keymaps:import', async (event): Promise<string | null> => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    const result = await dialog.showOpenDialog(window!, {
+    const result = await openDialogs.open('keymap', window ?? undefined, {
       properties: ['openFile'],
       filters: [{ name: 'Clave keymaps', extensions: ['json'] }]
     })

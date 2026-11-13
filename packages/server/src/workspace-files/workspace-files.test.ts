@@ -5,13 +5,94 @@
  * roots are behind the bearer; an answer to no review is the declared
  * failure; a review nobody answers reads as Cancel at the timeout.
  */
+import * as fs from 'node:fs'
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import path, { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource, Peer } from '../test-support'
 import { WorkspaceFiles, memoryWorkspaceFilesStorage } from './files'
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>()
+  return { ...actual, watch: vi.fn(actual.watch) }
+})
+
+// Opt-in attribution for the once-only case. Keep the real watcher, timers,
+// publisher and peer; print only tags, fixture-relative paths and digests.
+let trace: ((tag: string, fields?: Record<string, unknown>) => void) | undefined
+let stopTrace: (() => void) | undefined
+
+function traceWatch(): void {
+  const started = performance.now()
+  trace = (tag, fields = {}) =>
+    console.info(JSON.stringify({ watchTrace: tag, ms: performance.now() - started, ...fields }))
+  const revision = (): string => {
+    try {
+      return createHash('sha256')
+        .update(fs.readFileSync(join(root, 'watched.clave')))
+        .digest('hex')
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code ?? 'unreadable'
+    }
+  }
+  const realWatch = vi.mocked(fs.watch).getMockImplementation()!
+  stopTrace = () => vi.mocked(fs.watch).mockImplementation(realWatch)
+  let inCallback = false
+  vi.mocked(fs.watch).mockImplementation((...args: Parameters<typeof fs.watch>) => {
+    const [dir, callback] = args
+    trace?.('watch_registered', { path: 'watched.clave', revision: revision() })
+    return realWatch(dir, (eventType, filename) => {
+      trace?.('native_callback', { eventType, filename, revision: revision() })
+      inCallback = true
+      try {
+        if (typeof callback === 'function') callback(eventType, filename)
+      } finally {
+        inCallback = false
+      }
+    })
+  })
+  const realSetTimeout = globalThis.setTimeout
+  const realClearTimeout = globalThis.clearTimeout
+  const timers = new Map<ReturnType<typeof setTimeout>, number>()
+  let nextTimer = 0
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, ms, ...args) => {
+    if (!inCallback) return realSetTimeout(callback, ms, ...args)
+    const id = ++nextTimer
+    const timer = realSetTimeout(() => {
+      timers.delete(timer)
+      trace?.('timer_fired', { id, revision: revision() })
+      callback(...args)
+    }, ms)
+    timers.set(timer, id)
+    trace?.('timer_scheduled', { id, delay: ms })
+    return timer
+  })
+  vi.spyOn(globalThis, 'clearTimeout').mockImplementation((timer) => {
+    const id = timers.get(timer as ReturnType<typeof setTimeout>)
+    if (id !== undefined) {
+      trace?.('timer_cancelled', { id })
+      timers.delete(timer as ReturnType<typeof setTimeout>)
+    }
+    return realClearTimeout(timer)
+  })
+  files.onEvent((event) =>
+    trace?.('domain_emission', {
+      tag: event._tag,
+      path: path.basename(event.path),
+      revision: revision()
+    })
+  )
+  const subscribe = files.onEvent.bind(files)
+  vi.spyOn(files, 'onEvent').mockImplementation((listener) =>
+    subscribe((event) => {
+      trace?.('publication_requested', { tag: event._tag, path: path.basename(event.path) })
+      listener(event)
+    })
+  )
+}
 
 let server: EmbeddedServer
 let root: string
@@ -51,6 +132,11 @@ async function welcomed(): Promise<Peer> {
 beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'clave-wsf-http-')))
   files = new WorkspaceFiles(memoryWorkspaceFilesStorage(), { debounceMs: 60 })
+  if (
+    process.env.CLAVE_WATCH_TRACE === '1' &&
+    expect.getState().currentTestName?.includes('tells a welcomed peer once')
+  )
+    traceWatch()
   server = await startEmbedded({
     ports: { sessions: new FakeSource(), workspaceFiles: files },
     helloTimeoutMs: 200,
@@ -59,6 +145,11 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   await server.stop()
+  files.close()
+  stopTrace?.()
+  stopTrace = undefined
+  trace = undefined
+  vi.restoreAllMocks()
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -221,16 +312,31 @@ describe('the workspace files over HTTP', () => {
   it('tells a welcomed peer once when a watched file changes on disk, and not after unwatch', async () => {
     const file = join(root, 'watched.clave')
     writeFileSync(file, elevated(''))
+    trace?.('initial_write', { path: 'watched.clave' })
     const peer = await welcomed()
+    const frames: Array<Record<string, unknown>> = []
+    peer.ws.on('message', (data) => {
+      // Peer's earlier listener already decoded this frame against the schema.
+      const frame = JSON.parse(data.toString())
+      const tags = {
+        tag: frame._tag,
+        eventTag: frame.event?._tag,
+        path: frame.event?.path ? path.basename(frame.event.path) : undefined,
+        seq: frame.seq
+      }
+      frames.push(tags)
+      trace?.('decoded_frame', tags)
+    })
     expect([200, 204]).toContain((await post('/workspace-files/watch', { path: file })).status)
     await new Promise((r) => setTimeout(r, 50))
     writeFileSync(file, elevated('EDIT'))
+    trace?.('external_write', { path: 'watched.clave' })
     const frame = await peer.next()
     expect(frame).toMatchObject({
       _tag: 'event',
       event: { _tag: 'workspace_files.changed', path: file }
     })
-    expect(await peer.silence(200)).toBe(true)
+    expect(await peer.silence(200), JSON.stringify(frames)).toBe(true)
     await post('/workspace-files/unwatch', { path: file })
     writeFileSync(file, elevated('EDIT 2'))
     expect(await peer.silence(250)).toBe(true)

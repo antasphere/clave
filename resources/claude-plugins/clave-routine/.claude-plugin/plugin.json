@@ -1,0 +1,9 @@
+{
+  "name": "clave-routine",
+  "version": "1.0.0",
+  "description": "The contract of a Clave routine run: do the job the routine declares, then report through clave_routine_report with data matching the routine's schema. Loaded by Clave into every routine session with --plugin-dir; never installed by hand.",
+  "author": { "name": "Antasphere", "email": "team@antasphere.com", "url": "https://antasphere.com" },
+  "homepage": "https://github.com/antasphere/clave",
+  "license": "MIT",
+  "keywords": ["clave", "routine", "scheduled", "report"]
+}

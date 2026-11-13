@@ -7,7 +7,8 @@ import {
   type CommandOption,
   type ModelOption,
   type SessionEvent,
-  type SessionInput
+  type SessionInput,
+  flattenAnswers
 } from '../../shared/session-model'
 import { pluginFile, type PluginRecord } from '../plugins/plugin-store'
 import { sessionManager } from './session-manager'
@@ -75,7 +76,8 @@ const RESERVED_PROFILE_IDS = new Set([
   'builtin-claude',
   'builtin-antigravity',
   'builtin-codex',
-  'builtin-pi'
+  'builtin-pi',
+  'builtin-opencode'
 ])
 /** Emissions kept while no consumer is bound yet; a session that floods is not a reason to grow. */
 const BUFFER_LIMIT = 1000
@@ -223,7 +225,7 @@ class PluginSessionAdapter implements SessionAdapter {
           instance.respond({
             id,
             optionId: value.optionId,
-            ...(value.answers ? { answers: value.answers } : {})
+            ...(value.answers ? { answers: flattenAnswers(value.answers) } : {})
           })
         )
         return
@@ -384,6 +386,7 @@ export function prefixIds(event: SessionEvent, pluginId: string): SessionEvent {
     case 'tool_call':
     case 'tool_result':
     case 'permission_request':
+    case 'permission_withdrawn':
       return { ...event, id: `${pluginId}:${event.id}` }
     default:
       return event

@@ -7,12 +7,14 @@
  * replaces leaves); a message typed into a tab marks its row as a sibling's
  * message does; a tab about to restart on another account is marked so its
  * exit is not announced, and the restart remounts its pane on the new
- * process; a pinned group the server launched is linked to its pin.
+ * process; a pinned group the server launched is linked to its pin; a tab's
+ * work assignment (PRDCT-4123) lands as its record now keeps it.
  */
 import { useSessionStore } from '../store/session-store'
 import { usePinnedStore } from '../store/pinned-store'
 import { useWorkspaceStore } from '../store/workspace-store'
 import { adoptServerStartedTerminals } from './adopt-record'
+import { servedRestartApplies } from './restart-ownership'
 
 let started = false
 
@@ -24,6 +26,7 @@ export function initServedToolsEvents(): void {
   api.onSessionRenamed?.(({ id, name }) => {
     useSessionStore.getState().applyServedRename(id, name)
   })
+  api.onSessionWorkChanged?.(({ id, work }) => useSessionStore.getState().applyServedWork(id, work))
   api.onSessionPageChanged?.(({ id, page, servingSessionId }) => {
     const store = useSessionStore.getState()
     if (!store.sessions.some((s) => s.id === id)) return
@@ -51,14 +54,24 @@ export function initServedToolsEvents(): void {
     store.setSessionInjectedFrom(id, from ?? 'another tab')
     if (!store.selectedSessionIds.includes(id)) store.setSessionUnseenActivity(id, true)
   })
+  // The model the session runs on, as its provider said it (PRDCT-4256): the
+  // record already holds it; the store follows so the sidebar's foot and the
+  // row's warning judge the caps by the model the chat is on now.
+  api.onSessionModelChanged?.(({ id, model }) => {
+    const store = useSessionStore.getState()
+    if (store.sessions.some((s) => s.id === id)) store.setSessionModel(id, model)
+  })
   api.onSessionRestarting?.(({ id }) => {
     const store = useSessionStore.getState()
     if (store.sessions.some((s) => s.id === id)) store.setSessionRestarting(id, true)
   })
-  api.onSessionRestarted?.(({ id, account }) => {
+  api.onSessionRestarted?.(({ id, account, requestId }) => {
     const store = useSessionStore.getState()
     const session = store.sessions.find((s) => s.id === id)
     if (!session) return
+    // The window's own switch comes back this way too, beside the answer
+    // of its call: whichever arrives second steps aside (`restart-ownership.ts`).
+    if (!servedRestartApplies(id, requestId)) return
     store.applySessionRestart(id, {
       ...(account.codexAccountId !== undefined
         ? { codexAccountId: account.codexAccountId, codexAccountLabel: account.codexAccountLabel }

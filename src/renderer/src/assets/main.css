@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "@mdxeditor/editor/style.css";
-@import "@clave/ui/styles.css";
+@import 'tailwindcss';
+@import '@mdxeditor/editor/style.css';
+@import '@clave/ui/styles.css';
 @source "../../../../packages/ui/src";
 
 /* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
@@ -17,7 +17,7 @@ html[data-ui-font='synonym'] {
    restated as a literal, not a var(--accent) mix: lib/skin.ts snapshots these
    --cm-* values while the previous skin's tokens are still on the root, so a
    reference would freeze the selection in the theme being left. */
-[data-theme="dark"],
+[data-theme='dark'],
 :root {
   /* CodeMirror syntax tokens — driven by CSS vars so the editor recolors on theme switch */
   --cm-selection: rgba(90, 162, 247, 0.3);
@@ -36,7 +36,7 @@ html[data-ui-font='synonym'] {
   --cm-punctuation: #8b949e;
 }
 
-[data-theme="light"] {
+[data-theme='light'] {
   /* CodeMirror syntax tokens — GitHub-light-inspired, tuned for the warm light surface */
   --cm-selection: rgba(31, 95, 207, 0.18);
   --cm-active-line: rgba(0, 0, 0, 0.03);
@@ -54,7 +54,7 @@ html[data-ui-font='synonym'] {
   --cm-punctuation: #57606a;
 }
 
-[data-theme="coffee"] {
+[data-theme='coffee'] {
   /* CodeMirror syntax tokens — warm palette tuned for the cream surface */
   --cm-selection: rgba(31, 91, 196, 0.18);
   --cm-active-line: rgba(120, 100, 80, 0.05);
@@ -72,7 +72,7 @@ html[data-ui-font='synonym'] {
   --cm-punctuation: #756e66;
 }
 
-[data-theme="charcoal"] {
+[data-theme='charcoal'] {
   /* CodeMirror syntax tokens — dark's github-dark family, desaturated a notch
      for the lifted ground and with the two greys (comment, punctuation) taken
      off their cool #8b949e onto the theme's own warm axis. */
@@ -170,50 +170,6 @@ html[data-ui-font='synonym'] {
   transition: color 200ms;
 }
 
-/* The attribution sits a step back from the name — same ink, less of it, the
-   way it is a step smaller and a weight lighter. It is two boxes, "by" and the
-   company name, held apart by the word space the phrase itself sets (160 of the
-   frame's units, 0.2102 of Clave's ink): each box is cropped to its own ink, so
-   the space between them is not in either drawing. See Wordmark.tsx. */
-.wordmark-by {
-  display: flex;
-  align-items: flex-end;
-  gap: calc(var(--wordmark-h) * 0.2102);
-  color: var(--text-tertiary);
-}
-.wordmark-by .wordmark {
-  color: inherit;
-}
-
-/* The company name is the way out to the house's own site. The strip it sits in
-   is a window drag region under a `pointer-events: none` mark, so the link has
-   to opt out of BOTH: without the first a click drags the window instead, and
-   without the second it never reaches the button at all. */
-.wordmark-link {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
-  transition: color 150ms;
-}
-.wordmark-link:hover,
-.wordmark-link:focus-visible {
-  color: var(--text-secondary);
-}
-
-/* 130px is the lockup at the default size (Clave 46 + gap 6 + the attribution
-   78). Below it the second word would be clipped mid-letter, which is worse
-   than not being there. */
-@container wordmark (max-width: 134px) {
-  .wordmark-by {
-    display: none;
-  }
-}
-
 /* ── Groups ── */
 
 /* A group is a tinted card, and every state it has is drawn from the colour it
@@ -238,14 +194,17 @@ html[data-ui-font='synonym'] {
 .group-scope:has(.group-header:hover) {
   background-color: var(--group-bg-hover, color-mix(in srgb, var(--surface-100) 60%, transparent));
 }
-.group-scope[data-selected="true"] {
-  background-color: var(--group-bg-selected, color-mix(in srgb, var(--surface-200) 60%, transparent));
+.group-scope[data-selected='true'] {
+  background-color: var(
+    --group-bg-selected,
+    color-mix(in srgb, var(--surface-200) 60%, transparent)
+  );
   border-color: var(--group-border-selected, var(--color-border));
   box-shadow: 0 0 0.5px var(--selected-ring);
 }
 /* Selected AND hovered still moves — a card that stops responding once selected
    reads as disabled. */
-.group-scope[data-selected="true"]:has(.group-header:hover) {
+.group-scope[data-selected='true']:has(.group-header:hover) {
   background-color: var(--group-active-bg, color-mix(in srgb, var(--surface-200) 80%, transparent));
 }
 
@@ -256,7 +215,7 @@ html[data-ui-font='synonym'] {
 .group-scope .sidebar-item:hover {
   background-color: var(--group-hover-bg, var(--surface-100));
 }
-.group-scope .sidebar-item[data-selected="true"] {
+.group-scope .sidebar-item[data-selected='true'] {
   background-color: var(--group-active-bg, var(--surface-200));
 }
 
@@ -297,6 +256,40 @@ html[data-ui-font='synonym'] {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
 }
+/* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
+   switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
+   just inside the edge of the row it lands beside, so a scrolling list never
+   clips it; the dragged row fades in place. */
+.reorder-row {
+  position: relative;
+}
+.reorder-row[data-dragging] {
+  opacity: 0.45;
+}
+.reorder-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+.reorder-row[data-drop='before']::after {
+  top: 0;
+}
+.reorder-row[data-drop='after']::after {
+  bottom: 0;
+}
+body.reorder-dragging,
+body.reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
 /* The group header's two controls (PRDCT-1670). The terminals button carries
    the whole terminal story in one glyph: its colour is the first RUNNING
    terminal's (set inline) and the count beside it is how many are attached;
@@ -315,7 +308,9 @@ html[data-ui-font='synonym'] {
   gap: 2px;
   width: auto;
   min-width: var(--control-h-xs);
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
 /* Air on both edges, and only once there IS a count: the count reads as part of
    the button rather than pinned to its border, while a group with no terminals
@@ -400,7 +395,9 @@ html[data-ui-font='synonym'] {
   font-weight: var(--font-weight-medium);
   color: var(--text-tertiary);
   background-color: transparent;
-  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
 .idle-group-start:hover {
   color: var(--text-primary);
@@ -477,7 +474,10 @@ html[data-ui-font='synonym'] {
   border: 1px solid var(--border-subtle-color);
   background-color: var(--surface-100);
   text-align: left;
-  transition: border-color 150ms, background-color 150ms, transform 150ms;
+  transition:
+    border-color 150ms,
+    background-color 150ms,
+    transform 150ms;
 }
 .group-picker-card:hover {
   border-color: var(--color-border);
@@ -529,6 +529,38 @@ html[data-ui-font='synonym'] {
 }
 .history-dot[data-state='blocked'] {
   background-color: var(--color-status-waiting);
+}
+
+/* A server's conversation (PRDCT-4321): the sidebar's server badge, the
+   server's name in its colour, with a dot for its connection: green while
+   connected, a grey ring while it is not (its rows are its last answer).
+   A server with no colour on this Mac wears the group pill's fill
+   (.history-row-group, its neighbour on the title line). */
+.history-server {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 1 auto;
+  max-width: 9rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-md);
+  font-size: 10px;
+  line-height: 1rem;
+  color: var(--text-secondary);
+  background-color: var(--surface-200);
+}
+.history-server-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+}
+.history-server-dot[data-online='true'] {
+  background-color: var(--color-status-ready);
+}
+.history-server-dot[data-online='false'] {
+  border: 1px solid var(--text-tertiary);
+  opacity: 0.7;
 }
 
 /* A search hit under its row: the excerpt around the match, in the tone of
@@ -635,9 +667,15 @@ html[data-ui-font='synonym'] {
   animation: trail-miss 300ms ease-out;
 }
 @keyframes trail-miss {
-  25% { transform: translateX(-4px); }
-  55% { transform: translateX(4px); }
-  80% { transform: translateX(-2px); }
+  25% {
+    transform: translateX(-4px);
+  }
+  55% {
+    transform: translateX(4px);
+  }
+  80% {
+    transform: translateX(-2px);
+  }
 }
 /* The one-message face (collapsed): the whole line is the scroll-to button.
    Min-height and centering keep a single-line message level with the 28px
@@ -673,7 +711,10 @@ html[data-ui-font='synonym'] {
   background-color: color-mix(in srgb, var(--surface-0) 90%, transparent);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms, color 150ms, background-color 150ms;
+  transition:
+    opacity 120ms,
+    color 150ms,
+    background-color 150ms;
 }
 .message-trail:hover .message-trail-peek {
   opacity: 1;
@@ -723,6 +764,7 @@ html[data-ui-font='synonym'] {
   text-overflow: clip;
   max-height: min(40vh, 320px);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .message-trail-reply {
   font-size: 11px;
@@ -1081,7 +1123,9 @@ html[data-ui-font='synonym'] {
   border-radius: var(--radius-md);
   font-size: 10px;
   color: var(--text-tertiary);
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
 .git-footnote-action:hover:not(:disabled) {
   color: var(--text-primary);
@@ -1146,10 +1190,10 @@ html[data-ui-font='synonym'] {
   color: var(--text-secondary);
   pointer-events: none;
 }
-.keymap-command-hud[data-state="matched"] {
+.keymap-command-hud[data-state='matched'] {
   color: var(--color-status-ready);
 }
-.keymap-command-hud[data-state="cancelled"] {
+.keymap-command-hud[data-state='cancelled'] {
   color: var(--text-tertiary);
 }
 
@@ -1173,7 +1217,10 @@ html[data-ui-font='synonym'] {
   color: var(--text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  transition: color 150ms, border-color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    border-color 150ms,
+    background-color 150ms;
 }
 .keymap-binding:hover,
 .keymap-binding:focus-visible {
@@ -1199,19 +1246,19 @@ html[data-ui-font='synonym'] {
   border-radius: var(--radius-lg);
   background-color: var(--surface-200);
   color: var(--text-secondary);
-  transition: background-color 150ms, color 150ms, box-shadow 150ms, scale 120ms var(--ease-out-expo);
+  transition:
+    background-color 150ms,
+    color 150ms,
+    box-shadow 150ms;
 }
 .avatar-cell:hover {
   background-color: var(--surface-300);
   color: var(--text-primary);
 }
-.avatar-cell[data-selected="true"] {
+.avatar-cell[data-selected='true'] {
   color: var(--color-accent);
   background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
   box-shadow: 0 0 0 1px var(--color-accent);
-}
-.avatar-cell:active {
-  scale: 0.97;
 }
 /* The system's one focus ring (the "── Keyboard focus ──" block), restated
    here because the cell is an app-only class. */
@@ -1496,6 +1543,63 @@ html[data-ui-font='synonym'] {
 .account-preview-plot--even {
   justify-content: space-evenly;
   gap: 0;
+}
+/* The tab menu header's caps: one line per cap — name, a 4px bar, % used,
+   time to reset. */
+.account-usage-bars {
+  /* One grid for the whole stack (the rows are display: contents), so the
+     name and reset columns size to their longest entry and every bar still
+     starts and ends at the same x. */
+  display: grid;
+  grid-template-columns: max-content minmax(2.5rem, 1fr) max-content max-content;
+  grid-auto-rows: 1rem;
+  align-items: center;
+  column-gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+.account-usage-bar {
+  display: contents;
+}
+.account-usage-bar-name {
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.account-usage-bar-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+.account-usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition:
+    width 300ms var(--ease-out-expo),
+    background-color 200ms;
+}
+.account-usage-bar-pct {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.account-usage-bar-reset {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.account-usage-bars-empty {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
 }
 .account-preview-divider {
   align-self: stretch;
@@ -2332,13 +2436,16 @@ html[data-ui-font='synonym'] {
    gap to the session, and that gap is the resize handle. The card takes a
    surface one step up from the frame's, so border and ground together say
    "on top of", without the drop shadow panels deliberately do not carry. */
+/* The document or artefact beside a conversation is the other half of the
+   session's frame, not a card inside it (PRDCT-4491): flush with the frame's
+   edges, one line between the two, so its bar continues the session's bar on
+   the same line and at the same height. The divider straddles that line. */
 .linked-document-slot {
   --linked-inset: var(--space-2, 0.5rem);
   position: absolute;
-  top: var(--linked-inset);
-  bottom: var(--linked-inset);
-  right: var(--linked-inset);
-  padding-left: var(--linked-inset);
+  top: 0;
+  bottom: 0;
+  right: 0;
   z-index: 1;
 }
 .linked-document-panel {
@@ -2347,16 +2454,20 @@ html[data-ui-font='synonym'] {
   height: 100%;
   min-width: 0;
   overflow: hidden;
-  border-radius: var(--radius-lg);
-  border: var(--frame-border) solid var(--color-border);
-  background-color: var(--surface-50);
+  border-left: var(--frame-border) solid var(--color-border);
+  background-color: var(--surface-0);
   animation: linked-document-in 150ms ease-out;
 }
 @keyframes linked-document-in {
-  from { opacity: 0; translate: 8px 0; }
+  from {
+    opacity: 0;
+    translate: 8px 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .linked-document-panel { animation: none; }
+  .linked-document-panel {
+    animation: none;
+  }
 }
 /* One row, like an artifact's: kind and title on the left, then save state,
    the view toggle and hide. The title gives way first; the controls never wrap. */
@@ -2369,18 +2480,44 @@ html[data-ui-font='synonym'] {
   border-bottom: 1px solid var(--border-subtle-color);
   flex-shrink: 0;
 }
-.linked-document-header > :not(:first-child) { flex-shrink: 0; }
-.linked-document-header > [role="status"] { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
-.linked-document-content { flex: 1; overflow: auto; min-height: 0; }
-.linked-document-notice { padding: 0.5rem; font-size: 0.75rem; color: var(--text-secondary); background: var(--surface-100); }
-.linked-email-composer { display: flex; flex-direction: column; min-height: 100%; }
+.linked-document-header > :not(:first-child) {
+  flex-shrink: 0;
+}
+.linked-document-header > [role='status'] {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+.linked-document-content {
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+.linked-document-notice {
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--surface-100);
+}
+.linked-email-composer {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 
 /* The header fields are ONE block, not five controls. A boxed .input-field per
    line reads as a form to fill in; a mail header is a block you scan, so the
    rows carry the list hairline and the input itself has no chrome until the row
    is focused — then an accent bar on the leading edge says which line you are
    typing into, the same signal a selected row uses elsewhere. */
-.linked-email-fields { display: flex; flex-direction: column; flex-shrink: 0; }
+.linked-email-fields {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
 .linked-email-field {
   display: flex;
   align-items: center;
@@ -2391,9 +2528,18 @@ html[data-ui-font='synonym'] {
   box-shadow: inset 2px 0 0 transparent;
   transition: box-shadow 150ms;
 }
-.linked-email-field:last-child { border-bottom: 0; }
-.linked-email-field:focus-within { box-shadow: inset 2px 0 0 var(--color-accent); }
-.linked-email-field > span { width: 3.5rem; flex-shrink: 0; font-size: 12px; color: var(--text-tertiary); }
+.linked-email-field:last-child {
+  border-bottom: 0;
+}
+.linked-email-field:focus-within {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.linked-email-field > span {
+  width: 3.5rem;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
 .linked-email-field > input {
   flex: 1;
   min-width: 0;
@@ -2404,10 +2550,14 @@ html[data-ui-font='synonym'] {
   color: var(--text-primary);
   outline: none;
 }
-.linked-email-field > input::placeholder { color: var(--text-tertiary); }
+.linked-email-field > input::placeholder {
+  color: var(--text-tertiary);
+}
 /* The subject closes the header block, so it takes the structural seam the
    repeating row hairline is deliberately too soft to carry. */
-.linked-email-field--subject { border-top: 1px solid var(--border-subtle-color); }
+.linked-email-field--subject {
+  border-top: 1px solid var(--border-subtle-color);
+}
 
 /* The body is a document, not a hole in the panel: the light ground belongs to
    the email, so it is framed as a sheet inside the panel rather than bled to
@@ -2421,8 +2571,16 @@ html[data-ui-font='synonym'] {
   transition: border-color 150ms;
   flex-shrink: 0;
 }
-.linked-email-sheet:focus-within { border-color: var(--color-accent); }
-.linked-email-body { display: block; width: 100%; border: 0; background: white; color-scheme: light; }
+.linked-email-sheet:focus-within {
+  border-color: var(--color-accent);
+}
+.linked-email-body {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: white;
+  color-scheme: light;
+}
 
 /* Section headers for signature and attachments. The panel titlebar class used
    to draw these, which put a section label at the weight of the document title. */
@@ -2456,24 +2614,49 @@ html[data-ui-font='synonym'] {
   font-size: 12px;
   color: var(--text-secondary);
   outline: none;
-  transition: color 150ms, background-color 150ms;
+  transition:
+    color 150ms,
+    background-color 150ms;
 }
-.linked-email-select:hover { color: var(--text-primary); background: var(--surface-200); }
-.linked-email-select:focus-visible { box-shadow: 0 0 0 1px var(--color-accent); }
-.linked-email-section-toggle { color: var(--text-tertiary); }
-.linked-email-section-toggle svg { transition: rotate 150ms; }
-.linked-email-section-toggle[data-state="closed"] svg { rotate: -90deg; }
+.linked-email-select:hover {
+  color: var(--text-primary);
+  background: var(--surface-200);
+}
+.linked-email-select:focus-visible {
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.linked-email-section-toggle {
+  color: var(--text-tertiary);
+}
+.linked-email-section-toggle svg {
+  transition: rotate 150ms;
+}
+.linked-email-section-toggle[data-state='closed'] svg {
+  rotate: -90deg;
+}
 .linked-email-signature {
   margin: 0 0.75rem 0.75rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle-color);
   overflow: hidden;
 }
-.linked-signature-preview { display: block; width: 100%; min-height: 0; border: 0; background: white; color-scheme: light; }
+.linked-signature-preview {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: white;
+  color-scheme: light;
+}
 
 /* One chip per attachment, so a draft's files read as a set at a glance
    instead of as one full-width row each. */
-.linked-email-attachments { display: flex; flex-wrap: wrap; gap: 0.375rem; padding: 0 0.75rem 0.75rem; }
+.linked-email-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0 0.75rem 0.75rem;
+}
 .linked-email-attachment {
   display: inline-flex;
   align-items: center;
@@ -2488,10 +2671,20 @@ html[data-ui-font='synonym'] {
   color: var(--text-tertiary);
   transition: background-color 150ms;
 }
-.linked-email-attachment:hover { background: var(--surface-200); }
-.linked-email-attachment > button { min-width: 0; color: var(--text-primary); }
-.linked-email-attachment > button:hover { text-decoration: underline; }
-.linked-email-attachment > span { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.linked-email-attachment:hover {
+  background: var(--surface-200);
+}
+.linked-email-attachment > button {
+  min-width: 0;
+  color: var(--text-primary);
+}
+.linked-email-attachment > button:hover {
+  text-decoration: underline;
+}
+.linked-email-attachment > span {
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 /* The remove control matters only on approach — the same 20px hover-revealed
    affordance the git rows use, so a chip is not two buttons at rest. */
 .linked-email-attachment-remove {
@@ -2504,11 +2697,19 @@ html[data-ui-font='synonym'] {
   border-radius: var(--radius-md);
   color: var(--text-tertiary);
   opacity: 0;
-  transition: opacity 150ms, color 150ms, background-color 150ms;
+  transition:
+    opacity 150ms,
+    color 150ms,
+    background-color 150ms;
 }
 .linked-email-attachment:hover .linked-email-attachment-remove,
-.linked-email-attachment-remove:focus-visible { opacity: 1; }
-.linked-email-attachment-remove:hover { color: var(--text-primary); background: var(--surface-300); }
+.linked-email-attachment-remove:focus-visible {
+  opacity: 1;
+}
+.linked-email-attachment-remove:hover {
+  color: var(--text-primary);
+  background: var(--surface-300);
+}
 
 /* The save state of an email lives in one bar at the foot, under its
    attachments, instead of in the titlebar; the alert surface stays for trouble. */
@@ -2525,15 +2726,36 @@ html[data-ui-font='synonym'] {
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
-.linked-email-foot > span { min-width: 0; }
-.linked-email-foot-dot { width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; background: var(--color-accent); }
-.linked-email-foot-dot[data-state="saving"] { background: var(--text-tertiary); }
-.linked-email-foot-dot[data-state="error"] { background: var(--danger-toggle-icon); }
+.linked-email-foot > span {
+  min-width: 0;
+}
+.linked-email-foot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--color-accent);
+}
+.linked-email-foot-dot[data-state='saving'] {
+  background: var(--text-tertiary);
+}
+.linked-email-foot-dot[data-state='error'] {
+  background: var(--danger-toggle-icon);
+}
 /* The gap between session and card is the handle: invisible at rest, a
    hairline on approach, the accent while focused — the file tree's handle. */
-.linked-document-divider { position: absolute; left: 0; top: 0; bottom: 0; width: var(--linked-inset); cursor: col-resize; outline: none; }
+.linked-document-divider {
+  position: absolute;
+  left: calc(var(--linked-inset) / -2);
+  top: 0;
+  bottom: 0;
+  width: var(--linked-inset);
+  cursor: col-resize;
+  outline: none;
+  z-index: 2;
+}
 .linked-document-divider::after {
-  content: "";
+  content: '';
   position: absolute;
   left: 50%;
   top: 0.75rem;
@@ -2544,13 +2766,64 @@ html[data-ui-font='synonym'] {
   background: transparent;
   transition: background-color 150ms;
 }
-.linked-document-divider:hover::after { background: color-mix(in srgb, var(--color-accent) 50%, transparent); }
+.linked-document-divider:hover::after {
+  background: color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
 .linked-document-divider:focus-visible::after,
-.linked-document-divider:active::after { background: var(--color-accent); }
+.linked-document-divider:active::after {
+  background: var(--color-accent);
+}
+
+/* The version an artefact's panel shows, in its bar (PRDCT-4494): a quiet chip
+   beside the title, its menu the versions the server keeps. Accent while it
+   shows a saved version rather than the live folder, so a frozen page never
+   passes for the live one. */
+.artefact-version-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  height: 1.375rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-control);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.artefact-version-chip:hover,
+.artefact-version-chip[data-state='open'] {
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
+}
+.artefact-version-chip[data-pinned='true'] {
+  color: var(--color-accent);
+}
+
+/* Why a menu row is as it is (FileMenu's hint): an orange icon on the row's
+   right, hoverable even when the row is disabled and lets no pointer through. */
+.file-menu-hint {
+  display: inline-flex;
+  flex-shrink: 0;
+  pointer-events: auto;
+  cursor: help;
+  color: var(--color-status-waiting);
+}
+/* A disabled row fades its label and glyph, never the hint that says why. */
+.menu-item[data-disabled]:has(.file-menu-hint) {
+  opacity: 1;
+}
+.menu-item[data-disabled]:has(.file-menu-hint) > :not(.file-menu-hint) {
+  opacity: 0.4;
+}
 
 /* A hidden document stays one click away: a chip naming it in the session's
    header (LinkedDocumentReopen), like an artifact chip in its conversation. */
-.linked-document-reopen { max-width: 12rem; }
+.linked-document-reopen {
+  max-width: 12rem;
+}
 
 /* ── Release notes, HTML branch ────────────────────────────────────────────
    GitHub's releases feed serves each body already rendered to HTML, so the
@@ -2854,9 +3127,6 @@ html[data-ui-font='synonym'] {
 }
 .pr-empty-form .input-compact {
   width: 100%;
-}
-.pr-empty-form .input-compact[aria-invalid='true'] {
-  border-color: var(--color-destructive);
 }
 .pr-recent {
   width: 100%;
@@ -3182,35 +3452,86 @@ html[data-ui-font='synonym'] {
   gap: var(--control-gap);
 }
 
-/* ── Background work (BackgroundTasksChip) ──
-   A chat's turn can end while shells and subagents it started keep running.
-   The chip names how many, in the pane header; its popover lists them. */
-.background-tasks-chip { gap: 0.375rem; color: var(--text-secondary); }
-.background-tasks-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  background: var(--color-status-working);
-  animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.background-tasks-popover { width: 22rem; max-width: calc(100vw - 2rem); padding: 0.25rem; }
-.background-task-list { display: flex; flex-direction: column; }
-.background-task {
+/* Audio settings: the default input's segmented level meter. */
+.mic-level-meter {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  min-height: var(--control-h-md);
-  padding: 0 0.25rem 0 0.5rem;
-  border-radius: var(--radius-control);
-  font-size: 12px;
-  color: var(--text-tertiary);
+  gap: calc(var(--control-h) / 14);
 }
-.background-task:hover { background: var(--surface-100); }
-.background-task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-.background-task-time { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.mic-level-segment {
+  width: calc(var(--control-h) / 7);
+  height: calc(var(--control-h) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+}
+.mic-level-segment[data-state='lit'] {
+  background: var(--color-accent);
+}
+.mic-level-segment[data-state='peak'] {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .background-tasks-pulse,
   .pane-status-dot[data-status='background'],
-  .sidebar-tab-icon[data-background] { animation: none !important; }
+  .sidebar-tab-icon[data-background] {
+    animation: none !important;
+  }
+}
+
+/* A live subagent selector shares the model picker's chip and menu material.
+   Its button is a sibling of the parent row's button for keyboard access. */
+.subagent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.subagent-session-row > .sidebar-item {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-trigger,
+.work-trigger {
+  --chat-glyph: var(--framed-control-icon);
+  flex-shrink: 0;
+  max-width: 45%;
+  cursor: pointer;
+}
+.subagent-trigger .tab-status,
+.work-trigger .tab-status {
+  flex-shrink: 0;
+}
+.subagent-trigger[data-active='true'],
+.work-trigger[data-active='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.subagent-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A wave or lane entry (PRDCT-4123): one row for a unit of work, its chips
+   before the status slot. The chips are short words, never a count of work
+   done; amber is the one tone that asks the person to look. */
+.work-chip {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  background-color: var(--surface-100);
+}
+.work-chip[data-tone='amber'] {
+  color: var(--color-status-waiting);
+}
+.work-menu-breadcrumb {
+  color: var(--text-secondary);
+}
+.work-menu-action {
+  color: var(--text-secondary);
+  padding-inline-start: 22px;
+}
+.work-breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -78,6 +78,7 @@ npx plugins add antasphere/clave   # re-run to pull latest
 - **Edit beside your agent** — Link Markdown, HTML, or a structured email to its originating session. Edit in a focused two-pane view, with autosave, managed attachments and signatures; the agent reads the reviewed draft back and sends it through its own channel. [Workflow and dev testing](docs/linked-documents.md).
 - **Local & remote files** — Browse and edit files with syntax-highlighted previews, on your machine or on remote hosts over SSH/SFTP.
 - **Remote sessions** — Connect to any host over SSH and run your agents there with the same UI and shortcuts.
+- **Your own Clave server** — Run Clave's server on a VPS or a spare Mac and attach from any of your Macs; agents keep running when the laptop closes. [Install and update](docs/server-install.md).
 - **Fully local** — A desktop app with no cloud backend and no account; your code, sessions, and keys stay on your machine.
 
 ## Requirements

@@ -14,12 +14,29 @@
  * switch, and the showing of a hidden group, are the window's work still:
  * the tool answers `NOT_SERVED` and the caller sends it to the window.
  */
-import type { LayoutSnapshot } from '@clave/contract/sidebar'
 import type { AccountOverride, Session } from '@clave/contract/sessions'
-import { sanitizeForPaste } from '../../shared/paste-sanitize'
-import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
-import { pickAccount, type PoolAccount } from '../../shared/account-pool'
+import { pickAccount } from '../../shared/account-pool'
+import { launchModeFields } from '../../shared/runtime-choices'
+import { historyLines } from '../../shared/history-text'
+import {
+  type TargetHost,
+  checkpointCapture,
+  findTarget,
+  isServerTabRef,
+  readAnswer,
+  requireCaller,
+  resolveTarget as resolveOn,
+  sendToTarget
+} from './session-targets'
+import {
+  poolOf,
+  resolveAccountRef as resolveAccountRefFrom,
+  spawnFieldsOf,
+  usageOf
+} from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
+import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import { poolsOf } from '../../shared/launch-options'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
@@ -28,6 +45,7 @@ import {
   type AccountSwitchMode,
   type Ctx,
   NOT_SERVED,
+  type NotServed,
   type Payload,
   type ServedPoolAccount,
   allLayouts,
@@ -46,6 +64,23 @@ import {
 /** How long a tool waits for a window's own answer (a tab's pin, a pin's
  *  state) before it keeps the window road for the whole call. */
 export const WINDOW_FACT_TIMEOUT_MS = 2_000
+
+// ── Wave 7, lane A: the pooled harnesses, named from the table (PRDCT-4485) ──
+
+/** The harnesses Clave holds connections for, by name: "Claude Code, Codex". */
+const POOLED_NAMES = HARNESSES.filter((h) => poolsOf(h).length > 0)
+  .map((h) => h.name)
+  .join(', ')
+
+/** Why a mode takes no account: its harness signs in by itself, a terminal
+ *  runs none. `gemini` is Antigravity's deprecated alias. */
+function noConnectionWhy(mode: string): string {
+  const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
+  return harness
+    ? `${harness.name} runs on the login inside the harness.`
+    : `a ${mode} runs no harness.`
+}
+
 /** The size a session with no pane starts at, as the hidden spawns do. */
 const HIDDEN_COLS = 120
 const HIDDEN_ROWS = 30
@@ -54,66 +89,37 @@ const nameOf = (ctx: Ctx, session: Session): string => {
   const record = ctx.shell.record(session.id)
   return record?.displayName || record?.folderName || session.title
 }
-const agentStateOf = (session: Session): string | null =>
-  session.state === 'ended' ? null : session.state
 const modeOfSession = (ctx: Ctx, session: Session): string =>
   modeOf(ctx.shell.record(session.id), session.provider)
 
-// ── Who may reach whom ──
+// ── Who may reach whom: the shared rule (`session-targets.ts`), over this host's facts ──
 
-/** The renderer's `resolveTargetSession`: "parent", an id, then an exact
- *  name, the routed window's tabs first. */
-async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Session> {
-  if (ref === 'parent') {
-    if (!ctx.callerSessionId) {
-      throw new Error('Target "parent" requires the call to come from inside a Clave session')
-    }
-    const parentId = ctx.shell.parentOf(ctx.callerSessionId)
-    const parent = parentId ? await ctx.api.sessions.get(parentId).catch(() => null) : null
-    if (!parent) {
-      throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and the link does not survive an app restart. Use clave_list and target a session id or name instead.'
-      )
-    }
-    return parent
-  }
-  const byId = await ctx.api.sessions.get(ref).catch((err) => {
-    if (tagOf(err) === 'SessionNotFound') return null
-    throw err
-  })
-  if (byId) return byId
-  const all = await ctx.api.sessions.list()
-  const named = all.filter((s) => nameOf(ctx, s) === ref)
-  const found = named.find((s) => s.windowKey === key) ?? named[0]
-  if (!found) throw new Error(`No session with id or name "${ref}"`)
-  return found
+/** The tab that opened this one: main's own memory of the open, else the
+ *  session's record, which is what still says it after a restart (#259):
+ *  the opener nested or not (`openedBy`, PRDCT-4192), else the nesting
+ *  parent (`spawnedBy`). */
+function parentOfSession(ctx: Ctx, sessionId: string): string | null {
+  const record = ctx.shell.record(sessionId)
+  return ctx.shell.parentOf(sessionId) ?? record?.openedBy ?? record?.spawnedBy ?? null
 }
 
-/** The renderer's reach rule, over the server's facts: a tab reaches itself,
- *  the tab that opened it, a tab it opened, or a tab in the same group. */
-function assertCanReach(
-  ctx: Ctx,
-  layouts: readonly LayoutSnapshot[],
-  target: Session,
-  verb: 'message' | 'read'
-): void {
-  const caller = ctx.callerSessionId
-  if (!caller) {
-    throw new Error(
-      `clave_${verb === 'message' ? 'send_to' : 'read'}_session must be called from inside a Clave agent tab — this request has no tab identity.`
-    )
-  }
-  if (caller === target.id) return
-  const related =
-    ctx.shell.parentOf(target.id) === caller ||
-    ctx.shell.parentOf(caller) === target.id ||
-    layouts
-      .flatMap((l) => l.groups)
-      .some((g) => g.sessionIds.includes(caller) && g.sessionIds.includes(target.id))
-  if (!related) {
-    throw new Error(
-      `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`
-    )
+/** This host, as the shared resolver reads it: the server's sessions through
+ *  the typed client, the records and the lineage through the shell, the
+ *  groups of every window's layout. */
+function targetHost(ctx: Ctx, key: string): TargetHost {
+  return {
+    caller: ctx.callerSessionId,
+    routedKey: key,
+    get: (id) =>
+      ctx.api.sessions.get(id).catch((err) => {
+        if (tagOf(err) === 'SessionNotFound') return null
+        throw err
+      }),
+    list: () => ctx.api.sessions.list(),
+    nameOf: (session) => nameOf(ctx, session),
+    modeOf: (session) => modeOfSession(ctx, session),
+    parentOf: (id) => parentOfSession(ctx, id),
+    groups: async () => (await allLayouts(ctx, key)).flatMap((l) => l.groups)
   }
 }
 
@@ -197,10 +203,27 @@ async function setSessionView(ctx: Ctx, _key: string, p: Payload): Promise<unkno
   return { sessionId: id, view: { url, title } }
 }
 
-async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  const target = await resolveTarget(ctx, key, str(p.sessionId) ?? '')
-  assertCanReach(ctx, await allLayouts(ctx, key), target, 'read')
+async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown | NotServed> {
+  const ref = str(p.sessionId) ?? ''
+  // A tab running on another server, by its key or by a name no tab of this
+  // host carries, is read by the window that shows it, from the owning
+  // server over the fleet bridge (PRDCT-4166). Until then main answered
+  // "no session" for every server tab an agent had just opened.
+  if (isServerTabRef(ref)) return NOT_SERVED
+  const host = targetHost(ctx, key)
+  const target = ref === 'parent' ? await resolveOn(host, ref) : await findTarget(host, ref)
+  if (!target) return NOT_SERVED
+  requireCaller(host, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
+  // A chat has no screen: its recent history, one line per thing said or
+  // done, under the same envelope (PRDCT-4199).
+  if (target.transport === 'events') {
+    const page = await ctx.api.sessions.history(target.id, undefined, requested)
+    return {
+      ...(readAnswer(host, target, historyLines(page.items)) as Record<string, unknown>),
+      history: page.items
+    }
+  }
   let screen: { lines: readonly string[] }
   try {
     screen = await ctx.api.sessions.screen(target.id, requested)
@@ -217,167 +240,82 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     }
     throw err
   }
-  return {
-    sessionId: target.id,
-    name: nameOf(ctx, target),
-    mode: modeOfSession(ctx, target),
-    alive: target.state !== 'ended',
-    agentState: agentStateOf(target),
-    lines: screen.lines.length,
-    text: screen.lines.join('\n')
-  }
+  return readAnswer(host, target, screen.lines)
 }
 
-/** A self-addressed send: logged into the transport record, delivered
- *  nowhere, typed nowhere (the solo lane's checkpoint). */
-async function checkpoint(
-  ctx: Ctx,
-  key: string,
-  selfId: string,
-  message: string
-): Promise<unknown> {
-  const self = await ctx.api.sessions.get(selfId).catch(() => null)
-  if (!self) throw new Error('Calling session not found')
-  if (modeOfSession(ctx, self) === 'pi') throw new Error('Pi exchange capture is not supported yet')
-  const text = sanitizeForPaste(message)
-  const endpoint = endpointOf(ctx, self, await allLayouts(ctx, key))
-  if (!endpoint) throw new Error('Pi exchange capture is not supported yet')
-  const name = nameOf(ctx, self)
-  ctx.shell.captureMessage({
-    ts: new Date().toISOString(),
-    sender: endpoint,
-    target: endpoint,
-    text,
-    provenance: buildCheckpointProvenance({ id: self.id, name }),
-    delivered: false
-  })
-  return {
-    checkpoint: true,
-    logged: true,
-    delivered: false,
-    sessionId: self.id,
-    name,
-    note: 'Checkpoint logged to the transport record; nothing was typed into any tab.'
-  }
-}
-
-async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  const caller = ctx.callerSessionId
+async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown | NotServed> {
   const ref = str(p.sessionId) ?? ''
-  const message = str(p.message) ?? ''
-  if (caller && ref === 'mine') return checkpoint(ctx, key, caller, message)
-  const target = await resolveTarget(ctx, key, ref)
-  if (caller && target.id === caller) return checkpoint(ctx, key, caller, message)
+  // A tab of another server is the window's (PRDCT-4193); so is a name no
+  // tab of this host carries, which the window may know as a server tab's.
+  if (isServerTabRef(ref)) return NOT_SERVED
+  const host = targetHost(ctx, key)
+  if (ref !== 'mine' && ref !== 'parent' && !(await findTarget(host, ref))) return NOT_SERVED
   const layouts = await allLayouts(ctx, key)
-  assertCanReach(ctx, layouts, target, 'message')
-  const targetName = nameOf(ctx, target)
-  if (target.state === 'ended') throw new Error(`Session "${targetName}" has ended`)
-  const mode = modeOfSession(ctx, target)
-  if (mode === 'terminal') {
-    throw new Error(
-      'Refusing to send to a plain terminal — text typed there would run as a shell command. Target an agent tab (claude/antigravity/codex).'
-    )
-  }
-  if (mode === 'claude-agents') {
-    throw new Error('Refusing to send to a `claude agents` tab — it is a menu UI, not a chat input')
-  }
-  const sender = caller ? await ctx.api.sessions.get(caller).catch(() => null) : null
-  const senderName = sender ? nameOf(ctx, sender) : undefined
-  // The provenance header: the receiving agent must be able to tell this
-  // text came from a sibling tab, not from the person, and know how to
-  // answer it. Header and message are filtered apart, so the record holds
-  // exactly what was delivered under which provenance.
-  const cleanHeader = sanitizeForPaste(
-    buildProvenanceHeader(sender && senderName ? { id: sender.id, name: senderName } : undefined)
-  )
-  const cleanMessage = sanitizeForPaste(message)
-  const text = `${cleanHeader}\n${cleanMessage}`
-  let outcome: { submitted: boolean; draftHandling: string }
-  try {
-    outcome = await ctx.api.sessions.type(target.id, text, senderName)
-  } catch (err) {
-    const tag = tagOf(err)
-    if (tag === 'SessionNotFound') throw new Error(`No session with id or name "${ref}"`)
-    if (tag === 'SessionWriteRefused')
-      throw new Error((err as { message?: string }).message ?? 'The write was refused')
-    throw err
-  }
-  const after = await ctx.api.sessions.get(target.id).catch(() => null)
-  const stillAlive = after !== null && after.state !== 'ended'
-  // Transport capture (observability): once the submit landed, with the
-  // delivery as it stood; a Pi tab on either side is not captured.
-  if (sender && outcome.submitted && modeOfSession(ctx, sender) !== 'pi' && mode !== 'pi') {
-    const from = endpointOf(ctx, sender, layouts)
-    const to = endpointOf(ctx, target, layouts)
-    if (from && to) {
-      ctx.shell.captureMessage({
-        ts: new Date().toISOString(),
-        sender: from,
-        target: to,
-        text: cleanMessage,
-        provenance: cleanHeader,
-        delivered: stillAlive
-      })
+  return sendToTarget(
+    host,
+    { ref, message: str(p.message) ?? '', resume: p.resume === true },
+    {
+      // A self-addressed send: logged into the transport record, delivered
+      // nowhere, typed nowhere (the solo lane's checkpoint).
+      checkpoint: (self, name, message) => {
+        if (modeOfSession(ctx, self) === 'pi')
+          throw new Error('Pi exchange capture is not supported yet')
+        if (modeOfSession(ctx, self) === 'opencode')
+          throw new Error('OpenCode exchange capture is not supported yet')
+        const endpoint = endpointOf(ctx, self, layouts)
+        if (!endpoint) throw new Error('Exchange capture is not supported yet for this harness')
+        const { text, provenance } = checkpointCapture(self, name, message)
+        ctx.shell.captureMessage({
+          ts: new Date().toISOString(),
+          sender: endpoint,
+          target: endpoint,
+          text,
+          provenance,
+          delivered: false
+        })
+        return true
+      },
+      type: async (target, text, senderName) => {
+        try {
+          return await ctx.api.sessions.type(target.id, text, senderName)
+        } catch (err) {
+          const tag = tagOf(err)
+          if (tag === 'SessionNotFound') throw new Error(`No session with id or name "${ref}"`)
+          if (tag === 'SessionWriteRefused')
+            throw new Error((err as { message?: string }).message ?? 'The write was refused')
+          throw err
+        }
+      },
+      // The Resume the person's button makes, under the same id, the
+      // conversation resumed where the provider can (PRDCT-4193).
+      resume: async (target) => {
+        await ctx.api.sessions.restart(target.id, {}, false, undefined, true)
+      },
+      capture: ({ sender, target, text, provenance, delivered }) => {
+        const from = endpointOf(ctx, sender, layouts)
+        const to = endpointOf(ctx, target, layouts)
+        if (from && to)
+          ctx.shell.captureMessage({
+            ts: new Date().toISOString(),
+            sender: from,
+            target: to,
+            text,
+            provenance,
+            delivered
+          })
+      }
     }
-  }
-  return {
-    delivered: stillAlive,
-    sessionId: target.id,
-    name: targetName,
-    mode,
-    agentState: agentStateOf(target),
-    draftHandling: outcome.draftHandling
-  }
+  )
 }
 
-// ── Accounts ──
+// ── Accounts: the pool's rule, shared with the routines (`served-accounts.ts`) ──
 
-const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
-  accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
-const usageOf = (accounts: ServedPoolAccount[]): Record<string, ServedPoolAccount['usage']> =>
-  Object.fromEntries(accounts.map((a) => [a.id, a.usage]))
-
-/** The renderer's `accountForLaunch`: a named account is honoured; with none
- *  named, the selected one while it has headroom, else the next along. */
-function accountForLaunch(ctx: Ctx, provider: AccountProvider): ServedPoolAccount {
-  const accounts = ctx.shell.accounts(provider)
-  const selected = ctx.shell.selectedAccountId(provider) ?? 'default'
-  const id = pickAccount({
-    accounts: poolOf(accounts),
-    usage: usageOf(accounts),
-    preferredId: selected
-  })
-  return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
-}
-
-/** The renderer's `resolveAccountRef`: an id, a label, or "any" for the
- *  pool's pick; an unknown name errors with the names that exist. */
-function resolveAccountRef(
+const resolveAccountRef = (
   ctx: Ctx,
   provider: AccountProvider,
-  ref: string | undefined
-): ServedPoolAccount {
-  if (!ref || ref === 'any') return accountForLaunch(ctx, provider)
-  const accounts = ctx.shell.accounts(provider)
-  const byId = accounts.find((a) => a.id === ref)
-  if (byId) return byId
-  const exact = accounts.filter((a) => a.label === ref)
-  if (exact.length === 1) return exact[0]
-  const loose = accounts.filter((a) => a.label.toLowerCase() === ref.toLowerCase())
-  if (loose.length === 1) return loose[0]
-  const names = accounts.map((a) => `"${a.label}" (${a.id})`).join(', ')
-  throw new Error(
-    `Unknown ${provider === 'codex' ? 'Codex' : 'Claude'} account "${ref}". Available: ${names}`
-  )
-}
-
-const spawnFieldsOf = (
-  provider: AccountProvider,
-  account: { id: string; label: string }
-): AccountOverride =>
-  provider === 'codex'
-    ? { codexAccountId: account.id, codexAccountLabel: account.label }
-    : { claudeProfileId: account.id, claudeProfileLabel: account.label }
+  ref: string | undefined,
+  model?: string
+): ServedPoolAccount => resolveAccountRefFrom(ctx.shell, provider, ref, model)
 
 const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
   const mode = modeOfSession(ctx, session)
@@ -392,7 +330,10 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
   const session = id ? await ctx.api.sessions.get(id).catch(() => null) : null
   if (!session) throw new Error(`Unknown session "${ref}"`)
   const provider = providerOf(ctx, session)
-  if (!provider) throw new Error('Only Claude and Codex tabs run on an account')
+  if (!provider)
+    throw new Error(
+      `Only a tab on a harness with a connection pool (${POOLED_NAMES}) runs on a connection`
+    )
   const record = ctx.shell.record(session.id)
   const current =
     (provider === 'codex' ? record?.codexAccountId : record?.claudeProfileId) ?? 'default'
@@ -402,10 +343,10 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
     const accounts = ctx.shell.accounts(provider)
     const next = pickAccount({
       accounts: poolOf(accounts),
-      usage: usageOf(accounts),
+      usage: usageOf(accounts, { model: record?.model }),
       preferredId: current,
       leavingId: current,
-      preferSessionHeadroom: true
+      preferWeeklyHeadroom: true
     })
     if (next === current) throw new Error('No other account of this provider has headroom')
     target = accounts.find((a) => a.id === next) ?? { id: next, label: next }
@@ -466,7 +407,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
 
 // ── Opening a session ──
 
-type OpenMode = 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
+type OpenMode = 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'opencode' | 'terminal'
 
 async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   // The target group first, so a bad reference fails cleanly; its window is
@@ -481,18 +422,38 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     ? resolveWorkspace(ctx, explicitWorkspace)
     : (target?.group.workspaceId ?? workspaceForSpawn(ctx, undefined))
 
+  if (explicitWorkspace && target?.group.workspaceId && workspaceId !== target.group.workspaceId)
+    throw new Error('The group and workspace arguments name different workspaces')
+
   const mode = (str(p.mode) as OpenMode | undefined) ?? 'claude'
-  const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
-    resolveSpawnModes({
-      mode,
-      ...(p.dangerous !== undefined ? { dangerous: p.dangerous === true } : {}),
-      ...(str(p.model) !== undefined ? { model: str(p.model) } : {})
-    })
-  const profileRef = resolveProfileRef({
+  const {
+    claudeMode,
+    antigravityMode,
+    codexMode,
+    piMode,
+    opencodeMode,
+    dangerousMode,
+    model,
+    family
+  } = resolveSpawnModes({
     mode,
-    ...(p.chat !== undefined ? { chat: p.chat === true } : {}),
-    ...(str(p.profile) !== undefined ? { profile: str(p.profile) } : {})
+    ...(p.dangerous !== undefined ? { dangerous: p.dangerous === true } : {}),
+    ...(str(p.model) !== undefined ? { model: str(p.model) } : {})
   })
+  const profileRef = resolveProfileRef(
+    {
+      mode,
+      ...(p.chat !== undefined ? { chat: p.chat === true } : {}),
+      ...(str(p.profile) !== undefined ? { profile: str(p.profile) } : {})
+    },
+    // The chat the launcher would open in that workspace: the person's own
+    // chat profile when they set one. Until 3 November 2026 the built-in
+    // replaced it, and a wave's Codex chats asked before every command.
+    family ? ctx.shell.chatDefault(family, workspaceId) : undefined,
+    // An omitted `chat` follows the person's launcher (PRDCT-4425); a host
+    // with no setting keeps the terminal, as before 11 November 2026.
+    ctx.shell.interactionMode?.() ?? 'terminal'
+  )
   const launchProfileId =
     family && profileRef
       ? ctx.shell
@@ -504,14 +465,23 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   const accountRef = str(p.account)
   if (accountRef && !claudeMode && !codexMode) {
     throw new Error(
-      `The account argument applies to claude and codex modes only (got mode "${mode}")`
+      `The account argument applies to harnesses with a connection pool (${POOLED_NAMES}); ${noConnectionWhy(mode)}`
     )
   }
-  const accountFields = claudeMode
-    ? spawnFieldsOf('claude', resolveAccountRef(ctx, 'claude', accountRef))
-    : codexMode
-      ? spawnFieldsOf('codex', resolveAccountRef(ctx, 'codex', accountRef))
-      : {}
+  // The account is judged for the model the tab will run: a Fable week
+  // spent never costs a launch on Opus its account (PRDCT-4253). A launch
+  // naming no model runs the one main remembers for its chat, a resumed
+  // conversation its own, which nothing here knows (the shared caps judge).
+  const resumeSessionId = str(p.resumeSessionId)
+  const pooled: AccountProvider | null = claudeMode ? 'claude' : codexMode ? 'codex' : null
+  const judgedModel =
+    model ??
+    (pooled && resumeSessionId === undefined
+      ? ctx.shell.launchModel?.(pooled, launchProfileId, workspaceId)
+      : undefined)
+  const accountFields = pooled
+    ? spawnFieldsOf(pooled, resolveAccountRef(ctx, pooled, accountRef, judgedModel))
+    : {}
   const cwd = str(p.cwd) ?? ''
   const command = str(p.command)
   const prompt = str(p.prompt)
@@ -527,16 +497,38 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         antigravityMode,
         codexMode,
         piMode,
+        opencodeMode,
         dangerousMode,
         ...(model !== undefined ? { model } : {}),
         ...(launchProfileId !== undefined ? { launchProfileId } : {}),
         ...accountFields,
+        // A past conversation reopened (PRDCT-4236): the History's id, for
+        // the spawn's --resume (Claude), resume (Codex) or --session (Pi).
+        ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+        // The mode and the effort to start at (PRDCT-4236): the caller's, or
+        // the ones a resumed conversation last ran at. Bypass is the flag.
+        ...launchModeFields({
+          claudeMode,
+          codexMode,
+          dangerousMode,
+          permissionMode: p.permissionMode,
+          effort: p.effort,
+          allowDangerous: p.allowDangerous
+        }),
         ...(piMode && provider !== undefined ? { piProvider: provider } : {}),
         ...(piMode && thinking !== undefined ? { piThinking: thinking } : {}),
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
-        ...(workspaceId !== undefined ? { workspaceId } : {})
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
+        // Persisted lineage folds the tab under its caller. Separate tabs
+        // keep the in-memory messaging link below without sidebar nesting.
+        ...(p.attachToParent === true && ctx.callerSessionId
+          ? { spawnedBy: ctx.callerSessionId }
+          : {}),
+        // The opener, nested or not, on the record (PRDCT-4192): what the
+        // name tie-break read once this process's memory of the open is gone.
+        ...(ctx.callerSessionId ? { openedBy: ctx.callerSessionId } : {})
       }
     })
   } catch (err) {
@@ -564,8 +556,8 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     await ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS).catch(() => undefined)
   }
   // An agent's delegation is a transport event (PRDCT-1568), recorded with
-  // its launch prompt; a terminal and a Pi tab are not captured.
-  if (ctx.callerSessionId && mode !== 'terminal' && mode !== 'pi') {
+  // its launch prompt; a terminal, a Pi and an OpenCode tab are not captured.
+  if (ctx.callerSessionId && mode !== 'terminal' && mode !== 'pi' && mode !== 'opencode') {
     try {
       const layouts = await allLayouts(ctx, key)
       const [spawner, spawned] = await Promise.all([
@@ -619,9 +611,7 @@ function resolvePin(ctx: Ctx, p: Payload): PinnedBlueprint {
       })()
   let pin = named.length === 1 ? named[0] : undefined
   if (!pin && named.length > 1) {
-    const callerWs = ctx.callerSessionId
-      ? ctx.shell.record(ctx.callerSessionId)?.workspaceId
-      : undefined
+    const callerWs = workspaceForSpawn(ctx, undefined)
     const inCallerWs = callerWs ? named.filter((x) => x.workspaceId === callerWs) : []
     if (inCallerWs.length === 1) pin = inCallerWs[0]
     if (!pin) {
@@ -652,7 +642,8 @@ function pinnedAccountFields(
   ctx: Ctx,
   session: PinnedBlueprintSession,
   groupName: string,
-  pinOtherProvider: boolean
+  pinOtherProvider: boolean,
+  workspaceId: string | undefined
 ): AccountOverride {
   const provider: AccountProvider | null = session.codexMode
     ? 'codex'
@@ -660,9 +651,16 @@ function pinnedAccountFields(
       ? 'claude'
       : null
   if (!provider) return {}
+  // A pinned session names no model: it starts on the one its family's
+  // selected profile remembers, and its account is judged for that one, as
+  // the window's pinned groups do (`pinned-store.ts`). `claude agents` runs
+  // no chat, so the shared caps judge it.
+  const model = session.claudeAgentsMode
+    ? undefined
+    : ctx.shell.launchModel?.(provider, undefined, workspaceId)
   let account: { id: string; label: string }
   try {
-    account = resolveAccountRef(ctx, provider, session.account)
+    account = resolveAccountRef(ctx, provider, session.account, model)
   } catch {
     const fallback = ctx.shell.accounts(provider).find((a) => a.id === 'default')
     account = fallback ?? { id: 'default', label: 'Default' }
@@ -718,6 +716,7 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         session.antigravityMode ||
         session.codexMode ||
         session.piMode ||
+        session.opencodeMode ||
         session.claudeAgentsMode
       )
       const atRoot = session.rootSession === true && !!pin.workspaceRoot
@@ -737,12 +736,19 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
           antigravityMode: session.antigravityMode,
           codexMode: session.codexMode,
           ...(session.piMode !== undefined ? { piMode: session.piMode } : {}),
+          ...(session.opencodeMode !== undefined ? { opencodeMode: session.opencodeMode } : {}),
           ...(session.claudeAgentsMode !== undefined
             ? { claudeAgentsMode: session.claudeAgentsMode }
             : {}),
           dangerousMode: session.dangerousMode,
           ...(initialPrompt !== undefined ? { initialPrompt } : {}),
-          ...pinnedAccountFields(ctx, session, pin.name, pinOtherProvider),
+          ...pinnedAccountFields(
+            ctx,
+            session,
+            pin.name,
+            pinOtherProvider,
+            pin.workspaceId ?? undefined
+          ),
           // The pin's workspace wins over the window's: a launch of a hidden
           // workspace's pin must not leak its sessions into the view.
           ...(pin.workspaceId ? { workspaceId: pin.workspaceId } : {})

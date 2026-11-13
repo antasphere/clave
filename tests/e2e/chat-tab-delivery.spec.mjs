@@ -5,9 +5,9 @@ import { callMcp, until } from './harness.mjs'
    What this spec holds in the real app:
    - it ARRIVES: a chat tab has no terminal, and a paste addressed to one was
      dropped in main while the tool answered delivered: true;
-   - it reads as the other tab's, not the reader's: the agents' tint, the
-     sender in a chip, the bracketed header gone from the words;
-   - the chip opens the sender's tab;
+   - it reads as the other tab's, not the reader's: a card in the exchange
+     timeline, the sender named, the bracketed header gone from the words;
+   - the sender's name opens the sender's tab;
    - the ↑ recall of past messages skips it: the reader never wrote it. */
 
 export async function run(t) {
@@ -25,7 +25,7 @@ export async function run(t) {
         (s) => s.adapterId === 'echo' && s.id !== target.id
       )
     )
-    // Tabs reach each other within a group.
+    // The two tabs share a group (any tab may reach any tab since PRDCT-4236).
     const { groupId } = await callMcp(app, 'createGroup', { name: 'Delivery' })
     for (const id of [target.id, sender.id])
       await callMcp(app, 'moveSession', { sessionId: id, groupId })
@@ -37,36 +37,43 @@ export async function run(t) {
     // Back to the target, where the message should be.
     await callMcp(app, 'focus', { sessionId: target.id })
     const pane = win.locator(`[data-session-id="${target.id}"] [data-testid="terminal-view"]`)
-    const delivered = pane.locator('.chat-turn[data-from="tab"]')
+    const stack = pane.locator('.chat-delivery-stack')
+    await stack.waitFor()
+    const card = stack.locator('.exchange-card').first()
+    t.check(
+      'incoming cross-session traffic starts collapsed',
+      !(await card.evaluate((el) => el.open))
+    )
+    await card.locator('> summary').click()
+    const delivered = card.locator('.exchange-part[data-theirs]')
     const arrived = await until(async () => (await delivered.count()) === 1, 8000)
     t.check('a message sent to a chat tab arrives there', arrived === true && result.delivered, {
       arrived,
       result
     })
     const seen = await delivered.evaluate((el) => ({
-      text: el.innerText,
-      chip: el.querySelector('.chat-turn-from')?.textContent ?? null,
-      button: el.querySelector('.chat-turn-from')?.tagName ?? null,
-      tint: getComputedStyle(el).backgroundImage
+      text: el.querySelector('.exchange-part-text')?.innerText ?? '',
+      who: el.querySelector('.exchange-part-who')?.textContent ?? null,
+      button: el.querySelector('.exchange-part-who')?.tagName ?? null
     }))
     t.check(
-      'it reads as the other tab’s: sender in a chip, no bracketed header, its own tint',
-      !!seen.chip &&
-        !seen.chip.includes('[') &&
+      'it reads as the other tab’s: its name, no bracketed header',
+      !!seen.who &&
+        !seen.who.includes('[') &&
         seen.text.includes('MERGED · PR 12') &&
         !seen.text.includes('[Message from Clave tab') &&
         !seen.text.includes('clave_send_to_session'),
       seen
     )
-    // The chip opens the sender's tab.
-    await delivered.locator('button.chat-turn-from').click()
+    // The name opens the sender's tab.
+    await delivered.locator('button.exchange-part-who').click()
     const opened = await until(
       async () =>
         (await win.locator(`[data-session-id="${sender.id}"]`).count()) === 1 &&
         (await win.locator(`[data-session-id="${sender.id}"]`).isVisible()),
       5000
     )
-    t.check('the chip opens the sender’s tab', seen.button === 'BUTTON' && opened === true, {
+    t.check('the name opens the sender’s tab', seen.button === 'BUTTON' && opened === true, {
       button: seen.button,
       opened
     })

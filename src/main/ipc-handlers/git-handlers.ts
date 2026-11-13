@@ -1,18 +1,104 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
+import * as fs from 'fs'
 import log from 'electron-log/main'
 import { gitManager } from '../git-manager'
+import { isServerExternal } from '../server/endpoint'
+import { SERVER_SILENT } from '../../shared/helper-preferences'
+import { GitRepoWatcher } from '../git-watch'
+import { GIT_WATCH_DEBOUNCE_MS, GIT_WATCH_MAX_WAIT_MS } from '../constants'
 import { logPullFailures } from '../pull-log'
 import { repoIndexManager } from '../repo-index'
 import type { GitBatchProgress } from '../git-manager'
 import type { GitRangeDirection } from '../../shared/git-range'
 
+/**
+ * One repo watcher for the app. A panel subscribes under its own id, keyed by
+ * its window, so two panels of one window and the same repo in two windows
+ * share one watch; a change goes to every window, and each panel keeps the
+ * repos it shows.
+ */
+const repoWatcher = new GitRepoWatcher({
+  watch: (dir, onEvent) => {
+    const watcher = fs.watch(dir, { recursive: true }, (_type, filename) =>
+      onEvent(filename ? filename.toString() : null)
+    )
+    // A watch that errors later (the folder deleted) is closed rather than
+    // left to throw; the panel's slow poll still covers that repo.
+    watcher.on('error', () => {
+      try {
+        watcher.close()
+      } catch {
+        /* already closed */
+      }
+    })
+    return watcher
+  },
+  resolve: (repo) => gitManager.repoDirs(repo),
+  onChange: (repos) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('git:repos-changed', repos)
+    }
+  },
+  debounceMs: GIT_WATCH_DEBOUNCE_MS,
+  maxWaitMs: GIT_WATCH_MAX_WAIT_MS
+})
+
+export { SERVER_SILENT }
+
+/** Sync all's commit message, written where this Mac's helpers run
+ *  (PRDCT-4330): with a server of its own behind the window, that server
+ *  writes it (the call the panel's own button makes, through the routed
+ *  member); in-process, main's helper as before. A server that cannot be
+ *  reached is said in plain words; its own refusal ("Switched off …") passes
+ *  through. Main spawns nothing either way: its runner refuses all helpers
+ *  when a server backs the window (`settings/shell-source.ts`). */
+export async function syncCommitMessage(
+  cwd: string,
+  local: (cwd: string) => Promise<string> = (dir) => gitManager.generateCommitMessage(dir),
+  server: () => Promise<{
+    git: { generateCommitMessage: (cwd: string) => Promise<string> }
+  }> = async () => (await import('../mcp/server-client')).serverClient.api()
+): Promise<string> {
+  if (!isServerExternal()) return local(cwd)
+  let api: Awaited<ReturnType<typeof server>>
+  try {
+    api = await server()
+  } catch {
+    throw new Error(SERVER_SILENT)
+  }
+  try {
+    return await api.git.generateCommitMessage(cwd)
+  } catch (error) {
+    const tag = (error as { _tag?: unknown } | null)?._tag
+    if (tag === 'ServerUnreachable' || tag === 'ServerRefused') throw new Error(SERVER_SILENT)
+    throw error
+  }
+}
+
 export function registerGitHandlers(): void {
+  gitManager.setCommitMessageWriter((cwd) => syncCommitMessage(cwd))
+  const watchedSenders = new Set<number>()
+  ipcMain.handle('git:watch-repos', (event, subscriberId: string, repoPaths: string[]) => {
+    const wcId = event.sender.id
+    if (!watchedSenders.has(wcId)) {
+      watchedSenders.add(wcId)
+      event.sender.once('destroyed', () => {
+        watchedSenders.delete(wcId)
+        repoWatcher.dropPrefix(`${wcId}:`)
+      })
+    }
+    return repoWatcher.setRepos(`${wcId}:${subscriberId}`, repoPaths)
+  })
+  ipcMain.handle('git:unwatch-repos', (event, subscriberId: string) => {
+    repoWatcher.drop(`${event.sender.id}:${subscriberId}`)
+  })
   ipcMain.handle('git:check-ignored', (_event, cwd: string, paths: string[]) =>
     gitManager.checkIgnored(cwd, paths)
   )
   ipcMain.handle('git:fetch', (_event, cwd: string) => gitManager.fetch(cwd))
   ipcMain.handle('git:fetch-batch', (_event, paths: string[]) => gitManager.fetchBatch(paths))
   ipcMain.handle('git:status', (_event, cwd: string) => gitManager.getStatus(cwd))
+  ipcMain.handle('git:remote-url', (_event, cwd: string) => gitManager.remoteUrl(cwd))
   ipcMain.handle('git:status-batch', (_event, paths: string[]) => gitManager.getStatusBatch(paths))
   ipcMain.handle('git:discover-repos', (_event, cwd: string, force?: boolean) =>
     repoIndexManager.discover(cwd, force)

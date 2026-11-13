@@ -1,3 +1,5 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
+import { reportFleetError } from '../../store/fleet-store'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useCallback, useState, type ReactElement } from 'react'
 import {
@@ -19,6 +21,9 @@ import { SessionCopyOffers } from './SessionCopyOffers'
 import { AccountProposal } from './AccountProposal'
 import { AgentUpdateHint } from './AgentUpdateHint'
 import { LinkedDocumentReopen } from '../files/LinkedDocumentReopen'
+import { SessionStatus } from '../session/SessionItem'
+import { WorkBreadcrumb } from '../session/WorkEntryItem'
+import { FleetBadge } from '../fleet/FleetControls'
 
 interface TerminalHeaderProps {
   sessionId: string
@@ -41,6 +46,10 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
     try {
       await window.electronAPI.killSession(sessionId)
     } catch {
+      if (isRemoteKey(sessionId)) {
+        reportFleetError(new Error('close failed'))
+        return
+      }
       // session may already be dead
     }
     removeSession(sessionId)
@@ -75,17 +84,11 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
     <>
       <div className="pane-header">
         <div className="pane-header-lead">
-          <span
-            className="pane-status-dot"
-            data-status={
-              session.activityStatus === 'active'
-                ? 'working'
-                : session.activityStatus === 'idle'
-                  ? 'ready'
-                  : 'inactive'
-            }
-          />
+          {/* The sidebar row's own status glyph, as in a chat pane's header. */}
+          <SessionStatus session={session} placeholder />
           <span className="pane-header-title">{session.name}</span>
+          <FleetBadge sessionId={sessionId} />
+          <WorkBreadcrumb session={session} />
           {multiProfile &&
             session.claudeProfileLabel &&
             (session.claudeMode || session.claudeAgentsMode) && (
@@ -172,7 +175,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               <ChatBubbleBottomCenterTextIcon className="w-4 h-4" />
             </button>
           )}
-          {session.claudeMode && session.claudeSessionId && (
+          {!isRemoteKey(sessionId) && session.claudeMode && session.claudeSessionId && (
             <>
               <button
                 onClick={() =>

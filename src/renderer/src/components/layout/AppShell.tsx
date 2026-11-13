@@ -1,3 +1,4 @@
+import { startDesktopFleet } from '../../store/fleet-store'
 import { initializeSkins } from '../../lib/skin'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
@@ -6,6 +7,7 @@ import {
   useSessionStore,
   isFileTabId,
   getVisibleFlatOrder,
+  getSessionCycleOrder,
   inActiveWorkspace,
   enableSidebarPersistence,
   setSidebarBase,
@@ -19,10 +21,14 @@ import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
 import { ServerNotice } from './ServerNotice'
+import { LaunchNotice } from './LaunchNotice'
+import { ServerFolderPickerHost } from '../fleet/ServerFolderPickerHost'
+import { WorkspacePairingNotice } from '../fleet/WorkspacePairingNotice'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
 import { launchSession } from '../../lib/launch-session'
 import { loadLaunchPrefs } from '../../store/launch-prefs'
 import { loadLaunchProfiles } from '../../store/launch-profile-store'
+import { useLaunchSettingsStore } from '../../store/launch-settings-store'
 import { TerminalGrid } from './TerminalGrid'
 import { SettingsPanel } from '../settings/SettingsPanel'
 import { SettingsSidebar } from '../settings/SettingsSidebar'
@@ -33,6 +39,8 @@ import { connectUpdaterStore } from '../../store/updater-store'
 import { connectAgentUpdatesStore } from '../../store/agent-updates-store'
 import { MissionControlOverlay } from '../ui/MissionControlOverlay'
 import { SessionHistoryDialog } from '../session/SessionHistoryDialog'
+import { TriageDialog } from '../help/TriageDialog'
+import { useTriageStore } from '../../store/triage-store'
 import { useHistoryStore } from '../../store/history-store'
 import { startSessionHistoryStamping } from '../../lib/session-history'
 import { AgentChatPanel } from '../agents/AgentChatPanel'
@@ -42,10 +50,14 @@ import { SidePanel } from '../git/SidePanel'
 import { FilePreview } from '../files/FilePreview'
 import { GitDiffPreview } from '../git/GitDiffPreview'
 import { GitJourneyPanel } from '../git/GitJourneyPanel'
-import { Bars3BottomLeftIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowsPointingInIcon,
+  Bars3BottomLeftIcon,
+  MagnifyingGlassIcon
+} from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 import { usePinnedStore, initClaveFileWatchers } from '../../store/pinned-store'
-import { useWorkspaceStore } from '../../store/workspace-store'
+import { allWorkspaces, findWorkspace, useWorkspaceStore } from '../../store/workspace-store'
 import {
   bootWorkspaces,
   refreshActiveWorkspacePins,
@@ -55,13 +67,21 @@ import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { initServedToolsEvents } from '../../lib/served-events'
-import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
+import { installProviderSwitchRoad } from '../../lib/switch-provider'
+import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
+import { splitOngoingDead } from '../../lib/ongoing'
+import { dropEndedTab, keepRestingLaunch, startOngoingFollow } from '../../lib/ongoing-actions'
+import { useOngoingStore, startOngoingSync } from '../../store/ongoing-store'
+import { OngoingPage } from '../ongoing/OngoingPage'
 import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
 import { initCopyOfferStore } from '../../store/copy-offer-store'
+// ── ADR 0004: the routines in the toolbar ──
+import { initRoutinesStore } from '../../store/routines-store'
+import { RoutineToolbar } from '../routines/RoutineToolbar'
 import { ToolbarSecretPopover } from './ToolbarSecretPopover'
 import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
@@ -69,6 +89,7 @@ import { getTerminalIconComponent } from '../ui/terminal-icons'
 import { ToolbarTerminalPopover } from './ToolbarTerminalPopover'
 import { PluginToolbar } from '../plugins/PluginToolbar'
 import { PluginMainPanel } from '../plugins/PluginMainPanel'
+import { searchableScroller, usePaneSearchStore } from '../../views/pane-search'
 import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store'
 import { ConfirmDialog } from '@clave/ui/components'
 import { requestArchiveAndKill } from '../../lib/archive-session'
@@ -119,6 +140,17 @@ export function AppShell(): React.JSX.Element {
   // focus on every change and clears the report when it goes away. A window that never
   // reports leaves the plugins with the last report from whichever window did.
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
+  // The ongoing conversations (PRDCT-4190) follow their tabs (a rename, the
+  // provider's id) and are read again when the window comes back to the front.
+  useEffect(() => {
+    const stopFollow = startOngoingFollow()
+    const stopSync = startOngoingSync(dropEndedTab)
+    if (!useOngoingStore.getState().hydrated) void useOngoingStore.getState().hydrate()
+    return () => {
+      stopFollow()
+      stopSync()
+    }
+  }, [])
   useEffect(() => {
     void window.electronAPI.pluginsContext(focusedSessionId ?? null).catch(() => {
       /* The plugin registry reports its own failures in Settings. */
@@ -142,7 +174,7 @@ export function AppShell(): React.JSX.Element {
   // The window's title names its workspace — what tells windows apart in
   // Mission Control and the Window menu (the title bar itself is hidden).
   const activeWorkspaceName = useWorkspaceStore(
-    (s) => s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.name ?? null
+    (s) => findWorkspace(s, s.activeWorkspaceId)?.name ?? null
   )
   useEffect(() => {
     document.title = activeWorkspaceName ? `${activeWorkspaceName} — Clave` : 'Clave'
@@ -159,8 +191,11 @@ export function AppShell(): React.JSX.Element {
     // What the server did to a tab through an agent tool (wave 4): the
     // window follows the push channel's facts.
     initServedToolsEvents()
+    // The limit policy's third rung, a move to another provider (PRDCT-4300).
+    installProviderSwitchRoad()
     initSecretStore()
     initCopyOfferStore()
+    initRoutinesStore()
     initPluginUI()
     // Re-homing: take in what another window hands over — a closing window's
     // sessions with its groups, a tab or a group moved here — and drop a tab
@@ -198,12 +233,16 @@ export function AppShell(): React.JSX.Element {
     // whether it lands before or after the workspace registry.
     void loadLaunchPrefs()
     void loadLaunchProfiles()
+    void useLaunchSettingsStore.getState().load()
   }, [])
 
   useEffect(() => {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
     let hadSavedSessions = false
+    // Whether the boot's read held every record (inside the app) or the
+    // server's come through the top-up (attached, separate, or not known yet).
+    let bootListingComplete = true
     // The session ids the saved layout names: the attached top-up's gate, and
     // the shells the merge keeps for it until it has run (PRDCT-3432).
     let savedIds: string[] = []
@@ -255,33 +294,24 @@ export function AppShell(): React.JSX.Element {
         // where they belong instead of as rows beside the groups.
         const survivors = (await window.electronAPI?.listSessionRecords?.()) ?? []
         const plan = planBootAdoption(survivors)
+        // An ongoing conversation whose process is gone is not work to
+        // restore (PRDCT-4190): never behind the prompt, never spawned at
+        // launch. Its record goes; the entry resumes it when it is opened.
+        await useOngoingStore.getState().hydrate()
+        const ongoingDead = splitOngoingDead(plan.deadTabs, useOngoingStore.getState().entries)
+        keepRestingLaunch(ongoingDead.entries)
+        for (const s of ongoingDead.resting) {
+          void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+        }
+        plan.deadTabs = ongoingDead.restore
         // Whether that read was EVERY adoptable record (inside the app) or
         // the server's come after the boot (attached, or no server named
         // yet): the merge below prunes a saved id with no record only when
         // the listing is complete, else keeps it as a shell for the top-up.
         const listingComplete =
           (await window.electronAPI?.bootRecordsComplete?.().catch(() => true)) ?? true
+        bootListingComplete = listingComplete
 
-        const adoptedIds: string[] = []
-        for (const s of plan.liveTabs) {
-          const id = await adoptRecord(s, activeWorkspaceId)
-          if (id) adoptedIds.push(id)
-        }
-        if (plan.deadTabs.length > 0) {
-          // The boot now waits on the person: the mark says so (below), so a
-          // driver waiting for the boot can answer the prompt.
-          document.documentElement.dataset.boot = 'restore-prompt'
-          if (await promptRestore(plan.deadTabs)) {
-            for (const s of plan.deadTabs) {
-              const id = await adoptRecord(s, activeWorkspaceId)
-              if (id) adoptedIds.push(id)
-            }
-          } else {
-            for (const s of plan.deadTabs) {
-              void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
-            }
-          }
-        }
         // A dead hidden half has nothing worth restoring: relaunching it
         // gives a bare shell in the same cwd, not the dev server that died,
         // and its owner's start action is the way back. Drop the record so
@@ -291,11 +321,33 @@ export function AppShell(): React.JSX.Element {
         }
         // Toolbar terminals are not sidebar citizens at all: park each live
         // one for its button, which reattaches when next opened instead of
-        // starting a second server on the same port.
+        // starting a second server on the same port. Before the restore, so
+        // a click while it runs finds it (PRDCT-3527).
         for (const s of plan.toolbar) {
           if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
         }
 
+        // The rows first, from the records, then the processes a few at a
+        // time (PRDCT-3527): a launch bringing back a hundred tabs used to
+        // wait on a hundred round trips, one after the other, before the
+        // last row showed. The boot is complete once they have answered.
+        const live = placeRecords(plan.liveTabs, activeWorkspaceId)
+        const adoptedIds = [...live.placed]
+        const attaching = [live.attached]
+        if (plan.deadTabs.length > 0) {
+          // The boot now waits on the person: the mark says so (below), so a
+          // driver waiting for the boot can answer the prompt.
+          document.documentElement.dataset.boot = 'restore-prompt'
+          if (await promptRestore(plan.deadTabs)) {
+            const dead = placeRecords(plan.deadTabs, activeWorkspaceId)
+            adoptedIds.push(...dead.placed)
+            attaching.push(dead.attached)
+          } else {
+            for (const s of plan.deadTabs) {
+              void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+            }
+          }
+        }
         // Rebuild the layout around what survives: a group is kept if a
         // member — or a running quick-launch terminal — came back. The
         // hidden halves count as surviving here even though they are adopted
@@ -308,15 +360,22 @@ export function AppShell(): React.JSX.Element {
         // server runs, and persistence wrote that back before the tabs came.
         const keys: (string | null)[] = [
           null,
-          ...useWorkspaceStore.getState().workspaces.map((w) => w.id)
+          ...allWorkspaces(useWorkspaceStore.getState()).map((w) => w.id)
         ]
-        useSessionStore
-          .getState()
-          .mergeLayoutForKeys(
-            keys,
+        // A tab placed by the restore survives unless its spawn has already
+        // failed and taken it out (round 1 of the verifier, F3): a failure
+        // while the prompt was up must not leave its id in the saved group.
+        const inStore = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+        useSessionStore.getState().mergeLayoutForKeys(
+          keys,
+          persisted,
+          bootSurvivors(
+            plan,
+            adoptedIds.filter((id) => inStore.has(id)),
             persisted,
-            bootSurvivors(plan, adoptedIds, persisted, listingComplete)
+            listingComplete
           )
+        )
 
         // Owners are in place now (groups from the merge, owning tabs from
         // the adoption above), so the hidden halves can hang themselves back
@@ -324,6 +383,7 @@ export function AppShell(): React.JSX.Element {
         for (const s of plan.hidden) {
           await adoptHiddenRecord(s, activeWorkspaceId)
         }
+        await Promise.all(attaching)
       } catch (err) {
         console.error('Failed to restore sessions/groups on launch:', err)
       } finally {
@@ -348,6 +408,7 @@ export function AppShell(): React.JSX.Element {
       // instead of a fixed delay (PRDCT-1762): a group created before the
       // merge above was replaced by the saved layout and never drawn.
       document.documentElement.dataset.boot = 'complete'
+      startDesktopFleet()
 
       // Attached, the records are the SERVER's: the boot read above went over
       // IPC (main's own, empty attached) so the boot stayed fast and an early
@@ -366,8 +427,19 @@ export function AppShell(): React.JSX.Element {
       // server-event listener's catch-up over the state the window just loaded
       // — the pins the switcher reads, the usage the footer shows (PRDCT-3405).
       // A window with sessions to restore connects anyway, and warrants it.
-      if (!hadSavedSessions) return
+      // A window whose sessions live on a server process of their own reads
+      // them nowhere else (main answers its boot read with nothing,
+      // PRDCT-3527): records its saved layout does not name (orphans the
+      // primary adopts, a fresh window's own) come only from here. Such a
+      // window asks main first whether the server holds any for it, so a
+      // window with nothing to restore still never connects for it.
+      if (!hadSavedSessions && bootListingComplete) return
       void (async () => {
+        if (
+          !hadSavedSessions &&
+          !(await window.electronAPI?.serverHasRestoreRecords?.().catch(() => true))
+        )
+          return
         try {
           const serverRecords = (await window.electronAPI?.listServerRestoreRecords?.()) ?? []
           const here = new Set(useSessionStore.getState().sessions.map((s) => s.id))
@@ -375,23 +447,43 @@ export function AppShell(): React.JSX.Element {
           if (fresh.length === 0) return
           const ws = useWorkspaceStore.getState().activeWorkspaceId
           const serverPlan = planBootAdoption(fresh)
-          // Focus the first restored tab only when nothing is selected yet, so
-          // its pane mounts and the tmux session reattaches (the repaint and
-          // the keystroke road need a mounted pane) — but never steal focus
-          // from a tab the user opened during boot.
-          let takeFocus = useSessionStore.getState().selectedSessionIds.length === 0
-          const adopt = async (s: (typeof fresh)[number]): Promise<void> => {
-            const id = await adoptRecord(s, ws, { focus: takeFocus })
-            if (id && takeFocus) takeFocus = false
+          if (!useOngoingStore.getState().hydrated) await useOngoingStore.getState().hydrate()
+          const serverOngoing = splitOngoingDead(
+            serverPlan.deadTabs,
+            useOngoingStore.getState().entries
+          )
+          keepRestingLaunch(serverOngoing.entries)
+          for (const s of serverOngoing.resting)
+            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+          serverPlan.deadTabs = serverOngoing.restore
+          // What needs no process first, so nothing waits on a reattach: the
+          // dead hidden halves discarded, the toolbar survivors parked for
+          // their button (a click before the restore had settled started a
+          // second server, PRDCT-3527).
+          for (const s of serverPlan.discard)
+            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+          for (const s of serverPlan.toolbar) {
+            if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
           }
-          for (const s of serverPlan.liveTabs) await adopt(s)
+          // The rows from the records at once, the processes behind them, a
+          // few at a time (as above). Focus the first restored tab only when
+          // nothing is selected yet, so its pane mounts and the tmux session
+          // reattaches (the repaint and the keystroke road need a mounted
+          // pane) — but never steal focus from a tab the user opened during
+          // boot.
+          const attaching: Promise<string[]>[] = []
+          const adopt = (records: typeof fresh): void => {
+            const focusFirst = useSessionStore.getState().selectedSessionIds.length === 0
+            attaching.push(placeRecords(records, ws, { focusFirst }).attached)
+          }
+          adopt(serverPlan.liveTabs)
           if (serverPlan.deadTabs.length > 0) {
             // The boot waits on the person again, after its mark: a driver
             // reads 'restore-prompt' while the dialog is up, 'complete' after.
             document.documentElement.dataset.boot = 'restore-prompt'
             try {
               if (await promptRestore(serverPlan.deadTabs)) {
-                for (const s of serverPlan.deadTabs) await adopt(s)
+                adopt(serverPlan.deadTabs)
               } else {
                 for (const s of serverPlan.deadTabs)
                   void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
@@ -400,12 +492,10 @@ export function AppShell(): React.JSX.Element {
               document.documentElement.dataset.boot = 'complete'
             }
           }
-          for (const s of serverPlan.discard)
-            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
-          for (const s of serverPlan.toolbar) {
-            if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
-          }
+          // The owners are placed (the groups from the merge, the owning tabs
+          // above), so the hidden halves hang themselves back off them.
           for (const s of serverPlan.hidden) await adoptHiddenRecord(s, ws)
+          await Promise.all(attaching)
         } finally {
           // The shells the merge kept for the server's records: whatever
           // nothing holds now is gone for good, and the layout says so.
@@ -500,12 +590,20 @@ export function AppShell(): React.JSX.Element {
     }
     const selectByIndex = (index: number): void => {
       const state = useSessionStore.getState()
-      const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId)
+      // The sidebar's narrowing is view-local. Read its rendered rows at the
+      // keypress instead of persisting search/group-filter state for shortcuts.
+      const sidebar = state.sidebarOpen ? document.querySelector('[data-sidebar-shell]') : null
+      const rowIds = sidebar
+        ? [...sidebar.querySelectorAll<HTMLElement>('[data-sidebar-item-type="session"]')]
+            .filter((row) => !row.closest('[data-group-collapsed="true"]'))
+            .map((row) => row.dataset.sidebarItemId!)
+        : undefined
+      const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId, rowIds)
       if (index < ids.length) state.selectSession(ids[index], false)
     }
     const cycleSession = (direction: 1 | -1): void => {
       const state = useSessionStore.getState()
-      const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId)
+      const ids = getSessionCycleOrder(state, useWorkspaceStore.getState().activeWorkspaceId)
       if (ids.length === 0) return
       const current = ids.indexOf(state.focusedSessionId ?? '')
       const next =
@@ -542,6 +640,8 @@ export function AppShell(): React.JSX.Element {
       newYoloCodexAtFolder: () => launch({ kind: 'codex', dangerousMode: true }, 'ask'),
       newPi: () => launch({ kind: 'pi', dangerousMode: false }, 'workspace-root'),
       newPiAtFolder: () => launch({ kind: 'pi', dangerousMode: false }, 'ask'),
+      newOpencode: () => launch({ kind: 'opencode', dangerousMode: false }, 'workspace-root'),
+      newOpencodeAtFolder: () => launch({ kind: 'opencode', dangerousMode: false }, 'ask'),
       toggleSidebar: () => toggleSidebar(),
       toggleSidePanel: () => toggleFileTree(),
       openFilePalette: () => toggleFilePalette(),
@@ -555,6 +655,13 @@ export function AppShell(): React.JSX.Element {
       openSettings: () => useSessionStore.getState().setActiveView('settings'),
       focusSidebarSearch: () => {
         const state = useSessionStore.getState()
+        // A chat pane in view takes Cmd+F as find-in-this-session; the
+        // sidebar's search keeps it everywhere else.
+        const focused = state.focusedSessionId
+        if (state.activeView === 'terminals' && focused && searchableScroller(focused)) {
+          usePaneSearchStore.getState().open(focused)
+          return
+        }
         if (!state.sidebarOpen) state.toggleSidebar()
         setTimeout(
           () => document.querySelector<HTMLInputElement>('[data-sidebar-search]')?.focus(),
@@ -668,6 +775,15 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => connectUpdaterStore(), [])
   useEffect(() => connectAgentUpdatesStore(), [])
   useEffect(() => connectKeymapStore(), [])
+
+  // One dialog for both the native Help menu and the in-app Help action.
+  useEffect(
+    () =>
+      window.electronAPI?.onOpenTriage(() => {
+        void useTriageStore.getState().openDialog()
+      }),
+    []
+  )
 
   // Open Settings → Updates when asked from the native menu.
   useEffect(() => {
@@ -842,10 +958,9 @@ export function AppShell(): React.JSX.Element {
             >
               <div
                 className={cn(
-                  'absolute top-0 right-0 h-full transition-colors border-r border-border/20',
-                  draggingLeft ? 'bg-accent' : 'group-hover/resize:bg-accent/50'
+                  'absolute top-0 right-0 h-full w-px transition-colors',
+                  draggingLeft ? 'bg-accent' : 'bg-border/20 group-hover/resize:bg-accent/50'
                 )}
-                style={{ width: '1.5px' }}
               />
             </div>
           </motion.div>
@@ -853,11 +968,17 @@ export function AppShell(): React.JSX.Element {
       </AnimatePresence>
 
       {/* Inset main content — transparent flex container for floating boxes */}
+      {/* The resize line sits exactly in the middle of the gap between a side
+          panel and the content. A panel pads its content 8px, and its 1px line
+          is the last pixel of that padding, so 7px of air are left inside it;
+          the content keeps the same 7px outside it (8px less the line). With
+          no panel open, the content keeps a plain 8px from the window edge.
+          Measured, not eyeballed: 6.5px against 8px read as visibly uneven. */}
       <div
         className={cn(
-          'flex-1 flex flex-col min-w-0 my-2 gap-2 z-10 transition-[margin] duration-200',
-          sidebarOpen ? 'ml-1' : 'ml-2',
-          fileTreeOpen ? 'mr-1' : 'mr-2'
+          'flex-1 flex flex-col min-w-0 my-2 gap-2 z-10',
+          sidebarOpen ? 'ml-[calc(0.5rem-1px)]' : 'ml-2',
+          fileTreeOpen ? 'mr-[calc(0.5rem-1px)]' : 'mr-2'
         )}
       >
         {/* Toolbar — its own floating card. Its row height is a token because
@@ -902,11 +1023,17 @@ export function AppShell(): React.JSX.Element {
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <ToolbarQuickActions />
+              {/* The routines of the active workspace (ADR 0004): one button per
+                  routine with its badge, the floating report panel on a click. */}
+              <RoutineToolbar />
               <ToolbarSecretPopover />
               {/* Plugin contributions sit with the app's own toolbar controls, left of the
                   search and file-tree pair: a plugin configures this bar, it does not get
                   a bar of its own. */}
               <PluginToolbar />
+              {/* Fold the agent's working notes in the chat views (PRDCT-4212):
+                  the same choice as Settings → Appearance → Conversation. */}
+              <FoldNotesButton />
               {/* File palette button */}
               <button
                 onClick={toggleFilePalette}
@@ -939,6 +1066,9 @@ export function AppShell(): React.JSX.Element {
             its box, so coming back also resizes no terminal and no PTY. */}
         <div className="relative flex-1 min-h-0 flex">
           <ServerNotice />
+          <LaunchNotice />
+          <WorkspacePairingNotice />
+          <ServerFolderPickerHost />
           {/* Terminal grid — each terminal is its own floating card */}
           <div
             className="flex-1 flex min-h-0"
@@ -984,6 +1114,11 @@ export function AppShell(): React.JSX.Element {
             >
               <ExtensionsPanel />
             </div>
+            {activeView === 'ongoing' && (
+              <div className="flex-1 flex min-h-0 view-fade-in">
+                <OngoingPage />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1007,10 +1142,9 @@ export function AppShell(): React.JSX.Element {
             >
               <div
                 className={cn(
-                  'absolute top-0 left-0 h-full transition-colors border-l border-border/20',
-                  draggingRight ? 'bg-accent' : 'group-hover/resize:bg-accent/50'
+                  'absolute top-0 left-0 h-full w-px transition-colors',
+                  draggingRight ? 'bg-accent' : 'bg-border/20 group-hover/resize:bg-accent/50'
                 )}
-                style={{ width: '1.5px' }}
               />
             </div>
             <SidePanel />
@@ -1025,6 +1159,7 @@ export function AppShell(): React.JSX.Element {
       <UpdateOverlay />
       <MissionControlOverlay />
       <SessionHistoryDialog />
+      <TriageDialog />
       <RestorePromptDialog />
       <KeymapCommandHud hud={commandHud} />
       <ConfirmDialog
@@ -1061,6 +1196,27 @@ function DissolveConfirmDialog(): React.JSX.Element {
       onConfirm={() => void confirm()}
       onCancel={cancel}
     />
+  )
+}
+
+/** The toolbar's switch for the chat views' folded working notes: lit when
+ *  on. Flips the one preference the Appearance page holds. */
+function FoldNotesButton(): React.JSX.Element {
+  const fold = useSessionStore((s) => s.foldWorkNotes)
+  const setFold = useSessionStore((s) => s.setFoldWorkNotes)
+  return (
+    <button
+      onClick={() => setFold(!fold)}
+      className={cn('btn-icon btn-icon-md flex-shrink-0', fold && '!text-accent')}
+      title={
+        fold ? 'Working notes folded · click to show every line' : "Fold the agent's working notes"
+      }
+      aria-label="Fold working notes"
+      aria-pressed={fold}
+      data-testid="fold-notes-toggle"
+    >
+      <ArrowsPointingInIcon className="w-4 h-4" />
+    </button>
   )
 }
 

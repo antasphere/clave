@@ -18,6 +18,38 @@ import {
 import { ClaveMark } from '../ui/ClaveMark'
 import { PrereleaseMark } from '../ui/PrereleaseMark'
 import { AgentUpdatesSection } from './AgentUpdatesSection'
+import { SlidelessSection } from './SlidelessSection'
+import { UpdateErrorDrawing } from './UpdateErrorDrawing'
+import {
+  describeUpdaterError,
+  type UpdaterErrorDescription
+} from '../../../../shared/updater-errors'
+
+/** A failed check or download: the drawing of where the link broke, the
+ *  sentence, and the one technical line. Replaces the callout's own title and
+ *  text so the drawing can sit beside both. */
+function UpdateErrorCallout({
+  title,
+  error,
+  actions
+}: {
+  title: string
+  error: UpdaterErrorDescription
+  actions?: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <SettingsCallout tone="danger" role="alert" actions={actions}>
+      <div className="upd-error" data-update-error={error.cause}>
+        <UpdateErrorDrawing cause={error.cause} />
+        <div className="upd-error-words">
+          <p className="settings-callout-title">{title}</p>
+          <p className="settings-callout-text">{error.summary}</p>
+          {error.detail && <code className="upd-error-detail">{error.detail}</code>}
+        </div>
+      </div>
+    </SettingsCallout>
+  )
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -201,20 +233,16 @@ export function UpdatesTab(): React.JSX.Element {
             out". It used to be swallowed entirely. A callout under the card,
             the system's shape for an error, not a section of its own. */}
         {checkErrorMessage && phase !== 'error' && (
-          <SettingsCallout
-            tone="danger"
+          <UpdateErrorCallout
             title="Could not check for updates"
-            text={<span className="break-words">{checkErrorMessage}</span>}
+            error={describeUpdaterError(checkErrorMessage, { kind: 'check', channel })}
           />
         )}
 
         {phase === 'error' && (
-          <SettingsCallout
-            tone="danger"
+          <UpdateErrorCallout
             title="The download did not complete"
-            text={
-              <span className="break-words">{errorMessage || 'An unexpected error occurred'}</span>
-            }
+            error={describeUpdaterError(errorMessage, { kind: 'download', channel })}
             actions={
               <button onClick={() => startDownload('retry')} className="btn-primary">
                 Try Again
@@ -225,6 +253,8 @@ export function UpdatesTab(): React.JSX.Element {
       </SettingsSection>
 
       <AgentUpdatesSection />
+
+      <SlidelessSection />
 
       <SettingsSection
         title="Release channel"

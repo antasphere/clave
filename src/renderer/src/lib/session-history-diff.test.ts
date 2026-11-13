@@ -11,8 +11,10 @@ import { join } from 'path'
 import {
   SessionHistoryDiff,
   dotStateOf,
+  historyResumeLaunch,
   encodeProjectDir,
   resumeTargetGroup,
+  serverRowVisible,
   tabSessions,
   visibleInWorkspace,
   type LayoutState
@@ -83,6 +85,59 @@ describe('SessionHistoryDiff', () => {
       mode: 'claude',
       workspaceId: 'ws-1'
     })
+  })
+
+  it('the row carries the launch: bypass and the account (PRDCT-4236); a switch of either is a row', () => {
+    const { diff, rows } = harness()
+    const claude = session({
+      dangerousMode: true,
+      claudeProfileId: 'acc-anthropic',
+      claudeProfileLabel: 'Anthropic'
+    })
+    diff.apply({ sessions: [claude], groups: [], displayOrder: ['s1'] })
+    expect(rows[0]).toMatchObject({
+      dangerous: true,
+      accountId: 'acc-anthropic',
+      accountLabel: 'Anthropic'
+    })
+    diff.apply({
+      sessions: [{ ...claude, claudeProfileId: 'acc-2', claudeProfileLabel: 'Two' }],
+      groups: [],
+      displayOrder: ['s1']
+    })
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toMatchObject({ accountId: 'acc-2', accountLabel: 'Two' })
+    diff.apply({ sessions: [], groups: [], displayOrder: [] })
+    // The closed row is the placement's word alone: the launch it would copy
+    // is the flag the tab started with, and a row the close stamped from the
+    // record knows better (round 6 of the verifier).
+    expect(rows[2]).toMatchObject({ kind: 'closed' })
+    expect(rows[2]).not.toHaveProperty('dangerous')
+    expect(rows[2]).not.toHaveProperty('accountId')
+
+    const codex = harness()
+    codex.diff.apply({
+      sessions: [
+        session({
+          id: 'x',
+          claudeMode: false,
+          codexMode: true,
+          claudeProfileId: 'ignored',
+          codexAccountId: 'cx-1',
+          codexAccountLabel: 'Work'
+        })
+      ],
+      groups: [],
+      displayOrder: ['x']
+    })
+    expect(codex.rows[0]).toMatchObject({
+      dangerous: false,
+      accountId: 'cx-1',
+      accountLabel: 'Work'
+    })
+    const pool = harness()
+    pool.diff.apply({ sessions: [session({})], groups: [], displayOrder: ['s1'] })
+    expect(pool.rows[0]).not.toHaveProperty('accountId')
   })
 
   it('a move into a group is a row at the move, carrying the group id and name', () => {
@@ -270,5 +325,161 @@ describe('dotStateOf', () => {
     expect(dotStateOf(true, 'idle')).toBe('open')
     expect(dotStateOf(true, 'done')).toBe('open')
     expect(dotStateOf(true, undefined)).toBe('open')
+  })
+})
+
+describe('historyResumeLaunch: a reopen from the History comes back as it was launched (PRDCT-4236)', () => {
+  const known = (provider: 'claude' | 'codex', id: string): string | null =>
+    provider === 'claude' && id === 'acc-anthropic' ? 'Anthropic (now)' : null
+
+  it('bypass, effort and a known account come back, under the account’s current label', () => {
+    expect(
+      historyResumeLaunch(
+        {
+          provider: 'claude',
+          model: 'claude-fable-5',
+          launch: {
+            dangerous: true,
+            effort: 'high',
+            accountId: 'acc-anthropic',
+            accountLabel: 'old'
+          }
+        },
+        false,
+        known
+      )
+    ).toEqual({
+      dangerousMode: true,
+      effort: 'high',
+      claudeProfileId: 'acc-anthropic',
+      claudeProfileLabel: 'Anthropic (now)'
+    })
+  })
+
+  it('a mode short of bypass is the mode, bypass kept reachable; the person’s skip-permissions wins', () => {
+    const entry = {
+      provider: 'claude' as const,
+      model: null,
+      launch: { dangerous: true, permissionMode: 'plan' }
+    }
+    expect(historyResumeLaunch(entry, false, known)).toEqual({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+    expect(historyResumeLaunch(entry, true, known)).toEqual({ dangerousMode: true })
+    expect(historyResumeLaunch({ ...entry, launch: { dangerous: false } }, true, known)).toEqual({
+      dangerousMode: true
+    })
+  })
+
+  it('an unknown account, a malformed mode or effort, and an entry with no launch name nothing', () => {
+    expect(
+      historyResumeLaunch(
+        {
+          provider: 'claude',
+          model: null,
+          launch: { accountId: 'acc-gone', permissionMode: 'weird', effort: 'NOPE!' }
+        },
+        false,
+        known
+      )
+    ).toEqual({ dangerousMode: false })
+    expect(historyResumeLaunch({ provider: 'claude', model: null }, false, known)).toEqual({
+      dangerousMode: false
+    })
+    expect(
+      historyResumeLaunch({ provider: 'pi', model: null, launch: { dangerous: true } }, true, known)
+    ).toEqual({ dangerousMode: false })
+  })
+})
+
+describe('serverRowVisible: a server’s row in the active workspace (PRDCT-4321)', () => {
+  // The rows below are server A's ('srv-a'); the active workspace is a
+  // workspace of server A unless a case says otherwise.
+  const paired = [
+    { workspaceId: 'srv-ws-paired', rootDir: '/srv/paired', serverId: 'srv-a' },
+    { workspaceId: 'srv-ws-rootless', rootDir: null, serverId: 'srv-a' }
+  ]
+  const row = (
+    workspaceId: string | null,
+    cwd = '/elsewhere',
+    serverId = 'srv-a'
+  ): {
+    workspaceId: string | null
+    cwd: string
+    serverId: string
+  } => ({ workspaceId, cwd, serverId })
+
+  it('shows every row when no workspace is active', () => {
+    expect(serverRowVisible(row('srv-ws-other'), null, null, 'local', [])).toBe(true)
+    expect(serverRowVisible(row(null), null, '/a/b', 'local', paired)).toBe(true)
+  })
+
+  it('shows a row of the active workspace or of a paired one, and no other', () => {
+    expect(serverRowVisible(row('ws-active'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(true)
+    expect(serverRowVisible(row('srv-ws-paired'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(true)
+    expect(serverRowVisible(row('srv-ws-other'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(false)
+    // A row naming a workspace is judged by it, whatever its folder.
+    expect(
+      serverRowVisible(row('srv-ws-other', '/a/b/x'), 'ws-active', '/a/b', 'srv-a', paired)
+    ).toBe(false)
+  })
+
+  it('places a row with no workspace by its folder: under the active root or a paired root', () => {
+    expect(serverRowVisible(row(null, '/a/b'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(true)
+    expect(serverRowVisible(row(null, '/a/b/repo'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(
+      true
+    )
+    expect(
+      serverRowVisible(row(null, '/srv/paired/repo'), 'ws-active', '/a/b', 'srv-a', paired)
+    ).toBe(true)
+    expect(serverRowVisible(row(null, '/srv/other'), 'ws-active', '/a/b', 'srv-a', paired)).toBe(
+      false
+    )
+    expect(serverRowVisible(row(null, ''), 'ws-active', '/a/b', 'srv-a', paired)).toBe(false)
+    expect(serverRowVisible(row(null, '/a/b/repo'), 'ws-active', null, 'srv-a', [])).toBe(false)
+  })
+
+  it('places a row with no workspace only under the roots of its own server', () => {
+    // Two servers with the same layout: server B's row under server A's
+    // active root is not A's.
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-a', '/root/app', 'srv-a', [])
+    ).toBe(false)
+    // Under its own server's active root, it is.
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-b', '/root/app', 'srv-b', [])
+    ).toBe(true)
+    // A Mac workspace's root never places a server's row by itself.
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-mac', '/root/app', 'local', [])
+    ).toBe(false)
+    // A paired root of another server does not either; one of its own does.
+    const pairs = [
+      { workspaceId: 'ws-a-paired', rootDir: '/root/app', serverId: 'srv-a' },
+      { workspaceId: 'ws-b-paired', rootDir: '/home/ubuntu/app', serverId: 'srv-b' }
+    ]
+    expect(
+      serverRowVisible(row(null, '/root/app/x', 'srv-b'), 'ws-mac', '/Users/me', 'local', pairs)
+    ).toBe(false)
+    expect(
+      serverRowVisible(
+        row(null, '/home/ubuntu/app/x', 'srv-b'),
+        'ws-mac',
+        '/Users/me',
+        'local',
+        pairs
+      )
+    ).toBe(true)
+  })
+
+  it('never takes a root prefix that stops inside a folder name', () => {
+    expect(serverRowVisible(row(null, '/a/bc'), 'ws-active', '/a/b', 'srv-a', [])).toBe(false)
+    expect(
+      serverRowVisible(row(null, '/srv/paired-two'), 'ws-active', null, 'srv-a', [
+        { workspaceId: 'p', rootDir: '/srv/paired', serverId: 'srv-a' }
+      ])
+    ).toBe(false)
   })
 })

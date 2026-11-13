@@ -1,0 +1,2518 @@
+[
+  {
+    "collection": "a-pilot-dev",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "dev",
+      "source": "e8d4a9e51681417d53e20ef75052fe65d4654f1b",
+      "startedAt": "2026-10-15T14:11:26.502Z",
+      "config": {
+        "runs": 1,
+        "samples": 2,
+        "tabs": 8,
+        "turns": 20,
+        "idle-ms": 500
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            22.978515625,
+            27.11279296875,
+            23.083984375
+          ],
+          "startedAt": "2026-10-15T14:11:26.503Z",
+          "startupMs": 6488.2855,
+          "identity": {
+            "version": "2.4.0",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "54387"
+          },
+          "pids": {
+            "main": 14494,
+            "renderer": 14705
+          },
+          "emptyIdle": {
+            "elapsedMs": 502.5949999690056,
+            "taskMs": 0.10300000000000023,
+            "scriptMs": 0,
+            "heapBytes": 73002904
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 502.0109999459237,
+            "taskMs": 0.14400000000000523,
+            "scriptMs": 0,
+            "heapBytes": 74733732
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 404,
+            "sampledMs": 604.523,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 503.458,
+                "percent": 83.28186024353084
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 101.065,
+                "percent": 16.71813975646915
+              }
+            ]
+          },
+          "ok": false,
+          "error": "Error: locator.waitFor: Error: strict mode violation: locator('[data-testid=\"chat-view\"] textarea:not(:disabled)') resolved to 2 elements:\n    1) <textarea rows=\"1\" aria-label=\"Message\" placeholder=\"Write a message\u2026\"></textarea> aka locator('section').filter({ hasText: 'Synthetic tab 0doneTab 0 turn' }).getByPlaceholder('Write a message\u2026')\n    2) <textarea rows=\"1\" aria-label=\"Message\" placeholder=\"Write a message\u2026\"></textarea> aka getByRole('textbox', { name: 'Message' })\n\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"chat-view\"] textarea:not(:disabled)') to be visible\u001b[22m\n",
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ]
+    }
+  },
+  {
+    "collection": "a-pilot-dev-2",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "dev",
+      "source": "e8d4a9e51681417d53e20ef75052fe65d4654f1b",
+      "startedAt": "2026-10-15T14:12:30.349Z",
+      "config": {
+        "runs": 1,
+        "samples": 2,
+        "tabs": 8,
+        "turns": 20,
+        "idle-ms": 500
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            18.65625,
+            25.4013671875,
+            22.75634765625
+          ],
+          "startedAt": "2026-10-15T14:12:30.351Z",
+          "startupMs": 2907.7684160000003,
+          "identity": {
+            "version": "2.4.0",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "54610"
+          },
+          "pids": {
+            "main": 21185,
+            "renderer": 21361
+          },
+          "emptyIdle": {
+            "elapsedMs": 538.6029998771846,
+            "taskMs": 0.08500000000000003,
+            "scriptMs": 0,
+            "heapBytes": 83481988
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 518.5650000348687,
+            "taskMs": 0.10299999999999199,
+            "scriptMs": 0,
+            "heapBytes": 85214656
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 389,
+            "sampledMs": 694.039,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 588.336,
+                "percent": 84.76987604442978
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 105.703,
+                "percent": 15.23012395557022
+              }
+            ]
+          },
+          "setupMs": 1530.8162499999999,
+          "loadedIdle": {
+            "elapsedMs": 503.8909998256713,
+            "taskMs": 0.20199999999981344,
+            "scriptMs": 0,
+            "heapBytes": 118432764
+          },
+          "loadedIdleProfiled": {
+            "elapsedMs": 501.59300002269447,
+            "taskMs": 0.053999999999998494,
+            "scriptMs": 0,
+            "heapBytes": 118466932
+          },
+          "loadedProfile": {
+            "file": "run-1-many-idle.cpuprofile",
+            "samples": 374,
+            "sampledMs": 671.938,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 503.422,
+                "percent": 74.92090044021919
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 168.516,
+                "percent": 25.079099559780815
+              }
+            ]
+          },
+          "unsampled": {
+            "tab": {
+              "rawMs": [
+                25.600000143051147,
+                28.799999952316284
+              ],
+              "summary": {
+                "n": 2,
+                "min": 25.600000143051147,
+                "p50": 25.600000143051147,
+                "p95": null,
+                "max": 28.799999952316284
+              }
+            },
+            "group": {
+              "rawMs": [
+                28.300000190734863,
+                32.09999990463257
+              ],
+              "summary": {
+                "n": 2,
+                "min": 28.300000190734863,
+                "p50": 28.300000190734863,
+                "p95": null,
+                "max": 32.09999990463257
+              }
+            },
+            "composer": {
+              "rawMs": [
+                31.899999856948853,
+                22.40000009536743
+              ],
+              "summary": {
+                "n": 2,
+                "min": 22.40000009536743,
+                "p50": 22.40000009536743,
+                "p95": null,
+                "max": 31.899999856948853
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                16.800000190734863,
+                17.300000190734863
+              ],
+              "summary": {
+                "n": 2,
+                "min": 16.800000190734863,
+                "p50": 16.800000190734863,
+                "p95": null,
+                "max": 17.300000190734863
+              }
+            }
+          },
+          "sampled": {
+            "tab": {
+              "rawMs": [
+                27.5,
+                29.200000047683716
+              ],
+              "summary": {
+                "n": 2,
+                "min": 27.5,
+                "p50": 27.5,
+                "p95": null,
+                "max": 29.200000047683716
+              }
+            },
+            "group": {
+              "rawMs": [
+                29.200000047683716,
+                30
+              ],
+              "summary": {
+                "n": 2,
+                "min": 29.200000047683716,
+                "p50": 29.200000047683716,
+                "p95": null,
+                "max": 30
+              }
+            },
+            "composer": {
+              "rawMs": [
+                23.59999990463257,
+                23.300000190734863
+              ],
+              "summary": {
+                "n": 2,
+                "min": 23.300000190734863,
+                "p50": 23.300000190734863,
+                "p95": null,
+                "max": 23.59999990463257
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                17.299999952316284,
+                17.299999952316284
+              ],
+              "summary": {
+                "n": 2,
+                "min": 17.299999952316284,
+                "p50": 17.299999952316284,
+                "p95": null,
+                "max": 17.299999952316284
+              }
+            }
+          },
+          "interactionProfile": {
+            "file": "run-1-interactions.cpuprofile",
+            "samples": 1211,
+            "sampledMs": 1666.366,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 1126.028,
+                "percent": 67.57387032620684
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 302.544,
+                "percent": 18.15591532712501
+              },
+              {
+                "frame": "focus",
+                "selfMs": 46.149,
+                "percent": 2.7694396069050855
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 16.551,
+                "percent": 0.9932391803481349
+              },
+              {
+                "frame": "query",
+                "selfMs": 10.083,
+                "percent": 0.6050891580841183
+              },
+              {
+                "frame": "(anonymous) assets/index-Cjkmx59C.js:142972:44",
+                "selfMs": 10.017,
+                "percent": 0.6011284435712202
+              },
+              {
+                "frame": "(anonymous)",
+                "selfMs": 8.512,
+                "percent": 0.5108121505119524
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 6.314,
+                "percent": 0.3789083550672541
+              },
+              {
+                "frame": "computeBox",
+                "selfMs": 3.749,
+                "percent": 0.2249805864978042
+              },
+              {
+                "frame": "elementsFromPoint",
+                "selfMs": 3.736,
+                "percent": 0.22420044576041517
+              },
+              {
+                "frame": "query",
+                "selfMs": 3.612,
+                "percent": 0.21675910334224294
+              },
+              {
+                "frame": "getEventTarget assets/index-Cjkmx59C.js:1988:26",
+                "selfMs": 2.529,
+                "percent": 0.15176737883514185
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 2.523,
+                "percent": 0.15140731387942385
+              },
+              {
+                "frame": "querySelector",
+                "selfMs": 2.519,
+                "percent": 0.15116727057561183
+              },
+              {
+                "frame": "_cached",
+                "selfMs": 2.517,
+                "percent": 0.15104724892370583
+              }
+            ]
+          },
+          "afterLoad": [
+            22.6689453125,
+            26.01904296875,
+            23.025390625
+          ],
+          "ok": true,
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ],
+      "completedAt": "2026-10-15T14:12:43.336Z",
+      "summary": {
+        "startup": {
+          "n": 1,
+          "min": 2907.7684160000003,
+          "p50": 2907.7684160000003,
+          "p95": null,
+          "max": 2907.7684160000003
+        },
+        "unsampled": {
+          "tab": {
+            "n": 2,
+            "min": 25.600000143051147,
+            "p50": 25.600000143051147,
+            "p95": null,
+            "max": 28.799999952316284
+          },
+          "group": {
+            "n": 2,
+            "min": 28.300000190734863,
+            "p50": 28.300000190734863,
+            "p95": null,
+            "max": 32.09999990463257
+          },
+          "composer": {
+            "n": 2,
+            "min": 22.40000009536743,
+            "p50": 22.40000009536743,
+            "p95": null,
+            "max": 31.899999856948853
+          },
+          "scroll": {
+            "n": 2,
+            "min": 16.800000190734863,
+            "p50": 16.800000190734863,
+            "p95": null,
+            "max": 17.300000190734863
+          }
+        },
+        "sampled": {
+          "tab": {
+            "n": 2,
+            "min": 27.5,
+            "p50": 27.5,
+            "p95": null,
+            "max": 29.200000047683716
+          },
+          "group": {
+            "n": 2,
+            "min": 29.200000047683716,
+            "p50": 29.200000047683716,
+            "p95": null,
+            "max": 30
+          },
+          "composer": {
+            "n": 2,
+            "min": 23.300000190734863,
+            "p50": 23.300000190734863,
+            "p95": null,
+            "max": 23.59999990463257
+          },
+          "scroll": {
+            "n": 2,
+            "min": 17.299999952316284,
+            "p50": 17.299999952316284,
+            "p95": null,
+            "max": 17.299999952316284
+          }
+        }
+      }
+    }
+  },
+  {
+    "collection": "a-pilot-installed",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "installed",
+      "source": "4dd8e425e10b7fb13186fa45179aa1c87a84c2d6",
+      "startedAt": "2026-10-15T14:13:19.243Z",
+      "config": {
+        "runs": 1,
+        "samples": 2,
+        "tabs": 8,
+        "turns": 20,
+        "idle-ms": 500
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            15.69580078125,
+            23.92529296875,
+            22.38232421875
+          ],
+          "startedAt": "2026-10-15T14:13:19.244Z",
+          "startupMs": 2584.86075,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "55248"
+          },
+          "pids": {
+            "main": 28080,
+            "renderer": 28401
+          },
+          "emptyIdle": {
+            "elapsedMs": 502.13100016117096,
+            "taskMs": 0.14899999999999983,
+            "scriptMs": 0,
+            "heapBytes": 106594956
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 501.6949998680502,
+            "taskMs": 0.06699999999998374,
+            "scriptMs": 0,
+            "heapBytes": 108362584
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 402,
+            "sampledMs": 617.584,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 501.37,
+                "percent": 81.18247882069484
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 116.214,
+                "percent": 18.817521179305164
+              }
+            ]
+          },
+          "setupMs": 1439.9231250000003,
+          "loadedIdle": {
+            "elapsedMs": 502.0510000176728,
+            "taskMs": 0.0740000000000185,
+            "scriptMs": 0,
+            "heapBytes": 118030280
+          },
+          "loadedIdleProfiled": {
+            "elapsedMs": 501.89499999396503,
+            "taskMs": 0.053999999999998494,
+            "scriptMs": 0,
+            "heapBytes": 118064348
+          },
+          "loadedProfile": {
+            "file": "run-1-many-idle.cpuprofile",
+            "samples": 402,
+            "sampledMs": 669.068,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 503.514,
+                "percent": 75.25602778790795
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 165.554,
+                "percent": 24.743972212092043
+              }
+            ]
+          },
+          "unsampled": {
+            "tab": {
+              "rawMs": [
+                26.90000009536743,
+                27.5
+              ],
+              "summary": {
+                "n": 2,
+                "min": 26.90000009536743,
+                "p50": 26.90000009536743,
+                "p95": null,
+                "max": 27.5
+              }
+            },
+            "group": {
+              "rawMs": [
+                29,
+                29.40000009536743
+              ],
+              "summary": {
+                "n": 2,
+                "min": 29,
+                "p50": 29,
+                "p95": null,
+                "max": 29.40000009536743
+              }
+            },
+            "composer": {
+              "rawMs": [
+                20.399999856948853,
+                21.700000047683716
+              ],
+              "summary": {
+                "n": 2,
+                "min": 20.399999856948853,
+                "p50": 20.399999856948853,
+                "p95": null,
+                "max": 21.700000047683716
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                17.299999952316284,
+                17.200000047683716
+              ],
+              "summary": {
+                "n": 2,
+                "min": 17.200000047683716,
+                "p50": 17.200000047683716,
+                "p95": null,
+                "max": 17.299999952316284
+              }
+            }
+          },
+          "sampled": {
+            "tab": {
+              "rawMs": [
+                29.700000047683716,
+                29.100000143051147
+              ],
+              "summary": {
+                "n": 2,
+                "min": 29.100000143051147,
+                "p50": 29.100000143051147,
+                "p95": null,
+                "max": 29.700000047683716
+              }
+            },
+            "group": {
+              "rawMs": [
+                29.59999990463257,
+                30.299999952316284
+              ],
+              "summary": {
+                "n": 2,
+                "min": 29.59999990463257,
+                "p50": 29.59999990463257,
+                "p95": null,
+                "max": 30.299999952316284
+              }
+            },
+            "composer": {
+              "rawMs": [
+                122.60000014305115,
+                21.5
+              ],
+              "summary": {
+                "n": 2,
+                "min": 21.5,
+                "p50": 21.5,
+                "p95": null,
+                "max": 122.60000014305115
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                17.699999809265137,
+                17.09999990463257
+              ],
+              "summary": {
+                "n": 2,
+                "min": 17.09999990463257,
+                "p50": 17.09999990463257,
+                "p95": null,
+                "max": 17.699999809265137
+              }
+            }
+          },
+          "interactionProfile": {
+            "file": "run-1-interactions.cpuprofile",
+            "samples": 1318,
+            "sampledMs": 1783.453,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 1239.122,
+                "percent": 69.47881441226654
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 323.38,
+                "percent": 18.13224121970133
+              },
+              {
+                "frame": "focus",
+                "selfMs": 42.265,
+                "percent": 2.3698409770260276
+              },
+              {
+                "frame": "query",
+                "selfMs": 17.428,
+                "percent": 0.977205454811537
+              },
+              {
+                "frame": "(anonymous) assets/index-Cjkmx59C.js:142972:44",
+                "selfMs": 9.857,
+                "percent": 0.5526918847875442
+              },
+              {
+                "frame": "query",
+                "selfMs": 7.555,
+                "percent": 0.4236164339626556
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 6.646,
+                "percent": 0.37264789147793637
+              },
+              {
+                "frame": "(anonymous)",
+                "selfMs": 5.008,
+                "percent": 0.28080358719854126
+              },
+              {
+                "frame": "computeBox",
+                "selfMs": 3.802,
+                "percent": 0.21318195657525038
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 3.778,
+                "percent": 0.21183625248324459
+              },
+              {
+                "frame": "updateForwardRef assets/index-Cjkmx59C.js:5398:28",
+                "selfMs": 3.767,
+                "percent": 0.21121947144107525
+              },
+              {
+                "frame": "_cached",
+                "selfMs": 2.653,
+                "percent": 0.14875637317047324
+              },
+              {
+                "frame": "matches",
+                "selfMs": 2.551,
+                "percent": 0.14303713077944863
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 2.534,
+                "percent": 0.14208392371427786
+              },
+              {
+                "frame": "findNextMatchSync assets/index-Cjkmx59C.js:136498:20",
+                "selfMs": 2.529,
+                "percent": 0.14180356869511
+              }
+            ]
+          },
+          "afterLoad": [
+            14.44482421875,
+            23.38427734375,
+            22.2080078125
+          ],
+          "ok": true,
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ],
+      "completedAt": "2026-10-15T14:13:31.252Z",
+      "summary": {
+        "startup": {
+          "n": 1,
+          "min": 2584.86075,
+          "p50": 2584.86075,
+          "p95": null,
+          "max": 2584.86075
+        },
+        "unsampled": {
+          "tab": {
+            "n": 2,
+            "min": 26.90000009536743,
+            "p50": 26.90000009536743,
+            "p95": null,
+            "max": 27.5
+          },
+          "group": {
+            "n": 2,
+            "min": 29,
+            "p50": 29,
+            "p95": null,
+            "max": 29.40000009536743
+          },
+          "composer": {
+            "n": 2,
+            "min": 20.399999856948853,
+            "p50": 20.399999856948853,
+            "p95": null,
+            "max": 21.700000047683716
+          },
+          "scroll": {
+            "n": 2,
+            "min": 17.200000047683716,
+            "p50": 17.200000047683716,
+            "p95": null,
+            "max": 17.299999952316284
+          }
+        },
+        "sampled": {
+          "tab": {
+            "n": 2,
+            "min": 29.100000143051147,
+            "p50": 29.100000143051147,
+            "p95": null,
+            "max": 29.700000047683716
+          },
+          "group": {
+            "n": 2,
+            "min": 29.59999990463257,
+            "p50": 29.59999990463257,
+            "p95": null,
+            "max": 30.299999952316284
+          },
+          "composer": {
+            "n": 2,
+            "min": 21.5,
+            "p50": 21.5,
+            "p95": null,
+            "max": 122.60000014305115
+          },
+          "scroll": {
+            "n": 2,
+            "min": 17.09999990463257,
+            "p50": 17.09999990463257,
+            "p95": null,
+            "max": 17.699999809265137
+          }
+        }
+      }
+    }
+  },
+  {
+    "collection": "a-installed",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "installed",
+      "source": "4dd8e425e10b7fb13186fa45179aa1c87a84c2d6",
+      "sourceBasis": "operator-supplied installed release tag; executable hash below",
+      "startedAt": "2026-10-15T14:14:18.333Z",
+      "config": {
+        "runs": 5,
+        "samples": 30,
+        "tabs": 24,
+        "turns": 200,
+        "idle-ms": 5000
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            9.1162109375,
+            20.51123046875,
+            21.20703125
+          ],
+          "startedAt": "2026-10-15T14:14:18.334Z",
+          "executableSha256": "4403de80626a21f1b860f10968d02ca6ad6140087abd32272d552478418db064",
+          "startupMs": 2646.50425,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "55760"
+          },
+          "pids": {
+            "main": 32342,
+            "renderer": 32714
+          },
+          "reloadStartupMs": 1204.051959,
+          "startupProfile": {
+            "file": "run-1-renderer-reload.cpuprofile",
+            "samples": 1100,
+            "sampledMs": 1307.537,
+            "hotspots": [
+              {
+                "frame": "(program)",
+                "selfMs": 152.895,
+                "percent": 11.693359346618871
+              },
+              {
+                "frame": "(idle)",
+                "selfMs": 117.28,
+                "percent": 8.96953585252272
+              },
+              {
+                "frame": "compileSourceTextModule [source]:345:33",
+                "selfMs": 40.094,
+                "percent": 3.066375941942752
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 16.764,
+                "percent": 1.2821052100246495
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 15.07,
+                "percent": 1.1525486468069355
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 12.568,
+                "percent": 0.9611965091618823
+              },
+              {
+                "frame": "createError [source]:2:1993",
+                "selfMs": 12.386,
+                "percent": 0.9472772089814667
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 12.316,
+                "percent": 0.9419236319889992
+              },
+              {
+                "frame": "maybeCacheSourceMap [source]:157:29",
+                "selfMs": 7.738,
+                "percent": 0.5917996966816236
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 7.519,
+                "percent": 0.5750506486623324
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 7.447,
+                "percent": 0.5695441123272229
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 6.521,
+                "percent": 0.4987239366840097
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 6.098,
+                "percent": 0.4663730357152417
+              },
+              {
+                "frame": "normalizeString [source]:93:25",
+                "selfMs": 5.105,
+                "percent": 0.3904287220935239
+              },
+              {
+                "frame": "getImageData",
+                "selfMs": 5.075,
+                "percent": 0.388134331953895
+              }
+            ]
+          },
+          "viewport": {
+            "width": 1400,
+            "height": 900,
+            "dpr": 2
+          },
+          "emptyIdle": {
+            "elapsedMs": 5002.875000005588,
+            "taskMs": 1.0900000000000354,
+            "scriptMs": 0.5169999999999966,
+            "heapBytes": 148576272
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 5002.314000157639,
+            "taskMs": 5.783000000000094,
+            "scriptMs": 1.795999999999999,
+            "heapBytes": 149340036
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 3927,
+            "sampledMs": 5186.165,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 4998.176,
+                "percent": 96.37518281813247
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 184.118,
+                "percent": 3.5501762863310367
+              },
+              {
+                "frame": "close",
+                "selfMs": 1.34,
+                "percent": 0.02583797468842584
+              },
+              {
+                "frame": "_storeHeader [source]:455:22",
+                "selfMs": 1.272,
+                "percent": 0.024526793883341544
+              },
+              {
+                "frame": "(anonymous) assets/index-Cjkmx59C.js:44732:35",
+                "selfMs": 1.259,
+                "percent": 0.024276126964722488
+              }
+            ]
+          },
+          "setupMs": 3421.849459000001,
+          "loadedIdle": {
+            "elapsedMs": 5004.605999914929,
+            "taskMs": 0.6060000000003285,
+            "scriptMs": 0,
+            "heapBytes": 219132812
+          },
+          "loadedIdleProfiled": {
+            "elapsedMs": 5001.537000061944,
+            "taskMs": 0.07599999999996498,
+            "scriptMs": 0,
+            "heapBytes": 219167664
+          },
+          "loadedProfile": {
+            "file": "run-1-many-idle.cpuprofile",
+            "samples": 3819,
+            "sampledMs": 5299.781,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 5001.385,
+                "percent": 94.36965414231267
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 298.396,
+                "percent": 5.630345857687327
+              }
+            ]
+          },
+          "ok": false,
+          "error": "TimeoutError: page.waitForFunction: Timeout 10000ms exceeded.",
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ]
+    }
+  },
+  {
+    "collection": "a-installed-2",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "installed",
+      "source": "4dd8e425e10b7fb13186fa45179aa1c87a84c2d6",
+      "sourceBasis": "operator-supplied installed release tag; executable hash below",
+      "startedAt": "2026-10-15T14:15:56.841Z",
+      "config": {
+        "runs": 5,
+        "samples": 30,
+        "tabs": 24,
+        "turns": 200,
+        "idle-ms": 5000
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            11.548828125,
+            18.4375,
+            20.34033203125
+          ],
+          "startedAt": "2026-10-15T14:15:56.841Z",
+          "executableSha256": "4403de80626a21f1b860f10968d02ca6ad6140087abd32272d552478418db064",
+          "startupMs": 2554.399625,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "58145"
+          },
+          "pids": {
+            "main": 58765,
+            "renderer": 59962
+          },
+          "reloadStartupMs": 1159.4437079999998,
+          "startupProfile": {
+            "file": "run-1-renderer-reload.cpuprofile",
+            "samples": 1100,
+            "sampledMs": 1259.339,
+            "hotspots": [
+              {
+                "frame": "(program)",
+                "selfMs": 146.455,
+                "percent": 11.629513578154889
+              },
+              {
+                "frame": "(idle)",
+                "selfMs": 135.319,
+                "percent": 10.745240161703878
+              },
+              {
+                "frame": "compileSourceTextModule [source]:345:33",
+                "selfMs": 38.855,
+                "percent": 3.0853487424752193
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 21.444,
+                "percent": 1.7027980551702122
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 15.103,
+                "percent": 1.1992799397144058
+              },
+              {
+                "frame": "createError [source]:2:1993",
+                "selfMs": 12.563,
+                "percent": 0.9975868292810752
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 11.915,
+                "percent": 0.9461312640996586
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 11.276,
+                "percent": 0.8953903595457617
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 9.337,
+                "percent": 0.7414206976834673
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 8.585,
+                "percent": 0.6817068319173789
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 7.555,
+                "percent": 0.5999178934345716
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 7.456,
+                "percent": 0.5920566265318552
+              },
+              {
+                "frame": "get exports [source]:86:20",
+                "selfMs": 6.419,
+                "percent": 0.5097118408943104
+              },
+              {
+                "frame": "stat",
+                "selfMs": 6.309,
+                "percent": 0.5009770998912921
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 5.603,
+                "percent": 0.4449159439991932
+              }
+            ]
+          },
+          "viewport": {
+            "width": 1400,
+            "height": 900,
+            "dpr": 2
+          },
+          "emptyIdle": {
+            "elapsedMs": 5000.552000012249,
+            "taskMs": 1.2790000000000301,
+            "scriptMs": 0.5399999999999988,
+            "heapBytes": 146681548
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 5002.95599992387,
+            "taskMs": 8.594999999999908,
+            "scriptMs": 2.972000000000002,
+            "heapBytes": 147446472
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 3923,
+            "sampledMs": 5161.979,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 4994.293,
+                "percent": 96.75151719912073
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 161.019,
+                "percent": 3.119326909311332
+              },
+              {
+                "frame": "Writable.uncork [source]:520:37",
+                "selfMs": 1.369,
+                "percent": 0.026520836291662558
+              },
+              {
+                "frame": "(anonymous) [source]:1217:12",
+                "selfMs": 1.355,
+                "percent": 0.026249622480060457
+              },
+              {
+                "frame": "load assets/index-Cjkmx59C.js:44253:11",
+                "selfMs": 1.354,
+                "percent": 0.02623025006494602
+              },
+              {
+                "frame": "usePresence$2 assets/index-Cjkmx59C.js:18531:23",
+                "selfMs": 1.259,
+                "percent": 0.024389870629074623
+              },
+              {
+                "frame": "(anonymous)",
+                "selfMs": 1.241,
+                "percent": 0.024041167157014782
+              },
+              {
+                "frame": "updateElement assets/index-Cjkmx59C.js:3350:27",
+                "selfMs": 0.089,
+                "percent": 0.0017241449451847828
+              }
+            ]
+          },
+          "setupMs": 3241.936916999999,
+          "loadedIdle": {
+            "elapsedMs": 5001.649999991059,
+            "taskMs": 0.5619999999995073,
+            "scriptMs": 0,
+            "heapBytes": 327526348
+          },
+          "loadedIdleProfiled": {
+            "elapsedMs": 5002.001000102609,
+            "taskMs": 0.05599999999983396,
+            "scriptMs": 0,
+            "heapBytes": 327561200
+          },
+          "loadedProfile": {
+            "file": "run-1-many-idle.cpuprofile",
+            "samples": 3926,
+            "sampledMs": 5409.182,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 5003.485,
+                "percent": 92.4998456328517
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 405.697,
+                "percent": 7.500154367148305
+              }
+            ]
+          },
+          "ok": false,
+          "error": "TimeoutError: page.waitForFunction: Timeout 10000ms exceeded.",
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ]
+    }
+  },
+  {
+    "collection": "a-installed-3",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "installed",
+      "source": "4dd8e425e10b7fb13186fa45179aa1c87a84c2d6",
+      "sourceBasis": "operator-supplied installed release tag; executable hash below",
+      "startedAt": "2026-10-15T14:16:59.848Z",
+      "config": {
+        "runs": 5,
+        "samples": 30,
+        "tabs": 24,
+        "turns": 200,
+        "idle-ms": 5000
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            10.740234375,
+            16.75927734375,
+            19.5625
+          ],
+          "startedAt": "2026-10-15T14:16:59.848Z",
+          "executableSha256": "4403de80626a21f1b860f10968d02ca6ad6140087abd32272d552478418db064",
+          "pageErrors": [],
+          "startupMs": 2662.052083,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "59367"
+          },
+          "pids": {
+            "main": 89519,
+            "renderer": 89794
+          },
+          "reloadStartupMs": 1144.383667,
+          "ok": false,
+          "error": "AssertionError [ERR_ASSERTION]: invalid sample duration",
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ]
+    }
+  },
+  {
+    "collection": "a-installed-4",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "installed",
+      "source": "4dd8e425e10b7fb13186fa45179aa1c87a84c2d6",
+      "sourceBasis": "operator-supplied installed release tag; executable hash below",
+      "startedAt": "2026-10-15T14:17:48.379Z",
+      "config": {
+        "runs": 5,
+        "samples": 30,
+        "tabs": 24,
+        "turns": 200,
+        "idle-ms": 5000
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            15.97998046875,
+            17.47900390625,
+            19.6806640625
+          ],
+          "startedAt": "2026-10-15T14:17:48.379Z",
+          "executableSha256": "4403de80626a21f1b860f10968d02ca6ad6140087abd32272d552478418db064",
+          "pageErrors": [],
+          "startupMs": 2574.749541,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "59816"
+          },
+          "pids": {
+            "main": 94358,
+            "renderer": 94587
+          },
+          "reloadStartupMs": 1118.2601250000002,
+          "startupProfile": {
+            "file": "run-1-renderer-reload.cpuprofile",
+            "samples": 1047,
+            "sampledMs": 1215.747,
+            "hotspots": [
+              {
+                "frame": "(program)",
+                "selfMs": 138.163,
+                "percent": 11.364453294970088
+              },
+              {
+                "frame": "(idle)",
+                "selfMs": 130.364,
+                "percent": 10.722954693698608
+              },
+              {
+                "frame": "compileSourceTextModule [source]:345:33",
+                "selfMs": 36.045,
+                "percent": 2.964843836752219
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 21.43,
+                "percent": 1.7627022727590527
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 13.945,
+                "percent": 1.1470314136082589
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 11.36,
+                "percent": 0.9344049378694745
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 11.251,
+                "percent": 0.9254392566874522
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 8.78,
+                "percent": 0.7221897319096818
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 8.602,
+                "percent": 0.7075485277775722
+              },
+              {
+                "frame": "createError [source]:2:1993",
+                "selfMs": 8.426,
+                "percent": 0.6930718315570592
+              },
+              {
+                "frame": "splitPath",
+                "selfMs": 7.622,
+                "percent": 0.6269396510951702
+              },
+              {
+                "frame": "get exports [source]:86:20",
+                "selfMs": 7.412,
+                "percent": 0.6096663203775128
+              },
+              {
+                "frame": "makeContextifyScript [source]:171:30",
+                "selfMs": 7.214,
+                "percent": 0.5933800371294357
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 6.414,
+                "percent": 0.5275768724907403
+              },
+              {
+                "frame": "getImageData",
+                "selfMs": 6.384,
+                "percent": 0.5251092538167892
+              }
+            ]
+          },
+          "viewport": {
+            "width": 1400,
+            "height": 900,
+            "dpr": 2
+          },
+          "emptyIdle": {
+            "elapsedMs": 5002.752000000328,
+            "taskMs": 2.2500000000000853,
+            "scriptMs": 1.0749999999999995,
+            "heapBytes": 140497428
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 5001.82899995707,
+            "taskMs": 8.461000000000052,
+            "scriptMs": 2.7229999999999963,
+            "heapBytes": 141207248
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 3962,
+            "sampledMs": 5160.456,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 4995.03,
+                "percent": 96.79435305717169
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 160.385,
+                "percent": 3.1079617770212553
+              },
+              {
+                "frame": "start [source]:801:8",
+                "selfMs": 1.314,
+                "percent": 0.025462866072300586
+              },
+              {
+                "frame": "endReadableNT [source]:1692:23",
+                "selfMs": 1.25,
+                "percent": 0.02422266559389325
+              },
+              {
+                "frame": "emit [source]:466:44",
+                "selfMs": 1.245,
+                "percent": 0.024125774931517678
+              },
+              {
+                "frame": "areHookInputsEqual assets/index-Cjkmx59C.js:3991:30",
+                "selfMs": 1.232,
+                "percent": 0.02387385920934119
+              }
+            ]
+          },
+          "setupMs": 3120.4520409999986,
+          "loadedIdle": {
+            "elapsedMs": 5002.1220000926405,
+            "taskMs": 0.49700000000019173,
+            "scriptMs": 0,
+            "heapBytes": 194303348
+          },
+          "loadedIdleProfiled": {
+            "elapsedMs": 5002.4739999789745,
+            "taskMs": 0.06800000000062312,
+            "scriptMs": 0,
+            "heapBytes": 194338200
+          },
+          "loadedProfile": {
+            "file": "run-1-many-idle.cpuprofile",
+            "samples": 3959,
+            "sampledMs": 5261.605,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 5005.075,
+                "percent": 95.12449148121154
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 256.53,
+                "percent": 4.875508518788468
+              }
+            ]
+          },
+          "unsampled": {
+            "tab": {
+              "rawMs": [
+                28.5,
+                28.299999952316284,
+                28.299999952316284,
+                27.799999952316284,
+                28.40000009536743,
+                28.200000047683716,
+                28.40000009536743,
+                28.299999952316284,
+                21,
+                27.399999856948853,
+                27.800000190734863,
+                28.299999952316284,
+                28.100000143051147,
+                26.59999990463257,
+                28.5,
+                27.799999952316284,
+                28.90000009536743,
+                28.799999952316284,
+                28.399999856948853,
+                28.5,
+                28.799999952316284,
+                28.59999990463257,
+                28.899999856948853,
+                28.5,
+                29.5,
+                27.90000009536743,
+                28.5,
+                29,
+                28.300000190734863,
+                28.5
+              ],
+              "summary": {
+                "n": 30,
+                "min": 21,
+                "p50": 28.399999856948853,
+                "p95": 29,
+                "max": 29.5
+              }
+            },
+            "group": {
+              "rawMs": [
+                28.800000190734863,
+                26.90000009536743,
+                27.09999990463257,
+                27.300000190734863,
+                27,
+                27.100000143051147,
+                26.399999856948853,
+                26.59999990463257,
+                27.100000143051147,
+                27.399999856948853,
+                27.700000047683716,
+                26.90000009536743,
+                26.299999952316284,
+                25,
+                26.100000143051147,
+                27,
+                27.300000190734863,
+                27.40000009536743,
+                27.09999990463257,
+                27.200000047683716,
+                27,
+                26.600000143051147,
+                27.399999856948853,
+                27.700000047683716,
+                27.100000143051147,
+                27,
+                26.600000143051147,
+                26,
+                26.799999952316284,
+                26.700000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 25,
+                "p50": 27,
+                "p95": 27.700000047683716,
+                "max": 28.800000190734863
+              }
+            },
+            "composer": {
+              "rawMs": [
+                21.5,
+                19.899999856948853,
+                21.59999990463257,
+                20.799999952316284,
+                20.90000009536743,
+                21,
+                20.5,
+                21.299999952316284,
+                21.399999856948853,
+                21.799999952316284,
+                20.5,
+                21.40000009536743,
+                21,
+                20.299999952316284,
+                23.399999856948853,
+                22,
+                21.5,
+                20.59999990463257,
+                20,
+                19.200000047683716,
+                18.90000009536743,
+                18.100000143051147,
+                19.100000143051147,
+                18.100000143051147,
+                19.799999952316284,
+                20,
+                18.700000047683716,
+                19.40000009536743,
+                21.40000009536743,
+                21.299999952316284
+              ],
+              "summary": {
+                "n": 30,
+                "min": 18.100000143051147,
+                "p50": 20.59999990463257,
+                "p95": 22,
+                "max": 23.399999856948853
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                17.40000009536743,
+                17.200000047683716,
+                17.200000047683716,
+                17.299999952316284,
+                17.40000009536743,
+                16.5,
+                17.40000009536743,
+                17.100000143051147,
+                18.40000009536743,
+                17.799999952316284,
+                17.5,
+                16.399999856948853,
+                17.59999990463257,
+                17.100000143051147,
+                17.299999952316284,
+                18.299999952316284,
+                17.399999856948853,
+                18.300000190734863,
+                16.5,
+                17.300000190734863,
+                17.200000047683716,
+                17.200000047683716,
+                17.40000009536743,
+                16.399999856948853,
+                16.399999856948853,
+                17.09999990463257,
+                17.200000047683716,
+                17.90000009536743,
+                18,
+                17.100000143051147
+              ],
+              "summary": {
+                "n": 30,
+                "min": 16.399999856948853,
+                "p50": 17.299999952316284,
+                "p95": 18.300000190734863,
+                "max": 18.40000009536743
+              }
+            }
+          },
+          "ok": false,
+          "error": "TimeoutError: locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.chat-host[data-session-id=\"cfa85d85-2257-439e-b547-19da89aa3ce3\"] [data-testid=\"chat-view\"] .chat-turn').filter({ hasText: 'Tab 0 turn 199.' }) to be visible\u001b[22m\n",
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ]
+    }
+  },
+  {
+    "collection": "a-installed-5",
+    "reason": "development pilot before the final protocol; not included in baseline",
+    "measurements": {
+      "schema": 1,
+      "build": "installed",
+      "source": "4dd8e425e10b7fb13186fa45179aa1c87a84c2d6",
+      "sourceBasis": "operator-supplied installed release tag; executable hash below",
+      "startedAt": "2026-10-15T14:20:07.528Z",
+      "config": {
+        "runs": 5,
+        "samples": 30,
+        "tabs": 24,
+        "turns": 200,
+        "idle-ms": 5000
+      },
+      "machine": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "release": "25.6.0",
+        "cpu": "Apple M2 Max",
+        "logicalCpus": 12,
+        "ramGiB": 96,
+        "node": "v22.12.0"
+      },
+      "protocol": {
+        "server": "separate",
+        "hidden": true,
+        "noActivate": true,
+        "warmups": 5,
+        "profilerIntervalUs": 1000,
+        "synthetic": true
+      },
+      "runs": [
+        {
+          "run": 1,
+          "beforeLoad": [
+            31.60888671875,
+            21.0400390625,
+            20.60009765625
+          ],
+          "startedAt": "2026-10-15T14:20:07.529Z",
+          "executableSha256": "4403de80626a21f1b860f10968d02ca6ad6140087abd32272d552478418db064",
+          "pageErrors": [],
+          "startupMs": 3985.3194159999994,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "62302"
+          },
+          "pids": {
+            "main": 18310,
+            "renderer": 18588
+          },
+          "reloadStartupMs": 1211.658625,
+          "startupProfile": {
+            "file": "run-1-renderer-reload.cpuprofile",
+            "samples": 984,
+            "sampledMs": 1319.782,
+            "hotspots": [
+              {
+                "frame": "(program)",
+                "selfMs": 164.871,
+                "percent": 12.492290393413457
+              },
+              {
+                "frame": "(idle)",
+                "selfMs": 145.774,
+                "percent": 11.045308998001184
+              },
+              {
+                "frame": "compileSourceTextModule node:internal/modules/esm/utils:345:33",
+                "selfMs": 35.878,
+                "percent": 2.7184792639996607
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 20.625,
+                "percent": 1.562758091866687
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 18.858,
+                "percent": 1.4288723440689448
+              },
+              {
+                "frame": "makeContextifyScript node:internal/vm:171:30",
+                "selfMs": 15.255,
+                "percent": 1.1558727123115786
+              },
+              {
+                "frame": "createError node:electron/js2c/node_init:2:1993",
+                "selfMs": 14.814,
+                "percent": 1.12245810292912
+              },
+              {
+                "frame": "get exports node:internal/modules/package_json_reader:86:20",
+                "selfMs": 14.152,
+                "percent": 1.072298303810781
+              },
+              {
+                "frame": "splitPath node:electron/js2c/node_init:2:916",
+                "selfMs": 12.718,
+                "percent": 0.9636439957508134
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 12.687,
+                "percent": 0.9612951229824319
+              },
+              {
+                "frame": "Module._load node:internal/modules/cjs/loader:1176:24",
+                "selfMs": 9.31,
+                "percent": 0.7054195314074597
+              },
+              {
+                "frame": "makeContextifyScript node:internal/vm:171:30",
+                "selfMs": 8.692,
+                "percent": 0.658593616218436
+              },
+              {
+                "frame": "makeContextifyScript node:internal/vm:171:30",
+                "selfMs": 7.531,
+                "percent": 0.5706245425380858
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 6.572,
+                "percent": 0.4979610268968663
+              },
+              {
+                "frame": "(anonymous) [source]:1:11",
+                "selfMs": 6.47,
+                "percent": 0.49023247778799833
+              }
+            ]
+          },
+          "viewport": {
+            "width": 1400,
+            "height": 900,
+            "dpr": 2
+          },
+          "emptyIdle": {
+            "elapsedMs": 5003.2619999255985,
+            "taskMs": 0.6969999999999477,
+            "scriptMs": 0.26099999999999735,
+            "heapBytes": 150502016
+          },
+          "emptyIdleProfiled": {
+            "elapsedMs": 5001.805000007153,
+            "taskMs": 4.861000000000004,
+            "scriptMs": 1.361000000000001,
+            "heapBytes": 151215492
+          },
+          "emptyProfile": {
+            "file": "run-1-empty-idle.cpuprofile",
+            "samples": 3736,
+            "sampledMs": 5189.925,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 4998.288,
+                "percent": 96.30751889478172
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 187.865,
+                "percent": 3.619801827579397
+              },
+              {
+                "frame": "fromIterable [source]:157:29",
+                "selfMs": 1.271,
+                "percent": 0.024489756595711884
+              },
+              {
+                "frame": "load assets/index-Cjkmx59C.js:44253:11",
+                "selfMs": 1.27,
+                "percent": 0.024470488494535085
+              },
+              {
+                "frame": "identity assets/index-Cjkmx59C.js:21323:18",
+                "selfMs": 1.231,
+                "percent": 0.023719032548639912
+              }
+            ]
+          },
+          "setupMs": 3904.523083,
+          "loadedIdle": {
+            "elapsedMs": 5005.187999922782,
+            "taskMs": 0.30399999999985994,
+            "scriptMs": 0,
+            "heapBytes": 224738572
+          },
+          "loadedIdleProfiled": {
+            "elapsedMs": 5002.657999983057,
+            "taskMs": 105.1479999999998,
+            "scriptMs": 0,
+            "heapBytes": 147750076
+          },
+          "loadedProfile": {
+            "file": "run-1-many-idle.cpuprofile",
+            "samples": 3613,
+            "sampledMs": 5326.374,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 4900.438,
+                "percent": 92.00326526075713
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 347.804,
+                "percent": 6.529845632319473
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 78.132,
+                "percent": 1.4668891069233967
+              }
+            ]
+          },
+          "unsampled": {
+            "tab": {
+              "rawMs": [
+                24.5,
+                27.300000190734863,
+                26,
+                21.700000047683716,
+                23.40000009536743,
+                27.100000143051147,
+                26.90000009536743,
+                27.59999990463257,
+                26.799999952316284,
+                28.100000143051147,
+                27.5,
+                27.700000047683716,
+                26.5,
+                28.299999952316284,
+                28.5,
+                27.5,
+                27.59999990463257,
+                27.799999952316284,
+                27.200000047683716,
+                27.699999809265137,
+                26.5,
+                26.699999809265137,
+                27.399999856948853,
+                26.399999856948853,
+                25.799999952316284,
+                26.5,
+                26.799999952316284,
+                26.09999990463257,
+                28.09999990463257,
+                26.100000143051147
+              ],
+              "summary": {
+                "n": 30,
+                "min": 21.700000047683716,
+                "p50": 26.90000009536743,
+                "p95": 28.299999952316284,
+                "max": 28.5
+              }
+            },
+            "group": {
+              "rawMs": [
+                25.799999952316284,
+                24.90000009536743,
+                25.399999856948853,
+                27.300000190734863,
+                26.700000047683716,
+                26.799999952316284,
+                25.5,
+                27.700000047683716,
+                26.90000009536743,
+                25.899999856948853,
+                26.700000047683716,
+                26.799999952316284,
+                26.59999990463257,
+                27.399999856948853,
+                26.59999990463257,
+                27.300000190734863,
+                27.299999952316284,
+                24,
+                25.700000047683716,
+                25.5,
+                23.09999990463257,
+                27.199999809265137,
+                27.299999952316284,
+                27.799999952316284,
+                27.200000047683716,
+                28.200000047683716,
+                28,
+                28.100000143051147,
+                26.399999856948853,
+                26.700000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 23.09999990463257,
+                "p50": 26.700000047683716,
+                "p95": 28.100000143051147,
+                "max": 28.200000047683716
+              }
+            },
+            "composer": {
+              "rawMs": [
+                25.09999990463257,
+                26.200000047683716,
+                16,
+                18,
+                17.59999990463257,
+                19.59999990463257,
+                18.799999952316284,
+                18.800000190734863,
+                16.90000009536743,
+                15.799999952316284,
+                16.40000009536743,
+                18.100000143051147,
+                17,
+                18.800000190734863,
+                28.5,
+                19.5,
+                17.799999952316284,
+                19.700000047683716,
+                19.200000047683716,
+                18.399999856948853,
+                17.5,
+                21.200000047683716,
+                28.300000190734863,
+                20.5,
+                20,
+                30.700000047683716,
+                26,
+                25.90000009536743,
+                29.200000047683716,
+                17.700000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 15.799999952316284,
+                "p50": 18.800000190734863,
+                "p95": 29.200000047683716,
+                "max": 30.700000047683716
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                16.90000009536743,
+                17.299999952316284,
+                18,
+                17.299999952316284,
+                17.799999952316284,
+                18,
+                17.5,
+                17.700000047683716,
+                17.40000009536743,
+                16.700000047683716,
+                17.5,
+                16.899999856948853,
+                17.5,
+                18,
+                16.59999990463257,
+                17.199999809265137,
+                17.5,
+                17.40000009536743,
+                17.5,
+                17.299999952316284,
+                17.299999952316284,
+                17.299999952316284,
+                18.700000047683716,
+                17.299999952316284,
+                17.5,
+                17.200000047683716,
+                17.40000009536743,
+                17.09999990463257,
+                17.09999990463257,
+                17.5
+              ],
+              "summary": {
+                "n": 30,
+                "min": 16.59999990463257,
+                "p50": 17.40000009536743,
+                "p95": 18,
+                "max": 18.700000047683716
+              }
+            }
+          },
+          "sampled": {
+            "tab": {
+              "rawMs": [
+                26.59999990463257,
+                30.09999990463257,
+                29,
+                29.09999990463257,
+                27.40000009536743,
+                28.200000047683716,
+                28.699999809265137,
+                25.600000143051147,
+                28.299999952316284,
+                20.300000190734863,
+                25.600000143051147,
+                23.100000143051147,
+                23.200000047683716,
+                27.5,
+                22.700000047683716,
+                26.300000190734863,
+                26.700000047683716,
+                19,
+                23.700000047683716,
+                23.100000143051147,
+                24.700000047683716,
+                27.5,
+                27.399999856948853,
+                27.699999809265137,
+                26.59999990463257,
+                24.200000047683716,
+                21.799999952316284,
+                24.90000009536743,
+                19.5,
+                22.799999952316284
+              ],
+              "summary": {
+                "n": 30,
+                "min": 19,
+                "p50": 25.600000143051147,
+                "p95": 29.09999990463257,
+                "max": 30.09999990463257
+              }
+            },
+            "group": {
+              "rawMs": [
+                23.5,
+                24.200000047683716,
+                23.40000009536743,
+                26.899999856948853,
+                23.200000047683716,
+                21.200000047683716,
+                24,
+                27.100000143051147,
+                26.100000143051147,
+                24.200000047683716,
+                26.09999990463257,
+                21.09999990463257,
+                23,
+                27.100000143051147,
+                25,
+                22.5,
+                24.899999856948853,
+                22.799999952316284,
+                22,
+                25.299999952316284,
+                25.899999856948853,
+                26.699999809265137,
+                22.799999952316284,
+                21.59999990463257,
+                22.800000190734863,
+                22.700000047683716,
+                21.799999952316284,
+                28.09999990463257,
+                21.600000143051147,
+                22.700000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 21.09999990463257,
+                "p50": 23.40000009536743,
+                "p95": 27.100000143051147,
+                "max": 28.09999990463257
+              }
+            },
+            "composer": {
+              "rawMs": [
+                17.300000190734863,
+                19.800000190734863,
+                20.40000009536743,
+                18.59999990463257,
+                26,
+                18.799999952316284,
+                16.200000047683716,
+                17,
+                21.799999952316284,
+                27,
+                21.09999990463257,
+                24.200000047683716,
+                23.299999952316284,
+                17.100000143051147,
+                23.59999990463257,
+                19.5,
+                23.700000047683716,
+                28.90000009536743,
+                19.5,
+                27.799999952316284,
+                29,
+                21.5,
+                27.59999990463257,
+                16.5,
+                27.799999952316284,
+                17.399999856948853,
+                27.09999990463257,
+                26.100000143051147,
+                18.5,
+                18.5
+              ],
+              "summary": {
+                "n": 30,
+                "min": 16.200000047683716,
+                "p50": 21.09999990463257,
+                "p95": 28.90000009536743,
+                "max": 29
+              }
+            },
+            "scroll": {
+              "rawMs": [
+                17.299999952316284,
+                17.700000047683716,
+                18.09999990463257,
+                17.100000143051147,
+                17.40000009536743,
+                18.200000047683716,
+                17.40000009536743,
+                17.600000143051147,
+                16.299999952316284,
+                17.600000143051147,
+                17.5,
+                17.299999952316284,
+                17.59999990463257,
+                17.799999952316284,
+                17.100000143051147,
+                17.300000190734863,
+                17.09999990463257,
+                16.700000047683716,
+                18.299999952316284,
+                18.200000047683716,
+                17.299999952316284,
+                18.09999990463257,
+                17.5,
+                17.100000143051147,
+                18,
+                18.09999990463257,
+                16.899999856948853,
+                17.5,
+                17.700000047683716,
+                17.200000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 16.299999952316284,
+                "p50": 17.5,
+                "p95": 18.200000047683716,
+                "max": 18.299999952316284
+              }
+            }
+          },
+          "interactionProfile": {
+            "file": "run-1-interactions.cpuprofile",
+            "samples": 7008,
+            "sampledMs": 11719.843,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 7949.817,
+                "percent": 67.83211174415904
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 1464.178,
+                "percent": 12.493153705216017
+              },
+              {
+                "frame": "focus",
+                "selfMs": 384.759,
+                "percent": 3.2829705995208296
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 172.304,
+                "percent": 1.4701903429935026
+              },
+              {
+                "frame": "query",
+                "selfMs": 156.363,
+                "percent": 1.3341731625585769
+              },
+              {
+                "frame": "query",
+                "selfMs": 98.769,
+                "percent": 0.8427501972509359
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 77.513,
+                "percent": 0.661382579954356
+              },
+              {
+                "frame": "(anonymous) assets/index-Cjkmx59C.js:142972:44",
+                "selfMs": 75.519,
+                "percent": 0.6443687001609151
+              },
+              {
+                "frame": "(anonymous)",
+                "selfMs": 49.679,
+                "percent": 0.42388793092194155
+              },
+              {
+                "frame": "parentElementOrShadowHost",
+                "selfMs": 29.51,
+                "percent": 0.2517951818979145
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 28.364,
+                "percent": 0.24201689391231607
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 22.641,
+                "percent": 0.1931851817468886
+              },
+              {
+                "frame": "beginWork assets/index-Cjkmx59C.js:6178:21",
+                "selfMs": 22.391,
+                "percent": 0.19105204736957654
+              },
+              {
+                "frame": "performUnitOfWork assets/index-Cjkmx59C.js:9010:29",
+                "selfMs": 20.558,
+                "percent": 0.17541190611512458
+              },
+              {
+                "frame": "querySelector",
+                "selfMs": 19.751,
+                "percent": 0.16852614834516128
+              }
+            ]
+          },
+          "afterLoad": [
+            29.443359375,
+            22.28125,
+            21.09375
+          ],
+          "ok": true,
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        },
+        {
+          "run": 2,
+          "beforeLoad": [
+            29.443359375,
+            22.28125,
+            21.09375
+          ],
+          "startedAt": "2026-10-15T14:21:00.408Z",
+          "executableSha256": "4403de80626a21f1b860f10968d02ca6ad6140087abd32272d552478418db064",
+          "pageErrors": [],
+          "startupMs": 7691.983082999999,
+          "identity": {
+            "version": "3.0.0-beta.2",
+            "electron": "39.5.2",
+            "chrome": "142.0.7444.265",
+            "visible": false,
+            "backgroundThrottling": false
+          },
+          "server": {
+            "mode": "separate",
+            "port": "64358"
+          },
+          "pids": {
+            "main": 41661,
+            "renderer": 42169
+          },
+          "reloadStartupMs": 1273.156833000001,
+          "ok": false,
+          "error": "Error: Profiler rejected renderer-reload, samples=923, minDeltaUs=-4, negativeDeltas=1: AssertionError [ERR_ASSERTION]: invalid sample duration",
+          "close": {
+            "timedOut": false
+          },
+          "cleaned": true
+        }
+      ]
+    }
+  }
+]

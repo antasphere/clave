@@ -529,7 +529,7 @@ export function GitJourneyPanel(): React.JSX.Element | null {
         </div>
 
         {/* Content */}
-        <div ref={contentRef} className="flex-1 overflow-y-auto min-h-0">
+        <div ref={contentRef} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
           {loading && !data ? (
             <div className="flex items-center justify-center py-12">
               <span className="text-xs text-text-tertiary">Loading journey...</span>

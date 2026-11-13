@@ -9,8 +9,15 @@
  * when absent and extended in place, never replaced, so whichever domain
  * installs first, the others' hooks stay.
  */
-import type { SessionHostService, SettingsSourceService } from '@clave/server'
+import type {
+  PluginsService,
+  RoutinesService,
+  SessionHostService,
+  SettingsSourceService
+} from '@clave/server'
+import type { ForwardRegistry } from '@clave/server/forward-registry'
 import type { SessionStream } from '../../shared/session-model'
+import type { AccountUsageManager } from '../usage-manager'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 
 export interface E2eHooks {
@@ -29,6 +36,33 @@ export interface E2eHooks {
   echo: { inject: (sessionId: string, stream: SessionStream) => void }
   // ── Lane D (wave 3): which road each agent tool took (`src/main/mcp/roads.ts`) ──
   mcpRoads: { command: string; road: 'server' | 'window' }[]
+  // ── Wave 5, lane C: the plugin service the server answers from (`plugins/plugin-service.ts`),
+  // wrapped by the specs that watch a view's lease, in whichever process hosts it ──
+  plugins: PluginsService
+  /** Recording-provider fixture access. Never installed outside hidden test mode. */
+  usageClock: {
+    claude: AccountUsageManager
+    codex: AccountUsageManager
+    start: (intervalMs?: number) => void
+  }
+  /** ADR 0004: the routines service the server answers from, for the specs
+   *  that drive a tick by hand instead of waiting on the clock. */
+  routines: RoutinesService & { tick(): Promise<boolean>; refresh(): Promise<void> }
+  // ── Lane B (server wave): the token "Copy token" would have put on the
+  // clipboard. A hidden test instance must never write the person's
+  // clipboard, so under test mode it lands here instead. ──
+  serverSetup: { copiedToken: string | null }
+  // ── PRDCT-4165: the lines main wrote about the servers' connections
+  // (`src/main/server-connections/connection-log.ts`), oldest first, so a
+  // spec reads what the log says without reading the person's log file. ──
+  fleetLog: string[]
+  // ── PRDCT-4473: the forwards, for the spec that opens a socket from a real
+  // window across both hops. On a server, the registry of the ports it
+  // forwards (a spec registers its own target there); in main, a forward
+  // opened as the window's IPC handler opens one, answering its local url.
+  // Neither reaches the preload. ──
+  forwards: ForwardRegistry
+  openForward: (serverId: string, lease: string) => Promise<string>
   // ── later lanes add theirs here ──
 }
 

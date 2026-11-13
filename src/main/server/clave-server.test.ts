@@ -170,3 +170,68 @@ describe('the server started by the shell', () => {
     manager.kill('t1')
   })
 })
+
+describe('the version the in-process server reports (issue #266, V1-F6)', () => {
+  it("answers the app's version and that it updates with the app, and names it in the welcome", async () => {
+    const manager = new SessionManager()
+    const endpoint = await startClaveServer({
+      manager,
+      ports: { sessions: hostOver(manager) },
+      appVersion: '3.0.0-beta.9'
+    })
+    const api = createApiClient({ url: endpoint.url, token: endpoint.token })
+    try {
+      expect(await api.server.info()).toEqual({
+        version: '3.0.0-beta.9',
+        installRef: null,
+        // The server's own name (PRDCT-4149): this machine's, whatever it is.
+        name: expect.any(String),
+        upgrade: {
+          supported: false,
+          reason: 'This server is run by the app; it updates with it',
+          state: 'idle'
+        }
+      })
+    } finally {
+      await api.dispose()
+    }
+    const ws = new WebSocket(endpoint.url.replace('http', 'ws') + '/push')
+    const welcome = await new Promise<unknown>((resolve, reject) => {
+      ws.once('open', () => ws.send(JSON.stringify({ _tag: 'hello', token: endpoint.token })))
+      ws.once('message', (data) => resolve(JSON.parse(data.toString())))
+      ws.once('error', reject)
+    })
+    ws.close()
+    expect(welcome).toMatchObject({ _tag: 'welcome', version: '3.0.0-beta.9' })
+  })
+})
+
+describe('this Mac’s own name as a server (PRDCT-4241, verifier round 2 N10)', () => {
+  it('is read from its store, set from Settings, and tells its listeners', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const { configureOwnServerName, onOwnServerNameChanged, ownServerName, setOwnServerName } =
+      await import('./clave-server')
+    const dir = mkdtempSync(join(tmpdir(), 'own-name-'))
+    const previous = process.env.CLAVE_SERVER_NAME
+    process.env.CLAVE_SERVER_NAME = 'seeded'
+    try {
+      configureOwnServerName(dir)
+      expect(ownServerName()).toBe('seeded')
+      const heard: string[] = []
+      const off = onOwnServerNameChanged((name) => heard.push(name))
+      expect(setOwnServerName(' Studio ')).toBe('Studio')
+      expect(ownServerName()).toBe('Studio')
+      expect(heard).toEqual(['Studio'])
+      off()
+      setOwnServerName('Other')
+      expect(heard).toEqual(['Studio'])
+      expect(() => setOwnServerName('every')).toThrow()
+    } finally {
+      if (previous === undefined) delete process.env.CLAVE_SERVER_NAME
+      else process.env.CLAVE_SERVER_NAME = previous
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

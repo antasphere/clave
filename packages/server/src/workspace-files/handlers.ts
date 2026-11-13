@@ -57,7 +57,8 @@ export const workspaceFilesHandlers = [
                   folder: request.folder,
                   autoCommands: request.autoCommands,
                   prompts: request.prompts,
-                  dangerous: request.dangerous
+                  dangerous: request.dangerous,
+                  routines: request.routines
                 })
               ).then(() => undefined)
             )

@@ -8,6 +8,8 @@ Clave stores local agent launch profiles as argument arrays. A profile contains 
 
 Built-in profiles are immutable. Custom profiles are local and editable. Resolution order is an explicit profile, the workspace override, the global default, then the built-in profile. `.clave` files contain only the agent mode, never a profile id or command.
 
+Note, 3 November 2026: a saved profile has two forms, the terminal one and its chat form (`chat:<family>:<id>`, the "(chat)" entry the launcher offers beside it), one editable definition. An agent's `clave_open_session` with `chat: true` and no explicit profile resolves to the chat form of the profile this order yields for the family (`chatDefaultFor` in `src/shared/open-session-modes.ts`), so the chat an agent opens is the one the person gets from the launcher in that workspace; the built-in chat is the fallback for a default with no chat form. Until then the flag answered the built-in chat profile whatever the workspace was set to. A chat opened on a fleet server follows that server's own global default's chat form: the server holds no per-workspace default the Mac could name.
+
 Arguments are not encrypted. The UI warns users not to store secrets in them. Wrappers should obtain credentials from the environment or a secret tool. Missing commands fail visibly and never fall back to a different binary.
 
 ## Pi capability record

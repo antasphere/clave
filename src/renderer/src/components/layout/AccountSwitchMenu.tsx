@@ -1,18 +1,19 @@
 import type { ReactElement } from 'react'
 import { SparklesIcon } from '@heroicons/react/24/outline'
 import {
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage,
   headroomWindow,
   capName,
   capLevel,
+  capStatus,
   formatResetAt,
   formatResetIn,
+  claudeUsageForModel,
   type AccountUsageSummary
 } from '../../store/usage-store'
-import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
+import { soonestWeeklyReset } from '../../lib/account-pool'
 import { useNow } from '../../lib/use-now'
 import type { SwitchTarget } from '../../lib/switch-account'
+import { useOwnerAccountView } from '../../lib/session-accounts'
 import { UsageColumn } from '../usage/UsageColumn'
 
 /**
@@ -27,24 +28,27 @@ import { UsageColumn } from '../usage/UsageColumn'
  */
 
 function useTargetSummary(target: SwitchTarget): AccountUsageSummary | undefined {
-  const claude = useClaudeAccountsUsage((s) => s.byAccount[target.id])
-  const codex = useCodexAccountsUsage((s) => s.byAccount[target.id])
-  return (target.provider === 'codex' ? codex : claude) ?? target.summary
+  // The target's OWNER's usage: a server tab's targets are the server's.
+  const live = useOwnerAccountView(target.owner, target.provider).usage[target.id]
+  return live ? claudeUsageForModel(live, target.model) : target.summary
 }
 
 export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactElement {
   const now = useNow()
   const summary = useTargetSummary(target)
+  const status = capStatus(summary, { now })
   const w = headroomWindow(summary)
-  const exhausted = isExhausted(summary)
+  const exhausted = status?.exhausted === true
   const level = w ? capLevel(w) : 'normal'
   const left = w ? Math.max(0, Math.round(100 - w.usedPercentage)) : null
   const weekly = formatResetIn(soonestWeeklyReset(summary), now)
-  // An account at its limit is worth knowing about by when it comes back,
-  // which is the reset of the cap that stopped it, not the week's.
-  const back = exhausted ? formatResetIn(summary?.tightest?.resetsAt ?? null, now) : null
-  const detail = back
-    ? `Back ${back}`
+  // An account that is out for this tab is worth knowing about by when the
+  // cap that stopped it comes back ("Back in 2d 5h"; the badge names the
+  // cap), never by the week's renewal; the shared headroom beside it says
+  // what the account still has for the other models.
+  const back = status?.stopping ? formatResetIn(status.stopping.resetsAt, now) : null
+  const detail = exhausted
+    ? [back ? `Back ${back}` : null, status?.headroom].filter(Boolean).join(' · ')
     : weekly
       ? `Week renews ${weekly}`
       : summary?.status === 'error'
@@ -75,8 +79,10 @@ export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactEle
       </span>
       {w && left != null && (
         <span className="account-switch-headroom">
-          <span className="account-switch-left">{exhausted ? 'At limit' : `${left}% left`}</span>
-          <span className="account-switch-cap">{capName(w)}</span>
+          <span className="account-switch-left">
+            {status?.stopping ? `${capName(status.stopping)} out` : `${left}% left`}
+          </span>
+          {!status?.stopping && <span className="account-switch-cap">{capName(w)}</span>}
         </span>
       )}
     </span>
@@ -124,6 +130,67 @@ export function AccountUsagePlot({
       {session.map((w) => (
         <UsageColumn key={w.key} window={w} now={now} tooltip={false} />
       ))}
+    </div>
+  )
+}
+
+/** Every cap of an account as one thin horizontal bar each — name, bar, %
+ *  used, time to reset on a single line — the weekly caps first, then the
+ *  5-hour block. The tab menu's header draws this rather than the columns:
+ *  the columns stood ~8rem tall over a menu whose rows are 1.75rem, and the
+ *  header outweighed the menu it sat on. Same data, same urgency colours. */
+export function AccountUsageBars({
+  summary,
+  now
+}: {
+  summary: AccountUsageSummary | undefined
+  now: number
+}): ReactElement {
+  const windows = summary?.status === 'error' ? [] : (summary?.windows ?? [])
+  if (windows.length === 0)
+    return (
+      <div className="account-usage-bars-empty">
+        {summary?.status === 'error'
+          ? 'Usage could not be read'
+          : summary?.status === 'ready'
+            ? (summary.message ?? 'No limits reported')
+            : 'Reading usage…'}
+      </div>
+    )
+  const ordered = [
+    ...windows.filter((w) => w.kind !== 'session'),
+    ...windows.filter((w) => w.kind === 'session')
+  ]
+  return (
+    <div className="account-usage-bars" data-usage-chart="bars">
+      {ordered.map((w) => {
+        const pct = Math.round(w.usedPercentage)
+        const level = capLevel(w)
+        const reset = formatResetIn(w.resetsAt, now)
+        return (
+          <div
+            key={w.key}
+            className="account-usage-bar"
+            data-usage-window={w.key}
+            data-level={level}
+            title={`${w.label} · ${pct}% used${reset ? ` · resets ${reset}` : ''}`}
+          >
+            <span className="account-usage-bar-name">{capName(w)}</span>
+            <span className="account-usage-bar-track">
+              <span
+                className={`account-usage-bar-fill usage-meter-fill--${level}`}
+                style={{
+                  width: `${Math.min(100, Math.max(w.usedPercentage, pct === 0 ? 0 : 3))}%`
+                }}
+              />
+            </span>
+            <span className="account-usage-bar-pct" aria-label={`${pct}% used`}>
+              {pct}%
+            </span>
+            <span className="account-usage-bar-reset">{reset ?? ''}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }

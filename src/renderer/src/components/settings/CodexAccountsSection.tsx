@@ -1,22 +1,24 @@
-import { useState, type ReactElement } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import {
   TrashIcon,
   PlusIcon,
   KeyIcon,
   XMarkIcon,
   ArrowUpIcon,
-  ArrowDownIcon
+  ArrowDownIcon,
+  SparklesIcon
 } from '@heroicons/react/24/outline'
 import {
   useCodexAccountStore,
   DEFAULT_CODEX_ACCOUNT_ID,
+  codexAccountUsable,
   describeCodexAccountAuth
 } from '../../store/codex-account-store'
 import type { CodexAccount } from '../../../../preload/index.d'
 import { useAccountLoginStore } from '../../store/account-login-store'
-import { useCodexAccountsUsage, headroomLabel } from '../../store/usage-store'
-import { isExhausted } from '../../lib/account-pool'
-import { CodexLogo } from '../icons/cli-logos'
+import { useCodexAccountsUsage, capStatusLine } from '../../store/usage-store'
+import { isExhausted, switchTargets } from '../../lib/account-pool'
+import { CONNECTION_COMPANY_BY_POOL } from './connection-companies'
 import { SettingsSection, SettingsCard, SettingsCallout, Radio } from './primitives'
 import { LoginFlow } from './LoginFlow'
 
@@ -44,8 +46,8 @@ function NameForm({
       <SettingsCallout
         inset
         tone="accent"
-        title="Add an account"
-        text="Name the subscription, then sign in to ChatGPT in the browser that opens. Codex keeps the credential in a home of its own for this account; everything else — config, sessions, skills — stays shared with ~/.codex."
+        title="Add a connection"
+        text="Name the subscription, then sign in to ChatGPT in the browser that opens. Codex keeps the credential in a home of its own for this connection; everything else — config, sessions, skills — stays shared with ~/.codex."
         actions={
           <>
             <button onClick={onCancel} className="btn-secondary">
@@ -65,8 +67,8 @@ function NameForm({
           className="input-compact w-full max-w-72 mt-2"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="Account name"
-          aria-label="Account name"
+          placeholder="Connection name"
+          aria-label="Connection name"
           autoFocus
           onKeyDown={(e) => {
             if (e.key === 'Enter') void submit()
@@ -111,7 +113,7 @@ function ApiKeyForm({
         inset
         tone="accent"
         title={title}
-        text="An API key bills usage instead of a subscription, so it has no limit to read: the pool only falls back to it when every subscription account is out."
+        text="An API key bills usage instead of a subscription, so it has no limit to read: the pool only falls back to it when every subscription connection is out."
         actions={
           <>
             <button onClick={onCancel} className="btn-secondary">
@@ -122,7 +124,7 @@ function ApiKeyForm({
               disabled={busy || !apiKey.trim() || (askName && !label.trim())}
               className="btn-primary"
             >
-              {askName ? 'Add account' : 'Save key'}
+              {askName ? 'Add connection' : 'Save key'}
             </button>
           </>
         }
@@ -133,8 +135,8 @@ function ApiKeyForm({
               className="input-compact w-full max-w-72"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Account name"
-              aria-label="Account name"
+              placeholder="Connection name"
+              aria-label="Connection name"
               autoFocus
             />
           )}
@@ -169,6 +171,7 @@ function AccountRow({
   index,
   count,
   selected,
+  suggested,
   onSelect,
   onMove,
   onLogin,
@@ -178,6 +181,8 @@ function AccountRow({
   index: number
   count: number
   selected: boolean
+  /** The open connection the pool would spend first (its week renews soonest). */
+  suggested: boolean
   onSelect: () => void
   onMove: (offset: -1 | 1) => void
   onLogin: () => void
@@ -188,13 +193,14 @@ function AccountRow({
   const clearCredential = useCodexAccountStore((s) => s.clearCredential)
   const summary = useCodexAccountsUsage((s) => s.byAccount[account.id])
   const isDefault = account.id === DEFAULT_CODEX_ACCOUNT_ID
-  const headroom = headroomLabel(summary)
+  const { Logo } = CONNECTION_COMPANY_BY_POOL.codex
+  // One cap set, no families: the headroom, or the cap that is out and
+  // when it comes back ("Overall out · back in 2d 5h"). A fallback is billed
+  // per use and has no headroom. How the connection signs in is never on
+  // the card (PRDCT-4424): only the Mac's own login says where it lives.
   const description = [
-    isDefault
-      ? `${describeCodexAccountAuth(account)} · ~/.codex`
-      : describeCodexAccountAuth(account),
-    account.kind === 'apiKey' ? 'fallback only' : headroom,
-    account.kind !== 'apiKey' && isExhausted(summary) ? 'at limit' : null
+    isDefault ? `${describeCodexAccountAuth(account)} · ~/.codex` : null,
+    account.kind === 'apiKey' ? 'Pay per use' : capStatusLine(summary)
   ]
     .filter(Boolean)
     .join(' · ')
@@ -211,11 +217,12 @@ function AccountRow({
         <Radio
           checked={selected}
           onSelect={onSelect}
-          title={selected ? 'Account new sessions start on' : 'Start new sessions here'}
+          title={selected ? 'Connection new sessions start on' : 'Start new sessions here'}
           ariaLabel={
-            selected ? 'Account new sessions start on' : `Start new sessions on ${account.label}`
+            selected ? 'Connection new sessions start on' : `Start new sessions on ${account.label}`
           }
         />
+        <Logo className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             {isDefault ? (
@@ -225,9 +232,15 @@ function AccountRow({
                 className="input-compact w-full max-w-56"
                 value={account.label}
                 onChange={(e) => updateAccount(account.id, { label: e.target.value })}
-                placeholder="Account name"
-                aria-label="Account name"
+                placeholder="Connection name"
+                aria-label="Connection name"
               />
+            )}
+            {suggested && (
+              <span className="badge account-switch-suggested" data-connection-suggested>
+                <SparklesIcon aria-hidden />
+                Suggested
+              </span>
             )}
             {!account.hasCredential && (
               <span className="badge badge-muted flex-shrink-0">Needs login</span>
@@ -266,8 +279,8 @@ function AccountRow({
           title={
             account.kind === 'apiKey'
               ? account.hasCredential
-                ? 'Replace the API key'
-                : 'Set the API key'
+                ? 'Replace the key'
+                : 'Set the key'
               : account.hasCredential
                 ? 'Log in again'
                 : 'Log in'
@@ -291,8 +304,8 @@ function AccountRow({
           <button
             onClick={() => removeAccount(account.id)}
             className="btn-icon btn-icon-sm btn-icon--danger"
-            title="Remove account"
-            aria-label={`Remove account ${account.label}`}
+            title="Remove connection"
+            aria-label={`Remove connection ${account.label}`}
           >
             <TrashIcon className="w-3.5 h-3.5" />
           </button>
@@ -303,12 +316,15 @@ function AccountRow({
 }
 
 /**
- * The Codex accounts: the machine's own `~/.codex` plus every subscription
- * handed to Clave, each a home of its own (ADR 0002). A ChatGPT account
- * signs in through the browser; an API-key account takes the key here and
- * is the pool's fallback.
+ * The OpenAI connections: the machine's own `~/.codex` plus every
+ * subscription handed to Clave, each a home of its own (ADR 0002). A ChatGPT
+ * connection signs in through the browser; a pay-per-use one takes its key
+ * here and is the pool's fallback. `keyRequest` opens the key form from the
+ * page's Connect chooser (a new number each time it is asked).
  */
-export function CodexAccountsSection(): ReactElement {
+export function CodexAccountsSection({
+  keyRequest = 0
+}: { keyRequest?: number } = {}): ReactElement {
   const accounts = useCodexAccountStore((s) => s.accounts)
   const selectedAccountId = useCodexAccountStore((s) => s.selectedAccountId)
   const setSelectedAccount = useCodexAccountStore((s) => s.setSelectedAccount)
@@ -319,6 +335,23 @@ export function CodexAccountsSection(): ReactElement {
   const [form, setForm] = useState<
     { kind: 'add-login' } | { kind: 'add-key' } | { kind: 'set-key'; id: string } | null
   >(null)
+  // The chooser's "Use an API key instead", derived during render.
+  const [seenKey, setSeenKey] = useState(keyRequest)
+  if (seenKey !== keyRequest) {
+    setSeenKey(keyRequest)
+    if (keyRequest > 0) setForm({ kind: 'add-key' })
+  }
+  const byAccount = useCodexAccountsUsage((s) => s.byAccount)
+  const suggestedId = useMemo(() => {
+    const pool = accounts.map((a) => ({
+      id: a.id,
+      usable: codexAccountUsable(a),
+      fallback: a.kind === 'apiKey'
+    }))
+    if (pool.filter((p) => p.usable).length < 2) return null
+    return switchTargets(pool, byAccount).find((t) => t.suggested)?.id ?? null
+  }, [accounts, byAccount])
+  const company = CONNECTION_COMPANY_BY_POOL.codex
 
   const move = (index: number, offset: -1 | 1): void => {
     const ids = accounts.filter((a) => a.id !== DEFAULT_CODEX_ACCOUNT_ID).map((a) => a.id)
@@ -338,11 +371,11 @@ export function CodexAccountsSection(): ReactElement {
     <SettingsSection
       title={
         <span className="flex items-center gap-2">
-          <CodexLogo className="w-4 h-4 text-text-tertiary" />
-          Codex
+          <company.Logo className="w-4 h-4 text-text-tertiary" />
+          {company.name}
         </span>
       }
-      description="New Codex sessions start on the selected account and move along this list when it is about to hit its limit. Each account is a home of its own with everything but the credential linked to ~/.codex, so a thread can resume under another."
+      description={`${company.hint} New Codex sessions start on the selected connection and move along this list when it is about to hit its limit. Each connection is a home of its own with everything but the credential linked to ~/.codex, so a thread can resume under another.`}
     >
       <SettingsCard>
         {accounts.map((account, index) => (
@@ -352,6 +385,7 @@ export function CodexAccountsSection(): ReactElement {
               index={index}
               count={accounts.length}
               selected={account.id === selectedAccountId}
+              suggested={account.id === suggestedId}
               onSelect={() => setSelectedAccount(account.id)}
               onMove={(offset) => move(index, offset)}
               onLogin={() => {
@@ -363,7 +397,7 @@ export function CodexAccountsSection(): ReactElement {
             <LoginFlow provider="codex" accountId={account.id} label={account.label} />
             {form?.kind === 'set-key' && form.id === account.id && (
               <ApiKeyForm
-                title={`API key for ${account.label}`}
+                title={`Key for ${account.label}`}
                 askName={false}
                 onSubmit={(_label, apiKey) => submitKey(account.id, apiKey)}
                 onCancel={() => setForm(null)}
@@ -384,11 +418,11 @@ export function CodexAccountsSection(): ReactElement {
         )}
         {form?.kind === 'add-key' && (
           <ApiKeyForm
-            title="Add an account with an API key"
+            title="Add a connection with an API key"
             askName
             onSubmit={async (label, apiKey) => {
               const created = await addAccount(label, 'apiKey')
-              if (!created) return 'Could not add the account.'
+              if (!created) return 'Could not add the connection.'
               return submitKey(created.id, apiKey)
             }}
             onCancel={() => setForm(null)}
@@ -403,15 +437,16 @@ export function CodexAccountsSection(): ReactElement {
               data-codex-add-account
             >
               <PlusIcon className="w-4 h-4" />
-              Add account
+              Add connection
             </button>
             <button
               onClick={() => setForm({ kind: 'add-key' })}
               className="settings-row-action"
-              title="An account billed by API key: the pool's fallback"
+              title="A connection billed per use: the pool's fallback"
+              data-codex-api-key
             >
               <KeyIcon className="w-4 h-4" />
-              Add with an API key
+              Use an API key instead
             </button>
           </div>
         )}

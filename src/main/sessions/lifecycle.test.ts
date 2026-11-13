@@ -8,16 +8,21 @@ vi.mock('electron', () => {
   throw new Error('the lifecycle imported electron')
 })
 const mocks = vi.hoisted(() => ({
+  adoptable: [] as unknown[],
+  loginShellEnvAsync: vi.fn(async () => ({}) as Record<string, string>),
   spawn: vi.fn(),
   kill: vi.fn<(id: string) => Promise<void>>(async () => {}),
   listeners: new Map<string, { onData: (d: string) => void; onExit: (c: number) => void }>(),
   // ── Wave 4: the restart and the state the shadow reads ──
   restartSpawn: vi.fn(),
+  killAndWait: vi.fn(),
+  tmuxNameOf: vi.fn((): string | null => null),
+  discardSessionRecord: vi.fn(),
   getSessionRecord: vi.fn(() => undefined as unknown),
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
   writes: [] as [string, string][],
-  states: new Map<string, { state: string; transport: string }>(),
+  states: new Map<string, { state: string; transport: string; viewId?: string }>(),
   preference: vi.fn<(key: string) => unknown>(() => undefined),
   lastWorkspace: vi.fn((): string | null => null),
   scheduleTitle: vi.fn(),
@@ -25,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   clearState: vi.fn()
 }))
 vi.mock('../pty-manager', () => ({
+  loginShellEnvAsync: mocks.loginShellEnvAsync,
   ptyManager: {
     spawn: mocks.spawn,
     kill: mocks.kill,
@@ -34,9 +40,13 @@ vi.mock('../pty-manager', () => ({
     // The real kill ends the process, whose exit runs the listener the
     // lifecycle attached, before the kill resolves.
     killAndWait: async (id: string) => {
+      mocks.killAndWait(id)
       mocks.listeners.get(id)?.onExit(0)
     },
+    tmuxNameOf: mocks.tmuxNameOf,
+    discardSessionRecord: mocks.discardSessionRecord,
     getSessionRecord: mocks.getSessionRecord,
+    listAdoptableSessions: () => mocks.adoptable,
     setSessionDisplayName: mocks.setSessionDisplayName,
     setSessionViewRecord: mocks.setSessionViewRecord,
     getSession: (id: string) => (mocks.states.has(id) ? { id, alive: true } : undefined),
@@ -84,6 +94,8 @@ function windows(): {
   const memory = inMemorySessionWindows()
   const port: SessionWindowsPort = {
     workspaceOf: (key) => (key === 'w1' ? 'ws-1' : null),
+    isLive: (key) => key === 'w1' || key === 'w2' || key === 'w7',
+    primaryKey: () => 'w1',
     bind: (id, key) => {
       bound.push([id, key])
       memory.bind(id, key)
@@ -148,6 +160,21 @@ describe('a session is spawned for a window named by its key', () => {
       windowKey: 'w1'
     })
     expect(bound).toEqual([[id, 'w1']])
+  })
+  it('waits for the login shell’s environment, never reading it synchronously (PRDCT-3527)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    let release: (env: Record<string, string>) => void = () => {}
+    mocks.loginShellEnvAsync.mockImplementationOnce(
+      () => new Promise<Record<string, string>>((resolve) => (release = resolve))
+    )
+    const pending = spawnSession('w1', '/work/app', { claudeMode: false })
+    await Promise.resolve()
+    expect(mocks.spawn).not.toHaveBeenCalled()
+    release({ PATH: '/opt/homebrew/bin' })
+    await pending
+    expect(mocks.spawn).toHaveBeenCalledTimes(1)
   })
   it('a windowless caller falls back to the last active workspace and binds nothing', async () => {
     const id = `life-${++sequence}`
@@ -324,6 +351,27 @@ describe('a restart on another account', () => {
     expect(mocks.setSessionDisplayName).toHaveBeenCalledWith(id, 'Lane D', true)
     expect(mocks.setSessionViewRecord).toHaveBeenCalledWith(id, { url: 'http://127.0.0.1:4814' })
   })
+  it('brings the tab back in the view it was read in (PRDCT-4495)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    await spawnSession('w1', '/work/app', { claudeMode: true })
+    mocks.states.set(id, { state: 'idle', transport: 'events', viewId: 'clave.chat-view/terminal' })
+    plan(id)
+    spawned(id)
+    await restartSession(id, { claudeProfileId: 'acc-2' })
+    expect(mocks.spawn.mock.calls.at(-1)![1]).toMatchObject({
+      claudeProfileId: 'acc-2',
+      viewId: 'clave.chat-view/terminal'
+    })
+    // A tab with no view of its own takes the one a new tab opens in.
+    mocks.states.set(id, { state: 'idle', transport: 'events' })
+    plan(id)
+    spawned(id)
+    await restartSession(id, {})
+    expect(mocks.spawn.mock.calls.at(-1)![1]).not.toHaveProperty('viewId')
+    mocks.states.delete(id)
+  })
   it('takes the key the caller names, and refuses a tab it did not spawn', async () => {
     const id = `life-${++sequence}`
     windows()
@@ -333,9 +381,271 @@ describe('a restart on another account', () => {
     spawned(id)
     await restartSession(id, {}, 'w2')
     expect(mocks.spawn.mock.calls.at(-1)![1]).toMatchObject({ windowKey: 'w2' })
+    // A tab this process did not spawn and keeps no record of (PRDCT-4236:
+    // with a record, the Resume rebuilds the spawn from it instead).
     mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
     await expect(restartSession('other', {})).rejects.toThrow(
-      'This session cannot be restarted from here.'
+      'This session is not running and left no record to resume from.'
     )
+  })
+})
+
+describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, round 3 C2)', () => {
+  const plan = (id: string): void => {
+    mocks.restartSpawn.mockReturnValue({
+      cwd: '/work/app',
+      options: { claudeMode: true, adoptSessionId: id, claudeProfileId: 'acc-2' },
+      resumed: true
+    })
+  }
+  it('resumes a session this process never spawned from its record, and refuses one with no record (PRDCT-4236)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      id,
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: true,
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'acct-gone',
+      displayName: 'Account gone',
+      userRenamed: true
+    })
+    spawned(id)
+    await expect(restartSession(id, { onlyIfStopped: true })).resolves.toMatchObject({
+      id,
+      resumed: true
+    })
+    const [cwd, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(cwd).toBe('/work/app')
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      resumeSessionId: 'conv-1',
+      claudeMode: true,
+      dangerousMode: true,
+      claudeProfileId: 'acct-gone'
+    })
+    // The account the caller names lays over the record's.
+    spawned(id)
+    await restartSession(id, { claudeProfileId: 'acct-2', claudeProfileLabel: 'Two' })
+    expect((mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions])[1]).toMatchObject({
+      claudeProfileId: 'acct-2',
+      resumeSessionId: 'conv-1'
+    })
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.adoptable = []
+    await expect(restartSession(`life-${++sequence}`, {})).rejects.toThrow(
+      'This session is not running and left no record to resume from.'
+    )
+  })
+  it('moves a stopped record to another provider the way a live tab moves (PRDCT-4300)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      id,
+      adapterId: 'claude-chat',
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'work'
+    })
+    spawned(id)
+    await expect(
+      restartSession(id, {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        codexAccountId: 'c1',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      })
+    ).resolves.toMatchObject({ id, resumed: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      codexMode: true,
+      claudeMode: false,
+      launchProfileId: 'codex-chat',
+      resumeSessionId: 'thread-7',
+      model: 'gpt-5.5',
+      codexAccountId: 'c1',
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    })
+    expect(options.claudeSessionId).toBeUndefined()
+    expect(options.claudeProfileId).toBeUndefined()
+  })
+
+  it('finds a record keyed by its tmux name, spawns under the window that placed it, and offers the tmux name (round 2, N-F1, N-F2, N-F5)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.adoptable = [
+      {
+        id,
+        tmuxName: 'clave-root-abc123',
+        cwd: '/work/app',
+        folderName: 'app',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeSessionId: 'conv-2',
+        claudeProfileId: 'acct-kept',
+        windowKey: 'w7',
+        displayName: 'Old tmux tab'
+      }
+    ]
+    spawned(id)
+    // An account field the caller leaves undefined never erases the record's.
+    await expect(
+      restartSession(id, { onlyIfStopped: true, claudeProfileId: undefined })
+    ).resolves.toMatchObject({ id, resumed: true })
+    const [cwd, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(cwd).toBe('/work/app')
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      adoptTmuxName: 'clave-root-abc123',
+      resumeSessionId: 'conv-2',
+      claudeProfileId: 'acct-kept',
+      windowKey: 'w7'
+    })
+    mocks.adoptable = []
+  })
+
+  it('resumes a record-only tab without the kill that would discard its record, then drops a tmux-keyed record the spawn did not take', async () => {
+    // A restart places stopped tabs without a process (PRDCT-4236); their
+    // close for good discards the record, and a Resume must not go that way.
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.tmuxNameOf.mockReturnValue(null)
+    mocks.adoptable = [
+      {
+        id,
+        tmuxName: 'clave-root-chat01',
+        cwd: '/work/app',
+        folderName: 'app',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeSessionId: 'conv-3',
+        windowKey: 'w7'
+      }
+    ]
+    spawned(id)
+    await restartSession(id, { onlyIfStopped: true })
+    expect(mocks.killAndWait).not.toHaveBeenCalled()
+    expect(mocks.discardSessionRecord).toHaveBeenCalledWith('clave-root-chat01')
+
+    // The spawn that took the tmux name keeps its record.
+    mocks.discardSessionRecord.mockClear()
+    mocks.tmuxNameOf.mockReturnValue('clave-root-chat01')
+    await restartSession(id, { onlyIfStopped: true })
+    expect(mocks.discardSessionRecord).not.toHaveBeenCalled()
+    mocks.tmuxNameOf.mockReturnValue(null)
+    mocks.adoptable = []
+  })
+
+  it('a Resume from a tmux-keyed record carries the work the tab does (PRDCT-4123)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    const work = {
+      unit: 'stable-wave/lane-a',
+      kind: 'lane',
+      label: 'Lane A',
+      role: 'lead',
+      standing: 'current',
+      joinedAt: 1,
+      since: 1
+    }
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    mocks.adoptable = [
+      {
+        id,
+        tmuxName: 'clave-root-work01',
+        cwd: '/work/app',
+        folderName: 'app',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeSessionId: 'conv-4',
+        windowKey: 'w7',
+        work
+      }
+    ]
+    spawned(id)
+    await restartSession(id, { onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options.work).toEqual(work)
+    mocks.adoptable = []
+  })
+
+  it('a record naming a window that no longer exists resumes under the primary window (round 3, R3-F1)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      id,
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      claudeSessionId: 'conv-3',
+      windowKey: 'gone-window'
+    })
+    spawned(id)
+    await expect(restartSession(id, { onlyIfStopped: true })).resolves.toMatchObject({ id })
+    expect((mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions])[1]).toMatchObject({
+      windowKey: 'w1'
+    })
+  })
+
+  it('rejects with onlyIfStopped while the session runs, and restarts an ended one', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    await spawnSession('w1', '/work/app', { claudeMode: true })
+    plan(id)
+    spawned(id)
+    mocks.states.set(id, { id, state: 'working' } as never)
+    await expect(restartSession(id, { onlyIfStopped: true })).rejects.toThrow(
+      'This session is running; there is nothing to resume.'
+    )
+    expect(mocks.restartSpawn).not.toHaveBeenCalled()
+    mocks.states.set(id, { id, state: 'ended' } as never)
+    await expect(restartSession(id, { onlyIfStopped: true })).resolves.toMatchObject({ id })
+    // A move to another account restarts a running session, as before.
+    mocks.states.set(id, { id, state: 'working' } as never)
+    plan(id)
+    spawned(id)
+    await expect(restartSession(id, { claudeProfileId: 'acc-2' })).resolves.toMatchObject({ id })
   })
 })

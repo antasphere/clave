@@ -1,0 +1,1215 @@
+/* ── Folio (clave.chat-view/lab) ─────────────────────────────────────────
+   The conversation as a book of pages, one per question (FolioView.tsx). Its
+   own file, imported by the view, so the shared system.css stays untouched.
+   Tokens only: no literal colour and no literal size (the one exception is a
+   container query's width, where a custom property cannot go), so every skin
+   restates it whole; tests/visual/folio-voice.mjs holds the file to it. The
+   composer, the prompt dock, the prose and the drawing hand are the Chat
+   view's own classes; what is here is the book around them. */
+
+.folio-view {
+  --folio-sheet: calc(var(--spacing) * 200);
+  --folio-margin: calc(var(--spacing) * 56);
+  --folio-ink: var(--text-primary);
+}
+
+/* The spine: the turn buttons, one tick per page, the count, the contents. */
+.folio-spine {
+  position: relative;
+  z-index: 5;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  width: 100%;
+  max-width: var(--folio-sheet);
+  margin: 0 auto;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 6) calc(var(--spacing) * 1);
+}
+.folio-turn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition:
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration);
+}
+.folio-turn > svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+.folio-turn:hover:not(:disabled),
+.folio-turn[data-on='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.folio-turn:disabled {
+  opacity: 0.35;
+}
+.folio-ticks {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  height: calc(var(--spacing) * 7);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black calc(var(--spacing) * 3),
+    black calc(100% - var(--spacing) * 3),
+    transparent
+  );
+  padding: 0 calc(var(--spacing) * 2);
+}
+.folio-tick,
+.folio-tick-more {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: calc(var(--spacing) * 2.5);
+  height: 100%;
+  padding-bottom: calc(var(--spacing) * 1);
+}
+.folio-tick-more {
+  width: auto;
+  padding: 0 calc(var(--spacing) * 1) calc(var(--spacing) * 0.5);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1;
+}
+.folio-tick > span {
+  display: block;
+  width: calc(var(--spacing) * 0.375);
+  height: var(--tick);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--folio-ink) 28%, transparent);
+  transform-origin: bottom center;
+  transition:
+    background-color var(--default-transition-duration),
+    width var(--default-transition-duration) var(--ease-out-expo),
+    scale var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    scale: 1 0;
+  }
+}
+.folio-tick:hover > span {
+  background-color: color-mix(in oklab, var(--folio-ink) 60%, transparent);
+}
+.folio-tick[data-status='waiting'] > span {
+  background-color: var(--color-status-waiting);
+}
+.folio-tick[data-status='interrupted'] > span {
+  background-color: color-mix(in oklab, var(--folio-ink) 14%, transparent);
+}
+.folio-tick[aria-current='page'] > span {
+  width: calc(var(--spacing) * 0.75);
+  background-color: var(--color-accent);
+}
+.folio-tick:focus-visible {
+  outline: none;
+}
+.folio-tick:focus-visible > span {
+  box-shadow: 0 0 0 calc(var(--spacing) * 0.5) var(--color-accent);
+}
+.folio-count {
+  flex-shrink: 0;
+  padding: 0 calc(var(--spacing) * 1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.folio-count > span {
+  color: var(--text-tertiary);
+}
+
+/* The contents: every page's title, the one on screen marked. */
+.folio-contents {
+  position: absolute;
+  top: calc(100% - var(--spacing) * 1);
+  right: calc(var(--spacing) * 6);
+  width: min(calc(100% - var(--spacing) * 12), calc(var(--spacing) * 110));
+  max-height: min(60vh, calc(var(--spacing) * 120));
+  overflow-y: auto;
+  transition:
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * -1);
+  }
+}
+.folio-contents ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.folio-contents-item {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2.5);
+  width: 100%;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+.folio-contents-item:hover,
+.folio-contents-item:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.folio-contents-item[data-current='true'] {
+  color: var(--text-primary);
+}
+.folio-contents-item[data-current='true'] .folio-contents-number {
+  color: var(--color-accent);
+}
+.folio-contents-number {
+  flex-shrink: 0;
+  min-width: calc(var(--spacing) * 5);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.folio-contents-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The desk the page lies on, and the page. */
+.folio-desk {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.folio-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The desk's two edges fade the page in and out over the ground, as the Chat
+   view's transcript does: overlays above the scroller, not a mask on it, which
+   repainted on every frame of a scroll. The foot is the shared curve
+   (--transcript-fade-image in system.css); the head is a short plain fade under
+   the spine. */
+.folio-desk::before,
+.folio-desk::after {
+  content: '';
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+.folio-desk::before {
+  top: 0;
+  height: calc(var(--spacing) * 3);
+  background-image: linear-gradient(
+    to top,
+    transparent,
+    color-mix(in srgb, var(--surface-0) 88%, transparent)
+  );
+}
+.folio-desk::after {
+  bottom: 0;
+  height: var(--transcript-fade);
+  background-image: var(--transcript-fade-image);
+}
+.folio-sheet {
+  container: folio / inline-size;
+  width: 100%;
+  max-width: var(--folio-sheet);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: calc(var(--spacing) * 5) calc(var(--spacing) * 6) calc(var(--spacing) * 12);
+}
+.folio-page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 6);
+  transition:
+    opacity calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo),
+    translate calc(var(--default-transition-duration) * 1.6) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: calc(var(--spacing) * 6) 0;
+  }
+}
+.folio-page[data-direction='back'] {
+  @starting-style {
+    opacity: 0;
+    translate: calc(var(--spacing) * -6) 0;
+  }
+}
+
+/* The head: the eyebrow, who asked, the title, the whole message. */
+.folio-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  padding-bottom: calc(var(--spacing) * 5);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+/* The page's top: the head, and in the margin beside it the voice card,
+   on the same columns as the lines under them. */
+.folio-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--folio-margin);
+  column-gap: calc(var(--spacing) * 8);
+  row-gap: calc(var(--spacing) * 4);
+  align-items: start;
+}
+.folio-top > .folio-head {
+  grid-column: 1;
+  min-width: 0;
+}
+@container folio (max-width: 40rem) {
+  .folio-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.folio-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 3);
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: calc(var(--text-xs) - var(--spacing) / 4);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+.folio-status {
+  color: var(--text-secondary);
+  letter-spacing: 0.12em;
+  font-size: calc(var(--text-xs) - var(--spacing) / 4);
+  text-transform: uppercase;
+}
+.folio-status[data-status='writing'],
+.folio-status[data-status='working'] {
+  color: var(--color-accent);
+}
+.folio-status[data-status='waiting'] {
+  color: var(--color-status-waiting);
+}
+.folio-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xl);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  font-variant-numeric: tabular-nums;
+}
+/* A title being rewritten in place (PageTitle, reveal.ts): the pen inks the
+   new title in over the old one. Behind the nib, the last few characters are
+   still wet: they fade towards it, and the pen's own line (the accent of
+   `.folio-pen`, the one line) runs under them and travels with it. Figures
+   are tabular on the head at all times, so a digit never shifts as the
+   reveal starts or ends (the rule on `.folio-title` above). */
+.folio-title-pen {
+  position: relative;
+  white-space: pre;
+}
+.folio-title-wet {
+  mask-image: linear-gradient(to right, black 15%, transparent);
+}
+.folio-title-pen::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--spacing) * -0.25);
+  height: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in oklab, var(--color-accent) 70%, transparent)
+  );
+}
+
+/* The quiet loader (FolioLoader): a short ruled line and the pen going back
+   over it, drawn in the `.chat-drawing` hand. After a title being written,
+   and on the voice card while a step of the reading runs. The stroke
+   is measured in its own length (pathLength 1): written left to right, then
+   lifted off from the left, at the pace of the pen at a page's foot. */
+.chat-drawing.folio-loader {
+  display: inline-block;
+  flex-shrink: 0;
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 2);
+  margin-left: calc(var(--spacing) * 2);
+  vertical-align: middle;
+}
+.folio-loader .folio-loader-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0.4;
+}
+.folio-voice-toggle .folio-loader {
+  position: absolute;
+  bottom: calc(var(--spacing) * 0.25);
+  left: 50%;
+  translate: -50% 0;
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 1.5);
+  margin-left: 0;
+}
+.folio-voice-toggle {
+  position: relative;
+}
+.folio-brief {
+  width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+.folio-brief > p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+.folio-brief[data-whole='true'] > p {
+  display: block;
+}
+.folio-link {
+  margin-top: calc(var(--spacing) * 1);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+}
+.folio-link:hover {
+  text-decoration: underline;
+}
+
+/* The body: each line is the text and, beside it, its margin. */
+.folio-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 4);
+}
+.folio-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--folio-margin);
+  column-gap: calc(var(--spacing) * 8);
+  row-gap: calc(var(--spacing) * 3);
+  align-items: start;
+  transition:
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(var(--spacing) * 1);
+  }
+}
+.folio-text {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+}
+.folio-text:empty {
+  display: none;
+}
+.folio-prose {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+  line-height: 1.65;
+}
+.folio-margin {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+  padding-left: calc(var(--spacing) * 3);
+  border-left: thin solid var(--border-subtle-color);
+}
+.folio-margin-head {
+  margin: 0 0 calc(var(--spacing) * 1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+.folio-margin-more {
+  align-self: flex-start;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+.folio-margin-more:hover {
+  color: var(--text-primary);
+}
+.folio-note {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 1.5);
+  width: 100%;
+  min-width: 0;
+  padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1.5);
+  margin-left: calc(var(--spacing) * -1.5);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: left;
+  transition:
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration),
+    opacity var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+  }
+}
+.folio-note:hover,
+.folio-note[aria-expanded='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.folio-note-icon {
+  flex-shrink: 0;
+  align-self: center;
+  width: calc(var(--spacing) * 3.25);
+  height: calc(var(--spacing) * 3.25);
+}
+.folio-note-verb {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.folio-note-target {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(var(--text-xs) - var(--spacing) / 4);
+}
+.folio-note-flag {
+  flex-shrink: 0;
+  color: var(--color-destructive);
+}
+.folio-note[data-state='running'] .folio-note-icon {
+  color: var(--color-accent);
+}
+.folio-note-permission .chat-permission-row {
+  padding: calc(var(--spacing) * 0.5) 0;
+  font-size: var(--text-xs);
+}
+.folio-opened {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+/* A narrow page: the margin's notes go above the text they led to. */
+@container folio (max-width: 40rem) {
+  .folio-line {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .folio-margin {
+    grid-row: 1;
+    grid-column: 1;
+  }
+  .folio-text {
+    grid-row: 2;
+  }
+  .folio-opened {
+    grid-row: 3;
+  }
+}
+
+/* The pen: where the agent is writing, at the foot of what it has written. */
+.folio-pen {
+  display: block;
+  width: calc(var(--spacing) * 6);
+  height: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  transform-origin: left center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .folio-pen {
+    animation: folio-pen var(--beat-pen) var(--ease-out-settle) infinite;
+  }
+  .folio-tick[data-status='writing'] > span,
+  .folio-tick[data-status='working'] > span {
+    animation: folio-breathe var(--beat-breathe) ease-in-out infinite;
+  }
+  .folio-note[data-state='running'] .folio-note-icon {
+    animation: folio-breathe var(--beat-breathe-quick) ease-in-out infinite;
+  }
+  .folio-loader .folio-loader-stroke {
+    animation: folio-loader-write var(--beat-pen) ease-in-out infinite;
+  }
+}
+@keyframes folio-pen {
+  0% {
+    scale: 0.25 1;
+    opacity: 0.5;
+  }
+  50% {
+    scale: 1 1;
+    opacity: 1;
+  }
+  100% {
+    scale: 0.25 1;
+    opacity: 0.5;
+  }
+}
+@keyframes folio-loader-write {
+  0% {
+    stroke-dashoffset: 1;
+  }
+  55% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -1;
+  }
+}
+@keyframes folio-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .folio-page,
+  .folio-page[data-direction='back'],
+  .folio-line,
+  .folio-contents {
+    @starting-style {
+      translate: none;
+    }
+  }
+  .folio-tick > span {
+    @starting-style {
+      scale: none;
+    }
+  }
+}
+
+.folio-aside {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* The page's foot: copy the answer, how much work it took. */
+.folio-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  padding-top: calc(var(--spacing) * 4);
+  border-top: thin solid var(--border-subtle-color);
+  max-width: calc(100% - var(--folio-margin) - var(--spacing) * 8);
+}
+@container folio (max-width: 40rem) {
+  .folio-foot {
+    max-width: none;
+  }
+}
+.folio-action {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  height: var(--control-h-sm);
+  padding: 0 calc(var(--spacing) * 2.5);
+  margin-left: calc(var(--spacing) * -1);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  transition:
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration);
+}
+.folio-action > svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+.folio-action:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.folio-action[data-on='true'] {
+  color: var(--color-accent);
+}
+/* The player's bar (PRDCT-4430), on the voice card: the spine's sibling, in
+   the same hand and the same weights: a thin ruled line, one tick per block
+   (the spine's 1.5px ticks), the part read drawn over it in the accent (the
+   ONE line), and where the voice is, the ringed dot of the drawings
+   (`.chat-drawing .ring` over a dot in the accent). The fill and the dot
+   move on a short ease; a drag moves them with the pointer, at once; under
+   reduced motion everything is instant. */
+.folio-player-bar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.folio-scrub {
+  --ticks: 1;
+  --fill: 0;
+  --scrub-ease: calc(var(--default-transition-duration) * 1.6) ease-out;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--ticks), 1fr);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h-sm);
+  cursor: pointer;
+  touch-action: none;
+  border-radius: var(--radius-sm);
+}
+/* The ruled line, and the part read over it. */
+.folio-scrub::before,
+.folio-scrub-fill {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  translate: 0 -50%;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+}
+.folio-scrub::before {
+  right: 0;
+  height: calc(var(--spacing) / 4);
+  background-color: color-mix(in oklab, var(--folio-ink) 22%, transparent);
+}
+.folio-scrub-fill {
+  width: calc(var(--fill) * 100%);
+  height: calc(var(--spacing) * 0.5);
+  background-color: var(--color-accent);
+  transition: width var(--scrub-ease);
+}
+/* Where the voice is: the ringed dot, on paper so the ticks pass under it. */
+.folio-scrub-head {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: calc(var(--fill) * 100%);
+  width: calc(var(--spacing) * 3);
+  height: calc(var(--spacing) * 3);
+  translate: -50% -50%;
+  border-radius: var(--radius-full);
+  background-color: var(--surface-raised);
+  box-shadow: inset 0 0 0 calc(var(--spacing) / 4)
+    color-mix(in oklab, var(--folio-ink) 42%, transparent);
+  pointer-events: none;
+  transition:
+    left var(--scrub-ease),
+    scale var(--default-transition-duration) var(--ease-out-expo);
+}
+.folio-scrub-head::after {
+  content: '';
+  position: absolute;
+  inset: calc(var(--spacing) * 0.875);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+}
+.folio-scrub:hover .folio-scrub-head,
+.folio-scrub[data-dragging='true'] .folio-scrub-head {
+  scale: 1.15;
+}
+.folio-scrub[data-dragging='true'] .folio-scrub-fill,
+.folio-scrub[data-dragging='true'] .folio-scrub-head {
+  transition: none;
+}
+/* One tick per block, at its start: the spine's ticks, the blocks heard a
+   shade darker than the blocks to come. */
+.folio-scrub-tick {
+  position: relative;
+  pointer-events: none;
+}
+.folio-scrub-tick::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: calc(var(--spacing) * 0.375);
+  height: calc(var(--spacing) * 2);
+  translate: 0 -50%;
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--folio-ink) 28%, transparent);
+  transition:
+    height var(--default-transition-duration) var(--ease-out-expo),
+    background-color var(--default-transition-duration);
+}
+/* The first block starts where the line does: its tick is the line's end. */
+.folio-scrub-fill + .folio-scrub-tick::before {
+  visibility: hidden;
+}
+.folio-scrub-tick[data-played='true']::before,
+.folio-scrub-tick[data-current='true']::before {
+  background-color: color-mix(in oklab, var(--folio-ink) 55%, transparent);
+}
+.folio-scrub:hover .folio-scrub-tick::before {
+  height: calc(var(--spacing) * 3);
+}
+.folio-scrub:focus-visible {
+  outline: none;
+}
+.folio-scrub:focus-visible .folio-scrub-head {
+  box-shadow:
+    inset 0 0 0 calc(var(--spacing) / 4) color-mix(in oklab, var(--folio-ink) 42%, transparent),
+    0 0 0 calc(var(--spacing) * 0.5) color-mix(in oklab, var(--color-accent) 45%, transparent);
+}
+.folio-player-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The page by blocks: each block of the answer its own element, spaced as
+   the prose was. The one being read is where the voice is: a breath of the
+   accent washed under it, a little beyond its lines, and the pen's rule in
+   the margin at its left, both fading in and out (240 ms), never a jump.
+   The text keeps its own ink and emphasis: the wash is under it, never on
+   it. A hover on a block while the player is open offers it, a shade
+   lighter, with no rule. */
+.folio-block > :first-child {
+  margin-top: 0;
+}
+.folio-block > :last-child {
+  margin-bottom: 0;
+}
+.chat-prose > .folio-block:not(:first-child):has(> :is(h1, h2, h3, h4):first-child) {
+  margin-top: calc(var(--spacing) * 5);
+}
+.folio-block {
+  --wash-time: calc(var(--default-transition-duration) * 1.6);
+  position: relative;
+  isolation: isolate;
+  margin-inline: calc(var(--spacing) * -3);
+  padding-inline: calc(var(--spacing) * 3);
+}
+.folio-block::before,
+.folio-block::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity var(--wash-time) ease-out,
+    background-color var(--wash-time) ease-out,
+    scale var(--wash-time) var(--ease-out-expo);
+}
+.folio-block::before {
+  inset: calc(var(--spacing) * -1.5) 0;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--color-accent) 9%, transparent);
+}
+.folio-block::after {
+  left: 0;
+  top: calc(var(--spacing) * -0.5);
+  bottom: calc(var(--spacing) * -0.5);
+  width: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  scale: 1 0.4;
+}
+.folio-body[data-player='true'] .folio-block {
+  cursor: pointer;
+}
+.folio-body[data-player='true'] .folio-block:hover:not([data-reading='true'])::before {
+  opacity: 1;
+  background-color: color-mix(in oklab, var(--color-accent) 4%, transparent);
+}
+.folio-block[data-reading='true']::before {
+  opacity: 1;
+}
+.folio-block[data-reading='true']::after {
+  opacity: 1;
+  scale: 1 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .folio-block::before,
+  .folio-block::after,
+  .folio-scrub-fill,
+  .folio-scrub-head,
+  .folio-scrub-tick::before {
+    transition: none;
+  }
+}
+.folio-tally {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* The way back to the page being written, while the reader is elsewhere. */
+.folio-back {
+  position: absolute;
+  /* Over the desk's foot fade, as the chat's jump-to-end sits over its own. */
+  z-index: 10;
+  bottom: calc(var(--spacing) * 3);
+  left: 50%;
+  translate: -50% 0;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  height: var(--control-h-sm);
+  padding: 0 calc(var(--spacing) * 2) 0 calc(var(--spacing) * 3);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-raised);
+  /* Paper (tokens.css): the hairline in the shadow, not a border. */
+  box-shadow:
+    0 0 0 calc(var(--spacing) / 8) var(--edge-color),
+    var(--raised-shadow);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  transition:
+    color var(--default-transition-duration),
+    opacity var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+  }
+}
+.folio-back > svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+.folio-back:hover {
+  color: var(--text-primary);
+}
+.folio-back[data-status='writing'],
+.folio-back[data-status='working'] {
+  color: var(--color-accent);
+}
+.folio-back[data-status='waiting'] {
+  color: var(--color-status-waiting);
+}
+
+/* The empty book. */
+.folio-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 1.5);
+  min-height: calc(100% - var(--spacing) * 10);
+  padding: calc(var(--spacing) * 10) calc(var(--spacing) * 6);
+  text-align: center;
+}
+.folio-empty .folio-drawing {
+  width: calc(var(--spacing) * 64);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 3);
+}
+.folio-empty strong {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+.folio-empty span {
+  max-width: 44ch;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.folio-voice-toggle[data-on='true'] {
+  color: var(--color-accent);
+}
+.folio-composer {
+  max-width: var(--folio-sheet);
+}
+
+/* The voice card (VoiceCard.tsx, PRDCT-4430): in the page's margin at its
+   head, a sheet of paper laid in the margin, the hairline in the shadow as
+   the desk's other paper. The figure is the Integrations card's, at the
+   margin's size, and it says the step: the pen goes over the line being
+   read while the answer is rewritten, the wave draws itself while the voice
+   is created, it breathes while the voice plays, and it is still when idle
+   or paused. The two steps are two short rules the pen fills. The Mac's
+   voice is said in the accent of a note, never as an error. */
+.folio-voice {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  padding: calc(var(--spacing) * 3);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-raised);
+  box-shadow: 0 0 0 calc(var(--spacing) / 8) var(--edge-color);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  transition: box-shadow var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+  }
+}
+.folio-voice:not([data-voice-state='idle']) {
+  box-shadow:
+    0 0 0 calc(var(--spacing) / 8) var(--edge-color),
+    var(--raised-shadow);
+}
+@container folio (max-width: 40rem) {
+  .folio-voice {
+    grid-column: 1;
+    grid-row: 2;
+    max-width: calc(var(--folio-margin) * 1.4);
+  }
+}
+.folio-voice-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-drawing.folio-voice-figure {
+  width: calc(var(--spacing) * 22);
+  height: auto;
+  flex-shrink: 0;
+}
+.folio-voice-title {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+}
+.folio-voice-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  min-width: 0;
+}
+.folio-voice-listen,
+.folio-voice-control,
+.folio-voice-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 1.5);
+  height: var(--control-h-sm);
+  border-radius: var(--radius-control);
+  transition:
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration);
+}
+.folio-voice-listen {
+  padding: 0 calc(var(--spacing) * 2.5) 0 calc(var(--spacing) * 2);
+  margin-left: calc(var(--spacing) * -1);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+.folio-voice-control {
+  width: var(--control-h-sm);
+  color: var(--text-secondary);
+}
+.folio-voice-control[data-state='playing'],
+.folio-voice-control[data-state='paused'] {
+  color: var(--color-accent);
+}
+.folio-voice-cancel {
+  align-self: flex-start;
+  padding: 0 calc(var(--spacing) * 2);
+  margin-left: calc(var(--spacing) * -2);
+  color: var(--text-tertiary);
+}
+.folio-voice :is(.folio-voice-listen, .folio-voice-control) > svg {
+  width: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 3.5);
+}
+.folio-voice-listen:hover,
+.folio-voice-control:hover,
+.folio-voice-cancel:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.folio-voice :is(button, [role='slider']):focus-visible {
+  outline: calc(var(--spacing) * 0.5) solid
+    color-mix(in oklab, var(--color-accent) 45%, transparent);
+  outline-offset: calc(var(--spacing) * 0.25);
+}
+.folio-voice-ready {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+.folio-voice-block {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.folio-voice-source {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  margin: 0;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.folio-voice-why {
+  margin: 0;
+  padding-left: calc(var(--spacing) * 2);
+  border-left: calc(var(--spacing) * 0.5) solid
+    color-mix(in oklab, var(--color-accent) 55%, transparent);
+  color: color-mix(in oklab, var(--color-accent) 80%, var(--text-primary));
+}
+.folio-voice-why[data-tone='quiet'] {
+  border-left-color: var(--border-subtle-color);
+  color: var(--text-tertiary);
+}
+.folio-voice-auto {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+.folio-voice-line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  margin: 0;
+  color: var(--text-primary);
+}
+.folio-voice-line > .folio-loader {
+  margin-left: 0;
+}
+.folio-voice-seconds {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two steps: two short rules, the one running written by the pen over
+   and over, the one done filled, the one to come a hairline. */
+.folio-voice-steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--spacing) * 1.5);
+  margin: 0;
+  padding: calc(var(--spacing) * 1) 0;
+  list-style: none;
+}
+.folio-voice-step {
+  position: relative;
+  height: calc(var(--spacing) * 0.5);
+  border-radius: var(--radius-full);
+  background-color: color-mix(in oklab, var(--folio-ink) 14%, transparent);
+  overflow: hidden;
+}
+.folio-voice-step::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent);
+  transform-origin: left center;
+  scale: 0 1;
+}
+.folio-voice-step[data-done='true']::after {
+  scale: 1 1;
+  background-color: color-mix(in oklab, var(--color-accent) 55%, transparent);
+}
+.folio-voice-step[data-lit='true']::after {
+  scale: 0.5 1;
+}
+
+/* The figure says the step. */
+.folio-voice-pen {
+  opacity: 0;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0.4;
+}
+.folio-voice[data-voice-state='rewriting'] .folio-voice-pen {
+  opacity: 1;
+}
+.folio-voice[data-voice-state='rewriting'] .folio-voice-read {
+  opacity: 0;
+}
+.folio-voice-wave {
+  transform-box: fill-box;
+  transform-origin: left center;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.folio-voice[data-voice-state='idle'] .folio-voice-wave,
+.folio-voice[data-voice-state='rewriting'] .folio-voice-wave,
+.folio-voice[data-voice-state='paused'] .folio-voice-wave {
+  opacity: 0.45;
+}
+.folio-voice[data-voice-state='creating'] .folio-voice-wave {
+  stroke-dashoffset: 0.4;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .folio-voice[data-voice-state='rewriting'] .folio-voice-pen,
+  .folio-voice[data-voice-state='creating'] .folio-voice-wave {
+    animation: folio-loader-write var(--beat-pen) ease-in-out infinite;
+  }
+  .folio-voice[data-voice-state='playing'] .folio-voice-wave {
+    animation: folio-voice-breathe var(--beat-breathe) ease-in-out infinite;
+  }
+  .folio-voice[data-voice-state='playing'] .folio-voice-pulse {
+    animation: chat-drawing-pulse var(--beat-breathe) var(--ease-out-expo) infinite;
+  }
+  .folio-voice-step[data-lit='true']::after {
+    animation: folio-voice-fill var(--beat-pen) ease-in-out infinite;
+  }
+}
+@keyframes folio-voice-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    scale: 1 1;
+  }
+  50% {
+    opacity: 0.6;
+    scale: 1 0.55;
+  }
+}
+@keyframes folio-voice-fill {
+  0% {
+    scale: 0 1;
+    translate: 0 0;
+  }
+  55% {
+    scale: 1 1;
+    translate: 0 0;
+  }
+  100% {
+    scale: 0 1;
+    translate: 100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .folio-voice {
+    transition: none;
+    @starting-style {
+      opacity: 1;
+    }
+  }
+}

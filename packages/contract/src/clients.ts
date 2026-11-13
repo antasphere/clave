@@ -48,3 +48,45 @@ export const ListClients = Query.define('ListClients', {
   payload: Schema.Struct({}),
   success: Schema.Array(Client)
 })
+
+/** Desktop registration v1: reserve an invisible identity before creating presence. */
+export const CLIENT_REGISTRATION_TTL_MS = 15_000
+export const CLIENT_REGISTRATION_PENDING_LIMIT = 256
+export const ShellRegistrationIdentity = Schema.Struct({
+  kind: Schema.Literal('shell'),
+  name: Schema.NonEmptyString.pipe(
+    Schema.filter((name) => new TextEncoder().encode(name).length <= 256, {
+      message: () => 'The shell name must fit in 256 UTF-8 bytes'
+    })
+  ),
+  pid: Schema.optional(Schema.NonNegativeInt)
+})
+export const ClientRegistrationReservation = Schema.Struct({
+  protocol: Schema.Literal(1),
+  reservationId: Schema.UUID,
+  expiresInMs: Schema.Literal(CLIENT_REGISTRATION_TTL_MS)
+})
+export type ClientRegistrationReservation = typeof ClientRegistrationReservation.Type
+
+export class ClientRegistrationUnavailable extends Schema.TaggedError<ClientRegistrationUnavailable>()(
+  'ClientRegistrationUnavailable',
+  { id: Schema.String }
+) {}
+export class ClientRegistrationCapacity extends Schema.TaggedError<ClientRegistrationCapacity>()(
+  'ClientRegistrationCapacity',
+  { limit: Schema.Literal(CLIENT_REGISTRATION_PENDING_LIMIT) }
+) {}
+export const ReserveClientRegistration = Command.define('ReserveClientRegistration', {
+  payload: ShellRegistrationIdentity,
+  success: ClientRegistrationReservation,
+  failure: ClientRegistrationCapacity
+})
+export const ConfirmClientRegistration = Command.define('ConfirmClientRegistration', {
+  payload: Schema.Struct({ id: Schema.UUID }),
+  success: Client,
+  failure: ClientRegistrationUnavailable
+})
+export const ReleaseClientRegistration = Command.define('ReleaseClientRegistration', {
+  payload: Schema.Struct({ id: Schema.UUID }),
+  success: Schema.Void
+})

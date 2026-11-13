@@ -38,7 +38,17 @@ import {
   workspaceNameOf
 } from './served-core'
 import { sessionTools } from './served-session-tools'
+import { workTools } from './served-work-tools'
+import { isServerTabRef } from './session-targets'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
+import { DEFAULT_INTERACTION_MODE, HARNESSES, type HarnessId } from '../../shared/harness'
+import {
+  launchOptions as launchOptionsOf,
+  type LaunchModel,
+  type LaunchOptions
+} from '../../shared/launch-options'
+import type { LaunchProfile } from '../../shared/agent-launch'
+import { resolveProfileRef } from '../../shared/open-session-modes'
 
 export {
   NOT_SERVED,
@@ -297,6 +307,9 @@ async function closeSession(ctx: Ctx, key: string, p: Payload): Promise<unknown>
     }
   }
 
+  // The History remembers what the tab ran on, read from its record before
+  // the stop deletes it (PRDCT-4236, round 6).
+  await ctx.shell.historyRestamp?.(id)
   await ctx.api.sessions.stop(id)
   for (let i = 0; i < 40; i++) {
     const current = await ctx.api.sessions.get(id).catch(() => null)
@@ -353,7 +366,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       view: record?.view ? { url: record.view.url, title: record.view.title ?? null } : null,
       workspaceId: record?.workspaceId ?? null,
       workspaceName: workspaceNameOf(ctx, record?.workspaceId),
-      windowId: windowIdOf(s.windowKey)
+      windowId: windowIdOf(s.windowKey),
+      // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
+      work: record?.work ?? null
     }))
   // The layouts of live windows only: a key the server keeps for a window
   // that is gone is an orphan the primary takes at its next read, and the
@@ -408,6 +423,67 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   }
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** `clave_launch_options` on the machine the shell describes: the shell's
+ *  facts assembled into the shared function's input, the rules all
+ *  `launchOptions`' (`src/shared/launch-options.ts`). A shell missing a fact
+ *  still answers: no presence lists every harness as unchecked, no model
+ *  list offers the harness's Default. */
+async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
+  const { shell } = ctx
+  const presence = shell.presence?.()
+  const models = new Map<HarnessId, readonly LaunchModel[] | 'unavailable'>()
+  await Promise.all(
+    HARNESSES.filter((h) => h.takesModel).map(async (h) => {
+      const listed = shell.models
+        ? await shell.models(h.id).catch(() => 'unavailable' as const)
+        : 'unavailable'
+      models.set(h.id, listed)
+    })
+  )
+  const profiles = (family: HarnessId): readonly LaunchProfile[] =>
+    shell.launchProfileRows?.(family) ??
+    shell
+      .launchProfiles(family)
+      .map(({ id, name }) => ({ id, name, family, command: [], additionalArgs: [] }))
+  const workspaceId = (ctx.win ? shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
+  return launchOptionsOf({
+    machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
+    harnesses: HARNESSES,
+    presence: (id) => {
+      const status = presence?.find((p) => p.id === id)
+      return status
+        ? {
+            installed: status.installed,
+            version: status.currentVersion,
+            checkedAt: status.lastCheckedAt
+          }
+        : undefined
+    },
+    profiles,
+    defaultProfileId: (id) => shell.defaultProfileId?.(id),
+    // The served open's own resolution (`openSession`, served-session-tools.ts)
+    // with no chat and no profile: the chat default under a chat interaction
+    // mode, else nothing named, and main runs the family's default profile.
+    openProfileId: (id) =>
+      resolveProfileRef(
+        { mode: id },
+        shell.chatDefault(id, workspaceId),
+        shell.interactionMode?.() ?? 'terminal'
+      ) ?? shell.defaultProfileId?.(id),
+    models: (id) => models.get(id) ?? 'unavailable',
+    harnessSettings: shell.harnessSettings?.() ?? {},
+    interactionMode: shell.interactionMode?.() ?? DEFAULT_INTERACTION_MODE,
+    connections: (pool) => shell.accounts(pool as 'claude' | 'codex'),
+    selectedConnectionId: (pool) => shell.selectedAccountId(pool as 'claude' | 'codex'),
+    preferRecommended: shell.useRecommendedAccount?.() ?? false,
+    launchModel: (pool, profileId) =>
+      shell.launchModel?.(pool as 'claude' | 'codex', profileId, workspaceId),
+    now: Date.now()
+  })
+}
+
 /** Wave 3's tools here, wave 4's in `served-session-tools.ts`. */
 const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unknown>> = {
   list,
@@ -418,9 +494,22 @@ const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unkno
   moveSession,
   addGroupTerminal,
   closeSession,
-  ...sessionTools.others
+  ...sessionTools.others,
+  ...workTools,
+  launchOptions: (ctx) => launchOptions(ctx)
 }
 const SERVED = new Set(Object.keys(TOOLS))
+
+/** The reference a command's subject tab travels under: `sessionId` for most,
+ *  `id` for a tab's rename, `to` for a handover's successor. A subject that
+ *  is a tab of another Clave server (its `clave-owner:session:…` key) is
+ *  the window's to reach: this process holds no connection to that server
+ *  (PRDCT-4193; reading already deferred so since PRDCT-4166). */
+function subjectRefs(command: string, payload: Record<string, unknown>): unknown[] {
+  if (command === 'rename') return payload.target === 'group' ? [] : [payload.id]
+  if (command === 'handOver') return [payload.sessionId, payload.to]
+  return [payload.sessionId]
+}
 
 /** Serve an agent-tool command on the server, or answer `NOT_SERVED` for one
  *  the window must still run. */
@@ -430,6 +519,7 @@ export async function serveCommand<W extends ToolWindow>(
   ctx: ServedContext<W>
 ): Promise<unknown | NotServed> {
   if (!SERVED.has(command)) return NOT_SERVED
+  if (subjectRefs(command, payload).some(isServerTabRef)) return NOT_SERVED
   // Attached, the wave 4 tools alone take the server road (the wave 3 tools
   // keep the window there), over the server's own facts for this call.
   if (ctx.attached && !(ATTACHED_COMMANDS.has(command) && payload.target !== 'group'))

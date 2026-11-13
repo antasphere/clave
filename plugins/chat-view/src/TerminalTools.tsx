@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronRightIcon } from '@heroicons/react/24/outline'
 import { ToolPanel } from './ToolGroup'
 import { KIND_ICONS } from './tool-icons'
+import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 import { useDisclosure } from './disclosure'
 import {
   describeToolHead,
@@ -56,7 +57,10 @@ function Call({ tool, live }: { tool: ToolEntry; live: boolean }): React.JSX.Ele
   const disclosure = useDisclosure(`tool-${tool.id}`)
   const [built, setBuilt] = useState(disclosure.initial)
   const state = callState(tool, live)
-  const Icon = KIND_ICONS[describeToolHead(tool).kind]
+  const kind = describeToolHead(tool).kind
+  const Icon = KIND_ICONS[kind]
+  // Appearance → Agent mark: a pack with a tool slot draws the call while it runs.
+  const pack = useMarkPack()
   const build = (): void => setBuilt(true)
   return (
     <details
@@ -68,7 +72,13 @@ function Call({ tool, live }: { tool: ToolEntry; live: boolean }): React.JSX.Ele
       }}
     >
       <summary className="term-call-row" onPointerEnter={build} onFocus={build}>
-        <Icon className="term-call-icon" aria-hidden="true" />
+        {state === 'running' && pack?.Tool ? (
+          <span className="term-call-icon" data-mark="pack" aria-hidden="true">
+            <pack.Tool kind={kind} running />
+          </span>
+        ) : (
+          <Icon className="term-call-icon" aria-hidden="true" />
+        )}
         <span className="term-call-text">
           <CallLine tool={tool} />
         </span>

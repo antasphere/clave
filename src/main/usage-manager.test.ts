@@ -131,6 +131,12 @@ describe('credentialFor', () => {
   it('takes the pasted token', () => {
     expect(credentialFor(account, 'sk-ant-x')).toEqual({ kind: 'token', token: 'sk-ant-x' })
   })
+  it('keeps token-account probes available when the machine login is disabled', () => {
+    expect(credentialFor(account, 'fixture-token', false)).toEqual({
+      kind: 'token',
+      token: 'fixture-token'
+    })
+  })
   it('only the Default reads the keychain', () => {
     expect(credentialFor(undefined, undefined)).toEqual({ kind: 'keychain' })
     expect(

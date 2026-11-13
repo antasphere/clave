@@ -389,43 +389,16 @@ export async function run(t) {
           w: r.width
         }
       }
-      const wrap = document.querySelector('.wordmark-by')
-      const link = document.querySelector('.wordmark-link')
       const svgs = [...document.querySelectorAll('.wordmark')]
-      const wr = wrap?.getBoundingClientRect()
-      const ls = link ? getComputedStyle(link) : null
-      return {
-        clave: read(svgs[0]),
-        by: read(svgs[1]),
-        name: read(link?.querySelector('svg')),
-        wrap: wr && { top: wr.top, h: wr.height },
-        link: link && {
-          tag: link.tagName.toLowerCase(),
-          label: link.getAttribute('aria-label'),
-          title: link.getAttribute('title'),
-          // The two opt-outs a click depends on: the strip is a window drag
-          // region under a pointer-events: none mark.
-          pointerEvents: ls.pointerEvents,
-          appRegion: ls.webkitAppRegion ?? ls.getPropertyValue('-webkit-app-region'),
-          cursor: ls.cursor
-        }
-      }
+      return { clave: read(svgs[0]), count: svgs.length }
     })
     t.equal('the wordmark is labelled Clave', wm.clave?.label, 'Clave')
-    t.equal('and the attribution stands beside it', wm.by?.label, 'by')
-    t.equal('with the house’s name after it', wm.link?.label, 'Antasphere')
-    // The button is what carries the name; the drawing inside it is hidden, or
-    // a screen reader says "Antasphere Antasphere".
-    t.equal('announced once, not twice', wm.name?.hidden, 'true')
+    // "by Antasphere" was removed on 2026-11-07: the mark is the name alone.
+    t.equal('and stands alone, with no attribution beside it', wm.count, 1)
     // Outlines, not type. The face is Fontshare's and may not be redistributed
     // as a file, so a packaged build must not contain one — see Wordmark.tsx.
     t.equal('drawn as an SVG, not set in a face', wm.clave?.tag, 'svg')
-    t.equal('and so is the attribution', wm.name?.tag, 'svg')
-    t.check(
-      'with real outline data in both',
-      (wm.clave?.d ?? 0) > 500 && (wm.name?.d ?? 0) > 500,
-      wm
-    )
+    t.check('with real outline data', (wm.clave?.d ?? 0) > 500, wm)
     t.check('and clear of the traffic lights', (wm.clave?.x ?? 0) >= 80, wm.clave)
     // --wordmark-h names Clave's INK height; the box around it is taller by the
     // descender room the attribution needs. Read the ink back through the
@@ -442,86 +415,6 @@ export async function run(t) {
       ) < 0.02,
       wm.clave
     )
-    // The lockup's alignment, as the two facts that make it true. All three
-    // boxes, because the attribution is two of them now and either can drift.
-    t.check(
-      'all three words are drawn in one frame',
-      wm.by?.vbH === wm.clave?.vbH && wm.name?.vbH === wm.clave?.vbH,
-      { clave: wm.clave?.vbH, by: wm.by?.vbH, name: wm.name?.vbH }
-    )
-    t.check(
-      'and rendered at one box height and one top, so one baseline',
-      [wm.by, wm.name, wm.wrap].every(
-        (b) =>
-          b &&
-          Math.abs(b.h - (wm.clave?.h ?? -1)) < 0.5 &&
-          Math.abs(b.top - (wm.clave?.top ?? -1)) < 0.5
-      ),
-      wm
-    )
-    // A whisper under the name, not a second name: the attribution is drawn at
-    // a fraction of the primary's size, which its ink box carries.
-    t.check(
-      'the attribution is drawn smaller than the name',
-      (wm.name?.ink ?? 0) < (wm.clave?.ink ?? 0),
-      { name: wm.name?.ink, clave: wm.clave?.ink }
-    )
-    // The word space, which is a GAP rather than ink now that the two words are
-    // two boxes: lose it and the phrase reads "byAntasphere".
-    t.check(
-      'the two words are held apart by the phrase’s own space',
-      (wm.name?.x ?? 0) - ((wm.by?.x ?? 0) + (wm.by?.w ?? 0)) > 1.5,
-      { byRight: (wm.by?.x ?? 0) + (wm.by?.w ?? 0), nameLeft: wm.name?.x }
-    )
-
-    // ── the house's name is the way out to the house ──────────────────────
-    // The click has to survive two things that exist to stop clicks: the strip
-    // is a window drag region, and the mark over it takes no pointer events.
-    // Both opt-outs are read back, because a synthetic click would pass without
-    // the app-region one and a real one would drag the window instead.
-    t.equal('the name is a button', wm.link?.tag, 'button')
-    t.equal('labelled with the house', wm.link?.label, 'Antasphere')
-    t.equal('it takes pointer events back', wm.link?.pointerEvents, 'auto')
-    t.equal('and opts out of the window drag region', wm.link?.appRegion, 'no-drag')
-    t.equal('and says so with the cursor', wm.link?.cursor, 'pointer')
-    // Spied in MAIN, on the sink the click actually ends at: the renderer's
-    // electronAPI comes over contextBridge and cannot be stubbed, and spying
-    // here covers the whole chain — preload, IPC, and the handler's protocol
-    // allowlist, which would silently swallow a URL it did not like.
-    await app.evaluate(({ shell }) => {
-      globalThis.__opened = []
-      globalThis.__realOpen = shell.openExternal
-      shell.openExternal = (url) => {
-        globalThis.__opened.push(url)
-        return Promise.resolve()
-      }
-    })
-    // A real mouse click, not a synthetic .click(): that is what exercises the
-    // hit test, which is the half `pointer-events: auto` has to win. Caught, so
-    // an unhittable link is a named failure rather than a spec that dies on a
-    // timeout with the rest of its checks unrun.
-    let clickError = null
-    try {
-      await win.click('.wordmark-link', { timeout: 5000 })
-    } catch (err) {
-      clickError = String(err).slice(0, 140)
-    }
-    t.check('the name is clickable where it is drawn', clickError === null, clickError)
-    await new Promise((r) => setTimeout(r, 400))
-    const opened = await app.evaluate(({ shell }) => {
-      shell.openExternal = globalThis.__realOpen
-      return globalThis.__opened
-    })
-    t.equal('clicking it opens exactly one page', opened.length, 1)
-    // The whole point of the link for the house: the visit is attributed.
-    const url = opened[0] ? new URL(opened[0]) : null
-    t.check(
-      'and that page is antasphere.com',
-      url !== null && /(^|\.)antasphere\.com$/.test(url.hostname),
-      opened
-    )
-    t.equal('named as coming from the app', url?.searchParams.get('utm_source'), 'clave-app')
-
     // ── and no font file came with it ──
     // The failure this catches: someone reintroducing a Sentient @font-face to
     // make the mark editable. It would look identical and would put an
@@ -565,8 +458,6 @@ export async function run(t) {
       return {
         pad: getComputedStyle(strip).paddingLeft,
         h: Math.round(strip.getBoundingClientRect().height),
-        by: !!strip.querySelector('.wordmark-by'),
-        link: !!strip.querySelector('.wordmark-link'),
         drag: getComputedStyle(strip).webkitAppRegion,
         hasNav: !!nav,
         // The band is a token (--content-top-offset, derived from the frame
@@ -584,11 +475,6 @@ export async function run(t) {
     t.check('the mark is still there in Settings', !!settingsStrip, settingsStrip)
     t.equal('at the same clearance', settingsStrip?.pad, '90px')
     t.equal('in the same band as the toolbar', settingsStrip?.h, settingsStrip?.band)
-    t.check(
-      'with the attribution and its link',
-      !!settingsStrip?.by && !!settingsStrip?.link,
-      settingsStrip
-    )
     t.equal('and the band still drags the window', settingsStrip?.drag, 'drag')
 
     // The settings view replaces the sidebar, so the foot panel is out of the
@@ -719,7 +605,7 @@ export async function run(t) {
         return {
           pad: getComputedStyle(strip).paddingLeft,
           flag: strip.getAttribute('data-traffic-lights'),
-          markX: document.querySelector('.wordmark:not(.wordmark-by)')?.getBoundingClientRect().x
+          markX: document.querySelector('.wordmark')?.getBoundingClientRect().x
         }
       })
     // The toolbar's clearance is only there with the sidebar closed, so each
@@ -771,18 +657,26 @@ export async function run(t) {
     // the fallback has to stay on for the rest of the block, or leaving
     // fullscreen would find the OS already reporting `false` and push nothing,
     // leaving the chrome stuck at the fullscreen value it was handed.
+    // What "granted" means is the transition's own event, not the flag: on a
+    // hidden window AppKit sometimes flips `isFullScreen()` without any
+    // transition (no `enter-full-screen`, no resize to the screen), and which
+    // of the two it does depends on timing a few kilobytes of main-process
+    // code can tip (lane A of the server follow-ups, 8 November 2026: six
+    // red checks on a branch that touched nothing of the chrome). The event
+    // is what main relays to the renderer, so it is the one thing to wait for.
     let simulating = false
     const setFullScreen = async (value) => {
       if (!simulating) {
-        await app.evaluate(
-          ({ BrowserWindow }, v) => BrowserWindow.getAllWindows()[0].setFullScreen(v),
-          value
-        )
+        await app.evaluate(({ BrowserWindow }, v) => {
+          const w = BrowserWindow.getAllWindows()[0]
+          globalThis.__e2eFullScreenEvent = false
+          w.once(v ? 'enter-full-screen' : 'leave-full-screen', () => {
+            globalThis.__e2eFullScreenEvent = true
+          })
+          w.setFullScreen(v)
+        }, value)
         const granted = await until(
-          async () =>
-            (await app.evaluate(({ BrowserWindow }) =>
-              BrowserWindow.getAllWindows()[0].isFullScreen()
-            )) === value || null,
+          async () => (await app.evaluate(() => globalThis.__e2eFullScreenEvent === true)) || null,
           { tries: 12, gapMs: 250 }
         )
         if (granted) {
@@ -791,7 +685,7 @@ export async function run(t) {
         }
         simulating = true
         console.log(
-          "        (window manager declined fullscreen for the hidden test window — driving main's own event instead)"
+          "        (window manager declined fullscreen for the hidden test window, or flipped its flag without a transition — driving main's own event instead)"
         )
       }
       await app.evaluate(
@@ -840,37 +734,6 @@ export async function run(t) {
 
     await setFullScreen(false)
     t.equal('and leaving fullscreen gives the clearance back', (await stripPad()).pad, '90px')
-
-    // ── narrow enough and the attribution steps aside ─────────────────────
-    // The lockup needs about 130px. The sidebar goes down to 180, and 180 minus
-    // the traffic-light clearance is 90 — so at the narrow end the second word
-    // would be clipped mid-letter, which is worse than not being there.
-    const byShown = () =>
-      win.evaluate(() => ({
-        strip: Math.round(
-          document.querySelector('[data-wordmark-strip]').getBoundingClientRect().width
-        ),
-        by: getComputedStyle(document.querySelector('.wordmark-by')).display
-      }))
-    t.check(
-      'at the default width the attribution shows',
-      (await byShown()).by !== 'none',
-      await byShown()
-    )
-    const drag = async (toX) => {
-      const box = await win.locator('.cursor-col-resize').first().boundingBox()
-      await win.mouse.move(box.x + box.width / 2, box.y + 200)
-      await win.mouse.down()
-      await win.mouse.move(toX, box.y + 200, { steps: 10 })
-      await win.mouse.up()
-      await new Promise((r) => setTimeout(r, 400))
-    }
-    await drag(185)
-    const narrow = await byShown()
-    t.check('dragged narrow, it steps aside rather than clipping', narrow.by === 'none', narrow)
-    await drag(300)
-    const wide = await byShown()
-    t.check('and comes back when there is room again', wide.by !== 'none', wide)
   } finally {
     await app.close()
   }

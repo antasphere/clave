@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import {
   ptyManager,
   isTmuxAvailable,
+  whenTmuxResolvable,
   scrollTmuxSessionToText,
   type PtySpawnOptions
 } from '../pty-manager'
@@ -16,7 +17,14 @@ import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
-import { hasServerEventPublisher } from '../server/session-events'
+import {
+  hasServerEventPublisher,
+  sessionLimitCleared,
+  sessionLimitReported
+} from '../server/session-events'
+import { isServerExternal } from '../server/endpoint'
+import { adoptableRecordsFor, serverHoldsRecordsFor, tmuxAvailableFor } from './boot-reads'
+import { serverClient } from '../mcp/server-client'
 import {
   type SessionInfoResult,
   restartSession,
@@ -29,6 +37,7 @@ import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
 import { getSessionHost } from '../sessions/host'
+import { restartOverridesFromWire } from './restart-overrides-wire'
 import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
@@ -74,20 +83,23 @@ export function registerPtyHandlers(): void {
   ): Promise<SessionInfoResult> =>
     spawnSession(win ? windowRegistry.getKeyForWindow(win.id) : null, cwd, options)
 
-  // The CLI's own word on its account's limit reaches the window holding the
-  // tab (ADR 0002): the policy there proposes or makes the move.
-  ptyManager.onLimitReported((sessionId) => {
-    const win = windowRegistry.getWindowForSession(sessionId)
-    if (win && !win.isDestroyed()) win.webContents.send('session:limit-reported', sessionId)
-  })
+  // The CLI's own word on its account's limit, and which cap it hit, reaches
+  // the window holding the tab (ADR 0002, PRDCT-4302) on both transports: the
+  // policy there offers a model of the same account, another account, or a
+  // provider, and makes the move in automatic mode.
+  ptyManager.onLimitReported((sessionId, report) => sessionLimitReported(sessionId, report))
+  // The account served a turn again (PRDCT-4415): the report closes there too.
+  ptyManager.onLimitCleared((sessionId) => sessionLimitCleared(sessionId))
 
   // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
-  // renderer's spawn never carries one.
+  // renderer's spawn never carries one. Nor `work` (PRDCT-4123): a session's
+  // work changes only through the server's ChangeSessionWork.
   ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) =>
     spawnForWindow(
       BrowserWindow.fromWebContents(_event.sender),
       cwd,
-      options && { ...options, initialInput: undefined }
+      // A carried definition crosses to a server; a Mac-local start resolves its own ids.
+      options && { ...options, initialInput: undefined, launchProfile: undefined, work: undefined }
     )
   )
 
@@ -108,28 +120,31 @@ export function registerPtyHandlers(): void {
         codexAccountId?: unknown
         codexAccountLabel?: unknown
         resendRejected?: unknown
+        onlyIfStopped?: unknown
+        adapterId?: unknown
+        model?: unknown
+        resume?: unknown
+        firstMessage?: unknown
+        continuedFrom?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
-      const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
       const win = BrowserWindow.fromWebContents(_event.sender)
       // The restart itself is the lifecycle's (wave 4): the server's
       // `RestartSession` and this handler make the same one.
       try {
         return await restartSession(
           id,
-          {
-            claudeProfileId: str(overrides?.claudeProfileId),
-            claudeProfileLabel: str(overrides?.claudeProfileLabel),
-            codexAccountId: str(overrides?.codexAccountId),
-            codexAccountLabel: str(overrides?.codexAccountLabel),
-            resendRejected: overrides?.resendRejected === true
-          },
+          restartOverridesFromWire(overrides),
           win ? windowRegistry.getKeyForWindow(win.id) : null
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (message === 'This session cannot be restarted from here.') return { error: message }
+        if (
+          message === 'This session cannot be restarted from here.' ||
+          message === 'This session is running; there is nothing to resume.'
+        )
+          return { error: message }
         throw error
       }
     }
@@ -221,9 +236,12 @@ export function registerPtyHandlers(): void {
   })
 
   // Lets the settings UI enable/disable the "persistent sessions" toggle.
-  ipcMain.handle('tmux:available', () => {
-    return isTmuxAvailable()
-  })
+  // Answered without the synchronous login-shell read: tmux is looked up on
+  // that PATH, and the read froze main for two seconds at every launch,
+  // every window's first calls with it (PRDCT-3527).
+  ipcMain.handle('tmux:available', () =>
+    tmuxAvailableFor({ tmuxResolvable: whenTmuxResolvable, available: isTmuxAvailable })
+  )
 
   // On launch the renderer asks which sessions survived a previous run — live
   // tmux survivors to reattach silently, dead records (plain or post-reboot
@@ -239,14 +257,32 @@ export function registerPtyHandlers(): void {
   // answers for an attached window); which records THIS window takes is the
   // shell's rule (`shared/adoption-scope.ts`), applied here over main's
   // listing and in the preload over the server's, from the scope below.
-  ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
-    const host = getSessionHost()
-    if (filter && Array.isArray(filter.ids)) {
-      return host.listAdoptableRecords(filter.ids.filter((x): x is string => typeof x === 'string'))
-    }
-    const scope = adoptionScopeOf(event.sender)
-    return scope ? selectAdoptableRecords(host.listAdoptableRecords(), scope) : []
-  })
+  // A shell whose sessions live on a server of their own answers its boot
+  // read with nothing, and the listing waits for tmux without the
+  // synchronous login-shell read (`boot-reads.ts`, PRDCT-3527).
+  ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) =>
+    adoptableRecordsFor(filter, {
+      external: isServerExternal,
+      tmuxResolvable: whenTmuxResolvable,
+      list: (ids) => [...getSessionHost().listAdoptableRecords(ids)],
+      scoped: (all) => {
+        const scope = adoptionScopeOf(event.sender)
+        return scope ? selectAdoptableRecords(all, scope) : []
+      }
+    })
+  )
+  // Whether the server holds a record this window would bring back, asked by
+  // main so a window with nothing to restore never connects for it
+  // (`serverHoldsRecordsFor`, PRDCT-3527).
+  ipcMain.handle('records:server-has-any', (event) =>
+    serverHoldsRecordsFor({
+      list: async () => (await serverClient.api()).sessions.listAdoptable(),
+      scoped: (all) => {
+        const scope = adoptionScopeOf(event.sender)
+        return scope ? selectAdoptableRecords(all, scope) : []
+      }
+    })
+  )
   // What the asking window is, for the selection rule: its key, whether it is
   // the primary, and every window that exists (live or persisted). Null for
   // a sender that is not a Clave window.

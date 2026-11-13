@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import os from 'os'
 import { promisify } from 'util'
+import { TEST_NO_MACHINE_USAGE } from './test-mode'
 import {
   claudeAccountsManager,
   DEFAULT_CLAUDE_ACCOUNT_ID,
@@ -398,8 +399,16 @@ async function fetchWithTimeout(input: string, init: RequestInit): Promise<Respo
   }
 }
 
+/** The end-to-end runs keep the reads off the network (`CLAVE_E2E_USAGE_OFFLINE`):
+ *  a fixture token is then "unreachable", never refused, so the account it
+ *  names stays usable and the launcher can offer it (the menu greys a dead
+ *  connection out since 11 November 2026, PRDCT-4423). Never set outside tests. */
+const usageOffline = (): boolean =>
+  process.env.CLAVE_E2E_USAGE_OFFLINE === '1' && typeof process.env.CLAVE_E2E_NS === 'string'
+
 /** The usage endpoint, with a login credential (keychain or config dir). */
 async function readFromEndpoint(token: string): Promise<UsageLimits | UsageError> {
+  if (usageOffline()) return { error: 'Could not reach the usage service. Check your connection.' }
   let res: Response
   try {
     res = await fetchWithTimeout(USAGE_ENDPOINT, {
@@ -443,6 +452,7 @@ async function readFromProbe(token: string): Promise<UsageLimits | UsageError> {
   let last: Response | null = null
   for (const model of PROBE_MODELS) {
     let res: Response
+    if (usageOffline()) return { error: 'Could not reach Anthropic. Check your connection.' }
     try {
       res = await fetchWithTimeout(MESSAGES_ENDPOINT, {
         method: 'POST',
@@ -481,7 +491,8 @@ async function readFromProbe(token: string): Promise<UsageLimits | UsageError> {
 /** Which credential an account reads with. Exported for the tests. */
 export function credentialFor(
   account: ClaudeAccount | undefined,
-  token: string | undefined
+  token: string | undefined,
+  allowMachineLogin = true
 ): ClaudeCredential {
   if (token) return { kind: 'token', token }
   // Only the Default account is the machine login. Another account with no
@@ -489,6 +500,7 @@ export function credentialFor(
   // the wrong subscription's quota under its name (and put up the keychain
   // prompt for nothing).
   if (account && account.id !== DEFAULT_CLAUDE_ACCOUNT_ID) return { kind: 'none' }
+  if (!allowMachineLogin) return { kind: 'none' }
   return { kind: 'keychain' }
 }
 
@@ -533,6 +545,7 @@ export class AccountUsageManager {
   private latest = new Map<string, number>()
   private listeners = new Set<UpdateListener>()
   private timer: ReturnType<typeof setInterval> | null = null
+  private initialTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private source: AccountUsageSource,
@@ -617,12 +630,17 @@ export class AccountUsageManager {
     }
     this.timer = setInterval(tick, intervalMs)
     // Off the boot path: the first read waits for the windows to settle.
-    setTimeout(tick, 5_000)
+    this.initialTimer = setTimeout(() => {
+      this.initialTimer = null
+      tick()
+    }, 5_000)
   }
 
   stopPolling(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    if (this.initialTimer) clearTimeout(this.initialTimer)
+    this.initialTimer = null
   }
 }
 
@@ -632,9 +650,13 @@ export const usageManager = new AccountUsageManager(
   {
     ids: () => claudeAccountsManager.list().map((a) => a.id),
     exists: (id) => !!claudeAccountsManager.get(id),
-    read: (id) =>
+    read: async (id) =>
       readLimitsWith(
-        credentialFor(claudeAccountsManager.get(id), claudeAccountsManager.getToken(id))
+        credentialFor(
+          claudeAccountsManager.get(id),
+          await claudeAccountsManager.getToken(id),
+          !TEST_NO_MACHINE_USAGE
+        )
       ),
     onUnauthorized: (id) => {
       if (claudeAccountsManager.hasToken(id)) claudeAccountsManager.markTokenInvalid(id)

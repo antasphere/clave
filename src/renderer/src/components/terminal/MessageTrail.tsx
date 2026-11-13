@@ -1,9 +1,11 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
 import { useSessionStore } from '../../store/session-store'
 import { messageNeedle, scrollXtermToText } from '../../lib/terminal-scroll'
 import type { ConversationTurn } from '../../../../preload/index.d'
+import { readTrail } from '../../lib/trail-read'
 
 /**
  * The message trail: a floating box over a tab's terminal that answers "what
@@ -44,7 +46,8 @@ export function MessageTrail({ sessionId }: { sessionId: string }): ReactElement
 
   const cwd = session?.cwd
   const claudeSessionId = session?.claudeSessionId ?? session?.piSessionId ?? null
-  const provider = session?.piMode ? ('pi' as const) : ('claude' as const)
+  const piMode = !!session?.piMode
+  const claudeConfigDir = session?.claudeConfigDir
   const agentState = session?.agentState
 
   // A /clear rotates the transcript id: the trail follows the new
@@ -58,13 +61,15 @@ export function MessageTrail({ sessionId }: { sessionId: string }): ReactElement
   }
 
   const refresh = useCallback((): void => {
-    if (!cwd || !claudeSessionId) return
-    window.electronAPI
-      .historyConversation(cwd, claudeSessionId, provider)
-      .then((res) => setTurns(res.turns))
+    if (!cwd || !claudeSessionId || isRemoteKey(sessionId)) return
+    // The tab as it is now: the read takes every field it needs from it, the
+    // ones this render saw (the reasons to read again) on top.
+    const live = useSessionStore.getState().sessions.find((x) => x.id === sessionId)
+    readTrail({ ...live, cwd, claudeSessionId, piMode, claudeConfigDir })
+      ?.then((res) => setTurns(res.turns))
       // Best-effort: the trail just keeps what it last had.
       .catch(() => {})
-  }, [cwd, claudeSessionId, provider])
+  }, [cwd, claudeSessionId, piMode, claudeConfigDir, sessionId])
 
   useEffect(() => {
     refresh()

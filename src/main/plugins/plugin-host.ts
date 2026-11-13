@@ -1,17 +1,43 @@
-import {
-  MessageChannelMain,
-  utilityProcess,
-  type MessagePortMain,
-  type UtilityProcess
-} from 'electron'
-import { watch, type FSWatcher } from 'node:fs'
+import { mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
-import { assertMethodPermission, type RPCMessage, type PluginSession } from '@clave/plugin-sdk'
+import {
+  assertMethodPermission,
+  type PluginActionPreviewRow,
+  type PluginActionResult,
+  type PluginActionTarget,
+  type RPCMessage,
+  type PluginSession
+} from '@clave/plugin-sdk'
 import { pluginFile, PluginStore, type PluginRecord } from './plugin-store'
 
+/** The process a plugin's `main` runs in, as the host sees it: one per start,
+ *  a JSON-RPC channel in and out, an exit, and a kill. Electron main spawns it
+ *  on `utilityProcess` with a MessagePort (`electron-runner.ts`); the
+ *  standalone server forks the same runner under Node IPC (`fork-runner.ts`).
+ *  Nothing of either runtime crosses this: the host imports no Electron
+ *  (PRDCT-3433), so the server package can run it in any entry. */
+export interface RunnerProcess {
+  /** Hand the runner a message; throws once the channel is gone. */
+  postMessage(message: unknown): void
+  onMessage(listener: (message: unknown) => void): void
+  /** Called once the process has ended; several listeners may wait on it. */
+  onExit(listener: (code: number | null) => void): void
+  onOutput(listener: (stream: 'stdout' | 'stderr', text: string) => void): void
+  kill(): void
+}
+export interface RunnerSpawn {
+  /** The plugin id, for the process's name and its log lines. */
+  readonly id: string
+  /** The plugin's `main` file, resolved inside its directory. */
+  readonly main: string
+  readonly cwd: string
+  /** The trimmed environment the runner gets; never the host's own. */
+  readonly env: Record<string, string>
+}
+export type RunnerSpawner = (spawn: RunnerSpawn) => RunnerProcess
+
 interface RunningPlugin {
-  child: UtilityProcess
-  port: MessagePortMain
+  process: RunnerProcess
   stopping: boolean
   subscribed: boolean
   snapshot?: string
@@ -19,7 +45,7 @@ interface RunningPlugin {
   context?: string
   pending: Map<
     number,
-    { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
   >
 }
 export interface PluginServices {
@@ -47,7 +73,7 @@ export class PluginHost {
   constructor(
     readonly store: PluginStore,
     private services: PluginServices,
-    private runner = join(__dirname, 'plugin-runner.js')
+    private spawner: RunnerSpawner
   ) {
     this.poll = setInterval(() => {
       this.publishSessions()
@@ -66,6 +92,7 @@ export class PluginHost {
     if (record.manifest.kind === 'skin') return // The skin lane owns token activation.
     record.generation = ++this.generation
     record.panels = []
+    record.actions = []
     record.commands = []
     record.toolbar = []
     if (!record.manifest.main) {
@@ -80,50 +107,51 @@ export class PluginHost {
     record.status = 'starting'
     try {
       const main = pluginFile(record.directory, record.manifest.main)
-      const { port1, port2 } = new MessageChannelMain()
-      // Deliberately do not pass the application's credential-bearing environment.
+      // Deliberately do not pass the application's credential-bearing
+      // environment. ELECTRON_RUN_AS_NODE rides along when set: a server run
+      // on the app's own binary as Node must fork its runners the same way.
       const env = Object.fromEntries(
-        ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'SystemRoot'].flatMap((key) =>
+        ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'SystemRoot', 'ELECTRON_RUN_AS_NODE'].flatMap((key) =>
           process.env[key] ? [[key, process.env[key]!]] : []
         )
       )
-      const child = utilityProcess.fork(this.runner, [], {
-        cwd: record.directory,
-        env,
-        stdio: 'pipe',
-        serviceName: `Clave plugin: ${id}`
-      })
+      // The plugin's own folder for what it keeps between runs, outside its package.
+      const dataDir = join(this.store.root, 'data', id)
+      mkdirSync(dataDir, { recursive: true })
+      env.CLAVE_PLUGIN_DATA_DIR = dataDir
+      const child = this.spawner({ id, main, cwd: record.directory, env })
       const running: RunningPlugin = {
-        child,
-        port: port1,
+        process: child,
         stopping: false,
         subscribed: false,
         pending: new Map()
       }
       this.running.set(id, running)
-      child.stdout?.on('data', (data) => console.info(`[plugin:${id}] ${data}`))
-      child.stderr?.on('data', (data) => console.error(`[plugin:${id}] ${data}`))
-      port1.on('message', (event) => {
-        void this.receive(record, running, event.data).catch((error) => {
+      child.onOutput((stream, text) =>
+        stream === 'stdout'
+          ? console.info(`[plugin:${id}] ${text}`)
+          : console.error(`[plugin:${id}] ${text}`)
+      )
+      child.onMessage((message) => {
+        void this.receive(record, running, message).catch((error) => {
           record.error = `Plugin bridge failed: ${String(error)}`
           this.services.changed()
           child.kill()
         })
       })
-      port1.start()
       const startup = setTimeout(() => {
         if (record.status === 'starting' && this.running.get(id) === running) {
           record.error = 'Plugin activation timed out'
           child.kill()
         }
       }, 15_000)
-      child.on('exit', (code) => {
+      child.onExit((code) => {
         clearTimeout(startup)
-        port1.close()
         this.rejectPending(running)
         if (this.running.get(id) !== running) return
         this.running.delete(id)
         record.panels = []
+        record.actions = []
         record.commands = []
         record.toolbar = []
         this.services.stopped(id)
@@ -153,15 +181,13 @@ export class PluginHost {
         }
         this.services.changed()
       })
-      child.postMessage({ main }, [port2])
     } catch (error) {
       const running = this.running.get(id)
       if (running) {
         running.stopping = true
         this.running.delete(id)
         this.rejectPending(running)
-        running.port.close()
-        running.child.kill()
+        running.process.kill()
       }
       record.status = 'error'
       record.error = `Plugin startup failed: ${String(error)}`
@@ -185,7 +211,7 @@ export class PluginHost {
       clearTimeout(pending.timer)
       if ('error' in message)
         pending.reject(new Error(message.error?.message ?? 'Malformed plugin error'))
-      else pending.resolve()
+      else pending.resolve(message.result)
       return
     }
     if (!('id' in message)) {
@@ -199,7 +225,7 @@ export class PluginHost {
         record.error = String((message.params as { message?: string })?.message)
         record.status = 'error'
         this.services.changed()
-        running.child.kill()
+        running.process.kill()
       }
       return
     }
@@ -248,6 +274,10 @@ export class PluginHost {
           if (!record.commands.includes(string('id'))) record.commands.push(string('id'))
           this.services.changed()
           break
+        case 'ui.registerAction':
+          if (!record.actions.includes(string('id'))) record.actions.push(string('id'))
+          this.services.changed()
+          break
         case 'ui.registerToolbar':
           if (!record.toolbar.includes(string('id'))) record.toolbar.push(string('id'))
           this.services.changed()
@@ -277,12 +307,12 @@ export class PluginHost {
         default:
           throw new Error(`Unknown host method ${message.method}`)
       }
-      if (canReply()) running.port.postMessage({ jsonrpc: '2.0', id: message.id, result })
+      if (canReply()) running.process.postMessage({ jsonrpc: '2.0', id: message.id, result })
     } catch (error) {
       const e = error as Error & { code?: number; data?: unknown }
       if (canReply()) {
         try {
-          running.port.postMessage({
+          running.process.postMessage({
             jsonrpc: '2.0',
             id: message.id,
             error: { code: e.code ?? -32602, message: e.message, data: e.data }
@@ -307,7 +337,11 @@ export class PluginHost {
       const serialized = JSON.stringify(snapshot)
       if (serialized !== running.snapshot) {
         running.snapshot = serialized
-        running.port.postMessage({ jsonrpc: '2.0', method: 'sessions.changed', params: snapshot })
+        running.process.postMessage({
+          jsonrpc: '2.0',
+          method: 'sessions.changed',
+          params: snapshot
+        })
       }
     }
   }
@@ -328,7 +362,7 @@ export class PluginHost {
       const serialized = JSON.stringify(session)
       if (serialized !== running.context) {
         running.context = serialized
-        running.port.postMessage({
+        running.process.postMessage({
           jsonrpc: '2.0',
           method: 'context.changed',
           params: { session }
@@ -341,30 +375,88 @@ export class PluginHost {
   contextChanged(): void {
     this.publishContext()
   }
+  /** The session list changed in a way the poll would only see late (a group report):
+   *  publish it now. */
+  sessionsChanged(): void {
+    this.publishSessions()
+  }
   execute(id: string, command: string): Promise<void> {
     const record = this.store.get(id)
-    const running = this.running.get(id)
     if (
       !record.enabled ||
       record.status !== 'active' ||
       !record.commands.includes(command) ||
-      !running
+      !this.running.has(id)
     )
       return Promise.reject(new Error('Command is not active'))
+    return this.request(id, 'commands.execute', { id: command }, 125_000, 'Command timed out').then(
+      () => undefined
+    )
+  }
+  /** Run a declared, registered action on a target and check the page it answers. */
+  async invokeAction(
+    pluginId: string,
+    actionId: string,
+    target: unknown
+  ): Promise<PluginActionResult> {
+    const checked = this.activeAction(pluginId, actionId, target)
+    const answer = await this.request(
+      pluginId,
+      'actions.invoke',
+      { id: actionId, target: checked },
+      15_000
+    )
+    return validateActionResult(answer)
+  }
+  /** Ask a declared, registered action for its preview rows on a target. */
+  async previewAction(
+    pluginId: string,
+    actionId: string,
+    target: unknown
+  ): Promise<PluginActionPreviewRow[]> {
+    const checked = this.activeAction(pluginId, actionId, target)
+    const answer = await this.request(
+      pluginId,
+      'actions.preview',
+      { id: actionId, target: checked },
+      3_000
+    )
+    return validateActionPreview(answer)
+  }
+  private activeAction(pluginId: string, actionId: string, target: unknown): PluginActionTarget {
+    const checked = validateActionTarget(target)
+    const record = this.store.get(pluginId)
+    const declared = record.manifest?.contributes.actions.find((action) => action.id === actionId)
+    if (
+      !record.enabled ||
+      record.status !== 'active' ||
+      !record.actions.includes(actionId) ||
+      !declared ||
+      !declared.targets.includes(checked.kind) ||
+      !this.running.has(pluginId)
+    )
+      throw new Error('Action is not active')
+    return checked
+  }
+  /** A host → plugin request, resolved with the plugin's result. */
+  private request(
+    id: string,
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    timeoutMessage = `Plugin request timed out: ${method}`
+  ): Promise<unknown> {
+    const running = this.running.get(id)
+    if (!running) return Promise.reject(new Error('Plugin is not running'))
     const requestId = this.nextId++
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         running.pending.delete(requestId)
-        reject(new Error('Command timed out'))
-      }, 125_000)
+        reject(new Error(timeoutMessage))
+      }, timeoutMs)
       running.pending.set(requestId, { resolve, reject, timer })
       try {
-        running.port.postMessage({
-          jsonrpc: '2.0',
-          id: requestId,
-          method: 'commands.execute',
-          params: { id: command }
-        })
+        running.process.postMessage({ jsonrpc: '2.0', id: requestId, method, params })
       } catch (error) {
         clearTimeout(timer)
         running.pending.delete(requestId)
@@ -386,6 +478,7 @@ export class PluginHost {
     this.retries.delete(id)
     const record = this.store.get(id)
     record.panels = []
+    record.actions = []
     record.commands = []
     record.toolbar = []
     record.status = 'disabled'
@@ -400,14 +493,14 @@ export class PluginHost {
       this.running.delete(id)
       this.rejectPending(running)
       try {
-        running.port.postMessage({ jsonrpc: '2.0', method: 'host.deactivate' })
+        running.process.postMessage({ jsonrpc: '2.0', method: 'host.deactivate' })
       } catch {
-        running.child.kill()
+        running.process.kill()
         this.services.changed()
         return
       }
-      const timer = setTimeout(() => running.child.kill(), 1000)
-      running.child.once('exit', () => clearTimeout(timer))
+      const timer = setTimeout(() => running.process.kill(), 1000)
+      running.process.onExit(() => clearTimeout(timer))
     }
     this.services.changed()
   }
@@ -456,4 +549,57 @@ export class PluginHost {
     for (const timer of this.timers.values()) clearTimeout(timer)
     for (const id of this.running.keys()) this.stop(id)
   }
+}
+
+const TARGET_KINDS = ['session', 'group', 'workspace'] as const
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+const boundedString = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length >= 1 && value.length <= max
+
+/** What the renderer names an action's target; checked before anything reaches a plugin. */
+export function validateActionTarget(value: unknown): PluginActionTarget {
+  if (
+    !isRecord(value) ||
+    !(TARGET_KINDS as readonly unknown[]).includes(value.kind) ||
+    !boundedString(value.id, 256) ||
+    !(value.workspaceId === null || boundedString(value.workspaceId, 256))
+  )
+    throw new Error('Invalid action target')
+  return {
+    kind: value.kind as PluginActionTarget['kind'],
+    id: value.id,
+    workspaceId: value.workspaceId as string | null
+  }
+}
+
+/** A plugin's invoke answer: nothing, or a web page to open. Never trusted as sent. */
+export function validateActionResult(value: unknown): PluginActionResult {
+  if (value === null || value === undefined) return { page: null }
+  if (!isRecord(value)) throw new Error('Plugin answered an invalid page')
+  const page = value.page
+  if (page === null) return { page: null }
+  if (!isRecord(page) || !boundedString(page.url, 2048) || !boundedString(page.title, 200))
+    throw new Error('Plugin answered an invalid page')
+  let protocol: string
+  try {
+    protocol = new URL(page.url).protocol
+  } catch {
+    throw new Error('Plugin answered an invalid page')
+  }
+  if (protocol !== 'http:' && protocol !== 'https:')
+    throw new Error('Plugin answered an invalid page')
+  return { page: { url: page.url, title: page.title } }
+}
+
+/** A plugin's preview answer: at most six short label/value rows. */
+export function validateActionPreview(value: unknown): PluginActionPreviewRow[] {
+  if (!Array.isArray(value) || value.length > 6)
+    throw new Error('Plugin answered an invalid preview')
+  return value.map((row) => {
+    if (!isRecord(row) || !boundedString(row.label, 80) || !boundedString(row.value, 80))
+      throw new Error('Plugin answered an invalid preview')
+    return { label: row.label, value: row.value }
+  })
 }

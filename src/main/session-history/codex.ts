@@ -75,9 +75,28 @@ export function hasCodexRollout(threadId: string, root: string = codexRoot()): b
   return findCodexRollout(threadId, root) !== undefined
 }
 
+/** How long one walk of the store answers a MISS without walking again
+ *  (PRDCT-3527). A launch restoring 85 Codex chats asked twice per chat, and
+ *  each ask walked the whole store (1215 files on Valentin's machine): one walk
+ *  now serves the burst. A hit is never stale (the file is checked); a miss
+ *  can be, for a rollout written within this window, and then reads as a
+ *  thread with no message yet, which relaunches fresh under the same id. */
+export const ROLLOUT_WALK_REUSE_MS = 1000
+
+const rolloutWalks = new Map<string, { at: number; files: string[] }>()
+
 export function findCodexRollout(threadId: string, root: string = codexRoot()): string | undefined {
   const suffix = `-${threadId}.jsonl`
-  return listCodexFiles(root).find((file) => file.endsWith(suffix))
+  const now = Date.now()
+  const last = rolloutWalks.get(root)
+  const known = last?.files.find((file) => file.endsWith(suffix))
+  if (known && fs.existsSync(known)) return known
+  // A miss, or a file gone since the walk: walk again, unless this is a miss
+  // on a walk made within the reuse window.
+  if (last && !known && now - last.at < ROLLOUT_WALK_REUSE_MS) return undefined
+  const files = listCodexFiles(root)
+  rolloutWalks.set(root, { at: now, files })
+  return files.find((file) => file.endsWith(suffix))
 }
 
 function isInjected(text: string): boolean {

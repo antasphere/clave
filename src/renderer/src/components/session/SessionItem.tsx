@@ -1,48 +1,53 @@
+import { FleetBadge } from '../fleet/FleetControls'
 import { memo } from 'react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
-import { CommandLineIcon, BoltIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import {
-  ClaudeLogo,
-  AntigravityLogo,
-  CodexLogo,
-  PiLogo,
-  ClaudeVariantGlyph
-} from '../icons/cli-logos'
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  MinusCircleIcon,
+  QuestionMarkCircleIcon,
+  WindowIcon
+} from '@heroicons/react/24/outline'
+import { ClaudeVariantGlyph } from '../icons/cli-logos'
 import { SidebarTabItem } from './SidebarTabItem'
-import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../../store/usage-store'
-import { isExhausted } from '../../lib/account-pool'
+import { claudeUsageForModel, capOutLabel, capStatus } from '../../store/usage-store'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
-import { tabIndicators } from '../../lib/tab-status'
+import { useSessionAccountSummary } from '../../lib/session-accounts'
+import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
+import { useMarkPack } from '../plugins/native-marks'
+import { tokenColor } from '../../lib/marks'
+import { SubagentMenu, type SessionMenuEvent } from './SubagentMenu'
 
 /** A warning on a row whose account is about to stop it (ADR 0002), before
  *  the next turn fails. Hovering shows the account card the tab's context menu
  *  opens with. Its own component, subscribed to the usage mirror, because the
  *  row itself only re-renders on its session object. */
-function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
+export function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
   const provider = accountProviderOf(session)
+  // The tab's OWNER's account's usage, that one entry alone: a read of
+  // another account does not redraw the row's badge. A tab on a server
+  // reads the server's (PRDCT-4328), loaded as the row draws.
+  const read = useSessionAccountSummary(session, provider)
   const accountId = provider ? sessionAccountId(session, provider) : ''
-  const claude = useClaudeAccountsUsage((s) => s.byAccount[accountId])
-  const codex = useCodexAccountsUsage((s) => s.byAccount[accountId])
-  const summary = provider === 'codex' ? codex : provider === 'claude' ? claude : undefined
-  if (!provider || !session.alive || !isExhausted(summary)) return null
+  const summary = provider ? claudeUsageForModel(read, session.model) : undefined
+  const stopping = capStatus(summary)?.stopping ?? null
+  if (!provider || !session.alive || !stopping) return null
+  // The cap that stops THIS tab, named with its return (PRDCT-4254).
+  const words = capOutLabel(stopping)
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          className="tab-limit-warning"
-          data-account-limit={accountId}
-          aria-label="This account is at its limit"
-        >
+        <span className="tab-limit-warning" data-account-limit={accountId} aria-label={words}>
           <ExclamationTriangleIcon />
         </span>
       </TooltipTrigger>
       <TooltipContent side="right" className="max-w-64">
         <AccountMenuHeader session={session} />
         <div className="mt-1.5 text-text-tertiary">
-          At its limit. Right-click the tab to switch it to another account.
+          {words}. Right-click the tab to switch it to another account.
         </div>
       </TooltipContent>
     </Tooltip>
@@ -71,84 +76,126 @@ function getClaudeVariant(session: Session): 'agents' | null {
   return null
 }
 
-function SessionIcon({ session }: { session: Session }): React.JSX.Element {
-  // Provider sessions show their brand mark; plain terminals keep the terminal icon.
-  // OpenClaw remote agents use the bolt. The local Claude variants share the Claude mark
-  // (the trailing glyph tells them apart). Remote sessions reuse the same provider marks —
-  // the location badge already signals "remote".
-  const Icon =
-    session.sessionType === 'agent'
-      ? BoltIcon
-      : session.antigravityMode
-        ? AntigravityLogo
-        : session.codexMode
-          ? CodexLogo
-          : session.piMode
-            ? PiLogo
-            : session.claudeMode || session.claudeAgentsMode
-              ? ClaudeLogo
-              : CommandLineIcon
-  // The logo carries one signal at a time (`lib/tab-status.ts`): a ring while
-  // it works, amber when it needs the reader, blue when there is something new
-  // to read. Background work is the row's counter, never the logo's.
-  const { status } = tabIndicators(session)
-  // A row carrying an attached web view (session.view) makes its logo the way
-  // to it: the logo grows on hover and a click shows the view in the main pane,
-  // while a click anywhere else on the row still shows the terminal. A span,
-  // not a button — the row is already a button.
-  const view = session.view
-  const openView = (e: React.SyntheticEvent): void => {
-    e.stopPropagation()
-    useSessionStore.getState().openSessionView(session.id)
-  }
+/** Whether the row is an agent's (a provider session): the rows the Appearance
+ *  page's agent mark pack draws on. Never a plain terminal, never an OpenClaw
+ *  remote agent; a remote provider session counts, as its logo once did. */
+function isProviderRow(session: Session): boolean {
+  return (
+    session.sessionType !== 'agent' &&
+    !!(
+      session.antigravityMode ||
+      session.codexMode ||
+      session.piMode ||
+      session.opencodeMode ||
+      session.claudeMode ||
+      session.claudeAgentsMode
+    )
+  )
+}
+
+const GLYPHS: Record<Exclude<TabGlyph, 'spinner'>, typeof CheckCircleIcon> = {
+  check: CheckCircleIcon,
+  minus: MinusCircleIcon,
+  question: QuestionMarkCircleIcon
+}
+
+/** The row's status, in the trailing slot (PRDCT-3933): one glyph from
+ *  `tabStatusPresentation`, the same signal the provider logo used to carry
+ *  before the title, now on the right where the eye looks for it. The slot
+ *  stays when there is nothing to say, so the badges before it keep their
+ *  column. Background work is the row's counter, never the glyph's.
+ *  Appearance → Agent mark: a plugin's mark pack stands in for the glyph on
+ *  an agent row (never on a plain terminal). Its mark moves while the agent
+ *  works and takes the status colour as its ink, so the row keeps saying the
+ *  same things in a different voice. Exported: a pane's header draws this
+ *  same component before its title, so the tab and the pane it opens say the
+ *  state with one glyph rather than a glyph in one place and a dot in the
+ *  other. */
+export function SessionStatus({
+  session,
+  placeholder = false
+}: {
+  session: Session
+  /** Draw an empty grey ring when there is nothing to say (a pane header);
+   *  the sidebar leaves the slot empty. */
+  placeholder?: boolean
+}): React.JSX.Element {
+  const { status, glyph, tone, label, agents } = tabStatusPresentation(session)
+  const pack = useMarkPack()
+  const Mark = pack && isProviderRow(session) ? pack.Agent : null
+  const markInk =
+    status === 'needs-you'
+      ? tokenColor('--color-status-waiting')
+      : status === 'unread'
+        ? tokenColor('--color-status-working')
+        : undefined
+  const Glyph = glyph && glyph !== 'spinner' ? GLYPHS[glyph] : null
   return (
     <span
-      className="sidebar-tab-icon tab-status relative flex-shrink-0"
+      className="sidebar-tab-status"
       data-status={status}
-      {...(view
-        ? {
-            'data-view': '',
-            role: 'button',
-            tabIndex: 0,
-            'aria-label': view.title || 'Open view',
-            onClick: openView,
-            onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
-            onKeyDown: (e: React.KeyboardEvent) => {
-              if (e.key === 'Enter' || e.key === ' ') openView(e)
-            }
-          }
-        : {})}
-      title={
-        view
-          ? view.title || 'Open view'
-          : status === 'needs-you'
-            ? 'Waiting on you'
-            : status === 'working'
-              ? 'Working'
-              : status === 'unread'
-                ? session.injectedFrom
-                  ? `Message from ${session.injectedFrom}`
-                  : 'Finished while you were away'
-                : undefined
-      }
+      data-tone={tone}
+      data-glyph={Mark ? undefined : (glyph ?? undefined)}
+      data-mark={Mark ? 'pack' : undefined}
+      title={label ?? undefined}
+      role={label ? 'img' : undefined}
+      aria-label={label ?? undefined}
+      aria-hidden={label ? undefined : true}
     >
-      <Icon />
+      {Mark ? (
+        <Mark working={status === 'working'} status={status} color={markInk} slot="tab" />
+      ) : glyph === 'spinner' ? (
+        <>
+          <span className="sidebar-tab-spinner" />
+          {/* The subagents still at work, inside the ring rather than beside
+              it: one signal, not a spinner and a counter. */}
+          {agents ? (
+            <span className="sidebar-tab-agents" data-agents={agents}>
+              {agents > 9 ? '9+' : agents}
+            </span>
+          ) : null}
+        </>
+      ) : Glyph ? (
+        <Glyph />
+      ) : placeholder ? (
+        <span className="sidebar-tab-placeholder" />
+      ) : null}
     </span>
   )
 }
 
-/** Background shells and subagents a turn left running, in words on the row's
- *  right, so a finished tab with a server up still reads as finished. */
-function BackgroundCounter({ session }: { session: Session }): React.JSX.Element | null {
-  const { background } = tabIndicators(session)
-  if (!background) return null
+/** A row carrying an attached web view (session.view) gets the way to it
+ *  beside its status: the glyph grows on hover and a click shows the view in
+ *  the main pane, while a click anywhere else on the row still shows the
+ *  terminal. A span, not a button — the row is already a button. */
+function SessionViewButton({ session }: { session: Session }): React.JSX.Element | null {
+  const view = session.view
+  if (!view) return null
+  const openView = (e: React.SyntheticEvent): void => {
+    e.stopPropagation()
+    useSessionStore.getState().openSessionView(session.id)
+  }
+  const label = view.title || 'Open view'
   return (
     <span
-      className="tab-background-count"
-      data-background={background}
-      title={`${background} ${background === 1 ? 'task' : 'tasks'} still running in the background`}
+      className="sidebar-tab-view"
+      data-view=""
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      title={label}
+      onClick={openView}
+      onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        // The glyph sits inside the row's button: without this, the browser
+        // turns the same Enter or Space into a click on the row, which shows
+        // the terminal again right after the view opened (verifier, round 1).
+        e.preventDefault()
+        openView(e)
+      }}
     >
-      {background} running
+      <WindowIcon />
     </span>
   )
 }
@@ -167,6 +214,11 @@ interface SessionItemProps {
   onPointerDown?: (e: React.PointerEvent) => void
   isDragging?: boolean
   onDelete?: () => void
+  subagents?: Session[]
+  selectedIds?: string[]
+  focusedId?: string | null
+  onSelectSubagent?: (id: string) => void
+  onSubagentContextMenu?: (event: SessionMenuEvent, id: string) => void
 }
 
 function SessionItemImpl({
@@ -182,7 +234,12 @@ function SessionItemImpl({
   onEditingDone,
   onPointerDown,
   isDragging,
-  onDelete
+  onDelete,
+  subagents,
+  selectedIds,
+  focusedId,
+  onSelectSubagent,
+  onSubagentContextMenu
 }: SessionItemProps): React.JSX.Element {
   const renameSession = useSessionStore((s) => s.renameSession)
 
@@ -196,16 +253,29 @@ function SessionItemImpl({
       onContextMenu={onContextMenu}
       onRename={renameSession}
       onDelete={onDelete}
-      icon={<SessionIcon session={session} />}
+      rowControl={
+        subagents?.length && onSelectSubagent ? (
+          <SubagentMenu
+            parent={session}
+            descendants={subagents}
+            selectedIds={selectedIds ?? []}
+            focusedId={focusedId ?? null}
+            onSelect={onSelectSubagent}
+            onContextMenu={onSubagentContextMenu}
+          />
+        ) : undefined
+      }
       extraContent={
         <>
-          <BackgroundCounter session={session} />
           <AccountLimitBadge session={session} />
           {session.locationId && session.sessionType !== 'local' ? (
             <LocationBadge locationId={session.locationId} />
           ) : getClaudeVariant(session) ? (
             <ClaudeVariantGlyph variant={getClaudeVariant(session)!} />
           ) : null}
+          <FleetBadge sessionId={session.id} />
+          <SessionViewButton session={session} />
+          <SessionStatus session={session} />
         </>
       }
       grouped={grouped}
@@ -233,6 +303,9 @@ export const SessionItem = memo(SessionItemImpl, (prev, next) => {
     prev.groupColorHex === next.groupColorHex &&
     prev.dimmed === next.dimmed &&
     prev.forceEditing === next.forceEditing &&
-    prev.isDragging === next.isDragging
+    prev.isDragging === next.isDragging &&
+    prev.subagents === next.subagents &&
+    prev.selectedIds === next.selectedIds &&
+    prev.focusedId === next.focusedId
   )
 })

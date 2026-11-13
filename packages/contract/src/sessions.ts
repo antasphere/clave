@@ -9,8 +9,11 @@
  * here holds this one, and a change to one event is a change to both files.
  */
 import { Schema } from 'effect'
+import { INPUT_KINDS } from './input-kinds'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
+import { LaunchProfileView } from './settings/launch-profiles'
+import { WorkAssignment, WorkChange, WorkChangeRefused, WorkRename, WorkUpdate } from './work'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -30,7 +33,14 @@ export const Session = Schema.Struct({
   title: Schema.String,
   /** The view this session is read in, `<pluginId>/<viewId>`. Absent means
    *  the host picks the first view that renders this transport. */
-  viewId: Schema.optional(Schema.NonEmptyString)
+  viewId: Schema.optional(Schema.NonEmptyString),
+  /** Which process under this id this is: 1 at the first spawn, one more at
+   *  every spawn under the same id since the host started (a Resume, a move
+   *  to another account). A `state_change` carries the run it belongs to, so
+   *  a pane that hears an `ended` of run 1 after the `idle` of run 2 knows it
+   *  for the old process's word (PRDCT-4191). Absent on a host before this
+   *  field and on a stopped record, which runs nothing. */
+  run: Schema.optional(Schema.Number)
 })
 export type Session = typeof Session.Type
 
@@ -38,8 +48,13 @@ export type Session = typeof Session.Type
 
 export const MAX_ATTACHMENTS = 10
 
-export const Attachment = Schema.Struct({
+const AttachmentLabel = Schema.optional(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(32))
+)
+export const FileAttachment = Schema.Struct({
   id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  /** `Image #1`, `File #2`: the record's name in the message text, `[Image #1]`. */
+  label: AttachmentLabel,
   path: Schema.String.pipe(
     Schema.minLength(1),
     Schema.maxLength(4096),
@@ -48,8 +63,28 @@ export const Attachment = Schema.Struct({
   name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
   mimeType: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   size: Schema.NonNegativeInt,
-  delivery: Schema.Literal('reference', 'image')
+  delivery: Schema.Literal('reference', 'image', 'folder'),
+  /** A folder's top-level item count; folders only. */
+  entries: Schema.optional(Schema.NonNegativeInt)
 })
+export type FileAttachment = typeof FileAttachment.Type
+/** Another Clave tab dragged onto the composer: delivered to the agent as a
+ *  line it can act on with the Clave tools, never as a file. */
+export const SessionAttachment = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  label: AttachmentLabel,
+  delivery: Schema.Literal('session'),
+  sessionId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+  agent: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64)),
+  cwd: Schema.String.pipe(Schema.maxLength(4096)),
+  /** The machine the tab runs on, by name, when it is not the receiving tab's. */
+  machine: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))),
+  /** False when the receiving agent's Clave tools cannot reach the tab. */
+  reachable: Schema.optional(Schema.Literal(false))
+})
+export type SessionAttachment = typeof SessionAttachment.Type
+export const Attachment = Schema.Union(FileAttachment, SessionAttachment)
 export type Attachment = typeof Attachment.Type
 export const Attachments = Schema.Array(Attachment).pipe(Schema.maxItems(MAX_ATTACHMENTS))
 
@@ -67,7 +102,13 @@ export const UserMessage = Schema.Struct({
   type: Schema.Literal('user_message'),
   text: Schema.String,
   /** The files the reader attached, as the transcript shows them: never bytes. */
-  attachments: Schema.optional(Attachments)
+  attachments: Schema.optional(Attachments),
+  parent: Schema.optional(Schema.String),
+  /** The form this message carries the answers of (the request's provider
+   *  id, PRDCT-4157): the person's Approve or Skip on a hosted form, written
+   *  to the agent as their next message so an idle agent wakes with the
+   *  answers. A view draws the form's record row for it, never a bubble. */
+  form: Schema.optional(Schema.String)
 })
 export type UserMessage = typeof UserMessage.Type
 export const PreparedPrompt = Schema.Struct({
@@ -84,12 +125,35 @@ export const PermissionResponse = Schema.Struct({
   type: Schema.Literal('permission_response'),
   id: Schema.String,
   optionId: Schema.String,
-  answers: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+  /** A request carrying `questions`: the question's key → the chosen label(s)
+   *  or the reader's own words; a hosted multi-select answers with the labels
+   *  as an array, a provider's own question with one string. */
+  answers: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+    })
+  )
+})
+/** What the person typed into a form still open (PRDCT-4210), written by the
+ *  card as the fields change, debounced: the form's draft takes it, so the
+ *  agent's read and its own submit see the person's values. `id` is the
+ *  form's provider id; an emptied field is `''`. Never published back to the
+ *  views as the agent's fill; never reaches a provider. */
+export const PermissionDraft = Schema.Struct({
+  type: Schema.Literal('permission_draft'),
+  id: Schema.String,
+  answers: Schema.Record({
+    key: Schema.String,
+    value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+  })
 })
 export const Interrupt = Schema.Struct({ type: Schema.Literal('interrupt') })
 export const SetModel = Schema.Struct({
   type: Schema.Literal('set_model'),
-  model: Schema.NullOr(Schema.String)
+  model: Schema.NullOr(Schema.String),
+  /** Whether the pick becomes the next chat's default; absent means yes (PRDCT-4302). */
+  remember: Schema.optional(Schema.Boolean)
 })
 export type SetModel = typeof SetModel.Type
 /** A level as a provider spells it: a short lowercase word (src/shared/effort.ts). */
@@ -109,6 +173,7 @@ export const StopTask = Schema.Struct({
 export const SessionInput = Schema.Union(
   UserMessageInput,
   PermissionResponse,
+  PermissionDraft,
   Interrupt,
   SetModel,
   SetEffort,
@@ -130,6 +195,7 @@ export const SessionBytes = Schema.Struct({
 export const SessionWireInput = Schema.Union(
   UserMessage,
   PermissionResponse,
+  PermissionDraft,
   Interrupt,
   SetModel,
   SetEffort,
@@ -144,13 +210,34 @@ export type SessionWrite = typeof SessionWrite.Type
 
 export const PermissionModeOption = Schema.Struct({ id: Schema.String, label: Schema.String })
 export type PermissionModeOption = typeof PermissionModeOption.Type
+export const InputKind = Schema.Literal(...INPUT_KINDS)
 export const AgentQuestion = Schema.Struct({
+  /** Stable answer key; older providers without IDs use the question text. */
+  id: Schema.optional(Schema.NonEmptyString),
   question: Schema.String,
   header: Schema.optional(Schema.String),
   options: Schema.Array(
     Schema.Struct({ label: Schema.String, description: Schema.optional(Schema.String) })
   ),
-  multiSelect: Schema.optional(Schema.Boolean)
+  multiSelect: Schema.optional(Schema.Boolean),
+  /** A hosted choice closed to its options (PRDCT-4322): no own words. */
+  optionsOnly: Schema.optional(Schema.Boolean),
+  /** A hosted input request's question (clave_request_input, PRDCT-4157):
+   *  the kind of value asked for, and the field's own words. Absent on a
+   *  provider's native question, which is a choice among its options. The
+   *  one rule for whether an answer fits is `input-kinds.ts`. */
+  kind: Schema.optional(InputKind),
+  hint: Schema.optional(Schema.String),
+  placeholder: Schema.optional(Schema.String),
+  default: Schema.optional(Schema.String),
+  optional: Schema.optional(Schema.Boolean),
+  /** A `link` question: the address to open, and the words on the button
+   *  that says the reader is back. */
+  url: Schema.optional(Schema.String),
+  confirm: Schema.optional(Schema.String),
+  /** A `number` question's bounds. */
+  min: Schema.optional(Schema.Number),
+  max: Schema.optional(Schema.Number)
 })
 export type AgentQuestion = typeof AgentQuestion.Type
 export const EffortOption = Schema.Struct({
@@ -174,13 +261,35 @@ export const CommandOption = Schema.Struct({
   insert: Schema.String
 })
 export type CommandOption = typeof CommandOption.Type
+/** One control request a view may send a live session's provider, the zod
+ *  `SessionControlSchema` on the wire. The set is closed on purpose: the
+ *  provider's control channel also changes the permission mode and the like,
+ *  and none of that may pass here. */
+export const SessionControl = Schema.Union(
+  Schema.Struct({ type: Schema.Literal('mcp_status') }),
+  Schema.Struct({
+    type: Schema.Literal('mcp_toggle'),
+    server: Schema.NonEmptyString,
+    enabled: Schema.Boolean
+  }),
+  Schema.Struct({ type: Schema.Literal('mcp_reconnect'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('mcp_authenticate'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('mcp_clear_auth'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('reload_plugins') })
+)
+export type SessionControl = typeof SessionControl.Type
+/** The provider's answer to a control request, as it gave it. */
+export const SessionControlResult = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+export type SessionControlResult = typeof SessionControlResult.Type
 export const BackgroundTask = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('shell', 'agent', 'other'),
   description: Schema.String,
+  command: Schema.optional(Schema.String),
   toolUseId: Schema.optional(Schema.String),
   startedAt: Schema.Number,
-  outputFile: Schema.optional(Schema.String)
+  outputFile: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String)
 })
 export type BackgroundTask = typeof BackgroundTask.Type
 
@@ -191,7 +300,8 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({
     type: Schema.Literal('assistant_text'),
     delta: Schema.String,
-    final: Schema.Boolean
+    final: Schema.Boolean,
+    parent: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('tool_call'),
@@ -204,7 +314,8 @@ export const SessionEvent = Schema.Union(
     type: Schema.Literal('tool_result'),
     id: Schema.String,
     output: Schema.Unknown,
-    error: Schema.optional(Schema.Boolean)
+    error: Schema.optional(Schema.Boolean),
+    parent: Schema.optional(Schema.String)
   }),
   Schema.Struct({
     type: Schema.Literal('permission_request'),
@@ -216,7 +327,13 @@ export const SessionEvent = Schema.Union(
     detail: Schema.optional(Schema.String),
     questions: Schema.optional(Schema.Array(AgentQuestion))
   }),
-  Schema.Struct({ type: Schema.Literal('state_change'), state: AgentState }),
+  Schema.Struct({
+    type: Schema.Literal('state_change'),
+    state: AgentState,
+    /** The run of the process whose state this is (`Session.run`); absent
+     *  from an adapter's own frame, stamped by the host that publishes it. */
+    run: Schema.optional(Schema.Number)
+  }),
   Schema.Struct({
     type: Schema.Literal('session_meta'),
     model: Schema.NullOr(Schema.String),
@@ -225,6 +342,37 @@ export const SessionEvent = Schema.Union(
   Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
   Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
+  Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
+  /** A hosted form's answers changed under the card (PRDCT-4157): the agent
+   *  set fields from what the person said (`clave_input_set`), or the form
+   *  was approved and `sent` carries every answer to the views that did not
+   *  send them. `answers` is the patch, by the question's key. */
+  Schema.Struct({
+    type: Schema.Literal('permission_updated'),
+    id: Schema.String,
+    answers: Schema.Record({
+      key: Schema.String,
+      value: Schema.Union(Schema.String, Schema.Array(Schema.String))
+    }),
+    sent: Schema.optional(Schema.Boolean),
+    /** The fields are what the person typed (PRDCT-4210), handed to a view
+     *  that subscribes late so its card starts from them: never the agent's
+     *  fill, so nothing lands, flashes or says it was filled in. */
+    typed: Schema.optional(Schema.Boolean),
+    /** The agent's word under a field it could not fill, by the question's key. */
+    notes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+  }),
+  /** What a permission request does, read where the session runs
+   *  (PRDCT-4331): the level, the plain sentence, whether it matches the
+   *  person's ask, or why no sentence came. Keyed by the request's id. */
+  Schema.Struct({
+    type: Schema.Literal('permission_explained'),
+    id: Schema.String,
+    level: Schema.optional(Schema.Literal('reads', 'project', 'outside', 'irreversible')),
+    sentence: Schema.optional(Schema.String),
+    asked: Schema.optional(Schema.Literal('yes', 'no', 'unclear')),
+    failed: Schema.optional(Schema.String)
+  }),
   Schema.Struct({
     type: Schema.Literal('context_usage'),
     used: Schema.Number,
@@ -282,7 +430,13 @@ export const SessionLink = Schema.Union(
     terminalId: Schema.String
   }),
   Schema.Struct({ kind: Schema.Literal('session-view'), ownerId: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String })
+  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String }),
+  /** A routine's run (ADR 0004): never a sidebar row, the server's to run and to stop. */
+  Schema.Struct({
+    kind: Schema.Literal('routine'),
+    routineKey: Schema.String,
+    runId: Schema.String
+  })
 )
 export type SessionLink = typeof SessionLink.Type
 
@@ -298,17 +452,38 @@ export const SpawnOptions = Schema.Struct({
   antigravityMode: Schema.optional(Schema.Boolean),
   codexMode: Schema.optional(Schema.Boolean),
   piMode: Schema.optional(Schema.Boolean),
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.optional(Schema.Boolean),
   resumeSessionId: Schema.optional(Schema.String),
   claudeSessionId: Schema.optional(Schema.String),
   piSessionId: Schema.optional(Schema.String),
   launchProfileId: Schema.optional(Schema.String),
+  /** The definition named by launchProfileId in the asking Mac's list. The
+   * server runs it as given and stores none. Absent, the server resolves the
+   * id against its own built-ins and list as before. */
+  launchProfile: Schema.optional(LaunchProfileView),
   piProvider: Schema.optional(Schema.String),
   /** A level as Pi spells it (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). */
   piThinking: Schema.optional(Schema.String),
   initialCommand: Schema.optional(Schema.String),
   autoExecute: Schema.optional(Schema.Boolean),
   initialPrompt: Schema.optional(Schema.String),
+  // ── ADR 0004: what a routine run declares beyond a tab's launch ──
+  /** Claude's reasoning effort to start on (`--effort`); a chat defaults to the last picked. */
+  effort: Schema.optional(Schema.String),
+  /** The permission rung a session without `dangerousMode` starts on, by the
+   *  CLI's own name: Claude's `--permission-mode` values (`auto` and `dontAsk`
+   *  joined so a Resume brings a chat back in the mode it was running,
+   *  PRDCT-4191), Codex's sandbox names (`workspace-write`, …), Antigravity's
+   *  modes (`accept-edits`, …): the harness table (`shared/harness.ts`) owns
+   *  the ladders, and the spawn validates the rung against the harness it
+   *  launches (PRDCT-4424; until 11 November 2026 the five Claude names were
+   *  the whole list and every other rung was refused on the wire). */
+  permissionMode: Schema.optional(Schema.String.pipe(Schema.maxLength(64))),
+  /** A Claude Code plugin folder loaded for this session alone (`--plugin-dir`). */
+  pluginDir: Schema.optional(Schema.String),
+  /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
+  appendSystemPrompt: Schema.optional(Schema.String),
   tmuxMode: Schema.optional(Schema.Boolean),
   adoptTmuxName: Schema.optional(Schema.String),
   adoptSessionId: Schema.optional(Schema.String),
@@ -318,7 +493,19 @@ export const SpawnOptions = Schema.Struct({
   codexAccountId: Schema.optional(Schema.String),
   codexAccountLabel: Schema.optional(Schema.String),
   workspaceId: Schema.optional(Schema.String),
-  link: Schema.optional(SessionLink)
+  link: Schema.optional(SessionLink),
+  /** The caller when `clave_open_session` uses `attachToParent: true`:
+   *  folds the tab under its parent and restores the messaging link at boot.
+   *  Absent for separate tabs, including agent opens without attachment. */
+  spawnedBy: Schema.optional(Schema.String),
+  /** The tab whose agent opened this one through `clave_open_session`,
+   *  whether or not it is nested under it (PRDCT-4192): what "parent" and the
+   *  reach rule read once the host's memory of the open is gone (a restart).
+   *  Always written by an agent's open; absent for a tab a person opened. */
+  openedBy: Schema.optional(Schema.String),
+  /** Bypass stays reachable to a Claude chat resumed in another mode when
+   *  its launch had it (`--allow-dangerously-skip-permissions`), PRDCT-4191. */
+  allowDangerous: Schema.optional(Schema.Boolean)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -448,6 +635,14 @@ export const GetSessionCommands = Query.define('GetSessionCommands', {
   success: Schema.Array(CommandOption),
   failure: SessionNotFound
 })
+/** Send the session's provider one control request and answer what it
+ *  answered. A command, not a query: most of them change state (a server
+ *  turned off, a sign-in started, the plugins reloaded). */
+export const ControlSession = Command.define('ControlSession', {
+  payload: Schema.Struct({ id: Schema.String, request: SessionControl }),
+  success: SessionControlResult,
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+})
 /** What the session's adapter takes beyond text. */
 export const SessionCapabilities = Schema.Struct({ images: Schema.Boolean })
 export type SessionCapabilities = typeof SessionCapabilities.Type
@@ -480,6 +675,16 @@ export const SessionRecordView = Schema.Struct({
 })
 export type SessionRecordView = typeof SessionRecordView.Type
 
+/** Where a restarted tab's conversation came from (PRDCT-4300): the provider
+ *  it ran on before the tab changed provider, and how it crossed, converted
+ *  into the new provider's own storage or carried as a handoff message. The
+ *  first card of the tab reads it; the record keeps it. */
+export const ContinuedFrom = Schema.Struct({
+  provider: Schema.String,
+  road: Schema.Literal('converted', 'handoff')
+})
+export type ContinuedFrom = typeof ContinuedFrom.Type
+
 /**
  * A session's persisted record: what survives a quit and what a window brings
  * a tab back from. The shell's `SessionRecord` (`src/main/sessions/adapters/
@@ -505,10 +710,14 @@ export const SessionRecord = Schema.Struct({
   antigravityMode: Schema.Boolean,
   codexMode: Schema.Boolean,
   piMode: Schema.Boolean,
+  /** Optional on the wire: a record from a host before OpenCode has none. */
+  opencodeMode: Schema.optional(Schema.Boolean),
   claudeAgentsMode: Schema.Boolean,
   dangerousMode: Schema.Boolean,
   model: Schema.optional(Schema.String),
   launchProfileId: Schema.optional(Schema.String),
+  /** What a stopped session's Resume relaunches with. */
+  launchProfile: Schema.optional(LaunchProfileView),
   piProvider: Schema.optional(Schema.String),
   piThinking: Schema.optional(Schema.String),
   configDir: Schema.optional(Schema.String),
@@ -522,6 +731,18 @@ export const SessionRecord = Schema.Struct({
   windowKey: Schema.optional(Schema.String),
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
+  spawnedBy: Schema.optional(Schema.String),
+  /** The tab whose agent opened this one, nested or not (PRDCT-4192). */
+  openedBy: Schema.optional(Schema.String),
+  /** The permission mode the chat was last running in, as the provider
+   *  reported it (`bypassPermissions` included), so a Resume brings it back
+   *  in that mode and not the one it was launched on (PRDCT-4191). */
+  permissionMode: Schema.optional(Schema.String),
+  /** The reasoning effort the chat was last running at, the same way. */
+  effort: Schema.optional(Schema.String),
+  work: Schema.optional(WorkAssignment),
+  /** The conversation came from another provider (PRDCT-4300). */
+  continuedFrom: Schema.optional(ContinuedFrom),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })
@@ -681,7 +902,27 @@ export const AccountOverride = Schema.Struct({
   codexAccountLabel: Schema.optional(Schema.String)
 })
 export type AccountOverride = typeof AccountOverride.Type
+/** A restart that changes the tab's provider (PRDCT-4300): the adapter it
+ *  comes back on, the model, the conversation to resume there when one was
+ *  written in that provider's storage (a converted Codex thread), else the
+ *  first message to send on the fresh conversation (the handoff), and the
+ *  note the first card reads. Absent, the restart keeps its provider. */
+export const ProviderOverride = Schema.Struct({
+  adapterId: Schema.NonEmptyString,
+  model: Schema.optional(Schema.String),
+  resume: Schema.optional(Schema.String),
+  firstMessage: Schema.optional(Schema.String),
+  continuedFrom: Schema.optional(ContinuedFrom)
+})
+export type ProviderOverride = typeof ProviderOverride.Type
+/** Correlates one caller's answer and event; never a spawn override. */
+export const RestartRequestId = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128),
+  Schema.pattern(/^[A-Za-z0-9._:-]+$/)
+)
 export const RestartedSession = Schema.Struct({
+  requestId: Schema.optional(RestartRequestId),
   ...SessionInfo.fields,
   /** The conversation came along; false means the tab started fresh. */
   resumed: Schema.Boolean
@@ -696,8 +937,68 @@ export const RestartSession = Command.define('RestartSession', {
   payload: Schema.Struct({
     id: Schema.String,
     account: AccountOverride,
-    resendRejected: Schema.optional(Schema.Boolean)
+    requestId: Schema.optional(RestartRequestId),
+    resendRejected: Schema.optional(Schema.Boolean),
+    /** A Resume, not a move: refused when the session is running, so a
+     *  client reading a stale view never cuts a live turn (PRDCT-4193). */
+    onlyIfStopped: Schema.optional(Schema.Boolean),
+    /** The tab comes back on another provider (PRDCT-4300). */
+    provider: Schema.optional(ProviderOverride)
   }),
   success: RestartedSession,
   failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)
+})
+
+// ── Wave 6, lane A: what the window keeps on a tab's record (PRDCT-3526) ──
+
+/** A tab's name as the record keeps it: null is "no name" (the folder's),
+ *  `userRenamed` protects it from the auto-title. */
+export const SessionRecordName = Schema.Struct({
+  displayName: Schema.NullOr(Schema.String),
+  userRenamed: Schema.Boolean
+})
+export type SessionRecordName = typeof SessionRecordName.Type
+/** What the window keeps on a tab's record, each field only when sent: its
+ *  name, the page on its row (null takes it off), the conversation a
+ *  `/clear` rotated it to, and the workspace it was moved to (null for
+ *  none). */
+export const SessionRecordFields = Schema.Struct({
+  name: Schema.optional(SessionRecordName),
+  page: Schema.optional(Schema.NullOr(SessionRecordView)),
+  claudeSessionId: Schema.optional(Schema.NonEmptyString),
+  workspaceId: Schema.optional(Schema.NullOr(Schema.String))
+})
+export type SessionRecordFields = typeof SessionRecordFields.Type
+/**
+ * Keep what the window decided about a tab on the record the next launch
+ * restores it from (`SessionRecordFields`). Quiet on purpose: the window that sends it
+ * already shows it, so nothing is published, unlike `RenameSession` and
+ * `SetSessionPage`, which an agent sends for the windows to follow. A tab
+ * with no record keeps nothing, as before. Under the separate server the
+ * window's rename reached main's copy of the records only, and the name was
+ * gone at the next launch; a `/clear` and a workspace move the same way
+ * (round 1 of the lane's verifier).
+ */
+export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
+  payload: Schema.Struct({ id: Schema.String, ...SessionRecordFields.fields }),
+  success: Schema.Void,
+  failure: CapabilityUnavailable
+})
+
+// ── PRDCT-4123: which work a session does ──
+
+/**
+ * Change the work assignment of one session: assign it to a wave or a lane,
+ * complete it, leave it, offer a handover, cancel that offer, or accept it.
+ * The rules are `work-rules.ts`'s, applied over every record the host keeps;
+ * the answer is every record rewritten, the subject's first, and the windows
+ * follow through `session.work_changed`, one event per record. An accepted
+ * handover also renames: the successor takes its predecessor's name and the
+ * predecessor becomes `<name> · gen <n>` (`takeoverRenames`), each told as
+ * `session.renamed`.
+ */
+export const ChangeSessionWork = Command.define('ChangeSessionWork', {
+  payload: Schema.Struct({ id: Schema.String, change: WorkChange }),
+  success: Schema.Struct({ changed: Schema.Array(WorkUpdate), renamed: Schema.Array(WorkRename) }),
+  failure: Schema.Union(SessionNotFound, WorkChangeRefused, CapabilityUnavailable)
 })

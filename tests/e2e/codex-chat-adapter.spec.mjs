@@ -80,11 +80,23 @@ export async function run(t) {
     // temporary entry adds only a test reference; no production source, IPC,
     // adapter implementation, or renderer is replaced. Fail if bundling changes.
     const built = readFileSync(path.join(REPO, 'out/main/index.js'), 'utf8')
-    assert.match(built, /const sessionManager = new SessionManager\(/)
+    // The session manager is a module the standalone server entry shares
+    // with main since wave 5 (PRDCT-3434), so the bundler keeps it in a
+    // chunk main requires under a namespace (`announcing.sessionManager`);
+    // the window registry is main's alone and stays in the entry. Either
+    // shape names the same singleton the IPC handlers use.
+    const own = /const sessionManager = new SessionManager\(/.test(built)
+    const viaChunk = /\b([A-Za-z_$][\w$]*)\.sessionManager\b/.exec(built)?.[1]
+    assert.ok(
+      own || viaChunk,
+      'the built main bundle neither constructs the session manager nor refers to a chunk that does'
+    )
     assert.match(built, /const windowRegistry = new WindowRegistry\(/)
+    const sessionManagerRef = own ? 'sessionManager' : `${viaChunk}.sessionManager`
     writeFileSync(
       ENTRY,
-      built + '\nglobalThis.__codexAdapterTest = { sessionManager, windowRegistry };\n'
+      built +
+        `\nglobalThis.__codexAdapterTest = { sessionManager: ${sessionManagerRef}, windowRegistry };\n`
     )
     app = await electron.launch({
       executablePath: path.join(
@@ -178,9 +190,11 @@ export async function run(t) {
       )
     )
     t.check('protocol approval blocks the session observed through renderer IPC', true)
+    // The request service refuses an option the record does not list before
+    // the adapter would (PRDCT-4157 runs it in-process as on the daemon).
     await assert.rejects(
       () => write({ type: 'permission_response', id: approval.id, optionId: 'forged' }),
-      /approval option/
+      /approval option|does not answer this pending request/
     )
     await write({ type: 'permission_response', id: approval.id, optionId: 'cancel' })
     assert.ok(

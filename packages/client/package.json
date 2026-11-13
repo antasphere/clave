@@ -8,7 +8,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./router": "./src/router.ts",
-    "./node": "./src/node.ts"
+    "./node": "./src/node.ts",
+    "./fleet": "./src/fleet.ts",
+    "./requests": "./src/requests.ts",
+    "./files": "./src/files.ts",
+    "./git": "./src/git.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

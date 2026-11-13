@@ -16,13 +16,20 @@ export interface SidebarTabItemProps {
   onContextMenu: (e: React.MouseEvent) => void
   /** Called when the name is committed after editing */
   onRename: (id: string, newName: string) => void
+  /** False for a row whose name is not its own to edit (a wave or lane entry
+   *  shows its unit's label): no double-click or keyboard rename, and Enter
+   *  activates the row like a click. Defaults to true. */
+  renameable?: boolean
   /** Called when the close button is clicked. If omitted, no close button is shown. */
   onDelete?: () => void
 
-  // Icon slot
-  icon: ReactNode
+  /** Leading icon slot (file tabs). A session row has none: its title starts
+   *  at the row's gutter and its status sits on the right, in `extraContent`. */
+  icon?: ReactNode
   /** Extra content rendered between the name and the close button (e.g. LocationBadge) */
   extraContent?: ReactNode
+  /** A sibling control, so focusable menus are never nested in the row button. */
+  rowControl?: ReactNode
 
   // Group styling
   grouped?: boolean
@@ -49,9 +56,11 @@ export function SidebarTabItem({
   onClick,
   onContextMenu,
   onRename,
+  renameable = true,
   onDelete,
   icon,
   extraContent,
+  rowControl,
   grouped,
   groupSelected,
   groupColorHex,
@@ -74,7 +83,7 @@ export function SidebarTabItem({
     name,
     onCommit: (newName) => onRename(id, newName),
     onEditingDone,
-    forceEditing
+    forceEditing: renameable && forceEditing
   })
 
   const handleClick = useCallback(
@@ -91,7 +100,7 @@ export function SidebarTabItem({
 
   return (
     <div
-      className="relative"
+      className={cn('relative', rowControl && 'subagent-session-row')}
       data-sidebar-item-id={id}
       data-sidebar-item-type="session"
       onPointerDown={!editing ? onPointerDown : undefined}
@@ -99,9 +108,11 @@ export function SidebarTabItem({
       <button
         onClick={handleClick}
         onContextMenu={onContextMenu}
-        onKeyDown={handleButtonKeyDown}
+        onKeyDown={renameable ? handleButtonKeyDown : undefined}
         title={title}
-        data-selected={isSelected && !grouped ? 'true' : undefined}
+        data-selected={
+          isSelected && (!grouped || (!!rowControl && !groupSelected)) ? 'true' : undefined
+        }
         className={cn(
           'sidebar-item group',
           groupSelected
@@ -148,7 +159,7 @@ export function SidebarTabItem({
           <span
             data-testid="session-tab-name"
             className="flex-1 min-w-0 text-control font-medium truncate"
-            onDoubleClick={handleDoubleClick}
+            onDoubleClick={renameable ? handleDoubleClick : undefined}
           >
             {name}
           </span>
@@ -157,21 +168,33 @@ export function SidebarTabItem({
         {/* Extra content (e.g. location badge) */}
         {extraContent}
 
-        {/* Close button — visible on hover */}
+        {/* Close button. Away it takes no room; the row's hover or keyboard
+            focus slides it in (`.sidebar-item-close`). In the tab order in its
+            own right, so Tab reaches it; Enter and Space close the tab without
+            reaching the row's own handlers (a rename on Enter, a click). */}
         {!editing && onDelete && !isDragging && (
           <span
             role="button"
-            tabIndex={-1}
+            tabIndex={0}
+            aria-label="Close"
+            title="Close"
             onClick={(e) => {
               e.stopPropagation()
               onDelete()
             }}
-            className="btn-icon btn-icon-xs sidebar-item-close opacity-0 group-hover:opacity-100 transition-opacity"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return
+              e.preventDefault()
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="btn-icon btn-icon-xs sidebar-item-close"
           >
             <XMarkIcon className="w-3.5 h-3.5" />
           </span>
         )}
       </button>
+      {rowControl}
     </div>
   )
 }

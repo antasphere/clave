@@ -1,4 +1,5 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { ipcMain, shell, BrowserWindow } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import net from 'node:net'
 import http from 'node:http'
 import https from 'node:https'
@@ -83,9 +84,21 @@ export function registerShellHandlers(): void {
     return shell.openPath(filePath)
   })
 
+  // PRDCT-4157: a `file` question of clave_request_input picks a file the
+  // same way a folder is picked; the path is the answer, nothing is read.
+  ipcMain.handle('dialog:openFile', async (_event, defaultPath?: string) => {
+    const win = BrowserWindow.fromWebContents(_event.sender)
+    const result = await openDialogs.open('file', win ?? undefined, {
+      properties: ['openFile'],
+      ...(defaultPath ? { defaultPath } : {})
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
   ipcMain.handle('dialog:openFolder', async (_event, defaultPath?: string) => {
     const win = BrowserWindow.fromWebContents(_event.sender)
-    const result = await dialog.showOpenDialog(win!, {
+    const result = await openDialogs.open('folder', win ?? undefined, {
       properties: ['openDirectory'],
       ...(defaultPath ? { defaultPath } : {})
     })

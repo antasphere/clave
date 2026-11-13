@@ -69,3 +69,51 @@ export {
 export { ViewRequests, type ViewRequestsService, viewHandlers } from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export { AgentTokens, type AgentTokensService, agentToolsHandlers } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export {
+  Plugins,
+  type PluginsService,
+  type PluginsEvent,
+  pluginHandlers,
+  PluginsEventsLive
+} from './plugins'
+
+export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesService } from './files'
+// ── PRDCT-4327: the digests read by the server a tab runs on ──
+export { DigestsPort, type DigestsService, digestHandlers } from './digests'
+// ── PRDCT-4411: the speech of the server a tab runs on ──
+export { SpeechPort, type SpeechService, speechHandlers } from './speech'
+// ── PRDCT-4472: the artefacts of the server a session runs on ──
+export {
+  ArtefactsPort,
+  ArtefactRefusal,
+  type ArtefactsService,
+  type ArtefactEvent,
+  artefactHandlers,
+  ArtefactsEventsLive
+} from './artefacts'
+// ── Wave wcs1023, lane C: the git domain ──
+export { GitPort, type GitService, type GitEvent, gitHandlers, GitEventsLive } from './git'
+// ── Issue #266: the server's version and its self-upgrade ──
+export {
+  APP_RUN_REASON,
+  ServerInfoPort,
+  type ServerInfoService,
+  serverInfoHandlers,
+  ServerInfoEventsLive
+} from './server-info'
+// ── PRDCT-4321: the conversations a server's tabs ran ──
+export { HistoryPort, type HistoryService, historyHandlers } from './history'
+export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
+export { RequestsPort, type RequestsService } from './requests/port'
+
+export { FileTreeWatcher } from './files/watch'
+// ── ADR 0004: the routines ──
+export {
+  Routines,
+  RoutineReportRefusal,
+  type RoutinesService,
+  type RoutinesEvent,
+  type RoutineReportInput,
+  routineHandlers
+} from './routines'

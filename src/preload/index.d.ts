@@ -5,10 +5,11 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { DayActivity } from '../shared/activity-fold'
-import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
 import type {
   GithubResult,
@@ -18,6 +19,7 @@ import type {
   PullRequestView,
   ReviewEvent
 } from '../shared/github-pull'
+import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface ActivityAnswer {
@@ -43,12 +45,27 @@ export interface SessionIPCEvents {
   [channel: `sessions:exit:${string}`]: number
 }
 
+import type { FleetDesktopAPI } from './fleet-types'
+import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
+import type {
+  WindowIdentity,
+  Workspace,
+  WorkspaceStamp,
+  WorkspaceState
+} from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type { GitRangeDirection } from '../shared/git-range'
+import type {
+  HelperAccount,
+  HelperPreference,
+  HelperPreferencePatch
+} from '../shared/helper-preferences'
+import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -58,6 +75,8 @@ import type {
 
 export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
+export type { HelperAccount, HelperPreference, HelperPreferencePatch }
+export type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus }
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -66,7 +85,15 @@ export type SetWorkspaceResult =
   | { ok: false; reason: 'unknown-workspace' | 'no-window' }
 
 /** Main's answer to a state write (layout, pins). */
-export type WriteResult = { ok: true } | { ok: false; reason: 'invalid-key' | 'no-window' }
+/** A registry or pins write that landed: the state as the write left it,
+ *  with its stamp; the writer folds it like a change (PRDCT-3405). */
+export type WorkspaceWritten = {
+  ok: true
+  workspaces: Workspace[]
+  pins: unknown[]
+} & WorkspaceStamp
+/** A pins write: landed, or refused. */
+export type WriteResult = WorkspaceWritten | { ok: false; reason: 'invalid-key' | 'no-window' }
 
 export interface HistoryLedgerRow {
   v: 1
@@ -76,12 +103,26 @@ export interface HistoryLedgerRow {
   claudeSessionId: string | null
   name: string
   cwd: string
-  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'claude-agents' | 'terminal'
+  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode' | 'claude-agents' | 'terminal'
   model: string | null
   workspaceId: string | null
   groupId: string | null
   groupName: string | null
+  /** What the tab was launched on (PRDCT-4236): a reopen from the History
+   *  comes back the same way. The renderer fills `dangerous` and the account;
+   *  main adds the mode and the effort from the session's record. */
+  dangerous?: boolean
+  permissionMode?: string
+  effort?: string
+  accountId?: string
+  accountLabel?: string
 }
+
+/** The launch a History entry remembers, field by field from its latest row. */
+export type HistoryLaunch = Pick<
+  HistoryLedgerRow,
+  'dangerous' | 'permissionMode' | 'effort' | 'accountId' | 'accountLabel'
+>
 
 export type HistorySearchScope = 'human' | 'agent' | 'tools'
 
@@ -92,8 +133,62 @@ export interface HistorySearchHit {
   excerpt: string
 }
 
+/** A chat provider a tab can be moved to (PRDCT-4300). */
+export interface ProviderChoice {
+  adapterId: string
+  /** The provider's own name (`claude`, `codex`, a plugin's id). */
+  provider: string
+  /** How the person reads it: Claude, Codex. */
+  label: string
+}
+/** The road a provider switch would take, said before Continue (PRDCT-4300). */
+export type ProviderSwitchPlan = {
+  from: { adapterId: string; provider: string }
+  to: { adapterId: string; provider: string }
+} & ({ road: 'convert'; codexVersion: string } | { road: 'handoff'; reason: string })
+/** What a restart may change about the tab: its account, the message the
+ *  limit rejected sent again, and (PRDCT-4300) the provider it comes back
+ *  on with what the conversation does there. */
+export interface RestartOverridesInput {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+  /** Send the message the limit rejected again on the new account. */
+  resendRejected?: boolean
+  /** A Resume, not a move: refused while the session runs (PRDCT-4193). */
+  onlyIfStopped?: boolean
+  /** The adapter the tab comes back on; absent keeps its provider. */
+  adapterId?: string
+  model?: string
+  /** The conversation to resume in the new provider's storage (a converted thread). */
+  resume?: string
+  /** The first message of the fresh conversation when nothing is resumed (the handoff). */
+  firstMessage?: string
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+}
+
+/** The server a History row's conversation ran on (PRDCT-4321): absent for
+ *  this Mac's own. `online` is whether it answered this list; an offline
+ *  server's rows are its last answer, kept, and cannot be resumed. `held`
+ *  is what the server said of the conversation (a tab runs it, a stopped tab
+ *  holds it, no tab does); null when the row comes from this Mac's own
+ *  record of a server tab and the server's answer does not list it (a
+ *  server older than its History, a tab it ran before it kept one) or the
+ *  server did not answer. */
+export interface HistoryServerRef {
+  id: string
+  name: string
+  online: boolean
+  held: 'running' | 'stopped' | 'closed' | null
+}
+
 export interface HistoryListEntry {
-  source: 'ledger' | 'transcript'
+  /** `server`: a conversation a server's own History listed (PRDCT-4321). */
+  source: 'ledger' | 'transcript' | 'server'
+  server?: HistoryServerRef
+  /** The launch profile a server's conversation ran on (PRDCT-4321). */
+  launchProfileId?: string
   /** Which CLI's conversation this is; resume exists for claude only. */
   provider: 'claude' | 'codex' | 'pi' | 'antigravity'
   agentProvider?: string | null
@@ -110,6 +205,7 @@ export interface HistoryListEntry {
   firstSeenAt: string
   lastSeenAt: string
   closedAt: string | null
+  launch?: HistoryLaunch
   transcript: {
     exists: boolean
     path: string
@@ -235,6 +331,7 @@ export interface ClaveFileGroupData {
     antigravityMode: boolean
     codexMode: boolean
     piMode?: boolean
+    opencodeMode?: boolean
     claudeAgentsMode?: boolean
     dangerousMode: boolean
     prompt?: string
@@ -254,6 +351,34 @@ export interface ClaveFileGroupData {
     /** Bind this terminal's `serverUrl` as the group's web view at launch. */
     groupView?: boolean
   }[]
+  /** The group's routines (ADR 0004): elevated as a whole; mirrors `ClaveRoutine` of the contract. */
+  routines?: ClaveFileRoutineData[]
+}
+
+/** A routine as the file carries it (ADR 0004), its paths absolute once read. */
+export interface ClaveFileRoutineData {
+  name: string
+  schedule: string
+  prompt: string
+  params?: Record<string, string>
+  skill?: string
+  cwd?: string | null
+  agent?: string
+  form?: string
+  model?: string
+  effort?: string
+  thinking?: string
+  provider?: string
+  profile?: string
+  account?: string
+  dangerousMode?: boolean
+  permissionMode?: string
+  icon?: string
+  color?: string
+  catchUp?: boolean
+  timeoutMinutes?: number
+  scope?: string
+  report?: { template: string; schema?: string; width?: number; height?: number }
 }
 
 export type ClaveFileReadResult =
@@ -276,6 +401,7 @@ export interface ClaveFileWriteData {
     antigravityMode: boolean
     codexMode: boolean
     piMode?: boolean
+    opencodeMode?: boolean
     claudeAgentsMode?: boolean
     dangerousMode: boolean
     prompt?: string
@@ -293,6 +419,7 @@ export interface ClaveFileWriteData {
     serverUrl?: string
     groupView?: boolean
   }[]
+  routines?: ClaveFileRoutineData[]
   groups?: Array<{
     name: string
     cwd: string | null
@@ -309,6 +436,7 @@ export interface ClaveFileWriteData {
       antigravityMode: boolean
       codexMode: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       dangerousMode: boolean
       prompt?: string
@@ -326,6 +454,7 @@ export interface ClaveFileWriteData {
       serverUrl?: string
       groupView?: boolean
     }[]
+    routines?: ClaveFileRoutineData[]
   }>
 }
 
@@ -348,8 +477,13 @@ export type SessionLink =
   | { kind: 'group-terminal'; groupId: string; terminalId: string }
   | { kind: 'session-view'; ownerId: string }
   | { kind: 'toolbar'; key: string }
+  /** A routine's run (ADR 0004): the server's, never a sidebar row. */
+  | { kind: 'routine'; routineKey: string; runId: string }
 
 export interface SessionRecord {
+  /** How the session's process talks: a terminal (`pty`) or a chat's
+   *  structured events (`events`). Absent on a record older than the field. */
+  transport?: 'pty' | 'events'
   /** The session is one this process already runs (wave 3): a window asking
    *  for it by id takes it in from the record alone, with no spawn. Absent on
    *  an adoptable record, whose process the window reattaches itself. */
@@ -369,11 +503,13 @@ export interface SessionRecord {
   antigravityMode: boolean
   codexMode: boolean
   piMode: boolean
+  opencodeMode: boolean
   claudeAgentsMode: boolean
   dangerousMode: boolean
   /** Model the session was launched on (claude/codex); re-applied on re-spawn. */
   model?: string
   launchProfileId?: string
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   configDir?: string
@@ -395,6 +531,23 @@ export interface SessionRecord {
    *  view's server, a toolbar button). Absent = a tab. The boot restore puts
    *  a linked session back where it belongs instead of in the sidebar. */
   link?: SessionLink
+  /** The tab whose agent opened this one: the boot restore folds it under
+   *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
+  spawnedBy?: string
+  /** The same tab, nested under it or not (PRDCT-4192): what the name tie-break
+   *  reads after a restart. Absent = a user's tab. */
+  openedBy?: string
+  /** The permission mode and the effort the chat was last running in, as the
+   *  provider reported them (PRDCT-4191); a Resume brings them back. */
+  permissionMode?: string
+  effort?: string
+  /** Which wave or lane the tab works on, its role and its standing
+   *  (PRDCT-4123). Absent = an ordinary tab. */
+  work?: WorkAssignment
+  /** The conversation came from another provider (PRDCT-4300): which, and
+   *  whether it was converted into this provider's storage or carried as a
+   *  handoff message. */
+  continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -579,6 +732,25 @@ export type {
   GitBatchProgressFn
 } from '../shared/git-batch'
 import type { GitBatchProgress } from '../shared/git-batch'
+import type { MicAccessState } from '../shared/mic'
+import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
+import type {
+  OnboardingAgent,
+  InstallableAgentId,
+  OnboardingInstallResult,
+  OnboardingState
+} from '../shared/onboarding'
+import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
+import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
+import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { SpeakRequest, SpeakResult } from '../shared/speech'
+import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
+import type {
+  ServerInstallProgress,
+  ServerInstallResult,
+  ServerInstallStatus,
+  TailnetScan
+} from '../shared/server-setup-types'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -598,14 +770,48 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
-export interface ElectronAPI {
+/** The window's road to the artefacts (PRDCT-4474). */
+export interface ArtefactsAPI {
+  /** Every artefact this window can show: this Mac's own server's, and each connected server's, their session ids as the window keys them. */
+  list(): Promise<Artefact[]>
+  /** Hold the preview of a session's artefact; call again with the holdId before ttlMs runs out. The url is one this window can frame. */
+  hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
+  release(sessionId: string, holdId: string): Promise<void>
+  saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
+  /** The versions the session's artefact keeps, from its running preview (PRDCT-4494). */
+  versions(sessionId: string): Promise<ArtefactVersions>
+  /** The session shows no artefact any more, for every window and every Mac. */
+  close(sessionId: string): Promise<void>
+  onChanged(
+    callback: (change: { sessionId: string; artefact: Artefact | null }) => void
+  ): () => void
+  /** The preview died under its holders: hold again. */
+  onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
+  slidelessState(serverId?: string): Promise<SlidelessState>
+  installSlideless(serverId?: string): Promise<SlidelessState>
+  onSlidelessState(
+    callback: (change: { serverId: string | null; state: SlidelessState }) => void
+  ): () => void
+}
+
+export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
    *  it where the sessions would be (ServerNotice). */
   onServerRefusal: (
     callback: (refusal: { capability: string; message: string } | null) => void
   ) => () => void
+  /** The window's server connection opened, or came back after a loss: the
+   *  moment to ask again for a read that was lost (PRDCT-3526). Never heard
+   *  by a window on IPC for good. */
+  onServerConnected: (callback: () => void) => () => void
   sessionsList: () => Promise<Session[]>
+  /** Which tab opened which, as main keeps it across a window reload
+   *  (`sessions/lineage.ts`, PRDCT-4193): child session id or key → opener
+   *  id. The window's name tie-break reads it after a reload, when its own
+   *  memory of the opens is gone. */
+  lineageParents: () => Promise<Record<string, string>>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>
   /** Release this view's subscription, then remove its stream/exit listeners. */
@@ -615,16 +821,45 @@ export interface ElectronAPI {
    *  it; returns the updated record. */
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
+  // ── PRDCT-4300: provider then model, and the conversation moves ──
+  /** The chat providers this Mac can run a tab on: the built-in adapters
+   *  present in this build (Claude, Codex, the echo fixture when enabled). */
+  adaptersList: () => Promise<ProviderChoice[]>
+  /** A provider's models with no session of it open: asked of the CLI once
+   *  per boot (Claude's initialize on a short-lived process, Codex's
+   *  model/list on its app-server) and cached. */
+  adaptersModels: (adapterId: string, cwd: string) => Promise<ModelOption[]>
+  /** Which road a move of this tab to `adapterId` would take, before any
+   *  byte is written: convert through the session bridge, or a handoff
+   *  message, with the reason in the person's words. */
+  providerSwitchPlan: (sessionId: string, adapterId: string) => Promise<ProviderSwitchPlan>
+  /** Convert this tab's conversation into a Codex thread in the account's
+   *  home and read it back through the real Codex; refused with a reason
+   *  when the thread did not come back whole. */
+  providerSwitchConvert: (
+    sessionId: string,
+    target: { codexAccountId?: string; model?: string }
+  ) => Promise<{ ok: true; threadId: string } | { ok: false; reason: string }>
+  /** Write the full conversation beside the work (`<userData>/handoffs/<id>.md`)
+   *  and read the worktree's `git diff --stat`, for the handoff message. */
+  providerSwitchHandoff: (
+    sessionId: string,
+    tape: string
+  ) => Promise<{ path: string; diffStat: string | null }>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
+  /** One control request to the session's provider, from the closed set the
+   *  native panels send (the MCP servers, the plugins); answers the provider's
+   *  own response. */
+  sessionsControl: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
   /** A resumed conversation's past: the page ending at `before` (the end when
    *  absent), oldest first, with what to ask for the page older than it. */
   sessionsHistory: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
   sessionsFiles: {
-    prepare(sessionId: string, source: AttachmentSource): Promise<Attachment>
+    prepare(sessionId: string, source: AttachmentSource): Promise<FileAttachment>
     pick(): Promise<string[]>
-    preview(file: Attachment): Promise<AttachmentPreview>
-    open(file: Attachment): Promise<void>
+    preview(file: FileAttachment): Promise<AttachmentPreview>
+    open(file: FileAttachment): Promise<void>
   }
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
   onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
@@ -650,6 +885,18 @@ export interface ElectronAPI {
   pluginsLink: (folder?: string) => Promise<string | null>
   pluginsRemove: (id: string) => Promise<void>
   pluginsCommand: (id: string, command: string) => Promise<void>
+  /** Run a plugin's action on a target; answers the page it opens, if any. */
+  pluginsInvokeAction: (
+    pluginId: string,
+    actionId: string,
+    target: import('@clave/plugin-sdk').PluginActionTarget
+  ) => Promise<import('@clave/plugin-sdk').PluginActionResult>
+  /** The rows a plugin's action shows for a target before it runs. */
+  pluginsPreviewAction: (
+    pluginId: string,
+    actionId: string,
+    target: import('@clave/plugin-sdk').PluginActionTarget
+  ) => Promise<import('@clave/plugin-sdk').PluginActionPreviewRow[]>
   pluginsPanel: (id: string, panel: string) => Promise<{ url: string }>
   /** Report the focused session to the plugin host, which pushes it to plugins as
    *  `context.changed`. Null clears this window's report. */
@@ -674,6 +921,28 @@ export interface ElectronAPI {
     family: LauncherFamily,
     profileId: string | null
   ) => Promise<LaunchProfilePreferences>
+  /** This Mac's helpers (PRDCT-4330): every declared one with its switch,
+   *  model and account; a write answers the whole list. A server's are
+   *  `fleetHelpers` / `fleetHelperSet`. */
+  helpersList: () => Promise<HelperPreference[]>
+  helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's integrations (PRDCT-4410): the ElevenLabs key sealed on the
+   *  machine, its account check, the voice and model. Every write answers
+   *  the status, which never carries the key. A server's are
+   *  `fleetIntegrations` and the `fleetElevenLabs*` members. */
+  integrationsRead: () => Promise<IntegrationsStatus>
+  elevenLabsSetKey: (apiKey: string) => Promise<IntegrationsStatus>
+  elevenLabsCheck: () => Promise<IntegrationsStatus>
+  elevenLabsRemove: () => Promise<IntegrationsStatus>
+  elevenLabsSetVoice: (
+    voiceId: string,
+    voiceName: string,
+    modelId: ElevenLabsModelId | undefined
+  ) => Promise<IntegrationsStatus>
+  elevenLabsVoices: () => Promise<{ voices: ElevenLabsVoice[] }>
+  /** A voice's preview sample, fetched by this Mac's server (PRDCT-4411).
+   *  A failure is a result, never a rejection. */
+  elevenLabsPreview: (voiceId: string) => Promise<SpeakResult>
   spawnSession: (
     cwd: string,
     options?: {
@@ -683,11 +952,13 @@ export interface ElectronAPI {
       antigravityMode?: boolean
       codexMode?: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       resumeSessionId?: string
       claudeSessionId?: string
       piSessionId?: string
       launchProfileId?: string
+      launchProfile?: LaunchProfile
       piProvider?: string
       piThinking?: PiThinkingLevel
       initialCommand?: string
@@ -702,10 +973,20 @@ export interface ElectronAPI {
       /** The Codex account (ADR 0002); codex mode only. */
       codexAccountId?: string
       codexAccountLabel?: string
+      /** The mode a Claude session asks under short of bypass, and the
+       *  reasoning effort (PRDCT-4191/4236): a resume brings them back. */
+      permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+      effort?: string
+      /** Bypass kept reachable to a session resumed in another mode. */
+      allowDangerous?: boolean
       workspaceId?: string
       /** Spawning the hidden half of something else — persisted on the record
        *  so the next launch restores it as that half, not as a tab. */
       link?: SessionLink
+      /** The tab whose agent opened this one — persisted on the record. */
+      spawnedBy?: string
+      /** The same tab, nested or not (PRDCT-4192) — persisted on the record. */
+      openedBy?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void
@@ -722,12 +1003,19 @@ export interface ElectronAPI {
     id: string,
     view: { url: string; title?: string; command?: string; cwd?: string } | null
   ) => Promise<void>
+  /** PRDCT-4123: one change to the tab's work assignment, through the
+   *  server; answers every record rewritten, the tab's own first, and the
+   *  names an accepted handover gave. */
+  sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>
+  /** Whether the server holds a record this window would bring back, asked
+   *  through main so the window does not connect to find out (PRDCT-3527). */
+  serverHasRestoreRecords: () => Promise<boolean>
   /** Whether the boot's `listSessionRecords()` read is every adoptable record
    *  (inside the app) or the server's come after it through the top-up
    *  (attached, or while main has named no server yet). The boot's layout
@@ -741,6 +1029,11 @@ export interface ElectronAPI {
   ackRehomed: (sessionIds: string[]) => void
   // ── Wave 4, lane D: what the served agent tools did to a session (push only) ──
   onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) => () => void
+  /** PRDCT-4123: a tab's work assignment changed on its record; null when it
+   *  belongs to no wave or lane any more. */
+  onSessionWorkChanged: (
+    callback: (payload: { id: string; work: WorkAssignment | null }) => void
+  ) => () => void
   onSessionPageChanged: (
     callback: (payload: {
       id: string
@@ -750,10 +1043,13 @@ export interface ElectronAPI {
   ) => () => void
   onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) => () => void
   onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
+  /** The session runs on `model` now, as its provider said it (PRDCT-4256). */
+  onSessionModelChanged: (callback: (payload: { id: string; model: string }) => void) => () => void
   onSessionRestarted: (
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -767,7 +1063,14 @@ export interface ElectronAPI {
   ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
-  onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
+  /** A chat session's CLI reported its account's limit and which cap it hit
+   *  (ADR 0002, PRDCT-4302); both transports. */
+  onSessionLimitReported: (
+    callback: (payload: { id: string; report: LimitReport }) => void
+  ) => () => void
+  /** The account served that session a turn again after its limit report
+   *  (PRDCT-4415): the report is closed; both transports. */
+  onSessionLimitCleared: (callback: (payload: { id: string }) => void) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (
@@ -822,12 +1125,18 @@ export interface ElectronAPI {
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
+  /** The ledger told what a closing tab runs on, from its record, before the
+   *  record goes (PRDCT-4236): awaited before the kill, never a reason to fail it. */
+  historyRestamp: (sessionId: string) => Promise<void>
   historyList: () => Promise<{ entries: HistoryListEntry[]; skippedLines: number }>
-  /** The message trail's read: a live tab's conversation as turns. */
+  /** The message trail's read: a live tab's conversation as turns.
+   *  `configDir` is the tab's own account directory, when it ran with one:
+   *  its transcript lives there rather than under `~/.claude`. */
   historyConversation: (
     cwd: string,
     claudeSessionId: string,
-    provider?: 'claude' | 'pi'
+    provider?: 'claude' | 'pi',
+    configDir?: string
   ) => Promise<{ exists: boolean; turns: ConversationTurn[] }>
   /** Click-to-scroll: tmux-backed tabs are driven in main (`tmux: true`);
    *  plain ones answer `tmux: false` and the caller scans xterm's buffer. */
@@ -855,7 +1164,44 @@ export interface ElectronAPI {
   secretSubmit: (id: string, secret: string) => Promise<SecretRequestView>
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
+  /**
+   * A session's HTML artefact (PRDCT-4474), on the server the session runs
+   * on: this Mac's own server for its own sessions, a connected server for
+   * its sessions, their ids keyed as the window keys them.
+   */
+  artefacts: ArtefactsAPI
   linkedDocuments: LinkedDocumentsAPI
+  // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
+  routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
+  routinesRunNow: (key: string) => Promise<import('@clave/contract/routines/model').RoutineRun>
+  routinesDismiss: (runId: string) => Promise<void>
+  /** The run's conversation continued: in the panel (the session re-homed to this window) or as a tab (a new session this window places). */
+  routinesOpenDiscussion: (runId: string, mode: 'panel' | 'tab') => Promise<{ sessionId: string }>
+  // ── PRDCT-4242: the routines the server keeps in its own store ──
+  routinesCreate: (
+    input: import('@clave/contract/routines/model').RoutineCreateInput
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesUpdate: (
+    key: string,
+    patch: import('@clave/contract/routines/model').RoutinePatch
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  routinesDelete: (key: string) => Promise<void>
+  routinesPause: (
+    key: string,
+    paused: boolean
+  ) => Promise<import('@clave/contract/routines/model').RoutineView>
+  /** This Mac's own name as a server (PRDCT-4241): what a routine's runsOn places it by. */
+  routinesOwnName: () => Promise<string>
+  /** Set this Mac's own name as a server; answers the name in force. */
+  routinesSetOwnName: (name: string) => Promise<string>
+  onRoutinesChanged: (callback: () => void) => () => void
+  /** A connected server's run deck written under this Mac's user data and
+   *  registered with the preview protocol (PRDCT-4149): its `clave-preview://` URL. */
+  routinesCacheRemoteDeck: (
+    serverId: string,
+    runId: string,
+    html: string
+  ) => Promise<{ url: string }>
   copyOfferList: () => Promise<CopyOfferView[]>
   copyOfferCopy: (id: string) => Promise<CopyOfferView>
   copyOfferDismiss: (id: string) => Promise<void>
@@ -873,7 +1219,38 @@ export interface ElectronAPI {
     sessionName: string,
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => Promise<{ success: boolean; error?: string }>
+  /** Ask where to save a conversation written as Markdown, and write it.
+   *  `error: 'cancelled'` when the reader closed the dialog. */
+  saveTranscript: (
+    markdown: string,
+    fileName: string
+  ) => Promise<{ success: boolean; error?: string; path?: string }>
   openExternal: (url: string) => Promise<void>
+  /** The exchange timeline's digest: what the reader needs from a run of
+   *  messages other tabs sent. A failure is a result, never a rejection. */
+  exchangeDigest: (request: DigestRequest) => Promise<DigestResult>
+  /** Every digest already read for a tab, by the key of its messages. */
+  exchangeDigestsOf: (sessionId: string) => Promise<Record<string, DigestDone>>
+  /** The title of a card of the agent's working notes, and whether a note
+   *  needs the reader (PRDCT-4212). A failure is a result, never a rejection. */
+  workDigest: (request: WorkDigestRequest) => Promise<WorkDigestResult>
+  /** Every work digest already read for a tab, by the key of its notes. */
+  workDigestsOf: (sessionId: string) => Promise<Record<string, WorkDigestDone>>
+  /** Folio: a finished answer written for the ear, to be read aloud, keyed
+   *  by its clipped markdown (`spokenKey`). A failure is a result, never a
+   *  rejection. */
+  spokenRendering: (request: SpokenRequest) => Promise<SpokenResult>
+  /** Every spoken rendering already read for a tab, by key. */
+  spokenRenderingsOf: (sessionId: string) => Promise<Record<string, SpokenDone>>
+  /** Folio: the title of a page, from the reader's clipped message
+   *  (`pageTitleKey`). A failure is a result, never a rejection. */
+  /** Folio: a part of a page's spoken rendering in the ElevenLabs voice of
+   *  the server the tab runs on (PRDCT-4411). A failure is a result with its
+   *  reason (no key, no voice, refused, credits spent…), never a rejection. */
+  speakText: (request: SpeakRequest) => Promise<SpeakResult>
+  pageTitle: (request: PageTitleRequest) => Promise<PageTitleResult>
+  /** Every page title already read for a tab, by key. */
+  pageTitlesOf: (sessionId: string) => Promise<Record<string, PageTitleDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>
@@ -885,17 +1262,39 @@ export interface ElectronAPI {
   /** HTTP liveness probe (any HTTP response = true). Stricter than checkPort:
    *  proves a server answers, not just that something bound the port. */
   probeServerUrl: (url: string, timeoutMs?: number) => Promise<boolean>
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  /** The tailnet's machines and which of them answer as a Clave server. */
+  serverSetupScan: () => Promise<TailnetScan>
+  /** What this Mac has installed as a server, and whether it runs. */
+  serverSetupInstallStatus: () => Promise<ServerInstallStatus>
+  /** Installs (or updates) this Mac's server and saves it as a connection;
+   *  a second call while one runs answers the same run. */
+  serverSetupInstall: () => Promise<ServerInstallResult>
+  /** Puts this Mac's server token on the clipboard; the token never crosses to the window. */
+  serverSetupCopyToken: () => Promise<void>
+  onServerSetupProgress: (callback: (progress: ServerInstallProgress) => void) => () => void
   openPath: (filePath: string) => Promise<string>
   /** Register an HTML file with the clave-preview protocol; returns the URL an
    *  in-app preview iframe loads it from (assets scoped to the file's directory). */
   registerHtmlPreview: (filePath: string) => Promise<{ url: string }>
   openFolderDialog: (defaultPath?: string) => Promise<string | null>
+  /** A native file picker; the chosen path, or null when the person cancelled (PRDCT-4157). */
+  openFileDialog: (defaultPath?: string) => Promise<string | null>
   onUpdateAvailable: (callback: (version: string) => void) => () => void
   onUpdateDownloaded: (callback: (version: string) => void) => () => void
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
   onDownloadError: (callback: (message: string) => void) => () => void
   onUpdaterState: (callback: (state: UpdaterState) => void) => () => void
   onOpenSettingsSection: (callback: (section: string) => void) => () => void
+  /** The menu's "Debug Clave…" asks this window to open its triage. */
+  onOpenTriage: (callback: () => void) => () => void
+  onboardingGetState: () => Promise<OnboardingState>
+  onboardingAgents: (fresh?: boolean) => Promise<OnboardingAgent[]>
+  onboardingInstall: (id: InstallableAgentId) => Promise<OnboardingInstallResult>
+  onboardingComplete: () => Promise<void>
+  onboardingSetChatView: (viewId: string) => Promise<void>
+  onboardingCreateFolder: (parent: string, name: string) => Promise<string>
+  onOpenOnboarding: (callback: () => void) => () => void
   onMissionControlEntered: (callback: () => void) => () => void
   onMissionControlExited: (callback: () => void) => () => void
   missionControlGetEnabled: () => Promise<boolean>
@@ -949,14 +1348,21 @@ export interface ElectronAPI {
     baseRevision?: number
   ) => Promise<SidebarSaveResult>
   onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void) => () => void
-  workspaceLoad: () => Promise<WorkspaceStateFile>
+  // The state and every write result carry the state's stamp (wave 5,
+  // lane A, PRDCT-3405): the window drops a fold that is not newer than the
+  // last stamp it loaded, wrote or took in.
+  // ── Paired workspaces (PRDCT-4151) ──
+  serverPairingsLoad: () => Promise<ServerPairings>
+  serverPairingsChange: (change: ServerPairingChange) => Promise<ServerPairings>
+  onServerPairingsChanged: (callback: (state: ServerPairings) => void) => () => void
+  workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
-  ) => Promise<{ ok: true } | { ok: false; reason: 'invalid' }>
+  ) => Promise<WorkspaceWritten | { ok: false; reason: 'invalid' }>
   workspaceUpdatePins: (scope: string | null | 'all', pins: unknown[]) => Promise<WriteResult>
   workspaceSetLastActive: (workspaceId: string | null) => Promise<{ ok: true }>
   onWorkspaceStateChanged: (
-    callback: (state: { workspaces: Workspace[]; pins: unknown[] }) => void
+    callback: (state: { workspaces: Workspace[]; pins: unknown[] } & WorkspaceStamp) => void
   ) => () => void
   windowIdentity: () => Promise<WindowIdentity | null>
   onWindowIdentityChanged: (callback: (identity: WindowIdentity) => void) => () => void
@@ -1021,25 +1427,32 @@ export interface ElectronAPI {
    *  `resumed` false means it started fresh (nothing found to resume). */
   restartSession: (
     id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-    }
-  ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
+    overrides: RestartOverridesInput,
+    requestId?: string
+  ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
+  /** The `origin` remote of a checkout, as git keeps it, null without one;
+   *  a server's checkout answers through its own git (PRDCT-4151). */
+  gitRemoteUrl: (cwd: string) => Promise<string | null>
   getGitStatusBatch: (paths: string[]) => Promise<Array<{ path: string; status: GitStatusResult }>>
   gitFetch: (cwd: string) => Promise<void>
   gitFetchBatch: (paths: string[]) => Promise<void>
+  /** Watch the repos a panel shows (PRDCT-3775); resolves with the ones that
+   *  are watched — the rest are the panel's to poll. The set replaces the
+   *  subscriber's previous one. */
+  gitWatchRepos: (subscriberId: string, paths: string[]) => Promise<string[]>
+  gitUnwatchRepos: (subscriberId: string) => Promise<void>
+  /** A burst of changes in watched repos, one entry per repo that changed. */
+  onGitReposChanged: (callback: (repos: string[]) => void) => () => void
   discoverGitRepos: (
     cwd: string,
     force?: boolean
-  ) => Promise<{ repos: Array<{ name: string; path: string }>; truncated: boolean }>
+  ) => Promise<{
+    repos: Array<{ name: string; path: string; worktreeOf?: string | null }>
+    truncated: boolean
+  }>
   gitStage: (cwd: string, files: string[]) => Promise<void>
   gitUnstage: (cwd: string, files: string[]) => Promise<void>
   gitCommit: (cwd: string, message: string) => Promise<GitCommitResult>
@@ -1171,6 +1584,19 @@ export interface ElectronAPI {
   onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
+  onRecommendedAccountChanged: (callback: (enabled: boolean) => void) => () => void
+  launchSettingsGet: () => Promise<import('../shared/harness').LaunchSettings>
+  launchSettingsSet: (
+    patch: import('../shared/harness').LaunchSettingsPatch
+  ) => Promise<import('../shared/harness').LaunchSettings>
+  onLaunchSettingsChanged: (
+    callback: (settings: import('../shared/harness').LaunchSettings) => void
+  ) => () => void
+  launchRememberedModel: (adapterId: string) => Promise<string | null>
+  getMicAccess: () => Promise<MicAccessState>
+  requestMicAccess: () => Promise<MicAccessState>
+  openMicPrivacySettings: () => Promise<void>
+  openSoundSettings: () => Promise<void>
   keymapsLoad: () => Promise<unknown>
   keymapsSave: (value: unknown) => Promise<unknown>
   keymapsImport: () => Promise<string | null>
@@ -1212,6 +1638,12 @@ export interface ElectronAPI {
     email: string
     message?: string
   }) => Promise<{ ok: true } | { ok: false; error: string }>
+  /** Collect a read-only snapshot of this running app and write the private
+   *  triage bundle (context, playbook, snapshot). Never rejects for a source
+   *  that fails: the failure is in the snapshot and in `warnings`. */
+  triagePrepare: () => Promise<TriagePrepareResult>
+  /** The same snapshot, collected without writing anything. */
+  triageSnapshot: () => Promise<TriageSnapshot>
 
   // ── Lane C: settings behind ports ──
 

@@ -75,8 +75,9 @@ it('fans out through production IPC and detaches the consumer when its WebConten
     send: vi.fn()
   })
   const event = { sender }
-  expect(mocks.handlers.get('sessions:list')(event)).toContainEqual(session)
-  expect(mocks.handlers.get('sessions:subscribe')(event, id)).toEqual(session)
+  // The manager stamps the first process under an id as run 1 (PRDCT-4191).
+  expect(mocks.handlers.get('sessions:list')(event)).toContainEqual({ ...session, run: 1 })
+  expect(mocks.handlers.get('sessions:subscribe')(event, id)).toEqual({ ...session, run: 1 })
   const local = vi.fn()
   sessionManager.subscribe(id, local)
   mocks.handlers.get('sessions:write')(event, id, { type: 'user_message', text: 'hello' })
@@ -198,7 +199,7 @@ it('keeps subscriptions after ready errors and retries until one successful call
     send: vi.fn()
   })
   const subscribe = (): unknown => mocks.handlers.get('sessions:subscribe')({ sender }, id)
-  expect(subscribe()).toEqual(record)
+  expect(subscribe()).toEqual({ ...record, run: 1 })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
     event: {
@@ -337,7 +338,7 @@ it('prepares attachments at the write: the provider gets references and images, 
     attachments: [reference, shot]
   })
   const reply = events.find((e) => e.type === 'assistant_text') as { delta: string }
-  expect(reply.delta).toContain('read\n\nAttached local files')
+  expect(reply.delta).toContain('read\n\nAttachments, by the marker')
   expect(reply.delta).toContain(JSON.stringify({ name: 'notes.txt', path: notes }))
   expect(reply.delta).toContain('(1 image received)')
   expect(reply.delta).not.toContain('forged')
@@ -478,6 +479,36 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   mocks.keyForWindow.mockReturnValue('other-window')
   expect(() => history(event, id)).toThrow('another window')
   mocks.keyForWindow.mockReturnValue('window')
+})
+
+it('passes a control request the schema names and refuses any other at the boundary', async () => {
+  const id = `ipc-control-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  const control = vi.fn(async () => ({ mcpServers: [] }))
+  sessionManager.adopt(session, adapter.prepare(session), Object.assign(adapter, { control }))
+  const event = { sender: { id: 103 } }
+  const handler = mocks.handlers.get('sessions:control')
+  await expect(handler(event, id, { type: 'mcp_status' })).resolves.toEqual({ mcpServers: [] })
+  expect(control).toHaveBeenCalledExactlyOnceWith(expect.anything(), { type: 'mcp_status' })
+  // The permission mode travels on the same CLI channel; it must not pass here.
+  expect(() =>
+    handler(event, id, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  ).toThrow()
+  expect(() => handler(event, id, { type: 'mcp_reconnect', server: '' })).toThrow()
+  expect(control).toHaveBeenCalledTimes(1)
+  sessionManager.kill(id)
+  sessionManager.forget(id)
 })
 
 it('remembers a composer model pick for the next chat, only once the session took it', async () => {

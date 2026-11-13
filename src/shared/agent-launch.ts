@@ -1,6 +1,7 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
+import { HARNESS_BY_ID } from './harness'
 
-export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi'
+export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 export type AgentKind = LauncherFamily | 'claude-agents'
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -52,7 +53,22 @@ export const BUILT_IN_LAUNCH_PROFILES: readonly LaunchProfile[] = [
     additionalArgs: [],
     builtIn: true
   },
-  { id: 'builtin-pi', name: 'Pi', family: 'pi', command: ['pi'], additionalArgs: [], builtIn: true }
+  {
+    id: 'builtin-pi',
+    name: 'Pi',
+    family: 'pi',
+    command: ['pi'],
+    additionalArgs: [],
+    builtIn: true
+  },
+  {
+    id: 'builtin-opencode',
+    name: 'OpenCode',
+    family: 'opencode',
+    command: ['opencode'],
+    additionalArgs: [],
+    builtIn: true
+  }
 ]
 
 export const DEFAULT_LAUNCH_PROFILE_PREFERENCES: LaunchProfilePreferences = {
@@ -62,7 +78,7 @@ export const DEFAULT_LAUNCH_PROFILE_PREFERENCES: LaunchProfilePreferences = {
   workspaceOverrides: {}
 }
 
-const FAMILY_VALUES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi'])
+const FAMILY_VALUES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi', 'opencode'])
 const THINKING_VALUES = new Set<PiThinkingLevel>([
   'off',
   'minimal',
@@ -105,7 +121,10 @@ const MANAGED_ARGS: Record<LauncherFamily, Set<string>> = {
     '--session-dir',
     '--no-session',
     '--mode'
-  ])
+  ]),
+  // OpenCode 2's TUI: the session it continues and the prompt it starts on.
+  // `--auto` stays a profile's own choice, as Codex's `--yolo` does.
+  opencode: new Set(['--session', '-s', '--prompt'])
 }
 
 function cleanText(value: unknown, maxLength: number): string | undefined {
@@ -139,17 +158,17 @@ function hasManagedArg(family: LauncherFamily, args: string[]): boolean {
   )
 }
 
-function sanitizeProfile(value: unknown): LaunchProfile | null {
+function sanitizeProfile(value: unknown, carried = false): LaunchProfile | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
-  const id = cleanText(raw.id, 128)
+  const id = cleanText(raw.id, carried ? 140 : 128)
   const name = cleanText(raw.name, 100)
   const family = raw.family
   const command = cleanTokens(raw.command, false)
   const additionalArgs = cleanTokens(raw.additionalArgs, true)
   if (
     !id ||
-    !PROFILE_ID_RE.test(id) ||
+    !(PROFILE_ID_RE.test(id) || (carried && chatProfileSource(id))) ||
     !name ||
     !FAMILY_VALUES.has(family as LauncherFamily) ||
     !command ||
@@ -157,8 +176,11 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
   ) {
     return null
   }
+  const chat = carried ? chatProfileSource(id) : undefined
+  if (chat && chat.family !== family) return null
   const typedFamily = family as LauncherFamily
   if (hasManagedArg(typedFamily, command) || hasManagedArg(typedFamily, additionalArgs)) return null
+  const sourceProfileId = carried ? cleanText(raw.sourceProfileId, 128) : undefined
   const piRaw = raw.pi && typeof raw.pi === 'object' ? (raw.pi as Record<string, unknown>) : null
   const provider = piRaw ? cleanText(piRaw.provider, 200) : undefined
   const model = piRaw ? cleanText(piRaw.model, 200) : undefined
@@ -172,6 +194,7 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
     family: typedFamily,
     command,
     additionalArgs,
+    ...(sourceProfileId && PROFILE_ID_RE.test(sourceProfileId) ? { sourceProfileId } : {}),
     ...(typedFamily === 'pi' && (provider || model || thinking)
       ? {
           pi: {
@@ -182,6 +205,11 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
         }
       : {})
   }
+}
+
+/** A start may carry a Mac's custom profile or its derived chat variant. */
+export function sanitizeCarriedLaunchProfile(raw: unknown): LaunchProfile | null {
+  return sanitizeProfile(raw, true)
 }
 
 function cleanDefaults(value: unknown): Partial<Record<LauncherFamily, string>> {
@@ -201,7 +229,7 @@ export function sanitizeLaunchProfilePreferences(raw: unknown): LaunchProfilePre
   const value = raw as Record<string, unknown>
   const customProfiles = Array.isArray(value.customProfiles)
     ? value.customProfiles
-        .map(sanitizeProfile)
+        .map((profile) => sanitizeProfile(profile))
         .filter((profile): profile is LaunchProfile => profile !== null)
     : []
   const seenIds = new Set(BUILT_IN_LAUNCH_PROFILES.map((profile) => profile.id))
@@ -261,6 +289,14 @@ export function buildAgentArgv(input: {
   claudeSettings?: string
   mcpConfigPath?: string
   piStateExtensionPath?: string
+  // ── ADR 0004: a routine run's own flags ──
+  effort?: string
+  /** The rung of the harness's own ladder the launch starts on (PRDCT-4424):
+   *  Claude's `--permission-mode`, Codex's `--sandbox`, Antigravity's
+   *  `--mode`; Pi has none. `dangerousMode` wins over it. */
+  permissionMode?: string
+  pluginDir?: string
+  appendSystemPrompt?: string
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -273,25 +309,75 @@ export function buildAgentArgv(input: {
   }
   const argv = [...input.profile.command, ...input.profile.additionalArgs]
   if (input.kind === 'claude-agents') return [...argv, 'agents']
+  // Bypass is the skip flag, never a mode passed as such: a rung of
+  // `bypassPermissions` launches as `dangerousMode` does.
+  const dangerous =
+    input.dangerousMode === true ||
+    (input.kind === 'claude' &&
+      input.permissionMode === 'bypassPermissions' &&
+      !profileSetsPermissions(input.profile))
   if (input.kind === 'claude') {
     if (input.resumeSessionId) argv.push('--resume', input.resumeSessionId)
     else if (input.sessionId) argv.push('--session-id', input.sessionId)
-    if (input.dangerousMode) argv.push('--dangerously-skip-permissions')
+    if (dangerous) argv.push('--dangerously-skip-permissions')
     if (input.model) argv.push('--model', input.model)
     if (input.claudeSettings) argv.push('--settings', input.claudeSettings)
     if (input.mcpConfigPath) argv.push('--mcp-config', input.mcpConfigPath)
+    // ADR 0004: a routine run's own flags. The CLI names the ask-every-time
+    // mode `manual` on its command line; `default` is its running name.
+    if (input.effort) argv.push('--effort', input.effort)
+    // A profile's own `--permission-mode` is a deliberate choice and wins
+    // over the person's default rung (verifier, round 1).
+    if (
+      input.permissionMode &&
+      !dangerous &&
+      CLAUDE_MODES.has(input.permissionMode) &&
+      input.permissionMode !== 'bypassPermissions' &&
+      !profileSetsPermissions(input.profile)
+    )
+      argv.push(
+        '--permission-mode',
+        input.permissionMode === 'default' ? 'manual' : input.permissionMode
+      )
+    if (input.pluginDir) argv.push('--plugin-dir', input.pluginDir)
+    if (input.appendSystemPrompt) argv.push('--append-system-prompt', input.appendSystemPrompt)
   } else if (input.kind === 'codex') {
     // A resumed thread goes through the `resume` subcommand, which takes the
     // long spelling of the approvals flag and the thread id last.
     if (input.resumeSessionId) argv.push('resume')
     if (input.dangerousMode) {
       argv.push(input.resumeSessionId ? '--dangerously-bypass-approvals-and-sandbox' : '--yolo')
+    } else if (
+      isCodexRung(input.permissionMode) &&
+      Object.keys(codexProfilePolicy(input.profile)).length === 0
+    ) {
+      // A profile's own sandbox or approval flags win over the default rung.
+      // The person's rung (PRDCT-4424): the sandbox, and for full access the
+      // approvals off too, which is what the rung promises. Before the thread
+      // id on a resume, as the approvals flag is.
+      argv.push('--sandbox', input.permissionMode)
+      if (input.permissionMode === 'danger-full-access') argv.push('--ask-for-approval', 'never')
     }
     if (input.model) argv.push('-m', input.model)
     argv.push('-c', CODEX_TITLE_CONFIG)
     if (input.resumeSessionId) argv.push(input.resumeSessionId)
   } else if (input.kind === 'antigravity') {
+    if (
+      input.permissionMode &&
+      HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === input.permissionMode) &&
+      !profileSetsPermissions(input.profile)
+    )
+      argv.push('--mode', input.permissionMode)
     if (input.initialPrompt) argv.push('-i', input.initialPrompt)
+    return argv
+  } else if (input.kind === 'opencode') {
+    // OpenCode 2's TUI (`opencode --help`, v2.2.7): `--session <id>` continues
+    // a session, `--auto` approves what its config does not deny, `--prompt`
+    // starts on a prompt. It takes no model: that is `opencode run`'s flag.
+    const tokens = [...input.profile.command, ...input.profile.additionalArgs]
+    if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
+    if (input.dangerousMode && !tokens.includes('--auto')) argv.push('--auto')
+    if (input.initialPrompt) argv.push('--prompt', input.initialPrompt)
     return argv
   } else {
     const pi = input.profile.pi
@@ -318,6 +404,27 @@ export interface CodexThreadPolicy {
 }
 const CODEX_SANDBOX_VALUES = new Set<string>(['read-only', 'workspace-write', 'danger-full-access'])
 const CODEX_APPROVAL_VALUES = new Set<string>(['untrusted', 'on-request', 'never'])
+
+/** Is this a rung of Codex's ladder (`shared/harness.ts`): its sandbox modes. */
+export function isCodexRung(value: unknown): value is CodexSandboxMode {
+  return typeof value === 'string' && CODEX_SANDBOX_VALUES.has(value)
+}
+
+/**
+ * The thread settings a Codex rung stands for (PRDCT-4424), the same three
+ * presets Codex's own TUI offers: read only and workspace ask on request,
+ * full access never asks. A chat thread takes them as thread/start
+ * parameters, where a terminal takes `--sandbox`. Undefined for anything
+ * that is not a rung.
+ */
+export function codexRungPolicy(rung: unknown): CodexThreadPolicy | undefined {
+  if (!isCodexRung(rung)) return undefined
+  return {
+    sandbox: rung,
+    approvalPolicy: rung === 'danger-full-access' ? 'never' : 'on-request',
+    approvalsReviewer: 'user'
+  }
+}
 
 /**
  * The permissions a Codex profile's own flags ask for, as a chat thread's
@@ -375,6 +482,27 @@ export function claudeProfilePermissions(profile: LaunchProfile): {
   }
 }
 
+/** Whether a profile's own flags set its permissions (Claude's
+ *  `--permission-mode`, Codex's sandbox or approval flags): a saved profile
+ *  is a deliberate choice, and the person's default rung (Settings →
+ *  Harnesses) never overrides it, on any road (verifier, rounds 1 and 2). */
+export function profileSetsPermissions(profile: LaunchProfile): boolean {
+  if (profile.family === 'claude') return claudeProfilePermissions(profile).mode !== undefined
+  if (profile.family === 'codex') return Object.keys(codexProfilePolicy(profile)).length > 0
+  if (profile.family === 'antigravity')
+    return [...profile.command, ...profile.additionalArgs].some(
+      (token) => token === '--mode' || token.startsWith('--mode=')
+    )
+  return false
+}
+
+/** Claude's `--permission-mode` values: the ladder's rungs and `dontAsk`
+ *  (a routine's own, ADR 0004). Anything else is never passed to the CLI. */
+const CLAUDE_MODES = new Set<string>([
+  ...HARNESS_BY_ID.claude.permissionRungs.map((rung) => rung.id),
+  'dontAsk'
+])
+
 export const AGENT_CAPABILITIES = {
   claude: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'supported' },
   antigravity: {
@@ -383,5 +511,10 @@ export const AGENT_CAPABILITIES = {
     blockedState: 'unsupported'
   },
   codex: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'unsupported' },
-  pi: { claveTools: 'unsupported', exchangeCapture: 'unsupported', blockedState: 'unsupported' }
+  pi: { claveTools: 'unsupported', exchangeCapture: 'unsupported', blockedState: 'unsupported' },
+  opencode: {
+    claveTools: 'unsupported',
+    exchangeCapture: 'unsupported',
+    blockedState: 'unsupported'
+  }
 } as const

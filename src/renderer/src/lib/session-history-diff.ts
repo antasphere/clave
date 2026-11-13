@@ -1,6 +1,12 @@
 import type { Session, SessionGroup } from '../store/session-types'
 import { sessionMode, groupOfSession } from './exchange-capture'
-import type { HistoryLedgerRow } from '../../../preload/index.d'
+import type { HistoryLedgerRow, HistoryListEntry } from '../../../preload/index.d'
+import {
+  accountOf,
+  LAUNCH_KEYS,
+  resumeLaunch,
+  type ResumeLaunch
+} from '../../../shared/runtime-choices'
 import { entryInGroup, type GroupRef } from '../../../shared/history-group-match'
 import { encodeProjectDir } from '../../../shared/project-dir'
 
@@ -56,7 +62,15 @@ export class SessionHistoryDiff {
     for (const [id, prev] of this.stamped) {
       if (seen.has(id)) continue
       this.stamped.delete(id)
-      this.send({ ...prev.row, kind: 'closed', ts: this.now() })
+      // The closed row is the placement's last word, not the launch's: the
+      // launch the renderer knows is the flag the tab started with, and a
+      // row stamped from the record at the close (`historyRestamp`) knows
+      // the mode it moved to; a copy of the launch flag here would write
+      // over it (PRDCT-4236, round 6). Main still adds the record's mode
+      // where the record is there.
+      const placement: HistoryLedgerRow = { ...prev.row }
+      for (const key of LAUNCH_KEYS) delete placement[key]
+      this.send({ ...placement, kind: 'closed', ts: this.now() })
     }
   }
 
@@ -90,7 +104,11 @@ function identityRow(s: Session, group: SessionGroup | undefined, ts: string): H
     model: s.model ?? null,
     workspaceId: s.workspaceId ?? null,
     groupId: group?.id ?? null,
-    groupName: group?.name ?? null
+    groupName: group?.name ?? null,
+    // What it was launched on (PRDCT-4236), so a reopen from the History
+    // comes back the same way; main adds the mode and the effort.
+    dangerous: s.dangerousMode === true,
+    ...accountOf(s)
   }
 }
 
@@ -103,8 +121,46 @@ function keyOf(r: HistoryLedgerRow): string {
     r.groupName ?? '',
     r.name,
     r.claudeSessionId ?? '',
-    r.workspaceId ?? ''
+    r.workspaceId ?? '',
+    // A switch of account or of bypass is a new launch to remember.
+    r.dangerous ? '1' : '0',
+    r.accountId ?? ''
   ].join('\u0000')
+}
+
+/** The spawn fields of a reopen from the History (PRDCT-4236): the shared
+ *  rule (`resumeLaunch`), the person's explicit "skip permissions" winning
+ *  over the remembered mode. The account is named only when it still exists
+ *  (`accountLabel` answers with its current label); an unknown one falls back
+ *  to the pool. */
+export function historyResumeLaunch(
+  entry: Pick<HistoryListEntry, 'provider' | 'model' | 'launch'>,
+  dangerousMode: boolean,
+  accountLabel: (provider: 'claude' | 'codex', id: string) => string | null
+): Omit<ResumeLaunch, 'accountId'> & {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+} {
+  const { accountId: id, ...launch } = resumeLaunch(
+    entry.provider,
+    entry.launch,
+    dangerousMode ? { dangerous: true } : {}
+  )
+  const out: ReturnType<typeof historyResumeLaunch> = launch
+  const provider = entry.provider === 'codex' ? 'codex' : 'claude'
+  const label = id ? accountLabel(provider, id) : null
+  if (id && label !== null) {
+    if (provider === 'claude') {
+      out.claudeProfileId = id
+      out.claudeProfileLabel = label
+    } else {
+      out.codexAccountId = id
+      out.codexAccountLabel = label
+    }
+  }
+  return out
 }
 
 /** Where a resumed conversation lands: the group the dialog was filtered to
@@ -148,6 +204,35 @@ export function visibleInWorkspace(
     return entry.projectDir === enc || entry.projectDir.startsWith(enc + '-')
   }
   return true
+}
+
+/** A server's row (PRDCT-4321) in the active workspace: the server
+ *  workspace it ran in when that is the active one or one paired with it
+ *  (the sidebar shows those tabs here), else, when it names none, a folder
+ *  under the root of a workspace of ITS server: the active one when that
+ *  server owns it (`activeServerId`, `'local'` for a Mac workspace), or a
+ *  paired one of that server. Two servers often share a layout (`/root/…`),
+ *  so a folder alone never places a row in another server's workspace. With
+ *  no workspace active, every row shows, as this Mac's own do. */
+export function serverRowVisible(
+  entry: { workspaceId: string | null; cwd: string; serverId: string },
+  activeWorkspaceId: string | null,
+  activeRoot: string | null,
+  activeServerId: string,
+  paired: ReadonlyArray<{ workspaceId: string; rootDir: string | null; serverId: string }>
+): boolean {
+  if (!activeWorkspaceId) return true
+  if (entry.workspaceId)
+    return (
+      entry.workspaceId === activeWorkspaceId ||
+      paired.some((p) => p.workspaceId === entry.workspaceId)
+    )
+  const under = (root: string | null): boolean =>
+    !!root && !!entry.cwd && (entry.cwd === root || entry.cwd.startsWith(root + '/'))
+  return (
+    (activeServerId === entry.serverId && under(activeRoot)) ||
+    paired.some((p) => p.serverId === entry.serverId && under(p.rootDir))
+  )
 }
 
 export { encodeProjectDir } from '../../../shared/project-dir'

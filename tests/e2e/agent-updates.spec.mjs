@@ -31,6 +31,7 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import {
   callMcp,
+  waitForBoot,
   fixturePath,
   launchApp,
   seedTrustedRoots,
@@ -133,7 +134,8 @@ async function settingsAndInstallers(t) {
     // --- Nothing runs on its own in test mode ---
     const boot = await win.evaluate(() => window.electronAPI.getAgentUpdates())
     t.equal('automatic updates are on by default', boot?.autoUpdate, true)
-    t.equal('four agents are tracked', boot?.agents?.length, 4)
+    // OpenCode joined Claude, Codex, Antigravity and Pi (PRDCT-4423).
+    t.equal('five agents are tracked', boot?.agents?.length, 5)
     t.check(
       'no check ran at boot under test mode',
       boot?.agents?.every((a) => a.lastCheckedAt === null),
@@ -284,7 +286,7 @@ async function restartHint(t) {
     env: { CLAVE_TEST_AGENT_PATH: bin, CLAVE_TEST_NPM_REGISTRY: `http://127.0.0.1:${port}` }
   })
   try {
-    await win.evaluate(
+    const workId = await win.evaluate(
       async ({ workspaceId, TOKEN }) => {
         await window.electronAPI.launchProfileUpsert({
           id: 'e2e-claude-token',
@@ -306,6 +308,7 @@ async function restartHint(t) {
         const work = await window.electronAPI.claudeAccountAdd({ label: 'Work' })
         await window.electronAPI.claudeAccountSetToken(work.id, TOKEN)
         await window.electronAPI.setAgentAutoUpdate(false)
+        return work.id
       },
       { workspaceId: WS.id, TOKEN }
     )
@@ -317,6 +320,15 @@ async function restartHint(t) {
         return false
       }
     })
+    // #342: the updater check starts after account hydration. The Accounts
+    // page reads the same renderer mirror as the window MCP dispatcher.
+    await waitForBoot(win)
+    const accountWindow = await app.browserWindow(win)
+    await accountWindow.evaluate((window) =>
+      window.webContents.send('menu:open-settings-section', 'accounts')
+    )
+    await win.locator(`[data-claude-account-row="${workId}"]`).waitFor({ timeout: 10_000 })
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
     const tab = await callMcp(app, 'openSession', {
       cwd: ws,
       mode: 'claude',

@@ -74,7 +74,7 @@ describe('Codex stdio JSON-RPC', () => {
     const { client, receive } = setup(10)
     const failure = client.request('bad')
     receive({ id: 1, error: { code: -1, message: 'No thread' } })
-    await expect(failure).rejects.toThrow('No thread')
+    await expect(failure).rejects.toMatchObject({ code: -1, message: 'No thread' })
     await expect(client.request('slow')).rejects.toThrow('timed out')
     receive({ id: 2, result: {} })
     await client.close()

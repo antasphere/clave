@@ -1,0 +1,111 @@
+/**
+ * What stood still stays still when a pane comes back (PRDCT-4419).
+ *
+ * A chat tab nobody is looking at is hidden with `display: none`
+ * (`TerminalGrid`), and an element that leaves `display: none` has no style
+ * to start from: every `@starting-style` in it applies again, so the work
+ * cards under the composer fold open again, and anything else that enters
+ * that way enters again, each time the tab is chosen. Not an arrival, a
+ * return.
+ *
+ * A pane that gains a box (shown again, or mounted shown) has the
+ * transitions that started with it finished on the spot, before the frame
+ * is painted: a ResizeObserver reports after layout and before paint, in
+ * the same frame the transitions were created. A card that arrives while
+ * the pane is on screen starts its transition on a frame the pane already
+ * had its box, and keeps it. A keyframe animation that plays once (a row of
+ * the questions form coming in) restarts the same way and is finished too;
+ * one that loops (a drawing that breathes, a spinner) is left running, its
+ * restart is not seen.
+ */
+
+/** Whether a box that measured `previous` (undefined: never measured) and
+ *  now measures `next` has just appeared. */
+export function revealed(previous: number | undefined, next: number): boolean {
+  return next > 0 && !(previous !== undefined && previous > 0)
+}
+
+/** A CSS transition carries the property it moves, a CSS keyframe animation
+ *  its name; a script's own animation carries neither and is left alone. */
+type Running = { finish: () => void } & Partial<{
+  transitionProperty: string
+  animationName: string
+  effect: {
+    getComputedTiming?: () => { iterations?: number | null }
+    target?: Element | null
+  } | null
+}>
+
+/** Whether an animation was started on purpose as its pane came back and
+ *  must play (PRDCT-4422): its element says so with `--reveal-keep: 1` in
+ *  the stylesheet, beside the animation (the flash on a message jumped to,
+ *  which starts in the very frame the tab it is in is shown). */
+const keptOnReveal = (animation: Running): boolean => {
+  const target = animation.effect?.target
+  if (!target || typeof getComputedStyle !== 'function') return false
+  return getComputedStyle(target).getPropertyValue('--reveal-keep').trim() === '1'
+}
+
+/** Whether a CSS keyframe animation plays a set number of times: an entry,
+ *  never a loop. */
+const playsOnce = (animation: Running): boolean => {
+  if (typeof animation.animationName !== 'string') return false
+  const iterations = animation.effect?.getComputedTiming?.().iterations
+  return typeof iterations === 'number' && Number.isFinite(iterations)
+}
+
+/** Finish every CSS transition and every one-shot keyframe animation
+ *  running in `root` and under it, but one its element keeps. */
+export function settle(root: { getAnimations?: (o?: { subtree: boolean }) => Running[] }): number {
+  const running = root.getAnimations?.({ subtree: true }) ?? []
+  let finished = 0
+  for (const animation of running) {
+    if (typeof animation.transitionProperty !== 'string' && !playsOnce(animation)) continue
+    if (keptOnReveal(animation)) continue
+    animation.finish()
+    finished++
+  }
+  return finished
+}
+
+/** One observer for every pane: `observe` returns the way to stop. */
+export function createRevealSettler(): { observe: (el: Element) => () => void } {
+  const areas = new WeakMap<Element, number>()
+  let observer: ResizeObserver | null = null
+  const ensure = (): ResizeObserver => {
+    observer ??= new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const box = entry.borderBoxSize?.[0]
+        const area = box
+          ? box.inlineSize * box.blockSize
+          : entry.contentRect.width * entry.contentRect.height
+        const previous = areas.get(entry.target)
+        areas.set(entry.target, area)
+        if (revealed(previous, area))
+          settle(entry.target as unknown as Parameters<typeof settle>[0])
+      }
+    })
+    return observer
+  }
+  return {
+    observe: (el) => {
+      const o = ensure()
+      o.observe(el)
+      return () => {
+        o.unobserve(el)
+        areas.delete(el)
+      }
+    }
+  }
+}
+
+let shared: ReturnType<typeof createRevealSettler> | null = null
+
+/** A ref for any element hidden with `display: none` that comes back: a tab's
+ *  tile, a view's slot in its tab. Stable, so React attaches it once; the
+ *  function it returns is React's cleanup when the element goes. */
+export function settleOnReveal(el: Element | null): (() => void) | undefined {
+  if (!el) return undefined
+  shared ??= createRevealSettler()
+  return shared.observe(el)
+}

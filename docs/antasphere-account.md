@@ -21,11 +21,18 @@ window's store and section in `src/renderer/src/store/antasphere-account-store.t
 The **server** owns the login: the flow below, the token exchange and validation, the
 sealed session, its renewal and its sign-out, through the one settings source the server
 answers from. Inside the app that is the shell's own source, and the IPC route reads the
-same manager; attached to a standalone server (`CLAVE_SERVER_URL`), the shell builds **no**
-manager at all: nothing under the app's user data is restored or offered as a login, the
-window asks the server it is attached to, and main's IPC route refuses
-(`CapabilityUnavailable`, `antasphereAccount`). The standalone server runs the same
-manager on its own data directory, its session sealed in the macOS Keychain.
+same manager; with the server in another process, attached to a standalone server
+(`CLAVE_SERVER_URL`) or started by the shell as its own separate child (`--server=separate`,
+the packaged default on macOS), the shell builds **no** manager at all: nothing under the
+app's user data is restored or offered as a login, the window asks the server, and main's
+IPC route refuses (`CapabilityUnavailable`, `antasphereAccount`). Whether the shell builds
+one follows the one launch decision main takes at boot (`src/main/server-launch.ts`,
+`shellOwnsAntasphereAccount` in `server-boot.ts`), never a second read of the environment:
+until 2 November 2026 the shell decided from the environment alone, so the installed app,
+whose server is separate, kept a manager no login ever reached and refused the handoff the
+server had issued right at the open; the browser never opened and the server reported
+`timeout` five minutes later. The standalone server runs the same manager on its own data
+directory, its session sealed in the macOS Keychain.
 
 The wire: `GET /accounts/antasphere` (the status), `POST /accounts/antasphere/sign-in`,
 `/handoff/confirm`, `/cancel`, `/sign-out`, `/dismiss`, and the event
@@ -40,8 +47,9 @@ asks the manager that issued it, right before opening, whether it is still exact
 handoff of the login in flight (`confirm-handoff`: the URL and the generation, a read that
 starts nothing), hands it to main, and hands the page the status without it. Main opens
 it through `shell.openExternal` after its own check: a URL at the issuer this process is
-configured for, no credentials, and, while the shell holds the manager, the exact handoff
-once more at the open.
+configured for, no credentials, and, while the shell holds the manager (the server
+in-process), the exact handoff once more at the open; with the server elsewhere, the
+server's confirmation asked right before is the last word.
 
 Three guards close the gap between a sign-in's answer and the browser's open, since the
 answer waits on discovery and the registration and can land seconds later:
@@ -218,12 +226,18 @@ Clave.
   opens, and the store's ordering.
 - `node tests/e2e/run.mjs antasphere-account` (after `npx electron-vite build`): the
   same through the real app's Settings → Accounts, with `shell.openExternal` stood in,
-  twice: `antasphere-account.spec.mjs` with the server in-process (a cancel while the
-  issuer is slow included), `antasphere-account-attached.spec.mjs` attached to a
+  three times: `antasphere-account.spec.mjs` with the server in-process (a cancel while
+  the issuer is slow included), `antasphere-account-attached.spec.mjs` attached to a
   standalone server of the spec's own, on a keychain file of the run's own, through a
   proxy that holds one answer back (a `true` confirmation landing after a cancel, a
   sign-in answer landing after another window signed in), the server's query agreeing
-  at every step and the session under the server's data directory alone.
+  at every step and the session under the server's data directory alone, and
+  `antasphere-account-separate.spec.mjs` with the app on the separate server it starts
+  itself (the packaged default), the child's own HTTP API as the witness: the shell holds
+  no manager, the browser opens once on the handoff the child answered, the session is
+  sealed under `<user data>/server` and the run's keychain file, a cancelled login's link
+  lands on nothing, and the login is restored at the next launch. That spec is red on the
+  code before 2 November 2026.
 - `npx vitest run src/main/antasphere-account.fixtures.test.ts`, or on Bun
   `CLAVE_FIXTURES=1 bun scripts/antasphere-account-fixtures.ts fixtures load antasphere-account/signed-in`:
   the `@structure-ai/fixtures` scenario, one isolated run against a provider it starts

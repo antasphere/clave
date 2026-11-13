@@ -17,10 +17,10 @@ const TERMINAL = 'clave.chat-view/terminal'
  *  highlight has settled before the next read — pressing faster than the menu
  *  updates overshoots and lands on a neighbour. */
 export async function choose(win, picker, label) {
-  const items = win.getByRole('menuitem')
+  const items = win.getByRole('menuitemradio')
   await picker.click()
   await items.first().waitFor()
-  const highlighted = win.locator('[role="menuitem"][data-highlighted]')
+  const highlighted = win.locator('[role="menuitemradio"][data-highlighted]')
   const landed = await until(
     async () => {
       const current = await highlighted.innerText().catch(() => '')
@@ -42,9 +42,11 @@ const viewIdOf = (win, id) =>
   )
 
 export async function run(t) {
-  // The launch profile names the view its sessions open in. The development
-  // profile is told to name one, so the path from a profile to the session
-  // record is exercised here rather than left to inspection.
+  // The development profile names Enclave. Since the launcher's three words
+  // (PRDCT-4425) a chat-view view a profile names yields to the person's
+  // interaction mode, so `openChat` starts in the mode that opens it there
+  // (PRDCT-4495): what is exercised is the path from the spawn's view to the
+  // session record, rather than left to inspection.
   const chat = await openChat(
     'plugin-views',
     ['--dev-echo-view=clave.chat-view/terminal'],
@@ -52,11 +54,11 @@ export async function run(t) {
   )
   const { win, record, fixture } = chat
   try {
-    const picker = win.getByLabel('Change view', { exact: true })
+    const picker = win.getByLabel('Session menu', { exact: true })
     await picker.waitFor()
     await picker.click()
-    const items = win.getByRole('menuitem')
-    assert.deepEqual(await items.allInnerTexts(), ['Chat', 'Terminal'])
+    const items = win.getByRole('menuitemradio')
+    assert.deepEqual(await items.allInnerTexts(), ['Chat', 'Enclave', 'Folio'])
     t.check('the pane picker lists both views the plugin contributes', true)
 
     await win.keyboard.press('Escape')
@@ -73,9 +75,16 @@ export async function run(t) {
       { type: 'user_message', text: 'the first turn' },
       { type: 'assistant_text', delta: 'the answer to it', final: true }
     ])
+    // The rows are read once their text is visible, not the instant they are
+    // counted: the transcript's virtualiser keeps a fresh row hidden until it
+    // has measured it, and a re-render landing on that instant (a plugin
+    // change re-listing every store at once) kept it so for the read.
     const rows = win.locator('.terminal-view .chat-turn')
-    await until(async () => (await rows.count()) >= 2)
-    const texts = await rows.allInnerTexts()
+    const texts = await until(async () => {
+      const read = await rows.allInnerTexts()
+      return read.length >= 2 && read.join('\n').includes('the answer to it') ? read : null
+    })
+    assert.ok(texts)
     assert.match(texts.join('\n'), /the first turn/)
     assert.match(texts.join('\n'), /the answer to it/)
     t.check('the view the profile named shows the session it reads', true)
@@ -120,9 +129,10 @@ export async function run(t) {
     assert.ok((await terminalSlot.innerText()).includes('the first turn'))
     t.check('the view left behind stays mounted with its transcript', true)
 
-    // This session stays on the view the reader chose. A second one opens on
-    // the reader's last pick, which wins over the profile's default from the
-    // same plugin (`chat-view-default.ts`): the pick is written onto each
+    // This session stays on the view the reader chose. A second one opens in
+    // the view of the person's interaction mode (Enclave here), not on another
+    // tab's pick: a pick is that tab's own since the launcher's three words
+    // (`chat-view-default.ts`, PRDCT-4425). The view is written onto each
     // session's record at spawn, never read live from the plugin or the window.
     await win.locator('.launcher-split .launcher-btn').click()
     const second = await until(async () =>
@@ -131,10 +141,14 @@ export async function run(t) {
       )
     )
     assert.ok(second)
-    assert.equal(second.viewId, CHAT)
+    assert.equal(second.viewId, TERMINAL)
     assert.equal(await viewIdOf(win, record.id), CHAT)
-    await until(async () => (await win.locator(`[data-view-id="${CHAT}"]`).count()) === 2)
-    t.check('a new session opens on the last view the reader picked, stamped on its record', true)
+    // The first tab's Enclave stays mounted behind its Chat, beside the second's.
+    await until(async () => (await win.locator(`[data-view-id="${TERMINAL}"]`).count()) === 2)
+    t.check(
+      "a new session opens in the interaction mode's view, not on another tab's pick, stamped on its record",
+      true
+    )
 
     // The choice lives on the record in main rather than in the pane that set
     // it. A renderer reload is where that is decidable today: an events session
@@ -145,7 +159,7 @@ export async function run(t) {
     await win.reload()
     await win.waitForLoadState('domcontentloaded')
     assert.equal(await viewIdOf(win, record.id), CHAT)
-    assert.equal(await viewIdOf(win, second.id), CHAT)
+    assert.equal(await viewIdOf(win, second.id), TERMINAL)
     t.check('the choice outlives the pane that made it, on the record in main', true)
   } finally {
     await chat.close()

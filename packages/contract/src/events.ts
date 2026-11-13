@@ -10,12 +10,24 @@
  */
 import { Schema } from 'effect'
 import { Client } from './clients'
-import { AccountOverride, AgentState, SessionPage } from './sessions'
+import { FilesDirsChanged } from './files'
+import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
+import { WorkAssignment } from './work'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
+// ── Wave wcs1023, lane C: the git domain ──
+import { GitEvent } from './git'
+// ── Issue #266: the server domain ──
+import { ServerUpgradeEvent } from './server-info'
+// ── ADR 0004: the routines ──
+import { RoutinesChanged } from './routines/model'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactEvent } from './artefacts'
 
 export const ServerEvent = Schema.Union(
+  FilesDirsChanged,
+  Schema.TaggedStruct('requests.changed', { revision: Schema.Number }),
   // ── Clients ──
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
@@ -31,6 +43,30 @@ export const ServerEvent = Schema.Union(
     id: Schema.String,
     providerSessionId: Schema.NullOr(Schema.String)
   }),
+  /** The session runs on `model` now, as its provider said it (the Claude
+   *  CLI's init frame, a switch it took, the default resolved at ready; the
+   *  Codex app-server's thread): what a window's sidebar judges the caps by
+   *  (PRDCT-4256). Sent over the window's IPC too while no server runs. */
+  Schema.TaggedStruct('session.model_changed', { id: Schema.String, model: Schema.String }),
+  /** The session's CLI reported its account's limit and WHICH cap it hit
+   *  (ADR 0002, PRDCT-4302): a shared cap, one model family's week, the org's
+   *  credits, or nothing more than the refusal. The window's policy picks its
+   *  rung from it. Sent over the window's IPC too while no server runs. */
+  Schema.TaggedStruct('session.limit_reported', {
+    id: Schema.String,
+    scope: Schema.Union(
+      Schema.Literal('shared'),
+      Schema.Literal('credits'),
+      Schema.Literal('unknown'),
+      Schema.Struct({ family: Schema.String })
+    ),
+    resetsAt: Schema.optional(Schema.Number)
+  }),
+  /** The account served a turn again after the session's limit report
+   *  (PRDCT-4415): the report is closed, and the window's chip and proposal
+   *  with it. A turn refused again reports again. Sent over the window's IPC
+   *  too while no server runs. */
+  Schema.TaggedStruct('session.limit_cleared', { id: Schema.String }),
   // ── Lane D: settings (accounts, usage, workspaces) ──
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──
@@ -48,6 +84,12 @@ export const ServerEvent = Schema.Union(
     page: Schema.NullOr(SessionPage),
     servingSessionId: Schema.NullOr(Schema.String)
   }),
+  /** A session's work assignment changed: the record's new one, or null when
+   *  it belongs to no wave or lane any more. */
+  Schema.TaggedStruct('session.work_changed', {
+    id: Schema.String,
+    work: Schema.NullOr(WorkAssignment)
+  }),
   /** Another tab's agent typed a message into this one (`from` is its name,
    *  null when it had none): the window marks the row so the message is
    *  never silent. */
@@ -59,6 +101,7 @@ export const ServerEvent = Schema.Union(
    *  remounts its pane and shows the account. */
   Schema.TaggedStruct('session.restarted', {
     id: Schema.String,
+    requestId: Schema.optional(RestartRequestId),
     resumed: Schema.Boolean,
     account: AccountOverride
   }),
@@ -68,7 +111,26 @@ export const ServerEvent = Schema.Union(
     pinnedId: Schema.String,
     groupId: Schema.String,
     windowKey: Schema.String
-  })
+  }),
+  // ── Wave 5, lane C: the plugins ──
+  /** The installed plugins or their running state changed; a client re-lists. */
+  Schema.TaggedStruct('plugins.changed', {}),
+  /** A plugin's notification, for the client that shows notifications when
+   *  the server cannot. */
+  Schema.TaggedStruct('plugins.notified', {
+    pluginId: Schema.String,
+    name: Schema.String,
+    title: Schema.String,
+    body: Schema.optional(Schema.String)
+  }),
+  // ── Wave wcs1023, lane C: the git domain (a watched repository changed on the server's disk, a batch moved) ──
+  ...GitEvent.members,
+  // ── Issue #266: the server's self-upgrade changed state ──
+  ServerUpgradeEvent,
+  // ── ADR 0004: the routines (the routines or their runs changed) ──
+  RoutinesChanged,
+  // ── PRDCT-4472: the artefacts (a session's artefact opened or closed, its preview died, Slideless changed state) ──
+  ...ArtefactEvent.members
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

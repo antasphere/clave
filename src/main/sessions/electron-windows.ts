@@ -28,6 +28,11 @@ export const electronSessionWindows: SessionWindowsPort = {
     const win = live(windowRegistry.getWindowForSession(sessionId))
     return win ? windowRegistry.getKeyForWindow(win.id) : null
   },
+  isLive: (windowKey) => live(windowRegistry.getWindowByKey(windowKey)) !== null,
+  primaryKey: () => {
+    const win = live(windowRegistry.getPrimaryWindow())
+    return win ? windowRegistry.getKeyForWindow(win.id) : null
+  },
   send: (windowKey, channel, ...args) => {
     if (!windowKey) return
     const win = live(windowRegistry.getWindowByKey(windowKey))

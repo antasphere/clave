@@ -89,6 +89,18 @@ const changed = (n: number): ServerEventEnvelope['event'] => ({
   }))
 })
 
+/** A workspace change at revision `n` of one instance, its origin set by the caller. */
+const stateChanged = (
+  n: number
+): Extract<ServerEventEnvelope['event'], { _tag: 'workspaces.state_changed' }> => ({
+  _tag: 'workspaces.state_changed',
+  workspaces: [],
+  pins: [],
+  origin: null,
+  revision: n,
+  instance: 'server-1'
+})
+
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 function listen(
@@ -182,9 +194,9 @@ describe('a listener on both transports hears each event once', () => {
       tag: 'workspaces.state_changed',
       pick: (event) => (event.origin === 'mine' ? undefined : event.origin)
     })((value) => seen.push(value))
-    push.emit(1, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'mine' })
-    push.emit(2, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'w2' })
-    push.emit(3, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: null })
+    push.emit(1, { ...stateChanged(1), origin: 'mine' })
+    push.emit(2, { ...stateChanged(2), origin: 'w2' })
+    push.emit(3, { ...stateChanged(3), origin: null })
     push.emit(4, changed(1))
     expect(seen).toEqual(['w2', null])
   })
@@ -348,8 +360,8 @@ describe('the catch-up read at the welcome', () => {
         })
     })((value) => seen.push(value))
     push.setStatus('open')
-    push.emit(1, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'w2' })
-    push.emit(2, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'mine' })
+    push.emit(1, { ...stateChanged(1), origin: 'w2' })
+    push.emit(2, { ...stateChanged(2), origin: 'mine' })
     release(['server'])
     await tick()
     expect(seen).toEqual(['w2'])
@@ -481,13 +493,27 @@ describe('the workspace pick drops the window’s own echo and nothing else', ()
     _tag: 'workspaces.state_changed',
     workspaces: [],
     pins: [{ p: origin }],
-    origin
+    origin,
+    revision: 4,
+    instance: 'server-1'
   })
-  it('drops the change this window wrote, keeps every other', () => {
+  it('drops the change this window wrote, keeps every other, and passes the stamp on', () => {
     const pick = workspaceStatePick(() => 'w1')
     expect(pick(change('w1'))).toBeUndefined()
-    expect(pick(change('w2'))).toEqual({ workspaces: [], pins: [{ p: 'w2' }] })
-    expect(pick(change(null))).toEqual({ workspaces: [], pins: [{ p: null }] })
+    // The stamp travels with the value (PRDCT-3405): without it the renderer
+    // could not tell a copy older than its own write from a newer one.
+    expect(pick(change('w2'))).toStrictEqual({
+      workspaces: [],
+      pins: [{ p: 'w2' }],
+      revision: 4,
+      instance: 'server-1'
+    })
+    expect(pick(change(null))).toStrictEqual({
+      workspaces: [],
+      pins: [{ p: null }],
+      revision: 4,
+      instance: 'server-1'
+    })
   })
   it('reads the window’s key at each event, so a key that arrives late still counts', () => {
     let mine: string | null = null

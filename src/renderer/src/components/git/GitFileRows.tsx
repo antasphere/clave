@@ -4,6 +4,7 @@ import { statusWord, statusColor, splitPath } from './git-status-utils'
 import { buildGitTree, compactTree, flattenGitTree } from '../../lib/git-file-tree'
 import type { GitFileStatus } from '../../../../preload/index.d'
 import type { FlatGitTreeNode } from '../../lib/git-file-tree'
+import { useTreeIndentPx } from '../files/tree-metrics'
 
 /**
  * The hairline between two rows of a repo's contents — the changed files, in
@@ -178,6 +179,7 @@ export function GitTreeDirRow({
   onSelect?: (path: string, metaKey: boolean) => void
   baseIndentPx?: number
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.metaKey && onSelect) {
@@ -204,7 +206,7 @@ export function GitTreeDirRow({
       className={`flex items-center gap-1.5 h-[var(--panel-row-h)] text-xs transition-colors cursor-pointer pr-3 ${
         isSelected ? 'bg-surface-200' : 'hover:bg-surface-100'
       }`}
-      style={{ paddingLeft: `${baseIndentPx + 8 + node.depth * 8}px` }}
+      style={{ paddingLeft: `${baseIndentPx + 8 + node.depth * indentPx}px` }}
       onClick={handleClick}
       draggable
       onDragStart={handleDragStart}
@@ -264,6 +266,7 @@ export function GitTreeFileRow({
   readOnly?: boolean
   overlap?: boolean
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   const file = node.file!
   const isStaged = file.staged
 
@@ -315,7 +318,7 @@ export function GitTreeFileRow({
               ? 'bg-surface-200 border-l-2 border-l-transparent'
               : 'hover:bg-surface-100 border-l-2 border-l-transparent'
       }`}
-      style={{ paddingLeft: `${baseIndentPx + 8 + node.depth * 8}px` }}
+      style={{ paddingLeft: `${baseIndentPx + 8 + node.depth * indentPx}px` }}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       draggable
@@ -392,6 +395,7 @@ export function GitTreeSection({
   /** Files that also have local changes — flagged on their rows. */
   overlapPaths?: Set<string>
 }): React.JSX.Element {
+  const indentPx = useTreeIndentPx()
   const flatNodes = useMemo(() => {
     if (files.length === 0) return []
     const tree = compactTree(buildGitTree(files))
@@ -401,7 +405,7 @@ export function GitTreeSection({
   // A rule above every row but the first — the section header above the first
   // row is the boundary there, and a line under a header it already sits tight
   // against reads as a second border rather than as the tree's ruling.
-  const ruleLeftPx = (depth: number): number => baseIndentPx + 8 + depth * 8
+  const ruleLeftPx = (depth: number): number => baseIndentPx + 8 + depth * indentPx
 
   return (
     <>

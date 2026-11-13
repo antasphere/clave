@@ -3,6 +3,17 @@ import { useSessionStore } from '../../store/session-store'
 import { GitSyncActionButton } from './GitPanelControls'
 import type { GitLogEntry, GitCommitFileStatus } from '../../../../preload/index.d'
 
+/** The last reading of each repository's log, kept outside the view
+ *  (PRDCT-4142): a log view shown again, or drawn again for the same
+ *  repository, opens on what it last showed and the read refreshes it,
+ *  instead of a spinner and a wait on three git commands. */
+interface LogReading {
+  outgoing: GitLogEntry[]
+  incoming: GitLogEntry[]
+  history: GitLogEntry[]
+}
+const logCache = new Map<string, LogReading>()
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -281,13 +292,29 @@ export function GitLogView({
   behind: number
 }): React.JSX.Element {
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
-  const [outgoing, setOutgoing] = useState<GitLogEntry[]>([])
-  const [incoming, setIncoming] = useState<GitLogEntry[]>([])
-  const [history, setHistory] = useState<GitLogEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  const [outgoing, setOutgoing] = useState<GitLogEntry[]>(() => logCache.get(cwd)?.outgoing ?? [])
+  const [incoming, setIncoming] = useState<GitLogEntry[]>(() => logCache.get(cwd)?.incoming ?? [])
+  const [history, setHistory] = useState<GitLogEntry[]>(() => logCache.get(cwd)?.history ?? [])
+  // The spinner is for a repository never read; a known one shows its last
+  // log while the new read runs.
+  const [loading, setLoading] = useState(!logCache.has(cwd))
   const [operating, setOperating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedHash, setExpandedHash] = useState<string | null>(null)
+
+  // A folder change under a mounted view: show the new repository's last
+  // reading at once, during render, so no frame shows the old log under the
+  // new name.
+  const [seenCwd, setSeenCwd] = useState(cwd)
+  if (seenCwd !== cwd) {
+    setSeenCwd(cwd)
+    const cached = logCache.get(cwd)
+    setOutgoing(cached?.outgoing ?? [])
+    setIncoming(cached?.incoming ?? [])
+    setHistory(cached?.history ?? [])
+    setLoading(!cached)
+    setExpandedHash(null)
+  }
 
   const diffPreview = useSessionStore((s) => s.diffPreview)
 
@@ -309,7 +336,7 @@ export function GitLogView({
 
   const fetchLog = useCallback(async () => {
     try {
-      setLoading(true)
+      if (!logCache.has(cwd)) setLoading(true)
       setError(null)
 
       const [outgoingResult, incomingResult, logResult] = await Promise.all([
@@ -318,12 +345,17 @@ export function GitLogView({
         window.electronAPI.gitLog(cwd, 100)
       ])
 
-      setOutgoing(outgoingResult)
-      setIncoming(incomingResult)
-
       // Filter out outgoing commits from the full log to avoid duplicates
       const outgoingHashes = new Set(outgoingResult.map((c) => c.hash))
-      setHistory(logResult.filter((c) => !outgoingHashes.has(c.hash)))
+      const historyResult = logResult.filter((c) => !outgoingHashes.has(c.hash))
+      logCache.set(cwd, {
+        outgoing: outgoingResult,
+        incoming: incomingResult,
+        history: historyResult
+      })
+      setOutgoing(outgoingResult)
+      setIncoming(incomingResult)
+      setHistory(historyResult)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -383,7 +415,7 @@ export function GitLogView({
         <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">{error}</div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overscroll-contain">
         {/* Outgoing commits */}
         {hasOutgoing && (
           <>

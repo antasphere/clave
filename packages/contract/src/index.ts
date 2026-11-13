@@ -29,5 +29,22 @@ export * as WorkspaceFiles from './workspace-files'
 export * as Views from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export * as AgentTools from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export * as Plugins from './plugins'
+// ── Wave wcs1023, lane C: the git panel on a server's checkout ──
+export * as Git from './git'
+// ── Issue #266: the server's version and its self-upgrade ──
+export * as ServerInfo from './server-info'
+export * as History from './history'
+// ── PRDCT-4123: which work a session does ──
+export * as Work from './work'
+// ── ADR 0004: the routines ──
+export * as Routines from './routines'
+// ── PRDCT-4327: the digests read by the server a tab runs on ──
+export * as Digests from './digests'
+// ── PRDCT-4411: the speech of the server a tab runs on ──
+export * as Speech from './speech'
+// ── PRDCT-4472: the artefacts of the server a session runs on ──
+export * as Artefacts from './artefacts'
 
 // ── Lane B: terminals · Lane D: settings served ──

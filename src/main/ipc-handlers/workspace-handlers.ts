@@ -38,7 +38,7 @@ export function registerWorkspaceHandlers(): void {
 
   settings.subscribe((event) => {
     if (event._tag !== 'workspaces.state_changed') return
-    const { workspaces, pins, origin } = event
+    const { workspaces, pins, origin, revision, instance } = event
     for (const win of windowRegistry.listWindows()) {
       if (
         origin !== null &&
@@ -46,7 +46,7 @@ export function registerWorkspaceHandlers(): void {
           contentsOrigin(win.webContents.id) === origin)
       )
         continue
-      win.webContents.send('workspace:state-changed', { workspaces, pins })
+      win.webContents.send('workspace:state-changed', { workspaces, pins, revision, instance })
     }
   })
 }

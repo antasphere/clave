@@ -2,13 +2,16 @@ import {
   SessionSchema,
   type AgentState,
   type Session,
+  type SessionEvent,
   type SessionStream,
   type SessionInput,
   type ModelOption,
   type CommandOption,
+  type SessionControl,
   type HistoryPage,
   type BackgroundTask
 } from '../../shared/session-model'
+import type { SessionEvent as ContractSessionEvent } from '@clave/contract/sessions'
 import { pageHistory } from './history'
 import type { SessionAdapter, SessionHandle, SpawnSpec, Unsubscribe } from './adapter'
 
@@ -38,6 +41,10 @@ export class SessionManager {
   private adapters = new Map<string, SessionAdapter>()
   private entries = new Map<string, Entry>()
   private pending = new Set<string>()
+  /** How many processes ran under each id since this host started: the run
+   *  a session and its `state_change` frames carry (PRDCT-4191). Kept past
+   *  `forget`, since the next spawn under the id is the next run. */
+  private runs = new Map<string, number>()
   private removed = new Set<(id: string) => void>()
   private all = new Set<(id: string, stream: SessionStream) => void>()
   private added = new Set<(session: Session, meta: AdoptMeta) => void>()
@@ -83,7 +90,9 @@ export class SessionManager {
     meta: AdoptMeta = {}
   ): Session {
     if (this.entries.has(session.id)) throw new Error(`Session already exists: ${session.id}`)
-    const parsed = SessionSchema.parse(session)
+    const run = (this.runs.get(session.id) ?? 0) + 1
+    this.runs.set(session.id, run)
+    const parsed = SessionSchema.parse({ ...session, run })
     if (!adapter.transports.includes(parsed.transport))
       throw new Error(`Unsupported transport: ${parsed.transport}`)
     if (handle.id !== parsed.id) throw new Error('Adapter handle must match session id')
@@ -169,6 +178,15 @@ export class SessionManager {
     }
   }
 
+  /** Whether the session was made ready and has not ended: for an adapter
+   *  that starts its provider at ready (Claude, Codex), whether that provider
+   *  was started at all. Registered is not started: a restored chat sits here
+   *  unready until a view opens it (issue #183). */
+  started(id: string): boolean {
+    const entry = this.entries.get(id)
+    return entry !== undefined && entry.ready && !entry.exited
+  }
+
   write(id: string, input: Uint8Array | SessionInput): void {
     const entry = this.require(id)
     entry.adapter.write(entry.handle, input)
@@ -185,6 +203,13 @@ export class SessionManager {
   async commands(id: string): Promise<CommandOption[]> {
     const entry = this.require(id)
     return entry.adapter.commands ? entry.adapter.commands(entry.handle) : []
+  }
+  /** One control request to the session's provider, from the closed set a view may send. */
+  async control(id: string, request: SessionControl): Promise<Record<string, unknown>> {
+    const entry = this.require(id)
+    return entry.adapter.control
+      ? entry.adapter.control(entry.handle, request)
+      : Promise.reject(new Error('This session does not take control requests'))
   }
 
   /** The page of the session's past that ends at `before` (its end when
@@ -249,7 +274,25 @@ export class SessionManager {
     const entry = this.entries.get(id)
     if (!entry || entry.session.state === state || (entry.exited && state !== 'ended')) return
     entry.session.state = state
-    this.publish(entry, { kind: 'event', event: { type: 'state_change', state } })
+    this.publish(entry, { kind: 'event', event: this.stateFrame(entry) })
+  }
+
+  /** The session's current state as a frame, stamped with its run: what a
+   *  late subscriber is told, and what `setState` publishes. */
+  private stateFrame(entry: Entry): Extract<SessionStream, { kind: 'event' }>['event'] {
+    return {
+      type: 'state_change',
+      state: entry.session.state,
+      ...(entry.session.run !== undefined ? { run: entry.session.run } : {})
+    }
+  }
+
+  /** The session's current state and run, as a `state_change` frame, for a
+   *  consumer that binds late (the server's host at bind and at resume):
+   *  undefined for an unknown session. */
+  currentState(id: string): Extract<SessionStream, { kind: 'event' }>['event'] | undefined {
+    const entry = this.entries.get(id)
+    return entry && this.stateFrame(entry)
   }
 
   subscribe(
@@ -272,6 +315,19 @@ export class SessionManager {
     return () => {
       entry.exits.delete(listener)
     }
+  }
+
+  /** Publish an event the HOST raised into a session's stream, as if the
+   *  adapter had: a request an agent tool put to the person
+   *  (`request-aware-host.ts`, PRDCT-4157) reaches every view of the session
+   *  the way a native question does. A state change goes through `setState`,
+   *  never here. */
+  publishHostEvent(id: string, event: ContractSessionEvent): void {
+    if (event.type === 'state_change')
+      throw new Error('A state change is set with setState, not published')
+    // The contract's event and the renderer's model are the same shape, held
+    // together by packages/contract/src/sessions.test.ts.
+    this.publish(this.require(id), { kind: 'event', event: event as SessionEvent })
   }
 
   subscribeAll(callback: (id: string, stream: SessionStream) => void): Unsubscribe {

@@ -60,6 +60,29 @@ describe('isExhausted', () => {
     expect(isExhausted(used(40, { severity: 'critical' }))).toBe(true)
     expect(isExhausted(used(40, { severity: 'warning' }))).toBe(false)
   })
+  it('reads the view’s tightest window, which an account view never takes from a family cap', () => {
+    // The summary builders (`usage-summary.ts`) put the tightest SHARED cap
+    // in an account view’s `tightest`; a family that is out sits in `scopedOut`.
+    const overall = { ...used(40).tightest!, key: 'weekly', kind: 'weekly_all' }
+    const fable = {
+      ...used(100).tightest!,
+      key: 'fable',
+      kind: 'weekly_scoped',
+      scope: 'Fable',
+      severity: 'critical' as const
+    }
+    const account: AccountUsageSummary = {
+      status: 'ready',
+      error: null,
+      tightest: overall,
+      shared: overall,
+      windows: [overall, fable],
+      scopedOut: ['Fable']
+    }
+    expect(isExhausted(account)).toBe(false)
+    // The same read seen from a session on Fable.
+    expect(isExhausted({ ...account, tightest: fable })).toBe(true)
+  })
   it('never on a guess: no reading, or a failed one, is not exhaustion', () => {
     expect(isExhausted(undefined)).toBe(false)
     // The renderer's summary, as the store builds it, fits the pool's type.
@@ -93,32 +116,72 @@ describe('pickAccount', () => {
     )
   })
 
-  it("balances automatic switches using each account's 5-hour session headroom", () => {
-    const usage = {
-      work: {
-        ...used(20),
-        windows: [
-          used(20).tightest!,
-          { ...used(20).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: 80 }
-        ]
-      },
-      team: {
-        ...used(60),
-        windows: [
-          used(60).tightest!,
-          { ...used(60).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: 10 }
-        ]
+  describe('ranks automatic switches by weekly headroom', () => {
+    const weekly = (sessionUsed: number | null, weeklyUsed: number): AccountUsageSummary => {
+      const session = sessionUsed === null ? [] : [used(sessionUsed).tightest!]
+      const week = {
+        ...used(0).tightest!,
+        key: 'weekly',
+        kind: 'weekly_all',
+        usedPercentage: weeklyUsed
       }
+      return { ...used(0), tightest: week, windows: [...session, week] }
     }
-    expect(
+    const move = (usage: Record<string, AccountUsageSummary>): string =>
       pickAccount({
         accounts,
         usage,
         preferredId: 'default',
         leavingId: 'default',
-        preferSessionHeadroom: true
+        preferWeeklyHeadroom: true
       })
-    ).toBe('work')
+    it('takes the target with the most weekly headroom, whatever its 5-hour block says', () => {
+      // Work's block is fresher, Team's week is: the week is what runs out.
+      expect(move({ work: weekly(20, 80), team: weekly(60, 10) })).toBe('team')
+    })
+    it('uses the 5-hour block only to break a weekly tie, and only when every target has one', () => {
+      expect(move({ work: weekly(60, 30), team: weekly(20, 30) })).toBe('team')
+      // Team is a verified Ultra account: no 5-hour window since 30 October
+      // 2026. The tie holds, and the ring's order decides.
+      expect(move({ work: weekly(60, 30), team: weekly(null, 30) })).toBe('work')
+    })
+    it('ranks an Ultra account with no 5-hour window by its week like any other', () => {
+      expect(move({ work: weekly(5, 50), team: weekly(null, 20) })).toBe('team')
+      expect(move({ work: weekly(5, 20), team: weekly(null, 50) })).toBe('work')
+    })
+    it("ranks a session's view by the cap that binds its week: its family's when tighter", () => {
+      const fable = (weeklyUsed: number, fableUsed: number): AccountUsageSummary => {
+        const week = {
+          ...used(0).tightest!,
+          key: 'weekly',
+          kind: 'weekly_all',
+          usedPercentage: weeklyUsed
+        }
+        const family = {
+          ...week,
+          key: 'fable',
+          kind: 'weekly_scoped',
+          scope: 'Fable',
+          usedPercentage: fableUsed
+        }
+        return { ...used(0), tightest: family, windows: [week, family] }
+      }
+      // Work has more of its week, Team more of its Fable cap: on Fable, Team.
+      expect(move({ work: fable(30, 80), team: fable(50, 40) })).toBe('team')
+    })
+    it('puts a target with no weekly read last, and falls back to the ring with no reads at all', () => {
+      expect(move({ work: used(10), team: weekly(10, 90) })).toBe('team')
+      // Whichever side of the ring the read-less target sits on.
+      expect(move({ work: weekly(10, 50), team: used(10) })).toBe('work')
+      expect(move({})).toBe('work')
+    })
+    it('never lets one target’s 5-hour block decide when another has none', () => {
+      // Equal weeks; only Team has a 5-hour window (fresh). Without the
+      // "every target has one" guard Team would win on a block Work cannot
+      // be compared on; the ring's order holds instead.
+      expect(move({ work: weekly(null, 50), team: weekly(10, 50) })).toBe('work')
+      expect(move({ work: weekly(10, 50), team: weekly(null, 50) })).toBe('work')
+    })
   })
 
   it('takes a fallback only when every subscription account is out', () => {
@@ -128,6 +191,31 @@ describe('pickAccount', () => {
       'team'
     )
     expect(pickAccount({ accounts: withKey, usage, preferredId: 'work' })).toBe('key')
+  })
+
+  it('a launch keeps a SELECTED fallback once every subscription is out; a move leaves it', () => {
+    const withKey = [...accounts, { id: 'key', usable: true, fallback: true }]
+    const out = { default: used(96), work: used(96), team: used(96) }
+    expect(pickAccount({ accounts: withKey, usage: {}, preferredId: 'key' })).toBe('default')
+    expect(pickAccount({ accounts: withKey, usage: out, preferredId: 'key' })).toBe('key')
+    expect(
+      pickAccount({ accounts: withKey, usage: out, preferredId: 'key', leavingId: 'key' })
+    ).not.toBe('key')
+  })
+
+  it('a launch keeps the SELECTED key among two once the subscription is out; a switch leaving it takes the other (verifier, round 2)', () => {
+    const twoKeys = [
+      { id: 'sub', usable: true },
+      { id: 'keyA', usable: true, fallback: true },
+      { id: 'keyB', usable: true, fallback: true }
+    ]
+    const out = { sub: used(96) }
+    expect(pickAccount({ accounts: twoKeys, usage: out, preferredId: 'keyA' })).toBe('keyA')
+    // Open, the subscription still wins over the selected key.
+    expect(pickAccount({ accounts: twoKeys, usage: {}, preferredId: 'keyA' })).toBe('sub')
+    expect(
+      pickAccount({ accounts: twoKeys, usage: out, preferredId: 'keyA', leavingId: 'keyA' })
+    ).not.toBe('keyA')
   })
 
   it('with everything out and no fallback, takes the account that resets soonest', () => {
@@ -187,5 +275,54 @@ describe('switchTargets', () => {
       ['default', false]
     ])
     expect(targets[0].weeklyResetAt).toBe(5_000)
+  })
+})
+
+describe('recommended launch account', () => {
+  const weekly = (percent: number, at: number): AccountUsageSummary => {
+    const summary = used(percent)
+    const window = { ...summary.tightest!, kind: 'weekly_all', resetsAt: at }
+    return { ...summary, tightest: window, windows: [window] }
+  }
+  const input = {
+    accounts,
+    usage: { default: weekly(20, 9000), work: weekly(50, 3000), team: weekly(10, 6000) },
+    preferredId: 'default',
+    preferRecommended: true
+  }
+  it('uses the same weekly ranking as the switch menu when enabled', () => {
+    expect(pickAccount(input)).toBe('work')
+    expect(pickAccount({ ...input, preferRecommended: false })).toBe('default')
+  })
+  it('includes the selected account, and breaks ties in account order', () => {
+    expect(pickAccount({ ...input, preferredId: 'work' })).toBe('work')
+    expect(pickAccount({ ...input, usage: {}, preferredId: 'team' })).toBe('default')
+  })
+  it('skips exhausted, unusable, excluded and API key accounts', () => {
+    expect(pickAccount({ ...input, usage: { ...input.usage, work: weekly(99, 1000) } })).toBe(
+      'team'
+    )
+    expect(pickAccount({ ...input, excludeIds: ['work'] })).toBe('team')
+    expect(
+      pickAccount({
+        ...input,
+        accounts: [{ id: 'key', usable: true, fallback: true }, ...accounts],
+        preferredId: 'key'
+      })
+    ).toBe('work')
+    expect(
+      pickAccount({ ...input, accounts: accounts.map((a) => ({ ...a, usable: a.id !== 'work' })) })
+    ).toBe('team')
+  })
+  it('retains existing fallback when every subscription is exhausted', () => {
+    const exhausted = { default: weekly(99, 3000), work: weekly(99, 1000), team: weekly(99, 2000) }
+    expect(pickAccount({ ...input, usage: exhausted })).toBe('work')
+    expect(
+      pickAccount({
+        ...input,
+        usage: exhausted,
+        accounts: [...accounts, { id: 'key', usable: true, fallback: true }]
+      })
+    ).toBe('key')
   })
 })

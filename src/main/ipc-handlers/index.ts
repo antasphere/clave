@@ -7,10 +7,14 @@ import { registerGitHandlers } from './git-handlers'
 import { registerUpdaterHandlers } from './updater-handlers'
 import { registerAgentUpdateHandlers } from './agent-update-handlers'
 import { registerTelemetryHandlers } from './telemetry-handlers'
+import { registerOnboardingHandlers } from './onboarding-handlers'
 import { registerFeedbackHandlers } from './feedback-handlers'
 import { registerFsHandlers } from './fs-handlers'
 import { registerPtyHandlers } from './pty-handlers'
+// ── PRDCT-4300: a tab changes provider ──
+import { registerProviderSwitchHandlers } from './provider-switch-handlers'
 import { registerShellHandlers } from './shell-handlers'
+import { registerExchangeDigestHandlers } from './exchange-digest-handlers'
 import { registerLocationHandlers } from './location-handlers'
 import { registerSshHandlers } from './ssh-handlers'
 import { registerAgentHandlers } from './agent-handlers'
@@ -29,6 +33,12 @@ import { registerPreviewHandlers } from './preview-handlers'
 import { registerHistoryHandlers } from './history-handlers'
 import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handlers'
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
+import { registerLaunchSettingsHandlers } from '../launch-settings'
+import { registerHelperHandlers } from './helper-handlers'
+import { registerIntegrationsHandlers } from './integrations-handlers'
+import { registerSpeechHandlers } from './speech-handlers'
+// ── PRDCT-4474: a session's artefact, on this Mac's own server ──
+import { registerArtefactHandlers } from './artefact-handlers'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 import { registerCodexAccountHandlers } from './codex-accounts-handlers'
 import { registerAccountLoginHandlers } from './account-login-handlers'
@@ -36,9 +46,15 @@ import { registerAntasphereAccountHandlers } from './antasphere-account-handlers
 import { registerGithubHandlers } from './github-handlers'
 // ── Lane A: the server ──
 import { registerServerHandlers } from './server-handlers'
+import { registerServerPairingHandlers } from './server-pairing-handlers'
+// ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+import { registerServerSetupHandlers } from './server-setup-handlers'
 import { registerActivityHandlers } from './activity-handlers'
 // ── Lane C: settings behind ports ──
 // ── Lane F: the shell ──
+import { registerMicHandlers } from './mic-handlers'
+// ── Issue #227: Debug Clave… ──
+import { registerTriageHandlers } from './triage-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -53,10 +69,13 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerUpdaterHandlers()
   registerAgentUpdateHandlers()
   registerTelemetryHandlers()
+  registerOnboardingHandlers()
   registerFeedbackHandlers()
   registerFsHandlers()
   registerPtyHandlers()
+  registerProviderSwitchHandlers()
   registerShellHandlers()
+  registerExchangeDigestHandlers()
   registerLocationHandlers()
   registerSshHandlers()
   registerAgentHandlers()
@@ -77,9 +96,20 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerActivityHandlers()
   registerKeymapHandlers(deps)
   registerLaunchProfileHandlers()
+  registerLaunchSettingsHandlers()
+  registerHelperHandlers()
+  registerIntegrationsHandlers()
+  registerSpeechHandlers()
+  registerArtefactHandlers()
   registerGithubHandlers()
   // ── Lane A: the server ──
   registerServerHandlers()
+  registerServerPairingHandlers()
+  // ── Lane B (server wave): a Mac as a server, the tailnet scan ──
+  registerServerSetupHandlers()
   // ── Lane C: settings behind ports ──
   // ── Lane F: the shell ──
+  registerMicHandlers()
+  // ── Issue #227: Debug Clave… ──
+  registerTriageHandlers()
 }

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
   codexProfilePolicy,
+  codexRungPolicy,
   resolveLaunchProfile,
+  sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
   type LaunchProfile,
   type LaunchProfilePreferences
@@ -30,6 +33,72 @@ const prefs: LaunchProfilePreferences = {
   globalDefaults: { claude: 'tokenops-claude' },
   workspaceOverrides: { workspace: { claude: 'work-claude' } }
 }
+
+describe('a carried launch profile', () => {
+  const profile: LaunchProfile = {
+    id: 'work',
+    name: 'Work',
+    family: 'claude',
+    command: ['wrapper', 'claude'],
+    additionalArgs: ['--verbose']
+  }
+
+  it('accepts a custom profile and a chat variant with its source', () => {
+    expect(sanitizeCarriedLaunchProfile(profile)).toEqual(profile)
+    const chat = { ...profile, id: 'chat:claude:work', sourceProfileId: 'work' }
+    expect(sanitizeCarriedLaunchProfile(chat)).toEqual(chat)
+    expect(sanitizeCarriedLaunchProfile({ ...profile, id: ' work ', name: ' Work ' })).toEqual(
+      profile
+    )
+  })
+
+  it('requires a carried chat variant id to match its family', () => {
+    const codex = {
+      id: 'chat:codex:x',
+      name: 'X',
+      family: 'codex',
+      command: ['codex'],
+      additionalArgs: []
+    }
+    expect(sanitizeCarriedLaunchProfile(codex)).toEqual(codex)
+    expect(sanitizeCarriedLaunchProfile({ ...codex, id: 'chat:claude:x' })).toBeNull()
+  })
+
+  it.each([
+    { command: ['claude', '--model=opus'] },
+    { additionalArgs: ['--model', 'opus'] },
+    { family: 'other' },
+    { command: [] },
+    { command: ['claude\u0000'] },
+    { name: 'Work\u0001profile' },
+    { command: ['x'.repeat(4097)] }
+  ])('refuses invalid carried data %j', (changes) => {
+    expect(sanitizeCarriedLaunchProfile({ ...profile, ...changes })).toBeNull()
+  })
+
+  it('drops builtIn, invalid sources and Pi options on another family', () => {
+    expect(
+      sanitizeCarriedLaunchProfile({
+        ...profile,
+        builtIn: true,
+        sourceProfileId: '../invalid',
+        pi: { provider: 'anthropic', thinking: 'high' }
+      })
+    ).toEqual(profile)
+  })
+
+  it('keeps Pi options only for Pi and leaves stored-profile rules unchanged', () => {
+    const pi = { ...profile, family: 'pi', pi: { provider: 'anthropic', thinking: 'high' } }
+    expect(sanitizeCarriedLaunchProfile(pi)).toEqual(pi)
+    const parsed = sanitizeLaunchProfilePreferences({
+      customProfiles: [
+        { ...profile, builtIn: true, sourceProfileId: 'work' },
+        { ...profile, id: 'chat:claude:work', sourceProfileId: 'work' }
+      ]
+    })
+    expect(parsed.customProfiles).toEqual([profile])
+  })
+})
 
 describe('launch profile policy', () => {
   it('resolves explicit, workspace, global, then built-in profiles', () => {
@@ -225,6 +294,37 @@ describe('agent argv', () => {
     ])
   })
 
+  it("launches OpenCode's TUI with the flags it has: --session, --auto, --prompt, never a model", () => {
+    const profile = BUILT_IN_LAUNCH_PROFILES.find((p) => p.family === 'opencode')!
+    expect(profile.command).toEqual(['opencode'])
+    expect(buildAgentArgv({ kind: 'opencode', profile, sessionId: 'fresh', model: 'x/y' })).toEqual(
+      ['opencode']
+    )
+    expect(
+      buildAgentArgv({
+        kind: 'opencode',
+        profile,
+        resumeSessionId: 'ses_abc',
+        dangerousMode: true,
+        initialPrompt: 'hello'
+      })
+    ).toEqual(['opencode', '--session', 'ses_abc', '--auto', '--prompt', 'hello'])
+    const auto = { ...profile, id: 'oc-auto', builtIn: false, additionalArgs: ['--auto'] }
+    expect(buildAgentArgv({ kind: 'opencode', profile: auto, dangerousMode: true })).toEqual([
+      'opencode',
+      '--auto'
+    ])
+    const managed = { ...profile, id: 'oc-bad', builtIn: false, additionalArgs: ['--prompt=x'] }
+    expect(() => buildAgentArgv({ kind: 'opencode', profile: managed })).toThrow(
+      'Clave-managed flag'
+    )
+    expect(AGENT_CAPABILITIES.opencode).toEqual({
+      claveTools: 'unsupported',
+      exchangeCapture: 'unsupported',
+      blockedState: 'unsupported'
+    })
+  })
+
   it('keeps unsupported Pi capabilities explicit', () => {
     expect(AGENT_CAPABILITIES.pi).toEqual({
       claveTools: 'unsupported',
@@ -268,5 +368,183 @@ describe('Codex profile policy', () => {
   it('asks for nothing when the profile names no permission, or an unknown value', () => {
     expect(codexProfilePolicy(codex(['env', '-u', 'OPENAI_API_KEY', 'codex']))).toEqual({})
     expect(codexProfilePolicy(codex(['codex', '-s', 'everything', '-a']))).toEqual({})
+  })
+})
+
+describe('the permission default reaches the argv (PRDCT-4424)', () => {
+  const TITLE = 'tui.terminal_title=["app-name","status","spinner"]'
+  const profileOf = (family: LaunchProfile['family'], command: string): LaunchProfile => ({
+    id: `builtin-${family}`,
+    name: family,
+    family,
+    command: [command],
+    additionalArgs: []
+  })
+  const claude = profileOf('claude', 'claude')
+  const codex = profileOf('codex', 'codex')
+  const agy = profileOf('antigravity', 'agy')
+  const pi = profileOf('pi', 'pi')
+
+  it('claude: a rung is --permission-mode, bypass is the skip flag and never a mode', () => {
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'acceptEdits' })
+    ).toEqual(['claude', '--permission-mode', 'acceptEdits'])
+    expect(buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'default' })).toEqual([
+      'claude',
+      '--permission-mode',
+      'manual'
+    ])
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'bypassPermissions' })
+    ).toEqual(['claude', '--dangerously-skip-permissions'])
+    expect(
+      buildAgentArgv({
+        kind: 'claude',
+        profile: claude,
+        permissionMode: 'plan',
+        dangerousMode: true
+      })
+    ).toEqual(['claude', '--dangerously-skip-permissions'])
+  })
+
+  it("claude: a profile's own mode wins over the default rung, bypass included; a rung off the ladder is dropped", () => {
+    const planned: LaunchProfile = { ...claude, additionalArgs: ['--permission-mode', 'plan'] }
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: planned, permissionMode: 'acceptEdits' })
+    ).toEqual(['claude', '--permission-mode', 'plan'])
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: planned, permissionMode: 'bypassPermissions' })
+    ).toEqual(['claude', '--permission-mode', 'plan'])
+    // Cmd+Y is explicit: it still wins over the profile's mode.
+    expect(buildAgentArgv({ kind: 'claude', profile: planned, dangerousMode: true })).toEqual([
+      'claude',
+      '--permission-mode',
+      'plan',
+      '--dangerously-skip-permissions'
+    ])
+    // The wire takes any rung name now; Claude is handed its own alone.
+    expect(
+      buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'workspace-write' })
+    ).toEqual(['claude'])
+    expect(buildAgentArgv({ kind: 'claude', profile: claude, permissionMode: 'dontAsk' })).toEqual([
+      'claude',
+      '--permission-mode',
+      'dontAsk'
+    ])
+  })
+
+  it("codex: a profile's own sandbox or approval flags win over the default rung", () => {
+    const own: LaunchProfile = { ...codex, additionalArgs: ['--sandbox', 'read-only'] }
+    expect(
+      buildAgentArgv({ kind: 'codex', profile: own, permissionMode: 'workspace-write' })
+    ).toEqual(['codex', '--sandbox', 'read-only', '-c', TITLE])
+    const yolo: LaunchProfile = { ...codex, additionalArgs: ['--yolo'] }
+    expect(buildAgentArgv({ kind: 'codex', profile: yolo, permissionMode: 'read-only' })).toEqual([
+      'codex',
+      '--yolo',
+      '-c',
+      TITLE
+    ])
+  })
+
+  it('codex: a rung is --sandbox, full access turns approvals off too', () => {
+    expect(buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'read-only' })).toEqual([
+      'codex',
+      '--sandbox',
+      'read-only',
+      '-c',
+      TITLE
+    ])
+    expect(
+      buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'danger-full-access' })
+    ).toEqual([
+      'codex',
+      '--sandbox',
+      'danger-full-access',
+      '--ask-for-approval',
+      'never',
+      '-c',
+      TITLE
+    ])
+  })
+
+  it('codex: on a resume the rung goes before the thread id, as the approvals flag does', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'codex',
+        profile: codex,
+        resumeSessionId: 'thread-1',
+        permissionMode: 'workspace-write',
+        model: 'gpt-5.5'
+      })
+    ).toEqual([
+      'codex',
+      'resume',
+      '--sandbox',
+      'workspace-write',
+      '-m',
+      'gpt-5.5',
+      '-c',
+      TITLE,
+      'thread-1'
+    ])
+  })
+
+  it('codex: dangerous mode keeps its own flag and ignores the rung; a non-rung is dropped', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'codex',
+        profile: codex,
+        permissionMode: 'read-only',
+        dangerousMode: true
+      })
+    ).toEqual(['codex', '--yolo', '-c', TITLE])
+    expect(
+      buildAgentArgv({ kind: 'codex', profile: codex, permissionMode: 'acceptEdits' })
+    ).toEqual(['codex', '-c', TITLE])
+  })
+
+  it("antigravity: a profile's own --mode wins over the default rung", () => {
+    const own: LaunchProfile = { ...agy, additionalArgs: ['--mode', 'plan'] }
+    expect(buildAgentArgv({ kind: 'antigravity', profile: own, permissionMode: 'auto' })).toEqual([
+      'agy',
+      '--mode',
+      'plan'
+    ])
+  })
+
+  it('antigravity: a rung of its ladder is --mode, anything else is dropped', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'antigravity',
+        profile: agy,
+        permissionMode: 'plan',
+        initialPrompt: 'hi'
+      })
+    ).toEqual(['agy', '--mode', 'plan', '-i', 'hi'])
+    expect(
+      buildAgentArgv({ kind: 'antigravity', profile: agy, permissionMode: 'read-only' })
+    ).toEqual(['agy'])
+  })
+
+  it('pi: ignores it', () => {
+    expect(
+      buildAgentArgv({ kind: 'pi', profile: pi, sessionId: 'pi-1', permissionMode: 'acceptEdits' })
+    ).toEqual(['pi', '--session-id', 'pi-1'])
+  })
+
+  it("codex chat: a rung's thread policy", () => {
+    expect(codexRungPolicy('read-only')).toEqual({
+      sandbox: 'read-only',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user'
+    })
+    expect(codexRungPolicy('workspace-write')?.approvalPolicy).toBe('on-request')
+    expect(codexRungPolicy('danger-full-access')).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never'
+    })
+    expect(codexRungPolicy('never')).toBeUndefined()
+    expect(codexRungPolicy(undefined)).toBeUndefined()
   })
 })

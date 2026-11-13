@@ -27,6 +27,12 @@ import type {
   SessionWrite
 } from '@clave/contract/sessions'
 import type { SessionInput } from '../../shared/session-model'
+import {
+  applyWorkChange,
+  takeoverRenames,
+  WorkChangeRefusal,
+  type WorkAssignment
+} from '@clave/contract/work-rules'
 import type { PtySpawnOptions } from '../pty-manager'
 import { type SessionManager, sessionManager } from './session-manager'
 import { preparePrompt } from './attachments'
@@ -139,9 +145,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       if (value.type === 'set_model') {
         // The composer's pick is the next chat's default too. Remembered only
         // once the session took the switch: a refused name throws before this.
+        // A move the policy makes at a cap says `remember: false` (PRDCT-4302):
+        // Opus at the Fable cap is this tab's way on, not the person's pick.
         manager.write(id, value)
         const adapterId = manager.get(id)?.adapterId
-        if (adapterId) rememberChatModel(adapterId, value.model)
+        if (adapterId && value.remember !== false) rememberChatModel(adapterId, value.model)
         return
       }
       if (value.type === 'set_effort') {
@@ -154,15 +162,19 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       // A chat tab is named by its first message, and this is where that
       // message is first seen in main; the title comes back as a server event
       // (or on `session:auto-title:<id>` to the tab's window without a server).
-      titleGenerator.notifyChatMessage(id, value.text, windowOf(id))
+      // A form's outcome written to the agent (PRDCT-4157) is nobody's first
+      // words: it names no tab.
+      if (!value.form) titleGenerator.notifyChatMessage(id, value.text, windowOf(id))
       // A user message's prepared prompt is main's to build, from the attachment
       // records and the files they name, never the caller's to supply: the
       // files are read here, at send time, against the adapter's capabilities,
       // and a failure rejects the write so the composer keeps its draft.
+      const form = value.form ? { form: value.form } : {}
       const attachments = value.attachments?.length ? value.attachments : undefined
-      if (!attachments) return manager.write(id, { type: 'user_message', text: value.text })
+      if (!attachments)
+        return manager.write(id, { type: 'user_message', text: value.text, ...form })
       const prepared = await preparePrompt(value.text, attachments, manager.capabilities(id).images)
-      manager.write(id, { type: 'user_message', text: value.text, attachments, prepared })
+      manager.write(id, { type: 'user_message', text: value.text, attachments, prepared, ...form })
     },
     resize: (id, cols, rows) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
@@ -175,6 +187,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     },
     models: (id) => manager.models(id),
     commands: (id) => manager.commands(id),
+    control: (id, request) => manager.control(id, request),
     capabilities: (id): SessionCapabilities => manager.capabilities(id),
     history: (id, before, limit): HistoryPage => manager.history(id, before, limit),
     // ── Wave 4, lane C: the session records (PRDCT-3376) ──
@@ -193,6 +206,58 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       ptyManager.setSessionDisplayName(id, next === folderName ? null : next, true)
       return manager.get(id) ?? session
     },
+    // ── Wave 6, lane A: the window's name and page, on the record only ──
+    keepOnRecord: (id, { name, page, claudeSessionId, workspaceId }) => {
+      if (name) ptyManager.setSessionDisplayName(id, name.displayName, name.userRenamed)
+      if (page !== undefined) ptyManager.setSessionViewRecord(id, page)
+      if (claudeSessionId !== undefined) ptyManager.setSessionClaudeSessionId(id, claudeSessionId)
+      if (workspaceId !== undefined) ptyManager.setSessionWorkspace(id, workspaceId)
+    },
+    // ── PRDCT-4123: which work a session does, on the records ──
+    // The rule (`work-rules.ts`) reads every record this host keeps, the
+    // live sessions' and those waiting to be brought back, so a role's
+    // holder and both ends of a handover are known whichever of them runs.
+    // They are read as they are, never through the restore listing: that
+    // one runs tmux and prunes records, a boot's business, not a change's.
+    // The first record the rule answers is written first: it is the one
+    // that may have no record to keep it (a session joining a unit, the
+    // successor offered a role), and then nothing at all is written. Every
+    // other record it answers carries an assignment already, so it exists.
+    changeWork: (id, change) => {
+      const all = new Map<string, WorkAssignment | undefined>()
+      for (const r of ptyManager.listWorkAssignments()) all.set(r.id, r.work)
+      // A live session whose record is not on disk yet still counts.
+      for (const s of manager.list()) if (!all.has(s.id)) all.set(s.id, undefined)
+      // A session neither listed nor running is unknown: the rule says so
+      // (`WorkSessionUnknown`), and the server answers its declared not-found.
+      const before = [...all].map(([sid, work]) => ({ id: sid, work }))
+      const updates = applyWorkChange(before, id, change, Date.now())
+      const [first, ...rest] = updates
+      // A refusal in words, not a failure of the host: an answer the server
+      // turns into `CapabilityUnavailable` is the window-wide server notice.
+      if (first && !ptyManager.setSessionWork(first.id, first.work))
+        throw new WorkChangeRefusal(
+          first.id === id
+            ? 'This session keeps no record, so its work cannot be kept'
+            : `The session ${first.id} keeps no record, so its work cannot be kept`
+        )
+      for (const update of rest) ptyManager.setSessionWork(update.id, update.work)
+      // An accepted handover renames (`takeoverRenames`): the successor takes
+      // its predecessor's name, the predecessor first becoming `<name> · gen
+      // <n>`, n past every generation an open tab already bears, so no two
+      // open tabs share the name for a moment. Written as a rename is,
+      // protected from the auto-title.
+      const renamed = takeoverRenames(
+        before,
+        updates,
+        id,
+        change,
+        (sid) => manager.get(sid)?.title,
+        new Set(manager.list().map((s) => s.title))
+      )
+      for (const r of renamed) ptyManager.setSessionDisplayName(r.id, r.name, true)
+      return { changed: updates, renamed }
+    },
     setPage: (id, page) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
       ptyManager.setSessionViewRecord(id, page)
@@ -209,7 +274,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       }
       return typeIntoSession(id, text)
     },
-    restart: (id, account, resendRejected) => restartSession(id, { ...account, resendRejected })
+    restart: (id, account, resendRejected, onlyIfStopped, provider) =>
+      restartSession(id, { ...account, ...provider, resendRejected, onlyIfStopped })
   }
   return host
 }

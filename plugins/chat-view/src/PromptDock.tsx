@@ -1,27 +1,31 @@
+import { questionKey, questionIsPrivate } from '../../../src/renderer/src/lib/question-identity'
 import { useEffect, useRef, useState } from 'react'
 import {
-  CheckIcon,
   ChevronRightIcon,
-  PencilSquareIcon,
   QuestionMarkCircleIcon,
-  ShieldCheckIcon,
-  XMarkIcon
+  ShieldCheckIcon
 } from '@heroicons/react/24/outline'
-import type { AgentQuestion } from '../../../src/shared/session-model'
 import type { Entry, Permission } from './reducer'
-import { describeTool, safeJson, type ToolKind } from './tools'
+import { describeTool, safeJson, type ApprovalGroup, type ToolKind } from './tools'
+import { approvalRunSummary, decisionWord, describeApproval, isQuestion } from './approvals'
+import { useDisclosure } from './disclosure'
 import { ChatCode } from './code'
+import { ClosedForm, InputPrompt } from './InputPrompt'
+import { isDeny, isInputRequest, forgetCard } from './input-request'
+import { useQuestionHost, type Answer } from './question-context'
+import { BackToBypass, PermissionLevelTag, PermissionReading } from './PermissionReading'
+
+export type { Answer } from './question-context'
 
 /* What the agent is waiting on, docked above the composer so it is always in
    the same place and never scrolls away: a tool to allow, or questions to
-   answer. The transcript keeps one muted row per request (PermissionRow) as
-   the record of what was asked and what the reader said. */
+   answer. Every question, a form or the agent's own, is the one card of
+   InputPrompt.tsx (PRDCT-4322). The transcript keeps one row per request
+   (PermissionRow) as the record of what was asked and what the reader said. */
 
 type PermissionEntry = Extract<Entry, { kind: 'permission' }>
-export type Answer = (id: string, optionId: string, answers?: Record<string, string>) => void
 
 const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
-const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test(id)
 const basename = (path: string): string => path.split('/').filter(Boolean).at(-1) ?? path
 
 /** The prompt's body takes focus as it arrives, so its keys work at once
@@ -30,16 +34,6 @@ function useFocusOnArrival(): React.RefObject<HTMLDivElement | null> {
   const body = useRef<HTMLDivElement>(null)
   useEffect(() => body.current?.focus({ preventScroll: true }), [])
   return body
-}
-
-/** A keycap beside a button: the key that presses it. Hidden from the
- *  accessible name, which stays the button's own words. */
-function Key({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return (
-    <kbd className="chat-prompt-key" aria-hidden="true">
-      {children}
-    </kbd>
-  )
 }
 
 const VERBS: Record<ToolKind, string> = {
@@ -94,11 +88,14 @@ function PermissionPrompt({
   request,
   agent,
   busy,
+  waiting,
   onAnswer
 }: {
   request: Permission
   agent: string
   busy: boolean
+  /** How many requests wait in the dock, this one included. */
+  waiting: number
   onAnswer: Answer
 }): React.JSX.Element {
   const { title, target, code } = describeRequest(request, agent)
@@ -109,6 +106,36 @@ function PermissionPrompt({
   const ordered = [...denies, ...allows.slice(1).reverse(), ...allows.slice(0, 1)]
   const primary = allows[0]
   const keyOf = (id: string): number => ordered.findIndex((o) => o.id === id) + 1
+  // A button carries its words alone (PRDCT-4483). Its keys stay live and are
+  // said on approach, in the tooltip, the question card's way ("Skip (Esc)"),
+  // and to assistive technology: Escape denies, ⌘ Enter allows, a digit
+  // presses the button at that place from the left.
+  const keysOf = (option: Permission['options'][number]): { hint: string; aria: string } => {
+    const digit = String(keyOf(option.id))
+    if (option === denies[0]) return { hint: 'Esc', aria: `Escape ${digit}` }
+    if (option === primary) return { hint: '⌘ Enter', aria: `Meta+Enter ${digit}` }
+    return { hint: digit, aria: digit }
+  }
+  const button = (option: Permission['options'][number]): React.JSX.Element => {
+    const keys = keysOf(option)
+    return (
+      <button
+        key={option.id}
+        type="button"
+        // The question card's buttons (`chat-ask-btn`), so the two cards that
+        // wait on the reader wear the same ones; `chat-prompt-btn` stays the
+        // hook the dock's specs find them by.
+        className="chat-prompt-btn chat-ask-btn"
+        data-primary={option === primary ? 'true' : undefined}
+        title={`${option.label} (${keys.hint})`}
+        aria-keyshortcuts={keys.aria}
+        disabled={busy}
+        onClick={() => onAnswer(request.id, option.id)}
+      >
+        {option.label}
+      </button>
+    )
+  }
   const body = useFocusOnArrival()
   return (
     <div
@@ -131,9 +158,26 @@ function PermissionPrompt({
         }
       }}
     >
-      <div className="chat-prompt-title">{title}</div>
+      <div className="chat-prompt-head">
+        <div className="chat-prompt-title">{title}</div>
+        {/* The queue stands level with the question rather than on a line
+            of its own above it. */}
+        {waiting > 1 && <span className="chat-prompt-queue">1 of {waiting} waiting</span>}
+      </div>
       {target && <div className="chat-prompt-target">{target}</div>}
-      {request.detail && <p className="chat-prompt-detail">{request.detail}</p>}
+      {/* PRDCT-4331: the level at once, then what the request does in plain words. */}
+      <PermissionReading request={request} />
+      {/* The agent's own word on the request, said to be its own: the reading
+          above is Clave's and a model's, which never take the agent's word
+          (PRDCT-4489). */}
+      {request.detail && (
+        <p className="chat-prompt-detail">
+          <span className="chat-prompt-detail-who">
+            {agent.charAt(0).toUpperCase() + agent.slice(1)} says:
+          </span>{' '}
+          {request.detail}
+        </p>
+      )}
       {code && (
         <pre className="chat-prompt-code">
           {code.language === 'bash' && <span className="chat-tool-prompt">$ </span>}
@@ -152,395 +196,14 @@ function PermissionPrompt({
         </details>
       )}
       <div className="chat-prompt-actions">
-        {denies.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className="chat-prompt-btn"
-            disabled={busy}
-            onClick={() => onAnswer(request.id, option.id)}
-          >
-            {option.label}
-            <Key>{keyOf(option.id)}</Key>
-            {option === denies[0] && <Key>Esc</Key>}
-          </button>
-        ))}
+        {denies.map(button)}
         <span className="chat-prompt-spacer" />
-        {ordered
-          .filter((o) => !isDeny(o.id))
-          .map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className="chat-prompt-btn"
-              data-primary={option === primary ? 'true' : undefined}
-              disabled={busy}
-              onClick={() => onAnswer(request.id, option.id)}
-            >
-              {option.label}
-              <Key>{keyOf(option.id)}</Key>
-              {option === primary && <Key>⌘↩</Key>}
-            </button>
-          ))}
+        {ordered.filter((o) => !isDeny(o.id)).map(button)}
       </div>
+      <BackToBypass />
     </div>
   )
 }
-
-/** The reader's reply to one question: the labels picked, a note on any of
- *  them, or their own words. A note travels with its option ("Lint — only the
- *  changed files"), so the agent reads the choice and the remark together. */
-interface Reply {
-  picked: string[]
-  other: string | null
-  notes?: Record<string, string>
-}
-const replyText = (reply: Reply | undefined): string =>
-  reply
-    ? [
-        ...reply.picked.map((label) => {
-          const note = reply.notes?.[label]?.trim()
-          return note ? `${label} — ${note}` : label
-        }),
-        ...(reply.other?.trim() ? [reply.other.trim()] : [])
-      ].join(', ')
-    : ''
-
-function QuestionPrompt({
-  request,
-  busy,
-  onAnswer
-}: {
-  request: Permission
-  busy: boolean
-  onAnswer: Answer
-}): React.JSX.Element {
-  /* A request with `questions` is answered with their text → the reply; one
-     without (a plugin's question) offers its options as the choices, and the
-     choice IS the answer. Both read as the same card. */
-  const structured = request.questions
-  const questions: AgentQuestion[] = structured ?? [
-    { question: request.description, options: request.options.map((o) => ({ label: o.label })) }
-  ]
-  const [step, setStep] = useState(0)
-  // Which way the page came in: forward swipes from the right, Back from the left.
-  const [direction, setDirection] = useState<'forward' | 'back'>('forward')
-  const [replies, setReplies] = useState<Record<number, Reply>>({})
-  const otherInput = useRef<HTMLTextAreaElement>(null)
-  // The note field to focus once it has rendered, by its option's label.
-  const [noteFocus, setNoteFocus] = useState<string | null>(null)
-  /* A question the agent asked in words ends on a review of every reply
-     before anything is sent: one step past the last question. A plugin's
-     question, whose choice IS the answer, is sent on the choice. */
-  const reviewing = !!structured && step === questions.length
-  const question = questions[Math.min(step, questions.length - 1)]
-  const reply = replies[step] ?? { picked: [], other: null }
-  const notes = reply.notes ?? {}
-  const last = step === questions.length - 1
-  const answered = replyText(reply) !== ''
-  const skip = request.options.find((o) => isDeny(o.id))
-  const set = (next: Reply): void => setReplies((all) => ({ ...all, [step]: next }))
-  /** Move on with the replies given: the next question, or the answer itself
-   *  on the last one. Takes the replies as an argument because a single choice
-   *  moves on in the same click that picks it, before state has caught up. */
-  const advance = (all: Record<number, Reply>): void => {
-    if (busy || replyText(all[step]) === '') return
-    if (!last) {
-      setDirection('forward')
-      setStep(step + 1)
-      return
-    }
-    if (!structured) {
-      const option = request.options.find((o) => o.label === all[step]?.picked[0])
-      if (option) onAnswer(request.id, option.id)
-      return
-    }
-    setDirection('forward')
-    setStep(questions.length)
-  }
-  const submit = (): void => (reviewing ? send() : advance(replies))
-  /** The replies, sent: each question's text → what the reader said to it. */
-  const send = (): void => {
-    if (busy) return
-    const answers: Record<string, string> = {}
-    questions.forEach((q, i) => {
-      const text = replyText(replies[i])
-      if (text) answers[q.question] = text
-    })
-    onAnswer(request.id, 'answer', answers)
-  }
-  /* A multi-select toggles and waits for Next; a single choice IS the answer,
-     so picking it moves on at once — no second click on Submit — unless the
-     option carries a note being written, which is a reply still in the making. */
-  const pick = (label: string): void => {
-    if (question.multiSelect) {
-      // Unticking an option drops its note with it.
-      if (reply.picked.includes(label)) {
-        const rest = { ...notes }
-        delete rest[label]
-        set({ ...reply, picked: reply.picked.filter((l) => l !== label), notes: rest })
-      } else set({ ...reply, picked: [...reply.picked, label] })
-      return
-    }
-    const kept = notes[label] !== undefined ? { [label]: notes[label] } : {}
-    const next = { ...replies, [step]: { picked: [label], other: null, notes: kept } }
-    setReplies(next)
-    if (notes[label] === undefined) advance(next)
-  }
-  /** Open a note on an option: it is picked with it, and the field takes the caret. */
-  const openNote = (label: string): void => {
-    const picked = question.multiSelect
-      ? reply.picked.includes(label)
-        ? reply.picked
-        : [...reply.picked, label]
-      : [label]
-    const kept = question.multiSelect ? notes : {}
-    set({
-      picked,
-      other: question.multiSelect ? reply.other : null,
-      notes: { ...kept, [label]: notes[label] ?? '' }
-    })
-    setNoteFocus(label)
-  }
-  const writeNote = (label: string, text: string): void =>
-    set({ ...reply, notes: { ...notes, [label]: text } })
-  /** A note left empty closes when the caret leaves it. */
-  const closeEmptyNote = (label: string): void => {
-    if (notes[label]?.trim()) return
-    const rest = { ...notes }
-    delete rest[label]
-    set({ ...reply, notes: rest })
-  }
-  const back = (): void => {
-    setDirection('back')
-    setStep(step - 1)
-  }
-  const choices = question.options.length
-  const body = useFocusOnArrival()
-  // A new step disables the button that moved to it (nothing is chosen yet),
-  // which would drop focus out of the dock and its keys with it.
-  useEffect(() => body.current?.focus({ preventScroll: true }), [step, body])
-  return (
-    <div
-      ref={body}
-      tabIndex={-1}
-      className="chat-prompt-body"
-      onKeyDown={(event) => {
-        if (busy || event.target instanceof HTMLTextAreaElement) {
-          // In the reader's own words (Other, or a note), Enter submits the
-          // answer and Shift+Enter is a new line in it.
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault()
-            submit()
-          }
-          return
-        }
-        const n = Number(event.key)
-        if (reviewing) {
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            send()
-          } else if (event.key === 'Escape' && skip) {
-            event.preventDefault()
-            event.stopPropagation()
-            onAnswer(request.id, skip.id)
-          }
-          return
-        }
-        if (Number.isInteger(n) && n >= 1 && n <= choices + (structured ? 1 : 0)) {
-          event.preventDefault()
-          if (n <= choices) pick(question.options[n - 1].label)
-          else otherInput.current?.focus()
-        } else if (event.key === 'Enter') {
-          event.preventDefault()
-          submit()
-        } else if (event.key === 'Escape' && skip) {
-          event.preventDefault()
-          event.stopPropagation()
-          onAnswer(request.id, skip.id)
-        }
-      }}
-    >
-      {reviewing ? (
-        <div key="review" className="chat-prompt-page" data-direction={direction}>
-          <div className="chat-prompt-head">
-            <span className="chat-prompt-title">Review your answers</span>
-          </div>
-          <dl className="chat-prompt-review">
-            {questions.map((q, i) => (
-              <div key={q.question} className="chat-prompt-review-item">
-                <dt>{q.question}</dt>
-                <dd>{replyText(replies[i]) || 'No answer'}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      ) : (
-        <div key={step} className="chat-prompt-page" data-direction={direction}>
-          <div className="chat-prompt-head">
-            {questions.length > 1 && (
-              <span className="chat-prompt-step">
-                {step + 1}/{questions.length}
-              </span>
-            )}
-            <span className="chat-prompt-title">
-              {question.question}
-              {question.multiSelect && <span className="chat-prompt-hint">Choose any</span>}
-            </span>
-            {skip && (
-              <button
-                type="button"
-                className="chat-turn-copy"
-                aria-label="Skip the question"
-                title="Skip (Esc)"
-                disabled={busy}
-                onClick={() => onAnswer(request.id, skip.id)}
-              >
-                <XMarkIcon />
-              </button>
-            )}
-          </div>
-          <div
-            className="chat-prompt-options"
-            role={question.multiSelect ? 'group' : 'radiogroup'}
-            aria-label={question.header ?? question.question}
-          >
-            {question.options.map((option, index) => {
-              const selected = reply.picked.includes(option.label)
-              const note = notes[option.label]
-              return (
-                <div
-                  key={option.label}
-                  className="chat-prompt-choice"
-                  data-noted={note !== undefined ? 'true' : undefined}
-                  data-multi={question.multiSelect ? 'true' : undefined}
-                >
-                  <button
-                    type="button"
-                    role={question.multiSelect ? 'checkbox' : 'radio'}
-                    aria-checked={selected}
-                    className="chat-prompt-option"
-                    data-selected={selected ? 'true' : undefined}
-                    data-multi={question.multiSelect ? 'true' : undefined}
-                    disabled={busy}
-                    onClick={() => pick(option.label)}
-                  >
-                    {/* A multi-select says so before anything is picked: every
-                      option carries its box, empty or ticked. */}
-                    {question.multiSelect && (
-                      <span className="chat-prompt-box" aria-hidden="true">
-                        {selected && <CheckIcon />}
-                      </span>
-                    )}
-                    <span className="chat-prompt-option-text">
-                      <span className="chat-prompt-option-label">{option.label}</span>
-                      {option.description && (
-                        <span className="chat-prompt-option-hint">{option.description}</span>
-                      )}
-                    </span>
-                    {selected && !question.multiSelect ? (
-                      <CheckIcon className="chat-prompt-check" />
-                    ) : (
-                      <Key>{index + 1}</Key>
-                    )}
-                  </button>
-                  {structured && note === undefined && (
-                    <button
-                      type="button"
-                      className="chat-prompt-note-btn"
-                      aria-label={`Add a note to ${option.label}`}
-                      title="Add a note"
-                      disabled={busy}
-                      onClick={() => openNote(option.label)}
-                    >
-                      <PencilSquareIcon />
-                    </button>
-                  )}
-                  {structured && note !== undefined && (
-                    <textarea
-                      ref={(el) => {
-                        if (el && noteFocus === option.label) {
-                          el.focus()
-                          setNoteFocus(null)
-                        }
-                      }}
-                      rows={1}
-                      className="chat-prompt-other chat-prompt-note"
-                      aria-label={`Note on ${option.label}`}
-                      placeholder="Add a note to this answer"
-                      value={note}
-                      disabled={busy}
-                      onChange={(event) => writeNote(option.label, event.target.value)}
-                      onBlur={() => closeEmptyNote(option.label)}
-                    />
-                  )}
-                </div>
-              )
-            })}
-            {structured && (
-              <label
-                className="chat-prompt-option"
-                data-selected={reply.other?.trim() ? 'true' : undefined}
-              >
-                <span className="chat-prompt-option-text">
-                  <span className="chat-prompt-option-label">Other</span>
-                  {/* A field that grows with the answer and wraps it, never a
-                    single line running out of the card. */}
-                  <textarea
-                    ref={otherInput}
-                    rows={1}
-                    className="chat-prompt-other"
-                    placeholder="Type your own answer"
-                    value={reply.other ?? ''}
-                    disabled={busy}
-                    onChange={(event) =>
-                      set({
-                        picked: question.multiSelect ? reply.picked : [],
-                        other: event.target.value
-                      })
-                    }
-                  />
-                </span>
-                <Key>{choices + 1}</Key>
-              </label>
-            )}
-          </div>
-        </div>
-      )}
-      <div className="chat-prompt-actions">
-        <span className="chat-prompt-spacer" />
-        {step > 0 && (
-          <button type="button" className="chat-prompt-btn" disabled={busy} onClick={back}>
-            Back
-          </button>
-        )}
-        {skip && (
-          <button
-            type="button"
-            className="chat-prompt-btn"
-            disabled={busy}
-            onClick={() => onAnswer(request.id, skip.id)}
-          >
-            Skip
-            <Key>Esc</Key>
-          </button>
-        )}
-        <button
-          type="button"
-          className="chat-prompt-btn"
-          data-primary="true"
-          disabled={busy || (!reviewing && !answered)}
-          onClick={submit}
-        >
-          {reviewing ? 'Send' : !last ? 'Next' : structured ? 'Review' : 'Submit'}
-          <Key>↩</Key>
-        </button>
-      </div>
-    </div>
-  )
-}
-
-const isQuestion = (request: Permission): boolean => !!request.questions || !request.toolName
 
 /** The first request the agent still waits on, docked above the composer; the
  *  rest queue behind it. */
@@ -548,12 +211,15 @@ export function PromptDock({
   requests,
   agent,
   busy,
-  onAnswer
+  onAnswer,
+  remote = false
 }: {
   requests: Permission[]
   agent: string
   busy: (id: string) => boolean
   onAnswer: Answer
+  /** The session runs on another machine: a path picked here would be this Mac's. */
+  remote?: boolean
 }): React.JSX.Element | null {
   const request = requests[0]
   if (!request) return null
@@ -564,14 +230,16 @@ export function PromptDock({
       data-kind={question ? 'question' : 'permission'}
       aria-label={question ? 'Question' : 'Permission request'}
     >
-      {requests.length > 1 && (
+      {question && requests.length > 1 && (
         <div className="chat-prompt-queue">1 of {requests.length} waiting</div>
       )}
       {question ? (
-        <QuestionPrompt
+        <InputPrompt
           key={request.id}
           request={request}
           busy={busy(request.id)}
+          agent={agent}
+          remote={remote}
           onAnswer={onAnswer}
         />
       ) : (
@@ -580,6 +248,7 @@ export function PromptDock({
           request={request}
           agent={agent}
           busy={busy(request.id)}
+          waiting={requests.length}
           onAnswer={onAnswer}
         />
       )}
@@ -587,21 +256,126 @@ export function PromptDock({
   )
 }
 
-/** The transcript's record of a request: one muted row, like a tool call. */
+/** A question still waiting, drawn in the transcript where the agent asked it
+ *  (PRDCT-4157): the same card the dock held, inline under the agent's turn,
+ *  with the room of the column. The view provides how it answers
+ *  (`QuestionContext`); without a provider (a view that keeps its dock) the
+ *  row is the muted record as before. The answered card collapses into that
+ *  record (`PermissionRow`). */
+export function InlineQuestion({ entry }: { entry: PermissionEntry }): React.JSX.Element {
+  const host = useQuestionHost()
+  const { request } = entry
+  if (
+    !host ||
+    entry.answer ||
+    entry.answeredElsewhere ||
+    !isQuestion(request) ||
+    !host.live(entry)
+  ) {
+    if (entry.answer || entry.answeredElsewhere) forgetCard(request.id)
+    return <PermissionRow entry={entry} />
+  }
+  const busy = host.busy(request.id)
+  // The form's own road (the agent's fill, the reader's typing kept by the
+  // server, the agent at work on what was said) is a form's alone: the agent
+  // that asked with its own tool waits on the card and fills nothing.
+  const hosted = isInputRequest(request)
+  return (
+    <section className="chat-prompt" data-kind="question" data-inline="true" aria-label="Question">
+      <InputPrompt
+        key={request.id}
+        request={request}
+        busy={busy}
+        agent={host.agent}
+        remote={host.remote}
+        drafts={host.drafts}
+        {...(hosted && {
+          draft: entry.draft,
+          typed: entry.typed,
+          notes: entry.notes,
+          working: host.working,
+          onType: host.type
+        })}
+        onAnswer={host.answer}
+      />
+    </section>
+  )
+}
+
+/** The reader's answers to a request's questions, one line each, the way the
+ *  record reads them: a multi-select's labels together, a confirmed link as
+ *  its button's words, a private answer as dots. */
+function AnswerList({
+  request,
+  answers
+}: {
+  request: Permission
+  answers: Record<string, string | string[]>
+}): React.JSX.Element {
+  return (
+    <dl className="chat-permission-answers">
+      {(request.questions ?? []).flatMap((q) => {
+        const value = answers[questionKey(q)]
+        if (value === undefined) return []
+        const text = Array.isArray(value)
+          ? value.join(', ')
+          : q.kind === 'link'
+            ? (q.confirm ?? "I'm back")
+            : value
+        return [
+          <div key={questionKey(q)} className="chat-permission-answer">
+            <dt>{q.question}</dt>
+            <dd>{questionIsPrivate(q, request.input) ? '••••••' : text}</dd>
+          </div>
+        ]
+      })}
+    </dl>
+  )
+}
+
+/** The transcript's record of a request: one muted row, like a tool call.
+ *  It reads what was asked in the reader's words (`describeApproval`: "Run a
+ *  command", "Use clave_send_to_session · Clave") and what the reader said
+ *  ("Allowed", "Declined"), never the protocol's method name and raw
+ *  decision id the Codex adapter carries. */
 export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.Element {
+  const host = useQuestionHost()
   const { request } = entry
   const question = isQuestion(request)
+  // A question stays as the card it was, closed: every step folded with its
+  // answer, where it stood when it settled (PRDCT-4157), the agent's own
+  // question as much as a form (PRDCT-4322). A plugin's question, which
+  // carries no questions of its own, keeps its one muted row.
+  if (isQuestion(request) && request.questions?.length && (entry.answer || entry.answeredElsewhere))
+    return (
+      <div
+        className="chat-permission-row"
+        data-state={entry.answer ? 'answered' : 'elsewhere'}
+        data-kind="question"
+        data-revised={entry.revised ? 'true' : undefined}
+        data-form="closed"
+        role="status"
+      >
+        <ClosedForm entry={entry} agent={host?.agent ?? 'The agent'} />
+      </div>
+    )
   const Icon = question ? QuestionMarkCircleIcon : ShieldCheckIcon
-  const chosen = entry.answer
-    ? (request.options.find((o) => o.id === entry.answer)?.label ?? entry.answer)
+  const chosen = entry.answer ? decisionWord(request, entry.answer) : null
+  const approval = question
+    ? undefined
+    : (describeApproval(request) ?? {
+        label: request.toolName ?? request.description,
+        target: describeRequest(request, '').target
+      })
+  const subject = approval
+    ? [approval.label, approval.target].filter(Boolean).join(' ')
+    : request.description
+  const hosted = isInputRequest(request)
+  const answers = entry.answers
+    ? Object.values(entry.answers)
+        .map((v) => (Array.isArray(v) ? v.join(', ') : v))
+        .join('; ')
     : null
-  const target = question ? '' : describeRequest(request, '').target
-  const subject = question
-    ? request.description
-    : request.toolName
-      ? [request.toolName, target].filter(Boolean).join(' ')
-      : request.description
-  const answers = entry.answers ? Object.values(entry.answers).join('; ') : null
   // An answer on the entry is the truth, whatever the kernel said meanwhile.
   const status =
     entry.answeredElsewhere && !entry.answer
@@ -613,21 +387,74 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
         : question
           ? isDeny(entry.answer)
             ? 'Skipped'
-            : 'Answered'
+            : entry.revised
+              ? 'Revised'
+              : 'Answered'
           : chosen
   return (
     <div
       className="chat-permission-row"
       data-state={entry.answer ? 'answered' : entry.answeredElsewhere ? 'elsewhere' : 'waiting'}
       data-kind={question ? 'question' : 'permission'}
+      data-revised={entry.revised ? 'true' : undefined}
       role="status"
     >
       <Icon className="chat-tool-status" />
       <span className="chat-permission-row-text">
         <span className="chat-tool-name">{status}</span>
         <span className="chat-tool-summary">{subject}</span>
-        {answers && question && <span className="chat-permission-row-answer">→ {answers}</span>}
+        {!question && <PermissionLevelTag request={request} />}
+        {answers && question && !hosted && (
+          <span className="chat-permission-row-answer">→ {answers}</span>
+        )}
+        {entry.answers && question && hosted && (
+          <AnswerList request={request} answers={entry.answers} />
+        )}
       </span>
     </div>
+  )
+}
+
+/** A run of approvals the reader allowed: one row, led by the shield, that
+ *  opens to one receipt per request. An uncontrolled `<details>` keyed by the
+ *  row's key, as a run of tools is: the reader's choice is DOM state
+ *  a re-render cannot touch, and a receipt arriving mid-run neither closes an
+ *  opened row nor opens a closed one. */
+export function ApprovalRun({
+  group,
+  id
+}: {
+  group: ApprovalGroup
+  /** The row's key (`blockKey`): what the reader's disclosure is remembered under. */
+  id: string
+}): React.JSX.Element {
+  const disclosure = useDisclosure(id)
+  const [opened, setOpened] = useState(disclosure.initial)
+  const { head, detail } = approvalRunSummary(group.approvals)
+  return (
+    <details
+      className="chat-approval-run"
+      data-count={group.approvals.length}
+      open={disclosure.initial}
+      onToggle={(event) => {
+        if (disclosure.toggle(event)) setOpened(true)
+      }}
+    >
+      <summary className="chat-tool-row">
+        <ShieldCheckIcon className="chat-tool-status" aria-label="Allowed" />
+        <span className="chat-tool-run-summary">
+          <span className="chat-tool-name">{head}</span>
+          {detail && <span className="chat-tool-summary">{detail}</span>}
+        </span>
+        <ChevronRightIcon className="chat-tool-chevron" />
+      </summary>
+      {opened && (
+        <div className="chat-approval-items">
+          {group.approvals.map((entry) => (
+            <PermissionRow key={entry.request.id} entry={entry} />
+          ))}
+        </div>
+      )}
+    </details>
   )
 }

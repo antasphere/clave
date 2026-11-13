@@ -32,6 +32,7 @@ import {
   fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { NOTE_CHECK, noteDetail, whatsNewNoteFor } from './whats-new-note.mjs'
 
 const DIR = userDataDir('sidebar-whats-new')
 const ROOT = fixturePath('whats-new-root')
@@ -103,102 +104,111 @@ export async function run(t) {
     // entry exists for the version running. Seed a stale "last seen" and reload
     // so the check runs on boot against the real whats-new.json.
     const version = await app.evaluate(({ app: a }) => a.getVersion())
-    await win.evaluate((v) => {
-      localStorage.setItem('clave-whats-new-last-seen-version', `${v}-stale`)
-    }, version)
-    await win.reload()
-    await win.waitForLoadState('domcontentloaded')
-    await win.waitForTimeout(4000)
 
-    // Open the disclosure: the note, and the cap this spec is about, live
-    // behind it now.
-    const openedIt = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
+    // Only when the checkout carries a note for the version it built: the
+    // card is absent otherwise, by design, and the checks below would be
+    // about nothing (the check is red on a checkout without one, and named in
+    // known-failures.json with its task).
+    const note = whatsNewNoteFor(version)
+    t.check(NOTE_CHECK, note !== null, noteDetail(version))
+    if (note) {
+      await win.evaluate((v) => {
+        localStorage.setItem('clave-whats-new-last-seen-version', `${v}-stale`)
+      }, version)
+      await win.reload()
+      await win.waitForLoadState('domcontentloaded')
+      await win.waitForTimeout(4000)
+
+      // Open the disclosure: the note, and the cap this spec is about, live
+      // behind it now.
+      const openedIt = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        if (!heading) return false
+        const card = heading.closest('div.rounded-xl')
+        const toggle = [...card.querySelectorAll('button')].find((b) =>
+          /What's changed/.test(b.textContent ?? '')
+        )
+        if (!toggle) return false
+        toggle.click()
+        return true
+      })
+      t.check(
+        'the note can be opened',
+        openedIt === true,
+        'no “What’s changed” disclosure on the card'
       )
-      if (!heading) return false
-      const card = heading.closest('div.rounded-xl')
-      const toggle = [...card.querySelectorAll('button')].find((b) =>
-        /What's changed/.test(b.textContent ?? '')
+      await win.waitForTimeout(500)
+
+      const banner = await win.evaluate(() => {
+        const heading = [...document.querySelectorAll('span')].find((s) =>
+          /^New in /.test(s.textContent ?? '')
+        )
+        if (!heading) return { present: false }
+        const card = heading.closest('div.rounded-xl')
+        // The scrolling box the opened note lives in — not the headline `p`
+        // above it, which is one line by design.
+        const body = [...card.querySelectorAll('div')].find(
+          (d) => getComputedStyle(d).overflowY === 'auto'
+        )
+        if (!body) return { present: true, body: false }
+        const cs = getComputedStyle(body)
+        body.scrollTop = 9999
+        const scrolled = body.scrollTop
+        body.scrollTop = 0
+        const sidebar = card.closest('.flex.flex-col.h-full')
+        return {
+          present: true,
+          body: true,
+          overflowY: cs.overflowY,
+          clientHeight: body.clientHeight,
+          scrollHeight: body.scrollHeight,
+          scrolled,
+          chars: (body.textContent ?? '').length,
+          sidebarBottom: sidebar ? Math.round(sidebar.getBoundingClientRect().bottom) : null,
+          cardBottom: Math.round(card.getBoundingClientRect().bottom),
+          viewportHeight: window.innerHeight
+        }
+      })
+
+      t.check('the what’s-new banner is on screen', banner.present === true, banner)
+      t.check('it renders a body paragraph', banner.body === true, banner)
+
+      // Guard the guard: a short note would make every assertion below vacuous.
+      t.check(
+        'the entry under test is a long one (the case that broke)',
+        banner.chars > 600,
+        `body is ${banner.chars} chars — seed a longer entry or this proves nothing`
       )
-      if (!toggle) return false
-      toggle.click()
-      return true
-    })
-    t.check(
-      'the note can be opened',
-      openedIt === true,
-      'no “What’s changed” disclosure on the card'
-    )
-    await win.waitForTimeout(500)
 
-    const banner = await win.evaluate(() => {
-      const heading = [...document.querySelectorAll('span')].find((s) =>
-        /^New in /.test(s.textContent ?? '')
+      t.check(
+        'the body is capped rather than as tall as its text',
+        banner.clientHeight > 0 && banner.scrollHeight > banner.clientHeight + 20,
+        banner
       )
-      if (!heading) return { present: false }
-      const card = heading.closest('div.rounded-xl')
-      // The scrolling box the opened note lives in — not the headline `p`
-      // above it, which is one line by design.
-      const body = [...card.querySelectorAll('div')].find(
-        (d) => getComputedStyle(d).overflowY === 'auto'
+      t.check(
+        'the cap leaves the banner a sidebar element, not a screenful',
+        banner.clientHeight <= Math.round(banner.viewportHeight * 0.45),
+        banner
       )
-      if (!body) return { present: true, body: false }
-      const cs = getComputedStyle(body)
-      body.scrollTop = 9999
-      const scrolled = body.scrollTop
-      body.scrollTop = 0
-      const sidebar = card.closest('.flex.flex-col.h-full')
-      return {
-        present: true,
-        body: true,
-        overflowY: cs.overflowY,
-        clientHeight: body.clientHeight,
-        scrollHeight: body.scrollHeight,
-        scrolled,
-        chars: (body.textContent ?? '').length,
-        sidebarBottom: sidebar ? Math.round(sidebar.getBoundingClientRect().bottom) : null,
-        cardBottom: Math.round(card.getBoundingClientRect().bottom),
-        viewportHeight: window.innerHeight
-      }
-    })
-
-    t.check('the what’s-new banner is on screen', banner.present === true, banner)
-    t.check('it renders a body paragraph', banner.body === true, banner)
-
-    // Guard the guard: a short note would make every assertion below vacuous.
-    t.check(
-      'the entry under test is a long one (the case that broke)',
-      banner.chars > 600,
-      `body is ${banner.chars} chars — seed a longer entry or this proves nothing`
-    )
-
-    t.check(
-      'the body is capped rather than as tall as its text',
-      banner.clientHeight > 0 && banner.scrollHeight > banner.clientHeight + 20,
-      banner
-    )
-    t.check(
-      'the cap leaves the banner a sidebar element, not a screenful',
-      banner.clientHeight <= Math.round(banner.viewportHeight * 0.45),
-      banner
-    )
-    t.check(
-      'the overflow is scrollable, not clipped',
-      banner.overflowY === 'auto' || banner.overflowY === 'scroll',
-      `overflow-y is ${banner.overflowY}`
-    )
-    // The one that cannot be faked by a class name: the box actually moved.
-    t.check(
-      'scrolling the body actually moves it',
-      banner.scrolled > 0,
-      `scrollTop settled at ${banner.scrolled}`
-    )
-    t.check(
-      'the banner stays inside the window with the note open',
-      banner.cardBottom <= banner.viewportHeight,
-      banner
-    )
+      t.check(
+        'the overflow is scrollable, not clipped',
+        banner.overflowY === 'auto' || banner.overflowY === 'scroll',
+        `overflow-y is ${banner.overflowY}`
+      )
+      // The one that cannot be faked by a class name: the box actually moved.
+      t.check(
+        'scrolling the body actually moves it',
+        banner.scrolled > 0,
+        `scrollTop settled at ${banner.scrolled}`
+      )
+      t.check(
+        'the banner stays inside the window with the note open',
+        banner.cardBottom <= banner.viewportHeight,
+        banner
+      )
+    }
 
     // ── 2. The tree hairline in light mode ───────────────────────────────
     const rule = await win.evaluate(async () => {

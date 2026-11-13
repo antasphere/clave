@@ -20,7 +20,6 @@
 //  4. Restored at the next launch of the app on the same server, without
 //     the browser; signed out, the file and the keychain item are gone.
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
 import http from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
@@ -35,10 +34,11 @@ import {
   until
 } from './harness.mjs'
 import { startOidcProvider } from './fixtures/oidc-provider.mjs'
+import { runKeychain } from './fixtures/run-keychain.mjs'
 
 const DIR = userDataDir('antasphere-account-attached')
 const ROOT = fixturePath('antasphere-account-attached-root')
-const KEYCHAIN = fixturePath('antasphere-account-attached-keychain/e2e.keychain-db')
+const keychain = runKeychain(fixturePath('antasphere-account-attached-keychain/e2e.keychain-db'))
 const WS = {
   id: 'antasphere-attached-ws',
   name: 'Antasphere attached',
@@ -47,34 +47,6 @@ const WS = {
   createdAt: 1
 }
 const SESSION = 'antasphere-account-session.json'
-const SECURITY = '/usr/bin/security'
-const KEYCHAIN_SERVICE = 'Clave server'
-
-/** A keychain file of this run's own: never in the search list, deleted at the end. */
-function createKeychain() {
-  rmSync(path.dirname(KEYCHAIN), { recursive: true, force: true })
-  mkdirSync(path.dirname(KEYCHAIN), { recursive: true })
-  execFileSync(SECURITY, ['create-keychain', '-p', '', KEYCHAIN], { stdio: 'ignore' })
-  execFileSync(SECURITY, ['set-keychain-settings', KEYCHAIN], { stdio: 'ignore' })
-}
-function deleteKeychain() {
-  try {
-    execFileSync(SECURITY, ['delete-keychain', KEYCHAIN], { stdio: 'ignore' })
-  } catch {
-    // Never created, or already gone.
-  }
-  rmSync(path.dirname(KEYCHAIN), { recursive: true, force: true })
-}
-/** How many items the server filed in the run's keychain (never their values). */
-function keychainItems() {
-  try {
-    const dump = execFileSync(SECURITY, ['dump-keychain', KEYCHAIN], { encoding: 'utf-8' })
-    // One `svce` attribute line per item (the label line repeats the service).
-    return dump.split('\n').filter((l) => l.includes(`"svce"<blob>="${KEYCHAIN_SERVICE}"`)).length
-  } catch {
-    return 0
-  }
-}
 
 /**
  * A proxy in front of the server that can hold one path's answer back for
@@ -170,7 +142,7 @@ export async function run(t) {
   rmSync(DIR, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
-  createKeychain()
+  keychain.create()
   const provider = await startOidcProvider({
     registrationStatus: 200,
     user: {
@@ -184,7 +156,7 @@ export async function run(t) {
   // The server: the issuer and the keychain file are its; the app gets the
   // issuer too, for the shell's own check of what it opens.
   const server = await startE2eServer('antasphere-account-attached', {
-    env: { ...issuerEnv, CLAVE_KEYCHAIN_FILE: KEYCHAIN }
+    env: { ...issuerEnv, CLAVE_KEYCHAIN_FILE: keychain.file }
   })
   const proxy = await startHoldingProxy(server.url)
   const attach = { url: proxy.url, token: server.token }
@@ -279,7 +251,7 @@ export async function run(t) {
       filesNamed(server.dataDir, 'antasphere-account-client.json'),
       1
     )
-    t.equal('one item in the run’s keychain file', keychainItems(), 1)
+    t.equal('one item in the run’s keychain file', keychain.items(), 1)
 
     // ── A confirmation held back while Cancel completes ─────────────────
     // The server computes `true` (the login is in flight), the reply is
@@ -326,6 +298,12 @@ export async function run(t) {
     const { page: win2 } = await openWindow(app, win)
     win2.on('pageerror', (e) => errors.push(e.message))
     const { section: section2 } = await openAccounts(win2)
+    // The initial "Reading…" placeholder is signed-out too. Wait for the
+    // account read, independently of the cancellation notice asserted below.
+    await section2.locator('[data-antasphere-sign-in]:enabled').waitFor({
+      state: 'visible',
+      timeout: 10_000
+    })
     await until(async () => (await phaseOf(section2)) === 'signed-out')
     t.equal(
       'the second window sees the cancel too',
@@ -404,7 +382,7 @@ export async function run(t) {
     await section.locator('[data-antasphere-sign-out]').click()
     t.equal('sign out', await waitPhase(section, 'signed-out'), 'signed-out')
     t.check('the server’s session file is gone', !existsSync(serverFile))
-    t.equal('and the keychain file holds no item', keychainItems(), 0)
+    t.equal('and the keychain file holds no item', keychain.items(), 0)
     t.equal('the server agrees', (await serverStatus()).phase, 'signed-out')
     t.equal('no renderer errors', errors.length, 0, errors)
   } finally {
@@ -412,6 +390,6 @@ export async function run(t) {
     await proxy.close()
     await server.stop()
     await provider.close()
-    deleteKeychain()
+    keychain.remove()
   }
 }

@@ -1,20 +1,36 @@
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { PluginIcon } from './plugin-icon'
 import { PluginPanelHost } from './PluginPanelHost'
-import { usePluginRecords, pluginPanels, usePluginUIStore } from './plugin-ui-store'
+import { PluginSurface } from './PluginSurface'
+import { usePluginRecords, pluginPanels, usePluginUIStore, usePluginPage } from './plugin-ui-store'
 
 /** A `placement: 'main'` panel, in the content column where Settings and the mosaic live.
  *  It is a full-area card rather than a tile of the mosaic: every tile there is a session
  *  today, and a plugin is not one. Promoting it to a real tile belongs to the pane kernel.
  *  Renders nothing when no main panel is open, and closes itself when the plugin that
- *  contributed it stops — a card left behind would show a revoked URL. */
+ *  contributed it stops — a card left behind would show a revoked URL. An action's page takes
+ *  the same card, bare: no bar over it. */
 export function PluginMainPanel(): React.JSX.Element | null {
   const selection = usePluginUIStore((s) => s.mainPanel)
   const close = usePluginUIStore((s) => s.openMainPanel)
+  const page = usePluginPage()
   const panel =
     pluginPanels(usePluginRecords(), 'main').find(
       (entry) => entry.pluginId === selection?.pluginId && entry.panelId === selection?.panelId
     ) ?? null
+  // An action's page stands in for the session it replaced: the content of the
+  // card and nothing else, no bar over it. It used to carry a back arrow, its
+  // title as a tab and a close cross, three controls for one way out, over a
+  // page that has its own heading. The way out is the sidebar (picking a tab
+  // or a group closes the page, see selectSession) or the toolbar button that
+  // opened it, which toggles.
+  if (page) {
+    return (
+      <div className="flex-1 min-h-0 floating-card flex flex-col" data-plugin-page={page.pluginId}>
+        <PluginSurface key={page.url} url={page.url} title={page.title} />
+      </div>
+    )
+  }
   if (!panel) return null
   return (
     <div

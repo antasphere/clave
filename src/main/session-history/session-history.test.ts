@@ -11,6 +11,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { SPOKEN_MARKER, spokenPrompt } from '../../shared/spoken-rendering'
+import { PAGE_TITLE_MARKER, pageTitlePrompt } from '../../shared/page-title'
 import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
 import {
   captureEventsToRows,
@@ -95,6 +98,36 @@ describe('SessionLedger', () => {
     expect(normalizeLedgerRow({ ...row({}), name: '' })?.name).toBe('')
     expect(normalizeLedgerRow({ ...row({}), name: 'x'.repeat(5000) })?.name).toHaveLength(512)
     expect(normalizeLedgerRow({ ...row({}), cwd: '/' + 'y'.repeat(5000) })).toBeNull()
+    // The launch fields (PRDCT-4236): kept when well-formed, dropped otherwise,
+    // never a reason to refuse the row.
+    expect(
+      normalizeLedgerRow({
+        ...row({}),
+        dangerous: true,
+        permissionMode: 'acceptEdits',
+        effort: 'xhigh',
+        accountId: 'acc-1',
+        accountLabel: 'Anthropic'
+      })
+    ).toEqual(
+      row({
+        dangerous: true,
+        permissionMode: 'acceptEdits',
+        effort: 'xhigh',
+        accountId: 'acc-1',
+        accountLabel: 'Anthropic'
+      })
+    )
+    const odd = normalizeLedgerRow({
+      ...row({}),
+      dangerous: 'yes',
+      permissionMode: '../x',
+      effort: 'HIGH VOLTAGE',
+      accountId: 'a'.repeat(500),
+      accountLabel: 42
+    })
+    expect(odd).toEqual(row({}))
+    expect(odd).not.toHaveProperty('dangerous')
   })
 })
 
@@ -175,6 +208,36 @@ describe('foldHistory', () => {
     // A stamped row carrying no workspace keeps the one already known.
     const kept = foldHistory([row({}), row({ ts: '2026-08-25T11:00:00.000Z', workspaceId: null })])
     expect(kept[0].workspaceId).toBe('ws-1')
+  })
+
+  it('keeps the launch: the latest row with a field wins it, a row without one keeps the earlier (PRDCT-4236)', () => {
+    const [none] = foldHistory([row({})])
+    expect(none.launch).toBeUndefined()
+    const [entry] = foldHistory([
+      row({
+        ts: '2026-08-25T12:00:00.000Z',
+        kind: 'closed',
+        dangerous: true,
+        accountId: 'acc-2',
+        accountLabel: 'Anthropic'
+      }),
+      row({
+        ts: '2026-08-25T10:00:00.000Z',
+        dangerous: false,
+        permissionMode: 'plan',
+        effort: 'high',
+        accountId: 'acc-1',
+        accountLabel: 'Personal'
+      }),
+      row({ ts: '2026-08-25T11:00:00.000Z', effort: 'max' })
+    ])
+    expect(entry.launch).toEqual({
+      dangerous: true,
+      permissionMode: 'plan',
+      effort: 'max',
+      accountId: 'acc-2',
+      accountLabel: 'Anthropic'
+    })
   })
 
   it('entryInGroup matches by id or by name — a relaunched pin keeps its history', () => {
@@ -278,6 +341,16 @@ describe('isTitleHelperConversation', () => {
     expect(isTitleHelperConversation(`  ${TITLE_HELPER_MARKER}…`)).toBe(true)
     expect(isTitleHelperConversation('Generate a title for my landing page')).toBe(false)
     expect(isTitleHelperConversation(null)).toBe(false)
+  })
+  it('skips the work digest’s one-shots too (the card titles of the agent’s working notes)', () => {
+    expect(isTitleHelperConversation(`${WORK_DIGEST_MARKER}, so its human knows`)).toBe(true)
+  })
+  it('skips Folio’s spoken renderings and page titles too', () => {
+    expect(isTitleHelperConversation(spokenPrompt('# Done\n\nAll green.'))).toBe(true)
+    expect(isTitleHelperConversation(pageTitlePrompt('Why does the build fail?'))).toBe(true)
+    expect(isTitleHelperConversation(`${SPOKEN_MARKER}.`)).toBe(true)
+    expect(isTitleHelperConversation(`${PAGE_TITLE_MARKER}.`)).toBe(true)
+    expect(isTitleHelperConversation('Say this answer aloud for me')).toBe(false)
   })
 })
 

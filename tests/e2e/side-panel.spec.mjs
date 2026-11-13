@@ -44,6 +44,7 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
+  killLeakedE2eTmux,
   stubFolderDialog,
   fixturePath
 } from './harness.mjs'
@@ -915,8 +916,14 @@ export async function run(t) {
       limitBefore
     )
   } finally {
-    await app.close()
-    rmSync(ROOT, { recursive: true, force: true })
-    rmSync(BIG_ROOT, { recursive: true, force: true })
+    try {
+      await app.close()
+    } finally {
+      // App shutdown preserves tmux sessions. Stop this run's survivors before
+      // deleting their cwd, so the next spec inherits no fixture server state.
+      killLeakedE2eTmux()
+      rmSync(ROOT, { recursive: true, force: true })
+      rmSync(BIG_ROOT, { recursive: true, force: true })
+    }
   }
 }

@@ -11,10 +11,12 @@ import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
   ReadSessionScreen,
   RenameSession,
+  KeepOnSessionRecord,
   RestartSession,
   SessionScreenUnavailable,
   SetSessionPage,
   TypeIntoSession,
+  ControlSession,
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
@@ -34,13 +36,27 @@ import {
   // ── Wave 4, lane C: the session records and a session's release ──
   DiscardSessionRecord,
   ListAdoptableRecords,
-  ReleaseSessions
+  ReleaseSessions,
+  // ── PRDCT-4123: which work a session does ──
+  ChangeSessionWork
 } from '@clave/contract/sessions'
+import { WorkChangeRefused } from '@clave/contract/work'
+import { WorkChangeRefusal, WorkSessionUnknown } from '@clave/contract/work-rules'
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+/** Whether the host keeps a record of that id, running or not; false where
+ *  it keeps none or cannot list them. */
+const recorded = (host: SessionHostService, id: string): boolean => {
+  try {
+    return host.listAdoptableRecords([id]).length > 0
+  } catch {
+    return false
+  }
+}
 
 /** The record, or the declared failure for an id this host does not know. */
 const known = (host: SessionHostService, id: string): Effect.Effect<Session, SessionNotFound> => {
@@ -141,6 +157,18 @@ export const sessionHandlers = [
       )
     )
   ),
+  CommandHandler.make(ControlSession, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.tryPromise({
+            try: () => host.control(payload.id, payload.request),
+            catch: (error) => new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
+          })
+        )
+      )
+    )
+  ),
   QueryHandler.make(GetSessionCapabilities, (payload) =>
     Effect.flatMap(SessionHost, (host) =>
       known(host, payload.id).pipe(Effect.map(() => host.capabilities(payload.id)))
@@ -203,6 +231,21 @@ export const sessionHandlers = [
       return session
     })
   ),
+  // ── Wave 6, lane A: the window's name and page, on the record only ──
+  CommandHandler.make(KeepOnSessionRecord, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => {
+          const { id, ...fields } = payload
+          host.keepOnRecord(id, fields)
+        },
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+    )
+  ),
   CommandHandler.make(SetSessionPage, (payload) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
@@ -215,6 +258,35 @@ export const sessionHandlers = [
         page: payload.page,
         servingSessionId: payload.servingSessionId
       })
+    })
+  ),
+  // ── PRDCT-4123: which work a session does. The host applies the rule over
+  // every record it keeps; each record it rewrote is a fact the windows
+  // follow, published once the host wrote them all. A refusal is the rule's
+  // own words, and nothing is published. The subject need not be running:
+  // its record is enough (a person settles a lane whose candidate's process
+  // ended), and the host says when there is no record either. ──
+  CommandHandler.make(ChangeSessionWork, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      const result = yield* Effect.try({
+        try: () => host.changeWork(payload.id, payload.change),
+        catch: (error) =>
+          error instanceof WorkSessionUnknown
+            ? new SessionNotFound({ id: payload.id })
+            : error instanceof WorkChangeRefusal
+              ? new WorkChangeRefused({ id: payload.id, message: error.message })
+              : error instanceof SessionNotFound || error instanceof CapabilityUnavailable
+                ? error
+                : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+      const events = yield* ServerEvents
+      for (const update of result.changed)
+        yield* events.publish({ _tag: 'session.work_changed', id: update.id, work: update.work })
+      // The names an accepted handover gave, told as any rename is.
+      for (const rename of result.renamed)
+        yield* events.publish({ _tag: 'session.renamed', id: rename.id, name: rename.name })
+      return { changed: result.changed, renamed: result.renamed }
     })
   ),
   QueryHandler.make(ReadSessionScreen, (payload) =>
@@ -248,13 +320,36 @@ export const sessionHandlers = [
   CommandHandler.make(RestartSession, (payload) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
-      yield* known(host, payload.id)
+      // A Resume reaches a session the host runs AND one it only keeps the
+      // record of: a tab the restore placed stopped because its start was
+      // refused (PRDCT-4236). Known by its record, the host's restart builds
+      // the spawn from it; unknown both ways, the id is nobody's.
+      if (!host.get(payload.id) && !recorded(host, payload.id))
+        return yield* Effect.fail(new SessionNotFound({ id: payload.id }))
       const events = yield* ServerEvents
+      // A Resume of a session still running is refused HERE, before anything
+      // is announced: a `session.restarting` with no `session.restarted`
+      // after it would leave every window marking the tab as moving
+      // (PRDCT-4193, round 4). The host refuses it too, for its other callers.
+      const current = host.get(payload.id)
+      if (payload.onlyIfStopped === true && current && current.state !== 'ended')
+        return yield* Effect.fail(
+          new SessionStartFailed({
+            message: 'This session is running; there is nothing to resume.'
+          })
+        )
       // Said before the kill: the window hears the exit of the old process
       // first otherwise, and announces the tab as ended.
       yield* events.publish({ _tag: 'session.restarting', id: payload.id })
       const restarted = yield* Effect.tryPromise({
-        try: () => host.restart(payload.id, payload.account, payload.resendRejected === true),
+        try: () =>
+          host.restart(
+            payload.id,
+            payload.account,
+            payload.resendRejected === true,
+            payload.onlyIfStopped === true,
+            payload.provider
+          ),
         catch: (error) =>
           error instanceof CapabilityUnavailable
             ? error
@@ -263,10 +358,14 @@ export const sessionHandlers = [
       yield* events.publish({
         _tag: 'session.restarted',
         id: payload.id,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId }),
         resumed: restarted.resumed,
         account: payload.account
       })
-      return restarted
+      return {
+        ...restarted,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId })
+      }
     })
   )
 ] as const

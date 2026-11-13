@@ -8,6 +8,8 @@ import type {
   AntasphereAccountStatus,
   ClaudeAccount,
   CodexAccount,
+  HelperPreference,
+  IntegrationsStatus,
   LaunchProfile,
   LaunchProfilePreferences,
   SettingsEvent,
@@ -47,19 +49,54 @@ export class FakeSettingsSource implements SettingsSourceService {
   codex: CodexAccount[] = []
   jobs: AccountLoginJob[] = []
   profiles: LaunchProfilePreferences = emptyProfiles()
+  /** The host's helpers as the fake holds them (PRDCT-4330). */
+  helperList: HelperPreference[] = [
+    {
+      id: 'tab-title',
+      label: 'Tab titles',
+      enabled: true,
+      model: 'haiku',
+      defaultModel: 'haiku',
+      account: { kind: 'session' }
+    }
+  ]
   state: WorkspaceState = {
     version: 1,
     workspaces: [],
     lastActiveWorkspaceId: null,
     activeWorkspaceId: null,
     pins: [],
-    pinsMigrated: true
+    pinsMigrated: true,
+    // The stamp (PRDCT-3405): this fake is one instance, bumped per write.
+    revision: 0,
+    instance: 'fake-settings'
   }
   /** Every secret the source was handed, so a test can prove where it went and did not. */
   readonly secrets: string[] = []
   readonly calls: Array<{ method: string; args: unknown[] }> = []
   /** What the two login commands, the icon and the Antasphere account answer; unset lets them run. */
-  refuse: { login?: boolean; appIcon?: boolean; antasphere?: boolean } = {}
+  refuse: {
+    login?: boolean
+    appIcon?: boolean
+    antasphere?: boolean
+    integrations?: boolean
+  } = {}
+  /** The host's integrations as the fake holds them (PRDCT-4410): the key it
+   *  was handed goes to `secrets`, never into this. */
+  integrationsStatus: IntegrationsStatus = {
+    elevenLabs: {
+      configured: false,
+      setAt: null,
+      voiceId: null,
+      voiceName: null,
+      modelId: 'eleven_flash_v2_5',
+      checkedAt: null,
+      tier: null,
+      charactersUsed: null,
+      charactersLimit: null,
+      lastError: null
+    }
+  }
   /** The Antasphere account as the fake holds it, moved by the four commands. */
   antasphereStatus: AntasphereAccountStatus = {
     phase: 'signed-out',
@@ -259,6 +296,74 @@ export class FakeSettingsSource implements SettingsSourceService {
       return this.profiles
     }
   }
+  readonly helpers: SettingsSourceService['helpers'] = {
+    list: () => this.helperList,
+    set: (helperId, patch) => {
+      this.record('helpers.set', helperId, patch)
+      const known = this.helperList.find((h) => h.id === helperId)
+      if (!known) throw new Error(`There is no helper "${helperId}" on this machine.`)
+      this.helperList = this.helperList.map((h) =>
+        h.id === helperId
+          ? {
+              ...h,
+              ...(patch.enabled !== undefined && { enabled: patch.enabled }),
+              ...(patch.model !== undefined && { model: patch.model ?? h.defaultModel }),
+              ...(patch.account !== undefined && { account: patch.account })
+            }
+          : h
+      )
+      return this.helperList
+    }
+  }
+  private integrationsHere(): void {
+    if (this.refuse.integrations)
+      throw unavailable('integrations', 'This server has no integrations.')
+  }
+  private elevenLabs(patch: Partial<IntegrationsStatus['elevenLabs']>): IntegrationsStatus {
+    this.integrationsStatus = {
+      elevenLabs: { ...this.integrationsStatus.elevenLabs, ...patch }
+    }
+    return this.integrationsStatus
+  }
+  readonly integrations: SettingsSourceService['integrations'] = {
+    read: () => {
+      this.integrationsHere()
+      return this.integrationsStatus
+    },
+    setElevenLabsKey: (apiKey) => {
+      this.record('integrations.setElevenLabsKey')
+      this.integrationsHere()
+      if (!apiKey.trim()) throw new Error('Paste the API key first.')
+      this.secrets.push(apiKey)
+      return this.elevenLabs({ configured: true, setAt: 1, checkedAt: 1, tier: 'creator' })
+    },
+    checkElevenLabs: () => {
+      this.record('integrations.checkElevenLabs')
+      this.integrationsHere()
+      return this.elevenLabs({ checkedAt: 2 })
+    },
+    removeElevenLabsKey: () => {
+      this.record('integrations.removeElevenLabsKey')
+      this.integrationsHere()
+      return this.elevenLabs({ configured: false, setAt: null, voiceId: null, voiceName: null })
+    },
+    setElevenLabsVoice: (voiceId, voiceName, modelId) => {
+      this.record('integrations.setElevenLabsVoice', voiceId, voiceName, modelId)
+      this.integrationsHere()
+      return this.elevenLabs({ voiceId, voiceName, ...(modelId && { modelId }) })
+    },
+    listElevenLabsVoices: () => {
+      this.record('integrations.listElevenLabsVoices')
+      this.integrationsHere()
+      if (!this.integrationsStatus.elevenLabs.configured)
+        throw new Error('No ElevenLabs key on this machine.')
+      return {
+        voices: [
+          { voiceId: 'v1', name: 'Voice one', category: 'premade', labels: {}, previewUrl: null }
+        ]
+      }
+    }
+  }
   readonly preferences: SettingsSourceService['preferences'] = {
     setAppIcon: (icon) => {
       this.record('preferences.setAppIcon', icon)
@@ -323,28 +428,46 @@ export class FakeSettingsSource implements SettingsSourceService {
   }
   readonly workspaces: SettingsSourceService['workspaces'] = {
     load: () => this.state,
-    updateRegistry: (workspaces: ReadonlyArray<Workspace>, origin) => {
-      this.record('workspaces.updateRegistry', [...workspaces], origin)
-      this.state = { ...this.state, workspaces: [...workspaces] }
+    updateRegistry: (workspaces: ReadonlyArray<Workspace>, origin, base) => {
+      this.record('workspaces.updateRegistry', [...workspaces], origin, ...(base ? [base] : []))
+      if (base && (base.instance !== this.state.instance || base.revision !== this.state.revision))
+        return { ok: false as const, reason: 'stale' as const }
+      this.state = { ...this.state, workspaces: [...workspaces], revision: this.state.revision + 1 }
       this.emit({
         _tag: 'workspaces.state_changed',
         workspaces: this.state.workspaces,
         pins: this.state.pins,
-        origin: origin ?? null
+        origin: origin ?? null,
+        revision: this.state.revision,
+        instance: this.state.instance
       })
-      return { ok: true as const }
+      return {
+        ok: true as const,
+        workspaces: this.state.workspaces,
+        pins: this.state.pins,
+        revision: this.state.revision,
+        instance: this.state.instance
+      }
     },
     updatePins: (scope, pins, origin) => {
       this.record('workspaces.updatePins', scope, [...pins], origin)
       if (scope === 'bad') return { ok: false as const, reason: 'invalid-key' as const }
-      this.state = { ...this.state, pins: [...pins] }
+      this.state = { ...this.state, pins: [...pins], revision: this.state.revision + 1 }
       this.emit({
         _tag: 'workspaces.state_changed',
         workspaces: this.state.workspaces,
         pins: this.state.pins,
-        origin: origin ?? null
+        origin: origin ?? null,
+        revision: this.state.revision,
+        instance: this.state.instance
       })
-      return { ok: true as const }
+      return {
+        ok: true as const,
+        workspaces: this.state.workspaces,
+        pins: this.state.pins,
+        revision: this.state.revision,
+        instance: this.state.instance
+      }
     },
     setLastActive: (workspaceId) => {
       this.record('workspaces.setLastActive', workspaceId)

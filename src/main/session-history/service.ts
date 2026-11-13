@@ -1,8 +1,8 @@
 import * as path from 'path'
-import { homedir } from 'os'
 import { app } from 'electron'
 import { CaptureStore } from '../exchange-capture/store'
-import { SessionLedger, normalizeLedgerRow } from './ledger'
+import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
+import { launchOfRecord, type LaunchRecord } from './live-launch'
 import {
   captureEventsToRows,
   foldHistory,
@@ -20,6 +20,11 @@ import { CodexCache, codexRoot, listCodexSessions } from './codex'
 import { PiCache, listPiSessions, piRoot } from './pi'
 import { searchTranscripts, type SearchHit, type SearchScope } from './search'
 import { ConversationCache, type ConversationTurn } from './conversation'
+import { conversationRoot, transcriptsRoot } from './transcript-peek'
+
+// The roots moved beside the peek (PRDCT-4321): a server reads them too,
+// and it runs no Electron.
+export { conversationRoot, transcriptsRoot }
 
 /**
  * Session-history service: the main-process owner of the ledger and the one
@@ -47,10 +52,24 @@ import { ConversationCache, type ConversationTurn } from './conversation'
  * transcripts are indexed once per list rather than probed once per miss.
  */
 
+/** The server a row's conversation ran on: the preload's `HistoryServerRef`. */
+export interface HistoryServerRef {
+  id: string
+  name: string
+  online: boolean
+  /** What the server said of the conversation; null = the server's answer
+   *  does not list it (a server older than its History, a tab it ran before
+   *  it kept one) or the server did not answer. */
+  held: 'running' | 'stopped' | 'closed' | null
+}
+
 export interface HistoryListEntry extends HistoryEntry {
   /** Where the entry comes from: the ledger (a conversation Clave ran), or
    *  a transcript a store holds that Clave never saw. */
-  source: 'ledger' | 'transcript'
+  source: 'ledger' | 'transcript' | 'server'
+  /** The server the conversation ran on (PRDCT-4321); absent for this Mac's
+   *  own. Filled by the merge of the servers' Histories (`fleet-history.ts`). */
+  server?: HistoryServerRef
   /** Which CLI's conversation this is — the counts line's word. Resume
    *  exists for claude only today; the others are listed and searchable. */
   provider: 'claude' | 'codex' | 'pi' | 'antigravity'
@@ -88,22 +107,136 @@ function getCapture(): CaptureStore {
   return capture
 }
 
-export function transcriptsRoot(): string {
-  return process.env.CLAVE_TRANSCRIPTS_ROOT || path.join(homedir(), '.claude', 'projects')
+/** What a session's record says of what it runs on: the mode and the effort
+ *  the provider last reported, the model it was launched on, bypass and the
+ *  account (what `launchOfRecord` reads). */
+export type StampRecord = LaunchRecord
+
+/** Where the stamp reads a session's record (PRDCT-4236): main's own, and,
+ *  when main keeps none (its sessions live on a server of their own), the
+ *  server's. Either may answer nothing; neither may lose the row. */
+export interface StampRecordSource {
+  local(sessionId: string): StampRecord | null | undefined
+  remote?(sessionId: string): Promise<StampRecord | null | undefined>
 }
 
-/** Validate, then append. The one place a row enters the ledger. */
-export function stampHistory(input: unknown): void {
+/** How long a stamp waits on the server's record before writing without it. */
+export const STAMP_REMOTE_TIMEOUT_MS = 2_000
+/** After a server read timed out or failed, how long the stamps write
+ *  without asking again (round 5, V5-F2): a server that does not answer must
+ *  not cost every row of a boot its own wait. */
+export const STAMP_REMOTE_BACKOFF_MS = 30_000
+let remoteSilentUntil = 0
+/** For the tests: forget a server read's failure. */
+export function resetStampRemoteBackoff(): void {
+  remoteSilentUntil = 0
+}
+
+/** Stamps are written one after the other, so a row that waits on the
+ *  server is never overtaken by a later row of the same tab. */
+let stampQueue: Promise<void> = Promise.resolve()
+
+/** The row with the record's mode, effort and (when the row has none) model. */
+export function enrichLedgerRow(row: LedgerRow, record: StampRecord | null | undefined): LedgerRow {
+  if (!record) return row
+  // Re-validated as any row is: a record field is a provider's word.
+  return (
+    normalizeLedgerRow({
+      ...row,
+      ...(record.permissionMode !== undefined ? { permissionMode: record.permissionMode } : {}),
+      ...(record.effort !== undefined ? { effort: record.effort } : {}),
+      ...(row.model === null && record.model ? { model: record.model } : {})
+    }) ?? row
+  )
+}
+
+/**
+ * The ledger told what a tab runs on NOW, from its record, before the record
+ * goes (PRDCT-4236, round 6 F1): a chat that left bypass for plan stamps no
+ * row of its own, and a close deletes the record the History's live overlay
+ * reads, so a reopen after the close went back to the launch. Called on the
+ * close roads with the record still there: the latest row of the tab is
+ * written again, placed, with the record's launch. Nothing is written for a
+ * tab the ledger never saw.
+ */
+export function restampLaunch(sessionId: string, record: StampRecord): Promise<void> {
+  // Through the stamps' queue: a stamp of the same tab still waiting on the
+  // server never lands after the close's word.
+  const write = (): void => {
+    try {
+      const latest = [...getLedger().readAll().rows]
+        .reverse()
+        .find((r) => r.sessionId === sessionId)
+      if (!latest) return
+      const row = normalizeLedgerRow({
+        ...latest,
+        kind: 'placed',
+        ts: new Date().toISOString(),
+        ...launchOfRecord(record)
+      })
+      if (row) getLedger().append(row)
+    } catch (err) {
+      console.error('[session-history] failed to restamp the launch', err)
+    }
+  }
+  stampQueue = stampQueue.then(write, write)
+  return stampQueue
+}
+
+/** The record a stamp reads, main's own first, else the server's with a
+ *  timeout and a backoff, so a server that does not answer never holds a
+ *  stamp, or the restamp a close makes (PRDCT-4236, round 7), for long. */
+export async function recordFor(
+  sessionId: string,
+  source: StampRecordSource
+): Promise<StampRecord | null | undefined> {
+  try {
+    const local = source.local(sessionId)
+    if (local) return local
+  } catch {
+    // a record that cannot be read is a row without the launch's mode
+  }
+  if (!source.remote || Date.now() < remoteSilentUntil) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const answer = await Promise.race([
+      source.remote(sessionId),
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), STAMP_REMOTE_TIMEOUT_MS)
+      })
+    ])
+    if (answer === 'timeout') {
+      remoteSilentUntil = Date.now() + STAMP_REMOTE_BACKOFF_MS
+      return null
+    }
+    return answer
+  } catch {
+    remoteSilentUntil = Date.now() + STAMP_REMOTE_BACKOFF_MS
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Validate, enrich from the session's record, then append. The one place a
+ *  row enters the ledger. Resolves once the row is written (or refused); a
+ *  record that cannot be read never loses the row. */
+export function stampHistory(input: unknown, source?: StampRecordSource): Promise<void> {
   const row = normalizeLedgerRow(input)
   if (!row) {
     console.error('[session-history] refusing to write a malformed ledger row')
-    return
+    return Promise.resolve()
   }
-  try {
-    getLedger().append(row)
-  } catch (err) {
-    console.error('[session-history] failed to append to the ledger', err)
+  const write = async (): Promise<void> => {
+    const enriched = source ? enrichLedgerRow(row, await recordFor(row.sessionId, source)) : row
+    try {
+      getLedger().append(enriched)
+    } catch (err) {
+      console.error('[session-history] failed to append to the ledger', err)
+    }
   }
+  stampQueue = stampQueue.then(write, write)
+  return stampQueue
 }
 
 export function listHistory(): {
@@ -269,7 +402,12 @@ function firstLine(text: string | null): string | null {
  *  transcript, fold what was appended since the last call. `locateTranscript`
  *  validates the id alphabet, so a traversal string resolves to nothing. */
 export function getConversation(input: unknown): { exists: boolean; turns: ConversationTurn[] } {
-  const r = input as { cwd?: unknown; claudeSessionId?: unknown; provider?: unknown } | null
+  const r = input as {
+    cwd?: unknown
+    claudeSessionId?: unknown
+    provider?: unknown
+    configDir?: unknown
+  } | null
   const cwd = typeof r?.cwd === 'string' ? r.cwd : null
   const claudeSessionId = typeof r?.claudeSessionId === 'string' ? r.claudeSessionId : null
   if (!cwd || !claudeSessionId) return { exists: false, turns: [] }
@@ -284,7 +422,7 @@ export function getConversation(input: unknown): { exists: boolean; turns: Conve
       if (file) pathById.set(claudeSessionId, file)
     }
   } else {
-    file = locateTranscript(transcriptsRoot(), cwd, claudeSessionId)
+    file = locateTranscript(conversationRoot(r?.configDir), cwd, claudeSessionId)
   }
   return conversations.read(file)
 }

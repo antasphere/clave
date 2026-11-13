@@ -5,11 +5,46 @@
  * token and the API key go out as the plain strings the wire carries (the
  * encoded side of the contract's redacted fields) and come back in nothing.
  */
-import type { Effect } from 'effect'
+import { Schema, type Effect } from 'effect'
+import { NotFoundProblem } from '@structure-ai/http'
 import type * as S from '@clave/contract/settings'
 import type { Call, DerivedClient } from './call'
 
 export type ClaudeAccount = typeof S.ClaudeAccountView.Type
+
+/** A server released before the helpers' settings (PRDCT-4330): its router
+ *  answers their routes with its own 404. Said as the fix, an update. */
+export const HELPERS_NEED_UPDATE = 'This server needs an update to show its helpers.'
+export class HelperPreferencesMissing extends Error {
+  readonly _tag = 'HelperPreferencesMissing'
+  constructor() {
+    super(HELPERS_NEED_UPDATE)
+    this.name = 'HelperPreferencesMissing'
+  }
+}
+const helpersMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new HelperPreferencesMissing()
+      : error
+  })
+
+/** A server released before the integrations (PRDCT-4410): the same 404,
+ *  said as the update it needs. */
+export const INTEGRATIONS_NEED_UPDATE = 'This server needs an update to show its integrations.'
+export class IntegrationsMissing extends Error {
+  readonly _tag = 'IntegrationsMissing'
+  constructor() {
+    super(INTEGRATIONS_NEED_UPDATE)
+    this.name = 'IntegrationsMissing'
+  }
+}
+const integrationsMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new IntegrationsMissing()
+      : error
+  })
 export type CodexAccount = typeof S.CodexAccountView.Type
 export type CodexAccountKind = typeof S.CodexAccountKind.Type
 export type AccountProvider = typeof S.AccountProvider.Type
@@ -22,6 +57,16 @@ export type LaunchProfile = typeof S.LaunchProfileView.Type
 export type LauncherFamily = typeof S.LauncherFamily.Type
 export type LaunchProfilePreferences = typeof S.LaunchProfilePreferencesView.Type
 export type AppIcon = typeof S.AppIconSchema.Type
+export type HelperPreference = typeof S.HelperPreferenceView.Type
+export type HelperAccount = typeof S.HelperAccountView.Type
+export interface HelperPreferencePatch {
+  readonly enabled?: boolean
+  readonly model?: string | null
+  readonly account?: HelperAccount
+}
+export type IntegrationsStatus = typeof S.IntegrationsView.Type
+export type ElevenLabsModelId = typeof S.ElevenLabsModelId.Type
+export type ElevenLabsVoices = typeof S.ElevenLabsVoicesView.Type
 export type Workspace = typeof S.WorkspaceView.Type
 export type WorkspaceState = typeof S.WorkspaceStateView.Type
 export type RegistryWriteResult = typeof S.UpdateWorkspaceRegistry.success.Type
@@ -77,6 +122,29 @@ export interface SettingsClient {
       profileId: string | null
     ) => Promise<LaunchProfilePreferences>
   }
+  /** The helpers' preference on that server (PRDCT-4330); both answer the list. */
+  readonly helpers: {
+    readonly list: () => Promise<ReadonlyArray<HelperPreference>>
+    readonly set: (
+      helperId: string,
+      patch: HelperPreferencePatch
+    ) => Promise<ReadonlyArray<HelperPreference>>
+  }
+  /** The integrations of that server (PRDCT-4410): the ElevenLabs key goes
+   *  in once, as the redacted field's plain string, and comes back in no
+   *  answer; every write answers the status. */
+  readonly integrations: {
+    readonly read: () => Promise<IntegrationsStatus>
+    readonly setElevenLabsKey: (apiKey: string) => Promise<IntegrationsStatus>
+    readonly checkElevenLabs: () => Promise<IntegrationsStatus>
+    readonly removeElevenLabsKey: () => Promise<IntegrationsStatus>
+    readonly setElevenLabsVoice: (
+      voiceId: string,
+      voiceName: string,
+      modelId?: ElevenLabsModelId
+    ) => Promise<IntegrationsStatus>
+    readonly listElevenLabsVoices: () => Promise<ElevenLabsVoices>
+  }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
   }
@@ -96,7 +164,8 @@ export interface SettingsClient {
     readonly load: () => Promise<WorkspaceState>
     readonly updateRegistry: (
       workspaces: ReadonlyArray<Workspace>,
-      origin?: string
+      origin?: string,
+      base?: { revision: number; instance: string }
     ) => Promise<RegistryWriteResult>
     readonly updatePins: (
       scope: string | null,
@@ -179,6 +248,34 @@ export function settingsClient(callApi: Call): SettingsClient {
       setWorkspace: (workspaceId, family, profileId) =>
         call((g) => g.setWorkspaceLaunchProfile({ payload: { workspaceId, family, profileId } }))
     },
+    helpers: {
+      list: () =>
+        helpersMissing(call((g) => g.listHelperPreferences({ payload: {} }))).then(
+          (v) => v.helpers
+        ),
+      set: (helperId, patch) =>
+        helpersMissing(
+          call((g) => g.setHelperPreference({ payload: { helperId, ...patch } }))
+        ).then((v) => v.helpers)
+    },
+    integrations: {
+      read: () => integrationsMissing(call((g) => g.readIntegrations({ payload: {} }))),
+      setElevenLabsKey: (apiKey) =>
+        integrationsMissing(call((g) => g.setElevenLabsKey({ payload: { apiKey } }))),
+      checkElevenLabs: () => integrationsMissing(call((g) => g.checkElevenLabs({ payload: {} }))),
+      removeElevenLabsKey: () =>
+        integrationsMissing(call((g) => g.removeElevenLabsKey({ payload: {} }))),
+      setElevenLabsVoice: (voiceId, voiceName, modelId) =>
+        integrationsMissing(
+          call((g) =>
+            g.setElevenLabsVoice({
+              payload: { voiceId, voiceName, ...(modelId !== undefined && { modelId }) }
+            })
+          )
+        ),
+      listElevenLabsVoices: () =>
+        integrationsMissing(call((g) => g.listElevenLabsVoices({ payload: {} })))
+    },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)
     },
@@ -193,8 +290,12 @@ export function settingsClient(callApi: Call): SettingsClient {
     },
     workspaces: {
       load: () => call((g) => g.loadWorkspaceState({ payload: {} })),
-      updateRegistry: (workspaces, from) =>
-        call((g) => g.updateWorkspaceRegistry({ payload: { workspaces, ...origin(from) } })),
+      updateRegistry: (workspaces, from, base) =>
+        call((g) =>
+          g.updateWorkspaceRegistry({
+            payload: { workspaces, ...origin(from), ...(base ? { base } : {}) }
+          })
+        ),
       updatePins: (scope, pins, from) =>
         call((g) => g.updateWorkspacePins({ payload: { scope, pins, ...origin(from) } })),
       setLastActive: (workspaceId) =>

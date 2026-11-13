@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workspace health report",
+  "description": "One entry per check the routine ran against the Antasphere workspace: steward status, steward sync, steward secrets status, team tools outdated, steward doctor. A check the run could not perform is reported as failed with its detail, never left out.",
+  "type": "object",
+  "required": ["checks"],
+  "additionalProperties": false,
+  "properties": {
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The command as run: steward status, steward sync, steward secrets status, team tools outdated, steward doctor.",
+            "minLength": 1
+          },
+          "verdict": {
+            "description": "ok: nothing to do; fixed: a safe fix was applied; attention: something is left for the person; failed: the check could not run.",
+            "enum": ["ok", "fixed", "attention", "failed"]
+          },
+          "detail": {
+            "type": "string",
+            "description": "One or two sentences: what the check found, in plain words.",
+            "maxLength": 1000
+          },
+          "fixed": {
+            "type": "array",
+            "description": "The safe fixes applied, one line each (a checkout fast-forwarded, a clone made, a secret pulled, a tool updated).",
+            "items": { "type": "string", "maxLength": 300 },
+            "maxItems": 50
+          },
+          "proposed": {
+            "type": "array",
+            "description": "What the person should do by hand, one line each, with the command when there is one.",
+            "items": { "type": "string", "maxLength": 300 },
+            "maxItems": 50
+          }
+        }
+      }
+    },
+    "machine": {
+      "type": "string",
+      "description": "The machine's hostname, so a report read later says where it ran."
+    }
+  }
+}

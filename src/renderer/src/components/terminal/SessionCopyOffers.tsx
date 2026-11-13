@@ -37,7 +37,8 @@ export function SessionCopyOffers({ sessionId }: { sessionId: string }): React.J
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="btn-icon btn-icon-sm hover:bg-surface-300 relative"
+          className="panel-icon-btn relative"
+          aria-label="Copyable values"
           title={
             uncopiedCount > 0
               ? `${uncopiedCount} value(s) to copy`
@@ -45,7 +46,7 @@ export function SessionCopyOffers({ sessionId }: { sessionId: string }): React.J
           }
           style={uncopiedCount > 0 ? { color: 'var(--color-status-waiting)' } : undefined}
         >
-          <ClipboardDocumentIcon className="w-3.5 h-3.5" />
+          <ClipboardDocumentIcon className="w-4 h-4" />
           {uncopiedCount > 0 && (
             <span
               className="badge absolute -top-1 -right-1 text-white"
@@ -84,7 +85,7 @@ export function SessionCopyOffers({ sessionId }: { sessionId: string }): React.J
             <XMarkIcon className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="max-h-[400px] overflow-y-auto">
+        <div className="max-h-[400px] overflow-y-auto overscroll-contain">
           {offers.map((offer, i) => (
             <div key={offer.id} className={cn(i > 0 && 'border-t border-border-subtle')}>
               <CopyOfferCard offer={offer} />

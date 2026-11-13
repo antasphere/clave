@@ -1,4 +1,5 @@
 import { agentUpdateIdOf, type AgentUpdateStatus } from '../../../shared/agent-updates'
+import { isRemoteKey } from './fleet-identity'
 
 export interface StaleAgentRelease {
   agent: AgentUpdateStatus
@@ -17,6 +18,8 @@ export interface StaleAgentRelease {
  */
 export function staleAgentRelease(
   session: {
+    /** The tab's key: a server's tab runs the server's CLI (PRDCT-4329). */
+    id?: string
     alive: boolean
     sessionType?: string
     spawnedAt?: number
@@ -25,6 +28,7 @@ export function staleAgentRelease(
     codexMode?: boolean
     antigravityMode?: boolean
     piMode?: boolean
+    opencodeMode?: boolean
   },
   agents: AgentUpdateStatus[],
   dismissedAt: number | undefined
@@ -32,6 +36,9 @@ export function staleAgentRelease(
   const id = agentUpdateIdOf(session)
   // A remote tab runs another machine's CLI; only a local one runs ours.
   if (session.sessionType !== undefined && session.sessionType !== 'local') return null
+  // A tab on a Clave server is stored as `local` but runs the server's CLI:
+  // this Mac's upgrade says nothing about it.
+  if (isRemoteKey(session.id)) return null
   if (!id || !session.alive || session.spawnedAt === undefined) return null
   const agent = agents.find((a) => a.id === id)
   if (!agent?.lastUpdatedAt || !agent.updatedFrom || !agent.currentVersion) return null

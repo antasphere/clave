@@ -1,10 +1,14 @@
-import { spawn as spawnProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as pty from 'node-pty'
 import { claudeAccountsManager } from './claude-accounts'
 import { codexAccountsManager } from './codex-accounts'
+import { runCodexApiKeyLogin, stripAnsi } from './codex-api-key-login'
 import { resolvePosixShellLaunch } from './shell-launch'
 import { getLoginShellEnv, getUserShell } from './sessions/adapters/pty-backend'
+
+// The output stripping moved to `codex-api-key-login.ts`, which the daemon
+// loads without node-pty; it stays reachable from here for its callers.
+export { stripAnsi }
 
 /**
  * The login flows (ADR 0002): a provider's own login command, run in a
@@ -58,27 +62,6 @@ const CLAUDE_TOKEN_RE = /sk-ant-[A-Za-z0-9_-]{20,}(?=[^A-Za-z0-9_-])/
 const URL_RE = /https?:\/\/[^\s'"<>)\]]+/g
 /** Claude Code's wording when the local callback did not happen. */
 const CLAUDE_CODE_PROMPT_RE = /paste (the )?code/i
-
-// eslint-disable-next-line no-control-regex
-const CSI_RE = /\x1b\[[0-9;?]*[ -/]*([@-~])/g
-// eslint-disable-next-line no-control-regex
-const OTHER_ESCAPE_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>78]/g
-/** The CSI final bytes that move the cursor or erase: where one line ends
- *  and another starts, as far as the words are concerned. */
-const CURSOR_FINALS = 'ABCDEFGHJKSTdf'
-
-/** Terminal output as words. Colours, titles and modes go; a cursor move,
- *  an erase or a carriage return becomes a line break, because that is what
- *  it was on screen. The CLI paints its frames line by line with cursor
- *  moves rather than newlines (Ink), so dropping them ran the token into the
- *  first word of the line under it — `…Store`, from "Store this token
- *  securely" — and stored a credential the service refuses. */
-export function stripAnsi(text: string): string {
-  return text
-    .replace(CSI_RE, (_match, final: string) => (CURSOR_FINALS.includes(final) ? '\n' : ''))
-    .replace(OTHER_ESCAPE_RE, '')
-    .replace(/\r\n?/g, '\n')
-}
 
 /** The link a login command printed: the first web address in its output.
  *  Pure, for the tests. */
@@ -226,12 +209,14 @@ class AccountLoginManager {
     const running = this.runningFor('claude', accountId)
     if (running) return running
     const store = (live: LiveJob, token: string): void => {
-      try {
-        claudeAccountsManager.setToken(accountId, token)
-        live.finish('done')
-      } catch (error) {
-        live.finish('failed', error instanceof Error ? error.message : 'Could not store the token.')
-      }
+      void claudeAccountsManager.setToken(accountId, token).then(
+        () => live.finish('done'),
+        (error: unknown) =>
+          live.finish(
+            'failed',
+            error instanceof Error ? error.message : 'Could not store the token.'
+          )
+      )
     }
     return this.startJob(
       'claude',
@@ -295,54 +280,17 @@ class AccountLoginManager {
     )
   }
 
-  /** `codex login --with-api-key`, the key on stdin: no browser, no PTY. */
+  /** `codex login --with-api-key`, the key on stdin: no browser, no PTY
+   *  (`codex-api-key-login.ts`, the one login a daemon runs too). */
   startCodexApiKeyLogin(accountId: string, apiKey: string): Promise<LoginJob> {
-    const account = codexAccountsManager.get(accountId)
-    if (!account) throw new Error('Unknown Codex account')
-    const key = apiKey.trim()
-    if (!key) throw new Error('Paste the API key first.')
-    const env = this.loginEnv('codex', accountId)
-    const id = randomUUID()
-    const job: LoginJob = {
-      id,
-      provider: 'codex',
+    return runCodexApiKeyLogin({
       accountId,
-      status: 'running',
-      url: null,
-      awaitingCode: false,
-      message: null,
-      startedAt: Date.now()
-    }
-    return new Promise((resolve) => {
-      const launch = resolvePosixShellLaunch(getUserShell(), 'exec codex login --with-api-key')
-      const child = spawnProcess(launch.file, launch.args, {
-        cwd: env.HOME || process.cwd(),
-        env,
-        stdio: ['pipe', 'ignore', 'pipe']
-      })
-      let stderr = ''
-      child.stderr?.on('data', (chunk: Buffer) => {
-        stderr = (stderr + chunk.toString()).slice(-2048)
-      })
-      const done = (status: LoginStatus, message: string | null): void => {
-        job.status = status
-        job.message = message
-        for (const listener of this.listeners) listener({ ...job })
-        resolve({ ...job })
+      apiKey,
+      env: this.loginEnv('codex', accountId),
+      shell: getUserShell(),
+      onDone: (job) => {
+        for (const listener of this.listeners) listener(job)
       }
-      child.on('error', (error) => done('failed', error.message))
-      child.on('close', (code) => {
-        if (codexAccountsManager.hasCredential(accountId, env)) {
-          codexAccountsManager.notifyChanged()
-          done('done', null)
-        } else {
-          done(
-            'failed',
-            stripAnsi(stderr).trim().split('\n').pop() || `codex login exited with status ${code}.`
-          )
-        }
-      })
-      child.stdin?.end(`${key}\n`)
     })
   }
 

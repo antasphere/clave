@@ -262,7 +262,7 @@ export class ClaudeAccountsManager {
   }
 
   /** Removing an account forgets its token with it. */
-  remove(id: string): boolean {
+  async remove(id: string): Promise<boolean> {
     if (id === DEFAULT_CLAUDE_ACCOUNT_ID) return false
     const accounts = this.loadAccounts()
     const index = accounts.findIndex((a) => a.id === id)
@@ -273,7 +273,7 @@ export class ClaudeAccountsManager {
     const credentials = this.loadCredentials()
     if (credentials[id]) {
       const sealed = credentials[id].token
-      if (typeof sealed === 'string') this.ports.secrets.discard(sealed)
+      if (typeof sealed === 'string') await this.ports.secrets.discard(sealed)
       delete credentials[id]
       this.saveCredentials()
     }
@@ -284,7 +284,7 @@ export class ClaudeAccountsManager {
   /** Store a pasted or captured token, encrypted by the OS. Throws when the
    *  shape is not a token or when the OS cannot encrypt (never falls back to
    *  plaintext). A new token clears the refused mark and the migration mark. */
-  setToken(id: string, token: string): void {
+  async setToken(id: string, token: string): Promise<void> {
     const trimmed = token.trim()
     if (id === DEFAULT_CLAUDE_ACCOUNT_ID) {
       throw new Error('The Default account is the machine login; add an account for a token.')
@@ -293,14 +293,14 @@ export class ClaudeAccountsManager {
     if (!isPlausibleOauthToken(trimmed)) {
       throw new Error('That does not look like a Claude Code token (expected sk-ant-…).')
     }
-    if (!this.ports.secrets.available()) {
+    if (!(await this.ports.secrets.available())) {
       throw new Error('OS encryption is unavailable here, so the token cannot be stored securely.')
     }
     const credentials = this.loadCredentials()
     // Seal first, forget the old one after: a seal that fails (a locked
     // keychain, a denied prompt) must leave the working token in place
     // rather than an account that says it holds one and opens to nothing.
-    const sealed = this.ports.secrets.seal(trimmed)
+    const sealed = await this.ports.secrets.seal(trimmed)
     const previous = credentials[id]
     credentials[id] = { token: sealed, setAt: Date.now() }
     try {
@@ -310,21 +310,21 @@ export class ClaudeAccountsManager {
       // the item just sealed is forgotten rather than left orphaned.
       if (previous) credentials[id] = previous
       else delete credentials[id]
-      this.ports.secrets.discard(sealed)
+      await this.ports.secrets.discard(sealed)
       throw error
     }
     this.migrated.delete(id)
     // An entry can lack a string token (a hand-edited or an older file):
     // there is nothing of it to forget, and the new token must still land.
-    if (typeof previous?.token === 'string') this.ports.secrets.discard(previous.token)
+    if (typeof previous?.token === 'string') await this.ports.secrets.discard(previous.token)
     this.emit()
   }
 
-  clearToken(id: string): void {
+  async clearToken(id: string): Promise<void> {
     const credentials = this.loadCredentials()
     if (!credentials[id]) return
     const sealed = credentials[id].token
-    if (typeof sealed === 'string') this.ports.secrets.discard(sealed)
+    if (typeof sealed === 'string') await this.ports.secrets.discard(sealed)
     delete credentials[id]
     this.saveCredentials()
     this.emit()
@@ -347,7 +347,7 @@ export class ClaudeAccountsManager {
 
   /** The decrypted token. Main process only: the spawn environment and the
    *  usage read. Undefined when there is none or the OS refuses to decrypt. */
-  getToken(id: string | undefined): string | undefined {
+  async getToken(id: string | undefined): Promise<string | undefined> {
     if (!id) return undefined
     const stored = this.loadCredentials()[id]?.token
     if (typeof stored !== 'string') return undefined

@@ -3,6 +3,9 @@ import {
   hasServerEventPublisher,
   publishOrSend,
   sessionCleared,
+  sessionLimitCleared,
+  sessionLimitReported,
+  sessionModelChanged,
   sessionPlanDetected,
   sessionTitleChanged,
   setServerEventPublisher
@@ -25,6 +28,46 @@ const windows = (): { port: SessionWindowsPort; sent: unknown[][] } => {
   installSessionWindows(port)
   return { port, sent }
 }
+
+describe('a session’s model travels on both transports, the window picking one (PRDCT-4256)', () => {
+  it('reaches the session’s window over IPC while no server runs', () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    sessionModelChanged('s1', 'claude-opus-5-5')
+    expect(sent).toEqual([['session:model-changed', { id: 's1', model: 'claude-opus-5-5' }]])
+  })
+  it('reaches the window over IPC AND the server once a publisher is set', async () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    const published: unknown[] = []
+    setServerEventPublisher(async (event) => {
+      published.push(event)
+    })
+    sessionModelChanged('s1', 'claude-fable-5-1[1m]')
+    await Promise.resolve()
+    expect(published).toEqual([
+      { _tag: 'session.model_changed', id: 's1', model: 'claude-fable-5-1[1m]' }
+    ])
+    // The IPC arm too: a window whose push socket is not welcomed yet hears
+    // it there, and one that is drops the IPC copy (the preload's dual listener).
+    expect(sent).toEqual([['session:model-changed', { id: 's1', model: 'claude-fable-5-1[1m]' }]])
+  })
+  it('a session bound to no window, or a publisher that fails, sends nowhere and throws nothing', async () => {
+    const { sent } = windows()
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {})
+    setServerEventPublisher(async () => {
+      throw new Error('socket gone')
+    })
+    expect(() => sessionModelChanged('unbound', 'claude-opus-5-5')).not.toThrow()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sent).toEqual([])
+    expect(quiet).toHaveBeenCalledWith(
+      expect.stringContaining('session.model_changed not published'),
+      expect.any(Error)
+    )
+    quiet.mockRestore()
+  })
+})
 
 afterEach(() => {
   setServerEventPublisher(null)
@@ -88,5 +131,54 @@ describe('a session’s news travels on one transport, never both', () => {
   it('with no port installed nothing is sent and nothing throws', () => {
     installSessionWindows(null)
     expect(() => sessionTitleChanged('s1', 'fix auth', 'w1')).not.toThrow()
+  })
+})
+
+describe('a session’s limit report travels on both transports, with its scope (PRDCT-4302)', () => {
+  afterEach(() => setServerEventPublisher(null))
+  it('reaches the session’s window over IPC while no server runs, the report whole', () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    sessionLimitReported('s1', { scope: { family: 'Fable' }, resetsAt: 1_700_000_000_000 })
+    expect(sent).toEqual([
+      [
+        'session:limit-reported',
+        { id: 's1', report: { scope: { family: 'Fable' }, resetsAt: 1_700_000_000_000 } }
+      ]
+    ])
+  })
+  it('reaches the window over IPC AND the server once a publisher is set, flat on the event', async () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    const published: unknown[] = []
+    setServerEventPublisher(async (event) => {
+      published.push(event)
+    })
+    sessionLimitReported('s1', { scope: 'shared' })
+    await Promise.resolve()
+    expect(sent).toEqual([['session:limit-reported', { id: 's1', report: { scope: 'shared' } }]])
+    expect(published).toEqual([{ _tag: 'session.limit_reported', id: 's1', scope: 'shared' }])
+  })
+})
+
+describe('a session’s limit report closes on both transports (PRDCT-4415)', () => {
+  afterEach(() => setServerEventPublisher(null))
+  it('reaches the session’s window over IPC while no server runs', () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    sessionLimitCleared('s1')
+    expect(sent).toEqual([['session:limit-cleared', { id: 's1' }]])
+  })
+  it('reaches the window over IPC AND the server once a publisher is set', async () => {
+    const { port, sent } = windows()
+    port.bind('s1', 'w1')
+    const published: unknown[] = []
+    setServerEventPublisher(async (event) => {
+      published.push(event)
+    })
+    sessionLimitCleared('s1')
+    await Promise.resolve()
+    expect(sent).toEqual([['session:limit-cleared', { id: 's1' }]])
+    expect(published).toEqual([{ _tag: 'session.limit_cleared', id: 's1' }])
   })
 })

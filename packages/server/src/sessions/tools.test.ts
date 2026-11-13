@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
-import { FakeSource, Peer, aSession } from '../test-support'
+import { FakeSource, Peer, aRecord, aSession } from '../test-support'
 
 /**
  * The sessions commands the last agent tools need (wave 4, lane D,
@@ -160,6 +160,23 @@ describe('a message typed in', () => {
 })
 
 describe('a restart on another account', () => {
+  it('echoes a caller operation on the answer and event, never into host overrides', async () => {
+    const peer = await welcomed()
+    const account = { claudeProfileId: 'play' }
+    const response = await post('/sessions/restart', { id: 's1', account, requestId: 'op-123' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: 's1', requestId: 'op-123' })
+    expect(await eventOf(peer)).toEqual({ _tag: 'session.restarting', id: 's1' })
+    expect(await eventOf(peer)).toMatchObject({
+      _tag: 'session.restarted',
+      id: 's1',
+      requestId: 'op-123',
+      account
+    })
+    expect(source.restarts).toEqual([{ id: 's1', account, resendRejected: false }])
+    peer.ws.close()
+  })
+
   it('restarts through the host, saying restarting first and restarted after', async () => {
     const peer = await welcomed()
     const account = { claudeProfileId: 'acc-2', claudeProfileLabel: 'Second' }
@@ -196,5 +213,100 @@ describe('a restart on another account', () => {
     expect(source.restarts).toEqual([])
     expect(await peer.silence()).toBe(true)
     peer.ws.close()
+  })
+})
+
+describe('what the window keeps on a tab’s record (wave 6, lane A, PRDCT-3526)', () => {
+  it('writes the name and the page through the host, and tells nobody', async () => {
+    const peer = await welcomed()
+    const name = { displayName: 'Lane A', userRenamed: true }
+    expect((await post('/sessions/keep-on-record', { id: 's1', name })).status).toBe(204)
+    const page = { url: 'http://127.0.0.1:4826', title: 'Lane A' }
+    expect((await post('/sessions/keep-on-record', { id: 's1', page })).status).toBe(204)
+    expect((await post('/sessions/keep-on-record', { id: 's1', page: null })).status).toBe(204)
+    // An auto-title is a name the person did not give, and a cleared name is null.
+    const auto = { displayName: null, userRenamed: false }
+    expect((await post('/sessions/keep-on-record', { id: 's2', name: auto })).status).toBe(204)
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', claudeSessionId: 'c2' })).status
+    ).toBe(204)
+    expect((await post('/sessions/keep-on-record', { id: 's1', workspaceId: null })).status).toBe(
+      204
+    )
+    expect(source.kept).toEqual([
+      { id: 's1', fields: { name } },
+      { id: 's1', fields: { page } },
+      { id: 's1', fields: { page: null } },
+      { id: 's2', fields: { name: auto } },
+      { id: 's1', fields: { claudeSessionId: 'c2' } },
+      { id: 's1', fields: { workspaceId: null } }
+    ])
+    expect(await peer.silence()).toBe(true)
+    peer.ws.close()
+  })
+  it('refuses a name with no userRenamed and a page with no url', async () => {
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', name: { displayName: 'x' } })).status
+    ).toBe(400)
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', page: { title: 'x' } })).status
+    ).toBe(400)
+    expect((await post('/sessions/keep-on-record', { id: 's1', claudeSessionId: '' })).status).toBe(
+      400
+    )
+    expect(source.kept).toEqual([])
+  })
+})
+
+describe('a Resume of a running session (PRDCT-4193, round 5)', () => {
+  it('is refused before anything is announced, and a move still goes through', async () => {
+    const peer = await welcomed()
+    const refused = await post('/sessions/restart', { id: 's1', account: {}, onlyIfStopped: true })
+    expect(refused.status).toBe(422)
+    expect(await refused.json()).toMatchObject({
+      _tag: 'SessionStartFailed',
+      message: 'This session is running; there is nothing to resume.'
+    })
+    expect(source.restarts).toEqual([])
+    // The next thing any peer hears is the MOVE's restarting, never the refusal's.
+    const moved = await post('/sessions/restart', { id: 's1', account: {} })
+    expect(moved.status).toBe(200)
+    expect(await eventOf(peer)).toEqual({ _tag: 'session.restarting', id: 's1' })
+    expect(source.restarts).toEqual([{ id: 's1', account: {}, resendRejected: false }])
+    peer.ws.close()
+  })
+})
+
+describe('a Resume of a session the host only keeps the record of (PRDCT-4236)', () => {
+  it('reaches the host’s restart instead of answering an unknown session', async () => {
+    source.records.push({ ...aRecord('r9', 'w1'), running: false, live: false })
+    const answer = await post('/sessions/restart', { id: 'r9', account: {}, onlyIfStopped: true })
+    // The fake host's restart knows no record road, so it refuses: what
+    // matters is that the command asked it, with the host's own words back,
+    // where it used to answer SessionNotFound before asking anything.
+    expect(answer.status).not.toBe(404)
+    const body = await answer.json()
+    expect(JSON.stringify(body)).toContain('Unknown session: r9')
+    expect(JSON.stringify(body)).not.toContain('SessionNotFound')
+  })
+
+  it('still answers an unknown session for an id with no record', async () => {
+    const answer = await post('/sessions/restart', {
+      id: 'nobody',
+      account: {},
+      onlyIfStopped: true
+    })
+    expect(JSON.stringify(await answer.json())).toContain('SessionNotFound')
+  })
+})
+
+describe('a Resume of a stopped session goes through (PRDCT-4193, round 6, P04)', () => {
+  it('passes the host a session the host holds as ended', async () => {
+    const held = source.sessions.get('s2')
+    if (!held) throw new Error('fixture has no s2')
+    source.sessions.set('s2', { ...held, state: 'ended' })
+    const answer = await post('/sessions/restart', { id: 's2', account: {}, onlyIfStopped: true })
+    expect(answer.status).toBe(200)
+    expect(source.restarts).toEqual([{ id: 's2', account: {}, resendRejected: false }])
   })
 })

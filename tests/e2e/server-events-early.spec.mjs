@@ -110,7 +110,12 @@ export async function run(t) {
     )
     // Whatever the catch-up check found, the checks below run on what was
     // heard: a catch-up that never came must not hide a change never heard.
-    const caughtUp = found ?? (await heard())
+    // The catch-ups land one family at a time and the usage one is not in the
+    // wait above: settle, then count from what they all left (a window that
+    // reaches the server sooner, PRDCT-3527, heard its usage catch-up after
+    // the others and counted it as the read below).
+    if (found) await new Promise((r) => setTimeout(r, 1500))
+    const caughtUp = await heard()
     t.check(
       'once the server is named, each listener hears the server’s own state before any change',
       found !== null &&

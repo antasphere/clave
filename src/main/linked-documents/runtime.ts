@@ -1,8 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { openDialogs } from '../dialog-paths'
 import { join } from 'path'
 import { LinkedDocumentStore } from './store'
 import { broadcastToAllWindows } from '../window-routing'
 import { windowRegistry } from '../window-registry'
+import { TEST_NO_ACTIVATE } from '../test-mode'
 import type { LinkedOpen, LinkedUpdate } from '../../shared/linked-documents'
 let store: LinkedDocumentStore | undefined
 export function linkedDocuments(): LinkedDocumentStore {
@@ -36,8 +38,14 @@ export function registerLinkedDocumentHandlers(): void {
   })
   ipcMain.handle(
     'linked-documents:update',
-    (event, id: string, revision: number, input: LinkedUpdate) => {
+    async (event, id: string, revision: number, input: LinkedUpdate) => {
       own(event, linkedDocuments().get(id).sessionId)
+      // A test instance may hold the watcher's reload to open the window in
+      // which a keystroke crosses it (the end-to-end spec of PRDCT-4261).
+      if (TEST_NO_ACTIVATE && input?.reloadExternal && input.ifChanged) {
+        const hold = Number(process.env.CLAVE_TEST_LINKED_RELOAD_HOLD_MS)
+        if (hold > 0) await new Promise((r) => setTimeout(r, hold))
+      }
       return linkedDocuments().update(id, revision, input)
     }
   )
@@ -52,7 +60,7 @@ export function registerLinkedDocumentHandlers(): void {
   ipcMain.handle('linked-documents:choose-files', async (event, signature: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) throw new Error('Window unavailable')
-    const result = await dialog.showOpenDialog(win, {
+    const result = await openDialogs.open('document', win, {
       properties: signature ? ['openFile'] : ['openFile', 'multiSelections'],
       ...(signature ? { filters: [{ name: 'HTML signature', extensions: ['html', 'htm'] }] } : {})
     })

@@ -2,13 +2,13 @@
  * The agent-updates contract, shared by main, preload and renderer.
  *
  * Clave launches agent CLIs it does not ship: `claude`, `codex`, `agy`, `pi`,
- * each installed on the machine its own way. The main process keeps each one
+ * `opencode`, each installed on the machine its own way. The main process keeps each one
  * on its latest release (`src/main/agent-updates/`); this is the state the
  * renderer pulls and is pushed, the same pull-and-push shape as the app's own
  * updater (`updater-types.ts`).
  */
 
-export type AgentUpdateId = 'claude' | 'codex' | 'antigravity' | 'pi'
+export type AgentUpdateId = 'claude' | 'codex' | 'antigravity' | 'pi' | 'opencode'
 
 /**
  * How a CLI was installed, read off where its binary really lives. It decides
@@ -18,6 +18,9 @@ export type AgentUpdateId = 'claude' | 'codex' | 'antigravity' | 'pi'
 export type AgentInstall =
   /** Claude's own installer: versions under `~/.local/share/claude/versions/`. */
   | { kind: 'claude-native' }
+  /** OpenCode's own installer: the binary under `~/.opencode/bin/`, which
+   *  `opencode upgrade` replaces. */
+  | { kind: 'opencode-native' }
   | { kind: 'homebrew'; name: string; cask: boolean }
   | { kind: 'package'; manager: 'npm' | 'pnpm' | 'bun' | 'yarn'; pkg: string; prefix?: string }
   /** Shipped inside a Mac app, which updates it itself. Never touched. */
@@ -29,9 +32,9 @@ export type AgentUpdatePhase = 'idle' | 'checking' | 'updating'
 
 export interface AgentUpdateStatus {
   id: AgentUpdateId
-  /** Display name: Claude, Codex, Antigravity, Pi. */
+  /** Display name: Claude, Codex, Antigravity, Pi, OpenCode. */
   name: string
-  /** The command Clave launches (`claude`, `codex`, `agy`, `pi`). */
+  /** The command Clave launches (`claude`, `codex`, `agy`, `pi`, `opencode`). */
   command: string
   /** False once a check found no binary on the login PATH. */
   installed: boolean
@@ -79,7 +82,8 @@ export const AGENT_UPDATE_TARGETS: readonly { id: AgentUpdateId; name: string; c
     { id: 'claude', name: 'Claude', command: 'claude' },
     { id: 'codex', name: 'Codex', command: 'codex' },
     { id: 'antigravity', name: 'Antigravity', command: 'agy' },
-    { id: 'pi', name: 'Pi', command: 'pi' }
+    { id: 'pi', name: 'Pi', command: 'pi' },
+    { id: 'opencode', name: 'OpenCode', command: 'opencode' }
   ]
 
 /** The agent a session runs, from its mode flags; null for a plain terminal. */
@@ -89,10 +93,12 @@ export function agentUpdateIdOf(session: {
   codexMode?: boolean
   antigravityMode?: boolean
   piMode?: boolean
+  opencodeMode?: boolean
 }): AgentUpdateId | null {
   if (session.claudeMode || session.claudeAgentsMode) return 'claude'
   if (session.codexMode) return 'codex'
   if (session.antigravityMode) return 'antigravity'
   if (session.piMode) return 'pi'
+  if (session.opencodeMode) return 'opencode'
   return null
 }

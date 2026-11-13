@@ -14,7 +14,7 @@
  *
  * The check is the RESTART on one user-data dir: open a chat tab the way the
  * launcher does, talk to it once (a stub `claude` writes the transcript a real
- * CLI would), quit, relaunch, accept the restore prompt, and require the SAME
+ * CLI would), quit, relaunch (the chat comes back without the prompt), and require the SAME
  * tab back, relaunched with `--resume <its conversation>`. Then close it for
  * real and require the record gone, so a closed tab never comes back.
  *
@@ -217,15 +217,19 @@ export async function run(t) {
     app = null
     t.check('quit: the chat record survives app.close()', existsSync(recordPath(tabId)))
 
-    // ── Launch 2: accept the restore prompt ──
+    // ── Launch 2: the chat comes back without asking (PRDCT-3527) ──
     launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
-    const restore = win.getByRole('button', { name: 'Restore', exact: true })
-    const prompted = await until(() => restore.isVisible().catch(() => false))
-    t.check('launch 2: the restore prompt is offered', !!prompted)
-    if (!prompted) throw new Error('no restore prompt at launch 2')
-    await restore.click()
+    // Restoring a chat starts nothing (its agent starts when it is opened),
+    // so it comes back with the silent tabs, never behind the prompt.
+    t.check(
+      'launch 2: no restore prompt stands before the chat',
+      !(await win
+        .getByRole('button', { name: 'Restore', exact: true })
+        .isVisible()
+        .catch(() => false))
+    )
     const back = await until(async () =>
       (await callMcp(app, 'list', {})).sessions.find((s) => s.id === tabId)
     )

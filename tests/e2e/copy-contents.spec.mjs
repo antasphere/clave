@@ -53,39 +53,45 @@ export async function run(t) {
       await win.evaluate(() => document.body.innerHTML.slice(0, 400))
     )
 
+    // Copy contents is a row of the bar's ⋯ menu (PRDCT-4491), the menu drawn
+    // in a portal outside the sheet.
+    const copyFromMenu = async (bar) => {
+      await win.click(`${bar} button[aria-label="File menu"]`)
+      await win.locator('[role="menuitem"]', { hasText: 'Copy contents' }).click()
+    }
+    const menuGone = () =>
+      win
+        .locator('[role="menu"]')
+        .waitFor({ state: 'detached', timeout: 3000 })
+        .catch(() => {})
+
     await clearClipboard(app)
-    await win.click('.menu-surface--sheet button[title="Copy contents"]')
+    await copyFromMenu('.menu-surface--sheet')
     await win.waitForTimeout(400)
     const fromSheet = await readClipboard(app)
-    t.equal('the sheet’s copy button copies the file body', fromSheet, BODY)
+    t.equal('the sheet’s menu copies the file body', fromSheet, BODY)
     t.check(
       'and not the path the tree menu already copies',
       fromSheet !== './notes.md' && fromSheet !== `${ROOT}/notes.md`,
       fromSheet
     )
     t.check(
-      'the button says so while it is copied',
-      await win.evaluate(
-        () =>
-          !!document
-            .querySelector('.menu-surface--sheet button[title="Copy contents"]')
-            ?.className.includes('text-status-ready')
-      ),
-      await win.evaluate(
-        () =>
-          document.querySelector('.menu-surface--sheet button[title="Copy contents"]')?.className
-      )
+      'the row says so before the menu closes',
+      (await win.locator('[role="menuitem"]', { hasText: 'Copied' }).count()) === 1,
+      await win.evaluate(() => document.querySelector('[role="menu"]')?.textContent ?? 'no menu')
     )
+    await menuGone()
 
     // --- The file tab ---
     await win.click('.menu-surface--sheet button[title="Open in tab"]')
     await win.waitForTimeout(2000)
 
     await clearClipboard(app)
-    await win.click('button[title="Copy contents"]')
+    await copyFromMenu('.pane-header:visible')
     await win.waitForTimeout(400)
     const fromTab = await readClipboard(app)
-    t.equal('the file tab’s copy button copies the file body too', fromTab, BODY)
+    t.equal('the file tab’s menu copies the file body too', fromTab, BODY)
+    await menuGone()
 
     // --- It copies what you are looking at, unsaved edits included ---
     await win.click('.cm-content, .markdown-page-content')
@@ -93,7 +99,7 @@ export async function run(t) {
     await win.keyboard.type('EDITED ')
     await win.waitForTimeout(600)
     await clearClipboard(app)
-    await win.click('button[title="Copy contents"]')
+    await copyFromMenu('.pane-header:visible')
     await win.waitForTimeout(400)
     const dirty = await readClipboard(app)
     t.check('an unsaved edit is in what gets copied', dirty.includes('EDITED'), dirty)

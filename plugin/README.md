@@ -36,7 +36,7 @@ Both paths produce the same `/clave:<skill>` commands.
 
 Once installed, ask your agent things like:
 
-- *"Create a clave workspace for my codika-app project — 3 sessions: frontend, functions, docs."*
+- *"Create a clave workspace for my web-app project — 3 sessions: frontend, functions, docs."*
 - *"Scaffold a workspace for the slideless repo with separate terminal tabs for the app, CLI, and docs."*
 - *"Add a toolbar action to my existing workspace that runs `npm test`."*
 

@@ -1,13 +1,14 @@
 /**
  * The standalone server's settings source: the same managers, on the
  * standalone ports (JSON documents under the server's data directory, the
- * macOS Keychain for the secrets), with no login jobs and no Dock. A login
- * or an icon asked of this server answers `CapabilityUnavailable` with the
- * reason; wave 3's Node process beside the server is what takes them on.
+ * macOS Keychain or Linux encrypted files for secrets), with one login job
+ * (a Codex API key, `daemon-logins.ts`, set from the server's own shell by
+ * `scripts/server-accounts.mjs`) and no Dock. A browser login or an icon
+ * asked of this server answers `CapabilityUnavailable` with the reason.
  *
  * The Antasphere account (PRDCT-3259) it does own: the same manager as the
  * shell's, on these ports, its issuer read off this process's environment,
- * its session sealed in the Keychain (serialised to ASCII first) and
+ * its session sealed through the platform secret port and
  * restored from the data directory at start. No browser opens here: a
  * sign-in answers the handoff to the client that asked, and the shell on
  * the other end opens it.
@@ -28,7 +29,11 @@ import { piUsageManager } from '../pi-usage'
 import { launchProfileManager } from '../launch-profile-manager'
 import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
+import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { settingsSourceFromManagers } from './source'
+import { TEST_NO_ACTIVATE } from '../test-mode'
+import { installE2eHooks } from '../sessions/e2e-hooks'
 
 export interface StandaloneSettings {
   settings: SettingsSourceService
@@ -54,6 +59,8 @@ export function standaloneSettingsSource(
         `[antasphere-account] ${event}${fields ? ` ${JSON.stringify(fields)}` : ''}\n`
       )
   })
+  // The helpers run here read this server's preference at each call (PRDCT-4330).
+  installHelperPreferences(helperPreferences)
   // The ports are installed: the stored session is read back now. A state,
   // never a rejection; a login is never what stops the server from starting.
   void antasphere.restore()
@@ -66,7 +73,34 @@ export function standaloneSettingsSource(
     launchProfiles: launchProfileManager,
     preferences: preferencesManager,
     workspaces: workspaceManager,
+    helpers: helperPreferences,
+    integrations: elevenLabsIntegration,
+    // Loaded on first use, as the shell's: the daemon's login reaches the
+    // login shell's environment through the terminal backend, which the
+    // source's own import graph must not reach (`boot-graph.test.ts`).
+    logins: () => import('./daemon-logins').then((m) => m.daemonLogins()),
     antasphere
   })
-  return { settings, shutdown: () => antasphere.shutdown() }
+  // The accounts and their usage events belong to this process. Main's
+  // clock is suppressed when it attaches, and a renderer only refreshes
+  // accounts it has viewed. Enumerate the server's live account lists on
+  // every tick, including accounts added after launch.
+  const startUsagePolling = (intervalMs?: number): void => {
+    usageManager.startPolling(intervalMs)
+    codexUsageManager.startPolling(intervalMs)
+  }
+  // Hidden test instances must never read a personal provider on their own.
+  // The fixture installs recording reads before explicitly starting the clock.
+  installE2eHooks({
+    usageClock: { claude: usageManager, codex: codexUsageManager, start: startUsagePolling }
+  })
+  if (!TEST_NO_ACTIVATE) startUsagePolling()
+  return {
+    settings,
+    shutdown: () => {
+      usageManager.stopPolling()
+      codexUsageManager.stopPolling()
+      antasphere.shutdown()
+    }
+  }
 }

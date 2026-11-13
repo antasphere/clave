@@ -15,7 +15,8 @@
 import type { ClaveApiClient } from '@clave/client'
 import type { SessionRecord as WireRecord } from '@clave/contract/sessions'
 import type { SessionRecord } from '../sessions/adapters/pty-backend'
-import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
+import { BUILT_IN_LAUNCH_PROFILES, type LaunchProfilePreferences } from '../../shared/agent-launch'
+import { chatDefaultFor } from '../../shared/open-session-modes'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 import { usageSummaryOf } from '../../shared/usage-summary'
 import type { AccountProvider, ServedPoolAccount, ServedShell, ToolWindow } from './served-core'
@@ -28,10 +29,14 @@ const NEEDS: Record<string, ReadonlyArray<'records' | 'accounts' | 'profiles' | 
   sendToSession: ['records'],
   switchAccount: ['records', 'accounts'],
   openSession: ['records', 'accounts', 'profiles'],
-  launchGroup: ['records', 'accounts', 'pins']
+  launchGroup: ['records', 'accounts', 'pins'],
+  // PRDCT-4123: the caller's own unit and the parents the name tie-break reads.
+  setWork: ['records'],
+  handOver: ['records']
 }
 
-/** The commands that take the attached road: the wave 4 seven. The wave 3
+/** The commands that take the attached road: the wave 4 seven and the two
+ *  work tools (PRDCT-4123). The wave 3
  *  tools keep the window attached, as their record says. */
 export const ATTACHED_COMMANDS: ReadonlySet<string> = new Set(Object.keys(NEEDS))
 
@@ -88,7 +93,7 @@ export async function attachedShell<W extends ToolWindow>(
     needs.includes('records') ? loadRecords() : Promise.resolve(),
     needs.includes('accounts') ? fetchAccounts(api) : Promise.resolve(null),
     needs.includes('profiles')
-      ? api.settings.launchProfiles.list().then((p) => p.customProfiles)
+      ? api.settings.launchProfiles.list().then((p) => p as unknown as LaunchProfilePreferences)
       : Promise.resolve(null),
     needs.includes('pins')
       ? api.settings.workspaces.load().then((s) => s.pins as unknown as PinnedBlueprint[])
@@ -107,10 +112,20 @@ export async function attachedShell<W extends ToolWindow>(
     accounts: (provider) => accounts?.[provider] ?? base.accounts(provider),
     launchProfiles: (family) =>
       profiles
-        ? [...BUILT_IN_LAUNCH_PROFILES, ...profiles]
+        ? [...BUILT_IN_LAUNCH_PROFILES, ...profiles.customProfiles]
             .filter((p) => p.family === family)
             .map(({ id, name }) => ({ id, name }))
         : base.launchProfiles(family),
-    pins: () => pins ?? base.pins()
+    // The server's own defaults: a chat opened on a server lands on the chat
+    // that server's launcher would open, never on the Mac's.
+    chatDefault: (family, workspaceId) =>
+      profiles
+        ? chatDefaultFor(profiles, family, workspaceId)
+        : base.chatDefault(family, workspaceId),
+    pins: () => pins ?? base.pins(),
+    // The model a chat starts on is the SERVER's remembered one, a preference
+    // its API does not serve: this Mac's own would judge the account by the
+    // wrong model, so the pick falls back to the shared caps (PRDCT-4253).
+    launchModel: () => undefined
   }
 }

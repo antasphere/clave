@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { finishesTurn, tabIndicators } from './tab-status'
+import { finishesTurn, tabIndicators, tabStatusPresentation } from './tab-status'
 
 type Fields = Parameters<typeof tabIndicators>[0]
 
@@ -58,12 +58,113 @@ describe('tabIndicators', () => {
 
   it('never lets background work colour the logo', () => {
     const done = tabIndicators({ ...claude, agentState: 'done', backgroundTasks: 2 })
-    expect(done).toEqual({ status: 'idle', background: 2 })
+    expect(done).toEqual({ status: 'idle', background: 2, agents: 0 })
+  })
+
+  it('keeps a tab working while its subagents run past the turn', () => {
+    const lane = tabIndicators({
+      ...claude,
+      agentState: 'done',
+      backgroundTasks: 3,
+      backgroundAgents: 2
+    })
+    expect(lane).toEqual({ status: 'working', background: 1, agents: 2 })
+  })
+
+  it('a question still wins over running subagents', () => {
+    const asking = tabIndicators({
+      ...claude,
+      agentState: 'blocked',
+      backgroundTasks: 2,
+      backgroundAgents: 2
+    })
+    expect(asking.status).toBe('needs-you')
+  })
+
+  it('shells alone leave a finished tab finished', () => {
+    const shells = tabIndicators({ ...claude, agentState: 'done', backgroundTasks: 2 })
+    expect(shells).toEqual({ status: 'idle', background: 2, agents: 0 })
+  })
+
+  it('never counts more subagents than tasks', () => {
+    const odd = tabIndicators({
+      ...claude,
+      agentState: 'done',
+      backgroundTasks: 1,
+      backgroundAgents: 4
+    })
+    expect(odd).toEqual({ status: 'working', background: 0, agents: 1 })
   })
 
   it('counts nothing in the background of a dead or neutral tab', () => {
     expect(tabIndicators({ ...claude, alive: false, backgroundTasks: 2 }).background).toBe(0)
     expect(tabIndicators({ ...terminal, backgroundTasks: 2 }).background).toBe(0)
+  })
+})
+
+describe('tabStatusPresentation', () => {
+  it.each([
+    ['a fresh Claude tab', claude, null, 'grey', null],
+    ['a working Claude tab', { ...claude, agentState: 'working' }, 'spinner', 'grey', 'Working'],
+    [
+      'a Claude tab waiting on a permission',
+      { ...claude, agentState: 'blocked' },
+      'question',
+      'amber',
+      'Waiting on you'
+    ],
+    [
+      'a Claude tab done while away',
+      { ...claude, agentState: 'done', hasUnseenActivity: true },
+      'check',
+      'blue',
+      'Finished while you were away'
+    ],
+    [
+      'a Claude tab written to while away',
+      { ...claude, agentState: 'done', hasUnseenActivity: true, injectedFrom: 'Wave' },
+      'check',
+      'blue',
+      'Message from Wave'
+    ],
+    ['a Claude tab done and read', { ...claude, agentState: 'done' }, 'check', 'grey', 'Finished'],
+    [
+      'a terminal written to by another tab',
+      { ...terminal, injectedFrom: 'Wave' },
+      'check',
+      'blue',
+      'Message from Wave'
+    ],
+    ['a dead Claude tab', { ...claude, alive: false, agentState: 'done' }, 'minus', 'dim', 'Ended'],
+    ['a Codex tab at rest', { ...codex, agentState: 'idle' }, null, 'grey', null],
+    ['a Pi tab done and read', { ...pi, agentState: 'done' }, 'check', 'grey', 'Finished'],
+    ['a terminal with a stray done state', { ...terminal, agentState: 'done' }, null, 'grey', null],
+    ['an Antigravity tab stays neutral', { ...antigravity, agentState: 'done' }, null, 'grey', null]
+  ] as const)('%s', (_label, session, glyph, tone, label) => {
+    expect(tabStatusPresentation(session as Fields)).toMatchObject({ glyph, tone, label })
+  })
+
+  it('never draws an envelope: one glyph for one piece of news (PRDCT-4078)', () => {
+    const presentations = [
+      tabStatusPresentation({
+        ...claude,
+        agentState: 'done',
+        hasUnseenActivity: true,
+        injectedFrom: 'Wave'
+      }),
+      tabStatusPresentation({ ...terminal, injectedFrom: 'Wave' }),
+      tabStatusPresentation({ ...codex, agentState: 'idle', injectedFrom: 'Wave' })
+    ]
+    for (const p of presentations) {
+      expect(p.glyph).toBe('check')
+      expect(p.tone).toBe('blue')
+      expect(p.label).toBe('Message from Wave')
+    }
+  })
+
+  it('carries the status the row paints', () => {
+    expect(tabStatusPresentation({ ...claude, agentState: 'blocked' }).status).toBe('needs-you')
+    expect(tabStatusPresentation({ ...claude, alive: false }).status).toBe('ended')
   })
 })
 
@@ -78,5 +179,34 @@ describe('finishesTurn', () => {
     ['working', 'blocked', false]
   ] as const)('%s → %s: %s', (previous, next, expected) => {
     expect(finishesTurn(previous, next)).toBe(expected)
+  })
+})
+
+describe('tabStatusPresentation with subagents', () => {
+  it('draws the spinner with the subagents counted, and says so', () => {
+    const p = tabStatusPresentation({
+      ...claude,
+      agentState: 'done',
+      backgroundTasks: 2,
+      backgroundAgents: 2
+    })
+    expect(p).toMatchObject({ status: 'working', glyph: 'spinner', agents: 2 })
+    expect(p.label).toBe('Working · 2 subagents running')
+  })
+  it('a plain working turn carries no count', () => {
+    const p = tabStatusPresentation({ ...claude, agentState: 'working' })
+    expect(p.agents ?? 0).toBe(0)
+    expect(p.label).toBe('Working')
+  })
+})
+
+describe('commands left running', () => {
+  it('are named in the tooltip of a finished tab', () => {
+    const p = tabStatusPresentation({ ...claude, agentState: 'done', backgroundTasks: 1 })
+    expect(p).toMatchObject({ glyph: 'check', label: 'Finished · 1 command still running' })
+  })
+  it('in the plural too', () => {
+    const p = tabStatusPresentation({ ...claude, agentState: 'done', backgroundTasks: 3 })
+    expect(p.label).toBe('Finished · 3 commands still running')
   })
 })

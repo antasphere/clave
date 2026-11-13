@@ -1,3 +1,4 @@
+import { FleetResume } from '../fleet/FleetControls'
 import { useCallback, useEffect } from 'react'
 import { useTerminal } from '../../hooks/use-terminal'
 import { useSessionStore } from '../../store/session-store'
@@ -54,6 +55,9 @@ export function TerminalPanel({ sessionId }: TerminalPanelProps): React.JSX.Elem
       onMouseDown={handleClick}
     >
       <TerminalHeader sessionId={sessionId} />
+      <div className="flex justify-end">
+        <FleetResume sessionId={sessionId} />
+      </div>
       <div className="flex-1 min-h-0 relative">
         <div ref={containerRef} className="absolute inset-0 overflow-hidden" />
         <MessageTrail sessionId={sessionId} />

@@ -8,11 +8,16 @@ import {
   CommandLineIcon,
   PuzzlePieceIcon,
   CpuChipIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  MicrophoneIcon,
+  ServerIcon,
+  SparklesIcon,
+  SquaresPlusIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
 import { WordmarkStrip } from '../layout/Wordmark'
+import { MachinePicker } from './MachinePicker'
 
 type Row = {
   id: SettingsSection
@@ -28,14 +33,17 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     rows: [
       { id: 'general', label: 'General', icon: AdjustmentsHorizontalIcon },
       { id: 'appearance', label: 'Appearance', icon: SwatchIcon },
+      { id: 'audio', label: 'Audio', icon: MicrophoneIcon },
       { id: 'keymaps', label: 'Keymaps', icon: CommandLineIcon }
     ]
   },
   {
     label: 'Agents',
     rows: [
-      { id: 'agents', label: 'Agents', icon: CpuChipIcon },
-      { id: 'accounts', label: 'Accounts', icon: UserCircleIcon },
+      { id: 'agents', label: 'Harnesses', icon: CpuChipIcon },
+      { id: 'helpers', label: 'Helpers', icon: SparklesIcon },
+      { id: 'integrations', label: 'Integrations', icon: SquaresPlusIcon },
+      { id: 'accounts', label: 'Connections', icon: UserCircleIcon },
       { id: 'usage', label: 'Usage', icon: ChartBarIcon },
       { id: 'activity', label: 'Activity', icon: ClockIcon }
     ]
@@ -43,6 +51,7 @@ const GROUPS: { label: string; rows: Row[] }[] = [
   {
     label: 'Clave',
     rows: [
+      { id: 'servers', label: 'Servers', icon: ServerIcon },
       { id: 'plugins', label: 'Plugins', icon: PuzzlePieceIcon },
       { id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }
     ]
@@ -91,10 +100,14 @@ export function SettingsSidebar(): React.JSX.Element {
         </div>
       </div>
 
-      <nav className="px-2 overflow-y-auto" data-settings-nav>
+      <nav className="px-2 overflow-y-auto overscroll-contain" data-settings-nav>
         {GROUPS.map((group) => (
           <div key={group.label}>
             <div className="settings-nav-label">{group.label}</div>
+            {/* The Agents pages show one machine at a time: this Mac, or a
+                saved server. The picker sits with the pages it governs; the
+                Preferences above stay this Mac's whatever is picked. */}
+            {group.label === 'Agents' && <MachinePicker />}
             <div className="space-y-0.5">
               {group.rows.map(({ id, label, icon: Icon }) => (
                 <button

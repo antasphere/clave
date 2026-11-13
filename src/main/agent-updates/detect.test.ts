@@ -120,6 +120,22 @@ describe('versions', () => {
   })
 })
 
+describe("OpenCode's own installer", () => {
+  it('is read from ~/.opencode/bin, its latest from @opencode/cli, upgraded by itself', () => {
+    const install = classifyInstall(`${HOME}/.opencode/bin/opencode`, 'opencode')
+    expect(install).toEqual({ kind: 'opencode-native' })
+    expect(canUpgrade(install)).toBe(true)
+    expect(releaseSource('opencode', install, null)).toEqual({
+      pkg: '@opencode/cli',
+      tag: 'latest'
+    })
+    expect(upgradeCommand(install, `${HOME}/.opencode/bin/opencode`)).toEqual({
+      file: `${HOME}/.opencode/bin/opencode`,
+      args: ['upgrade']
+    })
+  })
+})
+
 describe('where the latest release is read', () => {
   it("follows the channel Claude's own settings picked", () => {
     const native = { kind: 'claude-native' } as const

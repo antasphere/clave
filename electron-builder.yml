@@ -17,6 +17,8 @@ files:
 extraResources:
   - from: plugins
     to: plugins
+  - from: scripts/install-server.sh
+    to: scripts/install-server.sh
 beforePack: scripts/prepare-resvg.cjs
 asarUnpack:
   - resources/**
@@ -47,6 +49,9 @@ mac:
   extendInfo:
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    # Without this key macOS kills the app the moment anything asks for the
+    # microphone, with no prompt and no error the app can see.
+    - NSMicrophoneUsageDescription: Clave uses the microphone so pages it shows on this machine, such as a voice dock, can listen when you ask them to. Audio is never recorded or sent anywhere by Clave itself.
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}

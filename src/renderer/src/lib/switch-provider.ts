@@ -1,0 +1,364 @@
+import type { ModelOption, SessionStream } from '../../../shared/session-model'
+import { handoffBudgetChars } from './handoff-budget'
+import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
+import { isChatSession, registerProviderSwitchRoad } from './account-policy'
+import { useSessionStore, type Session } from '../store/session-store'
+import { headroomLabel } from '../store/usage-store'
+import {
+  accountProviderOf,
+  landingForSession,
+  restartSessionProcess,
+  sessionAccountExhausted,
+  type SwitchResult
+} from './switch-account'
+
+/**
+ * A tab moves to another provider (PRDCT-4300): the same tab, restarted
+ * under the same id on the other adapter, the conversation reconstructed
+ * there rather than continued. Two roads, decided by the host before
+ * Continue (`providerSwitchPlan`): the conversation converted into the
+ * target's own storage and resumed (Claude to Codex through the session
+ * bridge), or carried as a handoff message that opens the fresh
+ * conversation. The popover in the chat view says which, in the person's
+ * words; this module makes the move. Lane E's limit policy registers the
+ * road from here for its "Continue on Codex" rung.
+ */
+export interface ProviderSwitchTarget {
+  adapterId: string
+  /** The provider's own name (`claude`, `codex`, a plugin's). */
+  provider: string
+  /** How the person reads it: Claude, Codex. */
+  label: string
+  model: ModelOption
+}
+
+/** Where the move lands: the pool's pick for the target's model with the
+ *  account's headroom as its menu row would read it, in the tab's OWNER's
+ *  pool: a tab on a server lands on one of that server's accounts, never on
+ *  this Mac's (PRDCT-4328); `refused` says why when the server's accounts are
+ *  not read yet. A provider with no account pool (the echo fixture, a
+ *  plugin) lands nowhere in particular. */
+export function providerSwitchLanding(
+  target: Pick<ProviderSwitchTarget, 'provider' | 'model'>,
+  sessionId?: string
+): {
+  account: { id: string; label: string } | null
+  headroom: string | null
+  overrides: {
+    claudeProfileId?: string
+    claudeProfileLabel?: string
+    codexAccountId?: string
+    codexAccountLabel?: string
+  }
+  refused?: string
+} {
+  if (target.provider !== 'claude' && target.provider !== 'codex')
+    return { account: null, headroom: null, overrides: {} }
+  const session = sessionId ? sessionById(sessionId) : undefined
+  const landing = landingForSession(session, target.provider, target.model.id)
+  if (!landing)
+    return {
+      account: null,
+      headroom: null,
+      overrides: {},
+      refused: "The server's accounts are not read yet; try the move again in a moment."
+    }
+  const { account, summary } = landing
+  return {
+    account: { id: account.id, label: account.label },
+    headroom: headroomLabel(summary),
+    overrides:
+      target.provider === 'claude'
+        ? { claudeProfileId: account.id, claudeProfileLabel: account.label }
+        : { codexAccountId: account.id, codexAccountLabel: account.label }
+  }
+}
+
+/** Which road the move would take, from the host, before anything is written. */
+export function planProviderSwitch(
+  sessionId: string,
+  adapterId: string
+): Promise<ProviderSwitchPlan> {
+  return window.electronAPI.providerSwitchPlan(sessionId, adapterId)
+}
+
+/** Whether the tab's own agent can still write one more message: the
+ *  handoff note is offered only while its account has room for the turn. */
+export function canWriteHandoffNote(session: Session): boolean {
+  return session.alive && accountProviderOf(session) !== null && !sessionAccountExhausted(session)
+}
+
+/** What the current agent is asked for before the move, when the person
+ *  wants a note from it. */
+export const HANDOFF_NOTE_REQUEST =
+  'This conversation is about to move to another agent, which will read a transcript of it rather than continue it. Write a handoff note for that agent: what we are working on, where it stands, what has been decided and why, what is next, and the files that matter. Plain text, no questions back.'
+
+/** One more turn on the current conversation: the request above, answered
+ *  as the note. Resolves with the agent's text once its turn ends; null when
+ *  the turn gave nothing within `timeoutMs` or the session ended first. */
+export function requestHandoffNote(
+  sessionId: string,
+  timeoutMs = 120_000,
+  request = HANDOFF_NOTE_REQUEST
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    let text = ''
+    let asked = false
+    let settled = false
+    const done = (value: string | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      stop()
+      resolve(value)
+    }
+    const stop = window.electronAPI.onSessionStream(sessionId, (stream: SessionStream) => {
+      if (stream.kind !== 'event') return
+      const event = stream.event
+      if (event.type === 'user_message') {
+        if (event.text === request) asked = true
+        return
+      }
+      if (!asked) return
+      if (event.type === 'assistant_text' && !event.parent) text += event.delta
+      else if (
+        event.type === 'state_change' &&
+        (event.state === 'idle' || event.state === 'done') &&
+        text.trim()
+      )
+        done(text.trim())
+      else if (event.type === 'state_change' && event.state === 'ended') done(text.trim() || null)
+      else if (event.type === 'turn_interrupted') done(text.trim() || null)
+    })
+    const timer = setTimeout(() => done(text.trim() || null), timeoutMs)
+    window.electronAPI
+      .sessionsWrite(sessionId, { type: 'user_message', text: request })
+      .catch(() => done(null))
+  })
+}
+
+export interface ProviderSwitchInput {
+  /** The provider the tab is on now, as the host names it (`claude`). */
+  from: string
+  target: ProviderSwitchTarget
+  /** The road the plan announced; a refused conversion falls back to the handoff. */
+  road: 'convert' | 'handoff'
+  /** The handoff message, built when the move takes that road: the chat view
+   *  holds the conversation and writes it (`export.ts`, `handoffMessage`). */
+  handoff: () => Promise<string>
+  /** The limit policy's move: the message the cap rejected goes once as the
+   *  new provider's first turn after the converted history (the handoff
+   *  tape already ends on it). Integration round 2, G7. */
+  resendRejected?: boolean
+}
+
+export type ProviderSwitchResult = SwitchResult & {
+  /** The road taken in the end. */
+  road: 'converted' | 'handoff'
+  /** Why the conversion was refused, when the plan said convert. */
+  fallback?: string
+}
+
+/** The move: the conversion when the road is convert (else, or when Codex
+ *  refuses it, the handoff message), then the same tab restarted under the
+ *  same id on the target adapter, resuming the converted thread or opening
+ *  on the handoff, the store told what the tab is now. */
+export async function switchSessionProvider(
+  sessionId: string,
+  input: ProviderSwitchInput
+): Promise<ProviderSwitchResult> {
+  const { target } = input
+  const landing = providerSwitchLanding(target, sessionId)
+  if (landing.refused) return { ok: false, resumed: false, error: landing.refused, road: 'handoff' }
+  let resume: string | undefined
+  let fallback: string | undefined
+  if (input.road === 'convert') {
+    const converted = await window.electronAPI.providerSwitchConvert(sessionId, {
+      ...landing.overrides,
+      model: target.model.id
+    })
+    if (converted.ok) resume = converted.threadId
+    else fallback = converted.reason
+  }
+  const firstMessage = resume === undefined ? await input.handoff() : undefined
+  const road = resume !== undefined ? 'converted' : 'handoff'
+  const continuedFrom = { provider: input.from, road } as const
+  const codex = target.adapterId === 'codex-chat'
+  const claude = target.adapterId === 'claude-chat'
+  const result = await restartSessionProcess(sessionId, {
+    resendRejected: input.resendRejected === true,
+    overrides: {
+      ...landing.overrides,
+      adapterId: target.adapterId,
+      model: target.model.id,
+      ...(resume !== undefined ? { resume } : {}),
+      ...(firstMessage !== undefined ? { firstMessage } : {}),
+      continuedFrom
+    },
+    patch: {
+      ...landing.overrides,
+      claudeMode: !codex,
+      codexMode: codex,
+      claudeAgentsMode: false,
+      launchProfileId: target.adapterId === 'echo' ? 'dev-echo-adapter' : target.adapterId,
+      model: target.model.id,
+      continuedFrom,
+      ...(codex
+        ? { claudeProfileId: undefined, claudeProfileLabel: undefined, claudeConfigDir: undefined }
+        : {}),
+      ...(claude ? { codexAccountId: undefined, codexAccountLabel: undefined } : {})
+    }
+  })
+  return { ...result, road, ...(fallback !== undefined ? { fallback } : {}) }
+}
+
+/** The session as the store holds it, for callers outside React. */
+export function sessionById(sessionId: string): Session | undefined {
+  return useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+}
+
+// ── The road lane E's limit policy offers as its third rung ──
+
+/** The providers this Mac can run a tab on, read once from the host; null
+ *  until the answer is in (the rung waits for it) or when the host has no
+ *  such call. */
+let providerChoices: ProviderChoice[] | null = null
+let choicesAsked = false
+function askChoices(): void {
+  if (choicesAsked) return
+  choicesAsked = true
+  Promise.resolve()
+    .then(() => window.electronAPI.adaptersList())
+    .then((list) => {
+      providerChoices = list
+    })
+    .catch(() => {
+      providerChoices = []
+    })
+}
+
+/** The other provider a session could continue on at a limit: Codex for a
+ *  Claude chat, Claude for a Codex one, when this Mac runs it. Null for a
+ *  tab without an account pool, for a terminal tab (its conversation is the
+ *  CLI's own, nothing here can read or move it), or while the host has not
+ *  said what it runs. */
+export function providerSwitchTargetFor(
+  session: Session
+): { adapterId: string; label: string } | null {
+  askChoices()
+  const from = accountProviderOf(session)
+  if (!from || !isChatSession(session, from)) return null
+  const adapterId = from === 'claude' ? 'codex-chat' : 'claude-chat'
+  if (!providerChoices) return null
+  const choice = providerChoices.find((c) => c.adapterId === adapterId)
+  return choice ? { adapterId: choice.adapterId, label: choice.label } : null
+}
+
+export { handoffBudgetChars }
+
+/** What the limit card asked for: a move the view's popover opens on. */
+export type ProviderSwitchAsk = NonNullable<Session['providerSwitchAsk']>
+interface PendingAsk {
+  settle: (result: ProviderSwitchResult | { cancelled: true }) => void
+  /** The withdrawal, armed until a view takes the ask (integration round 3,
+   *  R2-2: it used to run on, and wiped the card fifteen seconds into the
+   *  popover). */
+  timer: ReturnType<typeof setTimeout> | null
+}
+const pendingAsks = new Map<string, PendingAsk>()
+
+/** The ask a view takes, once: read and cleared together, the withdrawal
+ *  disarmed, since the popover now holds the move and settles it. */
+export function takeProviderSwitchAsk(sessionId: string): ProviderSwitchAsk | null {
+  const session = sessionById(sessionId)
+  const ask = session?.providerSwitchAsk ?? null
+  if (!ask) return null
+  const pending = pendingAsks.get(sessionId)
+  if (pending?.timer) {
+    clearTimeout(pending.timer)
+    pending.timer = null
+  }
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((s) =>
+      s.id === sessionId ? { ...s, providerSwitchAsk: null } : s
+    )
+  }))
+  return ask
+}
+
+/** The popover's word on the ask: the move's result, or that it was cancelled. */
+export function settleProviderSwitchAsk(
+  sessionId: string,
+  result: ProviderSwitchResult | { cancelled: true }
+): void {
+  const pending = pendingAsks.get(sessionId)
+  pendingAsks.delete(sessionId)
+  if (pending?.timer) clearTimeout(pending.timer)
+  pending?.settle(result)
+}
+
+/** The limit card's provider rung: the move is asked of the view's popover,
+ *  the one place that says the move reconstructs the conversation and
+ *  offers the handoff note (integration round 2, F11); the promise settles
+ *  with the popover's word, a refusal kept on screen there (G6). The
+ *  target's first listed model is what the popover opens on. */
+export async function switchToProvider(
+  sessionId: string,
+  adapterId: string,
+  options: { resendRejected: boolean } = { resendRejected: false }
+): Promise<ProviderSwitchResult | { cancelled: true }> {
+  const session = sessionById(sessionId)
+  if (!session) return { ok: false, resumed: false, error: 'No such session', road: 'handoff' }
+  const models = await window.electronAPI.adaptersModels(adapterId, session.cwd)
+  const model = models[0]
+  if (!model)
+    return { ok: false, resumed: false, error: 'The provider lists no model here', road: 'handoff' }
+  const target = providerSwitchTargetFor(session)
+  const ask: ProviderSwitchAsk = {
+    adapterId,
+    provider:
+      adapterId === 'codex-chat' ? 'codex' : adapterId === 'claude-chat' ? 'claude' : adapterId,
+    label: target?.adapterId === adapterId ? target.label : adapterId,
+    model: { id: model.id, label: model.label },
+    resendRejected: options.resendRejected
+  }
+  return new Promise((resolve) => {
+    settleProviderSwitchAsk(sessionId, { cancelled: true })
+    // A pane that never takes the ask (none visible for this tab) must not
+    // hold the policy's promise for good: the ask is withdrawn, with a word.
+    const pending: PendingAsk = {
+      settle: resolve,
+      timer: setTimeout(() => {
+        if (pendingAsks.get(sessionId) !== pending) return
+        pendingAsks.delete(sessionId)
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === sessionId && s.providerSwitchAsk === ask
+              ? { ...s, providerSwitchAsk: null }
+              : s
+          )
+        }))
+        resolve({
+          ok: false,
+          resumed: false,
+          road: 'handoff',
+          error: 'No chat view took the move; open the tab and pick the provider from its chip.'
+        })
+      }, ASK_TIMEOUT_MS)
+    }
+    pendingAsks.set(sessionId, pending)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, providerSwitchAsk: ask } : s
+      )
+    }))
+  })
+}
+/** How long an ask waits for a pane before it is withdrawn. */
+export const ASK_TIMEOUT_MS = 15_000
+
+/** Lane E's third rung: offered once this module is loaded by the shell. */
+export function installProviderSwitchRoad(): void {
+  registerProviderSwitchRoad({ targetFor: providerSwitchTargetFor, switchTo: switchToProvider })
+  askChoices()
+}

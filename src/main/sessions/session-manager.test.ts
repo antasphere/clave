@@ -73,6 +73,31 @@ describe('SessionManager', () => {
     expect(manager.get('a')?.viewId).toBe('clave.chat-view/terminal')
   })
 
+  it('says a session is started only once it was made ready, and not after it ended', async () => {
+    const { manager } = fixture()
+    await manager.create(session('a'))
+    // Registered is not started: a restored chat's provider waits for a view.
+    expect(manager.get('a')).toBeDefined()
+    expect(manager.started('a')).toBe(false)
+    manager.ready('a')
+    expect(manager.started('a')).toBe(true)
+    await manager.kill('a')
+    expect(manager.started('a')).toBe(false)
+    expect(manager.started('absent')).toBe(false)
+  })
+
+  it('never starts an ended session again when a view opens it', async () => {
+    const { manager, adapter } = fixture()
+    const ready = vi.spyOn(adapter, 'ready')
+    await manager.create(session('a'))
+    manager.ready('a')
+    await manager.kill('a')
+    // Still held (not forgotten), ended: a restored tab's view opening it.
+    expect(manager.get('a')?.state).toBe('ended')
+    manager.ready('a')
+    expect(ready).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects unknown adapters, mismatched transports and duplicate concurrent ids', async () => {
     const { manager } = fixture()
     await expect(manager.create({ ...session('x'), adapterId: 'missing' })).rejects.toThrow(
@@ -173,7 +198,9 @@ describe('SessionManager', () => {
     manager.setState('a', 'working')
     expect(streams.mock.calls).toEqual([
       [{ kind: 'pty', data }],
-      [{ kind: 'event', event: { type: 'state_change', state: 'working' } }]
+      // Stamped with the run the state belongs to (PRDCT-4191): the first
+      // process under the id is run 1.
+      [{ kind: 'event', event: { type: 'state_change', state: 'working', run: 1 } }]
     ])
     expect(all).toHaveBeenCalledWith('a', { kind: 'pty', data })
     manager.write('a', data)
@@ -251,6 +278,41 @@ describe('SessionManager', () => {
     manager.write('a', { type: 'user_message', text: 'moved' })
     expect(old).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledTimes(6)
+  })
+
+  it('counts the runs under an id across forget, and starts each id at 1', async () => {
+    // PRDCT-4191: a resumed chat on a server is a new process under the same
+    // id; the run is what lets a pane tell its old process's late frames from
+    // the new one's, so it must survive the forget a restart makes between
+    // the two adoptions, and never leak from one id to another.
+    const { manager, adapter } = fixture()
+    const first = await manager.create(session('a'))
+    expect(first.run).toBe(1)
+    expect(manager.get('a')?.run).toBe(1)
+    manager.forget('a')
+    const second = manager.adopt(first, await adapter.attach('a'), adapter)
+    expect(second.run).toBe(2)
+    expect(manager.get('a')?.run).toBe(2)
+    expect((await manager.create(session('b'))).run).toBe(1)
+  })
+
+  it('stamps state_change with the current run and tells it to a late binder', async () => {
+    // PRDCT-4191: the server's host reads currentState at every bind, so a
+    // pane that mounts after the state moved still learns it, with the run.
+    const { manager, adapter } = fixture()
+    const record = await manager.create(session('a'))
+    expect(manager.currentState('a')).toEqual({ type: 'state_change', state: 'idle', run: 1 })
+    manager.forget('a')
+    manager.adopt(record, await adapter.attach('a'), adapter)
+    const streams = vi.fn()
+    manager.subscribe('a', streams)
+    manager.setState('a', 'working')
+    expect(streams).toHaveBeenCalledWith({
+      kind: 'event',
+      event: { type: 'state_change', state: 'working', run: 2 }
+    })
+    expect(manager.currentState('a')).toEqual({ type: 'state_change', state: 'working', run: 2 })
+    expect(manager.currentState('absent')).toBeUndefined()
   })
 
   it('isolates throwing consumers during stream and exit delivery', async () => {

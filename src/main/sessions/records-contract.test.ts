@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
 import { SessionRecord as WireRecord } from '@clave/contract/sessions'
+import { ServerEvent } from '@clave/contract/events'
 import type { SessionRecord as ShellRecord } from './adapters/pty-backend'
+import type { ElectronAPI } from '../../preload/index.d'
 
 /**
  * The wire `SessionRecord` (contract) and the shell's `SessionRecord`
@@ -45,6 +47,23 @@ const full = {
   windowKey: 'w1',
   view: { url: 'http://127.0.0.1:1', title: 't', command: 'serve', cwd: '/v' },
   link: { kind: 'group-terminal' as const, groupId: 'g1', terminalId: 't1' },
+  spawnedBy: '6f1c2c8e-1b9a-4d6e-9b1a-2f3c4d5e6f70',
+  openedBy: '7a2d3d9f-2c0b-4e7f-8c2b-3a4d5e6f7a81',
+  permissionMode: 'acceptEdits',
+  effort: 'high',
+  work: {
+    unit: 'stable-wave/lane-a',
+    kind: 'lane' as const,
+    label: 'Stable wave lanes',
+    wave: 'stable-wave',
+    waveLabel: 'Stable waves',
+    role: 'lead' as const,
+    task: 'the plumbing',
+    standing: 'current' as const,
+    joinedAt: 100,
+    since: 200,
+    from: '0b7d4c1e-5f6a-4b3c-8d2e-1f0a9b8c7d6e'
+  },
   live: true,
   running: true
 }
@@ -77,5 +96,19 @@ describe('the SessionRecord mirror holds', () => {
     const shell = full as unknown as ShellRecord
     const onWire: typeof WireRecord.Type = shell
     expect(onWire.id).toBe('s1')
+  })
+})
+
+describe('the model push crosses the wire whole (PRDCT-4256)', () => {
+  it('the server event carries what the preload hands the window, and nothing is dropped', () => {
+    const event = { _tag: 'session.model_changed' as const, id: 's1', model: 'claude-opus-5-5' }
+    const decoded = Schema.decodeUnknownSync(ServerEvent)(event)
+    expect(decoded).toEqual(event)
+    // The preload's payload is the event minus its tag: compile-time proof the
+    // two copies agree (a field added to one and not the other is an error here).
+    type Payload = Parameters<Parameters<ElectronAPI['onSessionModelChanged']>[0]>[0]
+    const payload: Payload = { id: event.id, model: event.model }
+    const back: Omit<typeof event, '_tag'> = payload
+    expect(back).toEqual({ id: 's1', model: 'claude-opus-5-5' })
   })
 })

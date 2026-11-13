@@ -5,7 +5,7 @@
 // JSON and exits 0 whatever happened is a probe, not a check — it verifies
 // nothing the moment nobody is reading the output. Every spec here asserts, and
 // a failed assertion fails the run.
-import { readdirSync, readFileSync, existsSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
@@ -20,6 +20,7 @@ import {
 } from './harness.mjs'
 import { loadKnown, classify, summarize } from './known-failures.mjs'
 import { specDeadlineMs, withDeadline } from './bounds.mjs'
+import { parseRunArgs, selectShard } from './sharding.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 // Where the specs are read from: this folder, or (for the runner's own test,
@@ -36,7 +37,8 @@ if (!process.env[NAMESPACE_ENV] || process.env[NAMESPACE_ENV].trim() === '')
   process.env[NAMESPACE_ENV] = defaultNamespace(path.resolve(DIR, '..', '..'))
 // Every argument is a filter; a spec runs when its file name contains any of
 // them. No argument runs the whole suite.
-const only = process.argv.slice(2).filter((a) => a.trim() !== '')
+const options = parseRunArgs(process.argv.slice(2))
+const only = options.filters
 const GREEN = '\u001b[32m'
 const RED = '\u001b[31m'
 const YELLOW = '\u001b[33m'
@@ -95,15 +97,31 @@ function createT(specName) {
   }
 }
 
-const specs = readdirSync(SPECS_DIR)
+const selected = readdirSync(SPECS_DIR)
   .filter((f) => f.endsWith('.spec.mjs'))
   .filter((f) => only.length === 0 || only.some((o) => f.includes(o)))
   .sort()
 
-if (specs.length === 0) {
+if (selected.length === 0) {
   console.error(only.length ? `No spec matches ${only.join(', ')}` : 'No specs found')
   process.exit(1)
 }
+
+const specs = selectShard(selected, options.shard)
+if (options.list) {
+  console.log(JSON.stringify(specs))
+  process.exit(0)
+}
+// A shard on the same host must never sweep another shard's fixtures or tmux.
+if (options.shard.total > 1)
+  process.env[NAMESPACE_ENV] += `-shard-${options.shard.index}-of-${options.shard.total}`
+const started = Date.now()
+const timings = {}
+for (const signal of ['SIGINT', 'SIGTERM'])
+  process.once(signal, () => {
+    finishRun({ failed: 1 })
+    process.exit(signal === 'SIGINT' ? 130 : 143)
+  })
 
 console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NAMESPACE_ENV]})`)
 // The server mode is read ONCE here and named on both ends of the run: a
@@ -123,6 +141,7 @@ killLeakedE2eTmux()
 const results = {}
 
 for (const file of specs) {
+  const specStarted = Date.now()
   console.log(`\n${BOLD}${file}${OFF}`)
   const t = createT(file)
   try {
@@ -158,6 +177,8 @@ for (const file of specs) {
     t.check(`${file} made at least one assertion`, false, 'the spec ran but asserted nothing')
   }
   results[file] = t.results
+  timings[file] = Date.now() - specStarted
+  console.log(`  duration: ${timings[file]} ms`)
 }
 
 const { totals, recovered, unstablePassed, exitCode } = summarize(results, known)
@@ -178,4 +199,27 @@ if (unstablePassed.length > 0) {
 console.log(
   `\n${totals.passed} passed, ${totals.failed} failed, ${totals.known} known failures, ${totals.unstable} unstable  (server: ${mode})`
 )
+if (options.report) {
+  const target = path.resolve(options.report)
+  mkdirSync(path.dirname(target), { recursive: true })
+  writeFileSync(
+    target,
+    JSON.stringify(
+      {
+        version: 1,
+        completed: true,
+        shard: options.shard,
+        mode,
+        selected: specs,
+        results,
+        timings,
+        totals,
+        exitCode,
+        durationMs: Date.now() - started
+      },
+      null,
+      2
+    )
+  )
+}
 process.exit(exitCode)

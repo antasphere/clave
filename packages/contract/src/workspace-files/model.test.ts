@@ -18,6 +18,7 @@ describe('the .clave wire shape', () => {
         'logo',
         'name',
         'prompt',
+        'routines',
         'sessions',
         'terminals',
         'toolbar',
@@ -34,6 +35,7 @@ describe('the .clave wire shape', () => {
         'cwd',
         'dangerousMode',
         'name',
+        'opencodeMode',
         'piMode',
         'prompt',
         'rootSession'

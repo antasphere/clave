@@ -27,7 +27,7 @@ export function registerAgentHandlers(): void {
     const loc = locationManager.getLocations().find((l) => l.id === locationId)
     if (!loc?.host || !loc.openclawPort) throw new Error('Location not configured for agents')
     const wsUrl = buildOpenclawWsUrl(loc)
-    const token = locationManager.getOpenclawToken(locationId)
+    const token = await locationManager.getOpenclawToken(locationId)
     await openclawClient.connect(locationId, wsUrl, token)
   })
 

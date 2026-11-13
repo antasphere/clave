@@ -40,7 +40,6 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   writeFileSync(`${ROOT}/draft.md`, '# Linked draft\n\nOriginal words.\n')
   writeFileSync(`${ROOT}/page.html`, '<h1>HTML original</h1>')
-  writeFileSync(`${ROOT}/page.css`, 'h1 { color: rgb(19, 73, 121) }')
   writeFileSync(`${ROOT}/attachment.txt`, 'SYNTHETIC ATTACHMENT BYTES')
   writeFileSync(
     `${ROOT}/signature.html`,
@@ -164,35 +163,21 @@ export async function run(t) {
         .count()
         .then((c) => c === 0)
     )
+    // An HTML page is the session's artefact since PRDCT-4474, never a linked
+    // document: the side panel refuses it with the sentence naming the tool.
     const html = await client.call('clave_open_side_panel', { path: `${ROOT}/page.html` })
-    t.check('HTML link opens through same MCP flow', !toolErrored(html), html)
-    const source = win.locator('[data-testid="linked-document-panel"] .cm-content')
-    await source.fill(
-      '<link rel="stylesheet" href="page.css"><h1>Edited HTML</h1><script>window.linkedLoads = 1</script>'
+    t.check(
+      'the side panel refuses an HTML page, naming clave_open_artefact',
+      toolErrored(html) &&
+        JSON.stringify(html).includes(
+          'An HTML page or a folder opens with clave_open_artefact, not in the side panel.'
+        ),
+      html
     )
-    await client.call('clave_side_panel', { action: 'read' })
     t.equal(
-      'HTML source autosaves',
+      'and leaves the page alone',
       readFileSync(`${ROOT}/page.html`, 'utf8'),
-      '<link rel="stylesheet" href="page.css"><h1>Edited HTML</h1><script>window.linkedLoads = 1</script>'
-    )
-    await win.getByRole('button', { name: 'Rendered', exact: true }).click()
-    await win.frameLocator('iframe[title="page.html"]').getByText('Edited HTML').waitFor()
-    const htmlFrame = win.frameLocator('iframe[title="page.html"]')
-    t.equal(
-      'linked HTML resolves relative CSS',
-      await htmlFrame.locator('h1').evaluate((el) => getComputedStyle(el).color),
-      'rgb(19, 73, 121)'
-    )
-    await htmlFrame.locator('body').evaluate(() => {
-      window.linkedLoads = 7
-    })
-    await callMcp(app, 'focus', { sessionId: other.sessionId })
-    await callMcp(app, 'focus', { sessionId: agent.sessionId })
-    t.equal(
-      'linked HTML frame retains in-page state on session switch',
-      await htmlFrame.locator('body').evaluate(() => window.linkedLoads),
-      7
+      '<h1>HTML original</h1>'
     )
 
     if (process.env.CLAVE_LINKED_CAPTURE) await chooseTheme('Light')

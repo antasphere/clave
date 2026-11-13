@@ -4,7 +4,10 @@ import {
   isClaveServerBootSettled,
   markClaveServerBootSettled,
   resetClaveServerBootForTests,
+  isServerExternal,
+  onClaveServerEndpointNamed,
   setClaveServerEndpoint,
+  setServerExternal,
   whenClaveServerBootSettled
 } from './endpoint'
 
@@ -70,5 +73,24 @@ describe('the boot signal', () => {
     resetClaveServerBootForTests()
     expect(getClaveServerEndpoint()).toBeNull()
     expect(isClaveServerBootSettled()).toBe(false)
+  })
+})
+
+describe('the word that a server is named, and the external flag (PRDCT-3527)', () => {
+  it('tells its listeners each time a server is named, never when it is cleared', () => {
+    const heard = vi.fn()
+    const off = onClaveServerEndpointNamed(heard)
+    setClaveServerEndpoint({ url: 'http://127.0.0.1:1', token: 't', mode: 'attached' })
+    expect(heard).toHaveBeenCalledTimes(1)
+    setClaveServerEndpoint(null)
+    expect(heard).toHaveBeenCalledTimes(1)
+    off()
+    setClaveServerEndpoint({ url: 'http://127.0.0.1:2', token: 't', mode: 'attached' })
+    expect(heard).toHaveBeenCalledTimes(1)
+  })
+  it('says whether the launch put the sessions on a server process of their own', () => {
+    expect(isServerExternal()).toBe(false)
+    setServerExternal(true)
+    expect(isServerExternal()).toBe(true)
   })
 })

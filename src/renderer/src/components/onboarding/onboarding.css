@@ -1,0 +1,806 @@
+/* The first-run walk (Onboarding.tsx): a veil over the whole window and one
+   framed card on it, the drawing in an aside on the left, the step on the
+   right. In the hand of the tool template's dialogs: the aside's drawing and
+   its two words, the eyebrow, the step marks under the title, each step
+   sliding in, its parts arriving one after the other. Everything from the
+   app's tokens, so every skin just works. */
+
+.onb {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--spacing) * 8);
+  background-color: color-mix(in oklab, var(--surface-0) 48%, transparent);
+  backdrop-filter: blur(7px);
+  -webkit-app-region: drag;
+  transition: opacity 300ms var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+  }
+}
+.onb-card {
+  -webkit-app-region: no-drag;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  width: min(100%, 860px);
+  min-height: 520px;
+  max-height: calc(100vh - 64px);
+  overflow: hidden;
+  border-radius: calc(var(--radius-2xl) + 4px);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow), var(--overlay-shadow-lg);
+  transition:
+    translate 520ms var(--ease-out-expo),
+    scale 520ms var(--ease-out-expo);
+  @starting-style {
+    translate: 0 calc(var(--spacing) * 3);
+    scale: 0.97;
+  }
+}
+
+/* the aside: the drawing on a breath of the ground, its two words under it */
+.onb-aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(var(--spacing) * 6);
+  padding: calc(var(--spacing) * 8) calc(var(--spacing) * 7);
+  box-shadow: inset -0.5px 0 0 var(--edge-color);
+  background-color: color-mix(in oklab, var(--surface-100) 55%, var(--surface-raised));
+}
+.onb-door {
+  display: grid;
+  place-items: center;
+}
+.onb-door > * {
+  grid-area: 1 / 1;
+}
+.onb-door > .onb-drawing {
+  width: 100%;
+  max-width: 236px;
+  height: auto;
+}
+.onb-aside-words {
+  text-align: center;
+}
+.onb-caption {
+  margin: calc(var(--spacing) * 1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.onb-eyebrow {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* the step */
+.onb-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: calc(var(--spacing) * 10) calc(var(--spacing) * 10) calc(var(--spacing) * 8);
+  overflow-y: auto;
+}
+.onb-skip {
+  position: absolute;
+  top: calc(var(--spacing) * 4);
+  right: calc(var(--spacing) * 5);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  transition: color 150ms;
+}
+.onb-skip:hover {
+  color: var(--text-primary);
+}
+.onb-title {
+  margin: calc(var(--spacing) * 2) 0 0;
+  color: var(--text-primary);
+  font-size: 22px;
+  line-height: 1.25;
+  font-weight: var(--font-weight-semibold, 600);
+  letter-spacing: -0.01em;
+}
+.onb-description {
+  max-width: 52ch;
+  margin: calc(var(--spacing) * 2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+/* where you are: one short bar per step, the current one long and in the accent */
+.onb-steps {
+  display: flex;
+  gap: 6px;
+  margin: calc(var(--spacing) * 4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.onb-steps li {
+  width: 18px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--color-border);
+  transition:
+    width 400ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 400ms var(--ease-out-expo);
+}
+.onb-steps li.past {
+  background: color-mix(in oklab, var(--color-accent) 55%, var(--color-border));
+}
+.onb-steps li.on {
+  width: 44px;
+  background: var(--color-accent);
+}
+.onb-body {
+  margin-top: calc(var(--spacing) * 6);
+}
+.onb-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 2);
+  margin-top: calc(var(--spacing) * 8);
+}
+
+/* the parts of a step arrive one after the other */
+@media (prefers-reduced-motion: no-preference) {
+  .onb [data-stagger] > [data-stagger-item] {
+    animation: onb-stagger-in 460ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+  .onb [data-stagger] > [data-stagger-item]:nth-child(2) {
+    animation-delay: 70ms;
+  }
+  .onb [data-stagger] > [data-stagger-item]:nth-child(3) {
+    animation-delay: 140ms;
+  }
+  .onb [data-stagger] > [data-stagger-item]:nth-child(4) {
+    animation-delay: 210ms;
+  }
+  .onb [data-stagger] > [data-stagger-item]:nth-child(5) {
+    animation-delay: 280ms;
+  }
+}
+@keyframes onb-stagger-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+/* step 1: three plain points */
+.onb-points {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3.5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.onb-points li {
+  display: flex;
+  gap: calc(var(--spacing) * 3);
+}
+.onb-points strong {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+.onb-point-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--text-primary) 42%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--surface-raised);
+  background: var(--color-accent);
+}
+
+/* step 2: the providers */
+.onb-providers {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2.5);
+}
+.onb-providers--loading {
+  flex-direction: row;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.onb-provider {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3.5);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 4);
+  border-radius: var(--radius-xl, 12px);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
+  transition:
+    box-shadow 300ms var(--ease-out-expo),
+    background-color 300ms var(--ease-out-expo);
+}
+.onb-provider.is-connected {
+  background-color: color-mix(in oklab, var(--color-accent) 6%, var(--card-surface));
+  box-shadow: 0 0 0 0.5px color-mix(in oklab, var(--color-accent) 45%, transparent);
+}
+.onb-provider-logo {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  box-shadow: var(--field-shadow);
+  background: var(--surface-100);
+  color: var(--text-primary);
+}
+.onb-provider-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.onb-provider-text strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.onb-provider-maker {
+  color: var(--text-tertiary);
+  font-weight: normal;
+}
+.onb-provider-state {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.onb-provider-state > span {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.onb-provider-ok {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .onb-provider-ok svg {
+    animation: onb-check 520ms cubic-bezier(0.22, 1.5, 0.36, 1) backwards;
+  }
+}
+@keyframes onb-check {
+  from {
+    scale: 0.3;
+    opacity: 0;
+  }
+}
+.onb-provider-error {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-danger, #c2410c);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 5.5em;
+  overflow: auto;
+}
+.onb-provider-command {
+  margin-top: 4px;
+  padding: 3px 7px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-radius: 6px;
+  background: var(--surface-100);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+.onb-provider-action {
+  flex: none;
+}
+.onb-code {
+  display: flex;
+  gap: calc(var(--spacing) * 2);
+  margin-top: calc(var(--spacing) * 2);
+}
+.onb-code input {
+  flex: 1;
+}
+.onb-footnote {
+  margin: calc(var(--spacing) * 1) 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.onb-link {
+  color: var(--color-accent);
+  font-size: inherit;
+}
+.onb-link:hover {
+  text-decoration: underline;
+}
+.onb-link--quiet {
+  align-self: flex-start;
+  margin-top: calc(var(--spacing) * 1.5);
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.onb-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in oklab, var(--text-primary) 20%, transparent);
+  border-top-color: var(--color-accent);
+  animation: onb-spin 800ms linear infinite;
+}
+@keyframes onb-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* step 3: the chat styles */
+.onb-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 2.5);
+}
+.onb-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 3);
+  border-radius: var(--radius-xl, 12px);
+  background: var(--card-surface);
+  box-shadow: var(--card-shadow);
+  text-align: left;
+  transition:
+    box-shadow 200ms var(--ease-out-expo),
+    translate 200ms var(--ease-out-expo);
+}
+.onb-choice:hover {
+  translate: 0 -1px;
+}
+.onb-choice.is-on {
+  box-shadow: var(--focus-ring);
+}
+.onb-choice:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.onb-chat-preview {
+  width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+.onb-choice-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.onb-choice-check {
+  position: absolute;
+  top: calc(var(--spacing) * 2);
+  right: calc(var(--spacing) * 2);
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  background: var(--surface-raised);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--edge-color);
+  color: transparent;
+  transition:
+    background-color 200ms,
+    box-shadow 200ms,
+    color 200ms;
+}
+.onb-choice.is-on .onb-choice-check {
+  box-shadow: none;
+  background: var(--color-accent);
+  color: var(--color-action-foreground, #fff);
+}
+.onb-choice-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.onb-tag {
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* step 4: the workspace */
+.onb-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 4);
+}
+.onb-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+}
+.onb-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+}
+.onb-folder {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: 7px 10px;
+  border-radius: var(--control-radius, 8px);
+  background: var(--control-surface);
+  box-shadow: var(--field-shadow);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+.onb-folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.onb-setup-line {
+  height: auto;
+  min-height: 52px;
+  padding-block: 6px;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.onb-error {
+  margin: 0;
+  color: var(--color-danger, #c2410c);
+  font-size: 12.5px;
+}
+
+/* ── The drawing's hand (OnboardingDrawing.tsx, and the chat previews) ── */
+.onb-drawing {
+  --ink: var(--text-primary);
+  --paper: var(--surface-raised);
+  --ground: var(--surface-100);
+  --travel: 640ms;
+  display: block;
+  overflow: visible;
+}
+.onb-drawing :is(.ln, .bx, .ring) {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.onb-drawing .ln {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.2;
+}
+.onb-drawing .ln--soft {
+  stroke: color-mix(in oklab, var(--ink) 34%, transparent);
+  stroke-dasharray: 4 5;
+}
+.onb-drawing .ln--thin {
+  stroke: color-mix(in oklab, var(--ink) 30%, transparent);
+  stroke-width: 1;
+}
+.onb-drawing .bx {
+  fill: color-mix(in oklab, var(--ground) 40%, transparent);
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.onb-drawing .bx--front {
+  fill: var(--paper);
+}
+.onb-drawing .dot {
+  fill: color-mix(in oklab, var(--ink) 78%, transparent);
+}
+.onb-drawing .dot--seat {
+  fill: color-mix(in oklab, var(--ink) 40%, transparent);
+}
+.onb-drawing .dot--c {
+  fill: var(--color-accent);
+}
+.onb-drawing .ring {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 42%, transparent);
+  stroke-width: 1;
+}
+.onb-drawing .ln--c {
+  stroke: var(--color-accent);
+  stroke-width: 1.8;
+}
+/* the walk's arc: one path, revealed further at each step. It scales with
+   the drawing: its dashes are measured in the same units as its length. */
+.onb-drawing .travel {
+  vector-effect: none;
+  stroke-width: 2.2;
+  transition: stroke-dashoffset var(--travel) cubic-bezier(0.65, 0, 0.35, 1);
+}
+/* a seat lights when the accent arrives, not when it leaves */
+.onb-drawing .seat-dot {
+  transition: fill 160ms var(--ease-out-expo) var(--travel);
+}
+.onb-drawing .dot--ahead {
+  fill: color-mix(in oklab, var(--ink) 22%, transparent);
+  transition-delay: 0ms;
+}
+.onb-drawing .space,
+.onb-drawing .wash {
+  transform-box: view-box;
+  transform-origin: 120px 126px;
+}
+.onb-drawing .wash {
+  opacity: 0;
+}
+.onb-drawing .wash-stop {
+  stop-color: var(--color-accent);
+}
+.onb-drawing .wash-stop--in {
+  stop-opacity: 0.32;
+}
+.onb-drawing .wash-stop--out {
+  stop-opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .onb-drawing .travel,
+  .onb-drawing .seat-dot {
+    transition: none;
+  }
+  .onb-drawing .space--closed {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* each step's scene comes in as the last one goes */
+  .onb-scene {
+    animation: onb-scene-in 520ms cubic-bezier(0.22, 1, 0.36, 1) 220ms backwards;
+    transform-box: view-box;
+    transform-origin: 120px 126px;
+  }
+  .onb-scene-row {
+    animation: onb-stagger-in 460ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+  .onb-scene-link {
+    animation: onb-link-march 1.4s linear infinite;
+  }
+  .onb-scene-caret {
+    animation: onb-caret 1s steps(2) infinite;
+  }
+  /* once the ring has closed, the space gathers itself and lets go */
+  .onb-drawing .space--closed {
+    animation: onb-space-release 560ms var(--travel) 1 forwards;
+  }
+  .onb-drawing .wash--go {
+    animation: onb-space-wash 1100ms cubic-bezier(0.16, 1, 0.3, 1) calc(var(--travel) + 200ms) 1 both;
+  }
+}
+@keyframes onb-scene-in {
+  from {
+    opacity: 0;
+    scale: 0.82;
+  }
+}
+@keyframes onb-link-march {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+@keyframes onb-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes onb-space-release {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0);
+  }
+  42% {
+    transform: scale(0.86);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  100% {
+    transform: scale(1.22);
+    opacity: 0;
+  }
+}
+@keyframes onb-space-wash {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+/* the door: the agent's tile blooms where the ring was, rings leaving it */
+.onb-bloom {
+  --door: calc(var(--travel, 640ms) + 400ms);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 220px;
+  aspect-ratio: 1;
+}
+.onb-bloom-tile {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 26px;
+  background: var(--card-surface);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow), var(--overlay-shadow-lg);
+}
+.onb-bloom-ring {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  border-radius: 26px;
+  border: 1.5px solid var(--color-accent);
+  opacity: 0;
+}
+.onb-bloom-wash {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--color-accent) 34%, transparent),
+    transparent 68%
+  );
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .onb-bloom-tile {
+    animation: onb-bloom-drop 760ms cubic-bezier(0.22, 1.5, 0.36, 1) var(--door) both;
+  }
+  .onb-bloom-wash {
+    animation: onb-bloom-wash 1700ms cubic-bezier(0.16, 1, 0.3, 1) calc(var(--door) + 180ms) both;
+  }
+  .onb-bloom-ring--1 {
+    animation: onb-bloom-ring 1600ms cubic-bezier(0.16, 1, 0.3, 1) calc(var(--door) + 260ms) forwards;
+  }
+  .onb-bloom-ring--2 {
+    animation: onb-bloom-ring 1600ms cubic-bezier(0.16, 1, 0.3, 1) calc(var(--door) + 520ms) forwards;
+  }
+  .onb-bloom-ring--3 {
+    animation: onb-bloom-ring 1600ms cubic-bezier(0.16, 1, 0.3, 1) calc(var(--door) + 800ms) forwards;
+  }
+}
+@keyframes onb-bloom-drop {
+  0% {
+    opacity: 0;
+    transform: scale(0.45) rotate(-200deg);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.06) rotate(8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+@keyframes onb-bloom-wash {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  30% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@keyframes onb-bloom-ring {
+  0% {
+    opacity: 0.65;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.3);
+  }
+}
+
+@media (max-width: 760px) {
+  .onb-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .onb-aside {
+    display: none;
+  }
+  .onb-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* step 2: the look. Each card is painted in its own skin (Settings' own
+   swatch preview, `data-theme`), so the reader sees it before choosing; the
+   choice applies at once, the walk itself repainting with it. */
+.onb-looks {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 2.5);
+}
+.onb-look {
+  padding: calc(var(--spacing) * 2.5);
+}
+.onb-look-preview {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: calc(var(--spacing) * 1);
+}
+@media (max-width: 760px) {
+  .onb-looks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* the look scene's dark page: the ink's own colour as its paper, so it is the
+   dark one in a light skin and the light one in a dark skin */
+.onb-drawing .onb-scene-dark {
+  fill: color-mix(in oklab, var(--ink) 82%, var(--paper));
+  stroke: color-mix(in oklab, var(--ink) 40%, transparent);
+  stroke-width: 1;
+}
+.onb-drawing .onb-scene-dark-ink {
+  stroke: color-mix(in oklab, var(--paper) 55%, transparent);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+/* the look card's check sits on its name's row, never over the preview */
+.onb-look .onb-choice-check {
+  position: static;
+  margin-left: auto;
+}
+.onb-look-hint {
+  margin-top: -2px;
+  color: var(--color-accent);
+}

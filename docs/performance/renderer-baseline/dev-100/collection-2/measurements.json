@@ -1,0 +1,1218 @@
+{
+  "schema": 1,
+  "build": "dev",
+  "source": "8d6fb84b637b98e68d2c618a615c354bfd5d6396",
+  "sourceBasis": "git HEAD, tooling-only working changes",
+  "startedAt": "2026-10-15T15:09:45.259Z",
+  "toolingSha256": {
+    "renderer-benchmark.mjs": "2f41ec01d783f5f42209fa5a08b57579b1637ba5dc5b34a5c0f72603bba6c6bd",
+    "renderer-data.mjs": "4d8e242059ef34e2bfca31b97eaf525434beaaa529a3bf3a0b4ca1d93ba99d69"
+  },
+  "config": {
+    "runs": 2,
+    "samples": 30,
+    "tabs": 100,
+    "turns": 200,
+    "idle-ms": 5000,
+    "groups": 10,
+    "historyTabs": 20,
+    "streaming": true
+  },
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "cpu": "Apple M2 Max",
+    "logicalCpus": 12,
+    "ramGiB": 96,
+    "node": "v22.12.0"
+  },
+  "protocol": {
+    "server": "separate",
+    "hidden": true,
+    "noActivate": true,
+    "warmups": 5,
+    "profilerIntervalUs": 1000,
+    "synthetic": true,
+    "profilePolicy": "paired-timestamp sorting, conserved observed span, no tail extrapolation",
+    "emptyIdleIncluded": false
+  },
+  "runs": [
+    {
+      "run": 1,
+      "beforeLoad": [
+        12.9658203125,
+        9.1357421875,
+        8.72021484375
+      ],
+      "startedAt": "2026-10-15T15:09:45.260Z",
+      "executableSha256": "352199cc20deb0c84a9df2974a56c56a1f0eab6211fc082477c8a42ad344200b",
+      "pageErrors": [],
+      "startupMs": 2951.861291,
+      "identity": {
+        "version": "2.4.0",
+        "electron": "39.5.2",
+        "chrome": "142.0.7444.265",
+        "visible": false,
+        "backgroundThrottling": false
+      },
+      "server": {
+        "mode": "separate",
+        "port": "63248"
+      },
+      "pids": {
+        "main": 261,
+        "renderer": 628
+      },
+      "reloadAttempts": [
+        {
+          "attempt": 1,
+          "ms": 894.865667,
+          "ok": true
+        }
+      ],
+      "startupProfile": {
+        "file": "run-1-renderer-reload.cpuprofile",
+        "rawFile": "run-1-renderer-reload.raw.cpuprofile",
+        "normalization": {
+          "negativeIntervals": 0,
+          "reorderedSamples": 0,
+          "originalSamples": 697,
+          "totalBeforeUs": 995052,
+          "totalAfterUs": 995052,
+          "lastObservedTime": 1085934111262,
+          "unsampledTailUs": 295,
+          "weighting": "preceding observed interval; no tail extrapolation"
+        },
+        "samples": 697,
+        "sampledMs": 995.052,
+        "hotspots": [
+          {
+            "frame": "(idle)",
+            "selfMs": 142.607,
+            "percent": 14.33161282023452
+          },
+          {
+            "frame": "(program)",
+            "selfMs": 129.664,
+            "percent": 13.030876778299023
+          },
+          {
+            "frame": "compileSourceTextModule node:internal/modules/esm/utils:345:33",
+            "selfMs": 31.194,
+            "percent": 3.1349115423113565
+          },
+          {
+            "frame": "(garbage collector)",
+            "selfMs": 27.555,
+            "percent": 2.769202011553165
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 15.384,
+            "percent": 1.5460498546809613
+          },
+          {
+            "frame": "(anonymous) node:internal/per_context/primordials:491:15",
+            "selfMs": 12.779,
+            "percent": 1.2842544912225693
+          },
+          {
+            "frame": "(anonymous) [source]:1:11",
+            "selfMs": 12.03,
+            "percent": 1.2089820431495037
+          },
+          {
+            "frame": "internalModuleStat",
+            "selfMs": 7.999,
+            "percent": 0.8038775862969976
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 7.481,
+            "percent": 0.7518200053866532
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 7.33,
+            "percent": 0.7366449190595065
+          },
+          {
+            "frame": "open",
+            "selfMs": 7.166,
+            "percent": 0.7201633683465789
+          },
+          {
+            "frame": "(anonymous) [source]:1:11",
+            "selfMs": 6.018,
+            "percent": 0.6047925133560859
+          },
+          {
+            "frame": "get exports node:internal/modules/package_json_reader:86:20",
+            "selfMs": 5.988,
+            "percent": 0.6017775955427455
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 4.828,
+            "percent": 0.48520077342691637
+          },
+          {
+            "frame": "createCJSModuleWrap node:internal/modules/esm/translators:182:29",
+            "selfMs": 4.821,
+            "percent": 0.48449729260380364
+          }
+        ]
+      },
+      "reloadStartupMs": 894.865667,
+      "viewport": {
+        "width": 1400,
+        "height": 900,
+        "dpr": 2
+      },
+      "setupMs": 19341.375916,
+      "streaming": {
+        "backgroundIndices": [
+          10,
+          20,
+          30,
+          40
+        ],
+        "payloadBytes": 128,
+        "intervalMs": 50,
+        "ceilingMs": 30000,
+        "off": {
+          "idle": {
+            "elapsedMs": 5003.366000019014,
+            "taskMs": 47.71599999999765,
+            "scriptMs": 17.17099999999938,
+            "heapBytes": 173154436
+          },
+          "timings": {
+            "tab": {
+              "rawMs": [
+                32.80000019073486,
+                39.10000014305115,
+                35.5,
+                40.60000014305115,
+                39.700000047683716,
+                32.700000047683716,
+                34,
+                33.60000014305115,
+                39.5,
+                40,
+                34.90000009536743,
+                35.19999980926514,
+                33.299999952316284,
+                43.60000014305115,
+                38.80000019073486,
+                33.299999952316284,
+                35.200000047683716,
+                33.59999990463257,
+                33.200000047683716,
+                34.799999952316284,
+                38.59999990463257,
+                38.799999952316284,
+                35.799999952316284,
+                37.89999985694885,
+                37.799999952316284,
+                34,
+                33.799999952316284,
+                38.10000014305115,
+                41.40000009536743,
+                47
+              ],
+              "summary": {
+                "n": 30,
+                "min": 32.700000047683716,
+                "p50": 35.5,
+                "p95": 43.60000014305115,
+                "max": 47
+              }
+            },
+            "composer": {
+              "rawMs": [
+                14.900000095367432,
+                19.600000143051147,
+                20.5,
+                19.200000047683716,
+                16.90000009536743,
+                22.600000143051147,
+                15.099999904632568,
+                20.90000009536743,
+                21.90000009536743,
+                23.5,
+                24.200000047683716,
+                19.5,
+                22.200000047683716,
+                21.200000047683716,
+                29.5,
+                22.40000009536743,
+                20.200000047683716,
+                16.299999952316284,
+                29.40000009536743,
+                20.200000047683716,
+                19.40000009536743,
+                21.5,
+                21.700000047683716,
+                22,
+                19.699999809265137,
+                21.40000009536743,
+                23.200000047683716,
+                20.200000047683716,
+                20.5,
+                20.59999990463257
+              ],
+              "summary": {
+                "n": 30,
+                "min": 14.900000095367432,
+                "p50": 20.59999990463257,
+                "p95": 29.40000009536743,
+                "max": 29.5
+              }
+            }
+          },
+          "produced": {
+            "elapsedMs": 10568,
+            "counts": {
+              "86b43f30-572a-4b1b-bcf3-04f74c4da39e": 0,
+              "586b21f6-c680-4c93-8d3d-9679a16556c8": 0,
+              "1cec087c-cf85-4fe3-88a2-b6869b2e0335": 0,
+              "0a100a1b-5d0b-4805-a825-e3ee81d7484c": 0
+            },
+            "ceilingReached": false
+          },
+          "observedCounts": {
+            "86b43f30-572a-4b1b-bcf3-04f74c4da39e": 0,
+            "586b21f6-c680-4c93-8d3d-9679a16556c8": 0,
+            "1cec087c-cf85-4fe3-88a2-b6869b2e0335": 0,
+            "0a100a1b-5d0b-4805-a825-e3ee81d7484c": 0
+          },
+          "totalEvents": 0,
+          "actualEventsPerSecond": 0,
+          "elapsedMs": 10573.531000176445,
+          "taskMs": 3604.963999999999,
+          "heapBytes": 427330812,
+          "profile": {
+            "file": "run-1-stream-off.cpuprofile",
+            "rawFile": "run-1-stream-off.raw.cpuprofile",
+            "normalization": {
+              "negativeIntervals": 0,
+              "reorderedSamples": 0,
+              "originalSamples": 7013,
+              "totalBeforeUs": 10861247,
+              "totalAfterUs": 10861247,
+              "lastObservedTime": 1085965685070,
+              "unsampledTailUs": 994,
+              "weighting": "preceding observed interval; no tail extrapolation"
+            },
+            "samples": 7013,
+            "sampledMs": 10861.247,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 7087.267,
+                "percent": 65.25279279625995
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 1150.576,
+                "percent": 10.593406079430842
+              },
+              {
+                "frame": "query",
+                "selfMs": 379.928,
+                "percent": 3.4980145465801487
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 213.219,
+                "percent": 1.9631171264220397
+              },
+              {
+                "frame": "query",
+                "selfMs": 166.659,
+                "percent": 1.5344370678615449
+              },
+              {
+                "frame": "focus",
+                "selfMs": 154.305,
+                "percent": 1.4206932224264857
+              },
+              {
+                "frame": "querySelector",
+                "selfMs": 79.441,
+                "percent": 0.731416935826982
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 61.672,
+                "percent": 0.5678169366740301
+              },
+              {
+                "frame": "addEventListener",
+                "selfMs": 56.631,
+                "percent": 0.521404218134437
+              },
+              {
+                "frame": "(anonymous)",
+                "selfMs": 54.854,
+                "percent": 0.5050432975145488
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 50.716,
+                "percent": 0.46694454145090336
+              },
+              {
+                "frame": "commitBeforeMutationEffects assets/index-Cjkmx59C.js:7154:39",
+                "selfMs": 40.912,
+                "percent": 0.3766786631406136
+              },
+              {
+                "frame": "parentElementOrShadowHost",
+                "selfMs": 35.857,
+                "percent": 0.33013704595798254
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 28.291,
+                "percent": 0.2604765364419021
+              },
+              {
+                "frame": "beginWork assets/index-Cjkmx59C.js:6178:21",
+                "selfMs": 26.101,
+                "percent": 0.2403131058523943
+              }
+            ]
+          }
+        },
+        "on": {
+          "idle": {
+            "elapsedMs": 5003.410000121221,
+            "taskMs": 684.3259999999987,
+            "scriptMs": 501.09099999999887,
+            "heapBytes": 164041852
+          },
+          "timings": {
+            "tab": {
+              "rawMs": [
+                39.10000014305115,
+                35.19999980926514,
+                35.90000009536743,
+                38.299999952316284,
+                32.799999952316284,
+                33.299999952316284,
+                32.69999980926514,
+                32.10000014305115,
+                32.39999985694885,
+                47.10000014305115,
+                30.799999952316284,
+                33,
+                32.299999952316284,
+                31.09999990463257,
+                36,
+                32.30000019073486,
+                32.5,
+                33.09999990463257,
+                33.799999952316284,
+                37.59999990463257,
+                35.09999990463257,
+                33.799999952316284,
+                34.60000014305115,
+                34,
+                32.10000014305115,
+                34.09999990463257,
+                35.5,
+                36.5,
+                36.39999985694885,
+                37.09999990463257
+              ],
+              "summary": {
+                "n": 30,
+                "min": 30.799999952316284,
+                "p50": 33.799999952316284,
+                "p95": 39.10000014305115,
+                "max": 47.10000014305115
+              }
+            },
+            "composer": {
+              "rawMs": [
+                31.40000009536743,
+                20.200000047683716,
+                27.5,
+                19.09999990463257,
+                7.5,
+                37.09999990463257,
+                21.899999856948853,
+                21.200000047683716,
+                14.700000047683716,
+                17.200000047683716,
+                19.700000047683716,
+                18,
+                23.5,
+                24.299999952316284,
+                39.80000019073486,
+                26.600000143051147,
+                23.100000143051147,
+                28.600000143051147,
+                16.100000143051147,
+                24.299999952316284,
+                28.299999952316284,
+                41.59999990463257,
+                21.200000047683716,
+                35.799999952316284,
+                21.100000143051147,
+                21.40000009536743,
+                20.799999952316284,
+                22.09999990463257,
+                26.09999990463257,
+                21.200000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 7.5,
+                "p50": 21.899999856948853,
+                "p95": 39.80000019073486,
+                "max": 41.59999990463257
+              }
+            }
+          },
+          "produced": {
+            "elapsedMs": 11644,
+            "counts": {
+              "86b43f30-572a-4b1b-bcf3-04f74c4da39e": 225,
+              "586b21f6-c680-4c93-8d3d-9679a16556c8": 225,
+              "1cec087c-cf85-4fe3-88a2-b6869b2e0335": 225,
+              "0a100a1b-5d0b-4805-a825-e3ee81d7484c": 225
+            },
+            "ceilingReached": false
+          },
+          "observedCounts": {
+            "86b43f30-572a-4b1b-bcf3-04f74c4da39e": 225,
+            "586b21f6-c680-4c93-8d3d-9679a16556c8": 225,
+            "1cec087c-cf85-4fe3-88a2-b6869b2e0335": 225,
+            "0a100a1b-5d0b-4805-a825-e3ee81d7484c": 225
+          },
+          "totalEvents": 900,
+          "actualEventsPerSecond": 77.29302645139127,
+          "elapsedMs": 11652.248999802396,
+          "taskMs": 5960.084999999999,
+          "heapBytes": 508477252,
+          "profile": {
+            "file": "run-1-stream-on.cpuprofile",
+            "rawFile": "run-1-stream-on.raw.cpuprofile",
+            "normalization": {
+              "negativeIntervals": 0,
+              "reorderedSamples": 0,
+              "originalSamples": 7661,
+              "totalBeforeUs": 12169260,
+              "totalAfterUs": 12169260,
+              "lastObservedTime": 1085977937522,
+              "unsampledTailUs": 119,
+              "weighting": "preceding observed interval; no tail extrapolation"
+            },
+            "samples": 7661,
+            "sampledMs": 12169.26,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 5790.209,
+                "percent": 47.58061706299315
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 1509.965,
+                "percent": 12.408026453539492
+              },
+              {
+                "frame": "query",
+                "selfMs": 418.165,
+                "percent": 3.4362401657947976
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 256.268,
+                "percent": 2.1058634625277133
+              },
+              {
+                "frame": "query",
+                "selfMs": 193.103,
+                "percent": 1.5868097156277374
+              },
+              {
+                "frame": "focus",
+                "selfMs": 160.033,
+                "percent": 1.3150594202112535
+              },
+              {
+                "frame": "check assets/index-Cjkmx59C.js:53295:17",
+                "selfMs": 142.949,
+                "percent": 1.1746729053368898
+              },
+              {
+                "frame": "check assets/index-Cjkmx59C.js:53295:17",
+                "selfMs": 130.929,
+                "percent": 1.0758994384210707
+              },
+              {
+                "frame": "atBreak assets/index-Cjkmx59C.js:56530:21",
+                "selfMs": 122.947,
+                "percent": 1.0103079398418637
+              },
+              {
+                "frame": "querySelector",
+                "selfMs": 104.341,
+                "percent": 0.8574145017856468
+              },
+              {
+                "frame": "go2 assets/index-Cjkmx59C.js:56797:15",
+                "selfMs": 89.163,
+                "percent": 0.732690401881462
+              },
+              {
+                "frame": "main2 assets/index-Cjkmx59C.js:56780:17",
+                "selfMs": 88.251,
+                "percent": 0.7251961088841885
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 83.752,
+                "percent": 0.6882259069162792
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 78.874,
+                "percent": 0.6481413002927048
+              },
+              {
+                "frame": "handler assets/index-Cjkmx59C.js:60761:19",
+                "selfMs": 75.463,
+                "percent": 0.6201116583917181
+              }
+            ]
+          }
+        }
+      },
+      "afterLoad": [
+        14.44140625,
+        10.0546875,
+        9.07861328125
+      ],
+      "ok": true,
+      "close": {
+        "timedOut": false
+      },
+      "cleaned": true
+    },
+    {
+      "run": 2,
+      "beforeLoad": [
+        14.44140625,
+        10.0546875,
+        9.07861328125
+      ],
+      "startedAt": "2026-10-15T15:10:33.442Z",
+      "executableSha256": "352199cc20deb0c84a9df2974a56c56a1f0eab6211fc082477c8a42ad344200b",
+      "pageErrors": [],
+      "startupMs": 2308.967875000002,
+      "identity": {
+        "version": "2.4.0",
+        "electron": "39.5.2",
+        "chrome": "142.0.7444.265",
+        "visible": false,
+        "backgroundThrottling": false
+      },
+      "server": {
+        "mode": "separate",
+        "port": "55273"
+      },
+      "pids": {
+        "main": 5221,
+        "renderer": 5477
+      },
+      "reloadAttempts": [
+        {
+          "attempt": 1,
+          "ms": 873.5970410000009,
+          "ok": true
+        }
+      ],
+      "startupProfile": {
+        "file": "run-2-renderer-reload.cpuprofile",
+        "rawFile": "run-2-renderer-reload.raw.cpuprofile",
+        "normalization": {
+          "negativeIntervals": 0,
+          "reorderedSamples": 0,
+          "originalSamples": 738,
+          "totalBeforeUs": 970593,
+          "totalAfterUs": 970593,
+          "lastObservedTime": 1085981622865,
+          "unsampledTailUs": 1391,
+          "weighting": "preceding observed interval; no tail extrapolation"
+        },
+        "samples": 738,
+        "sampledMs": 970.593,
+        "hotspots": [
+          {
+            "frame": "(idle)",
+            "selfMs": 135.351,
+            "percent": 13.945186087268299
+          },
+          {
+            "frame": "(program)",
+            "selfMs": 132.836,
+            "percent": 13.686066147190429
+          },
+          {
+            "frame": "compileSourceTextModule node:internal/modules/esm/utils:345:33",
+            "selfMs": 39.801,
+            "percent": 4.100688960254195
+          },
+          {
+            "frame": "(garbage collector)",
+            "selfMs": 15.764,
+            "percent": 1.6241617238121437
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 13.526,
+            "percent": 1.3935810375718762
+          },
+          {
+            "frame": "(anonymous) [source]:1:11",
+            "selfMs": 12.021,
+            "percent": 1.2385211927141448
+          },
+          {
+            "frame": "open",
+            "selfMs": 10.02,
+            "percent": 1.0323585684215733
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 8.592,
+            "percent": 0.8852320179519119
+          },
+          {
+            "frame": "makeContextifyScript node:internal/vm:171:30",
+            "selfMs": 7.518,
+            "percent": 0.7745780157079228
+          },
+          {
+            "frame": "getPathFromURLPosix node:internal/url:1564:29",
+            "selfMs": 7.234,
+            "percent": 0.7453175532895869
+          },
+          {
+            "frame": "(anonymous) assets/index-Cjkmx59C.js:0:0",
+            "selfMs": 6.023,
+            "percent": 0.6205484688226682
+          },
+          {
+            "frame": "internalModuleStat",
+            "selfMs": 6.01,
+            "percent": 0.6192090814584486
+          },
+          {
+            "frame": "getImageData",
+            "selfMs": 5.991,
+            "percent": 0.6172515153107431
+          },
+          {
+            "frame": "readFileSync node:fs:433:22",
+            "selfMs": 4.507,
+            "percent": 0.4643552961952126
+          },
+          {
+            "frame": "(anonymous) [source]:1:11",
+            "selfMs": 4.43,
+            "percent": 0.45642200180714265
+          }
+        ]
+      },
+      "reloadStartupMs": 873.5970410000009,
+      "viewport": {
+        "width": 1400,
+        "height": 900,
+        "dpr": 2
+      },
+      "setupMs": 18480.130333,
+      "streaming": {
+        "backgroundIndices": [
+          10,
+          20,
+          30,
+          40
+        ],
+        "payloadBytes": 128,
+        "intervalMs": 50,
+        "ceilingMs": 30000,
+        "off": {
+          "idle": {
+            "elapsedMs": 5002.9200001154095,
+            "taskMs": 50.713000000001784,
+            "scriptMs": 22.760999999999143,
+            "heapBytes": 132377420
+          },
+          "timings": {
+            "tab": {
+              "rawMs": [
+                38.09999990463257,
+                39.40000009536743,
+                36.59999990463257,
+                43.40000009536743,
+                45.700000047683716,
+                36.700000047683716,
+                35.5,
+                35.09999990463257,
+                33.59999990463257,
+                38.5,
+                39.40000009536743,
+                36.200000047683716,
+                33.40000009536743,
+                35.700000047683716,
+                38.700000047683716,
+                39.90000009536743,
+                36.80000019073486,
+                37.200000047683716,
+                34.40000009536743,
+                39,
+                38.09999990463257,
+                34.40000009536743,
+                33.799999952316284,
+                33.5,
+                37.90000009536743,
+                38.799999952316284,
+                39,
+                34.59999990463257,
+                34,
+                33.59999990463257
+              ],
+              "summary": {
+                "n": 30,
+                "min": 33.40000009536743,
+                "p50": 36.700000047683716,
+                "p95": 43.40000009536743,
+                "max": 45.700000047683716
+              }
+            },
+            "composer": {
+              "rawMs": [
+                24.59999990463257,
+                21.90000009536743,
+                21.799999952316284,
+                23.09999990463257,
+                23.5,
+                19.799999952316284,
+                21.399999856948853,
+                22,
+                19.799999952316284,
+                21.199999809265137,
+                18.200000047683716,
+                20.799999952316284,
+                25.5,
+                19.700000047683716,
+                23.59999990463257,
+                23.09999990463257,
+                21.699999809265137,
+                18.799999952316284,
+                23.5,
+                21.299999952316284,
+                19.799999952316284,
+                18.59999990463257,
+                19.700000047683716,
+                19.200000047683716,
+                20.299999952316284,
+                21.100000143051147,
+                20.5,
+                19.399999856948853,
+                20,
+                16.200000047683716
+              ],
+              "summary": {
+                "n": 30,
+                "min": 16.200000047683716,
+                "p50": 20.799999952316284,
+                "p95": 24.59999990463257,
+                "max": 25.5
+              }
+            }
+          },
+          "produced": {
+            "elapsedMs": 10405,
+            "counts": {
+              "2af7306b-88ff-4db5-b93c-84e9ff457ebd": 0,
+              "c6aa318a-0296-400d-8a9f-0258fd09a6d0": 0,
+              "8dd75343-fe84-4d4c-93c8-ba5a9f5c2dae": 0,
+              "a51cc176-2d08-49c2-b7ff-66d7c84c7c07": 0
+            },
+            "ceilingReached": false
+          },
+          "observedCounts": {
+            "2af7306b-88ff-4db5-b93c-84e9ff457ebd": 0,
+            "c6aa318a-0296-400d-8a9f-0258fd09a6d0": 0,
+            "8dd75343-fe84-4d4c-93c8-ba5a9f5c2dae": 0,
+            "a51cc176-2d08-49c2-b7ff-66d7c84c7c07": 0
+          },
+          "totalEvents": 0,
+          "actualEventsPerSecond": 0,
+          "elapsedMs": 10410.122999921441,
+          "taskMs": 3456.2199999999984,
+          "heapBytes": 384825440,
+          "profile": {
+            "file": "run-2-stream-off.cpuprofile",
+            "rawFile": "run-2-stream-off.raw.cpuprofile",
+            "normalization": {
+              "negativeIntervals": 0,
+              "reorderedSamples": 0,
+              "originalSamples": 6908,
+              "totalBeforeUs": 10612542,
+              "totalAfterUs": 10612542,
+              "lastObservedTime": 1086012030544,
+              "unsampledTailUs": 147,
+              "weighting": "preceding observed interval; no tail extrapolation"
+            },
+            "samples": 6908,
+            "sampledMs": 10612.542,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 6998.866,
+                "percent": 65.94900637377926
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 1053.931,
+                "percent": 9.93099485495558
+              },
+              {
+                "frame": "query",
+                "selfMs": 356.125,
+                "percent": 3.3556993225562737
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 174.432,
+                "percent": 1.6436401382439758
+              },
+              {
+                "frame": "focus",
+                "selfMs": 165.984,
+                "percent": 1.56403621300156
+              },
+              {
+                "frame": "query",
+                "selfMs": 163.806,
+                "percent": 1.5435133260249996
+              },
+              {
+                "frame": "querySelector",
+                "selfMs": 87.676,
+                "percent": 0.8261545631574414
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 64.37,
+                "percent": 0.6065464805698767
+              },
+              {
+                "frame": "addEventListener",
+                "selfMs": 58.364,
+                "percent": 0.5499530649678466
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 57.944,
+                "percent": 0.545995483457215
+              },
+              {
+                "frame": "(anonymous)",
+                "selfMs": 54.718,
+                "percent": 0.515597488330317
+              },
+              {
+                "frame": "parentElementOrShadowHost",
+                "selfMs": 43.056,
+                "percent": 0.4057086417184497
+              },
+              {
+                "frame": "commitBeforeMutationEffects assets/index-Cjkmx59C.js:7154:39",
+                "selfMs": 31.683,
+                "percent": 0.29854298809842167
+              },
+              {
+                "frame": "performUnitOfWork assets/index-Cjkmx59C.js:9010:29",
+                "selfMs": 29.711,
+                "percent": 0.2799612006246948
+              },
+              {
+                "frame": "reconcileChildrenArray assets/index-Cjkmx59C.js:3516:36",
+                "selfMs": 29.177,
+                "percent": 0.2749294184183205
+              }
+            ]
+          }
+        },
+        "on": {
+          "idle": {
+            "elapsedMs": 5002.119000069797,
+            "taskMs": 671.9990000000031,
+            "scriptMs": 511.8980000000004,
+            "heapBytes": 135849400
+          },
+          "timings": {
+            "tab": {
+              "rawMs": [
+                37,
+                31.399999856948853,
+                30.799999952316284,
+                31.600000143051147,
+                31.899999856948853,
+                31.799999952316284,
+                32,
+                32.700000047683716,
+                32,
+                32.30000019073486,
+                31.5,
+                33.89999985694885,
+                32.700000047683716,
+                30.600000143051147,
+                30.799999952316284,
+                30.90000009536743,
+                31.5,
+                33.700000047683716,
+                32,
+                32.59999990463257,
+                30.5,
+                32,
+                48.90000009536743,
+                30.799999952316284,
+                30.700000047683716,
+                33.700000047683716,
+                31.90000009536743,
+                31.59999990463257,
+                31,
+                32.59999990463257
+              ],
+              "summary": {
+                "n": 30,
+                "min": 30.5,
+                "p50": 31.899999856948853,
+                "p95": 37,
+                "max": 48.90000009536743
+              }
+            },
+            "composer": {
+              "rawMs": [
+                28.5,
+                27.700000047683716,
+                27.5,
+                23.5,
+                21.299999952316284,
+                21.799999952316284,
+                8.199999809265137,
+                28.90000009536743,
+                16.299999952316284,
+                24.700000047683716,
+                8.400000095367432,
+                22.600000143051147,
+                31.799999952316284,
+                27.59999990463257,
+                27.700000047683716,
+                27,
+                20,
+                23.90000009536743,
+                19,
+                20.299999952316284,
+                23,
+                20.299999952316284,
+                24.200000047683716,
+                26.799999952316284,
+                25.299999952316284,
+                29.09999990463257,
+                25.799999952316284,
+                24.200000047683716,
+                20.09999990463257,
+                25.5
+              ],
+              "summary": {
+                "n": 30,
+                "min": 8.199999809265137,
+                "p50": 24.200000047683716,
+                "p95": 29.09999990463257,
+                "max": 31.799999952316284
+              }
+            }
+          },
+          "produced": {
+            "elapsedMs": 10911,
+            "counts": {
+              "2af7306b-88ff-4db5-b93c-84e9ff457ebd": 212,
+              "c6aa318a-0296-400d-8a9f-0258fd09a6d0": 212,
+              "8dd75343-fe84-4d4c-93c8-ba5a9f5c2dae": 212,
+              "a51cc176-2d08-49c2-b7ff-66d7c84c7c07": 212
+            },
+            "ceilingReached": false
+          },
+          "observedCounts": {
+            "2af7306b-88ff-4db5-b93c-84e9ff457ebd": 212,
+            "c6aa318a-0296-400d-8a9f-0258fd09a6d0": 212,
+            "8dd75343-fe84-4d4c-93c8-ba5a9f5c2dae": 212,
+            "a51cc176-2d08-49c2-b7ff-66d7c84c7c07": 212
+          },
+          "totalEvents": 848,
+          "actualEventsPerSecond": 77.7197323801668,
+          "elapsedMs": 10929.971000179648,
+          "taskMs": 5290.7119999999995,
+          "heapBytes": 133006408,
+          "profile": {
+            "file": "run-2-stream-on.cpuprofile",
+            "rawFile": "run-2-stream-on.raw.cpuprofile",
+            "normalization": {
+              "negativeIntervals": 0,
+              "reorderedSamples": 0,
+              "originalSamples": 7281,
+              "totalBeforeUs": 11396542,
+              "totalAfterUs": 11396542,
+              "lastObservedTime": 1086023482390,
+              "unsampledTailUs": 156,
+              "weighting": "preceding observed interval; no tail extrapolation"
+            },
+            "samples": 7281,
+            "sampledMs": 11396.542,
+            "hotspots": [
+              {
+                "frame": "(idle)",
+                "selfMs": 5724.853,
+                "percent": 50.23324618994077
+              },
+              {
+                "frame": "(program)",
+                "selfMs": 1297.587,
+                "percent": 11.38579579665481
+              },
+              {
+                "frame": "query",
+                "selfMs": 327.453,
+                "percent": 2.873266294284705
+              },
+              {
+                "frame": "(garbage collector)",
+                "selfMs": 270.005,
+                "percent": 2.369183564628639
+              },
+              {
+                "frame": "query",
+                "selfMs": 146.612,
+                "percent": 1.2864604017604637
+              },
+              {
+                "frame": "focus",
+                "selfMs": 146.52,
+                "percent": 1.2856531393470054
+              },
+              {
+                "frame": "check assets/index-Cjkmx59C.js:53295:17",
+                "selfMs": 124.824,
+                "percent": 1.0952796032340337
+              },
+              {
+                "frame": "check assets/index-Cjkmx59C.js:53295:17",
+                "selfMs": 112.308,
+                "percent": 0.985456816637889
+              },
+              {
+                "frame": "atBreak assets/index-Cjkmx59C.js:56530:21",
+                "selfMs": 108.065,
+                "percent": 0.9482262251128456
+              },
+              {
+                "frame": "go2 assets/index-Cjkmx59C.js:56797:15",
+                "selfMs": 78.292,
+                "percent": 0.6869803138530969
+              },
+              {
+                "frame": "querySelector",
+                "selfMs": 77.472,
+                "percent": 0.6797851488635763
+              },
+              {
+                "frame": "main2 assets/index-Cjkmx59C.js:56780:17",
+                "selfMs": 73.17,
+                "percent": 0.6420368564429456
+              },
+              {
+                "frame": "handler assets/index-Cjkmx59C.js:60761:19",
+                "selfMs": 68.919,
+                "percent": 0.6047360681862972
+              },
+              {
+                "frame": "loop assets/index-Cjkmx59C.js:34395:17",
+                "selfMs": 67.356,
+                "percent": 0.5910213817489551
+              },
+              {
+                "frame": "querySelectorAll",
+                "selfMs": 59.444,
+                "percent": 0.5215968141915328
+              }
+            ]
+          }
+        }
+      },
+      "afterLoad": [
+        14.01025390625,
+        10.4697265625,
+        9.27587890625
+      ],
+      "ok": true,
+      "close": {
+        "timedOut": false
+      },
+      "cleaned": true
+    }
+  ],
+  "completedAt": "2026-10-15T15:11:18.873Z",
+  "summary": {
+    "startup": {
+      "n": 2,
+      "min": 2308.967875000002,
+      "p50": 2308.967875000002,
+      "p95": null,
+      "max": 2951.861291
+    },
+    "off": {
+      "tab": {
+        "n": 60,
+        "min": 32.700000047683716,
+        "p50": 36.59999990463257,
+        "p95": 43.40000009536743,
+        "max": 47
+      },
+      "composer": {
+        "n": 60,
+        "min": 14.900000095367432,
+        "p50": 20.799999952316284,
+        "p95": 24.59999990463257,
+        "max": 29.5
+      }
+    },
+    "on": {
+      "tab": {
+        "n": 60,
+        "min": 30.5,
+        "p50": 32.59999990463257,
+        "p95": 38.299999952316284,
+        "max": 48.90000009536743
+      },
+      "composer": {
+        "n": 60,
+        "min": 7.5,
+        "p50": 23.5,
+        "p95": 35.799999952316284,
+        "max": 41.59999990463257
+      }
+    }
+  }
+}

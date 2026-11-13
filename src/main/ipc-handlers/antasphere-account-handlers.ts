@@ -21,7 +21,11 @@ import { acceptedHandoff, handoffShape } from '../antasphere-handoff'
  *    a cancel, a sign-out or a new login between the sign-in's answer and
  *    the open leaves a stale link that opens nothing. While the shell holds
  *    the manager (the server in-process) this handler asks it once more at
- *    the open itself; attached, the server's confirmation is the last word.
+ *    the open itself; with the server elsewhere, attached or the shell's own
+ *    separate child, the server's confirmation is the last word (the shell
+ *    holds no manager then, `settings/shell-source.ts`, and a manager that
+ *    never saw the login would refuse every handoff, which is what the
+ *    installed app did until 2 November 2026).
  *
  * The URL reaches no log and no window: the renderer gets the status.
  */

@@ -1,5 +1,10 @@
 import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
 import { readJson, writeJson } from './ports/storage'
+import {
+  DEFAULT_INTERACTION_MODE,
+  type HarnessSettingsById,
+  type InteractionMode
+} from '../shared/harness'
 
 export type AppIcon = 'dark' | 'light' | 'claude'
 
@@ -40,6 +45,26 @@ export interface Preferences {
    * A fresh chat opens in it (`sessions/chat-view-default.ts`).
    */
   chatView: string | null
+  /**
+   * How a new conversation opens (PRDCT-4425, `shared/harness.ts`): one of
+   * the chat views, or the terminal. Written by Settings → General and the
+   * onboarding; a launch takes its transport and its first view from it.
+   */
+  interactionMode: InteractionMode
+  /**
+   * Per harness (Settings → Harnesses): the model a click in the launcher
+   * runs and the permission rung a launch starts on. Absent = the CLI's own.
+   */
+  harnessSettings: HarnessSettingsById
+  /**
+   * The first-run walk (`onboarding.ts`): `pending` until it is finished or
+   * skipped, then `done`. Decided once, on the first read, and written at
+   * once when it is a first run: a machine where Clave has already
+   * left its files was installed before the walk existed, so it is `done`
+   * and an upgrade never shows the walk; only a data directory with none of
+   * them is a first install.
+   */
+  onboarding: 'pending' | 'done'
 }
 
 const PREFERENCES_FILE = 'preferences.json'
@@ -57,8 +82,15 @@ const DEFAULTS: Preferences = {
   agentAutoUpdate: true,
   chatModels: {},
   chatEfforts: {},
-  chatView: null
+  chatView: null,
+  interactionMode: DEFAULT_INTERACTION_MODE,
+  harnessSettings: {},
+  onboarding: 'pending'
 }
+
+/** The files an install of Clave leaves behind once it has run: any of them
+ *  means this is not a first launch. */
+const EARLIER_RUN_FILES = ['clave-preferences.json', 'claude-accounts.json', 'clave-server.json']
 
 export class PreferencesManager {
   private cache: Preferences | null = null
@@ -67,11 +99,19 @@ export class PreferencesManager {
 
   private load(): Preferences {
     if (this.cache) return this.cache
-    const raw = readJson(this.ports.storage, PREFERENCES_FILE)
-    this.cache =
-      raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? { ...DEFAULTS, ...(raw as Partial<Preferences>) }
-        : { ...DEFAULTS }
+    const storage = this.ports.storage
+    const raw = readJson(storage, PREFERENCES_FILE)
+    const stored =
+      raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<Preferences>) : null
+    this.cache = { ...DEFAULTS, ...(stored ?? {}) }
+    if (stored?.onboarding !== 'pending' && stored?.onboarding !== 'done') {
+      const firstRun = !stored && EARLIER_RUN_FILES.every((name) => storage.read(name) === null)
+      this.cache.onboarding = firstRun ? 'pending' : 'done'
+      // Written at once: a first run quit before anything else saved would
+      // otherwise leave only the other managers' files behind, and the next
+      // launch would read them as an earlier install and skip the walk.
+      if (firstRun) this.save()
+    }
     return this.cache
   }
 

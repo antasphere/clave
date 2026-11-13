@@ -70,6 +70,18 @@ describe('describeElevated — what the review dialog must disclose', () => {
     expect(safe.sessions[0].prompt).toBeUndefined()
   })
 
+  it('treats an OpenCode launch prompt as elevated and keeps the mode itself in safe mode', () => {
+    const loaded = single(
+      group({
+        sessions: [session({ claudeMode: false, opencodeMode: true, prompt: 'work now' })]
+      })
+    )
+    expect(describeElevated(loaded).prompts).toEqual(['work now'])
+    const safe = sanitizeElevated(loaded) as ClaveFileReadResult & ClaveGroupData
+    expect(safe.sessions[0].opencodeMode).toBe(true)
+    expect(safe.sessions[0].prompt).toBeUndefined()
+  })
+
   it('discloses auto-run commands and dangerousMode', () => {
     const result = single(
       group({
@@ -92,7 +104,7 @@ describe('describeElevated — what the review dialog must disclose', () => {
 
   it('says nothing is elevated when nothing is', () => {
     const described = describeElevated(single(group({ sessions: [session()] })))
-    expect(described).toEqual({ autoCommands: [], prompts: [], dangerous: false })
+    expect(described).toEqual({ autoCommands: [], prompts: [], dangerous: false, routines: [] })
   })
 })
 
@@ -172,7 +184,12 @@ describe('sanitizeElevated — what "Open safely" must strip', () => {
     const g = out as ClaveFileReadResult & ClaveGroupData
     expect(g.sessions[0].account).toBe('Work')
     expect(g.sessions[0].prompt).toBeUndefined()
-    expect(describeElevated(out)).toEqual({ autoCommands: [], prompts: [], dangerous: false })
+    expect(describeElevated(out)).toEqual({
+      autoCommands: [],
+      prompts: [],
+      dangerous: false,
+      routines: []
+    })
   })
 })
 
@@ -191,5 +208,61 @@ describe('the two must agree', () => {
     expect(after.prompts).toEqual([])
     expect(after.autoCommands).toEqual([])
     expect(after.dangerous).toBe(false)
+  })
+})
+
+// ── ADR 0004: the routines ──
+// A routine acts with nobody at the keyboard: its presence alone elevates the
+// file, its prompt is disclosed with the others, its skip flag raises
+// `dangerous`, and "Open safely" drops the routines whole rather than keeping
+// a routine that would never run.
+describe('describeElevated and sanitizeElevated — routines (ADR 0004)', () => {
+  const routine = (overrides = {}): NonNullable<ClaveGroupData['routines']>[number] => ({
+    name: 'Workspace health',
+    schedule: '30 8 * * 1-5',
+    prompt: 'check the machine and fix what is safe',
+    ...overrides
+  })
+
+  it('discloses a routine by name and its prompt, and elevates the file by its presence', () => {
+    const described = describeElevated(single(group({ routines: [routine()] })))
+    expect(described.routines).toEqual(['Workspace health'])
+    expect(described.prompts).toEqual([
+      'routine Workspace health: check the machine and fix what is safe'
+    ])
+    expect(described.dangerous).toBe(false)
+  })
+
+  it('raises dangerous for a routine with permissions off', () => {
+    const described = describeElevated(
+      single(group({ routines: [routine({ dangerousMode: true })] }))
+    )
+    expect(described.dangerous).toBe(true)
+  })
+
+  it('drops the routines of an untrusted file on Open safely, the group kept', () => {
+    const loaded = single(
+      group({
+        routines: [routine({ dangerousMode: true })],
+        terminals: [{ command: 'ls', commandMode: 'prefill', color: 'blue' }]
+      })
+    )
+    const safe = sanitizeElevated(loaded) as ClaveFileReadResult & ClaveGroupData
+    expect(safe.routines).toBeUndefined()
+    expect(safe.terminals).toHaveLength(1)
+    expect(describeElevated(safe).routines).toEqual([])
+  })
+
+  it('a multi-group file loses the routines of every group', () => {
+    const loaded: ClaveFileReadResult = {
+      type: 'multi',
+      groups: [
+        group({ routines: [routine()] }),
+        group({ name: 'B', routines: [routine({ name: 'B' })] })
+      ]
+    }
+    expect(describeElevated(loaded).routines).toEqual(['Workspace health', 'B'])
+    const safe = sanitizeElevated(loaded)
+    expect(safe.type === 'multi' && safe.groups.every((g) => g.routines === undefined)).toBe(true)
   })
 })

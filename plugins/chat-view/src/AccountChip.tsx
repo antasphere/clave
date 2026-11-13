@@ -1,29 +1,26 @@
 import { useRef, useState } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { BoltIcon, ExclamationTriangleIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { useSessionStore } from '../../../src/renderer/src/store/session-store'
 import {
-  useClaudeProfileStore,
-  sessionAccount
-} from '../../../src/renderer/src/store/claude-profile-store'
-import {
-  useCodexAccountStore,
-  sessionCodexAccount
-} from '../../../src/renderer/src/store/codex-account-store'
-import {
-  useClaudeAccountsUsage,
-  useCodexAccountsUsage,
   headroomWindow,
   capLevel,
-  capName
+  capName,
+  capOutLabel,
+  capStatus,
+  claudeUsageForModel
 } from '../../../src/renderer/src/store/usage-store'
-import { isExhausted } from '../../../src/renderer/src/lib/account-pool'
 import {
   accountProviderOf,
   sessionSwitchTargets,
+  switchModeLabel,
   switchSessionAccount
 } from '../../../src/renderer/src/lib/switch-account'
+import {
+  ownAccountFrom,
+  useSessionAccountView
+} from '../../../src/renderer/src/lib/session-accounts'
 import { effectiveSwitchMode } from '../../../src/renderer/src/store/account-policy-store'
 import { AccountMenuHeader } from '../../../src/renderer/src/components/layout/AccountMenuHeader'
 import {
@@ -39,41 +36,59 @@ import { MenuPreview } from '../../../src/renderer/src/components/ui/ContextMenu
  * account's caps as columns, every other account with its card beside the
  * highlighted row (picking one restarts the agent there, the conversation
  * resumed), and the tab's pin and switch mode. Nothing for a session that
- * has no account pool (Pi, a remote).
+ * has no account pool (Pi, a remote agent).
+ *
+ * The accounts and the usage are the tab's OWNER's (`lib/session-accounts.ts`):
+ * a tab on a server names that server's account, reads its usage there and
+ * moves among that server's accounts. Its pin and its mode hold an agent's
+ * ask as on this Mac; the mode is worded for that, since this Mac's policy
+ * does not move a server tab at a limit.
  */
 export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
   const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
-  // Subscribed so a renamed, added or removed account redraws the chip.
-  useClaudeProfileStore((s) => s.profiles)
-  useCodexAccountStore((s) => s.accounts)
   const provider = host ? accountProviderOf(host) : null
-  const own = host
-    ? provider === 'codex'
-      ? sessionCodexAccount(host)
-      : sessionAccount(host)
-    : null
-  const claudeSummary = useClaudeAccountsUsage((s) => (own ? s.byAccount[own.id] : undefined))
-  const codexSummary = useCodexAccountsUsage((s) => (own ? s.byAccount[own.id] : undefined))
+  // Subscribed: a renamed, added or removed account, or a read that lands,
+  // redraws the chip, on this Mac or on the tab's server. A server tab's
+  // chip reads the server's settings as it draws (`useSessionAccountView`).
+  const view = useSessionAccountView(host, provider)
+  const own = host && view ? ownAccountFrom(view, host) : null
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState<{ id: string; row: HTMLElement } | null>(null)
   const clearFrame = useRef<number | null>(null)
-  if (!host || !provider || !own) return null
+  if (!host || !provider || !own || !view) return null
 
-  const summary = provider === 'codex' ? codexSummary : claudeSummary
+  const summary = claudeUsageForModel(view.usage[own.id], host.model)
   const w = headroomWindow(summary)
-  const exhausted = isExhausted(summary) || host.limitReported === true
+  // Out: the cap that stops THIS session, named ("Fable out"); a limit the
+  // CLI reported that the poll does not show yet reads "Out" alone, since
+  // the report carries no cap (PRDCT-4254).
+  const stopping = capStatus(summary)?.stopping ?? null
+  const exhausted = stopping !== null || !!host.limitReported
   const level = exhausted ? 'critical' : w ? capLevel(w) : 'unknown'
   const left = w ? Math.max(0, Math.round(100 - w.usedPercentage)) : null
-  const headroom = exhausted ? 'At limit' : left !== null ? `${left}% left` : null
+  const headroom = stopping
+    ? `${capName(stopping)} out`
+    : exhausted
+      ? 'Out'
+      : left !== null
+        ? `${left}% left`
+        : null
   const title = [
     own.label,
-    exhausted ? 'at its limit' : w && left !== null ? `${left}% of ${capName(w)} left` : null,
+    stopping
+      ? capOutLabel(stopping)
+      : exhausted
+        ? 'out, as its agent reported'
+        : w && left !== null
+          ? `${left}% of ${capName(w)} left`
+          : null,
     'switch account'
   ]
     .filter(Boolean)
     .join(' · ')
 
   const targets = open && host.alive ? sessionSwitchTargets(host) : []
+
   const pinned = host.accountPinned === true
   const automatic = effectiveSwitchMode(host) === 'automatic'
   // Focus is the one signal hover and the arrow keys share; a blur is
@@ -94,7 +109,12 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const previewed = active ? targets.find((t) => t.id === active.id) : undefined
 
   return (
-    <span className="term-account" data-level={level} data-account-chip={own.id}>
+    <span
+      className="term-account"
+      data-level={level}
+      data-account-chip={own.id}
+      data-account-owner={view.remote ? view.owner : undefined}
+    >
       <DropdownMenu.Root
         modal={false}
         open={open}
@@ -119,7 +139,6 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
             side="top"
             align="start"
             sideOffset={6}
-            collisionPadding={8}
             className="menu-surface menu-pop term-account-menu z-50"
             aria-label="Account"
           >
@@ -137,7 +156,11 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
                     aria-label={target.label}
                     onFocus={(e) => highlight(target.id, e.currentTarget)}
                     onBlur={() => highlight(target.id, null)}
-                    onSelect={() => void switchSessionAccount(sessionId, target.id)}
+                    onSelect={() =>
+                      void switchSessionAccount(sessionId, target.id).then((result) => {
+                        if (!result.ok) console.error('Account switch failed:', result.error)
+                      })
+                    }
                   >
                     <AccountSwitchRow target={target} />
                   </DropdownMenu.Item>
@@ -163,9 +186,7 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
                   }
                 >
                   <BoltIcon className="term-account-item-icon" aria-hidden />
-                  {automatic
-                    ? 'Propose switches, do not make them'
-                    : 'Switch automatically at limit'}
+                  {switchModeLabel(automatic, view.remote)}
                 </DropdownMenu.Item>
               </>
             )}

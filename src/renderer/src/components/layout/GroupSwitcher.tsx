@@ -58,7 +58,7 @@ interface GroupSwitcherProps {
  * drawn where the answer is.
  *
  * Its top row is fixed — All, the field, the `+`. None of the three belongs to
- * the wrapping set: All is the filter's off position, the field is never
+ * the sliding set: All is the filter's off position, the field is never
  * "selected" the way a chip is, and the `+` is the panel's action. Pinning them
  * also keeps them still while the chips below change under the search.
  *
@@ -85,7 +85,7 @@ export function GroupSwitcher({
   return (
     <div className="group-switcher-panel">
       {/* Fixed top row: the filter's off position, the search field, the panel's
-          action. The chips wrap under it. */}
+          action. The chips slide sideways under it. */}
       <div className="group-switcher-head">
         <button
           className="group-switcher-chip"
@@ -155,7 +155,15 @@ export function GroupSwitcher({
           where height: auto does not — so the chips get an inner box of their
           own to be clipped by. */}
       <div className="group-switcher-wrap" data-empty={entries.length === 0 ? 'true' : undefined}>
-        <div className="group-switcher-chips">
+        <div
+          className="group-switcher-chips"
+          // The row slides sideways (see .group-switcher-chips). A trackpad
+          // swipe scrolls it natively; a mouse wheel only sends deltaY, so map
+          // that onto the row's one axis.
+          onWheel={(e) => {
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY
+          }}
+        >
           {entries.map((entry, index) => {
             const hex = resolveColorHex(entry.color)
             const live = entry.liveGroupId !== null

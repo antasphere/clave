@@ -4,63 +4,110 @@ name: Checks
 # request. Nothing ran them before this workflow, which is how 175 lint errors
 # piled up unseen; release.yml and build-win.yml only build.
 #
-# Linux is enough here: none of the three builds the app. `npm ci` still runs
-# scripts/postinstall.cjs, whose `electron-builder install-app-deps` rebuilds
-# node-pty against Electron's headers with the runner's own toolchain; the
-# macOS-only pieces (the Swift helpers, signing, the private Synonym font) are
-# build steps, not install steps, and none of the checks reads them.
+# Linux validation runs in parallel. Eight isolated hosts divide the complete
+# unit inventory; the named check waits for every validation job and verifies
+# that every selected test file completed exactly once.
 on:
   push:
     branches: [dev]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Run the original sequential schedule for a timing comparison
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 # A newer push to the same branch or pull request supersedes the running check.
 concurrency:
-  group: checks-${{ github.ref }}
+  group: checks-${{ github.ref }}-${{ inputs.baseline && 'baseline' || 'normal' }}
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Lint, typecheck, unit tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  linux:
+    name: Linux (${{ matrix.task }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [lint, typecheck, unit-1, unit-2, unit-3, unit-4, unit-5, unit-6, unit-7, unit-8]
     steps:
       - uses: actions/checkout@v4
+      # Bun 1.4.1 matches the dev dependency used by the server-process tests.
+      # Setup explicitly downloads Electron: npm install no longer fetches its binary.
+      - uses: ./.github/actions/setup-checks
 
-      - uses: actions/setup-node@v4
+      - uses: actions/cache@v4
+        if: matrix.task == 'lint'
         with:
-          node-version: '22'
-          cache: npm
-
-      # The unit tests of the server's own process (scripts/server-process.test.mjs)
-      # start it under Bun: the repository's own, from the `bun` dev dependency
-      # (1.4.1, the version the framework's gRPC package needs; ADR 0003, wave
-      # 3), which scripts/server-process.mjs prefers to any Bun on the PATH.
-      # This action pins the same version for anything else that calls `bun`.
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.4.1'
-
-      - name: Install dependencies
-        run: npm ci
+          path: .eslintcache
+          key: eslint-v1-${{ runner.os }}-${{ hashFiles('package-lock.json', 'eslint.config.mjs') }}-${{ github.sha }}
+          restore-keys: |
+            eslint-v1-${{ runner.os }}-${{ hashFiles('package-lock.json', 'eslint.config.mjs') }}-
 
       - name: Lint
-        run: npm run lint
+        if: matrix.task == 'lint'
+        run: npm run lint -- --concurrency 4 --cache-strategy content
 
       - name: Typecheck
+        if: matrix.task == 'typecheck'
         run: npm run typecheck
 
-      # The generated protobuf code of the terminal service is checked in
-      # (packages/server/src/terminals/proto); a .proto edited without its
-      # generated file would fail only at runtime.
       - name: Generated code is current
+        if: matrix.task == 'typecheck'
+        # A .proto change must include its checked-in terminal-service bindings.
         run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
+      - name: Build secure filesystem helper
+        if: startsWith(matrix.task, 'unit-')
+        run: npm run native:build
+
       - name: Unit tests
-        run: npx vitest run
+        if: startsWith(matrix.task, 'unit-')
+        env:
+          TASK: ${{ matrix.task }}
+        run: |
+          mkdir -p unit-reports
+          if [ "$TASK" = unit-1 ]; then
+            npx --no-install vitest list --filesOnly --json > unit-reports/inventory.json
+          fi
+          npx --no-install vitest run --shard="${TASK#unit-}/8" \
+            --config vitest.ci.config.mjs \
+            --reporter=default --reporter=json --outputFile="unit-reports/shard-${TASK#unit-}.json"
+
+      - name: Preserve unit reports
+        if: ${{ !cancelled() && startsWith(matrix.task, 'unit-') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-reports-${{ matrix.task }}
+          path: unit-reports/
+          # A rerun replaces this worker's earlier report, never another shard's.
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+  checks:
+    name: Lint, typecheck, unit tests
+    needs: linux
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All Linux validations passed
+        env:
+          RESULT: ${{ needs.linux.result }}
+        run: test "$RESULT" = success
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unit-reports-*
+          path: unit-reports
+          merge-multiple: true
+      - name: Every unit test file completed exactly once
+        run: node scripts/merge-unit-reports.mjs unit-reports 8
 
   # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
   # Electron on an isolated user-data directory, hidden (--test-no-activate),
@@ -68,8 +115,9 @@ jobs:
   # the specs spawn tmux sessions and the login shell. Bun runs the server's
   # own process for the attached mode (ADR 0003).
   #
-  # Two kinds of step. The GATE: the server spec, in-process and attached,
-  # fails the job (it is deterministic, and proven to go red under mutation).
+  # Two kinds of step. The GATE: the server spec, in-process, attached and
+  # separate, fails the job (it is deterministic, and proven to go red under
+  # mutation).
   # The REPORT: the whole suite in-process, with continue-on-error, its
   # result line in the job summary. On 2 October 2026 the suite on dev fails
   # 25 checks on a laptop and 28 on this runner with 15 in common, and the
@@ -78,10 +126,14 @@ jobs:
   # The report step turns into a gate (drop continue-on-error) once the
   # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
   # thread). Nothing here touches the release rail.
-  e2e:
-    name: End-to-end (the real app, macOS)
+  e2e-run:
+    name: Electron (${{ matrix.task }})
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ inputs.baseline && fromJSON('["baseline"]') || fromJSON('["1","2","3","4","5"]') }}
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.baseline && 120 || 35 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,9 +152,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Since Electron 42 the npm package no longer downloads its binary on
+      # install (supply-chain hardening); the first run of the bin does. The
+      # steps below run the real app, so fetch it here, explicitly.
+      - name: Download the Electron binary
+        run: npx install-electron
+
+      - name: Build native helpers
+        run: npm run native:build
+
       - name: Build the app
         id: build
         run: npx electron-vite build
+
+      - name: Report, hosted suite batch
+        id: suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}
+        continue-on-error: true
+        env:
+          HOST_BATCH: ${{ format('{0}/5', matrix.task) }}
+        run: node tests/e2e/ci-batch.mjs "$HOST_BATCH" --report-dir=e2e-reports
+
+      - name: All worker processes completed
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task != 'baseline' }}
+        env:
+          COMPLETE: ${{ steps.suite.outputs.complete }}
+        run: test "$COMPLETE" = true
+
+      - name: Gate, actual renderer and native view module audit
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        run: node scripts/renderer-module-audit.mjs
 
       # The packaged app, not the checkout: electron-builder leaves out the
       # peers npm installs on its own, so a module the bundles require can
@@ -110,6 +189,7 @@ jobs:
       # and 2.2.0 shipped that way (PRDCT-3418). An unsigned arm64 --dir
       # package is the same asar the release builds, without the signing.
       - name: Gate, the packaged app loads what its bundles require
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
@@ -122,30 +202,96 @@ jobs:
       # here and not in the Linux job): a terminal spawned through it streams
       # its bytes, a killed process is reported by the server.
       - name: Gate, the terminal process from the built bundle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
         run: npx vitest run scripts/server-process.test.mjs src/main/terminal-process
 
       - name: Gate, the server spec with the server in-process
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '2' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
 
       - name: Gate, the server spec with the server attached
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '4' || matrix.task == 'baseline') }}
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: attached
 
-      - name: Report, the whole suite with the server in-process
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      # The app starting its own server as a child, from the bundles it
+      # carries, under its own binary as Node (wave 5, PRDCT-3434): the pair
+      # starts, a killed terminal process is started again, the quit stops
+      # both.
+      - name: Gate, the server spec with the server separate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs server-boot
+        env:
+          CLAVE_E2E_SERVER: separate
+
+      # The Antasphere sign-in through the real app on each of the three
+      # servers (PRDCT-3259): in-process, attached to a server of the spec's
+      # own, and separate, the packaged default, where the installed app never
+      # opened the browser until 2 November 2026 (the shell asked an account
+      # manager of its own, idle, to confirm the handoff the server had
+      # issued). The separate spec is red on the code before that fix.
+      - name: Gate, the Antasphere sign-in on the three servers
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '4' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs antasphere-account
+
+      # A daemon on an older version, with a stand-in install script, and an
+      # app on a newer test version (issue #266): the server upgrades to the
+      # app's version only once no agent works, and Upgrade now runs it at once.
+      - name: Gate, connected servers follow the app's version
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '5' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs fleet-server-upgrade
+
+      # Current full-renderer completeness, lifecycle and responsiveness gates.
+      # Retired prefix-cache integration remains explicitly named legacy diagnostics.
+      - name: Gate, full Markdown client, native lifecycle and responsiveness
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
+
+      - name: Gate, MCP sessions on connected servers
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '5' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs mcp-fleet-sessions
+
+      - name: Report, sequential baseline suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.task == 'baseline' }}
         continue-on-error: true
+        run: node tests/e2e/run.mjs --report e2e-reports/shard-1.json
+
+      - name: Preserve shard results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-reports-${{ matrix.task }}
+          overwrite: true
+          path: e2e-reports/
+          if-no-files-found: error
+          retention-days: 14
+
+  # Retain the check name used by branch protection. A failed gate, failed
+  # setup or missing shard fails this job. Ordinary full-suite assertion
+  # failures keep the existing report policy, and remain visible in the summary.
+  e2e:
+    name: End-to-end (the real app, macOS)
+    needs: e2e-run
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-reports-*
+          path: e2e-reports
+          merge-multiple: true
+      - name: Every spec completed exactly once
+        env:
+          SHARDS: ${{ inputs.baseline && '1' || '5' }}
         run: |
-          set +e
-          node tests/e2e/run.mjs | tee e2e-in-process.log
-          status=${PIPESTATUS[0]}
-          line=$(grep -E '^[0-9]+ passed, ' e2e-in-process.log | tail -1)
-          {
-            echo "## End-to-end, whole suite, server in-process"
-            echo
-            echo "\`${line:-no result line: the runner did not finish}\` (exit ${status})"
-            echo
-            echo "A report, not a gate: see the comment on this job in checks.yml."
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit $status
+          node tests/e2e/merge-reports.mjs e2e-reports "$SHARDS" e2e-summary.md
+          cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: All required Electron gates passed
+        env:
+          RESULT: ${{ needs.e2e-run.result }}
+        run: test "$RESULT" = success

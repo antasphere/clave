@@ -1,40 +1,65 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { PluginHost, type PluginServices } from './plugin-host'
+import type { PluginSession } from '@clave/plugin-sdk'
+import {
+  PluginHost,
+  validateActionPreview,
+  validateActionResult,
+  validateActionTarget,
+  type PluginServices,
+  type RunnerSpawn,
+  type RunnerSpawner
+} from './plugin-host'
 import { PluginStore } from './plugin-store'
 
-const electron = vi.hoisted(() => ({ fork: vi.fn(), channels: [] as unknown[] }))
-vi.mock('electron', async () => {
-  const { EventEmitter } = await import('node:events')
-  class Port extends EventEmitter {
-    postMessage = vi.fn()
-    start = vi.fn()
-    close = vi.fn()
-  }
-  return {
-    utilityProcess: { fork: electron.fork },
-    MessageChannelMain: class {
-      port1 = new Port()
-      port2 = new Port()
-      constructor() {
-        electron.channels.push(this)
-      }
-    }
-  }
-})
+// The host speaks to a plugin's process through `RunnerProcess` (PRDCT-3433);
+// this fake stands in for both spawners, Electron's utility process and the
+// forked runner: a child that exits on kill and a port the test drives, one
+// pair per spawn, kept in the order they were spawned.
+class Port extends EventEmitter {
+  postMessage = vi.fn()
+}
 interface MockPort extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>
-  close: ReturnType<typeof vi.fn>
 }
 class Child extends EventEmitter {
-  postMessage = vi.fn()
   kill = vi.fn(() => {
     this.emit('exit', 1)
     return true
   })
+}
+const electron = {
+  channels: [] as { port1: MockPort }[],
+  failNext: null as Error | null,
+  spawns: [] as RunnerSpawn[]
+}
+const spawner: RunnerSpawner = (spawn) => {
+  electron.spawns.push(spawn)
+  if (electron.failNext) {
+    const error = electron.failNext
+    electron.failNext = null
+    throw error
+  }
+  const child = new Child()
+  const port = new Port()
+  children.push(child)
+  electron.channels.push({ port1: port })
+  return {
+    postMessage: (message) => port.postMessage(message),
+    onMessage: (listener) => {
+      port.on('message', (event: { data: unknown }) => listener(event.data))
+    },
+    onExit: (listener) => {
+      child.on('exit', listener)
+    },
+    onOutput: () => {},
+    kill: () => {
+      child.kill()
+    }
+  }
 }
 let temporary: string
 let store: PluginStore
@@ -48,6 +73,31 @@ async function request(method: string, params: unknown = {}, id = 10): Promise<v
   port().emit('message', { data: { jsonrpc: '2.0', id, method, params } })
   await Promise.resolve()
 }
+/** The last message the host posted to the plugin, the request it sent. */
+function lastPosted(): { id: number; method: string; params: unknown } {
+  return port().postMessage.mock.calls.at(-1)![0]
+}
+/** The plugin answers the host's request `id` with `result`. */
+async function answer(id: number, result: unknown): Promise<void> {
+  port().emit('message', { data: { jsonrpc: '2.0', id, result } })
+  await Promise.resolve()
+}
+function aSession(): PluginSession {
+  return {
+    id: 'session-1',
+    cwd: '/repo/app',
+    folderName: 'app',
+    alive: true,
+    provider: 'claude',
+    providerSessionId: null,
+    name: 'app',
+    model: null,
+    state: 'idle',
+    group: null,
+    workspaceId: null,
+    createdAt: 0
+  }
+}
 function ready(): void {
   port().emit('message', { data: { jsonrpc: '2.0', method: 'plugin.ready' } })
 }
@@ -56,12 +106,9 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.spyOn(console, 'error').mockImplementation(() => {})
   electron.channels.length = 0
+  electron.failNext = null
+  electron.spawns.length = 0
   children = []
-  electron.fork.mockReset().mockImplementation(() => {
-    const child = new Child()
-    children.push(child)
-    return child
-  })
   temporary = mkdtempSync(join(tmpdir(), 'clave-plugin-host-'))
   const bundled = join(temporary, 'bundled')
   const directory = join(bundled, 'example')
@@ -80,7 +127,16 @@ beforeEach(() => {
       permissions: ['sessions.read', 'secrets'],
       contributes: {
         commands: [{ id: 'hello', title: 'Hello' }],
-        toolbar: [{ id: 'hello', title: 'Hello', icon: 'SparklesIcon', kind: 'action' }]
+        toolbar: [{ id: 'hello', title: 'Hello', icon: 'SparklesIcon', kind: 'action' }],
+        actions: [
+          {
+            id: 'deck',
+            title: 'Make a deck',
+            icon: 'PresentationChartBarIcon',
+            targets: ['session', 'group'],
+            preview: true
+          }
+        ]
       }
     })
   )
@@ -95,7 +151,7 @@ beforeEach(() => {
     changed: vi.fn(),
     stopped: vi.fn()
   }
-  host = new PluginHost(store, services, 'runner.cjs')
+  host = new PluginHost(store, services, spawner)
 })
 afterEach(() => {
   host.close()
@@ -140,7 +196,7 @@ describe('plugin utility-process host', () => {
     expect(store.get('example.host').toolbar).toEqual([])
   })
   it('pushes the focused session to a reader, once per change, and never to a plugin without the grant', () => {
-    const focused = { id: 'session-1', cwd: '/repo/app', folderName: 'app', alive: true }
+    const focused = aSession()
     services.sessions.focused = vi.fn(() => focused)
     host.startAll()
     ready()
@@ -168,7 +224,7 @@ describe('plugin utility-process host', () => {
     ])
   })
   it('answers sessions.focused from the services, under the sessions.read grant', async () => {
-    const focused = { id: 'session-1', cwd: '/repo/app', folderName: 'app', alive: true }
+    const focused = aSession()
     services.sessions.focused = vi.fn(() => focused)
     host.startAll()
     ready()
@@ -346,21 +402,16 @@ describe('plugin utility-process host', () => {
     await Promise.resolve()
     expect(oldPort.postMessage).not.toHaveBeenCalled()
   })
-  it('kills a failed startup transport and permits a later clean activation', () => {
-    electron.fork.mockImplementationOnce(() => {
-      const child = new Child()
-      child.postMessage.mockImplementation(() => {
-        throw new Error('Closed startup port')
-      })
-      children.push(child)
-      return child
-    })
+  it('records a spawn that failed and permits a later clean activation', () => {
+    electron.failNext = new Error('Closed startup port')
     host.startAll()
-    expect(children[0].kill).toHaveBeenCalledOnce()
+    expect(children).toHaveLength(0)
     expect(store.get('example.host').status).toBe('error')
+    expect(store.get('example.host').error).toContain('Closed startup port')
     host.stop('example.host')
     host.start('example.host')
-    expect(children).toHaveLength(2)
+    expect(children).toHaveLength(1)
+    expect(store.get('example.host').status).toBe('starting')
   })
   it('terminates a process that reports activation failure', () => {
     host.startAll()
@@ -370,5 +421,151 @@ describe('plugin utility-process host', () => {
     expect(children[0].kill).toHaveBeenCalledOnce()
     vi.advanceTimersByTime(1000)
     expect(children).toHaveLength(2)
+  })
+})
+
+describe('plugin actions', () => {
+  const target = { kind: 'group', id: 'g1', workspaceId: 'ws1' } as const
+  const registered = async (): Promise<void> => {
+    host.startAll()
+    ready()
+    await request('ui.registerAction', { id: 'deck' })
+  }
+
+  it('records a declared action registration and refuses an undeclared one', async () => {
+    await registered()
+    expect(store.get('example.host').actions).toEqual(['deck'])
+    await request('ui.registerAction', { id: 'smuggled' }, 11)
+    expect(port().postMessage).toHaveBeenCalledWith({
+      jsonrpc: '2.0',
+      id: 11,
+      error: { code: -32001, message: 'Undeclared contribution: smuggled', data: undefined }
+    })
+    expect(store.get('example.host').actions).toEqual(['deck'])
+    host.stop('example.host')
+    expect(store.get('example.host').actions).toEqual([])
+  })
+
+  it('invokes the action with its target and resolves the page the plugin answers', async () => {
+    await registered()
+    const result = host.invokeAction('example.host', 'deck', target)
+    const sent = lastPosted()
+    expect(sent).toMatchObject({ method: 'actions.invoke', params: { id: 'deck', target } })
+    await answer(sent.id, { page: { url: 'https://decks.example/1', title: 'Deck' } })
+    await expect(result).resolves.toEqual({
+      page: { url: 'https://decks.example/1', title: 'Deck' }
+    })
+  })
+
+  it('refuses a javascript: page and an over-long title, and reads null as no page', async () => {
+    await registered()
+    const script = host.invokeAction('example.host', 'deck', target)
+    await answer(lastPosted().id, { page: { url: 'javascript:alert(1)', title: 'Deck' } })
+    await expect(script).rejects.toThrow('Plugin answered an invalid page')
+    const long = host.invokeAction('example.host', 'deck', target)
+    await answer(lastPosted().id, { page: { url: 'https://x.example', title: 'x'.repeat(300) } })
+    await expect(long).rejects.toThrow('Plugin answered an invalid page')
+    const none = host.invokeAction('example.host', 'deck', target)
+    await answer(lastPosted().id, null)
+    await expect(none).resolves.toEqual({ page: null })
+  })
+
+  it('refuses a target kind the action does not declare, and an unregistered action', async () => {
+    await expect(host.invokeAction('example.host', 'deck', target)).rejects.toThrow(
+      'Action is not active'
+    )
+    await registered()
+    await expect(
+      host.invokeAction('example.host', 'deck', { kind: 'workspace', id: 'ws1', workspaceId: null })
+    ).rejects.toThrow('Action is not active')
+    await expect(host.previewAction('example.host', 'other', target)).rejects.toThrow(
+      'Action is not active'
+    )
+  })
+
+  it('resolves the preview rows and refuses seven of them', async () => {
+    await registered()
+    const rows = host.previewAction('example.host', 'deck', target)
+    const sent = lastPosted()
+    expect(sent).toMatchObject({ method: 'actions.preview', params: { id: 'deck', target } })
+    await answer(sent.id, [{ label: 'Sessions', value: '4' }])
+    await expect(rows).resolves.toEqual([{ label: 'Sessions', value: '4' }])
+    const many = host.previewAction('example.host', 'deck', target)
+    await answer(
+      lastPosted().id,
+      Array.from({ length: 7 }, (_, i) => ({ label: `L${i}`, value: 'v' }))
+    )
+    await expect(many).rejects.toThrow('Plugin answered an invalid preview')
+  })
+
+  it('times a preview out at three seconds and an invoke at fifteen', async () => {
+    await registered()
+    const preview = expect(host.previewAction('example.host', 'deck', target)).rejects.toThrow(
+      'timed out'
+    )
+    vi.advanceTimersByTime(3000)
+    await preview
+    const invoke = host.invokeAction('example.host', 'deck', target)
+    let settled = false
+    invoke.catch(() => {
+      settled = true
+    })
+    vi.advanceTimersByTime(14_999)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    vi.advanceTimersByTime(1)
+    await expect(invoke).rejects.toThrow('timed out')
+  })
+
+  it('hands the runner its own data folder under the store root, created', () => {
+    host.startAll()
+    const dir = join(temporary, 'user', 'data', 'example.host')
+    expect(electron.spawns.at(-1)!.env.CLAVE_PLUGIN_DATA_DIR).toBe(dir)
+    expect(existsSync(dir)).toBe(true)
+  })
+})
+
+describe('the action validators', () => {
+  it('checks a target', () => {
+    expect(validateActionTarget({ kind: 'session', id: 's1', workspaceId: null })).toEqual({
+      kind: 'session',
+      id: 's1',
+      workspaceId: null
+    })
+    for (const bad of [
+      null,
+      { kind: 'window', id: 's1', workspaceId: null },
+      { kind: 'session', id: '', workspaceId: null },
+      { kind: 'session', id: 'x'.repeat(257), workspaceId: null },
+      { kind: 'session', id: 's1', workspaceId: '' },
+      { kind: 'session', id: 's1' }
+    ])
+      expect(() => validateActionTarget(bad)).toThrow('Invalid action target')
+  })
+  it('checks a page', () => {
+    expect(validateActionResult(null)).toEqual({ page: null })
+    expect(validateActionResult({ page: null })).toEqual({ page: null })
+    expect(validateActionResult({ page: { url: 'http://a.example/', title: 'A' } })).toEqual({
+      page: { url: 'http://a.example/', title: 'A' }
+    })
+    for (const bad of [
+      'https://a.example',
+      { page: { url: 'file:///etc/passwd', title: 'A' } },
+      { page: { url: 'not a url', title: 'A' } },
+      { page: { url: `https://a.example/${'x'.repeat(2048)}`, title: 'A' } },
+      { page: { url: 'https://a.example', title: '' } },
+      {}
+    ])
+      expect(() => validateActionResult(bad)).toThrow('Plugin answered an invalid page')
+  })
+  it('checks a preview', () => {
+    expect(validateActionPreview([])).toEqual([])
+    for (const bad of [
+      null,
+      [{ label: '', value: 'v' }],
+      [{ label: 'l', value: 'x'.repeat(81) }],
+      [{ label: 'l', value: 3 }]
+    ])
+      expect(() => validateActionPreview(bad)).toThrow('Plugin answered an invalid preview')
   })
 })

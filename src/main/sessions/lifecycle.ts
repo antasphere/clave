@@ -11,7 +11,12 @@
  * (`windows.ts`), which the shell implements over its registry and the
  * standalone server over a map.
  */
-import { ptyManager, type PtySpawnOptions, type RestartOverrides } from '../pty-manager'
+import {
+  ptyManager,
+  loginShellEnvAsync,
+  type PtySpawnOptions,
+  type RestartOverrides
+} from '../pty-manager'
 import { workspaceManager } from '../workspace-manager'
 import * as titleGenerator from '../title-generator'
 import { clearState as clearAgentState } from '../agent-state-manager'
@@ -21,7 +26,11 @@ import { dropDraftShadow, getDraftShadow } from '../../shared/draft-shadow'
 import { forgetScreen, hasScreen, renderScreen, retainOutput } from './terminal-screen'
 import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
-import type { SessionScreen } from '@clave/contract/sessions'
+import { resumeOptions } from './resume-options'
+import { accountOverrides } from '../restart-overrides'
+import { providerSwitchOptions } from './provider-switch'
+import { conversationIdOf } from '../../shared/runtime-choices'
+import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
 
 export type SessionInfoResult = {
   id: string
@@ -100,6 +109,10 @@ export async function spawnSession(
     (windowKey ? windows.workspaceOf(windowKey) : null) ??
     workspaceManager.getLastActiveWorkspaceId() ??
     undefined
+  // The spawn finds tmux and the agents on the login shell's PATH: waited
+  // for here, so it never takes the synchronous read that freezes the
+  // process for as long as the person's profile runs (PRDCT-3527).
+  await loginShellEnvAsync()
   // The asking window is the session's HOME: its persisted key goes on the
   // record, so the next boot brings the tab back in that window (an
   // adoption or a move re-stamps through this same path).
@@ -118,6 +131,7 @@ export async function spawnSession(
     !options?.antigravityMode &&
     !options?.codexMode &&
     !options?.piMode &&
+    !options?.opencodeMode &&
     !options?.claudeAgentsMode
   const isResumed = !!options?.resumeSessionId
 
@@ -236,11 +250,53 @@ export function typeIntoSession(id: string, text: string): Promise<TypingOutcome
   })
 }
 
+/** The Resume of a tab this process never spawned, from its record. */
+function planFromRecord(
+  record: SessionRecord | undefined,
+  overrides: RestartOverrides
+): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
+  if (!record) return null
+  const {
+    resendRejected: _resend,
+    onlyIfStopped: _only,
+    adapterId,
+    model,
+    resume,
+    firstMessage,
+    continuedFrom,
+    ...requested
+  } = overrides
+  void _resend
+  void _only
+  const options = {
+    ...resumeOptions(record),
+    ...(record.tmuxName ? { adoptTmuxName: record.tmuxName } : {}),
+    // Where the conversation came from stays on the tab across its restarts.
+    ...(record.continuedFrom ? { continuedFrom: record.continuedFrom } : {}),
+    // And the work it does (PRDCT-4123): the spawn reads the record back by
+    // the tab's id, which misses a record keyed by its tmux name, so the
+    // assignment travels with the plan.
+    ...(record.work ? { work: record.work } : {}),
+    ...accountOverrides(requested)
+  } as PtySpawnOptions
+  // A move to another provider (PRDCT-4300) from a stopped record: the same
+  // rebuild of the spawn `restartSpawn` makes for a live one.
+  const switching = adapterId !== undefined && adapterId !== record.adapterId
+  return {
+    cwd: record.cwd,
+    options: switching
+      ? providerSwitchOptions(options, { adapterId, model, resume, firstMessage, continuedFrom })
+      : options,
+    resumed: switching ? resume !== undefined : !!conversationIdOf(record)
+  }
+}
+
 /**
  * The same tab restarted under the same id on another account (ADR 0002):
  * the spawn read back before the kill, the process stopped and waited for,
  * the same spawn made again with the account changed and the conversation
- * resumed, the record's name and view put back (the kill took them). The
+ * resumed, the record's name and view put back (the kill took them), and
+ * the chat view the tab is read in carried into the spawn (PRDCT-4495). The
  * window's `pty:restart` and the server's `RestartSession` share it. The
  * tab stays in the window that holds it unless the caller names another key.
  */
@@ -249,18 +305,73 @@ export async function restartSession(
   overrides: RestartOverrides,
   windowKey?: string | null
 ): Promise<SessionInfoResult & { resumed: boolean }> {
-  const plan = ptyManager.restartSpawn(id, overrides)
-  if (!plan) throw new Error('This session cannot be restarted from here.')
+  // A Resume, not a move: a session still running is left alone, so a view
+  // that read it stopped by mistake never cuts its turn (PRDCT-4193).
+  const current = sessionManager.get(id)
+  if (overrides.onlyIfStopped && current && current.state !== 'ended')
+    throw new Error('This session is running; there is nothing to resume.')
+  // The spawn this process made, read back; else the record. By the
+  // session's id, else by its id among the adoptable ones: a terminal's
+  // record is keyed by its tmux name, which the by-id read does not find for
+  // a session this process never spawned (round 2, N-F2). The adoptable
+  // listing is read only when the by-id read finds nothing and the record is
+  // needed: for the spawn, or for the window of an unbound tab.
+  const spawned = ptyManager.restartSpawn(id, overrides)
+  let record: SessionRecord | undefined = ptyManager.getSessionRecord(id) ?? undefined
+  let lookedUp = false
+  const recordOf = (): SessionRecord | undefined => {
+    if (!record && !lookedUp) {
+      lookedUp = true
+      record = ptyManager.listAdoptableSessions().find((r) => r.id === id)
+    }
+    return record
+  }
+  // A session this process never spawned but whose record it keeps (a tab the
+  // restore placed stopped because its start was refused, PRDCT-4236 round 1
+  // F3) resumes from the record, as a Clave server's own Resume does: the
+  // same allowlist, the record's tmux name offered so a tmux respawn reuses
+  // it and the name carries over, the account the caller names laid over it
+  // (the fields it names, not the ones it leaves undefined, round 2 N-F5).
+  // Until then the Resume of such a tab failed on a message naming nothing
+  // but its id.
+  const plan = spawned ?? planFromRecord(recordOf(), overrides)
+  if (!plan) throw new Error('This session is not running and left no record to resume from.')
   const windows = sessionWindows()
-  const key = windowKey !== undefined ? windowKey : windows.windowOf(id)
-  const record = ptyManager.getSessionRecord(id)
+  // The window that holds the tab; for a session this process never spawned
+  // nothing is bound, and the record says which window placed it (round 2,
+  // N-F1: a Resume under no window ran the CLI with its output going nowhere).
+  // A record naming a window that has since closed goes to the primary, where
+  // the restore places an orphan (round 3, R3-F1).
+  const recordKey = (): string | null => {
+    const placed = recordOf()?.windowKey
+    return placed && windows.isLive(placed) ? placed : windows.primaryKey()
+  }
+  const key = windowKey !== undefined ? windowKey : (windows.windowOf(id) ?? recordKey())
   // The kill ends the old process, whose exit forgets what a dead tab
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).
   const parent = parentOf(id)
-  await ptyManager.killAndWait(id)
+  // The chat view the tab is read in lives on the session the kill ends: a
+  // tab put on Enclave from its menu came back in the interaction mode's view
+  // after an account switch or a Resume (PRDCT-4495).
+  const viewId = current?.viewId
+  // Only a process this one runs is ended. A tab with none (placed stopped
+  // by a restart, PRDCT-4236) has only its record, and a kill is a close
+  // for good: it would discard that record before the spawn reads it back
+  // (the work assignment, the start time), and a failed spawn would leave
+  // nothing to resume from.
+  if (current) await ptyManager.killAndWait(id)
   windows.unbind(id)
-  const info = await spawnSession(key, plan.cwd, plan.options)
+  const info = await spawnSession(
+    key,
+    plan.cwd,
+    viewId ? { ...plan.options, viewId } : plan.options
+  )
+  // A record keyed by a tmux name the new process did not take (a chat tab's
+  // record is keyed by its id) would stay beside the one the spawn wrote,
+  // and the next launch would bring the tab back twice.
+  const staleKey = current ? undefined : record?.tmuxName
+  if (staleKey && ptyManager.tmuxNameOf(id) !== staleKey) ptyManager.discardSessionRecord(staleKey)
   if (parent) setParent(id, parent)
   if (record?.displayName) {
     ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)

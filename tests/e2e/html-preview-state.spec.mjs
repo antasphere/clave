@@ -268,7 +268,9 @@ export async function run(t) {
     const openView = () =>
       win.evaluate(() => {
         const icon = [
-          ...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')
+          ...document.querySelectorAll(
+            '[data-sidebar-item-type="session"] .sidebar-tab-view[data-view]'
+          )
         ].find((s) => s.getAttribute('title') === 'Dash')
         icon?.click()
         return !!icon

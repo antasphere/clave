@@ -55,6 +55,12 @@ import type {
 } from '../../shared/antasphere-account-types'
 import type { Workspace } from '../../shared/workspace-types'
 import type { LaunchProfile } from '../../shared/agent-launch'
+import type {
+  HelperAccount,
+  HelperPreferencePatch,
+  HelperPreferenceView
+} from '../helpers/preferences'
+import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -74,9 +80,24 @@ export interface AntasphereAccountLike {
   start(): Promise<AntasphereSignInResult>
   confirmHandoff(handoff: AntasphereHandoff): boolean
   cancel(): AntasphereAccountStatus
-  signOut(): AntasphereAccountStatus
+  signOut(): Promise<AntasphereAccountStatus>
   dismissFailure(): AntasphereAccountStatus
   onChange(listener: (status: AntasphereAccountStatus) => void): () => void
+}
+
+/** The integrations of a host as the source needs them
+ *  (`../integrations/elevenlabs.ts`'s `ElevenLabsIntegration`). */
+export interface IntegrationsLike {
+  status(): ElevenLabsStatus
+  setKey(apiKey: string): Promise<ElevenLabsStatus>
+  check(): Promise<ElevenLabsStatus>
+  removeKey(): Promise<ElevenLabsStatus>
+  setVoice(
+    voiceId: string,
+    voiceName: string,
+    modelId?: ElevenLabsModelId
+  ): Promise<ElevenLabsStatus>
+  voices(): Promise<{ voices: ElevenLabsVoice[] }>
 }
 
 export interface SettingsManagers {
@@ -88,6 +109,17 @@ export interface SettingsManagers {
   launchProfiles: LaunchProfileManager
   preferences: PreferencesManager
   workspaces: WorkspaceManager
+  /** The helpers' preference on this host (PRDCT-4330); absent, refused. */
+  helpers?: {
+    list(): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+    set(
+      id: string,
+      patch: HelperPreferencePatch
+    ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+  }
+  /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
+   *  on its own secret port; absent, refused. */
+  integrations?: IntegrationsLike
   /** Where the process has a PTY for a login (the shell); absent, a login is
    *  refused. Loaded on the first call, not at construction: the login
    *  manager pulls the PTY backend in, which the shell must not load from
@@ -189,10 +221,28 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   const antasphere = (): AntasphereAccountLike =>
     m.antasphere ?? refuse('antasphereAccount', 'This server holds no Antasphere account.')
   m.antasphere?.onChange((status) => emit({ _tag: 'accounts.antasphere_changed', status }))
+  // The integrations (PRDCT-4410): no event of their own; the page reads the
+  // status each write answers.
+  const integrations = (): IntegrationsLike =>
+    m.integrations ?? refuse('integrations', 'This server has no integrations.')
 
-  const workspaceChanged = (origin: string | undefined): void => {
-    const { workspaces, pins } = m.workspaces.load()
-    emit({ _tag: 'workspaces.state_changed', workspaces, pins, origin: origin ?? null })
+  // The change event and the write's answer carry the state after the write
+  // with its stamp (PRDCT-3405): a window compares the stamp with the last
+  // one it loaded, wrote or took in, and the writer folds the answer so it
+  // knows the whole state at that revision, not only the partition it wrote.
+  const workspaceChanged = (
+    origin: string | undefined
+  ): { workspaces: Workspace[]; pins: unknown[]; revision: number; instance: string } => {
+    const { workspaces, pins, revision, instance } = m.workspaces.load()
+    emit({
+      _tag: 'workspaces.state_changed',
+      workspaces,
+      pins,
+      origin: origin ?? null,
+      revision,
+      instance
+    })
+    return { workspaces, pins, revision, instance }
   }
 
   return {
@@ -206,12 +256,12 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       remove: (id) => m.claudeAccounts.remove(id),
       // Storing the token and reading the account's limits with it are one
       // call: the read is what tells the user the paste worked.
-      setToken: (id, token) => {
-        m.claudeAccounts.setToken(id, token)
+      setToken: async (id, token) => {
+        await m.claudeAccounts.setToken(id, token)
         return m.claudeUsage.getLimits(id, { force: true })
       },
-      clearToken: (id) => {
-        m.claudeAccounts.clearToken(id)
+      clearToken: async (id) => {
+        await m.claudeAccounts.clearToken(id)
         m.claudeUsage.forget(id)
       }
     },
@@ -271,6 +321,29 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       setWorkspace: (workspaceId, family, profileId) =>
         m.launchProfiles.setWorkspaceDefault(workspaceId, family, profileId)
     },
+    helpers: {
+      list: () =>
+        m.helpers ? m.helpers.list() : refuse('helpers', 'This server runs no helpers.'),
+      set: (helperId, patch) =>
+        m.helpers
+          ? m.helpers.set(helperId, {
+              ...patch,
+              ...(patch.account && { account: mutable<HelperAccount>(patch.account) })
+            })
+          : refuse('helpers', 'This server runs no helpers.')
+    },
+    integrations: {
+      read: () => ({ elevenLabs: integrations().status() }),
+      setElevenLabsKey: async (apiKey) => ({
+        elevenLabs: await integrations().setKey(apiKey)
+      }),
+      checkElevenLabs: async () => ({ elevenLabs: await integrations().check() }),
+      removeElevenLabsKey: async () => ({ elevenLabs: await integrations().removeKey() }),
+      setElevenLabsVoice: async (voiceId, voiceName, modelId) => ({
+        elevenLabs: await integrations().setVoice(voiceId, voiceName, modelId)
+      }),
+      listElevenLabsVoices: () => integrations().voices()
+    },
     preferences: {
       setAppIcon: (icon) => {
         if (!m.applyAppIcon) return refuse('appIcon', 'This server has no Dock to paint.')
@@ -288,14 +361,18 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
     },
     workspaces: {
       load: () => m.workspaces.load(),
-      updateRegistry: (workspaces, origin) => {
+      updateRegistry: (workspaces, origin, base) => {
         if (!Array.isArray(workspaces) || !workspaces.every(isWorkspace)) {
           console.error('[workspace] refused: update-registry payload is not a list of workspaces')
           return { ok: false as const, reason: 'invalid' as const }
         }
+        if (base) {
+          const now = m.workspaces.stamp()
+          if (now.instance !== base.instance || now.revision !== base.revision)
+            return { ok: false as const, reason: 'stale' as const }
+        }
         m.workspaces.updateRegistry(mutable<Workspace[]>(workspaces))
-        workspaceChanged(origin)
-        return { ok: true as const }
+        return { ok: true as const, ...workspaceChanged(origin) }
       },
       // Pins are per workspace and global to the app: any window writes the
       // partition it changed, and every other window folds the change in.
@@ -309,8 +386,7 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
           return { ok: false as const, reason: 'invalid-key' as const }
         }
         m.workspaces.updatePins(key, [...pins])
-        workspaceChanged(origin)
-        return { ok: true as const }
+        return { ok: true as const, ...workspaceChanged(origin) }
       },
       setLastActive: (workspaceId) =>
         m.workspaces.setLastActive(isLayoutKey(workspaceId) ? workspaceId : null)

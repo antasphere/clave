@@ -7,6 +7,8 @@
  * identity of a tab). No Electron here: the shell comes in through the
  * interface, so every tool is tested on fakes.
  */
+import type { HarnessId, HarnessSettingsById, InteractionMode } from '../../shared/harness'
+import { workspaceForPath } from '../../shared/workspace-types'
 import type { ClaveApiClient } from '@clave/client'
 import type { LayoutSnapshot, SidebarGroup } from '@clave/contract/sidebar'
 import type { Session } from '@clave/contract/sessions'
@@ -19,7 +21,8 @@ import type {
 } from '../exchange-capture/types'
 import type { ServerEvent } from '@clave/contract/events'
 import type { AccountUsageSummary } from '../../shared/account-pool'
-import type { LauncherFamily } from '../../shared/agent-launch'
+import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
+import type { LaunchModel } from '../../shared/launch-options'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 
 export const NOT_SERVED: unique symbol = Symbol('not served')
@@ -85,6 +88,8 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   awaitRehomed(ids: string[]): Promise<void>
   /** Records a tab's close on the exchange capture. */
   captureTabClosed(payload: TabClosedCapturePayload): void
+  /** The ledger told what a closing tab runs on, before its record goes (PRDCT-4236). */
+  historyRestamp?(sessionId: string): Promise<void>
   /** The `windows` block of clave_list, built by main for that caller's window. */
   windowsListing(callerWin: W | null): unknown[]
   /** A fresh quick-launch terminal id. */
@@ -96,10 +101,27 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   accounts(provider: AccountProvider): ServedPoolAccount[]
   /** The account selected in settings for that provider, undefined when none is. */
   selectedAccountId(provider: AccountProvider): string | undefined
+  /** Opt in to the menu recommendation for implicit new-session accounts. */
+  useRecommendedAccount?(): boolean
   /** The switching mode a workspace runs under: its own, else the global one. */
   switchMode(workspaceId: string | null | undefined): AccountSwitchMode
   /** The launch profiles of a family, built-ins first. */
   launchProfiles(family: LauncherFamily): { id: string; name: string }[]
+  /** The chat profile the launcher would open that family's chat on in that
+   *  workspace (`chatDefaultFor`); undefined when its default has no chat form. */
+  chatDefault(family: LauncherFamily, workspaceId: string | undefined): string | undefined
+  /** The person's interaction mode on this machine (PRDCT-4425): what an
+   *  open with `chat` omitted follows. Absent on a host with no setting. */
+  interactionMode?(): InteractionMode
+  /** The model a launch naming none will run once spawned (`rememberedSpawnModel`):
+   *  the chat model last picked on the adapter of the profile it lands on. The
+   *  account pick judges by it (PRDCT-4253). Undefined when it is not known
+   *  here (a terminal CLI, a server whose preferences this process cannot read). */
+  launchModel?(
+    family: AccountProvider,
+    launchProfileId: string | undefined,
+    workspaceId: string | undefined
+  ): string | undefined
   /** The pinned groups the workspace state persists, every workspace's. */
   pins(): PinnedBlueprint[]
   /** The tab that opened a tab, null when none did (`sessions/lineage.ts`). */
@@ -118,6 +140,27 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   syncRecords?: () => Promise<void>
   /** A note to the person, as a system notification. */
   notify(title: string, body: string): void
+  // ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+  /** The machine the answer is about; absent, this Mac. */
+  machine?(): { id: string; name: string }
+  /** What the harness detection last found of each harness (agent-updates'
+   *  state); absent on a host that never checks. */
+  presence?(): ReadonlyArray<{
+    id: string
+    installed: boolean
+    currentVersion: string | null
+    lastCheckedAt: number | null
+  }>
+  /** The models a harness offers, the launcher's `modelsFor`; 'unavailable'
+   *  when the list could not be read. */
+  models?(harness: HarnessId): Promise<readonly LaunchModel[] | 'unavailable'>
+  /** The person's settings per harness (Settings → Harnesses). */
+  harnessSettings?(): HarnessSettingsById
+  /** The launch profile a click on the family's row starts. */
+  defaultProfileId?(family: LauncherFamily): string | undefined
+  /** The launch profiles of a family as full rows (built-in flag, Pi's
+   *  pinned model), built-ins first; `launchProfiles` names them only. */
+  launchProfileRows?(family: LauncherFamily): readonly LaunchProfile[]
 }
 
 export interface ServedContext<W extends ToolWindow = ToolWindow> {
@@ -158,11 +201,12 @@ export function modeOf(record: SessionRecord | undefined, provider: string): str
     if (record.antigravityMode) return 'antigravity'
     if (record.codexMode) return 'codex'
     if (record.piMode) return 'pi'
+    if (record.opencodeMode) return 'opencode'
     if (record.claudeAgentsMode) return 'claude-agents'
     if (record.claudeMode) return 'claude'
     return 'terminal'
   }
-  return ['claude', 'codex', 'antigravity', 'pi', 'claude-agents'].includes(provider)
+  return ['claude', 'codex', 'antigravity', 'pi', 'opencode', 'claude-agents'].includes(provider)
     ? provider
     : 'terminal'
 }
@@ -253,7 +297,10 @@ export function workspaceForSpawn(ctx: Ctx, explicit: string | undefined): strin
   if (explicit) return resolveWorkspace(ctx, explicit)
   const caller = ctx.callerSessionId ? ctx.shell.record(ctx.callerSessionId) : undefined
   return (
-    caller?.workspaceId ?? (ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
+    caller?.workspaceId ??
+    workspaceForPath(ctx.shell.workspaces(), caller?.cwd) ??
+    (ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null) ??
+    undefined
   )
 }
 
@@ -269,9 +316,7 @@ export async function allLayouts(ctx: Ctx, routedKey: string): Promise<LayoutSna
 export function groupOptions(ctx: Ctx): GroupRefOptions {
   return {
     callerSessionId: ctx.callerSessionId,
-    callerWorkspaceId: ctx.callerSessionId
-      ? ctx.shell.record(ctx.callerSessionId)?.workspaceId
-      : undefined,
+    callerWorkspaceId: workspaceForSpawn(ctx, undefined),
     windowWorkspaceId: ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null,
     workspaceNameOf: (id) => workspaceNameOf(ctx, id)
   }
@@ -299,7 +344,7 @@ export function endpointOf(
 ): EndpointIdentity | null {
   const record = ctx.shell.record(session.id)
   const mode = modeOf(record, session.provider)
-  if (mode === 'pi') return null
+  if (mode === 'pi' || mode === 'opencode') return null
   const group = groupOfSession(layouts, session.id)
   return {
     sessionId: session.id,

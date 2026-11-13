@@ -15,9 +15,12 @@ import {
   agentAcceptsPrompt,
   agentSetupToModes,
   parseSetup,
+  getLastAgentSetup,
+  useLaunchPrefsStore,
   DEFAULT_AGENT_SETUP,
   type AgentKind
 } from './launch-prefs'
+import { useAccountPolicyStore } from './account-policy-store'
 
 const KINDS: AgentKind[] = ['claude', 'claude-agents', 'antigravity', 'codex']
 
@@ -102,7 +105,68 @@ describe('parseSetup — what a persisted preference file is allowed to say', ()
     expect(parseSetup({ kind: 'codex', claudeProfileId: 'work' })?.claudeProfileId).toBeUndefined()
   })
 
+  it('keeps the launcher model (PRDCT-4423) and drops one no CLI flag could take', () => {
+    expect(parseSetup({ kind: 'claude', model: 'claude-fable-5-1[1m]' })?.model).toBe(
+      'claude-fable-5-1[1m]'
+    )
+    expect(parseSetup({ kind: 'codex', model: 'gpt-5.5' })?.model).toBe('gpt-5.5')
+    expect(parseSetup({ kind: 'claude', model: '--dangerously-skip' })?.model).toBeUndefined()
+    expect(parseSetup({ kind: 'claude', model: 7 })?.model).toBeUndefined()
+  })
+
   it('ignores a non-string account id', () => {
     expect(parseSetup({ kind: 'claude', claudeProfileId: 7 })?.claudeProfileId).toBeUndefined()
+  })
+})
+
+describe('getLastAgentSetup and the recommended account', () => {
+  const remembered = {
+    kind: 'claude' as const,
+    dangerousMode: true,
+    claudeProfileId: 'work',
+    launchProfileId: 'chat',
+    model: 'claude-opus-5-5'
+  }
+
+  it('replays the remembered account while the setting is off', () => {
+    useLaunchPrefsStore.setState({ byWorkspace: { ws: remembered } })
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    expect(getLastAgentSetup('ws')).toEqual(remembered)
+  })
+
+  it('drops only the account once the setting is on, so the pool picks the recommendation', () => {
+    useLaunchPrefsStore.setState({
+      byWorkspace: {
+        ws: remembered,
+        cx: { kind: 'codex', dangerousMode: false, codexAccountId: 'a' }
+      }
+    })
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    expect(getLastAgentSetup('ws')).toEqual({
+      kind: 'claude',
+      dangerousMode: true,
+      launchProfileId: 'chat',
+      model: 'claude-opus-5-5'
+    })
+    expect(getLastAgentSetup('cx')).toEqual({ kind: 'codex', dangerousMode: false })
+    // The stored memory is untouched: turning the setting off brings it back.
+    expect(useLaunchPrefsStore.getState().byWorkspace.ws).toEqual(remembered)
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+  })
+})
+
+describe('parseSetup — a remembered launch profile (PRDCT-4423, verifier round 2)', () => {
+  it('keeps a saved profile picked under Advanced and drops a built-in or chat-form transport', () => {
+    expect(parseSetup({ kind: 'claude', dangerousMode: false, launchProfileId: 'work' })).toEqual({
+      kind: 'claude',
+      dangerousMode: false,
+      launchProfileId: 'work'
+    })
+    for (const stale of ['builtin-claude', 'claude-chat', 'codex-chat', 'chat:claude:work']) {
+      expect(parseSetup({ kind: 'claude', dangerousMode: false, launchProfileId: stale })).toEqual({
+        kind: 'claude',
+        dangerousMode: false
+      })
+    }
   })
 })

@@ -1,10 +1,21 @@
 import { z } from 'zod'
+import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
 
-/* Files a reader attaches to a chat message. The attachment record is what the
-   composer holds and what the transcript shows: a name, a local path, and how
-   it is DELIVERED — an image goes to the provider as image content, anything
-   else as a reference the agent reads with its own tools. Bytes never cross the
-   renderer: the main process reads the file once the message is sent. */
+/* What a reader attaches to a chat message. The attachment record is what the
+   composer holds and what the transcript shows. A FILE record is a name, a
+   local path, and how it is DELIVERED — an image goes to the provider as image
+   content, anything else as a reference the agent reads with its own tools;
+   bytes never cross the renderer, the main process reads the file once the
+   message is sent. A SESSION record is another Clave tab dragged onto the
+   composer: its id, name, agent and folder, delivered as a line the agent can
+   act on with the Clave tools (read the tab, message it).
+
+   Every record carries a LABEL, `Image #1`, `File #2`, `Session #1`, numbered
+   per kind in the order they were attached. The label is the attachment's
+   name in the message text, written as a marker `[Image #1]` at the point the
+   reader attached it, so the text says where each one belongs; the marker
+   leaving the text removes the attachment, and removing the chip removes the
+   marker. Main explains the markers to the provider at send time. */
 
 export const MAX_ATTACHMENTS = 10
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -12,9 +23,27 @@ export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 /** The formats providers accept as image content. */
 export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
-export const AttachmentSchema = z
+const labelSchema = z.string().min(1).max(32).optional()
+
+const BARE_SESSION_ID = /^[a-zA-Z0-9_-]{1,128}$/
+/** A tab id an agent on this Mac can name: a tab of this Mac by its bare id,
+ *  or a paired server's tab by its owner key (`clave-owner:session:<server>:<id>`),
+ *  which the Clave tools take since PRDCT-4166. Dropping a server's tab on the
+ *  composer used to fail the whole send on the bare-id pattern alone. */
+export function isAttachableSessionId(value: string): boolean {
+  if (BARE_SESSION_ID.test(value)) return true
+  if (value.length > 1024 || !value.startsWith('clave-owner:')) return false
+  try {
+    return BARE_SESSION_ID.test(parseSessionKey(value).sessionId)
+  } catch {
+    return false
+  }
+}
+
+export const FileAttachmentSchema = z
   .object({
     id: z.string().min(1).max(128),
+    label: labelSchema,
     path: z
       .string()
       .min(1)
@@ -23,11 +52,77 @@ export const AttachmentSchema = z
     name: z.string().min(1).max(255),
     mimeType: z.string().min(1).max(128),
     size: z.number().int().nonnegative(),
-    delivery: z.enum(['reference', 'image'])
+    /** How it reaches the agent: image content, a path to read, or a path
+     *  to list (a folder). */
+    delivery: z.enum(['reference', 'image', 'folder']),
+    /** A folder's top-level item count; folders only. */
+    entries: z.number().int().nonnegative().optional()
   })
   .strict()
+export type FileAttachment = z.infer<typeof FileAttachmentSchema>
+
+export const SessionAttachmentSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    label: labelSchema,
+    delivery: z.literal('session'),
+    /** The Clave session id, the one the agent tools take. */
+    sessionId: z.string().refine(isAttachableSessionId, 'Not a Clave tab id'),
+    /** The tab's name as the sidebar shows it. */
+    name: z.string().min(1).max(255),
+    /** The agent in that tab, in the reader's words: Claude Code, Codex, Terminal… */
+    agent: z.string().min(1).max(64),
+    cwd: z.string().max(4096),
+    /** The machine the tab runs on, by name, when it is not the machine of the
+     *  tab the message goes to: a paired server, or this Mac seen from a
+     *  server's tab. Absent when both tabs share a machine. */
+    machine: z.string().min(1).max(128).optional(),
+    /** False when the receiving agent's Clave tools cannot reach the tab (a
+     *  server's agent knows its own server's tabs only). Absent means it can. */
+    reachable: z.literal(false).optional()
+  })
+  .strict()
+export type SessionAttachment = z.infer<typeof SessionAttachmentSchema>
+
+/** What this Mac calls itself to a server's agent. */
+export const THIS_MAC = 'the Mac this message was sent from'
+
+/**
+ * Where a dropped tab sits relative to the tab it is dropped on, by their
+ * keys as this Mac names them. Same machine: nothing to say. A server's tab
+ * dropped on a tab of this Mac: the agent here reaches it by its key, so it
+ * only names the machine. Anything dropped on a server's tab from elsewhere
+ * (this Mac, or a second server): that server's agent knows its own tabs
+ * only, so the record says the tab is out of its reach rather than the send
+ * being refused. `nameOf` turns a server id into the name the reader gave it.
+ */
+export function sessionReach(
+  droppedId: string,
+  targetId: string,
+  nameOf: (serverId: string) => string
+): Pick<SessionAttachment, 'machine' | 'reachable'> {
+  const owner = ownerOfKey(droppedId)
+  const here = ownerOfKey(targetId)
+  if (owner === here) return {}
+  const machine = owner === LOCAL_SERVER_ID ? THIS_MAC : nameOf(owner)
+  return here === LOCAL_SERVER_ID ? { machine } : { machine, reachable: false }
+}
+function ownerOfKey(id: string): string {
+  try {
+    return parseSessionKey(id).serverId
+  } catch {
+    return LOCAL_SERVER_ID
+  }
+}
+
+export const AttachmentSchema = z.union([FileAttachmentSchema, SessionAttachmentSchema])
 export const AttachmentsSchema = z.array(AttachmentSchema).max(MAX_ATTACHMENTS)
 export type Attachment = z.infer<typeof AttachmentSchema>
+
+export const isFileAttachment = (file: Attachment): file is FileAttachment =>
+  file.delivery !== 'session'
+export const isSessionAttachment = (file: Attachment): file is SessionAttachment =>
+  file.delivery === 'session'
 
 /** An image as the provider receives it, base64 in main only. */
 export const ProviderImageSchema = z.object({
@@ -60,4 +155,83 @@ export function attachmentIssue(file: Attachment, imagesSupported: boolean): str
   if (!IMAGE_MIME_TYPES.includes(file.mimeType)) return 'This image format cannot be sent directly.'
   if (file.size > MAX_IMAGE_BYTES) return 'Direct images must be 5 MiB or smaller.'
   return undefined
+}
+
+// ── Labels and markers ──
+
+export type AttachmentKind = 'Image' | 'File' | 'Folder' | 'Session'
+
+/** The kind a record is labelled by: what it IS to the agent, which is its
+ *  delivery — a HEIC that goes as a path is a File, however it is named,
+ *  and a folder is a Folder, a path to list. */
+export function attachmentKind(file: Attachment): AttachmentKind {
+  if (file.delivery === 'session') return 'Session'
+  if (file.delivery === 'folder') return 'Folder'
+  return file.delivery === 'image' ? 'Image' : 'File'
+}
+
+const LABEL = /^(Image|File|Folder|Session) #(\d+)$/
+
+/** The next label of a kind among `current`: one past the highest number
+ *  that kind already holds, so a label is never issued twice in one message. */
+export function nextLabel(kind: AttachmentKind, current: readonly Attachment[]): string {
+  let highest = 0
+  for (const file of current) {
+    const m = file.label ? LABEL.exec(file.label) : null
+    if (m && m[1] === kind) highest = Math.max(highest, Number(m[2]))
+  }
+  return `${kind} #${highest + 1}`
+}
+
+/** The marker a record is written as in the text; nothing for a record that
+ *  carries no label (one from before labels existed). */
+export function markerOf(file: Pick<Attachment, 'label'>): string | undefined {
+  return file.label ? `[${file.label}]` : undefined
+}
+
+/** `text` with `marker` inserted at `at`: spaced off from what is around it,
+ *  and followed by a space so the reader types straight on. Returns the new
+ *  text and where the caret lands. */
+export function insertMarker(
+  text: string,
+  marker: string,
+  at: number
+): { text: string; caret: number } {
+  const index = Math.max(0, Math.min(at, text.length))
+  const before = text.slice(0, index)
+  const after = text.slice(index)
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  const trail = after && /^\S/.test(after) ? ' ' : after ? '' : ' '
+  const insert = `${lead}${marker}${trail}`
+  // A space already there after the marker is the one the reader types past.
+  const skip = !trail && after.startsWith(' ') ? 1 : 0
+  return { text: before + insert + after, caret: before.length + insert.length + skip }
+}
+
+/** `text` without `marker`, every occurrence, and without the one space that
+ *  followed each so the words around close up. */
+export function removeMarker(text: string, marker: string): string {
+  let out = text
+  let index = out.indexOf(marker)
+  while (index !== -1) {
+    const end = index + marker.length
+    const trailing = out[end] === ' ' ? 1 : 0
+    out = out.slice(0, index) + out.slice(end + trailing)
+    index = out.indexOf(marker)
+  }
+  return out
+}
+
+/** The records whose marker is still in `text`: the reader editing a marker
+ *  out of the message — `[Session #1]` to `[Session #1` — takes the
+ *  attachment with it. A record with no label is kept: nothing in the text
+ *  can speak for it. */
+export function reconcileAttachments<T extends Pick<Attachment, 'label'>>(
+  text: string,
+  files: readonly T[]
+): T[] {
+  return files.filter((file) => {
+    const marker = markerOf(file)
+    return !marker || text.includes(marker)
+  })
 }

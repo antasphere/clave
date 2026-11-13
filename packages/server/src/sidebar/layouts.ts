@@ -129,7 +129,7 @@ export class SidebarLayouts {
   constructor(
     private readonly storage: SidebarStorage,
     private readonly host: SidebarHost,
-    options?: { mintId?: () => string }
+    private readonly options?: { mintId?: () => string; layoutKey?: string }
   ) {
     this.mintId = options?.mintId ?? randomUUID
   }
@@ -146,7 +146,11 @@ export class SidebarLayouts {
   }
 
   list(): LayoutSnapshot[] {
-    const keys = new Set([...this.cache.keys(), ...this.storage.keys()])
+    const keys = new Set(
+      this.options?.layoutKey
+        ? [this.options.layoutKey]
+        : [...this.cache.keys(), ...this.storage.keys()]
+    )
     return [...keys].map((key) => {
       this.load(key)
       return this.snapshot(key)
@@ -160,6 +164,7 @@ export class SidebarLayouts {
     layout: WindowLayout,
     baseRevision?: number
   ): Result<LayoutSnapshot, LayoutConflict> {
+    windowKey = this.options?.layoutKey ?? windowKey
     const entry = this.load(windowKey)
     if (baseRevision !== undefined && baseRevision !== entry.revision) {
       return err({ _tag: 'LayoutConflict', windowKey, current: this.snapshot(windowKey) })
@@ -499,6 +504,7 @@ export class SidebarLayouts {
    *  primary and its document removed. Answers the layout taken, for the
    *  shell to pass in the rehome payload. */
   windowClosed(windowKey: string, primaryWindowKey: string | null): WindowLayout {
+    if (this.options?.layoutKey) return this.get(this.options.layoutKey)
     const taken = this.load(windowKey).layout
     this.storage.remove(windowKey)
     this.cache.delete(windowKey)
@@ -519,9 +525,18 @@ export class SidebarLayouts {
   // ── Internals ──
 
   private load(windowKey: string): Entry {
+    windowKey = this.options?.layoutKey ?? windowKey
     let entry = this.cache.get(windowKey)
     if (!entry) {
-      entry = { layout: normalizeLayout(this.storage.read(windowKey)), revision: 0 }
+      const stored = this.storage.read(windowKey)
+      const revision = (stored as { revision?: unknown } | null)?.revision
+      entry = {
+        layout: normalizeLayout(stored),
+        revision:
+          typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0
+            ? revision
+            : 0
+      }
       this.cache.set(windowKey, entry)
     }
     return entry
@@ -566,10 +581,13 @@ export class SidebarLayouts {
   /** Every write: stored, counted, told. A change that changes nothing is
    *  none of the three, so an idle save never wakes the other windows. */
   private commit(windowKey: string, next: NormalizedLayout, cause: Cause): LayoutSnapshot {
+    windowKey = this.options?.layoutKey ?? windowKey
+    if (this.options?.layoutKey)
+      next = { ...next, groups: next.groups.map((g) => ({ ...g, collapsed: false })) }
     const entry = this.load(windowKey)
     if (JSON.stringify(next) === JSON.stringify(entry.layout)) return this.snapshot(windowKey)
     const layout = structuredClone(next)
-    this.storage.write(windowKey, layout)
+    this.storage.write(windowKey, layout, entry.revision + 1)
     this.cache.set(windowKey, { layout, revision: entry.revision + 1 })
     const snapshot = this.snapshot(windowKey)
     this.emit({ _tag: 'sidebar.layout_changed', layout: snapshot, cause })
@@ -577,6 +595,7 @@ export class SidebarLayouts {
   }
 
   private snapshot(windowKey: string): LayoutSnapshot {
+    windowKey = this.options?.layoutKey ?? windowKey
     const entry = this.load(windowKey)
     return frozen({ windowKey, revision: entry.revision, ...entry.layout })
   }

@@ -128,6 +128,9 @@ const answer = (table: Record<string, unknown>): void => {
   })
 }
 const channels = (): string[] => mocks.invoke.mock.calls.map(([c]) => c as string)
+/** The channels listened on over IPC, the server watch's own word aside. */
+const sessionChannels = (): string[] =>
+  mocks.on.mock.calls.map(([c]) => c as string).filter((c) => c !== 'server:endpoint-named')
 /** Lets the announce (a microtask queued by `connect`) and the dynamic import run. */
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await Promise.resolve()
@@ -161,6 +164,7 @@ beforeEach(async () => {
     setView: vi.fn(async (id: string) => ({ id, via: 'server' })),
     models: vi.fn(async () => [{ id: 'm' }]),
     commands: vi.fn(async () => [{ name: 'c' }]),
+    control: vi.fn(async () => ({ mcpServers: [] })),
     capabilities: vi.fn(async () => ({ images: true })),
     history: vi.fn(async () => ({ items: [], via: 'server' })),
     start: vi.fn(async () => ({ id: 'new', via: 'server' })),
@@ -189,7 +193,9 @@ describe('the preload routes sessionsList', () => {
     expect(mocks.createApiClient).not.toHaveBeenCalled()
     // The preload asks for the endpoint once at its start too, for the
     // terminal pane's road (its mode), before any routed call.
-    expect(channels().filter((c) => c !== 'server:endpoint')).toEqual(['sessions:list'])
+    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([
+      'sessions:list'
+    ])
     expect(channels()[0]).toBe('server:endpoint')
   })
   it('goes to the server, scoped to this window, once main names an endpoint', async () => {
@@ -239,20 +245,26 @@ describe('the preload routes the other session calls', () => {
     await api.sessionsSetView('s1', 'chat')
     await api.sessionsModels('s1')
     await api.sessionsCommands('s1')
+    await api.sessionsControl('s1', { type: 'mcp_status' })
     await api.sessionsCapabilities('s1')
     await api.sessionsHistory('s1', 40, 20)
     await api.spawnSession('/repo', spawnOptions)
     await api.killSession('s1')
-    const ipc = mocks.invoke.mock.calls.filter(([c]) => c !== 'server:endpoint')
+    const ipc = mocks.invoke.mock.calls.filter(
+      ([c]) => c !== 'server:endpoint' && c !== 'server:external'
+    )
     expect(ipc).toEqual([
       ['sessions:write', 's1', bytes],
       ['sessions:write', 's1', typed],
       ['sessions:set-view', 's1', 'chat'],
       ['sessions:models', 's1'],
       ['sessions:commands', 's1'],
+      ['sessions:control', 's1', { type: 'mcp_status' }],
       ['sessions:capabilities', 's1'],
       ['sessions:history', 's1', 40, 20],
       ['pty:spawn', '/repo', spawnOptions],
+      // A close tells the History what the tab runs on first (PRDCT-4236).
+      ['history:restamp', 's1'],
       ['pty:kill', 's1']
     ])
     expect(mocks.createApiClient).not.toHaveBeenCalled()
@@ -265,6 +277,7 @@ describe('the preload routes the other session calls', () => {
     expect(await api.sessionsSetView('s1', 'chat')).toEqual({ id: 's1', via: 'server' })
     expect(await api.sessionsModels('s1')).toEqual([{ id: 'm' }])
     expect(await api.sessionsCommands('s1')).toEqual([{ name: 'c' }])
+    expect(await api.sessionsControl('s1', { type: 'mcp_status' })).toEqual({ mcpServers: [] })
     expect(await api.sessionsCapabilities('s1')).toEqual({ images: true })
     expect(await api.sessionsHistory('s1', 40, 20)).toEqual({ items: [], via: 'server' })
     expect(await api.spawnSession('/repo', spawnOptions)).toEqual({ id: 'new', via: 'server' })
@@ -277,6 +290,7 @@ describe('the preload routes the other session calls', () => {
     expect(mocks.sessions.setView).toHaveBeenCalledExactlyOnceWith('s1', 'chat')
     expect(mocks.sessions.models).toHaveBeenCalledExactlyOnceWith('s1')
     expect(mocks.sessions.commands).toHaveBeenCalledExactlyOnceWith('s1')
+    expect(mocks.sessions.control).toHaveBeenCalledExactlyOnceWith('s1', { type: 'mcp_status' })
     expect(mocks.sessions.capabilities).toHaveBeenCalledExactlyOnceWith('s1')
     expect(mocks.sessions.history).toHaveBeenCalledExactlyOnceWith('s1', 40, 20)
     expect(mocks.sessions.start).toHaveBeenCalledExactlyOnceWith({
@@ -285,7 +299,154 @@ describe('the preload routes the other session calls', () => {
       options: spawnOptions
     })
     expect(mocks.sessions.stop).toHaveBeenCalledExactlyOnceWith('s1')
-    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'window:identity')).toEqual([])
+    expect(
+      channels().filter(
+        (c) => c !== 'server:endpoint' && c !== 'server:external' && c !== 'window:identity'
+      )
+    ).toEqual([
+      // The History's restamp is main's whatever road the kill takes (PRDCT-4236).
+      'history:restamp'
+    ])
+  })
+})
+
+describe('the preload routes a tab’s digests to the server that runs it (PRDCT-4327)', () => {
+  const launch = { claudeProfileId: 'main-account' }
+  const messages = [{ from: 'Lane A', text: 'done' }]
+  const digests = (): Record<string, ReturnType<typeof vi.fn>> => ({
+    exchange: vi.fn(async () => ({ ok: true, needsYou: false, summary: 'server', message: null })),
+    exchangesOf: vi.fn(async () => ({})),
+    work: vi.fn(async () => ({ ok: true, title: 'server', needsYou: false, note: null })),
+    workOf: vi.fn(async () => ({})),
+    spoken: vi.fn(async () => ({ ok: true, text: 'server' })),
+    spokenOf: vi.fn(async () => ({})),
+    title: vi.fn(async () => ({ ok: true, title: 'server' })),
+    titleOf: vi.fn(async () => ({}))
+  })
+
+  it('reads them in main over IPC, launch and all, while main names no server', async () => {
+    answer({ 'server:endpoint': null })
+    await api.exchangeDigest({ sessionId: 's1', key: 'k', launch, messages })
+    await api.exchangeDigestsOf('s1')
+    await api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 })
+    await api.workDigestsOf('s1')
+    await api.spokenRendering({ sessionId: 's1', key: 'spoken-1-a', launch, markdown: 'm' })
+    await api.spokenRenderingsOf('s1')
+    await api.pageTitle({ sessionId: 's1', key: 'title-1-a', launch, message: 'q' })
+    await api.pageTitlesOf('s1')
+    expect(
+      mocks.invoke.mock.calls.filter(([c]) => c !== 'server:endpoint' && c !== 'server:external')
+    ).toEqual([
+      ['exchanges:digest', { sessionId: 's1', key: 'k', launch, messages }],
+      ['exchanges:digests-of', 's1'],
+      ['work:digest', { sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 }],
+      ['work:digests-of', 's1'],
+      ['spoken:rendering', { sessionId: 's1', key: 'spoken-1-a', launch, markdown: 'm' }],
+      ['spoken:renderings-of', 's1'],
+      ['pages:title', { sessionId: 's1', key: 'title-1-a', launch, message: 'q' }],
+      ['pages:titles-of', 's1']
+    ])
+  })
+
+  for (const mode of ['separate', 'attached'] as const)
+    it(`asks the ${mode} server once main names it, without the launch, never main`, async () => {
+      const server = digests()
+      mocks.createApiClient.mockImplementation(() => ({
+        sessions: mocks.sessions,
+        digests: server
+      }))
+      answer({ ...onServer, 'server:endpoint': { ...endpoint, mode } })
+      expect(
+        await api.exchangeDigest({ sessionId: 's1', key: 'k', launch, messages })
+      ).toMatchObject({ summary: 'server' })
+      await api.exchangeDigestsOf('s1')
+      expect(
+        await api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 1 })
+      ).toMatchObject({ title: 'server' })
+      await api.workDigestsOf('s1')
+      expect(server.exchange).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'k',
+        messages
+      })
+      expect(server.exchangesOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(server.work).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'w',
+        notes: ['n'],
+        tools: 1
+      })
+      expect(server.workOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(
+        await api.spokenRendering({ sessionId: 's1', key: 'spoken-1-a', launch, markdown: 'm' })
+      ).toMatchObject({ text: 'server' })
+      await api.spokenRenderingsOf('s1')
+      expect(
+        await api.pageTitle({ sessionId: 's1', key: 'title-1-a', launch, message: 'q' })
+      ).toMatchObject({ title: 'server' })
+      await api.pageTitlesOf('s1')
+      expect(server.spoken).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'spoken-1-a',
+        markdown: 'm'
+      })
+      expect(server.spokenOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(server.title).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's1',
+        key: 'title-1-a',
+        message: 'q'
+      })
+      expect(server.titleOf).toHaveBeenCalledExactlyOnceWith('s1')
+      expect(channels().filter((c) => /digest|spoken|pages:/.test(c))).toEqual([])
+    })
+})
+
+describe('a window whose server is its own process never reads a digest in main (PRDCT-4327)', () => {
+  const launch = { claudeProfileId: 'main-account' }
+  const messages = [{ from: 'Lane A', text: 'done' }]
+
+  it('waits for the server main has not named yet, then asks it, never main', async () => {
+    const exchange = vi.fn(async () => ({
+      ok: true,
+      needsYou: false,
+      summary: 'server',
+      message: null
+    }))
+    const exchangesOf = vi.fn(async () => ({ k: { ok: true } }))
+    mocks.createApiClient.mockImplementation(() => ({
+      sessions: mocks.sessions,
+      digests: { exchange, exchangesOf, work: vi.fn(), workOf: vi.fn() }
+    }))
+    answer({ 'server:external': true, 'server:endpoint': null })
+    const read = api.exchangeDigest({ sessionId: 's1', key: 'k', launch, messages })
+    const filed = api.exchangeDigestsOf('s1')
+    await settle()
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(exchange).not.toHaveBeenCalled()
+    // Main names its server: the waiting calls go to it.
+    answer({
+      ...onServer,
+      'server:external': true,
+      'server:endpoint': { ...endpoint, mode: 'attached' }
+    })
+    await vi.advanceTimersByTimeAsync(2_100)
+    await settle()
+    await expect(read).resolves.toMatchObject({ summary: 'server' })
+    await expect(filed).resolves.toEqual({ k: { ok: true } })
+    expect(exchange).toHaveBeenCalledExactlyOnceWith({ sessionId: 's1', key: 'k', messages })
+    expect(channels().filter((c) => /digest/.test(c))).toEqual([])
+  })
+
+  it('a server that never comes is a rejection after the wait, still never main', async () => {
+    answer({ 'server:external': true, 'server:endpoint': null })
+    const read = api.workDigest({ sessionId: 's1', key: 'w', launch, notes: ['n'], tools: 0 })
+    const settled = read.then(
+      () => 'resolved',
+      (error: Error) => error.message
+    )
+    await vi.advanceTimersByTimeAsync(15_100)
+    await expect(settled).resolves.toBe('The server did not answer')
+    expect(channels().filter((c) => /digest/.test(c))).toEqual([])
   })
 })
 
@@ -452,13 +613,30 @@ describe('a subscription is released on the transport it was taken on', () => {
 })
 
 describe('a session listener bound before the server arrives', () => {
+  it('connects at once when main names the server, not at the next tick (PRDCT-3527)', async () => {
+    answer({ 'server:endpoint': null })
+    const states = vi.fn()
+    api.onAgentState('s1', states)
+    await settle()
+    expect(mocks.push).toBeNull()
+    const named = mocks.on.mock.calls.find(([c]) => c === 'server:endpoint-named')?.[1] as
+      | (() => void)
+      | undefined
+    expect(named).toBeTypeOf('function')
+    answer({ 'server:endpoint': attachedEndpoint })
+    named!()
+    await settle()
+    // Well before the watch's two-second tick.
+    expect(mocks.push).not.toBeNull()
+    expect(mocks.push!.connect).toHaveBeenCalled()
+  })
   it('binds IPC at once and the push channel once a routed call connects', async () => {
     answer({ 'server:endpoint': null })
     const titles = vi.fn()
     const states = vi.fn()
     api.onSessionAutoTitle('s1', titles)
     api.onAgentState('s1', states)
-    expect(mocks.on.mock.calls.map(([c]) => c)).toEqual(['session:auto-title:s1', 'agent:state:s1'])
+    expect(sessionChannels()).toEqual(['session:auto-title:s1', 'agent:state:s1'])
     await settle()
     expect(mocks.push).toBeNull()
 
@@ -506,7 +684,7 @@ describe('a stream listener follows its subscription’s transport', () => {
     api.onSessionStream('s1', late)
     await settle()
     expect(mocks.push!.subscribe).not.toHaveBeenCalled()
-    expect(mocks.on.mock.calls.map(([c]) => c)).toEqual([
+    expect(sessionChannels()).toEqual([
       'sessions:stream:s1',
       'sessions:exit:s1',
       'sessions:stream:s1'
@@ -710,5 +888,66 @@ describe('the preload routes the session records', () => {
     await connectAttached()
     await api.discardSessionRecord('clave-r2')
     expect(mocks.sessions.discardRecord).toHaveBeenCalledWith('clave-r2')
+  })
+})
+
+describe('restart correlation at the preload boundary', () => {
+  it('keeps correlation outside account overrides and forwards it only on the served route', async () => {
+    answer(onServer)
+    mocks.sessions.restart = vi.fn(async () => ({ id: 's1', resumed: true, requestId: 'op-123' }))
+    expect(
+      await api.restartSession('s1', { claudeProfileId: 'play', resendRejected: true }, 'op-123')
+    ).toMatchObject({ requestId: 'op-123' })
+    expect(mocks.sessions.restart).toHaveBeenCalledExactlyOnceWith(
+      's1',
+      { claudeProfileId: 'play' },
+      true,
+      'op-123'
+    )
+    expect(channels()).not.toContain('pty:restart')
+  })
+  it('carries a provider switch as its own object on the served route, resume included (PRDCT-4300)', async () => {
+    answer(onServer)
+    mocks.sessions.restart = vi.fn(async () => ({ id: 's1', resumed: true, requestId: 'op-9' }))
+    await api.restartSession(
+      's1',
+      {
+        codexAccountId: 'c1',
+        codexAccountLabel: 'Codex 1',
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      },
+      'op-9'
+    )
+    expect(mocks.sessions.restart).toHaveBeenCalledExactlyOnceWith(
+      's1',
+      { codexAccountId: 'c1', codexAccountLabel: 'Codex 1' },
+      false,
+      'op-9',
+      false,
+      {
+        adapterId: 'codex-chat',
+        model: 'gpt-5.5',
+        resume: 'thread-7',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      }
+    )
+    expect(channels()).not.toContain('pty:restart')
+  })
+  it('carries the handoff the same way, on the IPC road too', async () => {
+    answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: false } })
+    await api.restartSession('s1', { adapterId: 'echo', model: 'echo-1', firstMessage: 'hand' })
+    expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {
+      adapterId: 'echo',
+      model: 'echo-1',
+      firstMessage: 'hand'
+    })
+  })
+  it('does not pass a request ID to the legacy IPC restart or invent an echo', async () => {
+    answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: true } })
+    expect(await api.restartSession('s1', {}, 'op-123')).not.toHaveProperty('requestId')
+    expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {})
   })
 })

@@ -5,10 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // written at spawn, dropped on a real close, kept on quit, and a restore
 // resumes the conversation under the tab's own id.
 
+/** The person's launch settings (Settings → Harnesses), per test. */
+const launch = vi.hoisted(() => ({
+  harnesses: {} as Record<string, { permissionDefault?: string }>
+}))
 const mocks = vi.hoisted(() => {
   const handles = new Map<string, { id: string }>()
   return {
     handles,
+    /** The profile `launchProfileManager.resolve` answers for a test that
+     *  needs one with flags of its own; null answers the bare chat id. */
+    resolvedProfile: null as null | Record<string, unknown>,
     backend: {
       writeEventSessionRecord: vi.fn(() => true),
       discardSessionRecord: vi.fn(),
@@ -16,6 +23,7 @@ const mocks = vi.hoisted(() => {
       setSessionWorkspace: vi.fn(),
       setSessionClaudeSessionId: vi.fn(),
       setSessionCodexThreadId: vi.fn(),
+      setSessionRuntime: vi.fn(),
       getSessionRecord: vi.fn(() => null),
       tmuxNameOf: vi.fn(() => null),
       waitForTmuxSessionGone: vi.fn(async () => undefined),
@@ -90,6 +98,12 @@ vi.mock('./sessions/chat-model-default', () => ({
   rememberedChatModel: mocks.remembered,
   rememberedChatEffort: mocks.rememberedEffort
 }))
+vi.mock('./preferences-manager', () => ({
+  preferencesManager: {
+    get: (key: string) => (key === 'harnessSettings' ? launch.harnesses : undefined),
+    set: () => {}
+  }
+}))
 vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))
@@ -100,7 +114,7 @@ vi.mock('./launch-profile-manager', () => ({
   eventsProfile: (id?: string) =>
     id === 'claude-chat' || id === 'codex-chat' ? { id, adapterId: id } : undefined,
   isEchoLaunchProfile: () => false,
-  launchProfileManager: { resolve: () => ({ id: 'claude-chat' }) }
+  launchProfileManager: { resolve: () => mocks.resolvedProfile ?? { id: 'claude-chat' } }
 }))
 
 import { ptyManager } from './pty-manager'
@@ -117,6 +131,7 @@ beforeEach(() => {
   mocks.rememberedEffort.mockReturnValue(undefined)
   mocks.hasCodexRollout.mockReturnValue(true)
   mocks.backend.getSessionRecord.mockImplementation(() => null)
+  mocks.backend.listAdoptableSessions.mockReturnValue([])
   mocks.streams.clear()
   mocks.manager.subscribe.mockImplementation((id: string, listener: (stream: unknown) => void) => {
     mocks.streams.set(id, listener)
@@ -151,6 +166,14 @@ describe('a Claude chat tab survives a restart', () => {
     )
   })
 
+  it("writes the link of a routine's run on the record, so the boot never adopts it as a tab (ADR 0004)", async () => {
+    const link = { kind: 'routine' as const, routineKey: '/w/default.clave::Health', runId: 'r1' }
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', link })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: session.id, transport: 'events', link })
+    )
+  })
+
   it('comes back under its own id, resuming its conversation', async () => {
     const session = await ptyManager.spawn('/project', {
       launchProfileId: 'claude-chat',
@@ -180,6 +203,49 @@ describe('a Claude chat tab survives a restart', () => {
 
     expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
       expect.objectContaining({ id: TAB, displayName: 'Hackathon', userRenamed: true })
+    )
+  })
+
+  it('writes the tab that opened it, and carries it when restored (#259, V1-F2)', async () => {
+    const parent = '66666666-6666-4666-8666-666666666666'
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', spawnedBy: parent })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ spawnedBy: parent })
+    )
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, spawnedBy: parent } : null) as never)
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, spawnedBy: parent })
+    )
+  })
+
+  it('carries its work when restored, a restart’s own winning (PRDCT-4123)', async () => {
+    const work = {
+      unit: 'stable-wave/lane-a',
+      kind: 'lane',
+      label: 'Lane A',
+      role: 'lead',
+      standing: 'current',
+      joinedAt: 1,
+      since: 1
+    } as const
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, work } : null) as never)
+    const restore = { launchProfileId: 'claude-chat', adoptSessionId: TAB }
+    await ptyManager.spawn('/project', { ...restore, resumeSessionId: CONVERSATION })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, work })
+    )
+    await ptyManager.kill(TAB, true)
+    const handedOver = { ...work, standing: 'superseded' as const, since: 2 }
+    await ptyManager.spawn('/project', { ...restore, work: handedOver })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, work: handedOver })
     )
   })
 
@@ -228,6 +294,26 @@ describe('a Claude chat tab survives a restart', () => {
 
     expect(mocks.backend.discardSessionRecord).toHaveBeenCalledTimes(1)
     expect(mocks.backend.discardSessionRecord).toHaveBeenCalledWith(closed.id)
+  })
+
+  it('drops the record of a stopped tab closed before it was resumed, and keeps it on quit', async () => {
+    // A restart places every stopped tab without starting it (PRDCT-4236):
+    // no process here, only its record. Closing it left the record, and the
+    // next launch brought the closed tab back.
+    const tmuxKeyed = '22222222-2222-4222-8222-222222222222'
+    mocks.backend.listAdoptableSessions.mockReturnValue([
+      { id: TAB },
+      { id: tmuxKeyed, tmuxName: 'clave-project-abc123' }
+    ] as never)
+
+    await ptyManager.kill(TAB, false)
+    expect(mocks.backend.discardSessionRecord).not.toHaveBeenCalled()
+
+    await ptyManager.kill(TAB)
+    await ptyManager.kill(tmuxKeyed)
+    expect(mocks.backend.discardSessionRecord).toHaveBeenNthCalledWith(1, TAB)
+    expect(mocks.backend.discardSessionRecord).toHaveBeenNthCalledWith(2, 'clave-project-abc123')
+    expect(mocks.manager.kill).not.toHaveBeenCalled()
   })
 })
 
@@ -513,6 +599,67 @@ describe("a chat tab's dangerous mode reaches its agent", () => {
   })
 })
 
+describe("the person's permission default reaches a chat (PRDCT-4424)", () => {
+  const optionsOf = (adapter: {
+    spawn: { mock: { calls: unknown[][] } }
+  }): Record<string, unknown> =>
+    (adapter.spawn.mock.calls.at(-1) as unknown as [{ options: Record<string, unknown> }])[0]
+      .options
+  beforeEach(() => {
+    launch.harnesses = {}
+  })
+
+  it('hands a Codex chat its rung, and a Claude chat its mode', async () => {
+    launch.harnesses = {
+      codex: { permissionDefault: 'workspace-write' },
+      claude: { permissionDefault: 'acceptEdits' }
+    }
+    const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }
+    mocks.manager.getAdapter.mockReturnValue(codex)
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', codexMode: true })
+    expect(optionsOf(codex)).toMatchObject({ permissionRung: 'workspace-write' })
+    expect(optionsOf(codex).permissionMode).toBeUndefined()
+    mocks.manager.getAdapter.mockReturnValue(mocks.claude)
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'acceptEdits' })
+  })
+
+  it("lets the spawn's own mode and the dangerous flag win, and drops a rung off the ladder", async () => {
+    launch.harnesses = { claude: { permissionDefault: 'plan' } }
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', permissionMode: 'auto' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'auto' })
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', dangerousMode: true })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'bypassPermissions' })
+    launch.harnesses = { claude: { permissionDefault: 'workspace-write' } }
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude).permissionMode).toBeUndefined()
+  })
+
+  it('applies no default rung to a profile that sets its own permissions (verifier, round 3)', async () => {
+    launch.harnesses = { claude: { permissionDefault: 'bypassPermissions' } }
+    mocks.resolvedProfile = {
+      id: 'claude-chat',
+      name: 'Claude (chat)',
+      family: 'claude',
+      command: ['claude'],
+      additionalArgs: ['--permission-mode', 'plan']
+    }
+    try {
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+      expect(optionsOf(mocks.claude).permissionMode).toBeUndefined()
+      expect(optionsOf(mocks.claude).dangerousMode).not.toBe(true)
+    } finally {
+      mocks.resolvedProfile = null
+    }
+  })
+
+  it('turns the bypass rung into the dangerous flag', async () => {
+    launch.harnesses = { claude: { permissionDefault: 'bypassPermissions' } }
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'bypassPermissions' })
+  })
+})
+
 describe('a chat starts on the effort last picked in a composer', () => {
   const launched = (): unknown =>
     (mocks.claude.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { effort?: string } })
@@ -538,5 +685,224 @@ describe('a chat starts on the effort last picked in a composer', () => {
   it('starts on the CLI default when nothing was picked', async () => {
     await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     expect(launched()).toBeUndefined()
+  })
+})
+
+// PRDCT-4191: a chat moved to another mode, model or effort came back from a
+// Resume in the ones it was launched with. The provider's acknowledgements
+// are written back to the record, and a restart reads them from there.
+describe('a chat tab keeps what it was running on, for the spawn that brings it back', () => {
+  const listening = async (): Promise<{ id: string; emit: (event: unknown) => void }> => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    return {
+      id: session.id,
+      emit: (event) => mocks.streams.get(session.id)?.({ kind: 'event', event })
+    }
+  }
+
+  it('writes the mode the provider reports to the record', async () => {
+    const { id, emit } = await listening()
+    emit({ type: 'permission_mode', mode: 'plan', modes: [] })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenCalledExactlyOnceWith(id, {
+      permissionMode: 'plan'
+    })
+  })
+
+  it('writes the effort the provider reports, null included', async () => {
+    const { id, emit } = await listening()
+    emit({ type: 'effort', effort: 'high' })
+    emit({ type: 'effort', effort: null })
+    expect(mocks.backend.setSessionRuntime.mock.calls).toEqual([
+      [id, { effort: 'high' }],
+      [id, { effort: null }]
+    ])
+  })
+
+  it("writes a meta's model, and nothing for a meta naming none", async () => {
+    const { id, emit } = await listening()
+    // "The provider's default" refines nothing, so it never erases the model.
+    emit({ type: 'session_meta', model: null, providerSessionId: null })
+    expect(mocks.backend.setSessionRuntime).not.toHaveBeenCalled()
+    emit({ type: 'session_meta', model: 'sonnet', providerSessionId: null })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenCalledExactlyOnceWith(id, {
+      model: 'sonnet'
+    })
+  })
+
+  it('a restart carries the opener of the spawn, else the record', async () => {
+    const opener = '77777777-7777-4777-8777-777777777777'
+    const opened = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      openedBy: opener
+    })
+    expect(ptyManager.restartSpawn(opened.id, {})?.options.openedBy).toBe(opener)
+    // A spawn made without it (an older restore): the record still knows.
+    const restored = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === restored.id ? { id, openedBy: opener } : null) as never)
+    expect(ptyManager.restartSpawn(restored.id, {})?.options.openedBy).toBe(opener)
+  })
+
+  it("a restart runs in the record's reported mode, not the launch's", async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      model: 'opus',
+      dangerousMode: false
+    })
+    let record: Record<string, unknown> = { permissionMode: 'bypassPermissions', model: 'sonnet' }
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id, ...record } : null) as never)
+    expect(ptyManager.restartSpawn(session.id, {})?.options).toMatchObject({
+      dangerousMode: true,
+      model: 'sonnet'
+    })
+    expect(ptyManager.restartSpawn(session.id, {})?.options.permissionMode).toBeUndefined()
+    record = { dangerousMode: true, permissionMode: 'plan', effort: 'low' }
+    expect(ptyManager.restartSpawn(session.id, {})?.options).toMatchObject({
+      dangerousMode: false,
+      permissionMode: 'plan',
+      effort: 'low'
+    })
+  })
+})
+
+describe('a restart that moves the tab to another provider (PRDCT-4300)', () => {
+  const codex = {
+    id: 'codex-chat',
+    provider: 'codex',
+    spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+    kill: vi.fn(async () => undefined)
+  }
+  it('rebuilds the spawn on the other adapter under the same id, resuming the converted thread, and the record changes adapter', async () => {
+    mocks.manager.getAdapter.mockImplementation(((id: string) =>
+      id === 'codex-chat' ? codex : mocks.claude) as never)
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      model: 'claude-opus-5-5',
+      claudeProfileId: 'work',
+      claudeProfileLabel: 'Work',
+      configDir: '/cfg/work',
+      spawnedBy: '77777777-7777-4777-8777-777777777777'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id
+        ? { id, adapterId: 'claude-chat', claudeSessionId: session.claudeSessionId }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {
+      adapterId: 'codex-chat',
+      model: 'gpt-5.5',
+      resume: 'thread-7',
+      codexAccountId: 'c1',
+      codexAccountLabel: 'Codex 1',
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    })
+    expect(plan).toMatchObject({ cwd: '/project', resumed: true })
+    expect(plan?.options).toMatchObject({
+      adoptSessionId: session.id,
+      codexMode: true,
+      claudeMode: false,
+      launchProfileId: 'codex-chat',
+      model: 'gpt-5.5',
+      resumeSessionId: 'thread-7',
+      codexAccountId: 'c1',
+      codexAccountLabel: 'Codex 1',
+      spawnedBy: '77777777-7777-4777-8777-777777777777',
+      continuedFrom: { provider: 'claude', road: 'converted' }
+    })
+    expect(plan?.options.claudeProfileId).toBeUndefined()
+    expect(plan?.options.claudeSessionId).toBeUndefined()
+    // The same spawn made again: the same tab, now a Codex chat whose record
+    // says so, resuming the thread, with the card's note on it.
+    await ptyManager.kill(session.id)
+    const moved = await ptyManager.spawn(plan!.cwd, plan!.options)
+    expect(moved.id).toBe(session.id)
+    expect(codex.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        adapterId: 'codex-chat',
+        provider: 'codex',
+        options: expect.objectContaining({ resume: 'thread-7', model: 'gpt-5.5' })
+      })
+    )
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        adapterId: 'codex-chat',
+        codexMode: true,
+        claudeMode: false,
+        codexThreadId: 'thread-7',
+        codexAccountId: 'c1',
+        model: 'gpt-5.5',
+        continuedFrom: { provider: 'claude', road: 'converted' }
+      })
+    )
+    const written = (
+      mocks.backend.writeEventSessionRecord.mock.lastCall as unknown[] | undefined
+    )?.[0]
+    expect(written).not.toHaveProperty('claudeSessionId', session.claudeSessionId)
+  })
+  it('a restart that names no adapter keeps the provider, the conversation and the card', async () => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id
+        ? { id, adapterId: 'claude-chat', continuedFrom: { provider: 'codex', road: 'handoff' } }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'play' })
+    expect(plan?.options).toMatchObject({
+      launchProfileId: 'claude-chat',
+      resumeSessionId: session.claudeSessionId,
+      continuedFrom: { provider: 'codex', road: 'handoff' }
+    })
+    expect(plan?.options.codexMode).toBeFalsy()
+    expect(plan?.options.claudeMode).not.toBe(false)
+  })
+  it('a handoff opens the fresh conversation with the message, and resumes nothing', async () => {
+    mocks.manager.getAdapter.mockImplementation(((id: string) =>
+      id === 'codex-chat' ? codex : mocks.claude) as never)
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id, adapterId: 'claude-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {
+      adapterId: 'codex-chat',
+      firstMessage: '# Continued from Claude · handoff',
+      continuedFrom: { provider: 'claude', road: 'handoff' }
+    })
+    expect(plan).toMatchObject({ resumed: false })
+    expect(plan?.options.resumeSessionId).toBeUndefined()
+    expect(plan?.options.initialPrompt).toBe('# Continued from Claude · handoff')
+    expect(plan?.options.initialInput).toBeUndefined()
+  })
+})
+
+describe('bypass kept reachable on the spawn and the record (PRDCT-4191, round 3 C5)', () => {
+  it('passes allowDangerous to a Claude chat and records bypass as available', async () => {
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      permissionMode: 'plan',
+      allowDangerous: true
+    })
+    expect(mocks.claude.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ permissionMode: 'plan', allowDangerous: true })
+      })
+    )
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dangerousMode: true, permissionMode: 'plan' })
+    )
+  })
+  it('passes nothing of it to a chat launched without it', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', permissionMode: 'plan' })
+    const options = (
+      mocks.claude.spawn.mock.calls.at(-1)![0] as unknown as { options: Record<string, unknown> }
+    ).options
+    expect(options.allowDangerous).toBeUndefined()
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dangerousMode: false })
+    )
   })
 })

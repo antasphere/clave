@@ -5,9 +5,9 @@ import { readFileSync } from 'node:fs'
  * The conversation view's motion, held to the design-engineering rules it was
  * built on: every arriving thing settles in rather than pops (@starting-style,
  * opacity and translate only, so the scroller's pin measures the same
- * heights); every button acknowledges a press with the shared dip; a surface
- * grows from the point that opened it; and reduced motion keeps the fades and
- * drops the travel. Each assertion goes red when the rule it names is deleted.
+ * heights); a surface grows from the point that opened it; and reduced motion
+ * keeps the fades and drops the travel. Each assertion goes red when the rule
+ * it names is deleted. A press moves nothing: see press-holds-still.test.ts.
  */
 // The block is marked by a comment, so it is found before the comments go.
 const chat = readFileSync(
@@ -34,9 +34,13 @@ const ARRIVALS = [
   '.chat-row[data-arrive] > *',
   '.chat-row[data-arrive] .term-turn > *',
   '.chat-prompt',
-  '.chat-composer-files .chat-attachment'
+  '.chat-composer-files .chat-attachment',
+  // The card of the agent's working notes (PRDCT-4212): the card that has
+  // just folded, the digest's title landing, the note that needs the reader.
+  '.work-stretch[data-fresh]',
+  '.stretch-title-words',
+  '.stretch-flag'
 ]
-const PRESSED = ['.chat-jump-end', '.chat-turn-copy', '.chat-composer-tool', '.chat-model-trigger']
 
 describe('chat motion', () => {
   it.each(ARRIVALS)('%s settles in from a starting style, off the layout', (selector) => {
@@ -49,17 +53,21 @@ describe('chat motion', () => {
   it('the drop overlay comes up rather than snapping over the pane', () => {
     expect(block('.chat-drop-overlay')).toMatch(/@starting-style\s*\{[^}]*opacity:\s*0/)
   })
-  it.each(PRESSED)('%s dips on press', (selector) => {
-    expect(chat).toMatch(
-      new RegExp(
-        `${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:active[^{]*\\{[^}]*scale:\\s*0\\.9\\d`
-      )
-    )
-    expect(block(selector)).toMatch(/transition:[^;]*scale/)
-  })
   it('the jump control rises from the foot it sits over, not from a menu origin', () => {
     expect(block('.chat-jump-end')).toMatch(/animation:\s*chat-rise/)
     expect(block('@keyframes chat-rise')).toMatch(/translate:\s*0\s+calc/)
+  })
+  it('a card of working notes opens by gliding to its height, its steps rising in turn', () => {
+    expect(block('.stretch-card::details-content')).toMatch(/transition:[^;]*block-size/)
+    expect(block('.stretch-card[open] .stretch-step')).toMatch(/animation-delay:[^;]*--stretch-i/)
+    expect(block('.stretch-card[open] .stretch-step')).toMatch(/opacity:\s*1/)
+    // The rail and the steps are the exchange timeline's geometry, so the
+    // two cards read as one family.
+    expect(block('.stretch-step')).toMatch(/grid-template-columns:[^;]*--stretch-rail/)
+  })
+  it('a note that needs the reader is whole on the card’s face, never clamped', () => {
+    expect(block('.stretch-flag-words')).not.toMatch(/line-clamp|max-height|max-block-size/)
+    expect(block('.stretch-flag-words')).toMatch(/white-space:\s*pre-line/)
   })
   it('a tool row reveals what it opens to, on every opening', () => {
     expect(chat).toMatch(/details\[open\] > \.chat-tool-panel \{[^}]*animation:\s*chat-reveal/)
@@ -74,6 +82,16 @@ describe('chat motion', () => {
   it('reduced motion keeps every fade and drops every move', () => {
     for (const selector of [...ARRIVALS, '.chat-drop-overlay'])
       expect(reduced, `${selector} under reduced motion`).toContain(selector)
+    // The card of working notes: its glide and its rising steps stop too.
+    const stretchReduced = chat.slice(
+      chat.indexOf('@media (prefers-reduced-motion: reduce)', chat.indexOf('.stretch-card'))
+    )
+    for (const selector of ['.stretch-card::details-content', '.stretch-step', '.stretch-chevron'])
+      expect(stretchReduced, `${selector} under reduced motion`).toMatch(
+        new RegExp(
+          `${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^{]*\\{[^}]*transition:\\s*none`
+        )
+      )
     expect(reduced).toMatch(/transition-property:\s*opacity/)
     expect(reduced).toMatch(/@starting-style\s*\{[^}]*translate:\s*none/)
     expect(reduced).toMatch(/animation-name:\s*scrim-in/)
