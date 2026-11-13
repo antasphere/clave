@@ -107,7 +107,10 @@ describe('a Claude account as its pool reads it', () => {
 describe('a Codex account as its pool reads it', () => {
   it('a ChatGPT login is a subscription that reports its caps', () => {
     expect(
-      codexConnection({ id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true }, fresh)
+      codexConnection(
+        { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+        fresh
+      )
     ).toEqual({
       id: 'default',
       label: 'Default',
@@ -148,7 +151,10 @@ describe('a Codex account as its pool reads it', () => {
 
 describe('the pool rule reads the shape unchanged', () => {
   const pool: Connection[] = [
-    codexConnection({ id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true }, spent),
+    codexConnection(
+      { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+      spent
+    ),
     codexConnection({ id: 'k1', label: 'OpenAI 2', kind: 'apiKey', hasCredential: true }),
     codexConnection({ id: 'c2', label: 'OpenAI 3', kind: 'chatgpt', hasCredential: true }, fresh)
   ]
