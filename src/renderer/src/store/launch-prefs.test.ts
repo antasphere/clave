@@ -117,6 +117,15 @@ describe('parseSetup — what a persisted preference file is allowed to say', ()
   it('ignores a non-string account id', () => {
     expect(parseSetup({ kind: 'claude', claudeProfileId: 7 })?.claudeProfileId).toBeUndefined()
   })
+
+  it('keeps a provider connection for Pi and OpenCode alone (PRDCT-4496)', () => {
+    expect(
+      parseSetup({ kind: 'pi', connectionId: 'c1', connectionLabel: 'DeepSeek' })
+    ).toMatchObject({ connectionId: 'c1', connectionLabel: 'DeepSeek' })
+    expect(parseSetup({ kind: 'opencode', connectionId: 'c1' })?.connectionId).toBe('c1')
+    expect(parseSetup({ kind: 'claude', connectionId: 'c1' })?.connectionId).toBeUndefined()
+    expect(parseSetup({ kind: 'pi', connectionId: 7 })?.connectionId).toBeUndefined()
+  })
 })
 
 describe('getLastAgentSetup and the recommended account', () => {
@@ -149,6 +158,14 @@ describe('getLastAgentSetup and the recommended account', () => {
       model: 'claude-opus-5-5'
     })
     expect(getLastAgentSetup('cx')).toEqual({ kind: 'codex', dangerousMode: false })
+    // A provider connection goes the same way as an account (PRDCT-4496).
+    useLaunchPrefsStore.setState({
+      byWorkspace: {
+        ws: remembered,
+        pi: { kind: 'pi', dangerousMode: false, connectionId: 'c1', connectionLabel: 'DeepSeek' }
+      }
+    })
+    expect(getLastAgentSetup('pi')).toEqual({ kind: 'pi', dangerousMode: false })
     // The stored memory is untouched: turning the setting off brings it back.
     expect(useLaunchPrefsStore.getState().byWorkspace.ws).toEqual(remembered)
     useAccountPolicyStore.setState({ useRecommendedAccount: false })

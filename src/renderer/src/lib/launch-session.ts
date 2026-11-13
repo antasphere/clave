@@ -116,6 +116,19 @@ type SpawnOptions = NonNullable<Parameters<Window['electronAPI']['spawnSession']
  *  Harnesses set as the harness's default. `claude agents` takes neither: it
  *  is a subcommand with no model or permission flag of its own. Cmd+Y keeps
  *  its bypass: a dangerous setup never carries a rung. */
+/** The stored provider connection a Pi or OpenCode setup names, as the
+ *  spawn options carry it (PRDCT-4496): its id and name, never its key; the
+ *  host resolves the key from the id. Nothing for another harness. */
+export function providerConnectionFields(
+  setup: AgentSetup | null
+): Pick<SpawnOptions, 'connectionId' | 'connectionLabel'> {
+  if (!setup?.connectionId || (setup.kind !== 'pi' && setup.kind !== 'opencode')) return {}
+  return {
+    connectionId: setup.connectionId,
+    ...(setup.connectionLabel ? { connectionLabel: setup.connectionLabel } : {})
+  }
+}
+
 export function setupSpawnFlags(
   setup: AgentSetup | null,
   launchProfileId?: string,
@@ -284,6 +297,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
       ...(codexAccount
         ? { codexAccountId: codexAccount.id, codexAccountLabel: codexAccount.label }
         : {}),
+      ...providerConnectionFields(req.setup),
       ...(workspace ? { workspaceId: workspace.id } : {})
     })
     id = info.id
@@ -391,6 +405,7 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
     ...(profile ? claudeProfileSpawnFields(profile) : {}),
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
   }
+  const connection = providerConnectionFields(req.setup)
 
   const previousIds = req.exactProfile
     ? new Set((await window.electronAPI.sessionsList()).map((session) => session.id))
@@ -404,7 +419,8 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
       launchProfileId,
       ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
-      ...profileFields
+      ...profileFields,
+      ...connection
     })
     if (req.exactProfile && sessionInfo.launchProfileId !== launchProfileId) {
       let cleanupSucceeded = false
@@ -460,6 +476,7 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
         claudeProfileLabel: profile?.label,
         codexAccountId: codexAccount?.id,
         codexAccountLabel: codexAccount?.label,
+        ...connection,
         // Persisted so Duplicate re-primes the clone with the same prompt.
         initialPrompt,
         sessionType: 'local',

@@ -70,7 +70,12 @@ vi.mock('../store/launch-prefs', () => ({
   agentSetupToModes: () => f.modes,
   rememberAgentSetup: f.remember
 }))
-import { launchSession, setupSpawnFlags, transportProfileFor } from './launch-session'
+import {
+  launchSession,
+  providerConnectionFields,
+  setupSpawnFlags,
+  transportProfileFor
+} from './launch-session'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { useLaunchProfileStore } from '../store/launch-profile-store'
 import { DEFAULT_LAUNCH_PROFILE_PREFERENCES } from '../../../shared/agent-launch'
@@ -331,6 +336,30 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     expect(f.spawn.mock.calls[0][1]).toMatchObject({ permissionMode: 'workspace-write' })
   })
 
+  it('carries a Pi or OpenCode provider connection to the spawn, its id and name alone (PRDCT-4496)', async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.spawn.mockResolvedValue({ id: 'new', cwd: '/private/triage', folderName: 'triage' })
+    await launchSession({
+      ...request,
+      setup: {
+        kind: 'opencode',
+        dangerousMode: false,
+        model: 'deepseek-chat',
+        connectionId: 'c1',
+        connectionLabel: 'My DeepSeek'
+      },
+      throwOnError: true
+    })
+    expect(f.spawn.mock.calls[0][1]).toMatchObject({
+      connectionId: 'c1',
+      connectionLabel: 'My DeepSeek'
+    })
+    // Another harness never carries one, whatever the setup says.
+    expect(
+      providerConnectionFields({ kind: 'claude', dangerousMode: false, connectionId: 'c1' })
+    ).toEqual({})
+  })
+
   it('rejects a different account from the existing pool helper before any spawn', async () => {
     vi.stubGlobal('window', {
       electronAPI: { spawnSession: f.spawn, sessionsList: f.list, killSession: f.kill }
@@ -459,6 +488,18 @@ describe('launches in a server workspace (#241)', () => {
     expect(options).not.toHaveProperty('codexAccountId')
     useServerSettingsStore.setState({ byServer: {} })
     registerServerSettingsLoader(async () => undefined)
+  })
+
+  it('carries a Pi or OpenCode provider connection to the server (PRDCT-4496)', async () => {
+    withServer()
+    await launchSession({
+      setup: { kind: 'pi', dangerousMode: false, connectionId: 'c1', connectionLabel: 'Kimi' },
+      cwd: { kind: 'workspace-root' }
+    })
+    expect(f.fleetStart.mock.calls[0][2]).toMatchObject({
+      connectionId: 'c1',
+      connectionLabel: 'Kimi'
+    })
   })
 
   it('asks for a folder on the server, opened at the workspace root, for ⌥', async () => {
