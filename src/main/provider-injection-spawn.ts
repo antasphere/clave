@@ -7,7 +7,9 @@ import { PROVIDER_COMPANY_BY_ID } from './models-catalog-overlay'
 import { lazySettingsPorts } from './ports/registry'
 import { providerInjection, type ConnectionForSpawn } from './provider-injection'
 import { syncPiConnectionDir } from './provider-injection-pi-dir'
+import { setConnectionRefSource, setConnectionValueSource } from './provider-usage'
 import { getLoginShellEnv } from './sessions/adapters/pty-backend'
+import { TEST_NO_ACTIVATE } from './test-mode'
 
 /**
  * The spawn's half of a connection (PRDCT-4496), the way
@@ -27,6 +29,15 @@ let connectionSource: ConnectionSource | null = null
 /** The store of connections plugs itself in here; none until it does. */
 export function setConnectionSource(fn: ConnectionSource): void {
   connectionSource = fn
+}
+
+// The test hooks' namespace (`--test-no-activate` only): a spec plugs made-up
+// connections here until the connection store exists. Consulted by the
+// in-process server alone, as the settings hook is (settings/shell-source.ts).
+if (TEST_NO_ACTIVATE) {
+  const hooks = ((globalThis as { __claveE2E?: Record<string, unknown> }).__claveE2E ??= {})
+  hooks.providerInjection = { setConnectionSource }
+  hooks.providerUsage = { setConnectionRefSource, setConnectionValueSource }
 }
 
 export interface ProviderInjectionSpawnDeps {
