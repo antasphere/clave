@@ -480,6 +480,9 @@ describe('an OpenCode chat on a stored connection (PRDCT-4496 with PRDCT-4427)',
       connectionId: 'conn-1',
       model: 'kimi-code-plan-global/k3'
     })
+    // And the adapter is handed it as it is: the model the agent opens on
+    // (checked on the real opencode acp 2.3.0), so it switches nothing.
+    expect(spawnOptions().model).toBe('kimi-code-plan-global/k3')
     injection.forSpawn.mockReset()
     injection.forSpawn.mockImplementation(async () => ({}))
   })
