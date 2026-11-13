@@ -28,6 +28,7 @@ vi.mock('./chat-model-default', () => ({ rememberChatEffort: vi.fn(), rememberCh
 vi.mock('./chat-view-default', () => ({ rememberChatView: vi.fn() }))
 vi.mock('./records', () => ({ sessionRecords: {} }))
 import { createSessionHost } from './host'
+import { rememberChatModel } from './chat-model-default'
 
 const record: Session = {
   id: 'a',
@@ -121,5 +122,20 @@ describe('the host tells a late subscriber the model (PRDCT-4427)', () => {
     host.subscribe('a', late)
     expect(metaOf(late.mock.calls)).toEqual(['kimi-code-plan-global/k3.1-pro'])
     expect(manager.meta('absent')).toBeNull()
+  })
+
+  it('an OpenCode pick reaches the agent and is not the next chat’s default', async () => {
+    const { manager } = setup()
+    const write = vi.spyOn(manager, 'write')
+    const host = createSessionHost({
+      manager,
+      lifecycle: { spawn: vi.fn(), stop: vi.fn(), resize: vi.fn(), writeTerminal: vi.fn() }
+    })
+    await host.write('a', { type: 'set_model', model: 'kimi-code-plan-global/k3.1-pro' })
+    expect(write).toHaveBeenCalledWith('a', {
+      type: 'set_model',
+      model: 'kimi-code-plan-global/k3.1-pro'
+    })
+    expect(rememberChatModel).not.toHaveBeenCalled()
   })
 })

@@ -152,8 +152,12 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
         // A move the policy makes at a cap says `remember: false` (PRDCT-4302):
         // Opus at the Fable cap is this tab's way on, not the person's pick.
         manager.write(id, value)
-        const adapterId = manager.get(id)?.adapterId
-        if (adapterId && value.remember !== false) rememberChatModel(adapterId, value.model)
+        const { adapterId, provider } = manager.get(id) ?? {}
+        // An OpenCode or Pi pick stays the tab's (PRDCT-4427): its models are
+        // its connection's provider's, which the next chat may not run on.
+        const own = provider === 'opencode' || provider === 'pi'
+        if (adapterId && !own && value.remember !== false)
+          rememberChatModel(adapterId, value.model)
         return
       }
       if (value.type === 'set_effort') {
