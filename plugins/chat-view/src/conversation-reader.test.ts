@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { TimelinePage } from '@clave/contract/timeline'
-import type { SessionPosition, SessionStream } from '../../../src/shared/session-model'
+import type {
+  SessionEvent,
+  SessionPosition,
+  SessionStream
+} from '../../../src/shared/session-model'
 import {
   conversationReader,
   HANDOFF_MAX_BYTES,
@@ -336,7 +340,7 @@ describe('the positioned snapshot/live handoff', () => {
       input: { tool: 'clave_request_input' },
       options: [{ id: 'answer', label: 'Approve' }]
     }
-    const update = (name: string) => ({
+    const update = (name: string): Extract<SessionEvent, { type: 'permission_updated' }> => ({
       type: 'permission_updated' as const,
       id: request.id,
       answers: { name }
