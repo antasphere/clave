@@ -604,6 +604,45 @@ export interface ClaudeAccount {
   tokenInvalid: boolean
 }
 
+// ── Lane B (harness wave): provider connections ──
+/** The wire format a provider endpoint speaks (`@clave/contract/settings`). */
+export type ProviderWireFormat = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
+/** The ten cards of the catalogue (`@clave/contract/settings`, `PROVIDER_COMPANIES`). */
+export type ProviderCompanyId =
+  | 'moonshot'
+  | 'zai'
+  | 'mistral'
+  | 'deepseek'
+  | 'minimax'
+  | 'alibaba'
+  | 'openrouter'
+  | 'vercel-ai-gateway'
+  | 'ollama'
+  | 'generic'
+/** A provider connection as the renderer sees it (PRDCT-4426), field by
+ *  field the contract's `ProviderConnectionView`: never the key. */
+export interface ProviderConnection {
+  id: string
+  label: string
+  company: ProviderCompanyId
+  kind: 'key'
+  /** The pool this connection belongs to: the company's id. */
+  pool: ProviderCompanyId
+  endpoints: { wireFormat: ProviderWireFormat; baseUrl: string }[]
+  /** False for Ollama, which takes no key. */
+  needsKey: boolean
+  hasKey: boolean
+  keySetAt: number | null
+  createdAt: number
+}
+/** A new card: a company of the catalogue, Ollama at a base URL, or a generic endpoint. */
+export interface ProviderConnectionAddInput {
+  company: ProviderCompanyId
+  label?: string
+  baseUrl?: string
+  wireFormat?: ProviderWireFormat
+}
+
 /** A Codex account as the renderer sees it (ADR 0002): a home per account,
  *  the Default being the machine's own `~/.codex`. */
 export interface CodexAccount {
@@ -1648,6 +1687,23 @@ export interface ElectronAPI extends FleetDesktopAPI {
   // ── Lane C: settings behind ports ──
 
   // ── Lane F: the shell ──
+
+  // ── Lane B (harness wave): provider connections ──
+  /** This Mac's provider connections (PRDCT-4426); a server's are `fleetProviderConnections`. */
+  providerConnectionsList: () => Promise<ProviderConnection[]>
+  /** Refuses (the sentence in the error) an unknown company, a generic one
+   *  without its base URL and wire format, or a base URL that is not http(s). */
+  providerConnectionAdd: (input: ProviderConnectionAddInput) => Promise<ProviderConnection>
+  /** Refuses an unknown connection ("No such connection."). */
+  providerConnectionRename: (id: string, label: string) => Promise<ProviderConnection>
+  /** Removing a connection forgets its key with it. False for an unknown id. */
+  providerConnectionRemove: (id: string) => Promise<boolean>
+  /** The key goes in here and comes back in nothing: the answer says `hasKey`. */
+  providerConnectionSetKey: (id: string, apiKey: string) => Promise<ProviderConnection>
+  /** The whole list after any change, never a key. */
+  onProviderConnectionsChanged: (
+    callback: (connections: ProviderConnection[]) => void
+  ) => () => void
 }
 
 declare global {

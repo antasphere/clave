@@ -55,4 +55,10 @@ export const SettingsLive = HttpApiBuilder.group(ClaveApi, 'settings', (handlers
     .handle('updateWorkspaceRegistry', HttpCqrs.command(S.UpdateWorkspaceRegistry))
     .handle('updateWorkspacePins', HttpCqrs.command(S.UpdateWorkspacePins))
     .handle('setLastActiveWorkspace', HttpCqrs.command(S.SetLastActiveWorkspace))
+    // ── Lane B (harness wave): provider connections ──
+    .handle('listProviderConnections', HttpCqrs.query(S.ListProviderConnections))
+    .handle('addProviderConnection', HttpCqrs.command(S.AddProviderConnection))
+    .handle('renameProviderConnection', HttpCqrs.command(S.RenameProviderConnection))
+    .handle('removeProviderConnection', HttpCqrs.command(S.RemoveProviderConnection))
+    .handle('setProviderConnectionKey', HttpCqrs.command(S.SetProviderConnectionKey))
 )

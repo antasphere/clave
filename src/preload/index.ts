@@ -37,7 +37,10 @@ import type {
   ProviderChoice,
   ProviderSwitchPlan,
   RestartOverridesInput,
-  SessionInfo
+  SessionInfo,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnection,
+  ProviderConnectionAddInput
 } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
@@ -2992,11 +2995,45 @@ const electronAPI = {
   // ── Triage (issue #227): over IPC only, never routed to the server, whose
   // failure is one of the things a triage must be able to describe ──
   triagePrepare: () => ipcRenderer.invoke(TRIAGE_IPC.prepare) as Promise<TriagePrepareResult>,
-  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>
+  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>,
 
   // ── Lane D: the settings are served (their methods sit in their sections above) ──
 
   // ── Lane F: the shell ──
+
+  // ── Lane B (harness wave): provider connections ──
+  // PRDCT-4426: the key goes in once, in `providerConnectionSetKey`, and comes
+  // back in no answer and no event, on either road: a connection says `hasKey`.
+  providerConnectionsList: viaServer<[], ProviderConnection[]>({
+    ipc: () => ipcRenderer.invoke('provider-connections:list'),
+    server: async ({ api }) =>
+      loose<ProviderConnection[]>([...(await api.settings.providerConnections.list())])
+  }),
+  providerConnectionAdd: viaServer<[ProviderConnectionAddInput], ProviderConnection>({
+    ipc: (input) => ipcRenderer.invoke('provider-connections:add', input),
+    server: async ({ api }, input) =>
+      loose<ProviderConnection>(await api.settings.providerConnections.add(input))
+  }),
+  providerConnectionRename: viaServer<[string, string], ProviderConnection>({
+    ipc: (id, label) => ipcRenderer.invoke('provider-connections:rename', id, label),
+    server: async ({ api }, id, label) =>
+      loose<ProviderConnection>(await api.settings.providerConnections.rename(id, label))
+  }),
+  providerConnectionRemove: viaServer<[string], boolean>({
+    ipc: (id) => ipcRenderer.invoke('provider-connections:remove', id),
+    server: ({ api }, id) => api.settings.providerConnections.remove(id)
+  }),
+  providerConnectionSetKey: viaServer<[string, string], ProviderConnection>({
+    ipc: (id, apiKey) => ipcRenderer.invoke('provider-connections:set-key', id, apiKey),
+    server: async ({ api }, id, apiKey) =>
+      loose<ProviderConnection>(await api.settings.providerConnections.setKey(id, apiKey))
+  }),
+  onProviderConnectionsChanged: viaServerEvent(
+    'provider-connections:changed',
+    'accounts.providers_changed',
+    (event) => [...event.connections] as unknown[],
+    async (api) => [[...(await api.settings.providerConnections.list())] as unknown[]]
+  )
 }
 
 contextBridge.exposeInMainWorld(

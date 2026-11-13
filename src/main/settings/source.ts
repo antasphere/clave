@@ -61,6 +61,12 @@ import type {
   HelperPreferenceView
 } from '../helpers/preferences'
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
+// ── Lane B (harness wave): provider connections ──
+import type {
+  ProviderCompanyId,
+  ProviderConnectionView,
+  ProviderWireFormat
+} from '@clave/contract/settings'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -130,6 +136,30 @@ export interface SettingsManagers {
   /** Where this process owns the Antasphere login (the server's own process,
    *  in-process or standalone); absent, every account call is refused. */
   antasphere?: AntasphereAccountLike
+  // ── Lane B (harness wave): provider connections ──
+  /** The provider connections of this host (PRDCT-4426): the keys sealed on
+   *  its own secret port; absent, refused. Loaded on the first call, as the
+   *  login jobs are: the manager reads its catalogue from
+   *  `@clave/contract/settings` at runtime, which reaches Effect, and this
+   *  seam loads nothing of Effect at boot (`boot-graph.test.ts`). */
+  providerConnections?: () => Promise<ProviderConnectionsLike>
+}
+
+// ── Lane B (harness wave): provider connections ──
+/** The provider connections of a host as the source needs them
+ *  (`../provider-connections.ts`'s `ProviderConnectionsManager`). */
+export interface ProviderConnectionsLike {
+  list(): ProviderConnectionView[]
+  add(input: {
+    company: ProviderCompanyId
+    label?: string
+    baseUrl?: string
+    wireFormat?: ProviderWireFormat
+  }): ProviderConnectionView
+  rename(id: string, label: string): ProviderConnectionView | undefined
+  remove(id: string): Promise<boolean>
+  setKey(id: string, apiKey: string): Promise<ProviderConnectionView>
+  onChange(listener: (connections: ProviderConnectionView[]) => void): () => void
 }
 
 /** The machine's own login, when a usage read names no account. */
@@ -243,6 +273,35 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       instance
     })
     return { workspaces, pins, revision, instance }
+  }
+
+  // ── Lane B (harness wave): provider connections ──
+  // PRDCT-4426: the manager, loaded once on first use (every change goes
+  // through a call, which loads it), each change of its list one event from
+  // then on, never a key.
+  let connections: Promise<ProviderConnectionsLike> | null = null
+  const providerConnections = (): Promise<ProviderConnectionsLike> => {
+    const load = m.providerConnections
+    if (!load) {
+      return Promise.reject(
+        new SettingsUnavailable(
+          'providerConnections',
+          'This server stores no provider connections.'
+        )
+      )
+    }
+    if (!connections) {
+      const loading = load().then((manager) => {
+        manager.onChange((list) => emit({ _tag: 'accounts.providers_changed', connections: list }))
+        return manager
+      })
+      connections = loading
+      // A load that failed is tried again at the next call.
+      loading.catch(() => {
+        if (connections === loading) connections = null
+      })
+    }
+    return connections
   }
 
   return {
@@ -396,6 +455,18 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       return () => {
         listeners.delete(listener)
       }
+    },
+    // ── Lane B (harness wave): provider connections ──
+    providerConnections: {
+      list: async () => (await providerConnections()).list(),
+      add: async (input) => (await providerConnections()).add({ ...input }),
+      rename: async (id, label) => {
+        const connection = (await providerConnections()).rename(id, label)
+        if (!connection) throw new Error('No such connection.')
+        return connection
+      },
+      remove: async (id) => (await providerConnections()).remove(id),
+      setKey: async (id, apiKey) => (await providerConnections()).setKey(id, apiKey)
     }
   }
 }

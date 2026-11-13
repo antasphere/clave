@@ -498,3 +498,104 @@ describe('the Antasphere account on the server (PRDCT-3259)', () => {
     expect((await get('/accounts/antasphere')).status).toBe(500)
   })
 })
+
+// ── Lane B (harness wave): provider connections ──
+describe('the provider connections on the server (PRDCT-4426)', () => {
+  const KEY = 'sk-test-provider-0123456789'
+
+  it('adds, renames, takes a key and removes, the key in no answer', async () => {
+    const texts: string[] = []
+    const read = async (response: Response): Promise<unknown> => {
+      const text = await response.text()
+      texts.push(text)
+      return JSON.parse(text)
+    }
+    const empty = await get('/connections/providers')
+    expect(empty.status).toBe(200)
+    expect(await read(empty)).toEqual([])
+
+    const added = await post('/connections/providers', { company: 'moonshot', label: 'Work' })
+    expect([200, 201]).toContain(added.status)
+    const connection = (await read(added)) as { id: string }
+    expect(connection).toMatchObject({ label: 'Work', company: 'moonshot', hasKey: false })
+
+    const renamed = await post('/connections/providers/rename', {
+      id: connection.id,
+      label: 'Kimi at work'
+    })
+    expect(renamed.status).toBe(200)
+    expect(await read(renamed)).toMatchObject({ id: connection.id, label: 'Kimi at work' })
+
+    const keyed = await post('/connections/providers/key', { id: connection.id, apiKey: KEY })
+    expect(keyed.status).toBe(200)
+    expect(await read(keyed)).toMatchObject({ id: connection.id, hasKey: true })
+    expect(fake.providerKeysSet).toBe(1)
+    expect(fake.calls.find((c) => c.method === 'providerConnections.setKey')?.args).toEqual([
+      connection.id
+    ])
+    const listed = await get('/connections/providers')
+    expect(await read(listed)).toEqual([expect.objectContaining({ hasKey: true })])
+
+    const removed = await post('/connections/providers/remove', { id: connection.id })
+    expect(removed.status).toBe(200)
+    expect(await read(removed)).toBe(true)
+    expect(await read(await get('/connections/providers'))).toEqual([])
+
+    for (const text of texts) expect(text).not.toContain('sk-test-provider')
+  })
+
+  it('says an unknown connection in its sentence', async () => {
+    const rename = await post('/connections/providers/rename', { id: 'nope', label: 'x' })
+    expect(rename.status).toBe(422)
+    expect(await rename.json()).toEqual({ _tag: 'SettingsRefused', message: 'No such connection.' })
+    const key = await post('/connections/providers/key', { id: 'nope', apiKey: KEY })
+    expect(key.status).toBe(422)
+    expect(await key.text()).not.toContain('sk-test-provider')
+    expect(fake.providerKeysSet).toBe(0)
+    expect((await post('/connections/providers', { company: 'nobody' })).status).toBe(400)
+  })
+
+  it('publishes one accounts.providers_changed per change, never a key', async () => {
+    const peer = new Peer(server.url.replace('http', 'ws') + '/push')
+    await peer.opened
+    peer.send({ _tag: 'hello', token: server.token, client: 'test' })
+    expect(await peer.next()).toMatchObject({ _tag: 'welcome' })
+    expect(await peer.next()).toMatchObject({ event: { _tag: 'workspaces.state_changed' } })
+    const added = (await (await post('/connections/providers', { company: 'zai' })).json()) as {
+      id: string
+    }
+    const first = await peer.next()
+    expect(first).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'accounts.providers_changed', connections: [{ id: added.id }] }
+    })
+    await post('/connections/providers/key', { id: added.id, apiKey: KEY })
+    const second = await peer.next()
+    expect(second).toMatchObject({
+      event: { _tag: 'accounts.providers_changed', connections: [{ hasKey: true }] }
+    })
+    expect(JSON.stringify(second)).not.toContain('sk-test-provider')
+    expect(await peer.silence()).toBe(true)
+  })
+
+  it('a server with no settings behind it refuses them, never an empty list', async () => {
+    const bare = await startEmbedded({ ports: { sessions: new FakeSource() } })
+    try {
+      const auth = headers(bare.token)
+      const list = await fetch(`${bare.url}/connections/providers`, { headers: auth })
+      expect(list.status).toBeGreaterThanOrEqual(500)
+      const add = await fetch(`${bare.url}/connections/providers`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ company: 'moonshot' })
+      })
+      expect(add.status).toBe(422)
+      expect(await add.json()).toMatchObject({
+        _tag: 'CapabilityUnavailable',
+        capability: 'providerConnections'
+      })
+    } finally {
+      await bare.stop()
+    }
+  })
+})

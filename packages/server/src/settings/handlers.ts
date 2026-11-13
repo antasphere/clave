@@ -5,8 +5,8 @@
  * the source's own `CapabilityUnavailable` is the one failure that reaches
  * the wire as declared (422). Anything else the source throws is a defect.
  *
- * The three secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
- * `SetElevenLabsKey`) arrive
+ * The four secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
+ * `SetElevenLabsKey`, `SetProviderConnectionKey`) arrive
  * redacted; they are opened here, handed to the source, and appear in no
  * answer: the success schemas carry none, and the contract's own test keeps
  * it so.
@@ -63,7 +63,13 @@ import {
   StartCodexApiKeyLogin,
   UpdateWorkspacePins,
   UpdateWorkspaceRegistry,
-  UpsertLaunchProfile
+  UpsertLaunchProfile,
+  // ── Lane B (harness wave): provider connections ──
+  AddProviderConnection,
+  ListProviderConnections,
+  RemoveProviderConnection,
+  RenameProviderConnection,
+  SetProviderConnectionKey
 } from '@clave/contract/settings'
 import { SettingsSource, type SettingsSourceService } from './port'
 
@@ -243,5 +249,28 @@ export const settingsHandlers = [
       await s.workspaces.setLastActive(p.workspaceId)
       return { ok: true as const }
     })
+  ),
+  // ── Lane B (harness wave): provider connections ──
+  // PRDCT-4426: the key arrives redacted in `SetProviderConnectionKey` alone,
+  // is opened here and handed to the source; every answer says `hasKey`.
+  QueryHandler.make(ListProviderConnections, () => ask((s) => s.providerConnections.list())),
+  CommandHandler.make(AddProviderConnection, (p) =>
+    call((s) =>
+      s.providerConnections.add({
+        company: p.company,
+        label: p.label,
+        baseUrl: p.baseUrl,
+        wireFormat: p.wireFormat
+      })
+    )
+  ),
+  CommandHandler.make(RenameProviderConnection, (p) =>
+    call((s) => s.providerConnections.rename(p.id, p.label))
+  ),
+  CommandHandler.make(RemoveProviderConnection, (p) =>
+    call((s) => s.providerConnections.remove(p.id))
+  ),
+  CommandHandler.make(SetProviderConnectionKey, (p) =>
+    call((s) => s.providerConnections.setKey(p.id, Redacted.value(p.apiKey)))
   )
 ] as const

@@ -202,6 +202,30 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       if (standalone) expect([...security().items.values()]).toEqual([KEY])
     })
 
+    it.runIf(standalone)(
+      'a discard that fails leaves the connection and its key in place',
+      async () => {
+        const work = manager.add({ company: 'moonshot' })
+        await manager.setKey(work.id, KEY)
+        const locked = new ProviderConnectionsManager({
+          ...ports,
+          secrets: {
+            ...ports.secrets,
+            discard: async () => {
+              throw new Error('the keychain is locked')
+            }
+          }
+        })
+        await expect(locked.remove(work.id)).rejects.toThrow(/locked/)
+        expect(locked.list().map((c) => c.id)).toContain(work.id)
+        expect(await locked.openKey(work.id)).toBe(KEY)
+        const fresh = new ProviderConnectionsManager(ports)
+        expect(fresh.list().map((c) => c.id)).toContain(work.id)
+        expect(await fresh.openKey(work.id)).toBe(KEY)
+        expect([...security().items.values()]).toEqual([KEY])
+      }
+    )
+
     it('never falls back to plaintext when the port cannot seal', async () => {
       const work = manager.add({ company: 'moonshot' })
       const locked = new ProviderConnectionsManager({

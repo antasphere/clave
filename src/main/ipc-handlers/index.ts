@@ -55,6 +55,8 @@ import { registerActivityHandlers } from './activity-handlers'
 import { registerMicHandlers } from './mic-handlers'
 // ── Issue #227: Debug Clave… ──
 import { registerTriageHandlers } from './triage-handlers'
+// ── Lane B (harness wave): provider connections ──
+import { registerProviderConnectionsHandlers } from './provider-connections-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -112,4 +114,6 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerMicHandlers()
   // ── Issue #227: Debug Clave… ──
   registerTriageHandlers()
+  // ── Lane B (harness wave): provider connections ──
+  registerProviderConnectionsHandlers()
 }

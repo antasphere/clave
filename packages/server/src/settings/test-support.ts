@@ -17,7 +17,9 @@ import type {
   Unsubscribe,
   UsageRead,
   Workspace,
-  WorkspaceState
+  WorkspaceState,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnection
 } from './port'
 import { unavailable } from './port'
 
@@ -478,6 +480,66 @@ export class FakeSettingsSource implements SettingsSourceService {
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
+    }
+  }
+  // ── Lane B (harness wave): provider connections ──
+  /** The host's provider connections as the fake holds them (PRDCT-4426). */
+  connections: ProviderConnection[] = []
+  /** How many keys `setKey` was handed: the fake keeps the count, never a key. */
+  providerKeysSet = 0
+  private connectionsChanged(): void {
+    this.emit({ _tag: 'accounts.providers_changed', connections: [...this.connections] })
+  }
+  readonly providerConnections: SettingsSourceService['providerConnections'] = {
+    list: () => {
+      this.record('providerConnections.list')
+      return this.connections
+    },
+    add: (input) => {
+      this.record('providerConnections.add', input)
+      const connection: ProviderConnection = {
+        id: `pc-${++this.n}`,
+        label: input.label?.trim() || input.company,
+        company: input.company,
+        kind: 'key',
+        pool: input.company,
+        endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://provider.example.test/v1' }],
+        needsKey: true,
+        hasKey: false,
+        keySetAt: null,
+        createdAt: 1
+      }
+      this.connections = [...this.connections, connection]
+      this.connectionsChanged()
+      return connection
+    },
+    rename: (id, label) => {
+      this.record('providerConnections.rename', id, label)
+      const known = this.connections.find((c) => c.id === id)
+      if (!known) throw new Error('No such connection.')
+      const renamed = { ...known, label }
+      this.connections = this.connections.map((c) => (c.id === id ? renamed : c))
+      this.connectionsChanged()
+      return renamed
+    },
+    remove: (id) => {
+      this.record('providerConnections.remove', id)
+      const existed = this.connections.some((c) => c.id === id)
+      this.connections = this.connections.filter((c) => c.id !== id)
+      if (existed) this.connectionsChanged()
+      return existed
+    },
+    setKey: (id, apiKey) => {
+      // The key itself is never recorded, stored or returned.
+      this.record('providerConnections.setKey', id)
+      const known = this.connections.find((c) => c.id === id)
+      if (!known) throw new Error('No such connection.')
+      if (!apiKey.trim()) throw new Error('Paste the key first.')
+      this.providerKeysSet++
+      const keyed = { ...known, hasKey: true, keySetAt: 2 }
+      this.connections = this.connections.map((c) => (c.id === id ? keyed : c))
+      this.connectionsChanged()
+      return keyed
     }
   }
 }

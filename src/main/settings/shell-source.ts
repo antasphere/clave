@@ -81,7 +81,12 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   // same login manager statically, so in the app nothing loads twice.
   logins: () => import('../account-login').then((m) => m.accountLoginManager),
   applyAppIcon,
-  ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount })
+  ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount }),
+  // ── Lane B (harness wave): provider connections ──
+  // The machine's own, like its Claude accounts (PRDCT-4426): passed always,
+  // loaded on first use (the manager's graph reaches Effect, `source.ts`).
+  providerConnections: () =>
+    import('../provider-connections').then((m) => m.providerConnectionsManager)
 })
 
 // In-process, main is the server: every helper of this Mac runs here and

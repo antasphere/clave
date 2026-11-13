@@ -244,16 +244,18 @@ export class ProviderConnectionsManager {
   /** Removing a connection forgets its key with it. */
   async remove(id: string): Promise<boolean> {
     const connections = this.loadConnections()
-    const index = connections.findIndex((c) => c.id === id)
-    if (index === -1) return false
-    connections.splice(index, 1)
-    this.saveConnections()
+    if (!connections.some((c) => c.id === id)) return false
     const credentials = this.loadCredentials()
-    if (credentials[id]) {
-      const sealed = credentials[id].apiKey
-      if (typeof sealed === 'string') await this.ports.secrets.discard(sealed)
-      delete credentials[id]
-    }
+    // Discard first, while the connection is still listed: a discard that
+    // fails (a locked Keychain) leaves the connection and its key in place
+    // and surfaces the error, rather than an orphan key nobody can reach.
+    const sealed = credentials[id]?.apiKey
+    if (typeof sealed === 'string') await this.ports.secrets.discard(sealed)
+    // Found again after the await: the list may have moved meanwhile.
+    const index = connections.findIndex((c) => c.id === id)
+    if (index !== -1) connections.splice(index, 1)
+    delete credentials[id]
+    this.saveConnections()
     this.saveCredentials()
     this.emit()
     return true

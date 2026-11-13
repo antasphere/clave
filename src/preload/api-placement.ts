@@ -624,5 +624,29 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetServerVersions: routed,
   fleetUpgradeServer: routed,
   fleetSetServerName: routed,
-  onFleetServerVersions: routed
+  onFleetServerVersions: routed,
+  // ── Lane B (harness wave): provider connections ──
+  providerConnectionsList: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionAdd: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionRename: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionRemove: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionSetKey: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  onProviderConnectionsChanged: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  fleetProviderConnections: routed,
+  fleetProviderConnectionAdd: routed,
+  fleetProviderConnectionRename: routed,
+  fleetProviderConnectionRemove: routed,
+  fleetProviderConnectionSetKey: routed
 }

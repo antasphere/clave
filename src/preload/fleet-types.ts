@@ -14,7 +14,10 @@ import type {
   ClaudeAccount,
   CodexAccount,
   UsageLimits,
-  UsageError
+  UsageError,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnection,
+  ProviderConnectionAddInput
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
@@ -57,6 +60,8 @@ export type FleetSettingsEvent = { serverId: string } & (
   | { kind: 'codex-accounts'; accounts: CodexAccount[] }
   | { kind: 'claude-usage'; accountId: string; result: UsageLimits | UsageError }
   | { kind: 'codex-usage'; accountId: string; result: UsageLimits | UsageError }
+  // ── Lane B (harness wave): provider connections ──
+  | { kind: 'provider-connections'; connections: ProviderConnection[] }
 )
 export interface FleetDesktopAPI {
   fleetList(): Promise<SavedServerConnection[]>
@@ -189,6 +194,27 @@ export interface FleetDesktopAPI {
   /** A server's routines at each connect and each `routines.changed`; a read
    *  that fails publishes nothing, so the last listing stands. */
   onFleetRoutines(callback: (update: FleetRoutines) => void): () => void
+  // ── Lane B (harness wave): provider connections ──
+  /** The provider connections of a server (PRDCT-4426), read and written on
+   *  that server: the key is sealed there, by its own secret port, and comes
+   *  back in no answer. Their changes arrive through `onFleetSettingsEvent`
+   *  as `kind: 'provider-connections'`. */
+  fleetProviderConnections(serverId: string): Promise<ProviderConnection[]>
+  fleetProviderConnectionAdd(
+    serverId: string,
+    input: ProviderConnectionAddInput
+  ): Promise<ProviderConnection>
+  fleetProviderConnectionRename(
+    serverId: string,
+    id: string,
+    label: string
+  ): Promise<ProviderConnection>
+  fleetProviderConnectionRemove(serverId: string, id: string): Promise<boolean>
+  fleetProviderConnectionSetKey(
+    serverId: string,
+    id: string,
+    apiKey: string
+  ): Promise<ProviderConnection>
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

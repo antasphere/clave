@@ -21,6 +21,8 @@ import {
   type AntasphereAccountLike,
   type LoginJobsLike,
   type SettingsManagers,
+  // ── Lane B (harness wave): provider connections ──
+  type ProviderConnectionsLike,
   settingsSourceFromManagers
 } from './source'
 import type { AntasphereAccountStatus } from '../../shared/antasphere-account-types'
@@ -526,5 +528,127 @@ describe('usage-clock/accounts recording scenario', () => {
       managers.codexUsage.stopPolling()
       vi.useRealTimers()
     }
+  })
+})
+
+// ── Lane B (harness wave): provider connections ──
+describe('the provider connections through the source (PRDCT-4426)', () => {
+  const KEY = 'sk-test-provider-0123456789'
+  type Connection = ReturnType<ProviderConnectionsLike['list']>[number]
+  const view = (id: string, label: string, hasKey = false): Connection => ({
+    id,
+    label,
+    company: 'moonshot',
+    kind: 'key',
+    pool: 'moonshot',
+    endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://provider.example.test/v1' }],
+    needsKey: true,
+    hasKey,
+    keySetAt: hasKey ? 2 : null,
+    createdAt: 1
+  })
+  /** A manager that records each call (never a key) and lets the test fire its change. */
+  function fakeManager(): ProviderConnectionsLike & {
+    calls: Array<{ method: string; args: unknown[] }>
+    fire: (connections: Connection[]) => void
+  } {
+    const calls: Array<{ method: string; args: unknown[] }> = []
+    const listeners = new Set<(connections: Connection[]) => void>()
+    return {
+      calls,
+      fire: (connections) => {
+        for (const listener of listeners) listener(connections)
+      },
+      list: () => {
+        calls.push({ method: 'list', args: [] })
+        return [view('pc-1', 'Work')]
+      },
+      add: (input) => {
+        calls.push({ method: 'add', args: [input] })
+        return view('pc-2', input.label ?? 'Moonshot')
+      },
+      rename: (id, label) => {
+        calls.push({ method: 'rename', args: [id, label] })
+        return id === 'pc-1' ? view('pc-1', label) : undefined
+      },
+      remove: async (id) => {
+        calls.push({ method: 'remove', args: [id] })
+        return id === 'pc-1'
+      },
+      setKey: async (id, apiKey) => {
+        calls.push({ method: 'setKey', args: [id, apiKey.length] })
+        return view(id, 'Work', true)
+      },
+      onChange: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+  }
+
+  it('forwards each call to the manager, and says an unknown connection', async () => {
+    const manager = fakeManager()
+    const source = settingsSourceFromManagers({
+      ...managers,
+      providerConnections: async () => manager
+    })
+    expect(await source.providerConnections.list()).toEqual([view('pc-1', 'Work')])
+    const input = { company: 'moonshot' as const, label: 'Kimi', baseUrl: undefined }
+    expect(await source.providerConnections.add(input)).toMatchObject({ id: 'pc-2', label: 'Kimi' })
+    expect(await source.providerConnections.rename('pc-1', 'Renamed')).toMatchObject({
+      label: 'Renamed'
+    })
+    await expect(
+      Promise.resolve().then(() => source.providerConnections.rename('nope', 'x'))
+    ).rejects.toThrow(/No such connection/)
+    expect(await source.providerConnections.remove('pc-1')).toBe(true)
+    const keyed = await source.providerConnections.setKey('pc-1', KEY)
+    expect(keyed).toMatchObject({ hasKey: true })
+    expect(JSON.stringify(keyed)).not.toContain('sk-test-provider')
+    expect(manager.calls.map((c) => c.method)).toEqual([
+      'list',
+      'add',
+      'rename',
+      'rename',
+      'remove',
+      'setKey'
+    ])
+    expect(manager.calls[1].args).toEqual([input])
+    expect(manager.calls[5].args).toEqual(['pc-1', KEY.length])
+  })
+
+  it('loads the manager once, at the first call, and emits each change as one accounts.providers_changed', async () => {
+    const manager = fakeManager()
+    let loads = 0
+    const source = settingsSourceFromManagers({
+      ...managers,
+      providerConnections: async () => {
+        loads++
+        return manager
+      }
+    })
+    const events: SettingsEvent[] = []
+    source.subscribe((event) => events.push(event))
+    expect(loads).toBe(0)
+    await Promise.all([source.providerConnections.list(), source.providerConnections.list()])
+    expect(loads).toBe(1)
+    manager.fire([view('pc-1', 'Work', true)])
+    expect(events).toEqual([
+      { _tag: 'accounts.providers_changed', connections: [view('pc-1', 'Work', true)] }
+    ])
+  })
+
+  it('refuses them where it has no manager: nothing local stands in', async () => {
+    const bare = settingsSourceFromManagers(managers)
+    await expect(
+      Promise.resolve().then(() => bare.providerConnections.list())
+    ).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'providerConnections',
+      message: 'This server stores no provider connections.'
+    })
+    await expect(
+      Promise.resolve().then(() => bare.providerConnections.setKey('pc-1', KEY))
+    ).rejects.toMatchObject({ _tag: 'CapabilityUnavailable' })
   })
 })
