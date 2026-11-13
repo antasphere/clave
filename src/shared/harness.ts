@@ -15,7 +15,7 @@
 import type { LauncherFamily } from './agent-launch'
 import type { ConnectionPoolId } from './connection'
 // ── Lane B (harness wave): provider connections ──
-import type { ProviderWireFormat } from '@clave/contract/settings'
+import type { ProviderWireFormat } from '@clave/contract/settings/provider-catalogue'
 
 export type HarnessId = LauncherFamily
 

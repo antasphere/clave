@@ -17,7 +17,7 @@ import { type LauncherFamily } from '../../../../shared/agent-launch'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from '../../lib/launch-source'
 import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
-import { firstPoolOf } from '../../../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models'
 import { isChatProfileRef } from '../../../../shared/open-session-modes'
 import type { ModelOption } from '../../../../shared/session-model'
@@ -281,7 +281,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   // pool has a choice to make.
   const setupPool = firstPoolOf(HARNESS_BY_ID[setupFamily])
   const connectionLabel =
-    setupPool && topSource.accounts(setupPool).length > 1
+    isAccountPoolId(setupPool) && topSource.accounts(setupPool).length > 1
       ? (() => {
           const named = setupPool === 'claude' ? setup.claudeProfileId : setup.codexAccountId
           const connections = topSource.connections(setupPool, setup.model)
@@ -471,10 +471,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       )
     }
 
-    const multiAccount = pool !== null && source.accounts(pool).length > 1
+    const multiAccount = isAccountPoolId(pool) && source.accounts(pool).length > 1
 
     const connectionRows = (model: string | undefined): React.JSX.Element[] =>
-      pool
+      isAccountPoolId(pool)
         ? source.connections(pool, model).map((connection) => (
             <DropdownMenuItem
               key={connection.id}
@@ -501,7 +501,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
     const modelRow = (model: LauncherModel): React.JSX.Element => {
       const key = model.id ?? 'default'
-      const connections = pool ? source.connections(pool, model.id) : []
+      const connections = isAccountPoolId(pool) ? source.connections(pool, model.id) : []
       const unavailable =
         pool !== null && connections.length > 0 && !connections.some((c) => c.usable)
       const hint = unavailable ? `No connection with ${model.family} credits` : undefined

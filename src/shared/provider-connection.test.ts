@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { PROVIDER_COMPANIES, type ProviderConnectionView } from '@clave/contract/settings'
-import { isConnectionPoolId, poolAccountOf } from './connection'
+import { PROVIDER_COMPANIES } from '@clave/contract/settings/provider-catalogue'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import {
+  ACCOUNT_POOL_IDS,
+  PROVIDER_POOLS,
+  isAccountPoolId,
+  isConnectionPoolId,
+  poolAccountOf
+} from './connection'
 import { providerConnection, providerPoolOf } from './provider-connection'
 
 /** A made-up stored connection: no key value anywhere, only whether one is stored. */
@@ -68,5 +75,24 @@ describe('a provider connection in the one shape of a connection', () => {
   it('names a registered pool id, and an unknown company none', () => {
     expect(isConnectionPoolId('moonshot')).toBe(true)
     expect(isConnectionPoolId('acme')).toBe(false)
+  })
+})
+
+describe('isAccountPoolId', () => {
+  it('admits the two pools backed by an account list', () => {
+    expect(isAccountPoolId('claude')).toBe(true)
+    expect(isAccountPoolId('codex')).toBe(true)
+  })
+
+  it('refuses a provider pool, null and undefined', () => {
+    expect(isAccountPoolId('moonshot')).toBe(false)
+    expect(isAccountPoolId(null)).toBe(false)
+    expect(isAccountPoolId(undefined)).toBe(false)
+  })
+
+  it('lists the account pools, and refuses every provider pool', () => {
+    expect(ACCOUNT_POOL_IDS).toEqual(['claude', 'codex'])
+    expect(PROVIDER_POOLS.length).toBe(10)
+    for (const pool of PROVIDER_POOLS) expect(isAccountPoolId(pool.id)).toBe(false)
   })
 })

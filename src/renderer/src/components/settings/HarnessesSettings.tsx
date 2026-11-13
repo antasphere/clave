@@ -6,7 +6,7 @@ import {
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import { HARNESSES, type Harness, type HarnessId } from '../../../../shared/harness'
-import { firstPoolOf } from '../../../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS } from '../../../../shared/claude-models'
 import type { AgentUpdateStatus } from '../../../../shared/agent-updates'
 import type { InstallableAgentId, OnboardingInstallResult } from '../../../../shared/onboarding'
@@ -102,7 +102,8 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
   const value = useLaunchSettingsStore((s) => s.harnesses[harness.id]?.preferredModel ?? '')
   const setHarness = useLaunchSettingsStore((s) => s.setHarness)
   const pool = firstPoolOf(harness)
-  const connected = pool !== null && connectionsForModel(pool, undefined).some((c) => c.usable)
+  const connected =
+    isAccountPoolId(pool) && connectionsForModel(pool, undefined).some((c) => c.usable)
   const codex = useCodexModels(harness.id === 'codex' && connected)
   if (!harness.takesModel) return null
   const write = (model: string | null): void =>

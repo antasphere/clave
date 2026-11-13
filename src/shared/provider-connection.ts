@@ -3,7 +3,7 @@
  * a connection (PRDCT-4493, `connection.ts`): a key stored once, in its
  * company's pool, reporting no usage.
  */
-import type { ProviderConnectionView } from '@clave/contract/settings'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { CONNECTION_POOL_BY_ID, type Connection, type ConnectionPool } from './connection'
 
 /** A stored provider connection (PRDCT-4426) as the one shape every harness

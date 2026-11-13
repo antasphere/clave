@@ -16,7 +16,7 @@ import {
 import { HARNESSES, HARNESS_BY_ID } from './harness'
 import { pickAccount, switchTargets, type AccountUsageSummary } from './account-pool'
 // ── Lane B (harness wave): provider connections ──
-import { PROVIDER_COMPANIES } from '@clave/contract/settings'
+import { PROVIDER_COMPANIES } from '@clave/contract/settings/provider-catalogue'
 
 /** A weekly cap the service calls critical: the pool's rule reads it as out. */
 const spent: AccountUsageSummary = {

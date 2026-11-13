@@ -19,7 +19,10 @@
  */
 import type { AccountUsageSummary, PoolAccount } from './account-pool'
 // ── Lane B (harness wave): provider connections ──
-import { PROVIDER_COMPANIES, type ProviderCompanyId } from '@clave/contract/settings'
+import {
+  PROVIDER_COMPANIES,
+  type ProviderCompanyId
+} from '@clave/contract/settings/provider-catalogue'
 
 /** The pools Clave holds connections for, typed once. A provider pool of
  *  PRDCT-4426 adds its id here and its row to `CONNECTION_POOLS`; nothing
@@ -74,6 +77,13 @@ export const PROVIDER_POOLS: readonly ConnectionPool[] = PROVIDER_COMPANIES.map(
   company: { id: c.id, name: c.name },
   reportsUsage: false
 }))
+
+/** The two pools backed by an account list of their own (Claude accounts, Codex accounts); the provider pools are not. */
+export type AccountPoolId = 'claude' | 'codex'
+export const ACCOUNT_POOL_IDS: readonly AccountPoolId[] = ['claude', 'codex']
+export function isAccountPoolId(id: ConnectionPoolId | null | undefined): id is AccountPoolId {
+  return id === 'claude' || id === 'codex'
+}
 
 /** Every pool, in the order Settings → Connections lists the companies. */
 export const CONNECTION_POOLS: readonly ConnectionPool[] = [

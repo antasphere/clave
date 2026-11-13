@@ -3,10 +3,10 @@ import {
   connectionServes,
   providerCompany,
   type ProviderCompanyId,
-  type ProviderConnectionView,
   type ProviderEndpoint,
   type ProviderWireFormat
-} from '@clave/contract/settings'
+} from '@clave/contract/settings/provider-catalogue'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
 import { readJson, writeJson } from './ports/storage'
 // ── Lane B (harness wave): provider connections ──

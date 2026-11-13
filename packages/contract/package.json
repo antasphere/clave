@@ -42,7 +42,9 @@
     "./server-name": "./src/server-name.ts",
     "./upgrade-failure": "./src/upgrade-failure.ts",
     "./routines": "./src/routines/index.ts",
-    "./routines/model": "./src/routines/model.ts"
+    "./routines/model": "./src/routines/model.ts",
+    "./settings/provider-catalogue": "./src/settings/provider-catalogue.ts",
+    "./settings/connections": "./src/settings/connections.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
