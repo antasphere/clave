@@ -211,7 +211,7 @@ describe('resolveLaunch', () => {
       'permissionMode is for claude; codex takes none',
       'effort "Very High" is not a level Claude knows',
       'thinking "ultra" is not one of off, minimal, low, medium, high, xhigh, max',
-      'The model argument applies to harnesses that take a model (Claude Code, Codex, Pi); Antigravity takes none on its command line.',
+      'The model argument applies to harnesses that take a model (Claude Code, Codex, Pi, OpenCode); Antigravity takes none on its command line.',
       'launch profile "Nope" is not a claude profile here ("Claude", "Work", "Work (chat)")',
       'Unknown Claude account "Nobody". Available: "Default" (default), "Antasphere" (acc-2)',
       'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'

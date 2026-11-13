@@ -145,6 +145,8 @@ function input(over: Partial<LaunchOptionsInput> = {}): LaunchOptionsInput {
           { id: 'kimi-k2', label: 'kimi-k2', family: 'kimi-k2' }
         ]
       }
+      // OpenCode gets the Default row from both listing roads, as Pi does (PRDCT-4496).
+      if (id === 'opencode') return [{ id: null, label: 'Default', family: 'Default' }]
       return []
     },
     harnessSettings: { claude: { preferredModel: FABLE } },
@@ -297,10 +299,13 @@ describe('the models and the default one', () => {
       { id: null, label: 'Default', family: 'Default', served: true, reason: null }
     ])
   })
-  it('offers no model to a harness that takes none', () => {
+  it('offers OpenCode the models its listing gives, now that it takes one', () => {
     const opencode = harness(launchOptions(input()), 'opencode')
-    expect(opencode.takesModel).toBe(false)
-    expect(opencode.models).toEqual([])
+    // OpenCode takes a model through its config since PRDCT-4496, so its listed rows reach the launcher.
+    expect(opencode.takesModel).toBe(true)
+    expect(opencode.models).toEqual([
+      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+    ])
     expect(opencode.defaultModel).toBeNull()
     expect(opencode.chatView).toBe(false)
     expect(harness(launchOptions(input()), 'claude').chatView).toBe(true)
