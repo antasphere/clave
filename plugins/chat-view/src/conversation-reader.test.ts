@@ -97,6 +97,78 @@ function setup(timeline = vi.fn<() => Promise<TimelinePage | null>>(async () => 
 }
 
 describe('hosted drafts across refreshed snapshots', () => {
+  it.each(['wording', 'masking'])(
+    'does not seed private hosted fields into a different retained definition (%s)',
+    async (change) => {
+      const fields = ['agent', 'typed', 'note']
+      const retainedRequest = {
+        type: 'permission_request' as const,
+        id: 'clave:definition',
+        description: 'Retained question',
+        input: {
+          tool: 'clave_request_input',
+          questions: fields.map((id) => ({ id, isSecret: false }))
+        },
+        questions: fields.map((id) => ({ id, header: id, question: 'Value?', options: [] })),
+        options: [{ id: 'answer', label: 'Approve' }]
+      }
+      const currentRequest = {
+        ...retainedRequest,
+        ...(change === 'wording'
+          ? { description: 'Different current question' }
+          : {
+              input: {
+                ...retainedRequest.input,
+                questions: fields.map((id) => ({ id, isSecret: true }))
+              }
+            })
+      }
+      const h = setup(
+        vi.fn(async () => ({
+          ...page([], 1),
+          items: [{ event: retainedRequest, position: position(1) }]
+        }))
+      )
+      // Exercise the defensive contract with distinct subscription and
+      // retained definitions. No timeline item or position changes on Retry.
+      h.reader.stream({ kind: 'event', event: currentRequest })
+      h.reader.stream({
+        kind: 'event',
+        event: {
+          type: 'permission_updated',
+          id: currentRequest.id,
+          answers: { agent: 'Private draft' },
+          notes: { note: 'Private note' }
+        }
+      })
+      h.reader.stream({
+        kind: 'event',
+        event: {
+          type: 'permission_updated',
+          id: currentRequest.id,
+          typed: true,
+          answers: { typed: 'Private typing' }
+        }
+      })
+      h.reader.start()
+      await settle()
+      expect(h.entries()[0]).toMatchObject({
+        request: currentRequest,
+        draft: { agent: 'Private draft' },
+        typed: { typed: 'Private typing' },
+        notes: { note: 'Private note' }
+      })
+      h.reader.retry()
+      await settle()
+      const entry = h.entries()[0]
+      expect(entry).toMatchObject({ kind: 'permission', request: retainedRequest })
+      if (entry.kind !== 'permission') throw new Error('Missing refreshed form')
+      expect(entry.draft).toBeUndefined()
+      expect(entry.typed).toBeUndefined()
+      expect(entry.notes).toBeUndefined()
+      expect(h.failed).not.toHaveBeenCalled()
+    }
+  )
   const request = {
     type: 'permission_request' as const,
     id: 'clave:refresh',
