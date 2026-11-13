@@ -236,6 +236,232 @@ describe('the positioned snapshot/live handoff', () => {
     }
   )
 
+  it.each([
+    { key: 'name', value: 'Luca' },
+    { key: 'colours', value: ['blue'] }
+  ])(
+    'keeps a cleared hosted $key absent after remount, with other current fields intact',
+    async ({ key, value }) => {
+      const request = {
+        type: 'permission_request' as const,
+        id: 'clave:cleared',
+        description: 'Your details',
+        input: { tool: 'clave_request_input', layout: 'steps' },
+        options: [{ id: 'answer', label: 'Approve' }]
+      }
+      const h = setup(
+        vi.fn(async () => ({
+          ...page([], 2),
+          items: [
+            { event: request, position: position(1) },
+            {
+              event: {
+                type: 'permission_updated' as const,
+                id: request.id,
+                answers: { [key]: value, when: '2026-11-17' }
+              },
+              position: position(2)
+            }
+          ]
+        }))
+      )
+      // setDraft removes a no-default field cleared to either '' or []. The
+      // complete subscription draft then has only the other current fields.
+      h.reader.stream({ kind: 'event', event: request })
+      h.reader.stream({
+        kind: 'event',
+        event: {
+          type: 'permission_updated',
+          id: request.id,
+          answers: { when: '2026-11-17' }
+        }
+      })
+      h.reader.stream({
+        kind: 'event',
+        event: {
+          type: 'permission_updated',
+          id: request.id,
+          answers: { note: 'Still typed' },
+          typed: true
+        }
+      })
+      h.reader.start()
+      await settle()
+      expect(h.entries()).toHaveLength(1)
+      expect(h.entries()[0]).toMatchObject({
+        kind: 'permission',
+        draft: { when: '2026-11-17' },
+        typed: { note: 'Still typed' }
+      })
+      expect((h.entries()[0] as { draft?: object }).draft).not.toHaveProperty(key)
+    }
+  )
+
+  it('keeps an entirely emptied hosted draft empty without a typed overlay', async () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'clave:empty',
+      description: 'Name',
+      input: { tool: 'clave_request_input' },
+      options: [{ id: 'answer', label: 'Approve' }]
+    }
+    const h = setup(
+      vi.fn(async () => ({
+        ...page([], 2),
+        items: [
+          { event: request, position: position(1) },
+          {
+            event: {
+              type: 'permission_updated' as const,
+              id: request.id,
+              answers: { name: 'Luca' }
+            },
+            position: position(2)
+          }
+        ]
+      }))
+    )
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.start()
+    await settle()
+    expect(h.entries()).toHaveLength(1)
+    expect((h.entries()[0] as { draft?: object }).draft ?? {}).toEqual({})
+  })
+
+  it('keeps a newer hosted agent write covered by the snapshot without moving its cursor back', async () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'clave:new-write',
+      description: 'Name',
+      input: { tool: 'clave_request_input' },
+      options: [{ id: 'answer', label: 'Approve' }]
+    }
+    const update = (name: string) => ({
+      type: 'permission_updated' as const,
+      id: request.id,
+      answers: { name }
+    })
+    const snapshot = deferred<TimelinePage>()
+    const h = setup(vi.fn(() => snapshot.promise))
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.stream({ kind: 'event', event: update('Current at subscribe') })
+    h.reader.start()
+    h.reader.stream({ kind: 'event', event: update('Newer agent write'), position: position(3) })
+    snapshot.resolve({
+      ...page([], 5),
+      items: [
+        { event: request, position: position(1) },
+        { event: update('Historical fill'), position: position(2) },
+        { event: update('Newer agent write'), position: position(3) },
+        { event: { type: 'user_message', text: 'four' }, position: position(4) },
+        { event: { type: 'user_message', text: 'five' }, position: position(5) }
+      ]
+    })
+    await settle()
+    expect(h.entries().find((entry) => entry.kind === 'permission')).toMatchObject({
+      draft: { name: 'Newer agent write' }
+    })
+    expect(
+      h.event.mock.calls.filter(
+        ([item]) =>
+          item.event.type === 'permission_updated' &&
+          item.event.answers.name === 'Newer agent write'
+      )
+    ).toHaveLength(1)
+    h.reader.stream(frame(4, 'four'))
+    h.reader.stream(frame(6, 'six'))
+    expect(
+      h
+        .entries()
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.text)
+    ).toEqual(['four', 'five', 'six'])
+    expect(h.failed).not.toHaveBeenCalled()
+  })
+
+  it('preserves historical fills for a native prompt whose subscription has no hosted draft', async () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'native:question',
+      description: 'Name',
+      options: [{ id: 'answer', label: 'Approve' }]
+    }
+    const h = setup(
+      vi.fn(async () => ({
+        ...page([], 2),
+        items: [
+          { event: request, position: position(1) },
+          {
+            event: {
+              type: 'permission_updated' as const,
+              id: request.id,
+              answers: { name: 'Native fill' }
+            },
+            position: position(2)
+          }
+        ]
+      }))
+    )
+    h.reader.stream({ kind: 'event', event: request })
+    h.reader.start()
+    await settle()
+    expect(h.entries()[0]).toMatchObject({ draft: { name: 'Native fill' } })
+  })
+
+  it.each([false, true])(
+    'keeps a hosted form settled by the later snapshot (approved: %s)',
+    async (approved) => {
+      const request = {
+        type: 'permission_request' as const,
+        id: 'clave:settled',
+        description: 'Name',
+        input: { tool: 'clave_request_input' },
+        options: [{ id: 'answer', label: 'Approve' }]
+      }
+      const settled = approved
+        ? {
+            type: 'permission_updated' as const,
+            id: request.id,
+            answers: { name: 'Approved' },
+            sent: true
+          }
+        : { type: 'permission_withdrawn' as const, id: request.id }
+      const h = setup(
+        vi.fn(async () => ({
+          ...page([], 3),
+          items: [
+            { event: request, position: position(1) },
+            {
+              event: {
+                type: 'permission_updated' as const,
+                id: request.id,
+                answers: { name: 'Historical fill' }
+              },
+              position: position(2)
+            },
+            { event: settled, position: position(3) }
+          ]
+        }))
+      )
+      h.reader.stream({ kind: 'event', event: request })
+      h.reader.stream({
+        kind: 'event',
+        event: {
+          type: 'permission_updated',
+          id: request.id,
+          answers: { name: 'Stale subscription' }
+        }
+      })
+      h.reader.start()
+      await settle()
+      expect(h.entries()).toHaveLength(1)
+      expect(h.entries()[0]).toMatchObject({ draft: { name: 'Historical fill' } })
+      expect(h.entries()[0]).toMatchObject(
+        approved ? { answer: 'answer', answers: { name: 'Approved' } } : { answeredElsewhere: true }
+      )
+    }
+  )
+
   it('does not resurrect a subscription request settled in the subsequent snapshot', async () => {
     const request = {
       type: 'permission_request' as const,

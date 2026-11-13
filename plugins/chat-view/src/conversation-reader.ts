@@ -1,4 +1,5 @@
 import type { TimelinePage } from '@clave/contract/timeline'
+import { inputRequestMeta } from '@clave/contract/input-kinds'
 import type {
   HistoryItem,
   HistoryPage,
@@ -195,6 +196,28 @@ export function conversationReader(
               )
             })
           : []
+        const forms = new Map<string, number>()
+        for (const frame of overlays)
+          if (frame.event.type === 'permission_request' && inputRequestMeta(frame.event.input))
+            forms.set(frame.event.id, buffered.indexOf(frame))
+        const currentFill = (
+          event: HistoryItem['event']
+        ): event is Extract<HistoryItem['event'], { type: 'permission_updated' }> =>
+          event.type === 'permission_updated' && !event.typed && !event.sent && forms.has(event.id)
+        // A hosted request is followed by its complete current draft. Old
+        // agent fills can still name fields the person cleared on the server.
+        const newerFills = new Map<number, Frame>()
+        if (timeline) {
+          page = { ...page, items: page.items.filter((item) => !currentFill(item.event)) }
+          for (const [index, frame] of buffered.entries())
+            if (
+              currentFill(frame.event) &&
+              index > forms.get(frame.event.id)! &&
+              frame.position?.generation === timeline.cursor.generation &&
+              frame.position.sequence <= timeline.cursor.sequence
+            )
+              newerFills.set(frame.position.sequence, frame)
+        }
         clear()
         reading = false
         // Commit in this same continuation. Deferring the buffer copy to a
@@ -202,6 +225,10 @@ export function conversationReader(
         handlers.page(page, timeline !== null || hasPage, truncated)
         hasPage = true
         for (const frame of overlays) take(frame)
+        // A write after the subscription's draft may already be covered by
+        // this snapshot. Keep it once, without moving the snapshot cursor back.
+        for (const [, frame] of [...newerFills].sort(([a], [b]) => a - b))
+          handlers.event({ event: frame.event })
         // Entries replay at rest, but the current timeline can cover a live
         // state transition newer than the subscribe reply. Taking its last
         // state here restores that word without repeating any messages.
