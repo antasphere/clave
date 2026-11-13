@@ -300,7 +300,7 @@ export async function run(t) {
     }
     t.check(
       'an account on an agent without a pool is refused',
-      wrongMode?.includes('claude, codex, pi and opencode modes only'),
+      wrongMode?.includes('harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode)'),
       wrongMode
     )
     let wrongProvider = null
