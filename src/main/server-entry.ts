@@ -92,7 +92,7 @@ import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
 import { preferencesManager, type Preferences } from './preferences-manager'
 import { fileStorage } from './ports/storage'
-import { lazyTerminalPorts } from './ports/terminals'
+import { lazyTerminalPorts, resourcesDirOfEntry } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
@@ -170,6 +170,10 @@ function readAppVersion(): string {
     'clave-server: --app-version <version> is required when no package.json is beside the entry'
   )
 }
+/** The app's `resources` folder, from this entry's own folder (`src/main` run
+ *  from source, `out/main` built, `app.asar/out/main` packaged): the routine
+ *  contract, the default report, and Pi's Clave extension (PRDCT-4496). */
+const RESOURCES_DIR = resourcesDirOfEntry(__dirname)
 /** How often the parent named by `--parent` is checked for. */
 const PARENT_POLL_MS = 2_000
 
@@ -311,7 +315,11 @@ async function main(): Promise<void> {
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
-  const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const { host: originalSessions, agentTools } = standaloneSessionHost({
+    dataDir,
+    terminals,
+    resourcesDir: RESOURCES_DIR
+  })
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
   // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
   // kept after a tab is deleted and served to every connected client.
@@ -447,8 +455,8 @@ async function main(): Promise<void> {
     dataDir,
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
     holder: `clave-server:${process.pid}`,
-    pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
-    defaultTemplate: defaultReportDir(path.resolve(__dirname, '..', '..', 'resources')),
+    pluginDir: contractPluginDir(RESOURCES_DIR),
+    defaultTemplate: defaultReportDir(RESOURCES_DIR),
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     publisher: TEST_NO_ACTIVATE
       ? false
