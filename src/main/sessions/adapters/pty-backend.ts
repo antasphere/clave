@@ -10,7 +10,7 @@ import {
   INITIAL_COMMAND_DELAY_MS
 } from '../../constants'
 import { stateFilePath } from '../../agent-state-manager'
-import { lazyTerminalPorts } from '../../ports/terminals'
+import { lazyTerminalPorts, unpackedPath } from '../../ports/terminals'
 import { readJson } from '../../ports/storage'
 import type { TerminalProcess } from '../../ports/terminal'
 import { workspaceManager } from '../../workspace-manager'
@@ -57,6 +57,18 @@ function isValidPiOptionValue(value: string): boolean {
     // eslint-disable-next-line no-control-regex
     !/[\u0000-\u001f\u007f]/.test(value)
   )
+}
+
+/**
+ * Clave's Pi extension (`resources/pi-clave-state.js`), the `--extension` a
+ * Pi tab starts with: under the resources folder the entry named
+ * (`TerminalPorts.resourcesDir`), unpacked from the asar when packaged, since
+ * Pi cannot read inside it. Never from this module's own `__dirname`: built,
+ * this code sits in a bundle chunk, and a path relative to it named a folder
+ * that does not exist in any layout (PRDCT-4496).
+ */
+export function piStateExtensionPath(): string {
+  return unpackedPath(path.join(lazyTerminalPorts.resourcesDir, 'pi-clave-state.js'))
 }
 
 /**
@@ -1288,12 +1300,7 @@ export class PtyBackend {
               : randomUUID())
         }
         const mcpConfigPath = kind === 'claude' ? lazyTerminalPorts.mcpConfig.write(id) : null
-        const piExtensionPath =
-          kind === 'pi'
-            ? path
-                .join(__dirname, '../../resources/pi-clave-state.js')
-                .replace('app.asar', 'app.asar.unpacked')
-            : undefined
+        const piExtensionPath = kind === 'pi' ? piStateExtensionPath() : undefined
         const argv = buildAgentArgv({
           kind,
           profile,
