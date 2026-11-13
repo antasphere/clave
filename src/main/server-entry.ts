@@ -117,6 +117,10 @@ import { ForwardRegistry } from '@clave/server/forward-registry'
 import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
 import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
+// ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+import { standaloneLaunchFacts } from './mcp/standalone-launch-facts'
+import { standaloneHarnessDetection } from './agent-updates/standalone-detection'
+import { providerModels } from './provider-models'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
@@ -395,6 +399,28 @@ async function main(): Promise<void> {
   }
   // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
   const workspaceFilesInstance = new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
+  // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+  // One set of facts for the routines and the agent tools: what a routine
+  // resolves its launch with is what `clave_open_session` resolves a tab
+  // with; the tools add the harnesses detected, the models and the settings.
+  const launchFacts = launchFactsFromManagers({
+    claudeAccounts: claudeAccountsManager,
+    codexAccounts: codexAccountsManager,
+    claudeUsage: usageManager,
+    codexUsage: codexUsageManager,
+    launchProfiles: launchProfileManager,
+    preference: (key) => preferencesManager.get(key as keyof Preferences),
+    launchModel: rememberedSpawnModel
+  })
+  const agentLaunchFacts = standaloneLaunchFacts({
+    facts: launchFacts,
+    detection: standaloneHarnessDetection({ env: process.env, testMode: TEST_NO_ACTIVATE }),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    preferences: (key) => preferencesManager.get(key as keyof Preferences),
+    codexModels: (cwd) => providerModels('codex-chat', cwd),
+    homeDir: os.homedir(),
+    defaultProfile: (family) => launchProfileManager.resolve(family)
+  })
   // ── ADR 0004: the routines this server schedules, off its own workspace files ──
   const routines = createRoutineService({
     sessions,
@@ -404,15 +430,7 @@ async function main(): Promise<void> {
       standalone.settings.subscribe((event) => {
         if (event._tag === 'workspaces.state_changed') listener()
       }),
-    facts: launchFactsFromManagers({
-      claudeAccounts: claudeAccountsManager,
-      codexAccounts: codexAccountsManager,
-      claudeUsage: usageManager,
-      codexUsage: codexUsageManager,
-      launchProfiles: launchProfileManager,
-      preference: (key) => preferencesManager.get(key as keyof Preferences),
-      launchModel: rememberedSpawnModel
-    }),
+    facts: launchFacts,
     storage: fileStorage(dataDir),
     dataDir,
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
@@ -566,6 +584,8 @@ async function main(): Promise<void> {
         // defaults of its own.
         chatDefault: (family) =>
           chatDefaultFor(launchProfileManager.getPreferences(), family, null),
+        // PRDCT-4485: the launcher's choices, for clave_launch_options and the open.
+        launch: agentLaunchFacts,
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,

@@ -24,9 +24,31 @@ import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
 import { BUILT_IN_LAUNCH_PROFILES, type LauncherFamily } from '../../shared/agent-launch'
 import {
   CHAT_PROFILE_IDS,
+  DANGEROUS_MODE_FAMILIES,
+  chatOfInteractionMode,
+  isChatProfileRef,
   resolveProfileRef,
   resolveSpawnModes
 } from '../../shared/open-session-modes'
+// ── Wave 7, lane A: the launcher's choices on this server (PRDCT-4485) ──
+import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import {
+  EFFORT_PATTERN,
+  SPAWN_PERMISSION_MODES,
+  launchModeFields
+} from '../../shared/runtime-choices'
+import { launchOptions, poolsOf } from '../../shared/launch-options'
+import { pickAccount } from '../../shared/account-pool'
+import { accountRefusal, resolveLaunch, type LaunchRequest } from '../routines/launch'
+import { poolOf, resolveAccountRef, spawnFieldsOf, usageOf } from './served-accounts'
+import { modeOf as recordModeOf } from './served-core'
+import {
+  accountOf,
+  launchOptionsInput,
+  modelsOfHarnesses,
+  poolOfRecord,
+  type StandaloneLaunchFacts
+} from './standalone-launch-facts'
 import type {
   HostedRequestInput,
   PendingRequest,
@@ -47,7 +69,12 @@ import {
   toHostedInput,
   type RequestInputArgs
 } from './request-input'
-import type { Session, SessionRecord } from '@clave/contract/sessions'
+import type {
+  AccountOverride,
+  Session,
+  SessionRecord,
+  SpawnOptions
+} from '@clave/contract/sessions'
 import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
@@ -104,6 +131,12 @@ export interface StandaloneMcpOptions {
   /** PRDCT-4472: this server's artefacts, what `clave_open_artefact` opens a
    *  session's HTML page with. Absent, the tool is not registered. */
   readonly artefacts?: ArtefactsService
+  /** PRDCT-4485: what this server's launcher offers and resolves with (the
+   *  pools, the profiles, the harnesses installed, the models, the launch
+   *  settings, the switch mode). Absent, `clave_launch_options` and
+   *  `clave_switch_account` are not registered and `clave_open_session`
+   *  refuses `account` as before. */
+  readonly launch?: StandaloneLaunchFacts | undefined
 }
 /** The conversation this server's History remembers by its id, with its
  *  transcript still on the disk (PRDCT-4321); undefined otherwise, or when the
@@ -127,6 +160,21 @@ export const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
   (Object.entries(CHAT_PROFILE_IDS).find(([, profile]) => profile === id)?.[0] as
     | LauncherFamily
     | undefined)
+type ServedRecord = Parameters<typeof recordModeOf>[0]
+type OpenMode = 'claude' | 'codex' | 'antigravity' | 'gemini' | 'pi' | 'opencode' | 'terminal'
+/** The arguments of `clave_open_session` the spawn is resolved from. */
+interface OpenArgs {
+  readonly model?: string | undefined
+  readonly dangerous?: boolean | undefined
+  readonly chat?: boolean | undefined
+  readonly profile?: string | undefined
+  readonly account?: string | undefined
+  readonly permissionMode?: string | undefined
+  readonly effort?: string | undefined
+  readonly provider?: string | undefined
+  readonly thinking?: string | undefined
+  readonly name?: string | undefined
+}
 /** Who opened which tab through `clave_open_session`, kept as long as this
  *  listener lives. The record's `openedBy` (PRDCT-4192) is what survives a
  *  restart of this server; this map is the word before the record is read. */
@@ -134,7 +182,37 @@ type Parents = Map<string, string>
 /** The size a session with no pane starts at, as the desktop's hidden spawns. */
 const HIDDEN_COLS = 120
 const HIDDEN_ROWS = 30
-const DESKTOP_ONLY = ['account', 'window', 'workspace'] as const
+const DESKTOP_ONLY = ['window', 'workspace'] as const
+/** A server with no launch facts resolves no connection (the caller of old). */
+const DESKTOP_ONLY_WITHOUT_LAUNCH = ['account', 'window', 'workspace'] as const
+
+// ── PRDCT-4485: every description names the harnesses from the table ──
+const namesWhere = (pick: (id: HarnessId) => boolean): string =>
+  HARNESSES.filter((h) => pick(h.id))
+    .map((h) => h.name)
+    .join(', ')
+const ALL_HARNESSES = HARNESSES.map((h) => `${h.id} (${h.name})`).join(', ')
+const CHAT_HARNESSES = namesWhere((id) => HARNESS_BY_ID[id].chatAdapterId !== null)
+const MODEL_HARNESSES = namesWhere((id) => HARNESS_BY_ID[id].takesModel)
+const DANGEROUS_HARNESSES = namesWhere((id) => DANGEROUS_MODE_FAMILIES.has(id))
+const POOLED_HARNESSES = namesWhere((id) => poolsOf(HARNESS_BY_ID[id]).length > 0)
+/** The effort and the permission mode follow the launch fields rule (`launchModeFields`). */
+const EFFORT_HARNESSES = namesWhere((id) => id === 'claude' || id === 'codex')
+const CLAUDE_NAME = HARNESS_BY_ID.claude.name
+const PI_NAME = HARNESS_BY_ID.pi.name
+const BUILT_IN_CHATS = Object.values(CHAT_PROFILE_IDS)
+  .map((id) => `"${id}"`)
+  .join(', ')
+
+export const LAUNCH_OPTIONS_DESCRIPTION =
+  'Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model, its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile.'
+export const LIST_DESCRIPTION =
+  'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); parentId names the tab that opened it.'
+export const SWITCH_ACCOUNT_DESCRIPTION =
+  'Move a tab to another connection (a subscription or a key of its harness\'s pool) when the one it runs on is about to hit its limit, or when asked: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only. "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name, or "any" for whichever connection of the pool has headroom. This server switches at once when its switch mode is automatic and refuses when it is propose, since a server has no window to propose to. A pin set from the Mac window lives in that window and is not visible here: this tool cannot honour it (PRDCT-4508).'
+export const OPEN_SESSION_DESCRIPTION = `Open a new tab on this server: an agent of one of its harnesses (${HARNESSES.map((h) => h.name).join(', ')}) or a plain terminal, in an absolute directory. ${CHAT_HARNESSES} open in Clave's CHAT VIEW (the conversation interface with message bubbles and a composer) or in the terminal: omit chat to open the way this server's launcher does (its interaction mode), chat: true forces a chat view, chat: false the terminal. Optionally a model, a connection (account), a launch profile, a name, a first prompt and a group; clave_launch_options lists what this machine can launch. With resume, the new tab continues a PAST conversation by its id. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.`
+export const SWITCH_PROPOSE_REFUSAL =
+  'This server\'s switch mode is "propose" and a server has no window to propose to: set the server\'s switch mode to automatic in its settings, or move the tab from the Mac window.'
 const text = (value: unknown): { content: { type: 'text'; text: string }[] } => ({
   content: [{ type: 'text', text: JSON.stringify(value) }]
 })
@@ -246,11 +324,13 @@ function buildServer(
     parentOf,
     groups: async () => (sidebar ? sidebar.get(SERVER_LAYOUT_KEY).groups : [])
   }
+  const launch = options.launch
   const server = new McpServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
         'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. An HTML page, document or deck you made -> clave_open_artefact with its folder (index.html inside): open it ONCE, then edit its files; it reloads itself and keeps a version per turn. ' +
+        'Before opening a tab, or to know which harness, model or connection has room -> clave_launch_options. ' +
         ROUTINE_TOOLS_INSTRUCTION.slice(2)
     }
   )
@@ -429,22 +509,185 @@ function buildServer(
   server.registerTool(
     'clave_list',
     {
-      description: 'List sessions owned by this server, including stopped records.',
+      description: LIST_DESCRIPTION,
       inputSchema: {}
     },
-    async () =>
-      text({
+    async () => {
+      // PRDCT-4485: each row carries what it runs on, from its record.
+      let records: readonly SessionRecord[] = []
+      try {
+        records = sessions.listAdoptableRecords()
+      } catch {
+        // A host with no records: the rows carry what the session says.
+      }
+      return text({
         sessions: sessions.list().map((s) => {
           const parentId = parentOf(s.id)
-          return parentId ? { ...s, parentId } : s
+          const record = records.find((r) => r.id === s.id)
+          return {
+            ...s,
+            ...(parentId ? { parentId } : {}),
+            mode: recordModeOf(record as ServedRecord | undefined, s.provider),
+            model: record?.model ?? null,
+            launchProfileId: record?.launchProfileId ?? null,
+            account: launch && record ? accountOf(launch, record) : null
+          }
         })
       })
+    }
   )
+  // ── PRDCT-4485: what this machine can launch, the launcher's menu as data ──
+  if (launch)
+    server.registerTool(
+      'clave_launch_options',
+      { description: LAUNCH_OPTIONS_DESCRIPTION, inputSchema: {} },
+      async () => {
+        // A detection a step of which failed is no fact: every harness is
+        // listed with its presence unknown, and the answer says why.
+        const warnings: string[] = []
+        let statuses: Awaited<ReturnType<typeof launch.harnesses>> | undefined
+        try {
+          statuses = await launch.harnesses()
+        } catch (error) {
+          warnings.push(message(error))
+        }
+        const models = await modelsOfHarnesses(launch)
+        const answer = launchOptions(launchOptionsInput(launch, statuses, models))
+        return text(warnings.length > 0 ? { ...answer, warnings } : answer)
+      }
+    )
+  /** Today's resolution, for a terminal and for a caller with no launch
+   *  facts: the modes, the profile checked against this server's families,
+   *  the launch fields and Pi's own. */
+  const legacySpawn = (mode: OpenMode, args: OpenArgs): SpawnOptions => {
+    if (args.account !== undefined)
+      throw new Error(
+        `The account argument applies to harnesses with a connection pool (${POOLED_HARNESSES}); a terminal runs on none.`
+      )
+    const modes = resolveSpawnModes({
+      mode,
+      ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
+      ...(args.model !== undefined ? { model: args.model } : {})
+    })
+    const { family } = modes
+    const launchProfileId = resolveProfileRef(
+      {
+        mode,
+        // The chat view is the standalone default; a named profile decides for itself.
+        chat: args.chat ?? (args.profile === undefined && (mode === 'claude' || mode === 'codex')),
+        ...(args.profile !== undefined ? { profile: args.profile } : {})
+      },
+      // The chat this server's launcher would open: the person's own chat
+      // profile when they set one on this server.
+      family ? chatDefault(family) : undefined
+    )
+    // A profile picks the adapter, so one from another family would start
+    // another agent than the mode names: refuse it before anything starts.
+    if (launchProfileId !== undefined) {
+      if (family === null)
+        throw new Error(`The profile argument applies to agent modes only (got mode "${mode}")`)
+      const owner = profileFamily(launchProfileId)
+      if (!owner) throw new Error(`Unknown ${family} launch profile "${launchProfileId}"`)
+      if (owner !== family)
+        throw new Error(`Launch profile "${launchProfileId}" belongs to ${owner}, not ${family}`)
+    }
+    return {
+      claudeMode: modes.claudeMode,
+      antigravityMode: modes.antigravityMode,
+      codexMode: modes.codexMode,
+      piMode: modes.piMode,
+      opencodeMode: modes.opencodeMode,
+      dangerousMode: modes.dangerousMode,
+      ...(modes.model !== undefined ? { model: modes.model } : {}),
+      ...(launchProfileId !== undefined ? { launchProfileId } : {}),
+      ...launchModeFields({
+        claudeMode: modes.claudeMode,
+        codexMode: modes.codexMode,
+        dangerousMode: modes.dangerousMode,
+        permissionMode: args.permissionMode,
+        effort: args.effort,
+        allowDangerous: undefined
+      }),
+      ...(modes.piMode && args.provider !== undefined ? { piProvider: args.provider } : {}),
+      ...(modes.piMode && args.thinking !== undefined ? { piThinking: args.thinking } : {})
+    }
+  }
+  /** PRDCT-4485: an agent tab resolved as a routine run is (ADR 0004): the
+   *  arguments laid out as a launch declaration, the form decided by the
+   *  person's launcher (their interaction mode) when `chat` is omitted. */
+  const resolvedSpawn = (
+    facts: StandaloneLaunchFacts,
+    mode: Exclude<OpenMode, 'terminal'>,
+    args: OpenArgs,
+    resuming: boolean,
+    workspaceId: string | undefined
+  ): SpawnOptions => {
+    const agent: HarnessId = mode === 'gemini' ? 'antigravity' : mode
+    const harness = HARNESS_BY_ID[agent]
+    // A built-in chat id names the chat view, not one profile: the
+    // harness's configured chat default (PRDCT-4348).
+    const builtInChat = args.profile !== undefined && args.profile === CHAT_PROFILE_IDS[agent]
+    const profile = builtInChat && args.chat !== false ? undefined : args.profile
+    const chat = builtInChat && args.chat !== false ? true : args.chat
+    const decided = chatOfInteractionMode(
+      { mode: agent, ...(chat !== undefined ? { chat } : {}), ...(profile ? { profile } : {}) },
+      facts.interactionMode()
+    )
+    const form =
+      decided === true
+        ? 'chat'
+        : decided === false || harness.chatAdapterId === null
+          ? 'terminal'
+          : profile !== undefined && isChatProfileRef(agent, profile)
+            ? 'chat'
+            : 'terminal'
+    const request: LaunchRequest = {
+      name: args.name ?? 'tab',
+      workspaceId: workspaceId ?? null,
+      launch: {
+        agent,
+        form,
+        ...(profile !== undefined ? { profile } : {}),
+        ...(args.account !== undefined ? { account: args.account } : {}),
+        ...(args.model !== undefined ? { model: args.model } : {}),
+        // The skip flag is ignored where the harness has none, as before.
+        ...(args.dangerous !== undefined && DANGEROUS_MODE_FAMILIES.has(agent)
+          ? { dangerousMode: args.dangerous }
+          : {}),
+        ...(args.permissionMode !== undefined ? { permissionMode: args.permissionMode } : {}),
+        ...(args.effort !== undefined ? { effort: args.effort } : {}),
+        ...(args.provider !== undefined ? { provider: args.provider } : {}),
+        ...(args.thinking !== undefined ? { thinking: args.thinking } : {})
+      }
+    }
+    // A resumed conversation runs its own model, which nothing here knows
+    // unless the call or the History says: never the remembered chat model.
+    const resolved = resolveLaunch(request, resuming ? { ...facts, launchModel: undefined } : facts)
+    if (!resolved.ok) throw new Error(resolved.reason)
+    return resolved.spawn
+  }
+  /** The connection a stopped tab resumed in place moves to, judged on its own model. */
+  const heldAccount = (
+    facts: StandaloneLaunchFacts,
+    record: SessionRecord,
+    ref: string
+  ): AccountOverride => {
+    const pool = poolOfRecord(record)
+    if (!pool) {
+      const mode = recordModeOf(record as ServedRecord, '')
+      const harness = HARNESS_BY_ID[mode as HarnessId]
+      throw new Error(
+        harness
+          ? accountRefusal(harness.id)
+          : `The account argument applies to harnesses with a connection pool (${POOLED_HARNESSES}).`
+      )
+    }
+    return spawnFieldsOf(pool, resolveAccountRef(facts, pool, ref, record.model ?? undefined))
+  }
   server.registerTool(
     'clave_open_session',
     {
-      description:
-        'Open a new tab on this server: a Claude or Codex agent (in the chat view unless chat is false), an Antigravity or Pi agent, or a plain terminal, in an absolute directory, with an optional model, name, first prompt and group. With resume, the new tab continues a PAST conversation by its id. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.',
+      description: OPEN_SESSION_DESCRIPTION,
       inputSchema: {
         attachToParent: z
           .boolean()
@@ -465,36 +708,97 @@ function buildServer(
           .max(200)
           .optional()
           .describe(
-            "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id): the new agent tab continues it, in cwd. A tab of this server that already runs the conversation is answered as it is (alreadyOpen: true), nothing started; a stopped tab that still holds it is resumed in place. A Claude conversation this server's History remembers (clave_history), its tab deleted, reopens in its own folder with no cwd. Any other conversation needs cwd, and starts fresh on the id when no transcript is found there. Agent modes only."
+            "Reopen a PAST conversation by its id (a Claude session id, a Codex thread id or a Pi session id): the new agent tab continues it, in cwd. A tab of this server that already runs the conversation is answered as it is (alreadyOpen: true), nothing started; a stopped tab that still holds it is resumed in place, on the connection account names when passed. A Claude conversation this server's History remembers (clave_history), its tab deleted, reopens in its own folder with no cwd. Any other conversation needs cwd, and starts fresh on the id when no transcript is found there. Agent modes only."
           ),
         mode: z
           .enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'opencode', 'terminal'])
-          .optional(),
-        model: z.string().min(1).max(256).optional(),
+          .optional()
+          .describe(
+            `Which harness to start: ${ALL_HARNESSES}; or terminal for a plain shell. claude when omitted; gemini is an old alias of antigravity.`
+          ),
+        model: z
+          .string()
+          .min(1)
+          .max(256)
+          .optional()
+          .describe(
+            `Model the new agent starts on: an alias or a full model id, as clave_launch_options lists them. ${MODEL_HARNESSES} only (the others take no model on their command line). Omitted = the launch profile's default, else the CLI's. The user can still switch later inside the tab.`
+          ),
         name: z.string().min(1).max(255).optional().describe('Display name for the new tab'),
-        prompt: boundedText.optional().describe('First message an agent tab starts on'),
-        command: boundedText.optional().describe('Shell command a terminal tab runs'),
+        prompt: boundedText
+          .optional()
+          .describe('Agent modes only: the first message the agent starts working on'),
+        command: boundedText
+          .optional()
+          .describe('Terminal mode only: a shell command to run in the new terminal'),
+        autoRun: z
+          .boolean()
+          .optional()
+          .describe(
+            'Terminal mode only: execute the command immediately (default true); false just prefills it'
+          ),
         dangerous: z
           .boolean()
           .optional()
-          .describe('Start a claude, codex or opencode agent without approval prompts'),
+          .describe(
+            `Start the agent without approval prompts, on its own skip flag: ${DANGEROUS_HARNESSES}. Ignored for the other harnesses and for terminal.`
+          ),
         chat: z
           .boolean()
           .optional()
           .describe(
-            "Claude and Codex open in the chat view unless this is false, on the chat form of this server's default profile for the family (profile names another chat profile by its id)"
+            `true forces Clave's chat view ("chat", "chat mode", "the chat UI"), false the terminal; omit it to open the way this server's launcher does (its interaction mode). true is for ${CHAT_HARNESSES} only; errors for any other mode. Opens the chat the launcher would: the chat form of this server's default profile for the harness (its own flags included), the built-in chat otherwise; profile may name another chat profile instead.`
           ),
-        profile: z.string().min(1).max(256).optional().describe('A launch profile id'),
+        profile: z
+          .string()
+          .min(1)
+          .max(256)
+          .optional()
+          .describe(
+            `A launch profile of the harness, by id or name (clave_launch_options lists them with their form). Omit to use this server's default. A built-in chat id (${BUILT_IN_CHATS}) opens the harness's configured chat default.`
+          ),
+        account: z
+          .string()
+          .min(1)
+          .max(128)
+          .optional()
+          .describe(
+            `Connection the new tab runs on (a subscription or a key of its harness's pool): an id or its exact name ("default" is the machine login), or "any" for whichever connection of the pool has headroom for the model. Harnesses with a connection pool only (${POOLED_HARNESSES}). Omit to follow this server's settings: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each tab's connection.`
+          ),
+        permissionMode: z
+          .enum(SPAWN_PERMISSION_MODES)
+          .optional()
+          .describe(
+            `The mode a ${CLAUDE_NAME} agent asks permission under, short of bypass (bypass is dangerous). ${CLAUDE_NAME} only; ignored with dangerous: true.`
+          ),
+        effort: z
+          .string()
+          .regex(EFFORT_PATTERN)
+          .optional()
+          .describe(
+            `The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). ${EFFORT_HARNESSES} only.`
+          ),
+        provider: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(`${PI_NAME}'s provider id. ${PI_NAME} only.`),
+        thinking: z
+          .enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+          .optional()
+          .describe(`${PI_NAME}'s thinking level. ${PI_NAME} only.`),
         groupId: z.string().min(1).max(256).optional().describe('Group id from clave_create_group'),
         // Named so a desktop-shaped call fails clearly instead of being stripped.
-        account: z.unknown().optional(),
         window: z.unknown().optional(),
         workspace: z.unknown().optional()
       }
     },
     async (input) => {
       let args = input
-      const unsupported = DESKTOP_ONLY.filter((key) => args[key] !== undefined)
+      const unsupported = (launch ? DESKTOP_ONLY : DESKTOP_ONLY_WITHOUT_LAUNCH).filter(
+        (key) => (args as Record<string, unknown>)[key] !== undefined
+      )
       if (unsupported.length > 0)
         throw new Error(
           `${unsupported.join(', ')} ${unsupported.length > 1 ? 'are' : 'is'} not available on a standalone server.`
@@ -515,7 +819,17 @@ function buildServer(
         if (held) {
           let resumed = false
           if (held.kind === 'stopped') {
-            const restarted = await sessions.restart(held.sessionId, {}, false, true)
+            // PRDCT-4485: the connection the call names, judged on the
+            // conversation's own model; the restart carries no other field.
+            const record = records.find((r) => r.id === held.sessionId)
+            const restarted = await sessions.restart(
+              held.sessionId,
+              launch && args.account !== undefined && record
+                ? heldAccount(launch, record, args.account)
+                : {},
+              false,
+              true
+            )
             resumed = restarted.resumed
           }
           return text({
@@ -567,62 +881,23 @@ function buildServer(
       const directory = await stat(args.cwd).catch(() => undefined)
       if (!directory?.isDirectory()) throw new Error(`no such directory: ${args.cwd}`)
       const groupId = args.groupId === undefined ? null : knownGroup(args.groupId)
-      const {
-        claudeMode,
-        antigravityMode,
-        codexMode,
-        piMode,
-        opencodeMode,
-        dangerousMode,
-        model,
-        family
-      } = resolveSpawnModes({
-        mode,
-        ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
-        ...(args.model !== undefined ? { model: args.model } : {})
-      })
-      const launchProfileId = resolveProfileRef(
-        {
-          mode,
-          // The chat view is the standalone default; a named profile decides for itself.
-          chat:
-            args.chat ?? (args.profile === undefined && (mode === 'claude' || mode === 'codex')),
-          ...(args.profile !== undefined ? { profile: args.profile } : {})
-        },
-        // The chat this server's launcher would open: the person's own chat
-        // profile when they set one on this server.
-        family ? chatDefault(family) : undefined
-      )
-      // A profile picks the adapter, so one from another family would start
-      // another agent than the mode names: refuse it before anything starts.
-      if (launchProfileId !== undefined) {
-        if (family === null)
-          throw new Error(`The profile argument applies to agent modes only (got mode "${mode}")`)
-        const owner = profileFamily(launchProfileId)
-        if (!owner) throw new Error(`Unknown ${family} launch profile "${launchProfileId}"`)
-        if (owner !== family)
-          throw new Error(`Launch profile "${launchProfileId}" belongs to ${owner}, not ${family}`)
-      }
       const terminal = mode === 'terminal'
       // The new tab lands beside its caller (PRDCT-4150): the caller's
       // workspace, read from its record (the live session on the wire
       // carries none), goes on the start. A caller with no workspace leaves
       // the tab as the host stamps it today; the agent never picks one.
       const workspaceId = callerWorkspace(sessionId)
+      const spawn =
+        launch && !terminal
+          ? resolvedSpawn(launch, mode, args, resume !== undefined, workspaceId)
+          : legacySpawn(mode, args)
       const info = await sessions.start({
         cwd: args.cwd,
         options: {
-          claudeMode,
-          antigravityMode,
-          codexMode,
-          piMode,
-          opencodeMode,
-          dangerousMode,
-          ...(model !== undefined ? { model } : {}),
-          ...(launchProfileId !== undefined ? { launchProfileId } : {}),
+          ...spawn,
           ...(resume !== undefined ? { resumeSessionId: resume } : {}),
           ...(terminal && args.command ? { initialCommand: args.command } : {}),
-          autoExecute: terminal && !!args.command,
+          autoExecute: terminal && !!args.command && args.autoRun !== false,
           ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {}),
           ...(args.attachToParent ? { spawnedBy: sessionId } : {}),
           // The opener, nested or not, on the record (PRDCT-4192): what
@@ -669,6 +944,65 @@ function buildServer(
       })
     }
   )
+  // ── PRDCT-4485: a tab moved to another connection, the Mac's rule with no window to ask ──
+  if (launch)
+    server.registerTool(
+      'clave_switch_account',
+      {
+        description: SWITCH_ACCOUNT_DESCRIPTION,
+        inputSchema: {
+          sessionId: z.string().describe('Id of the tab to move, or "mine" for the calling tab'),
+          account: z
+            .string()
+            .min(1)
+            .max(128)
+            .describe(
+              'Connection id, exact name, or "any" for the pool\'s next connection with headroom'
+            )
+        }
+      },
+      async (args) => {
+        const id = own(args.sessionId)
+        const session = sessions.get(id)
+        if (!session) throw new Error(`Unknown session "${args.sessionId}".`)
+        const record = recordOf(id)
+        const mode = recordModeOf(record as ServedRecord | undefined, session.provider)
+        const harness = HARNESS_BY_ID[(mode === 'claude-agents' ? 'claude' : mode) as HarnessId]
+        const pool = harness?.connectionPool ?? null
+        if (!pool)
+          throw new Error(
+            `Only a tab on a harness with a connection pool (${POOLED_HARNESSES}) runs on a connection`
+          )
+        const current =
+          (pool === 'codex' ? record?.codexAccountId : record?.claudeProfileId) ?? 'default'
+        let target: { id: string; label: string }
+        if (args.account === 'any') {
+          const accounts = launch.accounts(pool)
+          const next = pickAccount({
+            accounts: poolOf(accounts),
+            usage: usageOf(accounts, { model: record?.model ?? undefined }),
+            preferredId: current,
+            leavingId: current,
+            preferWeeklyHeadroom: true
+          })
+          if (next === current) throw new Error('No other connection of this pool has headroom')
+          target = accounts.find((a) => a.id === next) ?? { id: next, label: next }
+        } else {
+          target = resolveAccountRef(launch, pool, args.account, record?.model ?? undefined)
+        }
+        const account = { id: target.id, label: target.label }
+        if (target.id === current) return text({ sessionId: id, account, switched: false })
+        if (launch.switchMode() === 'propose') throw new Error(SWITCH_PROPOSE_REFUSAL)
+        const restarted = await sessions.restart(id, spawnFieldsOf(pool, target), false)
+        return text({
+          sessionId: id,
+          account,
+          ...(typeof restarted?.resumed === 'boolean' ? { resumed: restarted.resumed } : {}),
+          switched: true,
+          proposed: false
+        })
+      }
+    )
   server.registerTool(
     'clave_close_session',
     {

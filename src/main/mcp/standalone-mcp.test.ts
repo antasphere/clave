@@ -29,6 +29,14 @@ import { ArtefactsPort, type ArtefactsService } from '@clave/server'
 import { ArtefactRefusal } from '../artefacts/service'
 import type { HistoryConversation } from '@clave/contract/history'
 import type { ServerConversations } from '../session-history/server-conversations'
+// ── PRDCT-4485: the launch facts of the daemon's agent tools ──
+import type { LaunchProfilePreferences } from '../../shared/agent-launch'
+import type { AgentUpdateStatus } from '../../shared/agent-updates'
+import type { InteractionMode } from '../../shared/harness'
+import type { PoolUsageWindow } from '../../shared/account-pool'
+import { usageSummaryOf } from '../../shared/usage-summary'
+import type { ServedPoolAccount } from './served-core'
+import { standaloneLaunchFacts } from './standalone-launch-facts'
 
 const closes: Array<() => Promise<unknown> | void> = []
 afterEach(async () => {
@@ -213,6 +221,122 @@ describe('server-owned MCP without an Electron callback', () => {
   }, 15_000)
 })
 
+/** What a test sets of the server's launcher (PRDCT-4485). */
+interface LaunchState {
+  interactionMode: InteractionMode
+  switchMode: 'propose' | 'automatic'
+  /** The detection's rejection, when set. */
+  detectFails: string | null
+}
+const NOW = Date.UTC(2026, 10, 13, 12, 0, 0)
+const HOUR = 3_600_000
+const win = (over: Partial<PoolUsageWindow> & { kind: string }): PoolUsageWindow => ({
+  scope: null,
+  usedPercentage: 0,
+  severity: null,
+  resetsAt: null,
+  ...over
+})
+/** Two Claude subscriptions, the first one's Fable week spent; one Codex key. */
+const CLAUDE_CONNECTIONS: ServedPoolAccount[] = [
+  {
+    id: 'default',
+    label: 'Romain',
+    usable: true,
+    usage: usageSummaryOf({
+      windows: [
+        win({ kind: 'session', usedPercentage: 20, resetsAt: NOW + 2 * HOUR }),
+        win({ kind: 'weekly_all', usedPercentage: 40, resetsAt: NOW + 50 * HOUR }),
+        win({
+          kind: 'weekly_scoped',
+          scope: 'Fable',
+          usedPercentage: 100,
+          severity: 'critical',
+          resetsAt: NOW + 72 * HOUR
+        })
+      ]
+    })!
+  },
+  {
+    id: 'work',
+    label: 'Work',
+    usable: true,
+    usage: usageSummaryOf({
+      windows: [
+        win({ kind: 'weekly_all', usedPercentage: 10, resetsAt: NOW + 96 * HOUR }),
+        win({
+          kind: 'weekly_scoped',
+          scope: 'Fable',
+          usedPercentage: 30,
+          resetsAt: NOW + 96 * HOUR
+        })
+      ]
+    })!
+  }
+]
+const CODEX_CONNECTIONS: ServedPoolAccount[] = [
+  { id: 'key', label: 'API key', usable: true, fallback: true }
+]
+/** The server's profiles: its Codex chats on the person's own "yolo" (as
+ *  the fixture's `chatDefault` says), and a Pi profile pinning a model. */
+const LAUNCH_PREFS: LaunchProfilePreferences = {
+  version: 1,
+  customProfiles: [
+    { id: 'yolo', name: 'Yolo', family: 'codex', command: ['codex'], additionalArgs: ['--yolo'] },
+    {
+      id: 'chat:codex:yolo',
+      name: 'Yolo (chat)',
+      family: 'codex',
+      command: ['codex'],
+      additionalArgs: ['--yolo'],
+      sourceProfileId: 'yolo'
+    },
+    {
+      id: 'pi-kimi',
+      name: 'Pi on Kimi',
+      family: 'pi',
+      command: ['pi'],
+      additionalArgs: [],
+      pi: { model: 'kimi-k2' }
+    }
+  ],
+  globalDefaults: { codex: 'yolo' },
+  workspaceOverrides: {}
+}
+const STATUSES = [
+  { id: 'claude', installed: true, currentVersion: '3.1.0', lastCheckedAt: NOW - HOUR },
+  { id: 'codex', installed: true, currentVersion: '0.80.0', lastCheckedAt: NOW - HOUR },
+  { id: 'antigravity', installed: false, currentVersion: null, lastCheckedAt: NOW - HOUR },
+  { id: 'pi', installed: true, currentVersion: '0.9.2', lastCheckedAt: NOW - HOUR },
+  { id: 'opencode', installed: true, currentVersion: '2.0.1', lastCheckedAt: NOW - HOUR }
+] as AgentUpdateStatus[]
+function launchFake(state: LaunchState): ReturnType<typeof standaloneLaunchFacts> {
+  return standaloneLaunchFacts({
+    facts: {
+      preferences: () => LAUNCH_PREFS,
+      accounts: (pool) => (pool === 'codex' ? CODEX_CONNECTIONS : CLAUDE_CONNECTIONS),
+      selectedAccountId: () => 'default'
+    },
+    detection: {
+      detect: async () => {
+        if (state.detectFails) throw new Error(state.detectFails)
+        return STATUSES
+      }
+    },
+    identity: () => ({ id: 'srv-1', name: 'build-box' }),
+    preferences: (key) =>
+      key === 'interactionMode'
+        ? state.interactionMode
+        : key === 'accountSwitchMode'
+          ? state.switchMode
+          : undefined,
+    codexModels: async () => [{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' }],
+    homeDir: '/home/me',
+    defaultProfile: (family) => (family === 'codex' ? { id: 'yolo' } : { id: `builtin-${family}` }),
+    now: () => NOW
+  })
+}
+
 interface StartedCall {
   cwd: string
   windowKey?: string | undefined
@@ -234,8 +358,11 @@ async function sessionFixture(
     /** Host methods laid over the fixture's own (PRDCT-4192: `type` and
      *  `restart` spies for the messaging tools). */
     host?: Partial<SessionHostService>
+    /** What the server's launcher says, laid over the fixture's (PRDCT-4485). */
+    launch?: Partial<LaunchState>
   } = {}
 ): Promise<{
+  launchState: LaunchState
   client: Client
   /** A client holding the token of another tab of this server, as that
    *  tab's agent would call the tools. */
@@ -269,6 +396,12 @@ async function sessionFixture(
     title: 'Lane lead'
   }
   sessions.set(caller.id, caller)
+  const launchState: LaunchState = {
+    interactionMode: 'chat',
+    switchMode: 'automatic',
+    detectFails: null,
+    ...hooks.launch
+  }
   const started: StartedCall[] = []
   const stopped: string[] = []
   const resized: Array<[string, number, number]> = []
@@ -338,6 +471,7 @@ async function sessionFixture(
     profileFamily: (id) =>
       builtInProfileFamily(id) ?? (id === 'chat:codex:yolo' || id === 'yolo' ? 'codex' : undefined),
     chatDefault: (family) => (family === 'codex' ? 'chat:codex:yolo' : undefined),
+    launch: launchFake(launchState),
     ...hooks.options
   })
   closes.push(() => mcp.close())
@@ -355,7 +489,18 @@ async function sessionFixture(
     return client
   }
   const client = await connectAs('caller')
-  return { client, connectAs, started, stopped, resized, sessions, sidebar, host, directory }
+  return {
+    client,
+    connectAs,
+    started,
+    stopped,
+    resized,
+    sessions,
+    sidebar,
+    host,
+    directory,
+    launchState
+  }
 }
 const errorText = (result: Awaited<ReturnType<Client['callTool']>>): string => {
   expect(result.isError).toBe(true)
@@ -606,8 +751,9 @@ describe('standalone MCP session tools', () => {
   }, 15_000)
 
   it('opens the built-in chat when the server names no chat default for the family', async () => {
+    // A caller with no launch facts: the server's `chatDefault` decides.
     const { client, started, directory } = await sessionFixture({
-      options: { chatDefault: () => undefined }
+      options: { chatDefault: () => undefined, launch: undefined }
     })
     await client.callTool({
       name: 'clave_open_session',
@@ -634,7 +780,8 @@ describe('standalone MCP session tools', () => {
   }, 15_000)
 
   it('rejects a relative or missing directory, an unknown mode and desktop-only arguments without starting anything', async () => {
-    const { client, started, directory } = await sessionFixture()
+    // A caller of old, with no launch facts: `account` stays refused as before (PRDCT-4485).
+    const { client, started, directory } = await sessionFixture({ options: { launch: undefined } })
     expect(
       errorText(
         await client.callTool({ name: 'clave_open_session', arguments: { cwd: 'relative/dir' } })
@@ -791,7 +938,8 @@ describe('standalone MCP session tools: boundaries', () => {
           arguments: { cwd: directory, mode: 'claude', profile: 'codex-chat' }
         })
       )
-    ).toContain('belongs to codex, not claude')
+      // Resolved as a routine is (PRDCT-4485): the family's profiles, named.
+    ).toContain('launch profile "codex-chat" is not a claude profile here ("Claude")')
     expect(
       errorText(
         await client.callTool({
@@ -799,7 +947,7 @@ describe('standalone MCP session tools: boundaries', () => {
           arguments: { cwd: directory, mode: 'codex', profile: 'claude-chat' }
         })
       )
-    ).toContain('belongs to claude, not codex')
+    ).toContain('launch profile "claude-chat" is not a codex profile here')
     expect(
       errorText(
         await client.callTool({
@@ -815,7 +963,7 @@ describe('standalone MCP session tools: boundaries', () => {
           arguments: { cwd: directory, mode: 'claude', profile: 'no-such-profile' }
         })
       )
-    ).toContain('Unknown claude launch profile "no-such-profile"')
+    ).toContain('launch profile "no-such-profile" is not a claude profile here')
     expect(started).toHaveLength(0)
     payload(
       await client.callTool({
@@ -844,7 +992,7 @@ describe('standalone MCP session tools: boundaries', () => {
           arguments: { cwd: directory, mode: 'claude', profile: 'builtin-codex', chat: false }
         })
       )
-    ).toContain('belongs to codex, not claude')
+    ).toContain('launch profile "builtin-codex" is not a claude profile here ("Claude")')
   }, 15_000)
 
   it('reports a group deleted while the tab starts instead of claiming the placement', async () => {
@@ -1543,4 +1691,325 @@ describe('clave_open_artefact on the server (PRDCT-4472)', () => {
       'An artefact is a folder holding an HTML page, or one .html file.'
     )
   })
+})
+
+/**
+ * PRDCT-4485: the daemon's agent tools offer and resolve what its launcher
+ * does. Silent when wrong: a tab started on a spent connection, a profile
+ * named and quietly dropped, a switch that never happened.
+ */
+describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
+  const FABLE = 'claude-fable-5-1[1m]'
+  /** The caller, a Claude chat on the Fable-spent subscription. */
+  const caller: SessionRecord = {
+    id: 'caller',
+    cwd: '/srv/repo',
+    folderName: 'repo',
+    claudeMode: true,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    claudeProfileId: 'default',
+    model: FABLE,
+    launchProfileId: 'claude-chat'
+  }
+  const call = async (
+    client: Client,
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<Awaited<ReturnType<Client['callTool']>>> => client.callTool({ name, arguments: args })
+
+  it('clave_launch_options answers what this machine can launch, from the shared function', async () => {
+    const { client } = await sessionFixture({
+      options: {
+        launch: (() => {
+          const state: LaunchState = {
+            interactionMode: 'chat',
+            switchMode: 'automatic',
+            detectFails: null
+          }
+          const base = launchFake(state)
+          return {
+            ...base,
+            harnessSettings: () => ({ claude: { preferredModel: FABLE } })
+          }
+        })()
+      }
+    })
+    const options = payload(await call(client, 'clave_launch_options', {}))
+    expect(options.machine).toEqual({ id: 'srv-1', name: 'build-box' })
+    expect(options.interactionMode).toBe('chat')
+    const harnesses = options.harnesses as Array<Record<string, unknown>>
+    expect(harnesses.map((h) => h.id)).toEqual(['claude', 'codex', 'pi', 'opencode'])
+    expect(options.notInstalled).toEqual(['Antigravity'])
+    expect(options).not.toHaveProperty('warnings')
+    const [claude, codex, pi, opencode] = harnesses
+    expect(claude).toMatchObject({ installed: true, version: '3.1.0', defaultModel: FABLE })
+    const connections = claude.connections as Array<Record<string, unknown>>
+    expect(connections.filter((c) => c.suggested).map((c) => c.id)).toEqual(['work'])
+    expect(connections.map((c) => [c.id, c.exhausted])).toEqual([
+      ['default', true],
+      ['work', false]
+    ])
+    expect(typeof connections[0].headroom).toBe('string')
+    expect(connections[0].headroom).toContain('Fable')
+    const windows = connections[0].windows as Array<Record<string, unknown>>
+    expect(windows[0]).toMatchObject({
+      kind: 'session',
+      leftPercent: 80,
+      resetIn: expect.any(String)
+    })
+    expect(codex.connections).toEqual([
+      expect.objectContaining({
+        id: 'key',
+        fallback: true,
+        suggested: true,
+        exhausted: false,
+        headroom: null,
+        windows: []
+      })
+    ])
+    expect(codex.models).toEqual([
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', family: 'GPT-6.1 Sol', served: true, reason: null }
+    ])
+    expect((codex.profiles as Array<Record<string, unknown>>).find((p) => p.id === 'yolo')).toEqual(
+      { id: 'yolo', name: 'Yolo', form: 'terminal', default: true }
+    )
+    expect(
+      (codex.profiles as Array<Record<string, unknown>>).find((p) => p.id === 'chat:codex:yolo')
+    ).toMatchObject({ form: 'chat', default: false })
+    expect((pi.models as Array<Record<string, unknown>>).map((m) => m.id)).toEqual([
+      null,
+      'kimi-k2'
+    ])
+    expect(pi.connectionNote).toBe(
+      'Clave holds no connection for Pi: it runs on the login inside the harness.'
+    )
+    expect(opencode).toMatchObject({ installed: true, version: '2.0.1', models: [] })
+  }, 15_000)
+
+  it('clave_launch_options lists every harness, presence unknown, when the detection fails, and says why', async () => {
+    const { client } = await sessionFixture({
+      launch: { detectFails: 'the login shell is unreadable' }
+    })
+    const options = payload(await call(client, 'clave_launch_options', {}))
+    expect(options.warnings).toEqual(['the login shell is unreadable'])
+    expect(options.notInstalled).toEqual([])
+    const harnesses = options.harnesses as Array<Record<string, unknown>>
+    expect(harnesses.map((h) => [h.id, h.installed])).toEqual([
+      ['claude', null],
+      ['codex', null],
+      ['antigravity', null],
+      ['pi', null],
+      ['opencode', null]
+    ])
+  }, 15_000)
+
+  it('opens on the connection named by id, exact name, any case, or "any" for the model, and refuses an unknown one with the list', async () => {
+    const { client, started, directory } = await sessionFixture()
+    const open = (args: Record<string, unknown>): ReturnType<typeof call> =>
+      call(client, 'clave_open_session', { cwd: directory, ...args })
+    payload(await open({ account: 'work' }))
+    expect(started[0].options).toMatchObject({
+      claudeMode: true,
+      claudeProfileId: 'work',
+      claudeProfileLabel: 'Work'
+    })
+    payload(await open({ account: 'Romain' }))
+    expect(started[1].options).toMatchObject({ claudeProfileId: 'default' })
+    payload(await open({ account: 'WORK' }))
+    expect(started[2].options).toMatchObject({ claudeProfileId: 'work' })
+    // The selected one is spent on Fable: "any" for a Fable tab takes the other.
+    payload(await open({ account: 'any', model: FABLE }))
+    expect(started[3].options).toMatchObject({ claudeProfileId: 'work', model: FABLE })
+    payload(await open({ account: 'any', model: 'claude-opus-5-5' }))
+    expect(started[4].options).toMatchObject({ claudeProfileId: 'default' })
+    expect(errorText(await open({ account: 'Nobody' }))).toContain(
+      'Unknown Claude account "Nobody". Available: "Romain" (default), "Work" (work)'
+    )
+    expect(errorText(await open({ mode: 'pi', account: 'any' }))).toContain(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'
+    )
+    expect(started).toHaveLength(5)
+  }, 15_000)
+
+  it('opens on a profile named by name, and a built-in chat id on the harness’s configured chat default', async () => {
+    const { client, started, directory } = await sessionFixture()
+    const open = (args: Record<string, unknown>): ReturnType<typeof call> =>
+      call(client, 'clave_open_session', { cwd: directory, ...args })
+    payload(await open({ mode: 'pi', profile: 'pi on kimi' }))
+    expect(started[0].options).toMatchObject({ piMode: true, launchProfileId: 'pi-kimi' })
+    payload(await open({ mode: 'codex', profile: 'Yolo', chat: false }))
+    expect(started[1].options).toMatchObject({ codexMode: true, launchProfileId: 'yolo' })
+    payload(await open({ mode: 'codex', profile: 'codex-chat' }))
+    expect(started[2].options?.launchProfileId).toBe('chat:codex:yolo')
+  }, 15_000)
+
+  it('carries the permission mode, the effort and Pi’s provider and thinking to the spawn; autoRun false prefills', async () => {
+    const { client, started, directory } = await sessionFixture()
+    const open = (args: Record<string, unknown>): ReturnType<typeof call> =>
+      call(client, 'clave_open_session', { cwd: directory, ...args })
+    payload(await open({ mode: 'claude', permissionMode: 'plan', effort: 'high' }))
+    expect(started[0].options).toMatchObject({ permissionMode: 'plan', effort: 'high' })
+    payload(await open({ mode: 'codex', effort: 'xhigh' }))
+    expect(started[1].options).toMatchObject({ codexMode: true, effort: 'xhigh' })
+    payload(await open({ mode: 'pi', provider: 'moonshot', thinking: 'high' }))
+    expect(started[2].options).toMatchObject({
+      piMode: true,
+      piProvider: 'moonshot',
+      piThinking: 'high'
+    })
+    payload(await open({ mode: 'terminal', command: 'make test', autoRun: false }))
+    expect(started[3].options).toMatchObject({ initialCommand: 'make test', autoExecute: false })
+    for (const extra of [{ window: 2 }, { workspace: 'Main' }])
+      expect(errorText(await open(extra))).toContain('not available on a standalone server')
+    expect(started).toHaveLength(4)
+  }, 15_000)
+
+  it('follows the server’s interaction mode when chat is omitted: terminal opens the terminal form', async () => {
+    const { client, started, directory } = await sessionFixture({
+      launch: { interactionMode: 'terminal' }
+    })
+    payload(await call(client, 'clave_open_session', { cwd: directory, mode: 'claude' }))
+    expect(started[0].options).toMatchObject({ claudeMode: true })
+    expect(started[0].options?.launchProfileId).toBeUndefined()
+  }, 15_000)
+
+  it('resumes a stopped holder in place on the connection the call names', async () => {
+    const restarted: unknown[][] = []
+    const { client } = await sessionFixture({
+      records: [{ ...caller, id: 'old', claudeSessionId: 'conv-old', running: false }],
+      host: {
+        restart: async (...args) => {
+          restarted.push(args)
+          return { id: String(args[0]), alive: true, resumed: true } as never
+        }
+      }
+    })
+    payload(await call(client, 'clave_open_session', { resume: 'conv-old', account: 'Work' }))
+    expect(restarted).toEqual([
+      ['old', { claudeProfileId: 'work', claudeProfileLabel: 'Work' }, false, true]
+    ])
+  }, 15_000)
+
+  it('clave_list says what each tab runs on: harness, model, profile and connection', async () => {
+    const { client, directory } = await sessionFixture({
+      records: [
+        caller,
+        {
+          ...caller,
+          id: 'started-1',
+          claudeMode: false,
+          codexMode: true,
+          claudeProfileId: undefined,
+          codexAccountId: 'key',
+          model: 'gpt-6.1-sol',
+          launchProfileId: 'chat:codex:yolo'
+        }
+      ]
+    })
+    payload(await call(client, 'clave_open_session', { cwd: directory, mode: 'codex' }))
+    const rows = payload(await call(client, 'clave_list', {})).sessions as Array<
+      Record<string, unknown>
+    >
+    expect(rows.find((r) => r.id === 'caller')).toMatchObject({
+      mode: 'claude',
+      model: FABLE,
+      launchProfileId: 'claude-chat',
+      account: { id: 'default', label: 'Romain', exhausted: true }
+    })
+    expect(rows.find((r) => r.id === 'started-1')).toMatchObject({
+      parentId: 'caller',
+      mode: 'codex',
+      model: 'gpt-6.1-sol',
+      launchProfileId: 'chat:codex:yolo',
+      account: { id: 'key', label: 'API key', exhausted: false }
+    })
+  }, 15_000)
+
+  async function switchFixture(
+    switchMode: 'propose' | 'automatic' = 'automatic'
+  ): Promise<{ client: Client; restarted: unknown[][]; directory: string }> {
+    const restarted: unknown[][] = []
+    const { client, directory } = await sessionFixture({
+      records: [caller],
+      launch: { switchMode },
+      host: {
+        restart: async (...args) => {
+          restarted.push(args)
+          return { id: String(args[0]), alive: true, resumed: true } as never
+        }
+      }
+    })
+    return { client, restarted, directory }
+  }
+
+  it('clave_switch_account moves a tab at once when the switch mode is automatic', async () => {
+    const { client, restarted } = await switchFixture()
+    expect(
+      payload(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'Work' }))
+    ).toEqual({
+      sessionId: 'caller',
+      account: { id: 'work', label: 'Work' },
+      resumed: true,
+      switched: true,
+      proposed: false
+    })
+    expect(restarted).toEqual([
+      ['caller', { claudeProfileId: 'work', claudeProfileLabel: 'Work' }, false]
+    ])
+  }, 15_000)
+
+  it('clave_switch_account: "any" leaves a connection spent for the tab’s model; the current one is no switch', async () => {
+    const { client, restarted } = await switchFixture()
+    expect(
+      payload(await call(client, 'clave_switch_account', { sessionId: 'caller', account: 'any' }))
+    ).toMatchObject({ account: { id: 'work' }, switched: true })
+    expect(
+      payload(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'default' }))
+    ).toEqual({ sessionId: 'caller', account: { id: 'default', label: 'Romain' }, switched: false })
+    expect(restarted).toHaveLength(1)
+  }, 15_000)
+
+  it('clave_switch_account refuses under propose, an unknown connection and a tab with no pool', async () => {
+    const { client, restarted, directory } = await switchFixture('propose')
+    expect(
+      errorText(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'Work' }))
+    ).toBe(
+      'This server\'s switch mode is "propose" and a server has no window to propose to: set the server\'s switch mode to automatic in its settings, or move the tab from the Mac window.'
+    )
+    expect(
+      errorText(
+        await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'Nobody' })
+      )
+    ).toContain('Unknown Claude account "Nobody". Available: "Romain" (default), "Work" (work)')
+    const { sessionId } = payload(
+      await call(client, 'clave_open_session', { cwd: directory, mode: 'terminal' })
+    )
+    expect(
+      errorText(await call(client, 'clave_switch_account', { sessionId, account: 'any' }))
+    ).toBe(
+      'Only a tab on a harness with a connection pool (Claude Code, Codex) runs on a connection'
+    )
+    expect(restarted).toHaveLength(0)
+  }, 15_000)
+
+  it('keeps its instructions under the host’s cut, naming clave_launch_options', async () => {
+    const { client } = await sessionFixture()
+    const instructions = client.getInstructions() ?? ''
+    expect(instructions).toContain('clave_launch_options')
+    expect(instructions.length).toBeLessThan(2000)
+  }, 15_000)
+
+  it('registers the launcher’s tools only when the server states its launch facts', async () => {
+    const without = await sessionFixture({ options: { launch: undefined } })
+    const names = (await without.client.listTools()).tools.map((t) => t.name)
+    expect(names).not.toContain('clave_launch_options')
+    expect(names).not.toContain('clave_switch_account')
+    const withLaunch = await sessionFixture()
+    const all = (await withLaunch.client.listTools()).tools.map((t) => t.name)
+    expect(all).toEqual(expect.arrayContaining(['clave_launch_options', 'clave_switch_account']))
+  }, 15_000)
 })
