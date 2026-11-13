@@ -67,6 +67,8 @@ export interface ProviderConnectionAddInput {
 }
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 export type ModelsCatalogView = typeof Settings.ModelsCatalogView.Type
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+export type ProviderUsageLineView = typeof Settings.ProviderUsageLineView.Type
 
 export interface SettingsSourceService {
   readonly claudeAccounts: {
@@ -203,6 +205,16 @@ export interface SettingsSourceService {
       readonly force?: boolean
     }) => Awaitable<ModelsCatalogView>
   }
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage line of that stored provider connection on this host, read
+   *  again first with `force`; a connection it does not know is the unknown
+   *  line. A host with no connections answers `CapabilityUnavailable`. */
+  readonly providerUsage: {
+    readonly read: (input: {
+      readonly connectionId: string
+      readonly force?: boolean
+    }) => Awaitable<ProviderUsageLineView>
+  }
 }
 
 export class SettingsSource extends Context.Tag('@clave/server/SettingsSource')<
@@ -301,6 +313,8 @@ function noneSource(): SettingsSourceService {
       setKey: refuse('providerConnections')
     },
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
-    modelsCatalog: { read: refuse('modelsCatalog') }
+    modelsCatalog: { read: refuse('modelsCatalog') },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage: { read: refuse('providerUsage') }
   }
 }

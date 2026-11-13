@@ -69,6 +69,8 @@ import type {
 } from '@clave/contract/settings'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -115,6 +117,13 @@ export interface ModelsCatalogLike {
   view(input: { providerIds?: readonly string[]; force?: boolean }): Promise<ModelsCatalogView>
 }
 
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+/** A host's usage lines as the source needs them
+ *  (`../provider-usage.ts`'s `providerUsageView`). */
+export interface ProviderUsageLike {
+  view(input: { connectionId: string; force?: boolean }): Promise<ProviderUsageLineView>
+}
+
 export interface SettingsManagers {
   claudeAccounts: ClaudeAccountsManager
   codexAccounts: CodexAccountsManager
@@ -155,6 +164,9 @@ export interface SettingsManagers {
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   /** The models catalogue of this host; absent, refused. */
   modelsCatalog?: ModelsCatalogLike
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage lines of this host's stored connections; absent, refused. */
+  providerUsage?: ProviderUsageLike
 }
 
 // ── Lane B (harness wave): provider connections ──
@@ -270,6 +282,9 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   const modelsCatalog = (): ModelsCatalogLike =>
     m.modelsCatalog ?? refuse('modelsCatalog', 'This server has no models catalogue.')
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  const providerUsage = (): ProviderUsageLike =>
+    m.providerUsage ?? refuse('providerUsage', 'This server has no provider usage.')
 
   // The change event and the write's answer carry the state after the write
   // with its stamp (PRDCT-3405): a window compares the stamp with the last
@@ -486,6 +501,10 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog: {
       read: (input) => modelsCatalog().view(input)
+    },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage: {
+      read: (input) => providerUsage().view(input)
     }
   }
 }

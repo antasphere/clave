@@ -59,6 +59,8 @@ import { registerTriageHandlers } from './triage-handlers'
 import { registerProviderConnectionsHandlers } from './provider-connections-handlers'
 // ── Lane C of the harness wave (PRDCT-4496): the models catalogue ──
 import { registerModelsCatalogHandlers } from './models-catalog-handlers'
+// ── Lane C of the harness wave (PRDCT-4496): a connection's usage line ──
+import { registerProviderUsageHandlers } from './provider-usage-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -120,4 +122,6 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerProviderConnectionsHandlers()
   // ── Lane C of the harness wave (PRDCT-4496): the models catalogue ──
   registerModelsCatalogHandlers()
+  // ── Lane C of the harness wave (PRDCT-4496): a connection's usage line ──
+  registerProviderUsageHandlers()
 }

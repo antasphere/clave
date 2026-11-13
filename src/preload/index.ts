@@ -86,6 +86,8 @@ import type {
 } from '../shared/server-setup-types'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -3048,6 +3050,17 @@ const electronAPI = {
     ipc: (input) => ipcRenderer.invoke('models-catalog:read', input ?? {}),
     server: async ({ api }, input) =>
       loose<ModelsCatalogView>(await api.settings.modelsCatalog.read(input ?? {}))
+  }),
+
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line, the
+  // window's server's when it has one, where that server's connection lives.
+  providerUsageRead: viaServer<
+    [input: { connectionId: string; force?: boolean }],
+    ProviderUsageLineView
+  >({
+    ipc: (input) => ipcRenderer.invoke('provider-usage:read', input),
+    server: async ({ api }, input) =>
+      loose<ProviderUsageLineView>(await api.settings.providerUsage.read(input))
   })
 }
 

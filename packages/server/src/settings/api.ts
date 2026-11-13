@@ -63,4 +63,6 @@ export const SettingsLive = HttpApiBuilder.group(ClaveApi, 'settings', (handlers
     .handle('setProviderConnectionKey', HttpCqrs.command(S.SetProviderConnectionKey))
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     .handle('readModelsCatalog', HttpCqrs.query(S.ReadModelsCatalog))
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    .handle('readProviderUsage', HttpCqrs.query(S.ReadProviderUsage))
 )

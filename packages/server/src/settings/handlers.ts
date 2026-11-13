@@ -73,6 +73,8 @@ import {
 } from '@clave/contract/settings'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import { ReadModelsCatalog } from '@clave/contract/settings'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import { ReadProviderUsage } from '@clave/contract/settings'
 import { SettingsSource, type SettingsSourceService } from './port'
 
 /** A refusal the source threw: the contract's class, or any error carrying
@@ -277,5 +279,8 @@ export const settingsHandlers = [
   ),
   // Lane C of the harness wave (PRDCT-4496): the models catalogue. A host
   // with none says so; a failed fetch is a stale answer, never a refusal.
-  QueryHandler.make(ReadModelsCatalog, (p) => call((s) => s.modelsCatalog.read(p)))
+  QueryHandler.make(ReadModelsCatalog, (p) => call((s) => s.modelsCatalog.read(p))),
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line. A
+  // host with none says so; an unknown connection is a line, never a refusal.
+  QueryHandler.make(ReadProviderUsage, (p) => call((s) => s.providerUsage.read(p)))
 ] as const

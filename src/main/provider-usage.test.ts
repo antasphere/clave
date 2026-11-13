@@ -9,8 +9,14 @@ import {
   parseOpenRouterKey,
   parseVercelCredits,
   usageLineText,
-  type ProviderUsageLine
+  type ProviderUsageLine,
+  // Lane C of the harness wave (PRDCT-4496): the usage line reaches the window
+  providerUsage,
+  providerUsageView,
+  setConnectionRefSource
 } from './provider-usage'
+// Lane C of the harness wave (PRDCT-4496): the line's text, from its new home
+import { usageLineText as contractUsageLineText } from '@clave/contract/settings/provider-usage-view'
 
 const VALUE = 'sk-made-up-0123456789abcdef'
 const MALFORMED: unknown[] = [null, 'not a body', { something: 'else' }]
@@ -309,5 +315,47 @@ describe('ProviderUsage.read', () => {
       expect(JSON.stringify(line)).not.toContain(VALUE)
       expect(usageLineText(line)).not.toContain(VALUE)
     }
+  })
+})
+
+// Lane C of the harness wave (PRDCT-4496): the usage line reaches the window
+describe('providerUsageView', () => {
+  it('says a connection unknown here when no store answers for it', async () => {
+    expect(await providerUsageView({ connectionId: 'c1' })).toEqual({
+      kind: 'unknown',
+      reason: 'The connection is not known here.'
+    })
+  })
+
+  it('reads the connection the store resolves, passing force on, and never rejects', async () => {
+    setConnectionRefSource(async (id) => (id === 'c1' ? { id: 'c1', company: 'minimax' } : null))
+    try {
+      expect(await providerUsageView({ connectionId: 'c1' })).toEqual({ kind: 'plan' })
+      const read = vi.spyOn(providerUsage, 'read')
+      await providerUsageView({ connectionId: 'c1', force: true })
+      await providerUsageView({ connectionId: 'c1' })
+      expect(read.mock.calls).toEqual([
+        [{ id: 'c1', company: 'minimax' }, { force: true }],
+        [{ id: 'c1', company: 'minimax' }, { force: false }]
+      ])
+      read.mockRejectedValueOnce(new Error('boom'))
+      expect((await providerUsageView({ connectionId: 'c1' })).kind).toBe('unknown')
+      read.mockRestore()
+      expect(await providerUsageView({ connectionId: 'c2' })).toEqual({
+        kind: 'unknown',
+        reason: 'The connection is not known here.'
+      })
+      setConnectionRefSource(async () => {
+        throw new Error('store gone')
+      })
+      expect((await providerUsageView({ connectionId: 'c1' })).kind).toBe('unknown')
+    } finally {
+      setConnectionRefSource(async () => null)
+    }
+  })
+
+  it('keeps the text the contract owns under its old name', () => {
+    expect(usageLineText).toBe(contractUsageLineText)
+    expect(usageLineText({ kind: 'plan' })).toBe('Coding plan')
   })
 })

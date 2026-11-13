@@ -31,6 +31,8 @@ export * from './connections'
 export { settingsGroup } from './api'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 export * from './models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+export * from './provider-usage'
 
 /** Every event the settings domains push, as members for `ServerEvent`. */
 export const SettingsEvent = Schema.Union(

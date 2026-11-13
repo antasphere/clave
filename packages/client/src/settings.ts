@@ -104,6 +104,8 @@ const providerConnectionsMissing = <T>(run: Promise<T>): Promise<T> =>
   })
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 export type ModelsCatalogView = typeof S.ModelsCatalogView.Type
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+export type ProviderUsageLineView = typeof S.ProviderUsageLineView.Type
 
 export interface SettingsClient {
   readonly claudeAccounts: {
@@ -222,6 +224,15 @@ export interface SettingsClient {
       readonly providerIds?: ReadonlyArray<string>
       readonly force?: boolean
     }) => Promise<ModelsCatalogView>
+  }
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** That server's usage line of that stored provider connection, read again
+   *  first with `force`; an unknown connection is the unknown line. */
+  readonly providerUsage: {
+    readonly read: (input: {
+      readonly connectionId: string
+      readonly force?: boolean
+    }) => Promise<ProviderUsageLineView>
   }
 }
 
@@ -387,6 +398,21 @@ export function settingsClient(callApi: Call): SettingsClient {
             payload: {
               ...(input.providerIds &&
                 input.providerIds.length > 0 && { providerIds: input.providerIds.join(',') }),
+              ...(input.force !== undefined && {
+                force: input.force ? ('true' as const) : ('false' as const)
+              })
+            }
+          })
+        )
+    },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line. A
+    // GET's parameters: the id, the flag as a string, only when set.
+    providerUsage: {
+      read: (input) =>
+        call((g) =>
+          g.readProviderUsage({
+            payload: {
+              connectionId: input.connectionId,
               ...(input.force !== undefined && {
                 force: input.force ? ('true' as const) : ('false' as const)
               })

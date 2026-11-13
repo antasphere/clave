@@ -41,6 +41,8 @@ import type {
 import type { ProviderConnection } from './index.d'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 
 interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -1378,6 +1380,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (serverId === LOCAL_SERVER_ID) return local.modelsCatalogRead(input)
       const { api } = await backing(serverId)
       return (await api.settings.modelsCatalog.read(input ?? {})) as ModelsCatalogView
+    },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line, read
+    // on the server that holds the connection; this Mac's over its own route.
+    fleetProviderUsage: async (serverId, input) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerUsageRead(input)
+      const { api } = await backing(serverId)
+      return (await api.settings.providerUsage.read(input)) as ProviderUsageLineView
     }
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>

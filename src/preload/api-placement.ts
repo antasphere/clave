@@ -653,5 +653,10 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   modelsCatalogRead: localBecause(
     "the window's own server's catalogue, this Mac's without one; a saved server's is fleetModelsCatalog"
   ),
-  fleetModelsCatalog: routed
+  fleetModelsCatalog: routed,
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  providerUsageRead: localBecause(
+    "the window's own server's connection, this Mac's without one; a saved server's is fleetProviderUsage"
+  ),
+  fleetProviderUsage: routed
 }

@@ -33,6 +33,8 @@ import type {
 } from '@clave/contract/routines/model'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 
 export interface FleetSnapshot {
   serverId: string
@@ -224,6 +226,13 @@ export interface FleetDesktopAPI {
     serverId: string,
     input?: { providerIds?: string[]; force?: boolean }
   ): Promise<ModelsCatalogView>
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** A stored provider connection's usage line, read on the server that holds
+   *  it (this Mac's own for the local id), read again first with `force`. */
+  fleetProviderUsage(
+    serverId: string,
+    input: { connectionId: string; force?: boolean }
+  ): Promise<ProviderUsageLineView>
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

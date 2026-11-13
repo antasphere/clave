@@ -21,7 +21,9 @@ import type {
   // ── Lane B (harness wave): provider connections ──
   ProviderConnection,
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
-  ModelsCatalogView
+  ModelsCatalogView,
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  ProviderUsageLineView
 } from './port'
 import { unavailable } from './port'
 
@@ -86,6 +88,8 @@ export class FakeSettingsSource implements SettingsSourceService {
     integrations?: boolean
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog?: boolean
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage?: boolean
   } = {}
   /** The host's integrations as the fake holds them (PRDCT-4410): the key it
    *  was handed goes to `secrets`, never into this. */
@@ -584,6 +588,25 @@ export class FakeSettingsSource implements SettingsSourceService {
         ...this.catalog,
         providers: ids.flatMap((id) => this.catalog.providers.filter((p) => p.id === id))
       }
+    }
+  }
+  // Lane C of the harness wave (PRDCT-4496): the usage lines as the fake holds
+  // them, by connection id; one it does not hold is the unknown line.
+  usageLines: Record<string, ProviderUsageLineView> = {
+    'conn-deepseek': { kind: 'balance', left: '12.50', currency: 'USD' },
+    'conn-minimax': { kind: 'plan' }
+  }
+  readonly providerUsage: SettingsSourceService['providerUsage'] = {
+    read: (input) => {
+      this.record('providerUsage.read', input)
+      if (this.refuse.providerUsage)
+        throw unavailable('providerUsage', 'This server has no provider usage.')
+      return (
+        this.usageLines[input.connectionId] ?? {
+          kind: 'unknown',
+          reason: 'The connection is not known here.'
+        }
+      )
     }
   }
 }

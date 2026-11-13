@@ -148,7 +148,9 @@ const UNREADABLE_NO_PLACE = new Set([
   'providerConnectionRemove',
   'providerConnectionSetKey',
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
-  'modelsCatalogRead'
+  'modelsCatalogRead',
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  'providerUsageRead'
 ])
 const unreadable = (fn: unknown): boolean => {
   if (typeof fn !== 'function') return false

@@ -36,6 +36,8 @@ import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import { modelsCatalog } from '../models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import { providerUsageView } from '../provider-usage'
 
 export interface StandaloneSettings {
   settings: SettingsSourceService
@@ -79,6 +81,8 @@ export function standaloneSettingsSource(
     integrations: elevenLabsIntegration,
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog,
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage: { view: providerUsageView },
     // Loaded on first use, as the shell's: the daemon's login reaches the
     // login shell's environment through the terminal backend, which the
     // source's own import graph must not reach (`boot-graph.test.ts`).

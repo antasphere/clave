@@ -68,6 +68,8 @@ import type {
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -1721,6 +1723,16 @@ export interface ElectronAPI extends FleetDesktopAPI {
     providerIds?: string[]
     force?: boolean
   }) => Promise<ModelsCatalogView>
+
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage line of that stored provider connection on the window's server
+   *  (this Mac's when it has none), read again first with `force`. A failed
+   *  read or an unknown connection is the unknown line with its reason, never
+   *  a rejection. A saved server's is `fleetProviderUsage`. */
+  providerUsageRead: (input: {
+    connectionId: string
+    force?: boolean
+  }) => Promise<ProviderUsageLineView>
 }
 
 declare global {

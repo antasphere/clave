@@ -73,6 +73,8 @@ import {
 } from './connections'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import { ReadModelsCatalog } from './models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import { ReadProviderUsage } from './provider-usage'
 
 export const settingsGroup = ApiGroup.make('settings')
   // Claude accounts
@@ -316,3 +318,5 @@ export const settingsGroup = ApiGroup.make('settings')
   )
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   .add(HttpCqrs.queryEndpoint('readModelsCatalog', '/models-catalog', ReadModelsCatalog))
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  .add(HttpCqrs.queryEndpoint('readProviderUsage', '/provider-usage', ReadProviderUsage))

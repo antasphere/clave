@@ -635,3 +635,42 @@ describe('the models catalogue on the server (PRDCT-4496)', () => {
     }
   })
 })
+
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+describe('a connection’s usage line on the server (PRDCT-4496)', () => {
+  it('answers the line of the connection asked for, an unknown one as a line, the flag decoded', async () => {
+    const known = await get('/provider-usage?connectionId=conn-deepseek')
+    expect(known.status).toBe(200)
+    expect(await known.json()).toEqual({ kind: 'balance', left: '12.50', currency: 'USD' })
+    const forced = await get('/provider-usage?connectionId=nobody&force=true')
+    expect(forced.status).toBe(200)
+    expect(await forced.json()).toEqual({
+      kind: 'unknown',
+      reason: 'The connection is not known here.'
+    })
+    expect(fake.calls.filter((c) => c.method === 'providerUsage.read').map((c) => c.args)).toEqual([
+      [{ connectionId: 'conn-deepseek' }],
+      [{ connectionId: 'nobody', force: true }]
+    ])
+  })
+
+  it('says a host with none as unavailable, and a server with no settings the same', async () => {
+    fake.refuse.providerUsage = true
+    const read = await get('/provider-usage?connectionId=conn-deepseek')
+    expect(read.status).toBe(422)
+    expect(await read.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'providerUsage'
+    })
+    const bare = await startEmbedded({ ports: { sessions: new FakeSource() } })
+    try {
+      const res = await fetch(`${bare.url}/provider-usage?connectionId=conn-deepseek`, {
+        headers: headers(bare.token)
+      })
+      expect(res.status).toBe(422)
+      expect(await res.json()).toMatchObject({ capability: 'providerUsage' })
+    } finally {
+      await bare.stop()
+    }
+  })
+})

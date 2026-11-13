@@ -9,34 +9,16 @@
  */
 
 import type { ProviderCompanyId } from './models-catalog-overlay'
+// Lane C of the harness wave (PRDCT-4496): the usage line, the window's shape
+import {
+  usageLineText,
+  type ProviderUsageLineView
+} from '@clave/contract/settings/provider-usage-view'
 
-export type ProviderUsageLine =
-  | { kind: 'balance'; left: string; currency: string }
-  | { kind: 'limit'; left: string; of: string; currency: string }
-  | { kind: 'used'; used: string; currency: string }
-  | { kind: 'payPerUse' }
-  | { kind: 'plan' }
-  | { kind: 'local' }
-  | { kind: 'unknown'; reason: string }
-
-export function usageLineText(line: ProviderUsageLine): string {
-  switch (line.kind) {
-    case 'balance':
-      return `${line.left} ${line.currency} left`
-    case 'limit':
-      return `${line.left} of ${line.of} ${line.currency} left`
-    case 'used':
-      return `Pay per use · ${line.used} ${line.currency} used`
-    case 'payPerUse':
-      return 'Pay per use'
-    case 'plan':
-      return 'Coding plan'
-    case 'local':
-      return 'Local'
-    case 'unknown':
-      return 'Usage unknown'
-  }
-}
+/** The line and its text live in the contract, which the window loads; they
+ *  keep their names here. */
+export type ProviderUsageLine = ProviderUsageLineView
+export { usageLineText }
 
 // ── The parsers: pure, never throwing ───────────────────────────────────────
 
@@ -265,3 +247,40 @@ export function setConnectionValueSource(
 }
 
 export const providerUsage = new ProviderUsage({ openValue: (id) => source(id) })
+
+// Lane C of the harness wave (PRDCT-4496): the usage line reaches the window
+
+let refSource: (
+  connectionId: string
+) => Promise<{ id: string; company: ProviderCompanyId } | null> = async () => null
+
+/** Where the app's instance finds a connection by its id: the connection
+ *  store sets it once it exists. */
+export function setConnectionRefSource(
+  fn: (connectionId: string) => Promise<{ id: string; company: ProviderCompanyId } | null>
+): void {
+  refSource = fn
+}
+
+const NOT_KNOWN = 'The connection is not known here.'
+
+/** A connection's usage line as a window reads it, on either road (IPC or the
+ *  server's `ReadProviderUsage`), read again first with `force`. Never
+ *  rejects: a connection this host does not know is the unknown line. */
+export async function providerUsageView(input: {
+  connectionId: string
+  force?: boolean
+}): Promise<ProviderUsageLineView> {
+  let ref: { id: string; company: ProviderCompanyId } | null
+  try {
+    ref = await refSource(input.connectionId)
+  } catch {
+    ref = null
+  }
+  if (!ref) return unknown(NOT_KNOWN)
+  try {
+    return await providerUsage.read(ref, { force: input.force === true })
+  } catch {
+    return unknown(UNREACHABLE)
+  }
+}
