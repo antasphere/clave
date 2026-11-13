@@ -337,6 +337,17 @@ export async function run(t) {
       errorText(proposed)
     )
     t.equal('and the tab stays on Work', (await rowOf(workTab))?.account?.id, work.id)
+    // The mode is read first, as on the Mac: a switch to the connection the
+    // tab already runs on is refused in the same words.
+    const toCurrent = await mcp.call('clave_switch_account', {
+      sessionId: workTab,
+      account: work.id
+    })
+    t.check(
+      'with the switch mode at propose, a switch to the current connection is refused too',
+      toolErrored(toCurrent) && errorText(toCurrent).includes(PROPOSE_REFUSAL),
+      errorText(toCurrent)
+    )
 
     // No route sets a daemon's switch mode: it is a preference of its own
     // store (`preferences.json` in its data folder, cached once read), so

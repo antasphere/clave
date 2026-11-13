@@ -26,7 +26,7 @@ import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinn
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
-import { rememberedLaunchModel } from './launch-model'
+import { localOpenProfileId, rememberedLaunchModel } from './launch-model'
 import { claudeProfileSpawnFields, type ClaudeProfile } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
 import {
@@ -1744,13 +1744,20 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
   const facts = { harnessSettings: harnesses, interactionMode, codexModels, now: Date.now() }
   if (serverId === LOCAL_SERVER_ID) {
+    // Each pool's remembered model on the profile an open naming none
+    // resolves (the chat default in a chat interaction mode), as the listing's
+    // `openProfileId` says: never on the terminal default (verifier, round 2).
     const launchModels = Object.fromEntries(
       await Promise.all(
         (['claude', 'codex'] as const).map(
           async (pool) =>
             [
               pool,
-              await rememberedLaunchModel(pool, undefined, null).catch(() => undefined)
+              await rememberedLaunchModel(
+                pool,
+                localOpenProfileId(pool, interactionMode, null),
+                null
+              ).catch(() => undefined)
             ] as const
         )
       )

@@ -55,6 +55,12 @@ export interface LaunchOptionsInput {
   /** Built-ins + the person's, of that family, chat forms included. */
   readonly profiles: (harness: HarnessId) => readonly LaunchProfile[]
   readonly defaultProfileId: (harness: HarnessId) => string | undefined
+  /** The launch profile an open that names no profile and no chat flag
+   *  resolves on this road: the harness's chat default under a chat
+   *  interaction mode, else its default profile. `defaultModel` is judged on
+   *  it, never on `defaultProfileId` (a chat open runs the remembered chat
+   *  model, a terminal profile has none: verifier, round 2). */
+  readonly openProfileId: (harness: HarnessId) => string | undefined
   /** The harness's list; 'unavailable' when the list could not be read. */
   readonly models: (harness: HarnessId) => readonly LaunchModel[] | 'unavailable'
   readonly harnessSettings: HarnessSettingsById
@@ -180,11 +186,12 @@ function harnessOptions(
   const pools = poolsOf(harness)
   const defaultProfileId = input.defaultProfileId(id)
   // What an open passing no model lands on: the remembered chat model of
-  // the default profile, else the harness's own default (null). The
+  // the profile that open resolves (the chat default under a chat
+  // interaction mode), else the harness's own default (null). The
   // launcher's row passes its preferred model instead (`launcherModel`).
   const defaultModel =
     harness.takesModel && pools.length > 0
-      ? (input.launchModel(pools[0], defaultProfileId) ?? null)
+      ? (input.launchModel(pools[0], input.openProfileId(id)) ?? null)
       : null
   const launcherModel = input.harnessSettings[id]?.preferredModel ?? null
   const model = defaultModel ?? undefined

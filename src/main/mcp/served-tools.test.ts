@@ -683,6 +683,42 @@ describe('launchOptions, served: what this machine can launch', () => {
     }
   })
 
+  it('judges defaultModel on the chat default an open resolves in a chat mode, not on the default profile', async () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      const h = setup()
+      // The default profile is the built-in terminal; the person's chat
+      // default is the chat form of a profile of theirs, and only a chat
+      // remembers a model.
+      const asked: (string | undefined)[] = []
+      const world = (mode: 'chat' | 'terminal'): Partial<ServedShell> => ({
+        defaultProfileId: (family) => (family === 'claude' ? 'builtin-claude' : undefined),
+        chatDefault: (family) => (family === 'claude' ? 'chat:claude:mine' : undefined),
+        launchModel: (pool, profileId) => {
+          if (pool !== 'claude') return undefined
+          asked.push(profileId)
+          return profileId === 'chat:claude:mine' ? 'opus' : undefined
+        },
+        interactionMode: () => mode
+      })
+      const claudeOf = async (
+        mode: 'chat' | 'terminal'
+      ): Promise<LaunchOptions['harnesses'][number]> =>
+        (
+          (await serveCommand('launchOptions', {}, full(h, world(mode)))) as LaunchOptions
+        ).harnesses.find((x) => x.id === 'claude')!
+      const chat = await claudeOf('chat')
+      expect(chat.defaultModel).toBe('opus')
+      expect(asked).toEqual(['chat:claude:mine'])
+      expect(chat.profiles.find((p) => p.default)?.id).toBe('builtin-claude')
+      const terminal = await claudeOf('terminal')
+      expect(terminal.defaultModel).toBeNull()
+      expect(asked[1]).toBe('builtin-claude')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('marks the recommendation when the person opted in: what accountForLaunch picks, not the next along', async () => {
     vi.useFakeTimers({ now: NOW })
     try {

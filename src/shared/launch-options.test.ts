@@ -132,7 +132,10 @@ function input(over: Partial<LaunchOptionsInput> = {}): LaunchOptionsInput {
     harnesses: HARNESSES,
     presence: (id) => PRESENCE[id],
     profiles: (id) => PROFILES.filter((p) => p.family === id),
-    defaultProfileId: (id) => (id === 'claude' ? 'claude-chat' : `builtin-${id}`),
+    // The default profile is the built-in terminal, as on a fresh install;
+    // the open (chat mode) resolves the chat default, a profile apart.
+    defaultProfileId: (id) => `builtin-${id}`,
+    openProfileId: (id) => (id === 'claude' ? 'claude-chat' : `builtin-${id}`),
     models: (id) => {
       if (id === 'claude') return claudeModels
       if (id === 'codex') return 'unavailable'
@@ -210,6 +213,40 @@ describe('the models and the default one', () => {
     )
     expect(harness(remembered, 'claude').defaultModel).toBe(OPUS)
     expect(asked).toContainEqual(['claude', 'claude-chat'])
+  })
+  it('judges the default model on the profile the open resolves, not on the default profile (verifier, round 2)', () => {
+    // The default profile is the terminal one; an open with no profile and
+    // no chat flag, under a chat interaction mode, resolves the chat default,
+    // whose remembered model is Fable. The default connection's Fable week
+    // is spent and Work is open: the open lands on Work.
+    const chatModel = (pool: string, profileId: string | undefined): string | undefined =>
+      pool === 'claude' && profileId === 'claude-chat' ? FABLE : undefined
+    const onChat = harness(
+      launchOptions(
+        input({
+          defaultProfileId: (id) => `builtin-${id}`,
+          openProfileId: (id) => (id === 'claude' ? 'claude-chat' : `builtin-${id}`),
+          launchModel: chatModel
+        })
+      ),
+      'claude'
+    )
+    expect(onChat.defaultModel).toBe(FABLE)
+    expect(onChat.connections.find((c) => c.suggested)?.id).toBe('work')
+    expect(onChat.profiles.find((p) => p.default)?.id).toBe('builtin-claude')
+    // A terminal open resolves the terminal profile: no remembered model.
+    const onTerminal = harness(
+      launchOptions(
+        input({
+          defaultProfileId: (id) => `builtin-${id}`,
+          openProfileId: (id) => `builtin-${id}`,
+          launchModel: chatModel
+        })
+      ),
+      'claude'
+    )
+    expect(onTerminal.defaultModel).toBeNull()
+    expect(onTerminal.connections.find((c) => c.suggested)?.id).toBe('default')
   })
   it('says null, the harness’s own default, when no launch model is remembered', () => {
     const none = launchOptions(
@@ -429,8 +466,8 @@ describe('the profiles', () => {
   it('reads each profile form and the default one', () => {
     const claude = harness(launchOptions(input()), 'claude')
     expect(claude.profiles).toEqual([
-      { id: 'builtin-claude', name: 'Claude', form: 'terminal', default: false },
-      { id: 'claude-chat', name: 'Claude (chat)', form: 'chat', default: true },
+      { id: 'builtin-claude', name: 'Claude', form: 'terminal', default: true },
+      { id: 'claude-chat', name: 'Claude (chat)', form: 'chat', default: false },
       { id: 'claude-yolo', name: 'Claude yolo', form: 'terminal', default: false },
       { id: 'chat:claude:claude-yolo', name: 'Claude yolo (chat)', form: 'chat', default: false }
     ])

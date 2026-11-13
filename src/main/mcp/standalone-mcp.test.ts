@@ -18,7 +18,7 @@ import { SidebarLayouts, memorySidebarStorage, noWindowsHost } from '@clave/serv
 import { PendingRequests } from '../../../packages/server/src/requests/service'
 import { createAgentTokenStore } from '../sessions/agent-tokens'
 import { executeSecretAction } from '../secret-actions'
-import { builtInProfileFamily, startStandaloneMcp } from './standalone-mcp'
+import { SWITCH_PROPOSE_REFUSAL, builtInProfileFamily, startStandaloneMcp } from './standalone-mcp'
 import { agentSessionFixtureCatalog } from './standalone-mcp.fixtures'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildProvenanceHeader } from '../../shared/exchange-provenance'
@@ -1827,6 +1827,52 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(opencode).toMatchObject({ installed: true, version: '2.0.1', models: [] })
   }, 15_000)
 
+  it('clave_launch_options judges defaultModel on the profile an open with no model resolves, and the open lands on its suggested connection (verifier, round 2)', async () => {
+    // Through the real facts: a chat interaction mode, the default profile
+    // the built-in terminal, the fixture's chat default for Claude (the
+    // built-in chat), and a remembered model only a CHAT profile answers,
+    // as `rememberedSpawnModel` does.
+    const asked: (string | undefined)[] = []
+    const { client, started, directory } = await sessionFixture({
+      options: {
+        launch: (() => {
+          const base = launchFake({
+            interactionMode: 'chat',
+            switchMode: 'automatic',
+            detectFails: null
+          })
+          return {
+            ...base,
+            launchModel: (family: 'claude' | 'codex', profileId: string | undefined) => {
+              if (family === 'claude') asked.push(profileId)
+              return family === 'claude' && profileId === 'claude-chat' ? FABLE : undefined
+            }
+          }
+        })()
+      }
+    })
+    const options = payload(await call(client, 'clave_launch_options', {}))
+    const claude = (options.harnesses as Array<Record<string, unknown>>).find(
+      (h) => h.id === 'claude'
+    )!
+    expect((claude.profiles as Array<Record<string, unknown>>).find((p) => p.default)?.id).toBe(
+      'builtin-claude'
+    )
+    expect(claude.defaultModel).toBe(FABLE)
+    const suggested = (claude.connections as Array<Record<string, unknown>>).find(
+      (c) => c.suggested
+    )?.id
+    expect(suggested).toBe('work')
+    // The open with no model and no connection is judged on the same model.
+    payload(await call(client, 'clave_open_session', { cwd: directory }))
+    expect(started[0].options).toMatchObject({
+      claudeMode: true,
+      launchProfileId: 'claude-chat',
+      claudeProfileId: suggested
+    })
+    expect(asked.every((id) => id === 'claude-chat')).toBe(true)
+  }, 15_000)
+
   it('clave_launch_options lists every harness, presence unknown, when the detection fails, and says why', async () => {
     const { client } = await sessionFixture({
       launch: { detectFails: 'the login shell is unreadable' }
@@ -1929,6 +1975,59 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(restarted).toEqual([
       ['old', { claudeProfileId: 'work', claudeProfileLabel: 'Work' }, false, true]
     ])
+  }, 15_000)
+
+  it('names every field a held tab does not apply: all of them on a live tab, all but the connection on a stopped one resumed in place', async () => {
+    const restarted: unknown[][] = []
+    const { client, started } = await sessionFixture({
+      records: [
+        { ...caller, id: 'live', claudeSessionId: 'conv-live', running: true },
+        { ...caller, id: 'old', claudeSessionId: 'conv-old', running: false }
+      ],
+      host: {
+        restart: async (...args) => {
+          restarted.push(args)
+          return { id: String(args[0]), alive: true, resumed: true } as never
+        }
+      }
+    })
+    const everything = {
+      account: 'Work',
+      permissionMode: 'plan',
+      effort: 'high',
+      model: 'claude-opus-5-5',
+      profile: 'claude-chat',
+      dangerous: true
+    }
+    const live = payload(
+      await call(client, 'clave_open_session', { resume: 'conv-live', ...everything })
+    )
+    expect(live).toMatchObject({ sessionId: 'live', alreadyOpen: true, resumed: false })
+    expect(live.warnings).toEqual([
+      'account, permissionMode, effort, model, profile, dangerous not applied: the conversation is already open in tab live'
+    ])
+    const stopped = payload(
+      await call(client, 'clave_open_session', { resume: 'conv-old', ...everything })
+    )
+    expect(stopped).toMatchObject({ sessionId: 'old', alreadyOpen: true, resumed: true })
+    // The connection is applied: the restart carries it, the warning omits it.
+    expect(restarted).toEqual([
+      ['old', { claudeProfileId: 'work', claudeProfileLabel: 'Work' }, false, true]
+    ])
+    expect(stopped.warnings).toEqual([
+      'permissionMode, effort, model, profile, dangerous not applied: the conversation was resumed in place in tab old'
+    ])
+    // A dangerous: false passed is a field passed, and said too.
+    const one = payload(
+      await call(client, 'clave_open_session', { resume: 'conv-old', dangerous: false })
+    )
+    expect(one.warnings).toEqual([
+      'dangerous not applied: the conversation was resumed in place in tab old'
+    ])
+    // Nothing passed, nothing said.
+    const none = payload(await call(client, 'clave_open_session', { resume: 'conv-old' }))
+    expect(none).not.toHaveProperty('warnings')
+    expect(started).toHaveLength(0)
   }, 15_000)
 
   it('clave_list says what each tab runs on: harness, model, profile and connection', async () => {
@@ -2069,6 +2168,13 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     ).toBe(
       'This server\'s switch mode is "propose", and a server has no window to propose to: move the tab from the Mac window, or set accountSwitchMode to "automatic" in the server\'s preferences.json, read when the server starts (a setting for it from the Mac\'s server pages is PRDCT-3318).'
     )
+    // The mode is read before the switch-to-current answer, as on the Mac: a
+    // switch to the connection the tab already runs on is refused too.
+    expect(
+      errorText(
+        await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'default' })
+      )
+    ).toBe(SWITCH_PROPOSE_REFUSAL)
     expect(
       errorText(
         await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'Nobody' })

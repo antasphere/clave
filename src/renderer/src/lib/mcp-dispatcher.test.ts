@@ -74,7 +74,8 @@ import { useSessionStore } from '../store/session-store'
 import { useFleetStore } from '../store/fleet-store'
 import { usePairingStore } from '../store/pairing-store'
 import { useAccountPolicyStore } from '../store/account-policy-store'
-import { HARNESSES } from '../../../shared/harness'
+import { DEFAULT_INTERACTION_MODE, HARNESSES } from '../../../shared/harness'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { launchOptions, type LaunchOptionsInput } from '../../../shared/launch-options'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
@@ -1122,6 +1123,7 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
     presence: () => undefined,
     profiles: () => [],
     defaultProfileId: () => undefined,
+    openProfileId: () => undefined,
     models: () => 'unavailable',
     harnessSettings: {},
     interactionMode: 'chat',
@@ -1137,26 +1139,59 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
     launchInput.server.mockReset()
     useAccountPolicyStore.setState({ useRecommendedAccount: true })
     // A full id: a bare default alias is the CLI's own default, read as none.
-    globals.window.electronAPI.launchRememberedModel = vi.fn(async () => 'claude-opus-5-5')
-    // Claude launches as a chat here: its chat model is remembered.
-    useLaunchProfileStore.setState({
-      preferences: preferences({
-        customProfiles: [
-          {
-            id: 'claude-chat',
-            name: 'Claude (chat)',
-            family: 'claude',
-            command: ['claude'],
-            additionalArgs: [],
-            builtIn: true
-          }
-        ],
-        globalDefaults: { claude: 'claude-chat' }
-      }),
-      loaded: true
-    })
+    // Only the chat adapter remembers a model; a terminal has none.
+    globals.window.electronAPI.launchRememberedModel = vi.fn(async (adapterId: string) =>
+      adapterId === 'claude-chat' ? 'claude-opus-5-5' : undefined
+    )
+    // The default profile is the built-in TERMINAL one, as on a fresh
+    // install; the chat default is a profile apart (the built-in chat). An
+    // open in a chat interaction mode lands on the chat default, so the
+    // remembered model is read there (verifier, round 2: a default profile
+    // set to the chat hid the difference).
+    useLaunchProfileStore.setState({ preferences: preferences({}), loaded: true })
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
   })
-  afterEach(() => useAccountPolicyStore.setState({ useRecommendedAccount: false }))
+  afterEach(() => {
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    useLaunchSettingsStore.setState({ interactionMode: DEFAULT_INTERACTION_MODE })
+  })
+
+  it('reads the remembered model on the chat default in a chat mode, none in a terminal mode', async () => {
+    expect(useLaunchProfileStore.getState().preferences.globalDefaults.claude).toBeUndefined()
+    const ask = async (): Promise<unknown> => {
+      let receive: (msg: {
+        requestId: string
+        command: string
+        payload: unknown
+      }) => void = () => {}
+      const response = new Promise<{ ok: boolean; result?: unknown }>((resolve) => {
+        globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+          receive = handler
+          return () => {}
+        }
+        globals.window.electronAPI.mcpRespond = resolve
+      })
+      const unsubscribe = initMcpDispatcher()
+      receive({ requestId: 'options', command: 'launchOptions', payload: { server: undefined } })
+      try {
+        return await response
+      } finally {
+        unsubscribe()
+      }
+    }
+    await ask()
+    expect(globals.window.electronAPI.launchRememberedModel).toHaveBeenCalledWith('claude-chat')
+    expect(launchInput.local).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        launchModels: expect.objectContaining({ claude: 'claude-opus-5-5' })
+      })
+    )
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    await ask()
+    expect(launchInput.local).toHaveBeenLastCalledWith(
+      expect.objectContaining({ launchModels: expect.objectContaining({ claude: undefined }) })
+    )
+  })
 
   it('answers this Mac with the shared function, from the stores the window keeps', async () => {
     let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}

@@ -29,7 +29,7 @@ import type { LaunchModel, LaunchOptionsInput } from '../../shared/launch-option
 import type { ModelOption } from '../../shared/session-model'
 import { usageSummaryForModel } from '../../shared/usage-summary'
 import type { HarnessDetection } from '../agent-updates/standalone-detection'
-import type { LaunchFacts } from '../routines/launch'
+import { openProfileIdFor, type LaunchFacts } from '../routines/launch'
 import type { AccountProvider, AccountSwitchMode, ServedAccount } from './served-core'
 
 export interface StandaloneLaunchFacts extends LaunchFacts {
@@ -184,6 +184,12 @@ export function launchOptionsInput(
     },
     profiles: (id) => profilesOf(facts, id),
     defaultProfileId: (id) => facts.defaultProfileId(id),
+    // What `clave_open_session` with no profile and no chat flag resolves,
+    // by the same two steps (`openFormOf`, `resolveLaunch`'s profile step);
+    // a terminal names none, and main runs the family's default profile.
+    openProfileId: (id) =>
+      openProfileIdFor(facts.preferences(), id, facts.interactionMode()) ??
+      facts.defaultProfileId(id),
     models: (id) => models[id] ?? [],
     harnessSettings: facts.harnessSettings(),
     interactionMode: facts.interactionMode(),

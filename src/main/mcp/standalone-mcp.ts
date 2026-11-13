@@ -25,8 +25,6 @@ import { BUILT_IN_LAUNCH_PROFILES, type LauncherFamily } from '../../shared/agen
 import {
   CHAT_PROFILE_IDS,
   DANGEROUS_MODE_FAMILIES,
-  chatOfInteractionMode,
-  isChatProfileRef,
   resolveProfileRef,
   resolveSpawnModes
 } from '../../shared/open-session-modes'
@@ -40,7 +38,7 @@ import {
 import { launchOptions, poolsOf } from '../../shared/launch-options'
 import { firstPoolOf } from '../../shared/connection'
 import { pickAccount } from '../../shared/account-pool'
-import { accountRefusal, resolveLaunch, type LaunchRequest } from '../routines/launch'
+import { accountRefusal, openFormOf, resolveLaunch, type LaunchRequest } from '../routines/launch'
 import { poolOf, resolveAccountRef, spawnFieldsOf, usageOf } from './served-accounts'
 import { modeOf as recordModeOf } from './served-core'
 import {
@@ -623,24 +621,13 @@ function buildServer(
     workspaceId: string | undefined
   ): SpawnOptions => {
     const agent: HarnessId = mode === 'gemini' ? 'antigravity' : mode
-    const harness = HARNESS_BY_ID[agent]
     // A built-in chat id names the chat view, not one profile: the
     // harness's configured chat default (PRDCT-4348).
     const builtInChat = args.profile !== undefined && args.profile === CHAT_PROFILE_IDS[agent]
     const profile = builtInChat && args.chat !== false ? undefined : args.profile
     const chat = builtInChat && args.chat !== false ? true : args.chat
-    const decided = chatOfInteractionMode(
-      { mode: agent, ...(chat !== undefined ? { chat } : {}), ...(profile ? { profile } : {}) },
-      facts.interactionMode()
-    )
-    const form =
-      decided === true
-        ? 'chat'
-        : decided === false || harness.chatAdapterId === null
-          ? 'terminal'
-          : profile !== undefined && isChatProfileRef(agent, profile)
-            ? 'chat'
-            : 'terminal'
+    // The form the listing's `openProfileId` reads too (`openProfileIdFor`).
+    const form = openFormOf(agent, { chat, profile }, facts.interactionMode())
     const request: LaunchRequest = {
       name: args.name ?? 'tab',
       workspaceId: workspaceId ?? null,
@@ -818,10 +805,12 @@ function buildServer(
         const held = planResumeFromRecords(records, sessions.list(), resume)
         if (held) {
           let resumed = false
+          let accountApplied = false
           if (held.kind === 'stopped') {
             // PRDCT-4485: the connection the call names, judged on the
             // conversation's own model; the restart carries no other field.
             const record = records.find((r) => r.id === held.sessionId)
+            accountApplied = !!launch && args.account !== undefined && !!record
             const restarted = await sessions.restart(
               held.sessionId,
               launch && args.account !== undefined && record
@@ -832,14 +821,13 @@ function buildServer(
             )
             resumed = restarted.resumed
           }
-          // A live tab runs as it is: what the call asked of its launch is
-          // said not applied, never silently dropped (PRDCT-4485).
-          const unapplied =
-            held.kind === 'open'
-              ? (['account', 'permissionMode', 'effort'] as const).filter(
-                  (key) => args[key] !== undefined
-                )
-              : []
+          // A held tab runs on its own launch: every field the call passed
+          // that this road does not apply is said not applied, never silently
+          // dropped (PRDCT-4485). A live tab applies none; a stopped one
+          // resumed in place applies the connection alone.
+          const unapplied = (
+            ['account', 'permissionMode', 'effort', 'model', 'profile', 'dangerous'] as const
+          ).filter((key) => args[key] !== undefined && !(key === 'account' && accountApplied))
           return text({
             sessionId: held.sessionId,
             groupId: null,
@@ -854,7 +842,9 @@ function buildServer(
             ...(unapplied.length > 0
               ? {
                   warnings: [
-                    `${unapplied.join(', ')} not applied: the conversation is already open in tab ${held.sessionId}`
+                    held.kind === 'open'
+                      ? `${unapplied.join(', ')} not applied: the conversation is already open in tab ${held.sessionId}`
+                      : `${unapplied.join(', ')} not applied: the conversation was resumed in place in tab ${held.sessionId}`
                   ]
                 }
               : {})
@@ -1006,10 +996,14 @@ function buildServer(
           target = resolveAccountRef(launch, pool, args.account, record?.model ?? undefined)
         }
         const account = { id: target.id, label: target.label }
-        // Already there: the Mac's answer (`switchAccount`, served-session-tools.ts).
+        // The mode before the switch-to-current answer, as the Mac's
+        // `switchAccount` (served-session-tools.ts) checks its mode first:
+        // under propose every call that is not an error is refused, a switch
+        // to the current connection included.
+        if (launch.switchMode() === 'propose') throw new Error(SWITCH_PROPOSE_REFUSAL)
+        // Already there: the Mac's answer.
         if (target.id === current)
           return text({ sessionId: id, account, resumed: true, switched: true, proposed: false })
-        if (launch.switchMode() === 'propose') throw new Error(SWITCH_PROPOSE_REFUSAL)
         const restarted = await sessions.restart(id, spawnFieldsOf(pool, target), false)
         return text({
           sessionId: id,

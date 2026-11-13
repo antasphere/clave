@@ -12,7 +12,12 @@
  * server) feed it from what they have.
  */
 import type { RoutineAgent, RoutineDeclaration, RoutineForm } from '@clave/contract/routines'
-import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import {
+  HARNESSES,
+  HARNESS_BY_ID,
+  type HarnessId,
+  type InteractionMode
+} from '../../shared/harness'
 import { firstPoolOf } from '../../shared/connection'
 import { poolsOf } from '../../shared/launch-options'
 import type { SpawnOptions } from '@clave/contract/sessions'
@@ -27,6 +32,7 @@ import {
   CHAT_PROFILE_IDS,
   DANGEROUS_MODE_FAMILIES,
   chatDefaultFor,
+  chatOfInteractionMode,
   isChatProfileRef,
   resolveProfileRef,
   resolveSpawnModes
@@ -98,6 +104,78 @@ export interface LaunchRequest {
     readonly agent?: string | undefined
     readonly permissionMode?: string | undefined
   }
+}
+
+/**
+ * The form a daemon's `clave_open_session` opens (PRDCT-4485): the call's
+ * `chat` when it says, else the person's launcher (`chatOfInteractionMode`:
+ * their interaction mode for a harness with a chat view and no profile
+ * named), else the named profile's own form; a harness with no chat view
+ * runs in a terminal. `chat`/`profile` are the call's, a built-in chat id
+ * already read as the chat view.
+ */
+export function openFormOf(
+  agent: HarnessId,
+  call: { readonly chat?: boolean | undefined; readonly profile?: string | undefined },
+  interactionMode: InteractionMode
+): RoutineForm {
+  const decided = chatOfInteractionMode(
+    {
+      mode: agent,
+      ...(call.chat !== undefined ? { chat: call.chat } : {}),
+      ...(call.profile ? { profile: call.profile } : {})
+    },
+    interactionMode
+  )
+  if (decided === true) return 'chat'
+  if (decided === false || HARNESS_BY_ID[agent].chatAdapterId === null) return 'terminal'
+  return call.profile !== undefined && isChatProfileRef(agent, call.profile) ? 'chat' : 'terminal'
+}
+
+/**
+ * The launch profile a resolved launch runs on: `profileRef` (already in the
+ * form's shape) when one is named, else the chat default of the workspace
+ * for a chat, else undefined (main runs the family's selected profile).
+ * Throws what `resolveProfileRef` refuses.
+ */
+function launchProfileIdOf(
+  preferences: LaunchProfilePreferences,
+  agent: HarnessId,
+  form: RoutineForm,
+  profileRef: string | undefined,
+  workspaceId: string | null | undefined
+): string | undefined {
+  return resolveProfileRef(
+    {
+      mode: agent,
+      chat: form === 'chat',
+      ...(profileRef !== undefined ? { profile: profileRef } : {})
+    },
+    form === 'chat' ? chatDefaultFor(preferences, agent, workspaceId ?? null) : undefined
+  )
+}
+
+/**
+ * The launch profile a daemon's open that names no profile and no chat flag
+ * resolves (`openFormOf` then `resolveLaunch`'s profile step, the same two
+ * functions): the harness's chat default under a chat interaction mode,
+ * undefined for a terminal (main then runs the family's selected profile).
+ * `clave_launch_options` judges its `defaultModel` on it, so the listing and
+ * the open cannot drift (verifier, round 2).
+ */
+export function openProfileIdFor(
+  preferences: LaunchProfilePreferences,
+  family: HarnessId,
+  interactionMode: InteractionMode,
+  workspaceId?: string | null
+): string | undefined {
+  return launchProfileIdOf(
+    preferences,
+    family,
+    openFormOf(family, {}, interactionMode),
+    undefined,
+    workspaceId
+  )
 }
 
 export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): ResolvedLaunch {
@@ -173,13 +251,12 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
   }
   let launchProfileId: string | undefined
   try {
-    launchProfileId = resolveProfileRef(
-      {
-        mode: agent,
-        chat: form === 'chat',
-        ...(profileRef !== undefined ? { profile: profileRef } : {})
-      },
-      form === 'chat' ? chatDefaultFor(preferences, family, routine.workspaceId ?? null) : undefined
+    launchProfileId = launchProfileIdOf(
+      preferences,
+      agent as HarnessId,
+      form,
+      profileRef,
+      routine.workspaceId
     )
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error))

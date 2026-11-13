@@ -18,6 +18,7 @@ import type { AgentUpdateStatus } from '../../../shared/agent-updates'
 import { CLAUDE_MODELS } from '../../../shared/claude-models'
 import {
   HARNESSES,
+  HARNESS_BY_ID,
   type HarnessId,
   type HarnessSettingsById,
   type InteractionMode
@@ -30,6 +31,7 @@ import type {
 } from '../../../shared/launch-options'
 import type { ServerSettings } from '../store/server-settings-state'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from './launch-source'
+import { localOpenProfileId } from './launch-model'
 import {
   currentAccountSources,
   ownerViewFrom,
@@ -130,6 +132,12 @@ export function serverLaunchOptionsInput(
     presence: () => undefined,
     profiles: (family) => source.profilesFor(family),
     defaultProfileId: (family) => source.selectedProfileId(family),
+    // What the server's open resolves with no profile and no chat flag: its
+    // chat default under a chat interaction mode, else its default profile.
+    openProfileId: (family) =>
+      facts.interactionMode !== 'terminal' && HARNESS_BY_ID[family].chatAdapterId !== null
+        ? source.chatProfileId(family)
+        : source.selectedProfileId(family),
     models: (harness) => launchModelsOf(source, harness, facts.codexModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
@@ -137,6 +145,8 @@ export function serverLaunchOptionsInput(
     selectedConnectionId: (pool) =>
       isPool(pool) ? (source.selectedAccountId(pool) ?? undefined) : undefined,
     preferRecommended: false,
+    // The Mac does not know a server's remembered chat model (it lives in
+    // the server's own preferences): the open profile names no model here.
     launchModel: () => undefined,
     now: facts.now
   }
@@ -151,11 +161,14 @@ export function localLaunchOptionsInput(
       'id' | 'installed' | 'currentVersion' | 'lastCheckedAt'
     >[]
     readonly preferRecommended: boolean
-    /** The model a launch naming none runs, per pool, on its default profile. */
+    /** The model a launch naming none runs, per pool, on the profile its
+     *  open resolves (`localOpenProfileId`). */
     readonly launchModels?: Partial<Record<AccountProvider, string | undefined>>
   }
 ): LaunchOptionsInput {
   const source = localLaunchSource(null)
+  const openProfileId = (family: HarnessId): string =>
+    localOpenProfileId(family, facts.interactionMode, null)
   const sources = currentAccountSources()
   return {
     machine: { id: LOCAL_SERVER_ID, name: source.name },
@@ -172,6 +185,7 @@ export function localLaunchOptionsInput(
     },
     profiles: (family) => source.profilesFor(family),
     defaultProfileId: (family) => source.selectedProfileId(family),
+    openProfileId,
     models: (harness) => launchModelsOf(source, harness, facts.codexModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,

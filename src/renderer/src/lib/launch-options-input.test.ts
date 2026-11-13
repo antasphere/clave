@@ -159,6 +159,20 @@ describe('serverLaunchOptionsInput', () => {
     expect(input.launchModel('claude', undefined)).toBeUndefined()
   })
 
+  it("resolves the server's open profile: its chat default in a chat mode, its default profile in a terminal one", () => {
+    // The server's default profile is the built-in terminal; its chat default the built-in chat.
+    expect(input.defaultProfileId('claude')).toBe('builtin-claude')
+    expect(input.openProfileId('claude')).toBe('claude-chat')
+    expect(input.openProfileId('codex')).toBe('codex-chat')
+    // No chat view: the default profile, whatever the mode.
+    expect(input.openProfileId('antigravity')).toBe('builtin-antigravity')
+    const terminal = serverLaunchOptionsInput('srv', 'Studio box', settings, {
+      ...facts,
+      interactionMode: 'terminal'
+    })
+    expect(terminal.openProfileId('claude')).toBe('builtin-claude')
+  })
+
   it("says the server's own default as defaultModel, the launcher's row model as launcherModel", () => {
     const withRow = launchOptions(
       serverLaunchOptionsInput('srv', 'Studio box', settings, {
@@ -209,6 +223,21 @@ describe('localLaunchOptionsInput', () => {
   it('marks the recommended connection when the person opted in, the next along when not', () => {
     expect(suggestedOf(true)).toEqual(['sooner'])
     expect(suggestedOf(false)).toEqual(['later'])
+  })
+
+  it("resolves this Mac's open profile: the chat default in a chat mode, the selected profile in a terminal one", () => {
+    // The launch profile store's defaults: the built-in terminal selected,
+    // its chat form the built-in chat.
+    const chat = localLaunchOptionsInput({ ...facts, agents: [], preferRecommended: false })
+    expect(chat.openProfileId('claude')).toBe('claude-chat')
+    expect(chat.openProfileId('pi')).toBe('builtin-pi')
+    const terminal = localLaunchOptionsInput({
+      ...facts,
+      interactionMode: 'terminal',
+      agents: [],
+      preferRecommended: false
+    })
+    expect(terminal.openProfileId('claude')).toBe('builtin-claude')
   })
 })
 

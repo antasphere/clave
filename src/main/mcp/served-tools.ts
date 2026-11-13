@@ -48,6 +48,7 @@ import {
   type LaunchOptions
 } from '../../shared/launch-options'
 import type { LaunchProfile } from '../../shared/agent-launch'
+import { resolveProfileRef } from '../../shared/open-session-modes'
 
 export {
   NOT_SERVED,
@@ -462,6 +463,15 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
     },
     profiles,
     defaultProfileId: (id) => shell.defaultProfileId?.(id),
+    // The served open's own resolution (`openSession`, served-session-tools.ts)
+    // with no chat and no profile: the chat default under a chat interaction
+    // mode, else nothing named, and main runs the family's default profile.
+    openProfileId: (id) =>
+      resolveProfileRef(
+        { mode: id },
+        shell.chatDefault(id, workspaceId),
+        shell.interactionMode?.() ?? 'terminal'
+      ) ?? shell.defaultProfileId?.(id),
     models: (id) => models.get(id) ?? 'unavailable',
     harnessSettings: shell.harnessSettings?.() ?? {},
     interactionMode: shell.interactionMode?.() ?? DEFAULT_INTERACTION_MODE,
