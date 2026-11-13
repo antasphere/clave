@@ -118,7 +118,23 @@ async function stopLeftovers() {
       return false
     }
   }
-  if (Number.isInteger(state.appGroup) && groupUp(state.appGroup)) {
+  // A recorded group is signalled only while every process in it is still this trial's app
+  // (each carries the trial's profile path): a group id can be reused once the app is gone
+  // (verifier round 5).
+  const ours = (pgid) => {
+    const members = spawnSync('pgrep', ['-g', String(pgid)], { encoding: 'utf-8' })
+      .stdout.split('\n')
+      .filter(Boolean)
+    return (
+      members.length > 0 &&
+      members.every((pid) =>
+        (
+          spawnSync('ps', ['-o', 'command=', '-p', pid], { encoding: 'utf-8' }).stdout ?? ''
+        ).includes(P.app)
+      )
+    )
+  }
+  if (Number.isInteger(state.appGroup) && groupUp(state.appGroup) && ours(state.appGroup)) {
     process.kill(-state.appGroup, 'SIGTERM')
     for (let i = 0; i < 60 && groupUp(state.appGroup); i++) await sleep(250)
     if (groupUp(state.appGroup)) process.kill(-state.appGroup, 'SIGKILL')
@@ -634,7 +650,7 @@ try {
       if (!workspaces) await delay(500)
     }
     const remote = workspaces?.find((w) => w.rootDir === workspaceRoot('trial-server'))
-    if (!remote) fail('the app did not reach the trial server')
+    if (!remote) throw new Error('the app did not reach the trial server')
     shownWorkspace = remote.id
     say(`the trial server is saved in the app as "${SERVER_NAME}"`)
   }
@@ -647,7 +663,8 @@ try {
       (a) => a.hasToken
     )
     const account = accountLabel ? all.find((a) => a.label === accountLabel) : all[0]
-    if (accountLabel && !account) fail(`no account "${accountLabel}" with a token on the server`)
+    if (accountLabel && !account)
+      throw new Error(`no account "${accountLabel}" with a token on the server`)
     // A tab on the second server is the server's: started over its API, every window attached
     // to it lists it. A tab on the app's own server belongs to a window, and only the window
     // adds it: it is opened through the app's agent tools, as an agent opens one.
