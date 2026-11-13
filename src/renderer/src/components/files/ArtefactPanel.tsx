@@ -25,33 +25,36 @@ export function ArtefactPanel({
   const setHidden = useArtefactStore((s) => s.setHidden)
   return (
     <section className="linked-document-panel" data-testid="artefact-panel">
-      <header className="linked-document-header">
-        <div className="flex items-center gap-2 flex-1 min-w-0" title={artefact.page}>
+      {/* The session bar's classes: one control tall beside the session's own bar (PRDCT-4491). */}
+      <header className="pane-header">
+        <div className="pane-header-lead" title={artefact.page}>
           <DocumentTextIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-          <span className="truncate min-w-0 text-sm font-medium">{artefact.title}</span>
+          <span className="pane-header-title">{artefact.title}</span>
         </div>
-        <IconButton
-          className="panel-icon-btn"
-          tooltip="Open the page's source"
-          aria-label="Open the page's source"
-          onClick={() =>
-            addFileTab({
-              id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              filePath: resourceKey('file', ownerOfSession(sessionId), artefact.page),
-              name: artefact.page.split('/').pop() ?? artefact.title
-            })
-          }
-        >
-          <CodeBracketIcon className="w-4 h-4" />
-        </IconButton>
-        <IconButton
-          className="panel-icon-btn"
-          tooltip="Hide artefact"
-          aria-label="Hide artefact"
-          onClick={() => setHidden(sessionId, artefact.openedAt)}
-        >
-          <XMarkIcon className="w-4 h-4" />
-        </IconButton>
+        <div className="pane-header-actions">
+          <IconButton
+            className="panel-icon-btn"
+            tooltip="Open the page's source"
+            aria-label="Open the page's source"
+            onClick={() =>
+              addFileTab({
+                id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                filePath: resourceKey('file', ownerOfSession(sessionId), artefact.page),
+                name: artefact.page.split('/').pop() ?? artefact.title
+              })
+            }
+          >
+            <CodeBracketIcon className="w-4 h-4" />
+          </IconButton>
+          <IconButton
+            className="panel-icon-btn"
+            tooltip="Hide artefact"
+            aria-label="Hide artefact"
+            onClick={() => setHidden(sessionId, artefact.openedAt)}
+          >
+            <XMarkIcon className="w-4 h-4" />
+          </IconButton>
+        </div>
       </header>
       <div className="linked-document-content">
         <SlidelessArtefact sessionId={sessionId} artefact={artefact} />

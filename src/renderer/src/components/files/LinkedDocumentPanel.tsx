@@ -5,7 +5,7 @@ import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../shar
 import { MarkdownPageEditor } from './MarkdownPageEditor'
 import { useFileChanged } from '../../hooks/use-file-changed'
 import { savesSomething } from '../../lib/linked-status'
-import { ViewModeToggle } from './ViewModeToggle'
+import { FileMenu } from './FileMenu'
 import { IconButton } from '@clave/ui/components'
 import { CodeEditor } from './CodeEditor'
 import { LinkedEmailComposer } from './LinkedEmailComposer'
@@ -152,37 +152,41 @@ export function LinkedDocumentPanel({
       data-testid="linked-document-panel"
       data-document-id={doc.id}
     >
-      <header className="linked-document-header">
-        <div className="flex items-center gap-2 flex-1 min-w-0" title={doc.path ?? doc.title}>
+      {/* The session bar's classes: one control tall beside the session's
+          own bar (PRDCT-4491), the page or its source chosen in the ⋯ menu. */}
+      <header className="pane-header">
+        <div className="pane-header-lead" title={doc.path ?? doc.title}>
           {doc.email ? (
             <EnvelopeIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
           ) : (
             <DocumentTextIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
           )}
-          <span className="truncate min-w-0 text-sm font-medium">{doc.title}</span>
+          <span className="pane-header-title">{doc.title}</span>
+          {/* An email carries its save state in the composer's foot, under its
+              attachments; every other kind keeps it here. */}
+          {doc.kind !== 'email' && (
+            <span role="status" className="pane-header-meta" title={status}>
+              {status}
+            </span>
+          )}
         </div>
-        {/* An email carries its save state in the composer's foot, under its
-            attachments; every other kind keeps it here. */}
-        {doc.kind !== 'email' && (
-          <span role="status" className="text-xs text-text-tertiary" title={status}>
-            {status}
-          </span>
-        )}
-        {doc.kind !== 'email' && (
-          <ViewModeToggle
-            mode={source ? 'source' : 'page'}
-            modes={['page', 'source']}
-            onChange={(mode) => setSource(mode === 'source')}
-          />
-        )}
-        <IconButton
-          className="panel-icon-btn"
-          tooltip="Hide linked document"
-          aria-label="Hide linked document"
-          onClick={() => update({ hidden: true })}
-        >
-          <XMarkIcon className="w-4 h-4" />
-        </IconButton>
+        <div className="pane-header-actions">
+          {doc.kind !== 'email' && (
+            <FileMenu
+              views={['page', 'source']}
+              view={source ? 'source' : 'page'}
+              onView={(mode) => setSource(mode === 'source')}
+            />
+          )}
+          <IconButton
+            className="panel-icon-btn"
+            tooltip="Hide linked document"
+            aria-label="Hide linked document"
+            onClick={() => update({ hidden: true })}
+          >
+            <XMarkIcon className="w-4 h-4" />
+          </IconButton>
+        </div>
       </header>
       {(error || doc.conflict) && (
         <div className="linked-document-notice" role="alert">
