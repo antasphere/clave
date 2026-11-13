@@ -454,7 +454,11 @@ describe('a Pi chat on a connection resumes from the directory it runs in (PRDCT
       key === session.id ? { id: session.id, adapterId: 'pi-chat' } : null) as never)
     const plan = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })
     expect(plan).toMatchObject({ resumed: true })
-    expect(plan?.options).toMatchObject({ piMode: true, resumeSessionId: id, connectionId: 'conn-1' })
+    expect(plan?.options).toMatchObject({
+      piMode: true,
+      resumeSessionId: id,
+      connectionId: 'conn-1'
+    })
   })
 })
 

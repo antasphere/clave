@@ -232,8 +232,7 @@ describe('piSessionLookupEnv (PRDCT-4427)', () => {
       )
       expect(out.providerEnv?.PI_CODING_AGENT_DIR).toBe(path.join(root, 'conn-1'))
       expect(
-        piSessionLookupEnv('conn-1', { root: () => root, loginEnv: () => ({}) })
-          .PI_CODING_AGENT_DIR
+        piSessionLookupEnv('conn-1', { root: () => root, loginEnv: () => ({}) }).PI_CODING_AGENT_DIR
       ).toBe(out.providerEnv?.PI_CODING_AGENT_DIR)
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
@@ -241,8 +240,6 @@ describe('piSessionLookupEnv (PRDCT-4427)', () => {
   })
   it("keeps the login shell's for a tab on no connection, or an id that names no directory", () => {
     for (const id of [undefined, '', '.', '..', 'a/b', 'a\\b'])
-      expect(piSessionLookupEnv(id, lookupDeps).PI_CODING_AGENT_DIR).toBe(
-        '/made-up/home/.pi/agent'
-      )
+      expect(piSessionLookupEnv(id, lookupDeps).PI_CODING_AGENT_DIR).toBe('/made-up/home/.pi/agent')
   })
 })

@@ -420,8 +420,7 @@ class PtyManager {
           !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))) ||
         // Lane D (PRDCT-4427): a Pi session exists once Pi wrote its file
         // (at the first message); until then the chat starts under its id.
-        (adapter.id === 'pi-chat' &&
-          !findPiSession(options.resumeSessionId, cwd, piLookupEnv)))
+        (adapter.id === 'pi-chat' && !findPiSession(options.resumeSessionId, cwd, piLookupEnv)))
         ? undefined
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {

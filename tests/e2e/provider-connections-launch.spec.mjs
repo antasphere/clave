@@ -617,6 +617,7 @@ export async function run(t) {
       JSON.stringify(dsConfig),
       JSON.stringify({
         providers: { deepseek: { settings: { apiKey: '{env:DEEPSEEK_API_KEY}' } } },
+        enabled_providers: ['deepseek'],
         model: 'deepseek/deepseek-chat'
       })
     )

@@ -16,7 +16,8 @@
 // sends, during each prompt, one `agent_message_chunk` for the session
 // `ses_other` (another session's update). A prompt containing `slow` waits
 // 20 s (cancellable); one containing `ask permission` asks the client first
-// and echoes the option.
+// and echoes the option. `OPENCODE_CONFIG_CONTENT`, when set, chooses the
+// models as OpenCode's own (below).
 import {
   appendFileSync,
   existsSync,
@@ -50,11 +51,32 @@ const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.ACP_STAND_IN_DELAY_MS ?? 0) || 0
 const refuse = process.env.ACP_STAND_IN_REFUSE
 
-const MODELS = [
+const OWN_MODELS = [
   { value: 'stand-in/one', name: 'One' },
   { value: 'stand-in/two', name: 'Two' },
   { value: 'stand-in/three', name: 'Three' }
 ]
+// The configuration in the environment (`OPENCODE_CONFIG_CONTENT`), read the
+// way the real `opencode acp` 2.3.0 reads it (checked by hand, a made-up key):
+// a new session opens on its `model`, and `enabled_providers` leaves only
+// those providers' models on offer.
+const envConfig = (() => {
+  try {
+    return JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '')
+  } catch {
+    return null
+  }
+})()
+const configModel = typeof envConfig?.model === 'string' ? envConfig.model : null
+const enabledProviders = Array.isArray(envConfig?.enabled_providers)
+  ? envConfig.enabled_providers
+  : null
+const MODELS = [
+  ...(configModel && !OWN_MODELS.some((m) => m.value === configModel)
+    ? [{ value: configModel, name: configModel }]
+    : []),
+  ...OWN_MODELS
+].filter((m) => !enabledProviders || enabledProviders.includes(m.value.split('/')[0]))
 const COMMANDS = [
   { name: 'init', description: 'Write an AGENTS.md for this folder' },
   { name: 'compact', description: 'Summarize the conversation' }
@@ -304,7 +326,7 @@ function handle(frame) {
     case 'session/new': {
       if (refuse === 'auth') return refuseFrame(id, -32000, 'Not signed in')
       const sessionId = `ses_${randomBytes(8).toString('hex')}`
-      const model = MODELS[0].value
+      const model = configModel ?? MODELS[0]?.value
       writeMeta(sessionId, {
         cwd: typeof params?.cwd === 'string' ? params.cwd : '',
         model,
