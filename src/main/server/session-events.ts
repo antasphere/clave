@@ -38,6 +38,12 @@ export function publishOrSend(event: ServerEvent, legacy: () => void): void {
   )
 }
 
+/** Registration is published only after the session's record is available.
+ *  A desktop that missed the event reads the records on its next connect. */
+export function sessionRegistered(id: string): void {
+  publishOrSend({ _tag: 'session.registered', id }, () => {})
+}
+
 /** Every attached client hears a session change state, whether or not it
  *  follows that session's stream: the manager's state changes go out as
  *  `session.state_changed` on the publisher given. Returns the way to stop.

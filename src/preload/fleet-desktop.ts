@@ -1353,6 +1353,23 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const own = await local.sessionsList()
       return [...own, ...connections.flatMap((c) => lastSnapshots.get(c.id)?.sessions ?? [])]
     },
+    sessionsTimeline: (id, before, limit) =>
+      route(
+        id,
+        (wireId) => local.sessionsTimeline(wireId, before, limit),
+        async (b, wireId) => {
+          const page = await b.api.sessions.timeline(wireId, before, limit)
+          return page === null
+            ? null
+            : {
+                ...page,
+                items: page.items.map((item) => ({
+                  ...item,
+                  event: scopeEvent(id, item.event as SessionEvent)
+                }))
+              }
+        }
+      ),
     sessionsHistory: (id, before, limit) =>
       route(
         id,

@@ -141,6 +141,13 @@ export function registerSessionIpc(): void {
       typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
     return getSessionHost().history(id, count(before), count(limit))
   })
+  ipcMain.handle('sessions:timeline', (event, id: string, before: unknown, limit: unknown) => {
+    owning(event, id)
+    const count = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+    const host = getSessionHost()
+    return host.timeline ? host.timeline(id, count(before), count(limit)) : null
+  })
   ipcMain.handle('sessions:commands', (event, id: string) => {
     owning(event, id)
     return getSessionHost().commands(id)

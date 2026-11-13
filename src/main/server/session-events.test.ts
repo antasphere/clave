@@ -8,6 +8,7 @@ import {
   sessionLimitCleared,
   sessionLimitReported,
   sessionModelChanged,
+  sessionRegistered,
   sessionPlanDetected,
   sessionTitleChanged,
   setServerEventPublisher,
@@ -75,6 +76,17 @@ describe('a session’s model travels on both transports, the window picking one
 afterEach(() => {
   setServerEventPublisher(null)
   installSessionWindows(null)
+})
+
+it('announces registration without starting a provider or targeting a window', async () => {
+  const published: unknown[] = []
+  sessionRegistered('before-server')
+  setServerEventPublisher(async (event) => {
+    published.push(event)
+  })
+  sessionRegistered('windowless')
+  await Promise.resolve()
+  expect(published).toEqual([{ _tag: 'session.registered', id: 'windowless' }])
 })
 
 describe('a session’s news travels on one transport, never both', () => {

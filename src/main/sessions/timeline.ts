@@ -17,7 +17,8 @@ interface Pending {
 /** One ordered view of the launch transcript and subsequent normalized events.
  * Seed before ready/write can append to the provider's transcript. Reentrant
  * emissions during that read queue behind the historical prefix. Neither text
- * nor timestamps identify an event. The bounded cache is process-local. */
+ * nor timestamps identify an event. Launch history is an immutable prefix;
+ * only subsequent live events need the bounded process-local buffer. */
 export class SessionTimeline {
   private readonly generation = randomUUID()
   private sequence = 0
@@ -25,6 +26,7 @@ export class SessionTimeline {
   private seeding = false
   private draining = false
   private seedError: unknown
+  private prefix: HistoryItem[] = []
   private readonly pending: Pending[] = []
   private readonly items: PositionedItem[] = []
   private readonly sizes: number[] = []
@@ -42,9 +44,11 @@ export class SessionTimeline {
     if (this.seeded || this.seeding) return
     this.seeding = true
     try {
-      const past = this.past()
-      for (const item of past)
-        if (item.event.type !== 'provider_event') this.append(item.event, item.at)
+      // Freeze membership before draining live captures. The adapter owns the
+      // launch transcript already; keep its events, without copying them into
+      // the evicting live buffer or rereading a transcript that can now grow.
+      this.prefix = this.past().filter((item) => item.event.type !== 'provider_event')
+      this.sequence = this.prefix.length
     } catch (error) {
       this.seedError = error
     } finally {
@@ -91,15 +95,20 @@ export class SessionTimeline {
   read(before?: number, limit?: number): TimelinePage {
     this.initialize()
     if (this.seedError !== undefined) throw this.seedError
+    const items = [...this.prefix, ...this.items]
+    const sequenceAt = (i: number): number =>
+      i < this.prefix.length ? i + 1 : this.items[i - this.prefix.length].position.sequence
     const index =
-      before === undefined
-        ? this.items.length
-        : this.items.findIndex((item) => item.position.sequence >= before)
-    const end = index === -1 ? this.items.length : index
-    const page = pageHistory(this.items, end, limit)
+      before === undefined ? items.length : items.findIndex((_, i) => sequenceAt(i) >= before)
+    const end = index === -1 ? items.length : index
+    const page = pageHistory(items, end, limit)
+    const start = end - page.items.length
     return {
-      items: page.items as PositionedItem[],
-      before: page.before === null ? null : this.items[page.before].position.sequence,
+      items: page.items.map((item, i) => ({
+        ...item,
+        position: { generation: this.generation, sequence: sequenceAt(start + i) }
+      })),
+      before: page.before === null ? null : sequenceAt(page.before),
       cursor: { generation: this.generation, sequence: this.sequence },
       truncated: this.truncated
     }

@@ -20,6 +20,7 @@ import type {
   ReviewEvent
 } from '../shared/github-pull'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { TimelinePage } from '@clave/contract/timeline'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface ActivityAnswer {
@@ -38,6 +39,10 @@ export interface SessionIPC {
   'sessions:history': {
     args: [sessionId: string, before?: number, limit?: number]
     result: HistoryPage
+  }
+  'sessions:timeline': {
+    args: [sessionId: string, before?: number, limit?: number]
+    result: TimelinePage | null
   }
 }
 export interface SessionIPCEvents {
@@ -830,6 +835,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** A resumed conversation's past: the page ending at `before` (the end when
    *  absent), oldest first, with what to ask for the page older than it. */
   sessionsHistory: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
+  sessionsTimeline: (id: string, before?: number, limit?: number) => Promise<TimelinePage | null>
   sessionsFiles: {
     prepare(sessionId: string, source: AttachmentSource): Promise<FileAttachment>
     pick(): Promise<string[]>
@@ -985,6 +991,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
+  /** Claim local running orphan chats for the primary window, without spawning. */
+  adoptRunningChats: () => Promise<SessionRecord[]>
+  onSessionRegistered: (callback: () => void) => () => void
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>

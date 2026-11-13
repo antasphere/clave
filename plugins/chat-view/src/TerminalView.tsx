@@ -1,3 +1,4 @@
+import { type PastState } from './past'
 import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import {
@@ -6,8 +7,8 @@ import {
   canOpenRemotePage
 } from '../../../src/renderer/src/lib/fleet-identity'
 import { parseResourceKey } from '@clave/contract/fleet'
-import { bindFleetCatchup } from './fleet-sync'
-import { bindReconnectReset } from './reconnect'
+import { bindConversation } from './bind-conversation'
+import type { ConversationReader, HistorySource } from './conversation-reader'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -89,7 +90,6 @@ import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
-import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
 import { acceptRung } from '../../../src/renderer/src/lib/account-policy'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { Attachments } from './Attachments'
@@ -102,7 +102,7 @@ import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
 import { useFitRow } from './fit'
-import { EarlierLoading, JumpPill } from './EarlierLoading'
+import { EarlierLoading, JumpPill, PastFailed, PastTruncated } from './EarlierLoading'
 import {
   attachmentIssue,
   MAX_TOTAL_IMAGE_BYTES,
@@ -384,7 +384,10 @@ export function TerminalView({
   // older; `pastRead` holds the empty state back until the first answer, so a
   // long conversation never flashes "Start a conversation" on its way in.
   const [before, setBefore] = useState<number | null>(null)
-  const [pastRead, setPastRead] = useState(false)
+  const [truncated, setTruncated] = useState(false)
+  const [past, setPast] = useState<PastState>('reading')
+  const pastRead = past === 'read'
+  const pastReader = useRef<ConversationReader | null>(null)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
@@ -411,74 +414,39 @@ export function TerminalView({
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
-    // A server's connection coming back may be to a server that counts its
-    // runs from 1 again: the run heard so far is forgotten first, bound
-    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
-    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
-    const catchup = bindFleetCatchup(session.id, (page) => {
-      if (!live) return
-      dispatch({ sync: page.items })
-      dispatchSubagents({ sync: page.items })
-      setBefore(page.before)
-      setReady(true)
-    })
-    // An end is taken only once the record confirms it: after a move to
-    // another account the old process's end can arrive after this pane has
-    // remounted on the new one, and closed it over a live agent.
-    const confirmed = (then: () => void): void =>
-      void endIsCurrent(session.id)
-        .then((current) => {
-          if (current && live) then()
-        })
-        .catch(console.error)
-    const stop = window.electronAPI.onSessionStream(session.id, (value) => {
-      catchup.changed()
-      if (value.kind !== 'event') return
-      const event = value.event
-      const take = (): void => {
-        dispatch({ event })
+    const reader = bindConversation(session.id, {
+      page: (page, replace, incomplete, preserve) => {
+        dispatch(replace ? { snapshot: page.items, preserve } : { prepend: page.items })
+        dispatchSubagents(replace ? { sync: page.items } : { items: page.items })
+        setBefore(page.before)
+        setTruncated(incomplete)
+        const usage = page.items.findLast((item) => item.event.type === 'context_usage')
+        if (usage) dispatchStatus(usage.event)
+        setPast('read')
+      },
+      event: ({ event, at, current }) => {
+        dispatch({ event, at, current })
         dispatchStatus(event)
         dispatchSubagents({ event })
-      }
-      if (event.type === 'state_change' && event.state === 'ended') confirmed(take)
-      else take()
-    })
-    const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
-      confirmed(() => dispatch({ exit: code }))
-    )
-    void window.electronAPI
-      .sessionsSubscribe(session.id)
-      .then((current) => {
-        if (!live) return
-        // The host's own word on the session, over the seed read at mount
-        // (PRDCT-4191), as the chat view takes it.
-        const word = {
-          state: current.state,
-          ...(current.run !== undefined ? { run: current.run } : {})
-        }
-        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
-        else dispatch({ session: word })
+      },
+      session: (current) => {
+        dispatch({
+          session: {
+            state: current.state,
+            ...(current.run !== undefined ? { run: current.run } : {})
+          }
+        })
         setReady(true)
-        // Asked once subscribed, when the adapter has read the transcript;
-        // whatever streamed meanwhile is newer and stays after it. A host
-        // without the call rejects inside the chain and shows no past.
-        return Promise.resolve()
-          .then(() => window.electronAPI.sessionsHistory(session.id))
-          .then((page) => {
-            if (!live) return
-            dispatch({ prepend: page.items })
-            dispatchSubagents({ items: page.items })
-            setBefore(page.before)
-            // The newest page holds the context as the conversation left it.
-            const usage = page.items.findLast((item) => item.event.type === 'context_usage')
-            if (usage) dispatchStatus(usage.event)
-          })
-          .catch(() => {})
-          .finally(() => {
-            if (live) setPastRead(true)
-          })
-      })
-      .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
+      },
+      exit: (code) => dispatch({ exit: code }),
+      reconnected: () => dispatch({ reconnected: true }),
+      reading: () => setPast('reading'),
+      failed: (error) => {
+        console.error(`[conversation] the past of ${session.id} could not be read`, error)
+        setPast('failed')
+      }
+    })
+    pastReader.current = reader
     // Whether an attached image can go as image content is the adapter's
     // word; until it arrives the composer assumes not, which only ever asks
     // the reader one more question, never sends a byte the adapter refuses.
@@ -490,11 +458,8 @@ export function TerminalView({
       .catch(() => {})
     return () => {
       live = false
-      stopReconnect()
-      catchup.close()
-      stop()
-      stopExit()
-      void window.electronAPI.sessionsUnsubscribe(session.id)
+      reader.stop()
+      pastReader.current = null
     }
   }, [session.id])
   /* The pane's state is the kernel's record, the same one the sidebar follows:
@@ -512,13 +477,17 @@ export function TerminalView({
   useFitRow(statusRow)
   const fetchEarlier = useCallback<EarlierPage>(async () => {
     if (before === null) return null
-    const page = await window.electronAPI.sessionsHistory(session.id, before)
+    const source = pastReader.current?.source()
+    if (!source) return null
+    const page = await source.read(before)
     return () => {
+      if (!source.current()) return
+      if (page.truncated) setTruncated(true)
       dispatch({ prepend: page.items })
       dispatchSubagents({ items: page.items })
       setBefore(page.before)
     }
-  }, [session.id, before])
+  }, [before])
   const earlier = useEarlier(
     transcript,
     visible && before !== null,
@@ -534,8 +503,12 @@ export function TerminalView({
     []
   )
   // A move of the tab to another provider (PRDCT-4300), from the chip's menu.
-  const switchSource = useRef({ conversation, before })
-  switchSource.current = { conversation, before }
+  const switchSource = useRef<{
+    conversation: typeof conversation
+    before: number | null
+    history?: HistorySource
+  }>({ conversation, before })
+  switchSource.current = { conversation, before, history: pastReader.current?.source() }
   const providerSwitch = useProviderSwitch({
     session,
     source: () => switchSource.current,
@@ -1019,6 +992,8 @@ export function TerminalView({
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
+            {truncated && <PastTruncated />}
+            {past === 'failed' && <PastFailed onRetry={() => pastReader.current?.retry()} />}
             {pastRead && conversation.entries.length === 0 && state !== 'ended' && (
               <ViewEmpty
                 kind="enclave"

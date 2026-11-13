@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   setSessionViewRecord: vi.fn(),
   setSessionClaudeSessionId: vi.fn(),
   setSessionWorkspace: vi.fn(),
+  getSessionRecord: vi.fn(),
+  setSessionWindowKey: vi.fn(),
   folderName: 'app',
   typed: vi.fn(async () => ({ submitted: true, draftHandling: 'none' as const })),
   notifyChatMessage: vi.fn()
@@ -25,6 +27,8 @@ vi.mock('../pty-manager', () => ({
     setSessionViewRecord: mocks.setSessionViewRecord,
     setSessionClaudeSessionId: mocks.setSessionClaudeSessionId,
     setSessionWorkspace: mocks.setSessionWorkspace,
+    getSessionRecord: mocks.getSessionRecord,
+    setSessionWindowKey: mocks.setSessionWindowKey,
     getSession: (id: string) => (id === 'gone' ? undefined : { id, folderName: mocks.folderName })
   }
 }))
@@ -111,6 +115,18 @@ describe('the page on a tab, and a message typed in', () => {
 })
 
 describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () => {
+  it('claims only the expected window stamp, without replacing or replaying the session', () => {
+    mocks.getSessionRecord.mockReturnValue({ id: 'c1' })
+    host.keepOnRecord('c1', { window: { key: 'primary', expectedKey: null } })
+    expect(mocks.setSessionWindowKey).toHaveBeenCalledExactlyOnceWith('c1', 'primary')
+    mocks.getSessionRecord.mockReturnValue({ id: 'c1', windowKey: 'secondary' })
+    host.keepOnRecord('c1', { window: { key: 'primary', expectedKey: null } })
+    expect(mocks.setSessionWindowKey).toHaveBeenCalledTimes(1)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    host.keepOnRecord('gone', { window: { key: 'primary', expectedKey: null } })
+    expect(mocks.setSessionWindowKey).toHaveBeenCalledTimes(1)
+    expect(writes).toEqual([])
+  })
   it('writes the name as given, an auto-title included, and the page, each only when sent', () => {
     host.keepOnRecord('c1', { name: { displayName: 'Lane A', userRenamed: true } })
     host.keepOnRecord('c1', { name: { displayName: null, userRenamed: false } })

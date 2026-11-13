@@ -1,9 +1,10 @@
 import type { TimelinePage, SessionPosition } from '@clave/contract/timeline'
 import { describe, expect, it, vi } from 'vitest'
-import type { Session, SessionStream } from '../../shared/session-model'
+import type { HistoryItem, Session, SessionStream } from '../../shared/session-model'
 // The Echo with a conversation history, a test fixture: the app's Echo replays nothing.
 import { HistoryEchoAdapter } from './adapters/echo-history.fixture'
 import { SessionManager } from './session-manager'
+import { SessionTimeline, TIMELINE_MAX_BYTES, TIMELINE_MAX_ITEMS } from './timeline'
 
 const session: Session = {
   id: 'ordered',
@@ -234,5 +235,132 @@ describe('bounded timeline paging', () => {
           stream.kind === 'event' && stream.event.type === 'user_message' && stream.event.text
       )
     ).toEqual(['outer', 'nested'])
+  })
+})
+
+describe('immutable launch history through the positioned timeline', () => {
+  const past = (count: number): HistoryItem[] =>
+    Array.from({ length: count }, (_, i) => ({
+      event: { type: 'user_message', text: `past ${i}` },
+      at: i
+    }))
+  const all = (timeline: SessionTimeline, limit = 17): TimelinePage['items'] => {
+    let page = timeline.read(undefined, limit)
+    let items = page.items
+    while (page.before !== null) {
+      const before = page.before
+      page = timeline.read(before, limit)
+      expect(page.before === null || page.before < before).toBe(true)
+      expect(page.items.every(({ position }) => position.sequence < before)).toBe(true)
+      items = [...page.items, ...items]
+    }
+    return items
+  }
+
+  it('pages every launch event beyond the item bound without claiming retention loss', () => {
+    const seed = past(TIMELINE_MAX_ITEMS + 13)
+    const read = vi.fn(() => seed)
+    const timeline = new SessionTimeline(read)
+    const newest = timeline.read(undefined, 2)
+    expect(newest.items.map(({ position }) => position.sequence)).toEqual([2012, 2013])
+    expect(newest.truncated).toBe(false)
+    expect(all(timeline).map(({ event, at }) => ({ event, at }))).toEqual(seed)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(timeline.read(1).items).toEqual([])
+    expect(timeline.read(1).before).toBeNull()
+  })
+
+  it('pages launch bytes beyond the live byte bound with stable positions and timestamps', () => {
+    const seed = past(8).map((item) => ({
+      ...item,
+      event: {
+        type: 'assistant_text' as const,
+        delta: 'x'.repeat(TIMELINE_MAX_BYTES / 4),
+        final: true
+      }
+    }))
+    const timeline = new SessionTimeline(() => seed)
+    const newest = timeline.read(undefined, 2)
+    expect(newest.truncated).toBe(false)
+    expect(all(timeline, 2)).toEqual(
+      seed.map((item, i) => ({ ...item, position: { ...newest.cursor, sequence: i + 1 } }))
+    )
+  })
+
+  it('freezes seed membership once and separates a reentrant capture from a large prefix', () => {
+    const seed = past(TIMELINE_MAX_ITEMS + 1)
+    seed.unshift({ event: { type: 'provider_event', provider: 'codex', payload: {} } })
+    const delivered: SessionPosition[] = []
+    const read = vi.fn(() => {
+      timeline.capture({ type: 'user_message', text: 'nested' }, (p) => delivered.push(p))
+      return seed
+    })
+    const timeline = new SessionTimeline(read)
+    timeline.capture({ type: 'user_message', text: 'outer' }, (p) => delivered.push(p))
+    const snapshot = timeline.read()
+    seed.push({ event: { type: 'user_message', text: 'not part of launch' } })
+    timeline.capture({ type: 'user_message', text: 'outer' }, (p) => delivered.push(p))
+    const items = all(timeline)
+    expect(items.map(({ event }) => event)).toEqual([
+      ...seed.slice(1, -1).map(({ event }) => event),
+      { type: 'user_message', text: 'outer' },
+      { type: 'user_message', text: 'nested' },
+      { type: 'user_message', text: 'outer' }
+    ])
+    expect(snapshot.cursor.sequence).toBe(TIMELINE_MAX_ITEMS + 3)
+    expect(delivered).toEqual(items.slice(-3).map(({ position }) => position))
+    expect(delivered[2].sequence).toBe(snapshot.cursor.sequence + 1)
+    expect(new Set(items.map(({ position }) => position.sequence)).size).toBe(items.length)
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a tool pair together across the launch/live boundary and pages at absolute cursors', () => {
+    const seed: HistoryItem[] = [
+      ...past(1),
+      { event: { type: 'tool_call', id: 'read', name: 'Read', input: {} } }
+    ]
+    const timeline = new SessionTimeline(() => seed)
+    timeline.capture({ type: 'tool_result', id: 'read', output: 'contents' }, () => {})
+    timeline.capture({ type: 'assistant_text', delta: 'done', final: true }, () => {})
+    const page = timeline.read(undefined, 2)
+    expect(page.items.map(({ position }) => position.sequence)).toEqual([2, 3, 4])
+    expect(page.before).toBe(2)
+    timeline.capture({ type: 'user_message', text: 'later' }, () => {})
+    const older = timeline.read(page.before!, 2)
+    expect(older.items.map(({ position }) => position.sequence)).toEqual([1])
+    expect(older.cursor).toEqual({ ...page.cursor, sequence: 5 })
+    expect(older.truncated).toBe(false)
+  })
+
+  it('retains the launch prefix but reports a genuinely evicted live gap without renumbering', () => {
+    const timeline = new SessionTimeline(() => past(3))
+    const initial = timeline.read()
+    for (let i = 0; i < TIMELINE_MAX_ITEMS + 5; i++)
+      timeline.capture({ type: 'user_message', text: `live ${i}` }, () => {})
+    const page = timeline.read(undefined, 2)
+    expect(page.truncated).toBe(true)
+    expect(page.cursor).toEqual({ ...initial.cursor, sequence: 2008 })
+    expect(all(timeline).map(({ position }) => position.sequence)).toEqual([
+      1,
+      2,
+      3,
+      ...Array.from({ length: TIMELINE_MAX_ITEMS }, (_, i) => i + 9)
+    ])
+    expect(timeline.read(9).items.map(({ position }) => position.sequence)).toEqual([1, 2, 3])
+    expect(timeline.read(9).truncated).toBe(true)
+  })
+
+  it('keeps prefix paging available after oversized live loss and preserves prior incompleteness', () => {
+    expect(new SessionTimeline(() => past(3), true).read().truncated).toBe(true)
+    const timeline = new SessionTimeline(() => past(3))
+    const initial = timeline.read()
+    expect(initial.truncated).toBe(false)
+    timeline.capture(
+      { type: 'assistant_text', delta: 'x'.repeat(TIMELINE_MAX_BYTES), final: true },
+      () => {}
+    )
+    expect(all(timeline).map(({ position }) => position.sequence)).toEqual([1, 2, 3])
+    expect(timeline.read().cursor).toEqual({ ...initial.cursor, sequence: 4 })
+    expect(timeline.read().truncated).toBe(true)
   })
 })

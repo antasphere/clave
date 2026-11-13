@@ -32,6 +32,9 @@ export const ServerEvent = Schema.Union(
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
   // ── Sessions (lane A) ──
+  /** A session was registered. Clients reconcile their local projection;
+   *  this is not a request to start or resume its provider. */
+  Schema.TaggedStruct('session.registered', { id: Schema.String }),
   Schema.TaggedStruct('session.state_changed', { id: Schema.String, state: AgentState }),
   /** The tab's name, earned from its first message. */
   Schema.TaggedStruct('session.title_changed', { id: Schema.String, title: Schema.String }),

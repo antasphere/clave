@@ -20,8 +20,11 @@ import {
 // question's masking and never offer the old one. The control gives the old
 // question an id of its own.
 export async function run(t) {
-  for (const reused of [true, false]) {
-    const world = await fleetWorld(`request-history-${reused ? 'reused' : 'distinct'}`)
+  const cases = ['timeline', 'history'].flatMap((source) =>
+    [true, false].map((reused) => ({ source, reused }))
+  )
+  for (const { source, reused } of cases) {
+    const world = await fleetWorld(`request-history-${source}-${reused ? 'reused' : 'distinct'}`)
     try {
       const server = world.servers[0]
       await request(server, '/launch-profiles', {
@@ -51,9 +54,12 @@ export async function run(t) {
       assert.deepEqual(question.secretQuestions, ['fleet-private-id'])
       // The past an older process left: the same question, public, answered.
       await server.fixture.evaluate(
-        ({ id, question, reused }) => {
+        ({ id, question, reused, source }) => {
           const host = globalThis.__claveE2E.sessionHost
           const history = host.history
+          const timeline = host.timeline
+          const subscribe = host.subscribe
+          globalThis.__pastServed = { timeline: false, history: false }
           const questions = question.questions.map((q, i) => ({
             ...q,
             header: `Previous public field ${i + 1}`
@@ -74,7 +80,7 @@ export async function run(t) {
           }
           host.history = (sid, before, limit) => {
             const page = history.call(host, sid, before, limit)
-            if (sid === id && before === undefined) globalThis.__historyServed = true
+            if (sid === id && before === undefined) globalThis.__pastServed.history = true
             return sid === id && before === undefined
               ? {
                   ...page,
@@ -86,8 +92,55 @@ export async function run(t) {
                 }
               : page
           }
+          if (source === 'history') host.timeline = undefined
+          else {
+            // Put the same synthetic older prefix on the positioned road.
+            // Shift its real page and stream together so the fixture does
+            // not create a gap or overlap with the two older events.
+            const shifted = (at) => ({ ...at, sequence: at.sequence + 2 })
+            host.timeline = (sid, before, limit) => {
+              if (sid !== id) return timeline.call(host, sid, before, limit)
+              const page = timeline.call(
+                host,
+                sid,
+                before === undefined ? undefined : before - 2,
+                limit
+              )
+              if (before === undefined) globalThis.__pastServed.timeline = true
+              return {
+                ...page,
+                items: [
+                  ...(before === undefined
+                    ? [
+                        {
+                          event: old,
+                          at: 1,
+                          position: { generation: page.cursor.generation, sequence: 1 }
+                        },
+                        {
+                          event: { type: 'state_change', state: 'done' },
+                          at: 2,
+                          position: { generation: page.cursor.generation, sequence: 2 }
+                        }
+                      ]
+                    : []),
+                  ...page.items.map((item) => ({ ...item, position: shifted(item.position) }))
+                ],
+                before: page.before === null ? null : page.before + 2,
+                cursor: shifted(page.cursor)
+              }
+            }
+            host.subscribe = (sid, listener) =>
+              subscribe.call(host, sid, (frame) =>
+                listener(
+                  sid === id && frame.position
+                    ? { ...frame, position: shifted(frame.position) }
+                    : frame
+                )
+              )
+          }
         },
-        { id: provider.id, question, reused }
+        { id: provider.id, question, reused, source }
       )
       const mac = await world.mac('history')
       await connectMac(mac, [server], { ui: false })
@@ -97,8 +150,16 @@ export async function run(t) {
       await clickReady(mac.win.locator(`[data-sidebar-item-id="${key}"]`))
       const pane = mac.win.locator(`.chat-host[data-session-id="${key}"]`)
       await eventually(
-        () => server.fixture.evaluate(() => globalThis.__historyServed === true),
+        () => server.fixture.evaluate((source) => globalThis.__pastServed[source] === true, source),
         'the past holding the old question is read'
+      )
+      assert.equal(
+        await server.fixture.evaluate(
+          (source) => globalThis.__pastServed[source === 'timeline' ? 'history' : 'timeline'],
+          source
+        ),
+        false,
+        'the other history source was not used'
       )
       // The live approval, docked above the composer; the live question, drawn
       // inline in the transcript (PRDCT-4157): never the old one as a card.
@@ -110,7 +171,19 @@ export async function run(t) {
       await eventually(
         async () => (await dock.innerText()).includes('Fleet public answer'),
         'the live question follows the approval'
-      )
+      ).catch(async (error) => {
+        console.log(
+          'request-history failure: ' +
+            JSON.stringify({
+              source,
+              reused,
+              dock: await dock.innerText({ timeout: 1000 }).catch(() => ''),
+              pane: await pane.innerText({ timeout: 1000 }).catch(() => ''),
+              errors: mac.errors
+            })
+        )
+        throw error
+      })
       assert.equal((await dock.innerText()).includes('Previous public field'), false)
       await dock.locator('textarea.chat-field--answer').fill('synthetic public response')
       await dock.getByRole('button', { name: 'Next', exact: true }).click()
@@ -143,9 +216,9 @@ export async function run(t) {
       assert.equal((await pane.innerText()).includes(secret), false, 'kept out of the transcript')
       assert.deepEqual(mac.errors, [])
       t.check(
-        reused
+        (reused
           ? 'an older question under the live id never replaces the live question or its masking'
-          : 'an older question under its own id never takes the dock either',
+          : 'an older question under its own id never takes the dock either') + ` (${source})`,
         true
       )
     } finally {
