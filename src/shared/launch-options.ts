@@ -32,6 +32,7 @@ import {
   type ConnectionPoolId
 } from './connection'
 import { isChatProfileRef } from './open-session-modes'
+import { pickProviderConnection } from './provider-connection-pick'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
 
 /** What agent-updates knows of a harness on the machine; undefined when this road never checks (the Mac's view of a server). */
@@ -139,9 +140,10 @@ export function poolsOf(harness: Pick<Harness, 'connectionPools'>): readonly Con
 }
 
 /** The pools of a harness backed by an account list (Claude, Codex): the
- *  ones an `account` argument names a connection of. Pi's and OpenCode's
- *  provider pools are not (PRDCT-4496): an agent never picks their stored
- *  connection by an account. */
+ *  ones a launch naming no connection picks from, and a running tab moves
+ *  along. Pi's and OpenCode's provider pools are not: an `account` names one
+ *  of their stored connections (`provider-connection-pick.ts`, PRDCT-4496),
+ *  and naming none runs on the harness's own login. */
 export function accountPoolsOf(
   harness: Pick<Harness, 'connectionPools'>
 ): readonly AccountPoolId[] {
@@ -217,12 +219,20 @@ function harnessOptions(
   const launcherModel = input.harnessSettings[id]?.preferredModel ?? null
   const model = defaultModel ?? undefined
 
+  // The provider pools (PRDCT-4496) suggest ONE connection across them, the
+  // one an open naming `account: "any"` lands on (`pickProviderConnection`
+  // over the same rows in the same order); naming none still runs on the
+  // harness's own login.
+  const providerPick = pickProviderConnection(
+    pools.filter((pool) => !isAccountPoolId(pool)).flatMap((pool) => input.connections(pool)),
+    undefined
+  )
+  const providerSuggested = providerPick.ok ? providerPick.connection.id : null
   const connections: ConnectionOption[] = pools.flatMap((pool) => {
     const rows = input.connections(pool)
-    // A provider pool suggests nothing: naming no connection runs on the harness's own login (PRDCT-4496).
     const suggested = isAccountPoolId(pool)
       ? suggestedConnection(rows, input.selectedConnectionId(pool), input.preferRecommended, model)
-      : null
+      : providerSuggested
     return rows.map((c) => ({
       ...c,
       pool,
@@ -267,7 +277,9 @@ function harnessOptions(
     connectionNote:
       pools.length === 0 || (!accountPool && all.length === 0)
         ? `Clave holds no connection for ${harness.name}: it runs on the login inside the harness.`
-        : null,
+        : !accountPool
+          ? `Clave holds stored connections for ${harness.name}: name one as account (a label, an id, or "any" for the suggested one, the first with a key); with no account, it runs on the login inside the harness.`
+          : null,
     profiles: profiles.map((p) => ({
       id: p.id,
       name: p.name,

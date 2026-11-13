@@ -18,6 +18,7 @@ import { usageSummaryOf } from './usage-summary'
 import type { PoolUsageWindow } from './account-pool'
 import { codexConnection, poolAccountOf, type Connection } from './connection'
 import { providerConnection } from './provider-connection'
+import { resolveProviderConnection } from './provider-connection-pick'
 import {
   PROVIDER_COMPANY_IDS,
   type ProviderCompanyId
@@ -437,7 +438,10 @@ describe('the connections that pay', () => {
         ['deepseek', 'c-ds', 'No key yet', false],
         ['ollama', 'c-ollama', 'Local', true]
       ])
-      expect(h.connectionNote).toBeNull()
+      // How an agent names one, in the voice of the note for a harness with none.
+      expect(h.connectionNote).toBe(
+        `Clave holds stored connections for ${HARNESS_BY_ID[id].name}: name one as account (a label, an id, or "any" for the suggested one, the first with a key); with no account, it runs on the login inside the harness.`
+      )
       // The harness's own login still runs a launch that names none: no
       // remembered model, every model served.
       expect(h.defaultModel).toBeNull()
@@ -447,20 +451,56 @@ describe('the connections that pay', () => {
     expect(accountPoolsOf(HARNESS_BY_ID.pi)).toEqual([])
     expect(accountPoolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
   })
-  it('suggests no stored connection under a provider pool, an account pool still one (PRDCT-4496)', () => {
+  it('suggests, across the provider pools, the first stored connection with a key, an account pool still its own (PRDCT-4496)', () => {
+    const unkeyed = providerConnection(view('c-kimi-unkeyed', 'moonshot', 'Kimi', true, false))
     const work = providerConnection(view('c-kimi-work', 'moonshot', 'Kimi work'))
     const home = providerConnection(view('c-kimi-home', 'moonshot', 'Kimi home'))
+    const ollama = providerConnection(view('c-ollama', 'ollama', 'Local', false))
     const options = launchOptions(
       input({
         connections: (pool) =>
-          pool === 'claude' ? [fableOut, open()] : pool === 'moonshot' ? [work, home] : []
+          pool === 'claude'
+            ? [fableOut, open()]
+            : pool === 'moonshot'
+              ? [unkeyed, work, home]
+              : pool === 'ollama'
+                ? [ollama]
+                : []
       })
     )
     expect(harness(options, 'pi').connections.map((c) => [c.id, c.suggested])).toEqual([
-      ['c-kimi-work', false],
-      ['c-kimi-home', false]
+      ['c-kimi-unkeyed', false],
+      ['c-kimi-work', true],
+      ['c-kimi-home', false],
+      ['c-ollama', false]
     ])
     expect(harness(options, 'claude').connections.filter((c) => c.suggested)).toHaveLength(1)
+    // None usable: none suggested.
+    const none = launchOptions(
+      input({ connections: (pool) => (pool === 'moonshot' ? [unkeyed] : []) })
+    )
+    expect(harness(none, 'pi').connections.map((c) => [c.id, c.suggested])).toEqual([
+      ['c-kimi-unkeyed', false]
+    ])
+  })
+  it('marks suggested the very connection an open\'s "any" picks from the same rows (PRDCT-4496)', () => {
+    const views = [
+      view('c-ollama', 'ollama', 'Local', false),
+      view('c-ds', 'deepseek', 'No key yet', true, false),
+      view('c-kimi', 'moonshot', 'Kimi work'),
+      view('c-zai', 'zai', 'GLM')
+    ]
+    const rows = views.map(providerConnection)
+    const options = launchOptions(
+      input({ connections: (pool) => rows.filter((c) => c.pool === pool) })
+    )
+    for (const id of ['pi', 'opencode'] as const) {
+      const listed = harness(options, id).connections.filter((c) => c.suggested)
+      const opened = resolveProviderConnection(HARNESS_BY_ID[id], views, 'any')
+      expect(listed).toHaveLength(1)
+      expect(opened.ok && opened.connection.id).toBe(listed[0].id)
+      expect(listed[0].id).toBe('c-kimi')
+    }
   })
   it('follows the recommendation when the person opted in', () => {
     // Work renews later than Romain's week: the recommendation is Romain's on Opus.

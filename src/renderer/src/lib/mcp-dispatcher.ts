@@ -4,7 +4,11 @@ import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
 import { resolveSessionTarget } from './mcp-session-target'
-import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
+import {
+  assertServerConnected,
+  machineProviderConnection,
+  openFleetSession
+} from './mcp-fleet-session'
 import { ownerOf } from './fleet-identity'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
@@ -221,7 +225,17 @@ function listedAccount(
   s: Session
 ): { id: string; label: string; removed: boolean; exhausted: boolean } | null {
   const provider = s.claudeMode || s.claudeAgentsMode ? 'claude' : s.codexMode ? 'codex' : null
-  if (!provider) return null
+  // A Pi or OpenCode tab on a stored connection (PRDCT-4496): its id and
+  // label, never exhausted (a provider key reports no usage).
+  if (!provider)
+    return (s.piMode || s.opencodeMode) && s.connectionId
+      ? {
+          id: s.connectionId,
+          label: s.connectionLabel ?? s.connectionId,
+          removed: false,
+          exhausted: false
+        }
+      : null
   const { id, label, removed } = sessionOwnAccount(s, provider)
   return { id, label, removed, exhausted: sessionAccountExhausted(s) }
 }
@@ -441,7 +455,7 @@ const messagingParentOf = (session: Session): string | undefined =>
 export async function openSessionProgrammatically(payload: {
   cwd: string
   server?: string
-  mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
+  mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'opencode' | 'terminal'
   groupId?: string
   name?: string
   dangerous?: boolean
@@ -449,7 +463,8 @@ export async function openSessionProgrammatically(payload: {
   profile?: string
   /** Open claude / codex in Clave's chat view instead of the terminal. */
   chat?: boolean
-  /** The Claude account (id or label) the tab runs on; claude mode only. */
+  /** The connection (id or label, or "any") the tab runs on: a Claude or
+   *  Codex account, or a stored connection of Pi's or OpenCode's. */
   account?: string
   provider?: string
   thinking?: PiThinkingLevel
@@ -562,14 +577,22 @@ export async function openSessionProgrammatically(payload: {
   const codexAccount = codexMode
     ? (resolveAccountRef('codex', payload.account, judgedModel) as CodexAccount)
     : null
-  if (payload.account && !claudeMode && !codexMode) {
+  const providerHarness = piMode ? 'pi' : opencodeMode ? 'opencode' : null
+  if (payload.account && !claudeMode && !codexMode && !providerHarness) {
     throw new Error(
-      `The account argument applies to claude and codex modes only (got mode "${mode}")`
+      `The account argument applies to claude, codex, pi and opencode modes only (got mode "${mode}")`
     )
   }
+  // Pi and OpenCode run on one of this Mac's stored connections when the
+  // account names one (PRDCT-4496); with none, on the login inside the harness.
+  const connection =
+    payload.account && providerHarness
+      ? await machineProviderConnection(LOCAL_SERVER_ID, providerHarness, payload.account)
+      : null
   const accountFields = {
     ...(claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}),
-    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
+    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {}),
+    ...(connection ?? {})
   }
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
@@ -630,6 +653,7 @@ export async function openSessionProgrammatically(payload: {
     claudeProfileLabel: claudeProfile?.label,
     codexAccountId: codexAccount?.id,
     codexAccountLabel: codexAccount?.label,
+    ...(connection ?? {}),
     // Persist so Duplicate re-primes the clone with the same prompt.
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
     sessionType: 'local',

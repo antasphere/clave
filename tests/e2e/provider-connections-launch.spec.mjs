@@ -272,6 +272,33 @@ async function stopTabs(win) {
     .catch(() => undefined)
 }
 
+/** A tab an agent opens through clave_open_session (the window's dispatcher),
+ *  focused so it starts, and what its shell printed, read back through
+ *  clave_read_session as claude-accounts.spec does. */
+async function mcpOpenPrinted(app, payload) {
+  const opened = await callMcp(app, 'openSession', { cwd: ROOT, ...payload })
+  await callMcp(app, 'focus', { sessionId: opened.sessionId })
+  let raw = ''
+  const printed = await until(
+    async () => {
+      const read = await callMcp(app, 'readSession', {
+        sessionId: opened.sessionId,
+        lines: 40,
+        callerSessionId: opened.sessionId
+      })
+      raw = read?.text ?? ''
+      const out = {}
+      for (const line of raw.replace(/\r/g, '').split('\n')) {
+        const m = /^(KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG)=(.*)$/.exec(line.trim())
+        if (m && !(m[1] in out)) out[m[1]] = m[2]
+      }
+      return 'KIMI' in out || 'DS' in out ? out : null
+    },
+    { tries: 60, gapMs: 500 }
+  )
+  return { sessionId: opened.sessionId, printed, raw: raw.slice(-1500) }
+}
+
 async function spawnRefusal(win, options) {
   return win.evaluate(
     async ({ root, options }) =>
@@ -631,6 +658,69 @@ export async function run(t) {
       ocPlain?.ARGS
     )
 
+    // ── An agent names the connection: clave_open_session's account ───────
+    // The window's road (`callMcp` reaches the dispatcher), the account by
+    // label, then "any", then a name the store never held. No profile is
+    // named: the window's profile list is the one it loaded at start, so main
+    // resolves the workspace's Pi profile (`e2e-pi-print`, `setProfiles`).
+    const piByLabel = await mcpOpenPrinted(app, {
+      mode: 'pi',
+      workspace: WS.id,
+      account: 'Kimi work',
+      name: 'Pi on Kimi by account'
+    })
+    t.check(
+      "an agent's Pi tab on account 'Kimi work' got the Kimi value under KIMI_API_KEY",
+      piByLabel.printed?.KIMI === KIMI,
+      piByLabel.printed ? scrub(piByLabel.printed) : scrub(piByLabel.raw)
+    )
+    const piAny = await mcpOpenPrinted(app, {
+      mode: 'pi',
+      workspace: WS.id,
+      account: 'any',
+      name: 'Pi on any'
+    })
+    t.check(
+      "account 'any' lands on the first stored connection with a key (Kimi, the listing's first)",
+      piAny.printed?.KIMI === KIMI,
+      piAny.printed ? scrub(piAny.printed) : scrub(piAny.raw)
+    )
+    // Ended with the spec's own print tabs, so neither holds the quit up.
+    await win.evaluate(
+      (ids) => {
+        const out = (window.__connectionsOut ??= {})
+        for (const id of ids) out[id] ??= ''
+      },
+      [piByLabel.sessionId, piAny.sessionId]
+    )
+    let unknownRefusal = null
+    try {
+      await callMcp(app, 'openSession', {
+        cwd: ROOT,
+        mode: 'pi',
+        workspace: WS.id,
+        account: 'Nobody'
+      })
+    } catch (e) {
+      unknownRefusal = e.message
+    }
+    t.check(
+      'an unknown connection is refused, naming every stored one with its id',
+      unknownRefusal?.includes('Unknown Pi connection "Nobody". Available: ') &&
+        unknownRefusal.includes(`"Kimi work" (${C.kimi})`) &&
+        unknownRefusal.includes(`"Local Ollama" (${C.ollama})`),
+      unknownRefusal
+    )
+    const agentRows = (await callMcp(app, 'list', {}))?.sessions ?? []
+    const agentRow = agentRows.find((s) => s.id === piByLabel.sessionId)
+    t.check(
+      "clave_list reports the agent's Pi tab on 'Kimi work', never exhausted",
+      agentRow?.account?.label === 'Kimi work' &&
+        agentRow.account.id === C.kimi &&
+        agentRow.account.exhausted === false,
+      agentRow?.account ?? agentRows.length
+    )
+
     // ── A connection that is gone refuses the start ──────────────────────
     const refused = await spawnRefusal(win, {
       piMode: true,
@@ -785,6 +875,41 @@ export async function run(t) {
       PI_HOME
     )
     t.equal("and finds the person's own login there", pi?.AUTH, 'present')
+
+    // ── An agent names a connection the separate server stores ───────────
+    // Stored through lane B's fleet calls on the window's own machine, which
+    // in this mode is the separate server (the calls route to it); the
+    // agent's open by label reads that server's list and its spawn that
+    // server's key.
+    const sepStored = await separate.win.evaluate(async (kimi) => {
+      const api = window.electronAPI
+      const created = await api.fleetProviderConnectionAdd('local', {
+        company: 'moonshot',
+        label: 'Kimi work'
+      })
+      const view = await api.fleetProviderConnectionSetKey('local', created.id, kimi)
+      return { id: view.id, hasKey: view.hasKey }
+    }, KIMI)
+    t.check(
+      'on a separate server, the Kimi connection is stored with its key',
+      !!sepStored?.id && sepStored.hasKey,
+      scrub(sepStored)
+    )
+    const sepPi = await mcpOpenPrinted(separate.app, {
+      mode: 'pi',
+      workspace: WS.id,
+      account: 'Kimi work',
+      name: 'Pi on Kimi by account (separate)'
+    })
+    await separate.win.evaluate((id) => {
+      const out = (window.__connectionsOut ??= {})
+      out[id] ??= ''
+    }, sepPi.sessionId)
+    t.check(
+      "on a separate server, an agent's Pi tab on account 'Kimi work' got the Kimi value",
+      sepPi.printed?.KIMI === KIMI,
+      sepPi.printed ? scrub(sepPi.printed) : scrub(sepPi.raw)
+    )
   } finally {
     await stopTabs(separate.win)
     await separate.app.close()

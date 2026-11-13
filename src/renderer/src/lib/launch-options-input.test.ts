@@ -252,7 +252,12 @@ describe("Pi's and OpenCode's provider pools (PRDCT-4496)", () => {
           ['moonshot', 'mac-kimi', true],
           ['deepseek', 'mac-ds', false]
         ])
-        expect(h.connectionNote).toBeNull()
+        // The first with a key is the one `account: "any"` lands on (PRDCT-4496).
+        expect(h.connections.map((c) => [c.id, c.suggested])).toEqual([
+          ['mac-kimi', true],
+          ['mac-ds', false]
+        ])
+        expect(h.connectionNote).toMatch(/^Clave holds stored connections for /)
       }
       const server = launchOptions(serverLaunchOptionsInput('srv', 'Studio box', settings, facts))
       expect(

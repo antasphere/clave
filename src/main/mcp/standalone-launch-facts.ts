@@ -36,6 +36,7 @@ import {
   type ProviderListingDeps
 } from './provider-launch-listing'
 import { usageSummaryForModel } from '../../shared/usage-summary'
+import { listedProviderConnection } from '../../shared/provider-connection-pick'
 import type { HarnessDetection } from '../agent-updates/standalone-detection'
 import { openProfileIdFor, type LaunchFacts } from '../routines/launch'
 import type { AccountProvider, AccountSwitchMode, ServedAccount } from './served-core'
@@ -106,6 +107,9 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
       : {}),
     preferences: () => facts.preferences(),
     ...(facts.launchModel ? { launchModel: facts.launchModel } : {}),
+    ...(facts.providerConnectionsFor
+      ? { providerConnectionsFor: (harness) => facts.providerConnectionsFor!(harness) }
+      : {}),
     machine: () => deps.identity(),
     harnesses: () => deps.detection.detect(),
     models: async (harness) => {
@@ -160,7 +164,16 @@ export function poolOfRecord(record: SessionRecord): AccountProvider | null {
  *  about to stop for the tab's own model. Null for a tab with no pool. */
 export function accountOf(facts: LaunchFacts, record: SessionRecord): ServedAccount | null {
   const pool = poolOfRecord(record)
-  if (!pool) return null
+  if (!pool)
+    // A Pi or OpenCode tab on a stored connection (PRDCT-4496): its id and
+    // its label, the store's current one first; a key reports no usage.
+    return listedProviderConnection(
+      record,
+      (id) =>
+        facts
+          .providerConnectionsFor?.(record.opencodeMode ? 'opencode' : 'pi')
+          .find((c) => c.id === id)?.label
+    )
   const id = (pool === 'codex' ? record.codexAccountId : record.claudeProfileId) ?? 'default'
   const account = facts.accounts(pool).find((a) => a.id === id)
   const recorded = pool === 'codex' ? record.codexAccountLabel : record.claudeProfileLabel

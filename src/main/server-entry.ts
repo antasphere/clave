@@ -415,7 +415,9 @@ async function main(): Promise<void> {
     codexUsage: codexUsageManager,
     launchProfiles: launchProfileManager,
     preference: (key) => preferencesManager.get(key as keyof Preferences),
-    launchModel: rememberedSpawnModel
+    launchModel: rememberedSpawnModel,
+    // An account on Pi or OpenCode names a stored connection (PRDCT-4496).
+    providerConnections: providerConnectionsManager
   })
   // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
   wireProviderConnections(providerConnectionsManager)

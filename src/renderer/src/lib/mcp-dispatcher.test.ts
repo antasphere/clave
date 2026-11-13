@@ -67,7 +67,8 @@ vi.mock('../store/server-settings-store', () => ({
 }))
 import { openSessionProgrammatically, initMcpDispatcher } from './mcp-dispatcher'
 import { usePinnedStore } from '../store/pinned-store'
-import { resourceKey } from '@clave/contract/fleet'
+import { LOCAL_SERVER_ID, resourceKey } from '@clave/contract/fleet'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 
 import { useWorkspaceStore } from '../store/workspace-store'
 import { useSessionStore } from '../store/session-store'
@@ -956,6 +957,63 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       usePairingStore.setState({ servers: {} } as never)
       useFleetStore.setState({ connections: [], statuses: {} } as never)
     }
+  })
+})
+
+// Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on this Mac's stored connections
+describe('the account of a window-road Pi or OpenCode open', () => {
+  const stored = (id: string, company: string, label: string, hasKey = true): unknown => ({
+    id,
+    label,
+    company,
+    pool: company,
+    kind: 'key',
+    endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+    needsKey: true,
+    hasKey,
+    keySetAt: null,
+    createdAt: 0
+  })
+  it('runs on this Mac\'s stored connection named by id, label or "any", and refuses an unknown one with the list', async () => {
+    globals.window.electronAPI.fleetProviderConnections = vi.fn(async () => [
+      stored('c-ds', 'deepseek', 'No key yet', false),
+      stored('c-kimi', 'moonshot', 'Kimi work')
+    ])
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'c-kimi' })
+    expect(globals.window.electronAPI.fleetProviderConnections).toHaveBeenCalledWith(
+      LOCAL_SERVER_ID
+    )
+    expect(spawned()).toMatchObject({
+      piMode: true,
+      connectionId: 'c-kimi',
+      connectionLabel: 'Kimi work'
+    })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'opencode', account: 'kimi work' })
+    expect(spawned()).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'any' })
+    expect(spawned()).toMatchObject({ connectionId: 'c-kimi' })
+    // The window's tab names the connection it runs on.
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === `tab-${spawnSession.mock.calls.length}`)
+    ).toMatchObject({ connectionId: 'c-kimi', connectionLabel: 'Kimi work' })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'pi' })
+    expect(spawned()).not.toHaveProperty('connectionId')
+    const before = spawnSession.mock.calls.length
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'Nobody' })
+    ).rejects.toThrow(
+      'Unknown Pi connection "Nobody". Available: "Kimi work" (c-kimi), "No key yet" (c-ds)'
+    )
+    useProviderConnectionsStore.setState({
+      byMachine: { [LOCAL_SERVER_ID]: { connections: [], loading: false, error: null } }
+    })
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'any' })
+    ).rejects.toThrow('No stored connection serves Pi yet: add one in Settings → Connections.')
+    expect(spawnSession.mock.calls.length).toBe(before)
   })
 })
 

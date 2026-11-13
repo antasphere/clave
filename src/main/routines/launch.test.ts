@@ -3,6 +3,7 @@ import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import { type LaunchFacts, resolveLaunch } from './launch'
 import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
 import type { ConnectionPoolId } from '../../shared/connection'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 
 const prefs: LaunchProfilePreferences = {
   version: 1,
@@ -196,7 +197,7 @@ describe('resolveLaunch', () => {
       resolveLaunch(routine({ agent: 'antigravity', model: 'x' }), facts()),
       resolveLaunch(routine({ profile: 'Nope' }), facts()),
       resolveLaunch(routine({ account: 'Nobody' }), facts()),
-      resolveLaunch(routine({ agent: 'pi', account: 'any' }), facts())
+      resolveLaunch(routine({ agent: 'antigravity', account: 'any' }), facts())
     ]
     for (const r of reasons) expect(r.ok).toBe(false)
     expect(reasons.map((r) => (r.ok ? '' : r.reason))).toEqual([
@@ -214,7 +215,7 @@ describe('resolveLaunch', () => {
       'The model argument applies to harnesses that take a model (Claude Code, Codex, Pi, OpenCode); Antigravity takes none on its command line.',
       'launch profile "Nope" is not a claude profile here ("Claude", "Work", "Work (chat)")',
       'Unknown Claude account "Nobody". Available: "Default" (default), "Antasphere" (acc-2)',
-      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
     ])
   })
 
@@ -232,28 +233,72 @@ describe('resolveLaunch', () => {
       account: null,
       spawn: { opencodeMode: true, dangerousMode: true }
     })
-    const account = resolveLaunch(routine({ agent: 'opencode', account: 'any' }), facts())
-    expect(account.ok ? '' : account.reason).toBe(
-      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); OpenCode runs on the login inside the harness.'
-    )
   })
 })
 
 // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on the provider pools
 describe('a routine naming an account on a harness whose pools are stored keys', () => {
-  it('is refused, never launched on no account, in the sentence of a harness with no pool', () => {
+  const view = (
+    id: string,
+    company: ProviderConnectionView['company'],
+    label: string,
+    hasKey = true
+  ): ProviderConnectionView => ({
+    id,
+    label,
+    company,
+    pool: company,
+    kind: 'key',
+    endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+    needsKey: true,
+    hasKey,
+    keySetAt: null,
+    createdAt: 0
+  })
+  const stored = [
+    view('c-ds', 'deepseek', 'No key yet', false),
+    view('c-kimi-home', 'moonshot', 'Kimi home', false),
+    view('c-kimi-work', 'moonshot', 'Kimi work')
+  ]
+  const withStored = (views: ProviderConnectionView[]): LaunchFacts =>
+    facts({ providerConnectionsFor: () => views })
+
+  it('runs on the stored connection named by label, any case, or by id', () => {
     for (const agent of ['pi', 'opencode'] as const) {
-      // The pools are there: the refusal is not the old empty-pool case.
-      expect(HARNESS_BY_ID[agent].connectionPools.length).toBeGreaterThan(0)
-      const run = resolveLaunch(routine({ agent, account: 'Kimi work' }), facts())
-      expect(run.ok).toBe(false)
-      expect(run.ok ? '' : run.reason).toBe(
-        `The account argument applies to harnesses with a connection pool (Claude Code, Codex); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
-      )
+      for (const ref of ['Kimi work', 'kimi WORK', 'c-kimi-work']) {
+        const run = resolveLaunch(routine({ agent, account: ref }), withStored(stored))
+        expect(run.ok && run.account).toBe('Kimi work')
+        expect(run.ok && run.spawn).toMatchObject({
+          connectionId: 'c-kimi-work',
+          connectionLabel: 'Kimi work'
+        })
+      }
     }
-    // With no account named, Pi still launches, on no account.
-    const plain = resolveLaunch(routine({ agent: 'pi' }), facts())
+  })
+  it('runs "any" on the first stored connection with a key, in the listing order', () => {
+    const run = resolveLaunch(routine({ agent: 'pi', account: 'any' }), withStored(stored))
+    expect(run.ok && run.spawn).toMatchObject({ connectionId: 'c-kimi-work' })
+  })
+  it('fails the run on an unknown name, with the list', () => {
+    const run = resolveLaunch(routine({ agent: 'opencode', account: 'Nobody' }), withStored(stored))
+    expect(run.ok ? '' : run.reason).toBe(
+      'Unknown OpenCode connection "Nobody". Available: "Kimi home" (c-kimi-home), "Kimi work" (c-kimi-work), "No key yet" (c-ds)'
+    )
+  })
+  it('fails the run when no stored connection serves it, or none has its key', () => {
+    const none = resolveLaunch(routine({ agent: 'pi', account: 'any' }), facts())
+    expect(none.ok ? '' : none.reason).toBe(
+      'No stored connection serves Pi yet: add one in Settings → Connections.'
+    )
+    const unkeyed = resolveLaunch(routine({ agent: 'pi', account: 'any' }), withStored([stored[0]]))
+    expect(unkeyed.ok ? '' : unkeyed.reason).toBe(
+      'No stored connection of Pi has its key yet: set one in Settings → Connections.'
+    )
+  })
+  it('runs on the login inside the harness when no account is named', () => {
+    const plain = resolveLaunch(routine({ agent: 'pi' }), withStored(stored))
     expect(plain.ok && plain.account).toBeNull()
+    expect(plain.ok && plain.spawn).not.toHaveProperty('connectionId')
   })
 })
 

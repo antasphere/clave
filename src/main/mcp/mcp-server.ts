@@ -93,9 +93,10 @@ import { providerModels } from '../provider-models'
 import { modelsCatalog } from '../models-catalog'
 import { providerConnectionsForListing } from '../provider-injection-spawn'
 import { providerConnectionsManager } from '../provider-connections'
+import { listedProviderConnection } from '../../shared/provider-connection-pick'
 import { CLAUDE_MODELS } from '../../shared/claude-models'
 import { HARNESSES, type HarnessId } from '../../shared/harness'
-import { accountPoolsOf, type LaunchModel } from '../../shared/launch-options'
+import { accountPoolsOf, poolsOf, type LaunchModel } from '../../shared/launch-options'
 import {
   INPUT_RESULT_DESCRIPTION,
   INPUT_SET_DESCRIPTION,
@@ -511,8 +512,12 @@ const ALL_HARNESS_NAMES = harnessNames(() => true, 'or')
 const CHAT_VIEW_NAMES = harnessNames((h) => h.chatAdapterId !== null, 'and')
 const CHAT_VIEW_MODES = harnessNames((h) => h.chatAdapterId !== null, 'and', true)
 const MODEL_TAKING_MODES = harnessNames((h) => h.takesModel, 'and', true)
-// The account pools only: a provider pool's connection is never named by an account (PRDCT-4496).
+// The account pools: the harnesses whose running tab moves to another
+// connection (a Pi or OpenCode tab's move is lane D's restart road).
 const POOLED_HARNESS_NAMES = harnessNames((h) => accountPoolsOf(h).length > 0, 'and')
+// Every harness with a pool takes an account on open and lists its
+// connection: Pi's and OpenCode's stored connections included (PRDCT-4496).
+const OPEN_POOLED_HARNESS_NAMES = harnessNames((h) => poolsOf(h).length > 0, 'and')
 const DANGEROUS_MODES = harnessNames((h) => DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
 const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
 /** The effort follows the launch fields rule (`launchModeFields`): Claude and Codex. */
@@ -570,7 +575,9 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
         exhausted: exhaustedFrom(read, { model: record.model })
       }
     }
-    return null
+    // A Pi or OpenCode tab on a stored connection (PRDCT-4496), reported the
+    // way a Claude tab's account is: the store's label first, never exhausted.
+    return listedProviderConnection(record, (id) => providerConnectionsManager.get(id)?.label)
   },
   statKind: async (absPath) => {
     try {
@@ -985,7 +992,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_list',
     {
-      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a session on a harness with a connection pool (${POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit).`,
+      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a session on a harness with a connection pool (${OPEN_POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit).`,
       inputSchema: {
         workspace: z
           .string()
@@ -1154,7 +1161,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe(
-            `The connection (a subscription or a key) the new tab runs on: its id or exact name as Settings → Connections lists it ("default" is the machine login), or "any" for whichever connection of the pool has headroom, judged on the model the tab will run. Harnesses with a connection pool only (${POOLED_HARNESS_NAMES}). Omit to follow Settings → Connections: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. Unknown names error with the list; clave_launch_options lists them with their headroom.`
+            `The connection (a subscription or a key) the new tab runs on: its id or exact name as Settings → Connections lists it ("default" is the machine login), or "any" for whichever connection of the pool has headroom, judged on the model the tab will run. Harnesses with a connection pool only (${OPEN_POOLED_HARNESS_NAMES}). Omit to follow Settings → Connections: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. On Pi and OpenCode, a stored provider connection by its label or its id, or "any" for the first one with a key; omitted, they run on the login inside the harness. Unknown names error with the list; clave_launch_options lists them with their headroom.`
           ),
         permissionMode: z
           .enum(SPAWN_PERMISSION_MODES)

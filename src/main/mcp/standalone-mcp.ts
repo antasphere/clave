@@ -35,7 +35,7 @@ import {
   SPAWN_PERMISSION_MODES,
   launchModeFields
 } from '../../shared/runtime-choices'
-import { accountPoolsOf, launchOptions } from '../../shared/launch-options'
+import { accountPoolsOf, launchOptions, poolsOf } from '../../shared/launch-options'
 import { firstPoolOf, isAccountPoolId } from '../../shared/connection'
 import { pickAccount } from '../../shared/account-pool'
 import { accountRefusal, openFormOf, resolveLaunch, type LaunchRequest } from '../routines/launch'
@@ -194,8 +194,12 @@ const ALL_HARNESSES = HARNESSES.map((h) => `${h.id} (${h.name})`).join(', ')
 const CHAT_HARNESSES = namesWhere((id) => HARNESS_BY_ID[id].chatAdapterId !== null)
 const MODEL_HARNESSES = namesWhere((id) => HARNESS_BY_ID[id].takesModel)
 const DANGEROUS_HARNESSES = namesWhere((id) => DANGEROUS_MODE_FAMILIES.has(id))
-// The account pools only: a provider pool's connection is never named by an account (PRDCT-4496).
-const POOLED_HARNESSES = namesWhere((id) => accountPoolsOf(HARNESS_BY_ID[id]).length > 0)
+// Every harness with a pool takes an account on open: an account of Claude's
+// or Codex's, a stored connection of Pi's or OpenCode's (PRDCT-4496).
+const POOLED_HARNESSES = namesWhere((id) => poolsOf(HARNESS_BY_ID[id]).length > 0)
+// A running tab moves to another connection on an account pool only: a Pi or
+// OpenCode tab's move is a restart road of its own (lane D).
+const SWITCHABLE_HARNESSES = namesWhere((id) => accountPoolsOf(HARNESS_BY_ID[id]).length > 0)
 /** The effort and the permission mode follow the launch fields rule (`launchModeFields`). */
 const EFFORT_HARNESSES = namesWhere((id) => id === 'claude' || id === 'codex')
 const CLAUDE_NAME = HARNESS_BY_ID.claude.name
@@ -751,7 +755,7 @@ function buildServer(
           .max(128)
           .optional()
           .describe(
-            `Connection the new tab runs on (a subscription or a key of its harness's pool): an id or its exact name ("default" is the machine login), or "any" for whichever connection of the pool has headroom for the model. Harnesses with a connection pool only (${POOLED_HARNESSES}). Omit to follow this server's settings: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each tab's connection.`
+            `Connection the new tab runs on (a subscription or a key of its harness's pool): an id or its exact name ("default" is the machine login), or "any" for whichever connection of the pool has headroom for the model. Harnesses with a connection pool only (${POOLED_HARNESSES}). Omit to follow this server's settings: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. On ${PI_NAME} and ${HARNESS_BY_ID.opencode.name}, a stored provider connection by its label or its id, or "any" for the first one with a key; omitted, they run on the login inside the harness. Unknown names error with the list. clave_list reports each tab's connection.`
           ),
         permissionMode: z
           .enum(SPAWN_PERMISSION_MODES)
@@ -811,10 +815,14 @@ function buildServer(
             // PRDCT-4485: the connection the call names, judged on the
             // conversation's own model; the restart carries no other field.
             const record = records.find((r) => r.id === held.sessionId)
-            accountApplied = !!launch && args.account !== undefined && !!record
+            // A Pi or OpenCode tab resumed in place keeps the connection it
+            // ran on: moving it is the restart road of its own (lane D), so
+            // the account is said not applied, never refused (PRDCT-4496).
+            const onProviderPool = !!record && (record.piMode || record.opencodeMode) === true
+            accountApplied = !!launch && args.account !== undefined && !!record && !onProviderPool
             const restarted = await sessions.restart(
               held.sessionId,
-              launch && args.account !== undefined && record
+              launch && accountApplied && record && args.account !== undefined
                 ? heldAccount(launch, record, args.account)
                 : {},
               false,
@@ -977,7 +985,7 @@ function buildServer(
         const pool = harness ? firstPoolOf(harness) : null
         if (!isAccountPoolId(pool))
           throw new Error(
-            `Only a tab on a harness with a connection pool (${POOLED_HARNESSES}) runs on a connection`
+            `Only a tab on a harness with a connection pool (${SWITCHABLE_HARNESSES}) runs on a connection`
           )
         const current =
           (pool === 'codex' ? record?.codexAccountId : record?.claudeProfileId) ?? 'default'
