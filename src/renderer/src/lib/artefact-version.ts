@@ -14,6 +14,15 @@ export function withVersion(url: string, shown: string): string {
   return page.toString()
 }
 
+/** The same page for a browser, where Clave's bar is not: Slideless's own bar shown. */
+export function inBrowser(url: string, shown: string): string {
+  const page = new URL(url)
+  page.searchParams.delete('bar')
+  if (shown === 'live') page.searchParams.delete('v')
+  else page.searchParams.set('v', shown)
+  return page.toString()
+}
+
 /** What the bar's chip says for what the panel shows. */
 export const versionLabel = (shown: string): string =>
   shown === 'live' ? 'Live' : shown === 'latest' ? 'Latest' : `v${shown}`

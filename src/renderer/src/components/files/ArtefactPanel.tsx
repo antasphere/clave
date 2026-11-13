@@ -15,6 +15,9 @@ import { ownerOfSession, useArtefactStore } from '../../store/artefact-store'
 import { SlidelessArtefact } from './SlidelessArtefact'
 import { ArtefactVersionChip } from './ArtefactVersionChip'
 import { FileMenu } from './FileMenu'
+import { inBrowser } from '../../lib/artefact-version'
+import { useFleetStore } from '../../store/fleet-store'
+import { serverNameOf } from '../../lib/drop-refusal'
 
 /**
  * The panel a session's artefact lives in (PRDCT-4474), the other half of the
@@ -40,6 +43,9 @@ export function ArtefactPanel({
   const owner = ownerOfSession(sessionId)
   const own = owner === LOCAL_SERVER_ID
   const ready = useArtefactStore((s) => s.slideless[owner]?.phase === 'ready')
+  const previewUrl = useArtefactStore((s) => s.previewUrl[sessionId])
+  const shown = useArtefactStore((s) => s.version[sessionId] ?? 'live')
+  const machine = useFleetStore((s) => (own ? 'this Mac' : serverNameOf(s.connections, owner)))
   return (
     <section className="linked-document-panel" data-testid="artefact-panel">
       {/* The session bar's classes: one control tall beside the session's own bar (PRDCT-4491). */}
@@ -93,10 +99,27 @@ export function ArtefactPanel({
                       id: 'browser',
                       label: 'Open in browser',
                       icon: ArrowTopRightOnSquareIcon,
-                      onSelect: () => void window.electronAPI.openPath(artefact.page)
+                      disabled: !previewUrl,
+                      onSelect: () => {
+                        if (previewUrl)
+                          void window.electronAPI.openExternal(inBrowser(previewUrl, shown))
+                      }
                     }
                   ]
-                : []),
+                : [
+                    // A server's preview is on that server's loopback, and the
+                    // port this Mac forwards it on answers Clave's windows alone:
+                    // a browser cannot open it, and a copy of the files would lose
+                    // its fonts and modules (file:// gives the page no origin).
+                    {
+                      id: 'browser',
+                      label: 'Open in browser',
+                      icon: ArrowTopRightOnSquareIcon,
+                      disabled: true,
+                      hint: `Runs on ${machine}: its preview lives on that machine, so this Mac's browser cannot open it.`,
+                      onSelect: () => {}
+                    }
+                  ]),
               {
                 id: 'copy-path',
                 label: 'Copy path',

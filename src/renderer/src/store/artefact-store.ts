@@ -87,6 +87,10 @@ interface ArtefactState extends ArtefactView {
    *  (PRDCT-4494). Kept in memory: a new start shows the live folder. */
   version: Record<string, string>
   setVersion: (sessionId: string, shown: string) => void
+  /** The preview address each mounted panel frames, by session: what Open in browser opens
+   *  for an artefact of this Mac (PRDCT-4494). Set by the frame, cleared when it unmounts. */
+  previewUrl: Record<string, string>
+  setPreviewUrl: (sessionId: string, url: string | null) => void
   /** Bumped when a version is saved from the bar, so its chip reads the list again. */
   versionsSaved: Record<string, number>
   noteSaved: (sessionId: string) => void
@@ -121,6 +125,15 @@ export const useArtefactStore = create<ArtefactState>((set, get) => {
     version: {},
     setVersion: (sessionId, shown) =>
       set((s) => ({ version: { ...s.version, [sessionId]: shown } })),
+    previewUrl: {},
+    setPreviewUrl: (sessionId, url) =>
+      set((s) => {
+        if ((s.previewUrl[sessionId] ?? null) === url) return s
+        const next = { ...s.previewUrl }
+        if (url) next[sessionId] = url
+        else delete next[sessionId]
+        return { previewUrl: next }
+      }),
     versionsSaved: {},
     noteSaved: (sessionId) =>
       set((s) => ({

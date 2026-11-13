@@ -2807,6 +2807,23 @@ body.reorder-dragging * {
   color: var(--color-accent);
 }
 
+/* Why a menu row is as it is (FileMenu's hint): an orange icon on the row's
+   right, hoverable even when the row is disabled and lets no pointer through. */
+.file-menu-hint {
+  display: inline-flex;
+  flex-shrink: 0;
+  pointer-events: auto;
+  cursor: help;
+  color: var(--color-status-waiting);
+}
+/* A disabled row fades its label and glyph, never the hint that says why. */
+.menu-item[data-disabled]:has(.file-menu-hint) {
+  opacity: 1;
+}
+.menu-item[data-disabled]:has(.file-menu-hint) > :not(.file-menu-hint) {
+  opacity: 0.4;
+}
+
 /* A hidden document stays one click away: a chip naming it in the session's
    header (LinkedDocumentReopen), like an artifact chip in its conversation. */
 .linked-document-reopen {

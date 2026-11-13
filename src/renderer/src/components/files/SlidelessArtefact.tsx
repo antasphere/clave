@@ -113,6 +113,12 @@ export function SlidelessArtefact({
   // Slideless's own bar is hidden (`bar=0`): the version shown is chosen, and
   // a version saved, from Clave's bar above (PRDCT-4494); `v` is that choice.
   const shown = useArtefactStore((s) => s.version[sessionId] ?? 'live')
+  const setPreviewUrl = useArtefactStore((s) => s.setPreviewUrl)
+  const live = ready && !gaveUp ? (url ?? null) : null
+  useEffect(() => {
+    setPreviewUrl(sessionId, live)
+    return () => setPreviewUrl(sessionId, null)
+  }, [sessionId, live, setPreviewUrl])
   const framed = url ? withVersion(url, shown) : undefined
   if (ready && framed && !gaveUp)
     return (

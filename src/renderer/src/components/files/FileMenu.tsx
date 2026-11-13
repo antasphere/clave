@@ -5,7 +5,8 @@ import {
   CodeBracketIcon,
   DocumentTextIcon,
   EllipsisHorizontalIcon,
-  GlobeAltIcon
+  GlobeAltIcon,
+  InformationCircleIcon
 } from '@heroicons/react/24/outline'
 import { VIEW_LABELS, type FileViewMode } from './file-types'
 
@@ -23,6 +24,9 @@ export interface FileMenuAction {
   reports?: boolean
   /** A divider above the row: it starts a group of its own. */
   separated?: boolean
+  /** Why the row is as it is, behind an orange icon on its right, readable on hover even
+   *  when the row is disabled. */
+  hint?: string
 }
 
 const VIEW_ICONS: Record<FileViewMode, React.ComponentType<{ className?: string }>> = {
@@ -146,6 +150,11 @@ export function FileMenu({
             >
               <action.icon className="menu-glyph" />
               <span className="flex-1 truncate">{action.label}</span>
+              {action.hint && (
+                <span className="file-menu-hint" title={action.hint} aria-label={action.hint}>
+                  <InformationCircleIcon className="w-4 h-4" />
+                </span>
+              )}
               {done?.id === action.id && done.text && (
                 <span
                   className="menu-hint session-menu-note"
