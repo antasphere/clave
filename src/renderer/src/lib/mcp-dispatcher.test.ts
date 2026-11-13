@@ -49,6 +49,22 @@ vi.mock('./switch-account', () => ({
 vi.mock('./session-accounts', () => ({
   sessionOwnAccount: () => ({ id: 'default', label: 'Default', removed: false })
 }))
+/* clave_launch_options loads these on the call (the usage store polls on
+   import): the window's input is recorded, the server settings never read. */
+const launchInput = vi.hoisted(() => ({
+  local: vi.fn(),
+  server: vi.fn(),
+  loadServerSettings: vi.fn(async () => undefined),
+  serverSettingsFor: vi.fn(() => ({ status: 'ready' }))
+}))
+vi.mock('./launch-options-input', () => ({
+  localLaunchOptionsInput: launchInput.local,
+  serverLaunchOptionsInput: launchInput.server
+}))
+vi.mock('../store/server-settings-store', () => ({
+  loadServerSettings: launchInput.loadServerSettings,
+  serverSettingsFor: launchInput.serverSettingsFor
+}))
 import { openSessionProgrammatically, initMcpDispatcher } from './mcp-dispatcher'
 import { usePinnedStore } from '../store/pinned-store'
 import { resourceKey } from '@clave/contract/fleet'
@@ -57,6 +73,9 @@ import { useWorkspaceStore } from '../store/workspace-store'
 import { useSessionStore } from '../store/session-store'
 import { useFleetStore } from '../store/fleet-store'
 import { usePairingStore } from '../store/pairing-store'
+import { useAccountPolicyStore } from '../store/account-policy-store'
+import { HARNESSES } from '../../../shared/harness'
+import { launchOptions, type LaunchOptionsInput } from '../../../shared/launch-options'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
@@ -1092,5 +1111,78 @@ describe('an agent switches the account of a server tab', () => {
     expect(
       useSessionStore.getState().sessions.find((s) => s.id === SERVER_TAB)?.accountProposal
     ).toMatchObject({ rungs: [{ kind: 'account', accountId: 'srv-two', label: 'Play' }] })
+  })
+})
+
+describe('clave_launch_options on the window road (PRDCT-4485)', () => {
+  /** This Mac as the input names it: one Claude connection, a remembered model. */
+  const input: LaunchOptionsInput = {
+    machine: { id: 'local', name: 'This Mac' },
+    harnesses: HARNESSES,
+    presence: () => undefined,
+    profiles: () => [],
+    defaultProfileId: () => undefined,
+    models: () => 'unavailable',
+    harnessSettings: {},
+    interactionMode: 'chat',
+    connections: (pool) =>
+      pool === 'claude' ? [{ id: 'default', label: 'Me', usable: true }] : [],
+    selectedConnectionId: () => 'default',
+    preferRecommended: true,
+    launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
+    now: 1
+  }
+  beforeEach(() => {
+    launchInput.local.mockReset().mockReturnValue(input)
+    launchInput.server.mockReset()
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    // A full id: a bare default alias is the CLI's own default, read as none.
+    globals.window.electronAPI.launchRememberedModel = vi.fn(async () => 'claude-opus-5-5')
+    // Claude launches as a chat here: its chat model is remembered.
+    useLaunchProfileStore.setState({
+      preferences: preferences({
+        customProfiles: [
+          {
+            id: 'claude-chat',
+            name: 'Claude (chat)',
+            family: 'claude',
+            command: ['claude'],
+            additionalArgs: [],
+            builtIn: true
+          }
+        ],
+        globalDefaults: { claude: 'claude-chat' }
+      }),
+      loaded: true
+    })
+  })
+  afterEach(() => useAccountPolicyStore.setState({ useRecommendedAccount: false }))
+
+  it('answers this Mac with the shared function, from the stores the window keeps', async () => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'options', command: 'launchOptions', payload: { server: undefined } })
+    try {
+      const answer = await response
+      expect(answer).toMatchObject({ requestId: 'options', ok: true })
+      expect(answer.result).toEqual(launchOptions(input))
+      expect(launchInput.server).not.toHaveBeenCalled()
+      expect(launchInput.local).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preferRecommended: true,
+          codexModels: 'unavailable',
+          launchModels: expect.objectContaining({ claude: 'claude-opus-5-5' })
+        })
+      )
+    } finally {
+      unsubscribe()
+    }
   })
 })

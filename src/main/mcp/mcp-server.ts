@@ -523,9 +523,11 @@ const MODEL_TAKING_MODES = harnessNames((h) => h.takesModel, 'and', true)
 const POOLED_HARNESS_NAMES = harnessNames((h) => poolsOf(h).length > 0, 'and')
 const DANGEROUS_MODES = harnessNames((h) => DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
 const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
+/** The effort follows the launch fields rule (`launchModeFields`): Claude and Codex. */
+const EFFORT_MODES = harnessNames((h) => h.id === 'claude' || h.id === 'codex', 'and', true)
 
 const LAUNCH_OPTIONS_DESCRIPTION =
-  'Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model, its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile.'
+  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
 
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
   raw === 'propose' || raw === 'automatic' ? raw : null
@@ -1169,7 +1171,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .regex(EFFORT_PATTERN)
           .optional()
           .describe(
-            'The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). claude and codex chats. With resume, defaults to the effort the conversation last ran at.'
+            `The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). ${EFFORT_MODES} only. With resume, defaults to the effort the conversation last ran at.`
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z

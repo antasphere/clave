@@ -1167,7 +1167,7 @@ describe('opening a session', () => {
     await expect(
       run(h, 'openSession', { cwd: '/p', mode: 'terminal', account: 'x' })
     ).rejects.toThrow(
-      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); A terminal runs no harness.'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); a terminal runs no harness.'
     )
     await expect(run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'x' })).rejects.toThrow(
       'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'

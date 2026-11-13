@@ -206,7 +206,7 @@ describe('resolveLaunch', () => {
       )
         .map((h) => h.name)
         .join(', ')}); Antigravity has none`,
-      'dangerousMode is for claude and codex; pi has no such flag',
+      'dangerousMode is for Claude Code, Codex, OpenCode; pi has no such flag',
       'permissionMode is for claude; codex takes none',
       'effort "Very High" is not a level Claude knows',
       'thinking "ultra" is not one of off, minimal, low, medium, high, xhigh, max',

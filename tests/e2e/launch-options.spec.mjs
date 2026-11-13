@@ -31,7 +31,7 @@ const STUB_ID = 'launch-options-stub'
 const STUB_NAME = 'Launch options stream stub'
 const SERVER_NAME = 'launch-options-server'
 const PROPOSE_REFUSAL =
-  'This server\'s switch mode is "propose" and a server has no window to propose to: set the server\'s switch mode to automatic in its settings, or move the tab from the Mac window.'
+  'This server\'s switch mode is "propose", and a server has no window to propose to: move the tab from the Mac window, or set accountSwitchMode to "automatic" in the server\'s preferences.json, read when the server starts (a setting for it from the Mac\'s server pages is PRDCT-3318).'
 
 const lines = (file) =>
   existsSync(file)

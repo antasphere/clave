@@ -150,7 +150,8 @@ function input(over: Partial<LaunchOptionsInput> = {}): LaunchOptionsInput {
       pool === 'claude' ? [fableOut, open()] : pool === 'codex' ? [codexKey] : [],
     selectedConnectionId: (pool) => (pool === 'claude' ? 'default' : undefined),
     preferRecommended: false,
-    launchModel: () => undefined,
+    // The remembered chat model: what an open passing no model lands on.
+    launchModel: (pool) => (pool === 'claude' ? FABLE : undefined),
     now,
     ...over
   }
@@ -195,12 +196,12 @@ describe('which harnesses are listed', () => {
 })
 
 describe('the models and the default one', () => {
-  it('takes the default model from the settings, else the remembered launch model', () => {
-    expect(harness(launchOptions(input()), 'claude').defaultModel).toBe(FABLE)
+  it('takes the default model from the remembered launch model, what an open with no model lands on', () => {
     const asked: [string, string | undefined][] = []
+    // The launcher's preferred model is NOT what an open with no model runs.
     const remembered = launchOptions(
       input({
-        harnessSettings: {},
+        harnessSettings: { claude: { preferredModel: FABLE } },
         launchModel: (pool, profileId) => {
           asked.push([pool, profileId])
           return OPUS
@@ -209,7 +210,29 @@ describe('the models and the default one', () => {
     )
     expect(harness(remembered, 'claude').defaultModel).toBe(OPUS)
     expect(asked).toContainEqual(['claude', 'claude-chat'])
-    expect(harness(launchOptions(input({ harnessSettings: {} })), 'claude').defaultModel).toBeNull()
+  })
+  it('says null, the harness’s own default, when no launch model is remembered', () => {
+    const none = launchOptions(
+      input({
+        harnessSettings: { claude: { preferredModel: FABLE } },
+        launchModel: () => undefined
+      })
+    )
+    expect(harness(none, 'claude').defaultModel).toBeNull()
+    // Judged on the harness's own default: the account view, nothing out.
+    expect(harness(none, 'claude').connections.map((c) => [c.id, c.suggested])).toEqual([
+      ['default', true],
+      ['work', false]
+    ])
+  })
+  it('gives the launcher’s row model as launcherModel, from the settings', () => {
+    const options = launchOptions(input({ harnessSettings: { claude: { preferredModel: OPUS } } }))
+    expect(harness(options, 'claude').launcherModel).toBe(OPUS)
+    expect(harness(options, 'claude').defaultModel).toBe(FABLE)
+    expect(harness(options, 'codex').launcherModel).toBeNull()
+    expect(
+      harness(launchOptions(input({ harnessSettings: {} })), 'claude').launcherModel
+    ).toBeNull()
   })
   it('serves Fable while one connection is open on it, and says why not when none is', () => {
     const claude = harness(launchOptions(input()), 'claude')
@@ -256,7 +279,7 @@ describe('the connections that pay', () => {
     ])
     // On Opus the selected one keeps the launch, and is open.
     const onOpus = harness(
-      launchOptions(input({ harnessSettings: { claude: { preferredModel: OPUS } } })),
+      launchOptions(input({ launchModel: (pool) => (pool === 'claude' ? OPUS : undefined) })),
       'claude'
     )
     expect(onOpus.connections.map((c) => [c.id, c.suggested, c.exhausted])).toEqual([
@@ -395,6 +418,10 @@ describe("a key that reports no usage (lane P's Connection rows)", () => {
       ['default', false, true],
       ['key', true, false]
     ])
+  })
+  it('suggests an open subscription over a SELECTED key, the key once the subscription is out', () => {
+    expect(suggestedConnection([apiKey, chatgpt(10)], 'key', false, undefined)).toBe('default')
+    expect(suggestedConnection([apiKey, chatgpt(100)], 'key', false, undefined)).toBe('key')
   })
 })
 

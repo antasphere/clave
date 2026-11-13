@@ -78,7 +78,7 @@ function noConnectionWhy(mode: string): string {
   const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
   return harness
     ? `${harness.name} runs on the login inside the harness.`
-    : `A ${mode} runs no harness.`
+    : `a ${mode} runs no harness.`
 }
 
 /** The size a session with no pane starts at, as the hidden spawns do. */

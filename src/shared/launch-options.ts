@@ -98,7 +98,12 @@ export interface HarnessOptions {
   readonly version: string | null
   readonly takesModel: boolean
   readonly chatView: boolean
+  /** The model a tab opens on when the open passes none (the remembered
+   *  chat model), null for the harness's own default. The connections are
+   *  judged on it. */
   readonly defaultModel: string | null
+  /** The model the launcher's row opens on; pass it as model to get the same tab. */
+  readonly launcherModel: string | null
   readonly models: readonly ModelOption[]
   readonly connections: readonly ConnectionOption[]
   readonly connectionNote: string | null
@@ -174,11 +179,14 @@ function harnessOptions(
   const { id } = harness
   const pools = poolsOf(harness)
   const defaultProfileId = input.defaultProfileId(id)
-  const defaultModel = harness.takesModel
-    ? (input.harnessSettings[id]?.preferredModel ??
-      (pools.length > 0 ? input.launchModel(pools[0], defaultProfileId) : undefined) ??
-      null)
-    : null
+  // What an open passing no model lands on: the remembered chat model of
+  // the default profile, else the harness's own default (null). The
+  // launcher's row passes its preferred model instead (`launcherModel`).
+  const defaultModel =
+    harness.takesModel && pools.length > 0
+      ? (input.launchModel(pools[0], defaultProfileId) ?? null)
+      : null
+  const launcherModel = input.harnessSettings[id]?.preferredModel ?? null
   const model = defaultModel ?? undefined
 
   const connections: ConnectionOption[] = pools.flatMap((pool) => {
@@ -227,6 +235,7 @@ function harnessOptions(
     takesModel: harness.takesModel,
     chatView: harness.chatAdapterId !== null,
     defaultModel,
+    launcherModel,
     models,
     connections,
     connectionNote:

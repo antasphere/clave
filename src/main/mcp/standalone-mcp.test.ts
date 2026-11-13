@@ -630,6 +630,28 @@ describe('standalone MCP session tools', () => {
       workspaceId: 'ws-studio',
       conversation: 'conv-live'
     })
+    expect(live).not.toHaveProperty('warnings')
+    // What the call asks of the launch is said not applied to a live tab.
+    const asked = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { resume: 'conv-live', account: 'Work', permissionMode: 'plan', effort: 'high' }
+      })
+    )
+    expect(asked).toMatchObject({ sessionId: 'caller', alreadyOpen: true, resumed: false })
+    expect(asked.warnings).toEqual([
+      'account, permissionMode, effort not applied: the conversation is already open in tab caller'
+    ])
+    const effortOnly = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { resume: 'conv-live', effort: 'low' }
+      })
+    )
+    expect(effortOnly.warnings).toEqual([
+      'effort not applied: the conversation is already open in tab caller'
+    ])
+    expect(restarted).toEqual([])
     expect(started).toHaveLength(0)
     const stopped = payload(
       await client.callTool({ name: 'clave_open_session', arguments: { resume: 'conv-old' } })
@@ -1735,9 +1757,12 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
             detectFails: null
           }
           const base = launchFake(state)
+          // An open passing no model lands on the remembered chat model,
+          // Fable; the launcher's row passes Opus.
           return {
             ...base,
-            harnessSettings: () => ({ claude: { preferredModel: FABLE } })
+            launchModel: (family) => (family === 'claude' ? FABLE : undefined),
+            harnessSettings: () => ({ claude: { preferredModel: 'claude-opus-5-5' } })
           }
         })()
       }
@@ -1750,7 +1775,12 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(options.notInstalled).toEqual(['Antigravity'])
     expect(options).not.toHaveProperty('warnings')
     const [claude, codex, pi, opencode] = harnesses
-    expect(claude).toMatchObject({ installed: true, version: '3.1.0', defaultModel: FABLE })
+    expect(claude).toMatchObject({
+      installed: true,
+      version: '3.1.0',
+      defaultModel: FABLE,
+      launcherModel: 'claude-opus-5-5'
+    })
     const connections = claude.connections as Array<Record<string, unknown>>
     expect(connections.filter((c) => c.suggested).map((c) => c.id)).toEqual(['work'])
     expect(connections.map((c) => [c.id, c.exhausted])).toEqual([
@@ -1976,8 +2006,60 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     ).toMatchObject({ account: { id: 'work' }, switched: true })
     expect(
       payload(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'default' }))
-    ).toEqual({ sessionId: 'caller', account: { id: 'default', label: 'Romain' }, switched: false })
+    ).toEqual({
+      // The Mac's answer for a tab already on the connection named.
+      sessionId: 'caller',
+      account: { id: 'default', label: 'Romain' },
+      resumed: true,
+      switched: true,
+      proposed: false
+    })
     expect(restarted).toHaveLength(1)
+  }, 15_000)
+
+  it('clave_switch_account: "any" from a connection with headroom moves the tab to another one', async () => {
+    const restarted: unknown[][] = []
+    // On Opus the caller's own connection still has headroom (only its
+    // Fable week is spent): "any" still leaves it.
+    const { client } = await sessionFixture({
+      records: [{ ...caller, model: 'claude-opus-5-5' }],
+      launch: { switchMode: 'automatic' },
+      host: {
+        restart: async (...args) => {
+          restarted.push(args)
+          return { id: String(args[0]), alive: true, resumed: false } as never
+        }
+      }
+    })
+    expect(
+      payload(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'any' }))
+    ).toEqual({
+      sessionId: 'caller',
+      account: { id: 'work', label: 'Work' },
+      resumed: false,
+      switched: true,
+      proposed: false
+    })
+    expect(restarted).toEqual([
+      ['caller', { claudeProfileId: 'work', claudeProfileLabel: 'Work' }, false]
+    ])
+  }, 15_000)
+
+  it('clave_switch_account says resumed: false when the restart gives no word of it', async () => {
+    const { client } = await sessionFixture({
+      records: [caller],
+      launch: { switchMode: 'automatic' },
+      host: { restart: async () => undefined as never }
+    })
+    expect(
+      payload(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'Work' }))
+    ).toEqual({
+      sessionId: 'caller',
+      account: { id: 'work', label: 'Work' },
+      resumed: false,
+      switched: true,
+      proposed: false
+    })
   }, 15_000)
 
   it('clave_switch_account refuses under propose, an unknown connection and a tab with no pool', async () => {
@@ -1985,7 +2067,7 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(
       errorText(await call(client, 'clave_switch_account', { sessionId: 'mine', account: 'Work' }))
     ).toBe(
-      'This server\'s switch mode is "propose" and a server has no window to propose to: set the server\'s switch mode to automatic in its settings, or move the tab from the Mac window.'
+      'This server\'s switch mode is "propose", and a server has no window to propose to: move the tab from the Mac window, or set accountSwitchMode to "automatic" in the server\'s preferences.json, read when the server starts (a setting for it from the Mac\'s server pages is PRDCT-3318).'
     )
     expect(
       errorText(

@@ -599,7 +599,10 @@ describe('launchOptions, served: what this machine can launch', () => {
           : harness === 'claude'
             ? [{ id: 'opus', label: 'Opus', family: 'Opus' }]
             : [{ id: null, label: 'Default', family: 'Default' }],
-      harnessSettings: () => ({ claude: { preferredModel: 'opus' } }),
+      // The launcher's row passes sonnet; an open passing no model lands on
+      // the remembered chat model, opus.
+      harnessSettings: () => ({ claude: { preferredModel: 'sonnet' } }),
+      launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
       defaultProfileId: (family) => (family === 'claude' ? 'claude-chat' : undefined),
       launchProfileRows: (family) =>
         family === 'claude'
@@ -644,6 +647,7 @@ describe('launchOptions, served: what this machine can launch', () => {
       const answer = (await serveCommand('launchOptions', {}, full(h))) as LaunchOptions
       const claude = answer.harnesses.find((x) => x.id === 'claude')!
       expect(claude.defaultModel).toBe('opus')
+      expect(claude.launcherModel).toBe('sonnet')
       expect(
         claude.connections.map((c) => [c.id, c.suggested, c.exhausted, c.headroom !== null])
       ).toEqual([
@@ -674,6 +678,41 @@ describe('launchOptions, served: what this machine can launch', () => {
       const pi = answer.harnesses.find((x) => x.id === 'pi')!
       expect(pi.connections).toEqual([])
       expect(pi.connectionNote).toMatch(/runs on the login inside the harness/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks the recommendation when the person opted in: what accountForLaunch picks, not the next along', async () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      const h = setup()
+      // The selected one spent; next along "Later" (its week resets in five
+      // days), the recommendation "Sooner" (its week resets in a day).
+      const claude: ServedPoolAccount[] = [
+        { id: 'default', label: 'Default', usable: true, usage: week(100, NOW + 86_400_000) },
+        { id: 'later', label: 'Later', usable: true, usage: week(20, NOW + 5 * 86_400_000) },
+        { id: 'sooner', label: 'Sooner', usable: true, usage: week(40, NOW + 86_400_000) }
+      ]
+      const world = (recommended: boolean): Partial<ServedShell> => ({
+        accounts: (pool) => (pool === 'claude' ? claude : []),
+        useRecommendedAccount: () => recommended
+      })
+      const suggested = async (recommended: boolean): Promise<string[]> =>
+        (
+          (await serveCommand('launchOptions', {}, full(h, world(recommended)))) as LaunchOptions
+        ).harnesses
+          .find((x) => x.id === 'claude')!
+          .connections.filter((c) => c.suggested)
+          .map((c) => c.id)
+      const facts = {
+        accounts: () => claude,
+        selectedAccountId: () => 'default',
+        useRecommendedAccount: () => true
+      }
+      expect(accountForLaunch(facts, 'claude', 'opus').id).toBe('sooner')
+      expect(await suggested(true)).toEqual(['sooner'])
+      expect(await suggested(false)).toEqual(['later'])
     } finally {
       vi.useRealTimers()
     }

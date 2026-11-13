@@ -117,7 +117,9 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
     )
 
   if (p.dangerousMode === true && !DANGEROUS_MODE_FAMILIES.has(agent as LauncherFamily))
-    return fail(`dangerousMode is for claude and codex; ${agent} has no such flag`)
+    return fail(
+      `dangerousMode is for ${namesOf((h) => DANGEROUS_MODE_FAMILIES.has(h.id as LauncherFamily))}; ${agent} has no such flag`
+    )
   if (p.permissionMode !== undefined && agent !== 'claude')
     return fail(`permissionMode is for claude; ${agent} takes none`)
   if (p.effort !== undefined && agent !== 'claude' && agent !== 'codex')

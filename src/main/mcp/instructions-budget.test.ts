@@ -91,10 +91,13 @@ describe('MCP server instructions', () => {
     expect(block).toContain('description: LAUNCH_OPTIONS_DESCRIPTION')
     expect(block).toContain("run('launchOptions', { ...args, callerSessionId })")
     expect(src).toMatch(
-      /const LAUNCH_OPTIONS_DESCRIPTION =\n {2}'Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine \(or for a connected server with server\)/
+      /const LAUNCH_OPTIONS_DESCRIPTION =\n {2}"Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine \(or for a connected server with server\)/
+    )
+    expect(src).toContain(
+      "whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass)"
     )
     expect(src).toMatch(
-      /Pass what you read to clave_open_session as mode, model, account and profile\.'/
+      /Pass what you read to clave_open_session as mode, model, account and profile\."/
     )
   })
 })

@@ -49,7 +49,10 @@ export function accountForLaunch(
 ): ServedPoolAccount {
   const accounts = facts.accounts(provider)
   // The rule lives once, in the shared module clave_launch_options answers
-  // from too (PRDCT-4485): what it marks suggested is what a launch lands on.
+  // from too (PRDCT-4485): the connection it marks suggested, judged on its
+  // defaultModel (the model a tab opens on when none is passed), is the one
+  // an open naming neither a model nor a connection lands on. An open naming
+  // another model is judged on that model here, and may land elsewhere.
   const id = suggestedConnection(
     accounts,
     facts.selectedAccountId(provider),

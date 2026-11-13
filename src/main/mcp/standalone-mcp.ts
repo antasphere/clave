@@ -206,14 +206,14 @@ const BUILT_IN_CHATS = Object.values(CHAT_PROFILE_IDS)
   .join(', ')
 
 export const LAUNCH_OPTIONS_DESCRIPTION =
-  'Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model, its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile.'
+  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
 export const LIST_DESCRIPTION =
   'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); parentId names the tab that opened it.'
 export const SWITCH_ACCOUNT_DESCRIPTION =
-  'Move a tab to another connection (a subscription or a key of its harness\'s pool) when the one it runs on is about to hit its limit, or when asked: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only. "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name, or "any" for whichever connection of the pool has headroom. This server switches at once when its switch mode is automatic and refuses when it is propose, since a server has no window to propose to. A pin set from the Mac window lives in that window and is not visible here: this tool cannot honour it (PRDCT-4508).'
+  'Move a tab to another connection (a subscription or a key of its harness\'s pool) when the one it runs on is about to hit its limit, or when asked: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only. "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name, or "any" for whichever connection of the pool has headroom. This server switches at once when its switch mode is automatic (accountSwitchMode in its preferences.json, read when it starts; propose is the default, and a setting from the Mac\'s server pages is PRDCT-3318) and refuses when it is propose, since a server has no window to propose to. A pin set from the Mac window lives in that window and is not visible here: this tool cannot honour it (PRDCT-4508).'
 export const OPEN_SESSION_DESCRIPTION = `Open a new tab on this server: an agent of one of its harnesses (${HARNESSES.map((h) => h.name).join(', ')}) or a plain terminal, in an absolute directory. ${CHAT_HARNESSES} open in Clave's CHAT VIEW (the conversation interface with message bubbles and a composer) or in the terminal: omit chat to open the way this server's launcher does (its interaction mode), chat: true forces a chat view, chat: false the terminal. Optionally a model, a connection (account), a launch profile, a name, a first prompt and a group; clave_launch_options lists what this machine can launch. With resume, the new tab continues a PAST conversation by its id. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.`
 export const SWITCH_PROPOSE_REFUSAL =
-  'This server\'s switch mode is "propose" and a server has no window to propose to: set the server\'s switch mode to automatic in its settings, or move the tab from the Mac window.'
+  'This server\'s switch mode is "propose", and a server has no window to propose to: move the tab from the Mac window, or set accountSwitchMode to "automatic" in the server\'s preferences.json, read when the server starts (a setting for it from the Mac\'s server pages is PRDCT-3318).'
 const text = (value: unknown): { content: { type: 'text'; text: string }[] } => ({
   content: [{ type: 'text', text: JSON.stringify(value) }]
 })
@@ -832,6 +832,14 @@ function buildServer(
             )
             resumed = restarted.resumed
           }
+          // A live tab runs as it is: what the call asked of its launch is
+          // said not applied, never silently dropped (PRDCT-4485).
+          const unapplied =
+            held.kind === 'open'
+              ? (['account', 'permissionMode', 'effort'] as const).filter(
+                  (key) => args[key] !== undefined
+                )
+              : []
           return text({
             sessionId: held.sessionId,
             groupId: null,
@@ -842,7 +850,14 @@ function buildServer(
             note:
               held.kind === 'open'
                 ? 'A tab of this server already runs this conversation; nothing was started.'
-                : 'A stopped tab of this server held this conversation; it was resumed in place.'
+                : 'A stopped tab of this server held this conversation; it was resumed in place.',
+            ...(unapplied.length > 0
+              ? {
+                  warnings: [
+                    `${unapplied.join(', ')} not applied: the conversation is already open in tab ${held.sessionId}`
+                  ]
+                }
+              : {})
           })
         }
         if (mode === 'terminal')
@@ -991,13 +1006,15 @@ function buildServer(
           target = resolveAccountRef(launch, pool, args.account, record?.model ?? undefined)
         }
         const account = { id: target.id, label: target.label }
-        if (target.id === current) return text({ sessionId: id, account, switched: false })
+        // Already there: the Mac's answer (`switchAccount`, served-session-tools.ts).
+        if (target.id === current)
+          return text({ sessionId: id, account, resumed: true, switched: true, proposed: false })
         if (launch.switchMode() === 'propose') throw new Error(SWITCH_PROPOSE_REFUSAL)
         const restarted = await sessions.restart(id, spawnFieldsOf(pool, target), false)
         return text({
           sessionId: id,
           account,
-          ...(typeof restarted?.resumed === 'boolean' ? { resumed: restarted.resumed } : {}),
+          resumed: restarted?.resumed === true,
           switched: true,
           proposed: false
         })

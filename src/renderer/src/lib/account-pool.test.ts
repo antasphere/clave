@@ -193,6 +193,16 @@ describe('pickAccount', () => {
     expect(pickAccount({ accounts: withKey, usage, preferredId: 'work' })).toBe('key')
   })
 
+  it('a launch keeps a SELECTED fallback once every subscription is out; a move leaves it', () => {
+    const withKey = [...accounts, { id: 'key', usable: true, fallback: true }]
+    const out = { default: used(96), work: used(96), team: used(96) }
+    expect(pickAccount({ accounts: withKey, usage: {}, preferredId: 'key' })).toBe('default')
+    expect(pickAccount({ accounts: withKey, usage: out, preferredId: 'key' })).toBe('key')
+    expect(
+      pickAccount({ accounts: withKey, usage: out, preferredId: 'key', leavingId: 'key' })
+    ).not.toBe('key')
+  })
+
   it('with everything out and no fallback, takes the account that resets soonest', () => {
     const usage = {
       default: used(96, { resetsAt: 3000 }),

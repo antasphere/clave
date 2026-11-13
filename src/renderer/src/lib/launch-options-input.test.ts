@@ -4,10 +4,40 @@ import { HARNESSES } from '../../../shared/harness'
 import type { ServerSettings } from '../store/server-settings-state'
 import type { AccountUsageSummary } from '../store/usage-store'
 import type { ClaudeAccount } from '../../../preload/index.d'
-import { launchModelsOf, serverLaunchOptionsInput } from './launch-options-input'
+import type { AccountSources } from './session-accounts'
+import {
+  launchModelsOf,
+  localLaunchOptionsInput,
+  serverLaunchOptionsInput
+} from './launch-options-input'
 
 // The session store reads localStorage at import; nothing here touches it.
 vi.mock('../store/session-store', () => ({ useSessionStore: {} }))
+
+// This Mac's stores, as `localLaunchOptionsInput` reads them: the launcher's
+// source and the account sources, set per test.
+const local = vi.hoisted(() => ({ sources: null as unknown, selected: 'default' }))
+vi.mock('./launch-source', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./launch-source')>()
+  return {
+    ...actual,
+    localLaunchSource: () => ({
+      serverId: 'local',
+      name: 'This Mac',
+      ready: true,
+      profilesFor: () => [],
+      selectedProfileId: () => undefined,
+      accounts: () => [],
+      selectedAccountId: (family: string) => (family === 'claude' ? local.selected : null),
+      chatProfileId: () => undefined,
+      connections: () => []
+    })
+  }
+})
+vi.mock('./session-accounts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./session-accounts')>()
+  return { ...actual, currentAccountSources: () => local.sources }
+})
 
 /**
  * `clave_launch_options` for a connected server, as the window assembles it
@@ -127,6 +157,58 @@ describe('serverLaunchOptionsInput', () => {
     expect(claude.profiles.filter((p) => p.default)).toHaveLength(1)
     expect(input.preferRecommended).toBe(false)
     expect(input.launchModel('claude', undefined)).toBeUndefined()
+  })
+
+  it("says the server's own default as defaultModel, the launcher's row model as launcherModel", () => {
+    const withRow = launchOptions(
+      serverLaunchOptionsInput('srv', 'Studio box', settings, {
+        ...facts,
+        harnessSettings: { claude: { preferredModel: 'opus' } }
+      })
+    ).harnesses.find((h) => h.id === 'claude')!
+    expect(withRow.defaultModel).toBeNull()
+    expect(withRow.launcherModel).toBe('opus')
+  })
+})
+
+describe('localLaunchOptionsInput', () => {
+  const weekAt = (used: number, resetsAt: number): AccountUsageSummary => {
+    const w = {
+      kind: 'weekly_all',
+      scope: null,
+      usedPercentage: used,
+      severity: used >= 100 ? 'critical' : 'normal',
+      resetsAt
+    }
+    return { status: 'ready', error: null, tightest: w, windows: [w] } as AccountUsageSummary
+  }
+  const DAY = 86_400_000
+  // The selected one spent; next along the ring "Later" (its week resets in
+  // five days), the recommendation "Sooner" (its week resets tomorrow).
+  local.sources = {
+    claude: [
+      claudeAccount('default', 'Default'),
+      claudeAccount('later', 'Later'),
+      claudeAccount('sooner', 'Sooner')
+    ],
+    codex: [],
+    claudeUsage: {
+      default: weekAt(100, NOW + DAY),
+      later: weekAt(20, NOW + 5 * DAY),
+      sooner: weekAt(40, NOW + DAY)
+    },
+    codexUsage: {},
+    servers: {}
+  } satisfies AccountSources
+  const suggestedOf = (preferRecommended: boolean): string[] =>
+    launchOptions(localLaunchOptionsInput({ ...facts, agents: [], preferRecommended }))
+      .harnesses.find((h) => h.id === 'claude')!
+      .connections.filter((c) => c.suggested)
+      .map((c) => c.id)
+
+  it('marks the recommended connection when the person opted in, the next along when not', () => {
+    expect(suggestedOf(true)).toEqual(['sooner'])
+    expect(suggestedOf(false)).toEqual(['later'])
   })
 })
 
