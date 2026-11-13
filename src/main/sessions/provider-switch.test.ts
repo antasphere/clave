@@ -10,10 +10,18 @@ import {
   providerOf,
   providerSwitchOptions,
   switchRoad,
-  transportSwitchOptions,
+  transportSwitchOptions as switchTransport,
   transportTarget
 } from './provider-switch'
 import type { PtySpawnOptions } from './adapters/pty-backend'
+
+/** The transport switch with every saved profile still there, for the tests
+ *  that are not about a profile deleted since (verifier round 2). */
+const transportSwitchOptions = (
+  previous: Parameters<typeof switchTransport>[0],
+  target: Parameters<typeof switchTransport>[1],
+  deps: Parameters<typeof switchTransport>[2] = { profileExists: () => true }
+): PtySpawnOptions => switchTransport(previous, target, deps)
 
 const facts = {
   fromAdapterId: 'claude-chat',
@@ -514,6 +522,52 @@ describe('the transport switch: the same harness, chat to terminal and back (lan
         { adapterId: 'pty', resume: 'p1' }
       ).launchProfileId
     ).toBeUndefined()
+  })
+  // Verifier round 2, the Major: a saved profile deleted since the tab started.
+  it('names a saved profile, or its chat form, only while it still exists', () => {
+    const asked: [string, string][] = []
+    const gone = {
+      profileExists: (family: string, id: string): boolean => {
+        asked.push([family, id])
+        return false
+      }
+    }
+    const live = { profileExists: (): boolean => true }
+    for (const family of ['claude', 'codex', 'pi', 'opencode'] as const) {
+      const flags = {
+        claudeMode: family === 'claude',
+        codexMode: family === 'codex',
+        piMode: family === 'pi',
+        opencodeMode: family === 'opencode'
+      }
+      const chatId = {
+        claude: 'claude-chat',
+        codex: 'codex-chat',
+        pi: 'pi-chat',
+        opencode: 'opencode-chat'
+      }[family]
+      // Into the chat: the chat form while `work` exists, else the built-in chat.
+      const terminal = { ...flags, launchProfileId: 'work' }
+      expect(
+        transportSwitchOptions(terminal, { adapterId: chatId, resume: 'x' }, live).launchProfileId,
+        family
+      ).toBe(`chat:${family}:work`)
+      expect(
+        transportSwitchOptions(terminal, { adapterId: chatId, resume: 'x' }, gone).launchProfileId,
+        family
+      ).toBe(chatId)
+      // Back to the terminal: `work` while it exists, else left to the caller.
+      const chat = { ...flags, launchProfileId: `chat:${family}:work` }
+      expect(
+        transportSwitchOptions(chat, { adapterId: 'pty', resume: 'x' }, live).launchProfileId,
+        family
+      ).toBe('work')
+      expect(
+        transportSwitchOptions(chat, { adapterId: 'pty', resume: 'x' }, gone).launchProfileId,
+        family
+      ).toBeUndefined()
+    }
+    expect(asked).toContainEqual(['pi', 'work'])
   })
   it('throws on a target that is neither transport of the harness, and for a plain terminal', () => {
     expect(() => transportSwitchOptions(chat, { adapterId: 'codex-chat', resume: 'x' })).toThrow(

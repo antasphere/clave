@@ -805,6 +805,16 @@ class PtyManager {
     return family === 'opencode'
   }
 
+  /** Whether the person still has a saved profile `id` for the family (lane
+   *  D, PRDCT-4427, verifier round 2): a transport switch names a saved
+   *  profile, or its chat form, only while it exists. A read of the store,
+   *  never a resolve, which throws on a chat form that is gone. */
+  profileExists(family: LauncherFamily, id: string): boolean {
+    return launchProfileManager
+      .getPreferences()
+      .customProfiles.some((profile) => profile.id === id && profile.family === family)
+  }
+
   /** The conversation a session would resume: Claude's session id, a Codex
    *  chat's thread, or the rollout a Codex terminal wrote (found by its cwd
    *  and start). Null when the session has nothing to resume. */
@@ -926,7 +936,8 @@ class PtyManager {
           family,
           (conversation) =>
             !!family && this.hasConversation(family, conversation, spawn.cwd, options.configDir)
-        )
+        ),
+        { profileExists: (owner, profileId) => this.profileExists(owner, profileId) }
       )
       return {
         cwd: spawn.cwd,
@@ -936,7 +947,9 @@ class PtyManager {
           adapterId === 'pty' && family && moved.launchProfileId === undefined
             ? { ...moved, launchProfileId: this.terminalProfileFor(family, moved.workspaceId) }
             : moved,
-        resumed: (resume ?? conversationId) != null,
+        // What the plan resumes: a terminal started fresh or under the id
+        // resumes nothing (verifier round 2, the Note).
+        resumed: moved.resumeSessionId !== undefined,
         keepView: false
       }
     }

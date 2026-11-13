@@ -339,7 +339,10 @@ function savedProfileOf(id: string | undefined, family: LauncherFamily): string 
  *  To the chat: the chat form of the saved profile the terminal ran, else the
  *  family's chat profile, the conversation resumed, the view the tab opens
  *  in. The account, the dangerous flag, the tab's lineage and work stay
- *  either way. */
+ *  either way. A saved profile is named either way only while it still
+ *  exists (`profileExists`, the caller's word from the profile store): a
+ *  profile deleted since the tab started falls back to the family's own
+ *  (verifier round 2, the Major). */
 export function transportSwitchOptions(
   previous: PtySpawnOptions,
   target: {
@@ -348,7 +351,8 @@ export function transportSwitchOptions(
     sessionId?: string
     viewId?: string
     model?: string
-  }
+  },
+  deps: { profileExists: (family: LauncherFamily, id: string) => boolean }
 ): PtySpawnOptions {
   const family = familyOfOptions(previous)
   const harness = family ? HARNESS_BY_ID[family] : null
@@ -359,10 +363,12 @@ export function transportSwitchOptions(
       previous.permissionMode !== undefined &&
       harness.permissionRungs.some((entry) => entry.id === previous.permissionMode)
     const source = chatProfileSource(previous.launchProfileId)
+    const saved =
+      source?.family === family && deps.profileExists(family, source.id) ? source.id : undefined
     const startUnder = target.resume ? undefined : target.sessionId
     return {
       ...previous,
-      launchProfileId: source?.family === family ? source.id : undefined,
+      launchProfileId: saved,
       launchProfile: undefined,
       resumeSessionId: target.resume,
       claudeSessionId: family === 'claude' ? startUnder : undefined,
@@ -376,7 +382,8 @@ export function transportSwitchOptions(
     }
   }
   if (target.adapterId === harness.chatAdapterId) {
-    const saved = savedProfileOf(previous.launchProfileId, family)
+    const candidate = savedProfileOf(previous.launchProfileId, family)
+    const saved = candidate && deps.profileExists(family, candidate) ? candidate : undefined
     return {
       ...previous,
       launchProfileId: saved ? `chat:${family}:${saved}` : CHAT_PROFILE_IDS[family],

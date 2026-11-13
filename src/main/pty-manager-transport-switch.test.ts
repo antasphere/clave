@@ -58,6 +58,8 @@ const mocks = vi.hoisted(() => {
     streams: new Map<string, (stream: unknown) => void>(),
     /** The family's selected profile, when a test makes it a chat. */
     selected: null as null | string,
+    /** The person's saved profiles, as the store lists them (verifier round 2). */
+    saved: [] as { id: string; family: string }[],
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
     /** Whether Codex wrote the thread's rollout; Pi's session file (lane D,
      *  PRDCT-4427, verifier round 1 Major 2 and Minor 4). */
@@ -144,6 +146,7 @@ vi.mock('./launch-profile-manager', () => ({
         : undefined,
   isEchoLaunchProfile: () => false,
   launchProfileManager: {
+    getPreferences: () => ({ customProfiles: mocks.saved }),
     resolve: (family: string) => ({
       id: mocks.selected ?? (family === 'codex' ? 'codex-default' : 'claude-default'),
       family,
@@ -172,6 +175,10 @@ beforeEach(() => {
   mocks.rollout.mockReturnValue(true)
   mocks.findPiSession.mockReturnValue(null)
   mocks.selected = null
+  mocks.saved = [
+    { id: 'work-flags', family: 'claude' },
+    { id: 'work', family: 'claude' }
+  ]
   mocks.backend.getSessionRecord.mockImplementation(() => null)
   mocks.manager.getAdapter.mockImplementation(((id: string) =>
     id === 'codex-chat' ? mocks.codex : id === 'pi-chat' ? mocks.pi : mocks.claude) as never)
@@ -288,6 +295,8 @@ describe('chat to terminal on the same conversation (lane D, PRDCT-4427)', () =>
     expect(plan?.options.claudeSessionId).toBeUndefined()
     expect(plan?.options.piSessionId).toBeUndefined()
     expect(mocks.rollout).toHaveBeenCalledWith(THREAD)
+    // Verifier round 2, the Note: the plan resumes nothing, and says so.
+    expect(plan?.resumed).toBe(false)
   })
   it('a Pi chat that never wrote its session file starts its terminal under the same id (--session-id), not a resume', async () => {
     const session = await ptyManager.spawn('/project', {
@@ -308,6 +317,9 @@ describe('chat to terminal on the same conversation (lane D, PRDCT-4427)', () =>
     const resumed = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })
     expect(resumed?.options.resumeSessionId).toBe(id)
     expect(resumed?.options.piSessionId).toBeUndefined()
+    // Verifier round 2, the Note: started under the id resumes nothing; the file resumes.
+    expect(plan?.resumed).toBe(false)
+    expect(resumed?.resumed).toBe(true)
   })
   // Lane D (PRDCT-4427, verifier round 1 Minor 3): the profile follows the tab.
   it('a chat on a saved profile’s chat form lands on that saved profile’s terminal, whatever the selection', async () => {
@@ -358,6 +370,43 @@ describe('terminal to chat on the same conversation (lane D, PRDCT-4427)', () =>
       launchProfileId: 'chat:claude:work-flags',
       resumeSessionId: CONVERSATION
     })
+  })
+  // Verifier round 2, the Major: the saved profile deleted while the tab ran.
+  it('a terminal on a saved profile deleted since goes into the built-in chat; a live one into its chat form', async () => {
+    const session = await ptyManager.spawn('/project', {
+      claudeMode: true,
+      launchProfileId: 'work'
+    })
+    recordFor(session.id, 'pty')
+    const live = ptyManager.restartSpawn(session.id, {
+      adapterId: 'claude-chat',
+      viewId: 'clave.chat-view/lab'
+    })
+    expect(live?.options.launchProfileId).toBe('chat:claude:work')
+    mocks.saved = mocks.saved.filter((profile) => profile.id !== 'work')
+    const gone = ptyManager.restartSpawn(session.id, {
+      adapterId: 'claude-chat',
+      viewId: 'clave.chat-view/lab'
+    })
+    expect(gone?.options).toMatchObject({
+      launchProfileId: 'claude-chat',
+      resumeSessionId: CONVERSATION
+    })
+  })
+  it('a chat on a saved profile deleted since lands on the selected terminal, never the gone id', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'chat:claude:work',
+      claudeMode: true
+    })
+    recordFor(session.id, 'claude-chat')
+    mocks.selected = 'claude-chat'
+    expect(ptyManager.restartSpawn(session.id, { adapterId: 'pty' })?.options.launchProfileId).toBe(
+      'work'
+    )
+    mocks.saved = []
+    expect(ptyManager.restartSpawn(session.id, { adapterId: 'pty' })?.options.launchProfileId).toBe(
+      'builtin-claude'
+    )
   })
   it('a terminal with no conversation to carry is refused, never opened as a fresh chat (amendment 1)', async () => {
     const session = await ptyManager.spawn('/project', { claudeMode: false, codexMode: true })

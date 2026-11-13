@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   // The terminal form of the family's selected profile (lane D, PRDCT-4427):
   // undefined when the selection is a terminal, left to the spawn.
   terminalProfile: vi.fn<(family: string) => string | undefined>(() => undefined),
+  // Whether a saved profile still exists in the store (verifier round 2).
+  profileExists: vi.fn<(family: string, id: string) => boolean>(() => true),
   writes: [] as [string, string][],
   states: new Map<string, { state: string; transport: string; viewId?: string }>(),
   preference: vi.fn<(key: string) => unknown>(() => undefined),
@@ -55,6 +57,7 @@ vi.mock('../pty-manager', () => ({
     setSessionViewRecord: mocks.setSessionViewRecord,
     hasConversation: () => mocks.transcript,
     terminalProfileFor: (family: string) => mocks.terminalProfile(family),
+    profileExists: (family: string, id: string) => mocks.profileExists(family, id),
     getSession: (id: string) => (mocks.states.has(id) ? { id, alive: true } : undefined),
     write: (id: string, data: string) => void mocks.writes.push([id, data])
   }
@@ -626,6 +629,67 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     expect(options.viewId).toBeUndefined()
     expect(options.resumeSessionId).toBe('conv-1')
     mocks.states.delete(id)
+  })
+  // Verifier round 2, the Gap (mutation 13) and the Major, on the stopped-record road.
+  it("a stopped chat on a saved profile's chat form lands on that saved profile's terminal, or the selection's once it is deleted (lane D, PRDCT-4427)", async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      ...stoppedChat(id),
+      launchProfileId: 'chat:claude:work'
+    })
+    mocks.terminalProfile.mockImplementation((family) => `builtin-${family}`)
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, live] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(live.launchProfileId).toBe('work')
+    expect(mocks.profileExists).toHaveBeenCalledWith('claude', 'work')
+    // `work` deleted since: the selection's terminal, never the gone id.
+    mocks.profileExists.mockReturnValue(false)
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, gone] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(gone.launchProfileId).toBe('builtin-claude')
+    mocks.profileExists.mockReturnValue(true)
+    mocks.terminalProfile.mockImplementation(() => undefined)
+  })
+  it('a stopped terminal on a saved profile deleted since moves into the built-in chat (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      ...stoppedChat(id),
+      adapterId: 'pty',
+      launchProfileId: 'work'
+    })
+    spawned(id)
+    await restartSession(id, { adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' })
+    const [, live] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(live.launchProfileId).toBe('chat:claude:work')
+    mocks.profileExists.mockReturnValue(false)
+    spawned(id)
+    await restartSession(id, { adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' })
+    const [, gone] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(gone).toMatchObject({ launchProfileId: 'claude-chat', resumeSessionId: 'conv-1' })
+    mocks.profileExists.mockReturnValue(true)
+  })
+  // Verifier round 2, the Note: `resumed` says what the plan resumes.
+  it('a stopped chat whose conversation has no transcript reports no resume when its terminal starts under the id (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(stoppedChat(id))
+    mocks.transcript = false
+    spawned(id)
+    const fresh = await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options.claudeSessionId).toBe('conv-1')
+    expect(fresh.resumed).toBe(false)
+    mocks.transcript = true
+    spawned(id)
+    const resumed = await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    expect(resumed.resumed).toBe(true)
   })
 
   it('finds a record keyed by its tmux name, spawns under the window that placed it, and offers the tmux name (round 2, N-F1, N-F2, N-F5)', async () => {

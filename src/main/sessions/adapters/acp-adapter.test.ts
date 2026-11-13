@@ -231,7 +231,9 @@ describe('AcpAdapter against the stand-in agent', () => {
       )
       .toMatchObject({ result: { outcome: { outcome: 'cancelled' } } })
     expect(s.events).toContainEqual({ type: 'permission_withdrawn', id: request.id })
-    expect(frames(s.state).some((f) => f.method === 'session/cancel')).toBe(true)
+    // The stand-in records the cancel after its cancelled answer: polled
+    // (verifier round 2, Minor 2).
+    await expect.poll(() => frames(s.state).some((f) => f.method === 'session/cancel')).toBe(true)
     await expect.poll(() => done(s.events)).toBe(true)
   })
 

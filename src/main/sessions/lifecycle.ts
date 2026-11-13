@@ -302,7 +302,8 @@ function planFromRecord(
         family,
         (conversation) =>
           !!family && ptyManager.hasConversation(family, conversation, record.cwd, record.configDir)
-      )
+      ),
+      { profileExists: (owner, profileId) => ptyManager.profileExists(owner, profileId) }
     )
     return {
       cwd: record.cwd,
@@ -312,7 +313,9 @@ function planFromRecord(
         adapterId === 'pty' && family && moved.launchProfileId === undefined
           ? { ...moved, launchProfileId: ptyManager.terminalProfileFor(family, moved.workspaceId) }
           : moved,
-      resumed: conversationId != null,
+      // What the plan resumes: a terminal started fresh or under the id
+      // resumes nothing (verifier round 2, the Note).
+      resumed: moved.resumeSessionId !== undefined,
       keepView: false
     }
   }
