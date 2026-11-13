@@ -132,6 +132,9 @@ describe('PiRpcConnection', () => {
       .command('release')
       .then((data) => order.push(`release ${String(data)}`))
     await Promise.all([held, released])
+    // The third event may come in a later chunk than the last answer: waited
+    // for, never read early (verifier round 3).
+    await expect.poll(() => order.filter((entry) => entry.startsWith('event')).length).toBe(3)
     // Events go out synchronously as each line is read; a resolution after.
     expect(order.filter((entry) => entry.startsWith('event'))).toEqual([
       'event 1',

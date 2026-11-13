@@ -160,6 +160,7 @@ import { ptyManager } from './pty-manager'
 
 const CONVERSATION = '33333333-3333-4333-8333-333333333333'
 const THREAD = '44444444-4444-4444-8444-444444444444'
+const PI_CONVERSATION = '66666666-6666-4666-8666-666666666666'
 
 /** The record each tab's spawn wrote, as the backend would read it back. */
 function recordFor(id: string, adapterId: string): void {
@@ -369,6 +370,26 @@ describe('terminal to chat on the same conversation (lane D, PRDCT-4427)', () =>
     expect(plan?.options).toMatchObject({
       launchProfileId: 'chat:claude:work-flags',
       resumeSessionId: CONVERSATION
+    })
+  })
+  // Verifier round 3: a saved profile counts only for its own family.
+  it("a Pi terminal on `work` goes into pi-chat when `work` is another family's saved profile", async () => {
+    mocks.saved = [{ id: 'work', family: 'codex' }]
+    const session = await ptyManager.spawn('/project', {
+      claudeMode: false,
+      piMode: true,
+      launchProfileId: 'work'
+    })
+    recordFor(session.id, 'pty')
+    const plan = ptyManager.restartSpawn(session.id, {
+      adapterId: 'pi-chat',
+      viewId: 'clave.chat-view/chat',
+      resume: PI_CONVERSATION
+    })
+    expect(plan?.options).toMatchObject({
+      piMode: true,
+      launchProfileId: 'pi-chat',
+      resumeSessionId: PI_CONVERSATION
     })
   })
   // Verifier round 2, the Major: the saved profile deleted while the tab ran.
