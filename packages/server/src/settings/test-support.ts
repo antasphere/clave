@@ -19,7 +19,9 @@ import type {
   Workspace,
   WorkspaceState,
   // ── Lane B (harness wave): provider connections ──
-  ProviderConnection
+  ProviderConnection,
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  ModelsCatalogView
 } from './port'
 import { unavailable } from './port'
 
@@ -82,6 +84,8 @@ export class FakeSettingsSource implements SettingsSourceService {
     appIcon?: boolean
     antasphere?: boolean
     integrations?: boolean
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog?: boolean
   } = {}
   /** The host's integrations as the fake holds them (PRDCT-4410): the key it
    *  was handed goes to `secrets`, never into this. */
@@ -540,6 +544,46 @@ export class FakeSettingsSource implements SettingsSourceService {
       this.connections = this.connections.map((c) => (c.id === id ? keyed : c))
       this.connectionsChanged()
       return keyed
+    }
+  }
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue as the
+  // fake holds it; `read` filters it to the ids asked for, in their order.
+  catalog: ModelsCatalogView = {
+    fetchedAt: 1,
+    stale: false,
+    providers: [
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: false, toolCall: true }]
+      },
+      {
+        id: 'openrouter',
+        name: 'OpenRouter',
+        models: [
+          {
+            id: 'old',
+            name: 'Old',
+            reasoning: false,
+            toolCall: false,
+            status: 'deprecated',
+            contextLimit: 8000
+          }
+        ]
+      }
+    ]
+  }
+  readonly modelsCatalog: SettingsSourceService['modelsCatalog'] = {
+    read: (input) => {
+      this.record('modelsCatalog.read', input)
+      if (this.refuse.modelsCatalog)
+        throw unavailable('modelsCatalog', 'This server has no models catalogue.')
+      const ids = input.providerIds
+      if (!ids) return this.catalog
+      return {
+        ...this.catalog,
+        providers: ids.flatMap((id) => this.catalog.providers.filter((p) => p.id === id))
+      }
     }
   }
 }

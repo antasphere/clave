@@ -31,6 +31,8 @@ import type {
   RoutineView,
   RoutinesListing
 } from '@clave/contract/routines/model'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 
 export interface FleetSnapshot {
   serverId: string
@@ -215,6 +217,13 @@ export interface FleetDesktopAPI {
     id: string,
     apiKey: string
   ): Promise<ProviderConnection>
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** A server's models catalogue, read on that server (this Mac's own for
+   *  the local id): what its launcher lists under Pi and OpenCode. */
+  fleetModelsCatalog(
+    serverId: string,
+    input?: { providerIds?: string[]; force?: boolean }
+  ): Promise<ModelsCatalogView>
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

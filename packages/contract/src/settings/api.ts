@@ -71,6 +71,8 @@ import {
   RenameProviderConnection,
   SetProviderConnectionKey
 } from './connections'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import { ReadModelsCatalog } from './models-catalog'
 
 export const settingsGroup = ApiGroup.make('settings')
   // Claude accounts
@@ -312,3 +314,5 @@ export const settingsGroup = ApiGroup.make('settings')
       SetProviderConnectionKey
     )
   )
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  .add(HttpCqrs.queryEndpoint('readModelsCatalog', '/models-catalog', ReadModelsCatalog))

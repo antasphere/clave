@@ -65,6 +65,8 @@ export interface ProviderConnectionAddInput {
   readonly baseUrl?: string
   readonly wireFormat?: ProviderWireFormat
 }
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+export type ModelsCatalogView = typeof Settings.ModelsCatalogView.Type
 
 export interface SettingsSourceService {
   readonly claudeAccounts: {
@@ -191,6 +193,16 @@ export interface SettingsSourceService {
     /** Stores the key sealed; the view returned says hasKey and never carries the key. */
     readonly setKey: (id: string, apiKey: string) => Awaitable<ProviderConnection>
   }
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of this host: models.dev read and cached a day, the
+   *  providers of those ids in their order (all when none is named), fetched
+   *  again first with `force`. A host with none answers `CapabilityUnavailable`. */
+  readonly modelsCatalog: {
+    readonly read: (input: {
+      readonly providerIds?: ReadonlyArray<string>
+      readonly force?: boolean
+    }) => Awaitable<ModelsCatalogView>
+  }
 }
 
 export class SettingsSource extends Context.Tag('@clave/server/SettingsSource')<
@@ -287,6 +299,8 @@ function noneSource(): SettingsSourceService {
       rename: refuse('providerConnections'),
       remove: refuse('providerConnections'),
       setKey: refuse('providerConnections')
-    }
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog: { read: refuse('modelsCatalog') }
   }
 }

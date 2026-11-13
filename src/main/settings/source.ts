@@ -67,6 +67,8 @@ import type {
   ProviderConnectionView,
   ProviderWireFormat
 } from '@clave/contract/settings'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -106,6 +108,13 @@ export interface IntegrationsLike {
   voices(): Promise<{ voices: ElevenLabsVoice[] }>
 }
 
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+/** The models catalogue of a host as the source needs it
+ *  (`../models-catalog.ts`'s `ModelsCatalog`). */
+export interface ModelsCatalogLike {
+  view(input: { providerIds?: readonly string[]; force?: boolean }): Promise<ModelsCatalogView>
+}
+
 export interface SettingsManagers {
   claudeAccounts: ClaudeAccountsManager
   codexAccounts: CodexAccountsManager
@@ -143,6 +152,9 @@ export interface SettingsManagers {
    *  `@clave/contract/settings` at runtime, which reaches Effect, and this
    *  seam loads nothing of Effect at boot (`boot-graph.test.ts`). */
   providerConnections?: () => Promise<ProviderConnectionsLike>
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of this host; absent, refused. */
+  modelsCatalog?: ModelsCatalogLike
 }
 
 // ── Lane B (harness wave): provider connections ──
@@ -255,6 +267,9 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // status each write answers.
   const integrations = (): IntegrationsLike =>
     m.integrations ?? refuse('integrations', 'This server has no integrations.')
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  const modelsCatalog = (): ModelsCatalogLike =>
+    m.modelsCatalog ?? refuse('modelsCatalog', 'This server has no models catalogue.')
 
   // The change event and the write's answer carry the state after the write
   // with its stamp (PRDCT-3405): a window compares the stamp with the last
@@ -467,6 +482,10 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       },
       remove: async (id) => (await providerConnections()).remove(id),
       setKey: async (id, apiKey) => (await providerConnections()).setKey(id, apiKey)
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog: {
+      read: (input) => modelsCatalog().view(input)
     }
   }
 }

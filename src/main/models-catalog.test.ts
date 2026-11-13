@@ -283,3 +283,68 @@ describe('ModelsCatalog', () => {
     expect(read).toEqual({ snapshot: null, stale: true, error: expect.any(String) })
   })
 })
+
+// Lane C of the harness wave (PRDCT-4496): the catalogue as a window reads it.
+describe('ModelsCatalog.view', () => {
+  it('maps every provider to the window’s fields only, the deprecated model kept with its status', async () => {
+    const view = await make(okFetch()).view()
+    expect(view).toEqual({
+      fetchedAt: T0,
+      stale: false,
+      providers: [
+        {
+          id: 'acme-ai',
+          name: 'Acme AI',
+          models: [
+            {
+              id: 'alpha-1',
+              name: 'Alpha 1',
+              reasoning: false,
+              toolCall: true,
+              status: 'deprecated'
+            },
+            { id: 'beta-x', name: 'Beta X', reasoning: false, toolCall: false, status: 'beta' },
+            {
+              id: 'zeta-2',
+              name: 'Zeta 2',
+              reasoning: true,
+              toolCall: true,
+              contextLimit: 200000,
+              outputLimit: 32000
+            }
+          ]
+        },
+        {
+          id: 'bolt-lab',
+          name: 'Bolt Lab',
+          models: [{ id: 'one', name: 'One', reasoning: true, toolCall: false }]
+        }
+      ]
+    })
+    expect(view).not.toHaveProperty('error')
+  })
+
+  it('filters to the ids asked for, in their order, an unknown id omitted; an empty list names none', async () => {
+    const catalog = make(okFetch())
+    const some = await catalog.view({ providerIds: ['bolt-lab', 'nobody', 'acme-ai'] })
+    expect(some.providers.map((p) => p.id)).toEqual(['bolt-lab', 'acme-ai'])
+    const none = await catalog.view({ providerIds: [] })
+    expect(none.providers.map((p) => p.id)).toEqual(['acme-ai', 'bolt-lab'])
+  })
+
+  it('a null snapshot gives no provider, a null date, and the failure', async () => {
+    const view = await make(
+      vi.fn<typeof fetch>(async () => Promise.reject(new TypeError('fetch failed')))
+    ).view({ providerIds: ['acme-ai'] })
+    expect(view).toEqual({ fetchedAt: null, stale: true, error: expect.any(String), providers: [] })
+    expect(view.error).toMatch(/models\.dev/)
+  })
+
+  it('a forced view fetches again', async () => {
+    const fetchMock = okFetch()
+    const catalog = make(fetchMock)
+    await catalog.view()
+    await catalog.view({ force: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})

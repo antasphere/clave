@@ -84,6 +84,8 @@ import type {
   ServerInstallStatus,
   TailnetScan
 } from '../shared/server-setup-types'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -3036,7 +3038,17 @@ const electronAPI = {
     'accounts.providers_changed',
     (event) => [...event.connections] as unknown[],
     async (api) => [[...(await api.settings.providerConnections.list())] as unknown[]]
-  )
+  ),
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue, the window's
+  // server's when it has one, so a window on a server lists that server's models.
+  modelsCatalogRead: viaServer<
+    [input?: { providerIds?: string[]; force?: boolean }],
+    ModelsCatalogView
+  >({
+    ipc: (input) => ipcRenderer.invoke('models-catalog:read', input ?? {}),
+    server: async ({ api }, input) =>
+      loose<ModelsCatalogView>(await api.settings.modelsCatalog.read(input ?? {}))
+  })
 }
 
 contextBridge.exposeInMainWorld(

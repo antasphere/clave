@@ -57,6 +57,8 @@ import { registerMicHandlers } from './mic-handlers'
 import { registerTriageHandlers } from './triage-handlers'
 // ── Lane B (harness wave): provider connections ──
 import { registerProviderConnectionsHandlers } from './provider-connections-handlers'
+// ── Lane C of the harness wave (PRDCT-4496): the models catalogue ──
+import { registerModelsCatalogHandlers } from './models-catalog-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -116,4 +118,6 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerTriageHandlers()
   // ── Lane B (harness wave): provider connections ──
   registerProviderConnectionsHandlers()
+  // ── Lane C of the harness wave (PRDCT-4496): the models catalogue ──
+  registerModelsCatalogHandlers()
 }

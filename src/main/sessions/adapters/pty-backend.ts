@@ -1318,6 +1318,12 @@ export class PtyBackend {
         // has run: a `CODEX_HOME` the user's own profile exports would
         // otherwise override the one in the environment.
         if (codexHome) assignments.push(`CODEX_HOME=${shellSingleQuote(codexHome)}`)
+        // A login profile exporting PI_CODING_AGENT_DIR would otherwise point Pi at the
+        // person's own directory instead of the connection's; a directory path, never a key, rides here.
+        if (options?.providerEnv?.PI_CODING_AGENT_DIR)
+          assignments.push(
+            `PI_CODING_AGENT_DIR=${shellSingleQuote(options.providerEnv.PI_CODING_AGENT_DIR)}`
+          )
         const rendered = `${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
         const failure = `__clave_status=$?; if [ $__clave_status -ne 0 ]; then printf '\\r\\n[Clave] Agent command exited with status %d\\r\\nCommand: %s\\r\\n' $__clave_status ${shellSingleQuote(argv.map(shellSingleQuote).join(' '))}; fi; exit $__clave_status`
         posixAgentCommand = `${rendered}; ${failure}`

@@ -66,6 +66,8 @@ import type {
   HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -1710,6 +1712,15 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onProviderConnectionsChanged: (
     callback: (connections: ProviderConnection[]) => void
   ) => () => void
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of the window's server (this Mac's when it has
+   *  none): the providers of those ids in their order, every one when none is
+   *  named, fetched again first with `force`. A failed fetch is `stale` with
+   *  its `error`, never a rejection. A saved server's is `fleetModelsCatalog`. */
+  modelsCatalogRead: (input?: {
+    providerIds?: string[]
+    force?: boolean
+  }) => Promise<ModelsCatalogView>
 }
 
 declare global {

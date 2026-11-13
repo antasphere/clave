@@ -102,6 +102,8 @@ const providerConnectionsMissing = <T>(run: Promise<T>): Promise<T> =>
       ? new ProviderConnectionsMissing()
       : error
   })
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+export type ModelsCatalogView = typeof S.ModelsCatalogView.Type
 
 export interface SettingsClient {
   readonly claudeAccounts: {
@@ -211,6 +213,15 @@ export interface SettingsClient {
     readonly rename: (id: string, label: string) => Promise<ProviderConnection>
     readonly remove: (id: string) => Promise<boolean>
     readonly setKey: (id: string, apiKey: string) => Promise<ProviderConnection>
+  }
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** That server's models catalogue: the providers of those ids in their
+   *  order (all when none is named), fetched again first with `force`. */
+  readonly modelsCatalog: {
+    readonly read: (input?: {
+      readonly providerIds?: ReadonlyArray<string>
+      readonly force?: boolean
+    }) => Promise<ModelsCatalogView>
   }
 }
 
@@ -365,6 +376,22 @@ export function settingsClient(callApi: Call): SettingsClient {
       setKey: (id, apiKey) =>
         providerConnectionsMissing(
           call((g) => g.setProviderConnectionKey({ payload: { id, apiKey } }))
+        )
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue. A GET's
+    // parameters: the ids comma-joined, the flag as a string, only what is set.
+    modelsCatalog: {
+      read: (input = {}) =>
+        call((g) =>
+          g.readModelsCatalog({
+            payload: {
+              ...(input.providerIds &&
+                input.providerIds.length > 0 && { providerIds: input.providerIds.join(',') }),
+              ...(input.force !== undefined && {
+                force: input.force ? ('true' as const) : ('false' as const)
+              })
+            }
+          })
         )
     }
   }

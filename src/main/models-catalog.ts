@@ -1,5 +1,9 @@
 import { lazySettingsPorts } from './ports/registry'
 import { readJson, writeJson, type StoragePort } from './ports/storage'
+import type {
+  CatalogModelView,
+  ModelsCatalogView
+} from '@clave/contract/settings/models-catalog-view'
 
 /**
  * The catalogue of models the launcher lists under Pi and OpenCode (PRDCT-4496),
@@ -129,6 +133,19 @@ export function pruneModelsDev(raw: unknown): CatalogProvider[] {
   return providers.sort(byId)
 }
 
+/** A model as the window reads it: the launcher's fields, nothing more. */
+function modelView(m: CatalogModel): CatalogModelView {
+  return {
+    id: m.id,
+    name: m.name,
+    reasoning: m.reasoning,
+    toolCall: m.toolCall,
+    ...(m.status !== undefined && { status: m.status }),
+    ...(m.contextLimit !== undefined && { contextLimit: m.contextLimit }),
+    ...(m.outputLimit !== undefined && { outputLimit: m.outputLimit })
+  }
+}
+
 /** The stored document read back: a snapshot only when it is well formed. */
 function readSnapshot(raw: unknown): ModelsCatalogSnapshot | null {
   if (!isRecord(raw)) return null
@@ -211,6 +228,35 @@ export class ModelsCatalog {
   async modelsOf(providerId: string): Promise<CatalogModel[]> {
     const [provider] = await this.providers([providerId])
     return provider ? provider.models.filter((m) => m.status !== 'deprecated') : []
+  }
+
+  /** The catalogue as a window reads it, on either road (IPC or the server's
+   *  `ReadModelsCatalog`): the providers of those ids in their order, every
+   *  one when none is named (an empty list names none), fetched again first
+   *  with `force`. Never rejects: a failed fetch is `stale` with its `error`. */
+  async view(
+    input: { providerIds?: readonly string[]; force?: boolean } = {}
+  ): Promise<ModelsCatalogView> {
+    const { snapshot, stale, error } = await this.read({ force: input.force === true })
+    const all = snapshot?.providers ?? []
+    let providers = all
+    if (input.providerIds && input.providerIds.length > 0) {
+      const index = new Map(all.map((p) => [p.id, p]))
+      providers = input.providerIds.flatMap((id) => {
+        const provider = index.get(id)
+        return provider ? [provider] : []
+      })
+    }
+    return {
+      fetchedAt: snapshot?.fetchedAt ?? null,
+      stale,
+      ...(error !== undefined && { error }),
+      providers: providers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        models: p.models.map(modelView)
+      }))
+    }
   }
 
   private async refresh(): Promise<ModelsCatalogRead> {

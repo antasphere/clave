@@ -34,6 +34,8 @@ import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import { modelsCatalog } from '../models-catalog'
 
 export interface StandaloneSettings {
   settings: SettingsSourceService
@@ -75,6 +77,8 @@ export function standaloneSettingsSource(
     workspaces: workspaceManager,
     helpers: helperPreferences,
     integrations: elevenLabsIntegration,
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog,
     // Loaded on first use, as the shell's: the daemon's login reaches the
     // login shell's environment through the terminal backend, which the
     // source's own import graph must not reach (`boot-graph.test.ts`).

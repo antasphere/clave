@@ -44,7 +44,8 @@
     "./routines": "./src/routines/index.ts",
     "./routines/model": "./src/routines/model.ts",
     "./settings/provider-catalogue": "./src/settings/provider-catalogue.ts",
-    "./settings/connections": "./src/settings/connections.ts"
+    "./settings/connections": "./src/settings/connections.ts",
+    "./settings/models-catalog-view": "./src/settings/models-catalog-view.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -599,3 +599,39 @@ describe('the provider connections on the server (PRDCT-4426)', () => {
     }
   })
 })
+
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+describe('the models catalogue on the server (PRDCT-4496)', () => {
+  it('answers the whole catalogue, and the ids asked for in their order, the flag decoded', async () => {
+    const all = await get('/models-catalog')
+    expect(all.status).toBe(200)
+    expect(await all.json()).toEqual(fake.catalog)
+    const some = await get('/models-catalog?providerIds=openrouter,nobody,deepseek&force=true')
+    expect(some.status).toBe(200)
+    expect(
+      ((await some.json()) as { providers: { id: string }[] }).providers.map((p) => p.id)
+    ).toEqual(['openrouter', 'deepseek'])
+    expect(fake.calls.filter((c) => c.method === 'modelsCatalog.read').map((c) => c.args)).toEqual([
+      [{}],
+      [{ providerIds: ['openrouter', 'nobody', 'deepseek'], force: true }]
+    ])
+  })
+
+  it('says a host with none as unavailable, and a server with no settings the same', async () => {
+    fake.refuse.modelsCatalog = true
+    const read = await get('/models-catalog')
+    expect(read.status).toBe(422)
+    expect(await read.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'modelsCatalog'
+    })
+    const bare = await startEmbedded({ ports: { sessions: new FakeSource() } })
+    try {
+      const res = await fetch(`${bare.url}/models-catalog`, { headers: headers(bare.token) })
+      expect(res.status).toBe(422)
+      expect(await res.json()).toMatchObject({ capability: 'modelsCatalog' })
+    } finally {
+      await bare.stop()
+    }
+  })
+})
