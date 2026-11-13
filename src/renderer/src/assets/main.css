@@ -397,8 +397,7 @@ body.reorder-dragging * {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .idle-group-start:hover {
   color: var(--text-primary);
@@ -1250,8 +1249,7 @@ body.reorder-dragging * {
   transition:
     background-color 150ms,
     color 150ms,
-    box-shadow 150ms,
-    scale 120ms var(--ease-out-expo);
+    box-shadow 150ms;
 }
 .avatar-cell:hover {
   background-color: var(--surface-300);
@@ -1261,9 +1259,6 @@ body.reorder-dragging * {
   color: var(--color-accent);
   background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
   box-shadow: 0 0 0 1px var(--color-accent);
-}
-.avatar-cell:active {
-  scale: 0.97;
 }
 /* The system's one focus ring (the "── Keyboard focus ──" block), restated
    here because the cell is an app-only class. */

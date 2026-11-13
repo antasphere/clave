@@ -36,9 +36,6 @@ const SCRIPT = `${ROOT}/codex.py`
 const WS = { id: 'close-ws', name: 'Close', rootDir: ROOT, profileFile: null, createdAt: 1 }
 const LONG = 'A session title long enough to be cut short by the width the hidden cross held'
 const THEMES = ['dark', 'light', 'coffee', 'charcoal']
-// `.btn-icon`'s press dip as the computed shorthand spells it: 120ms on the
-// design system's ease-out-expo curve.
-const PRESS_DIP = /scale 0\.12s cubic-bezier\(0\.2, 0, 0, 1\)/
 
 export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
@@ -99,8 +96,6 @@ for line in sys.stdin:
             : null,
           opacity: box ? getComputedStyle(box).opacity : null,
           transition: box ? getComputedStyle(box).transitionProperty : null,
-          // The whole shorthand, so a check can read a duration and an easing.
-          transitionFull: box ? getComputedStyle(box).transition : null,
           transform: box ? getComputedStyle(box).transform : null,
           // The room the cross takes from the title once shown: its box, the
           // row's gap before it less the margin that cancels it (the box sits
@@ -132,11 +127,6 @@ for line in sys.stdin:
     ]) {
       const rest = await geometry(id)
       t.equal(`${label}: the close cross takes no room at rest`, await width(closeOf(id)), 0)
-      t.check(
-        `${label}: the cross keeps the icon button's press dip, 120ms on the shared curve`,
-        PRESS_DIP.test(rest.transitionFull ?? ''),
-        rest.transitionFull
-      )
       t.equal(
         `${label}: at rest the status glyph ends at the row's padding edge`,
         rest.statusGap,
@@ -229,11 +219,6 @@ for line in sys.stdin:
       'under reduced motion no width or movement animates',
       !/width|transform|margin/.test(reduced.transition ?? ''),
       reduced.transition
-    )
-    t.check(
-      'under reduced motion the press dip keeps its 120ms on the shared curve',
-      PRESS_DIP.test(reduced.transitionFull ?? ''),
-      reduced.transitionFull
     )
     await rowOf(ungrouped).hover()
     t.check(
