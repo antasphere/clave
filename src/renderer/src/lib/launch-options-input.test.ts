@@ -291,6 +291,57 @@ describe("Pi's and OpenCode's provider pools (PRDCT-4496)", () => {
     }
   })
 
+  it("says a connected server's Pi decides the start model, never naming one the Mac cannot know", () => {
+    useProviderConnectionsStore.setState({
+      byMachine: {
+        srv: { connections: [view('srv-kimi', 'moonshot')], loading: false, error: null }
+      }
+    })
+    try {
+      const server = launchOptions(serverLaunchOptionsInput('srv', 'Studio box', settings, facts))
+      const [row] = server.harnesses.find((x) => x.id === 'pi')!.connections
+      expect(row).not.toHaveProperty('startModel')
+      expect(row.startModelNote).toBe(
+        'Studio box decides the model from its own Pi settings when the tab opens: pass a model to choose it.'
+      )
+      // OpenCode needs no start model: its rows say nothing of it.
+      for (const c of server.harnesses.find((x) => x.id === 'opencode')!.connections)
+        expect(c).not.toHaveProperty('startModelNote')
+    } finally {
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+
+  it("names this Mac's Pi start model from main's answer, and no note", () => {
+    useProviderConnectionsStore.setState({
+      byMachine: {
+        [LOCAL_SERVER_ID]: {
+          connections: [view('mac-kimi', 'moonshot')],
+          loading: false,
+          error: null
+        }
+      }
+    })
+    const before = local.sources
+    try {
+      local.sources = { claude: [], codex: [], claudeUsage: {}, codexUsage: {}, servers: {} }
+      const mac = launchOptions(
+        localLaunchOptionsInput({
+          ...facts,
+          agents: [],
+          preferRecommended: false,
+          piStarts: { 'mac-kimi': { ok: true, model: 'k-second', from: 'own-default' } }
+        })
+      )
+      const [row] = mac.harnesses.find((x) => x.id === 'pi')!.connections
+      expect(row.startModel).toBe('k-second')
+      expect(row).not.toHaveProperty('startModelNote')
+    } finally {
+      local.sources = before
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+
   it('lists a stored connection under no pool of a harness that speaks none of its wire formats, as the open never lands on it', () => {
     const views = [
       view('chat-only', 'moonshot'),

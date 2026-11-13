@@ -148,6 +148,12 @@ export function poolConnections(
 
 const isPool = (pool: string): pool is AccountProvider => pool === 'claude' || pool === 'codex'
 
+/** What a connected server's Pi connection row says in place of a start
+ *  model: that server's own Pi settings decide it. */
+export function serverPiStartNote(serverName: string): string {
+  return `${serverName} decides the model from its own Pi settings when the tab opens: pass a model to choose it.`
+}
+
 /** A connected server, from the settings this Mac read of it. The Mac never
  *  checks a server's harnesses: every one is listed, installed unknown, as
  *  the launcher shows a server. Its pool makes its own pick, so no
@@ -188,6 +194,9 @@ export function serverLaunchOptionsInput(
     // The Mac does not know a server's remembered chat model (it lives in
     // the server's own preferences): the open profile names no model here.
     launchModel: () => undefined,
+    // Nor the server's own Pi settings, which decide what a Pi connection
+    // starts on with no model named (PRDCT-4496): said, never guessed.
+    providerStartNote: (harness) => (harness === 'pi' ? serverPiStartNote(name) : undefined),
     now: facts.now
   }
 }

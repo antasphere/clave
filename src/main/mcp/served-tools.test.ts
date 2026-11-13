@@ -675,7 +675,14 @@ describe('launchOptions, served: what this machine can launch', () => {
       ])
       const codex = answer.harnesses.find((x) => x.id === 'codex')!
       expect(codex.models).toEqual([
-        { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+        {
+          id: null,
+          label: 'Default',
+          family: 'Default',
+          served: true,
+          reason: null,
+          note: 'Pass no model and Codex starts on its own default.'
+        }
       ])
       expect(codex.connections).toEqual([
         expect.objectContaining({ id: 'key', fallback: true, suggested: true, exhausted: false })
@@ -767,7 +774,14 @@ describe('launchOptions, served: what this machine can launch', () => {
     expect(answer.harnesses.every((x) => x.installed === null)).toBe(true)
     expect(answer.notInstalled).toEqual([])
     expect(answer.harnesses.find((x) => x.id === 'claude')!.models).toEqual([
-      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+      {
+        id: null,
+        label: 'Default',
+        family: 'Default',
+        served: true,
+        reason: null,
+        note: 'Pass no model and Claude Code starts on its own default.'
+      }
     ])
     expect(answer.interactionMode).toBe('chat')
   })
@@ -818,7 +832,10 @@ describe('launchOptions, served: what this machine can launch', () => {
       served: true,
       reason: null
     })
-    const DEFAULT = row(null, 'Default', 'Default')
+    const defaultOf = (name: string): LaunchOptions['harnesses'][number]['models'][number] => ({
+      ...row(null, 'Default', 'Default'),
+      note: `Pass no model and ${name} starts on its own default.`
+    })
     const asked: (readonly string[])[] = []
     const stored: Partial<ServedShell> = {
       catalog: async (ids) => {
@@ -842,7 +859,7 @@ describe('launchOptions, served: what this machine can launch', () => {
       asked.length = 0
       const pi = await harnessOf(setup(), 'pi')
       expect(pi.models).toEqual([
-        DEFAULT,
+        defaultOf('Pi'),
         row('devstral', 'devstral name', 'Mistral'),
         row('deepseek-chat', 'deepseek-chat name', 'DeepSeek'),
         row('kimi-k2', 'kimi-k2', 'kimi-k2')
@@ -853,7 +870,7 @@ describe('launchOptions, served: what this machine can launch', () => {
     it("lists OpenCode's default and the catalogue models, no pinned model", async () => {
       const opencode = await harnessOf(setup(), 'opencode')
       expect(opencode.models).toEqual([
-        DEFAULT,
+        defaultOf('OpenCode'),
         row('devstral', 'devstral name', 'Mistral'),
         row('deepseek-chat', 'deepseek-chat name', 'DeepSeek')
       ])

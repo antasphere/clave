@@ -324,15 +324,66 @@ describe('the models and the default one', () => {
     expect(harness(options, 'pi').models.every((m) => m.served)).toBe(true)
     expect(harness(options, 'pi').defaultModel).toBeNull()
     expect(harness(options, 'codex').models).toEqual([
-      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+      {
+        id: null,
+        label: 'Default',
+        family: 'Default',
+        served: true,
+        reason: null,
+        note: 'Pass no model and Codex starts on its own default.'
+      }
     ])
+  })
+  it('says what the row with no id means, and on Pi with stored connections that the row of the connection names it', () => {
+    const plain = harness(launchOptions(input()), 'pi').models[0]
+    expect(plain).toMatchObject({
+      id: null,
+      note: 'Pass no model and Pi starts on its own default.'
+    })
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const onConnections = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude' ? [fableOut, open()] : pool === 'moonshot' ? [kimi] : []
+      })
+    )
+    expect(harness(onConnections, 'pi').models[0].note).toBe(
+      "Pass no model and Pi starts on its own default. On a stored connection, it starts on the model that connection's row names (startModel)."
+    )
+    // OpenCode picks its own on a connection too.
+    expect(harness(onConnections, 'opencode').models[0].note).toBe(
+      'Pass no model and OpenCode starts on its own default.'
+    )
+    // A row with an id carries no note.
+    expect(harness(onConnections, 'pi').models[1]).not.toHaveProperty('note')
+  })
+  it('says a start model decided elsewhere in a sentence, never a model', () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const options = launchOptions(
+      input({
+        connections: (pool) => (pool === 'moonshot' ? [kimi] : []),
+        providerStartNote: (id) => (id === 'pi' ? 'Decided there.' : undefined)
+      })
+    )
+    expect(harness(options, 'pi').connections[0]).toMatchObject({
+      startModelNote: 'Decided there.'
+    })
+    expect(harness(options, 'pi').connections[0]).not.toHaveProperty('startModel')
+    expect(harness(options, 'opencode').connections[0]).not.toHaveProperty('startModelNote')
   })
   it('offers OpenCode the models its listing gives, now that it takes one', () => {
     const opencode = harness(launchOptions(input()), 'opencode')
     // OpenCode takes a model through its config since PRDCT-4496, so its listed rows reach the launcher.
     expect(opencode.takesModel).toBe(true)
     expect(opencode.models).toEqual([
-      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+      {
+        id: null,
+        label: 'Default',
+        family: 'Default',
+        served: true,
+        reason: null,
+        note: 'Pass no model and OpenCode starts on its own default.'
+      }
     ])
     expect(opencode.defaultModel).toBeNull()
     // OpenCode has a chat view since PRDCT-4427.

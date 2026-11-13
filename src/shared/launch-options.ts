@@ -96,6 +96,10 @@ export interface LaunchOptionsInput {
     harness: HarnessId,
     connectionId: string
   ) => PiStartModel | undefined
+  /** Where `providerStartModel` cannot know it because another machine
+   *  decides it (a connected server's Pi reads its own settings): the
+   *  sentence its connection rows say instead of a model. */
+  readonly providerStartNote?: (harness: HarnessId) => string | undefined
   readonly now: number
 }
 export interface ConnectionWindow {
@@ -118,10 +122,16 @@ export type ConnectionOption = PooledConnection & {
    *  cannot know it. */
   readonly startModel?: string | null
   readonly startRefusal?: string
+  /** In place of `startModel` where another machine decides it: the
+   *  sentence saying so. */
+  readonly startModelNote?: string
 }
 export interface ModelOption extends LaunchModel {
   readonly served: boolean
   readonly reason: string | null
+  /** The row whose id is null (the harness's own default): what it means
+   *  and how to get it, in one sentence. */
+  readonly note?: string
 }
 export interface ProfileOption {
   readonly id: string
@@ -235,6 +245,16 @@ function windowsOf(usage: AccountUsageSummary | undefined, now: number): Connect
   }))
 }
 
+/** What the model row with no id means: no model passed, the harness's own
+ *  pick. A Pi tab on a stored connection always names one (Pi refuses a
+ *  provider without a model), so there it is the connection's startModel. */
+function defaultRowNote(harness: Harness, onConnections: boolean): string {
+  const own = `Pass no model and ${harness.name} starts on its own default.`
+  return harness.id === 'pi' && onConnections
+    ? `${own} On a stored connection, it starts on the model that connection's row names (startModel).`
+    : own
+}
+
 function harnessOptions(
   input: LaunchOptionsInput,
   harness: Harness,
@@ -278,6 +298,7 @@ function harnessOptions(
       : providerSuggested
     return rows.map((c) => {
       const start = isAccountPoolId(pool) ? undefined : input.providerStartModel?.(id, c.id)
+      const startNote = isAccountPoolId(pool) || start ? undefined : input.providerStartNote?.(id)
       return {
         ...c,
         pool,
@@ -286,6 +307,7 @@ function harnessOptions(
             ? { startModel: start.model }
             : { startModel: null, startRefusal: start.reason }
           : {}),
+        ...(startNote ? { startModelNote: startNote } : {}),
         suggested: c.id === suggested,
         exhausted: isExhausted(usageSummaryForModel(c.usage, model)),
         // With no model named, the account view: its shared headroom and
@@ -311,7 +333,12 @@ function harnessOptions(
       !accountPool ||
       all.length === 0 ||
       all.some((c) => c.usable && !isExhausted(usageSummaryForModel(c.usage, m.id ?? undefined)))
-    return { ...m, served, reason: served ? null : `No connection with ${m.family} credits` }
+    return {
+      ...m,
+      served,
+      reason: served ? null : `No connection with ${m.family} credits`,
+      ...(m.id === null ? { note: defaultRowNote(harness, connections.length > 0) } : {})
+    }
   })
 
   return {
