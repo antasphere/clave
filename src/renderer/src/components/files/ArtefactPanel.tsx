@@ -15,7 +15,7 @@ import { ownerOfSession, useArtefactStore } from '../../store/artefact-store'
 import { SlidelessArtefact } from './SlidelessArtefact'
 import { ArtefactVersionChip } from './ArtefactVersionChip'
 import { FileMenu } from './FileMenu'
-import { inBrowser } from '../../lib/artefact-version'
+import { inBrowser, shownFor } from '../../lib/artefact-version'
 import { useFleetStore } from '../../store/fleet-store'
 import { serverNameOf } from '../../lib/drop-refusal'
 
@@ -44,7 +44,7 @@ export function ArtefactPanel({
   const own = owner === LOCAL_SERVER_ID
   const ready = useArtefactStore((s) => s.slideless[owner]?.phase === 'ready')
   const previewUrl = useArtefactStore((s) => s.previewUrl[sessionId])
-  const shown = useArtefactStore((s) => s.version[sessionId] ?? 'live')
+  const shown = useArtefactStore((s) => shownFor(s.version[sessionId], artefact.openedAt))
   const machine = useFleetStore((s) => (own ? 'this Mac' : serverNameOf(s.connections, owner)))
   return (
     <section className="linked-document-panel" data-testid="artefact-panel">
@@ -53,7 +53,7 @@ export function ArtefactPanel({
         <div className="pane-header-lead" title={artefact.page}>
           <DocumentTextIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
           <span className="pane-header-title">{artefact.title}</span>
-          {ready && <ArtefactVersionChip sessionId={sessionId} />}
+          {ready && <ArtefactVersionChip sessionId={sessionId} openedAt={artefact.openedAt} />}
         </div>
         <div className="pane-header-actions">
           <FileMenu

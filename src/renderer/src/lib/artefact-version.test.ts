@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inBrowser, versionLabel, withVersion } from './artefact-version'
+import { inBrowser, shownFor, versionLabel, withVersion } from './artefact-version'
 
 describe('the version an artefact shows (PRDCT-4494)', () => {
   it('hides Slideless’s own bar whatever is shown', () => {
@@ -25,5 +25,11 @@ describe('the version an artefact shows (PRDCT-4494)', () => {
   it('opens in a browser with Slideless’s own bar, on the version shown', () => {
     expect(inBrowser('http://127.0.0.1:4100/?bar=0', 'live')).toBe('http://127.0.0.1:4100/')
     expect(inBrowser('http://127.0.0.1:4100/?bar=0&v=2', '3')).toBe('http://127.0.0.1:4100/?v=3')
+  })
+  it('keeps a version chosen for the open it was chosen on, and starts a new open live', () => {
+    const choice = { openedAt: '2026-11-13T10:00:00.000Z', shown: '3' }
+    expect(shownFor(choice, '2026-11-13T10:00:00.000Z')).toBe('3')
+    expect(shownFor(choice, '2026-11-13T11:00:00.000Z')).toBe('live')
+    expect(shownFor(undefined, '2026-11-13T10:00:00.000Z')).toBe('live')
   })
 })

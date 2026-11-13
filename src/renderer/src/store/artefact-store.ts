@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { VersionChoice } from '../lib/artefact-version'
 import { parseSessionKey } from '@clave/contract/fleet'
 import type { Artefact, SlidelessState } from '@clave/contract/artefacts/model'
 
@@ -85,8 +86,8 @@ interface ArtefactState extends ArtefactView {
   setSplit: (sessionId: string, value: number) => void
   /** What each session's panel shows, by session: `live`, `latest` or a version's number
    *  (PRDCT-4494). Kept in memory: a new start shows the live folder. */
-  version: Record<string, string>
-  setVersion: (sessionId: string, shown: string) => void
+  version: Record<string, VersionChoice>
+  setVersion: (sessionId: string, openedAt: string, shown: string) => void
   /** The preview address each mounted panel frames, by session: what Open in browser opens
    *  for an artefact of this Mac (PRDCT-4494). Set by the frame, cleared when it unmounts. */
   previewUrl: Record<string, string>
@@ -123,8 +124,8 @@ export const useArtefactStore = create<ArtefactState>((set, get) => {
     setSplit: (sessionId, value) =>
       keep({ split: { ...get().split, [sessionId]: clampSplit(value) } }),
     version: {},
-    setVersion: (sessionId, shown) =>
-      set((s) => ({ version: { ...s.version, [sessionId]: shown } })),
+    setVersion: (sessionId, openedAt, shown) =>
+      set((s) => ({ version: { ...s.version, [sessionId]: { openedAt, shown } } })),
     previewUrl: {},
     setPreviewUrl: (sessionId, url) =>
       set((s) => {

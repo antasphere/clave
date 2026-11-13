@@ -23,6 +23,18 @@ export function inBrowser(url: string, shown: string): string {
   return page.toString()
 }
 
+/** A version chosen in the bar, for the open of the artefact it was chosen on. */
+export interface VersionChoice {
+  openedAt: string
+  shown: string
+}
+
+/** What the panel shows: the choice made for this open, else the live folder. A new open by
+ *  the agent (another folder, or the same one again) starts on the live folder (verifier
+ *  round 4, finding 3: a number kept per session pointed at another artefact's versions). */
+export const shownFor = (choice: VersionChoice | undefined, openedAt: string): string =>
+  choice && choice.openedAt === openedAt ? choice.shown : 'live'
+
 /** What the bar's chip says for what the panel shows. */
 export const versionLabel = (shown: string): string =>
   shown === 'live' ? 'Live' : shown === 'latest' ? 'Latest' : `v${shown}`

@@ -79,6 +79,7 @@ function fixture(): Fixture {
       hold: localRecord('hold', { url: 'http://127.0.0.1:5555/', holdId: 'lh', ttlMs: 90_000 }),
       release: localRecord('release', undefined),
       saveVersion: localRecord('saveVersion', { version: 1, created: true }),
+      versions: localRecord('versions', { versions: [] }),
       close: localRecord('close', undefined),
       onChanged: (cb: (change: { sessionId: string; artefact: Artefact | null }) => void) => {
         localChanged.add(cb)
@@ -133,6 +134,7 @@ function fixture(): Fixture {
             ),
             release: record('release', () => undefined),
             saveVersion: record('saveVersion', () => ({ version: 3, created: true })),
+            versions: record('versions', () => ({ versions: [] })),
             close: record('close', () => undefined),
             slidelessState: record('slidelessState', () => ({
               phase: 'missing',
@@ -248,9 +250,11 @@ describe('a connected server’s artefacts', () => {
 
   it('routes a version and a close to the server by the key', async () => {
     await expect(h.api.artefacts.saveVersion(X)).resolves.toEqual({ version: 3, created: true })
+    await expect(h.api.artefacts.versions(X)).resolves.toEqual({ versions: [] })
     await h.api.artefacts.close(sessionKey({ serverId: 'y', sessionId: 'wire-2' }))
     expect(h.calls).toEqual([
       { owner: 'x', method: 'saveVersion', args: ['wire-1'] },
+      { owner: 'x', method: 'versions', args: ['wire-1'] },
       { owner: 'y', method: 'close', args: ['wire-2'] }
     ])
   })

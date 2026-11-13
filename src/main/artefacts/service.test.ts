@@ -52,6 +52,11 @@ if (args[0] === 'snapshot') {
 const port = Number(args[args.indexOf('--port') + 1])
 let version = 0
 createServer((req, res) => {
+  if (req.url === '/__slideless/versions' && req.method === 'GET') {
+    say('list ' + args[1])
+    res.writeHead(200, { 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ versions: Array.from({ length: version }, (_, i) => ({ version: i + 1, createdAt: '2026-11-13T10:00:00.000Z', fileCount: 1 })) }))
+  }
   if (req.url === '/__slideless/snapshot' && req.method === 'POST') {
     if (req.headers['x-slideless'] !== 'snapshot') { res.writeHead(403); return res.end('{}') }
     version++
@@ -479,6 +484,24 @@ describe('a version at each finished turn', () => {
       .poll(calls, { timeout: 5_000 })
       .toEqual([`command ${deck}`, `dev ${deck}`, `route ${deck}`])
     expect(await service.saveVersion('s1')).toEqual({ version: 2, created: true })
+  })
+
+  it('lists the versions from the running preview, says when none runs, and is refused without a link', async () => {
+    const { service, deck, calls } = setup()
+    await expect(service.versions('s1')).rejects.toThrow()
+    await service.open('s1', deck)
+    expect(await service.versions('s1')).toEqual({
+      versions: [],
+      error: 'The preview of this artefact is not running.'
+    })
+    expect(calls()).toEqual([])
+    await service.hold('s1')
+    await expect.poll(calls, { timeout: 5_000 }).toEqual([`dev ${deck}`])
+    await service.saveVersion('s1')
+    expect(await service.versions('s1')).toEqual({
+      versions: [{ version: 1, createdAt: '2026-11-13T10:00:00.000Z', fileCount: 1 }]
+    })
+    expect(calls()).toEqual([`dev ${deck}`, `route ${deck}`, `list ${deck}`])
   })
 
   it('saves nothing for a rest after a rest, a first state, or a session with no link', async () => {

@@ -3,7 +3,7 @@ import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { ArtefactVersions } from '@clave/contract/artefacts/model'
 import { useArtefactStore } from '../../store/artefact-store'
-import { versionLabel } from '../../lib/artefact-version'
+import { shownFor, versionLabel } from '../../lib/artefact-version'
 
 /** A version's time, short enough to sit on its row: 13 Nov 11:58. */
 const when = (iso: string): string => {
@@ -20,8 +20,15 @@ const when = (iso: string): string => {
  * server's preview keeps. It replaces Slideless's own bar, hidden in the
  * frame; the list is read again each time the menu opens and after a save.
  */
-export function ArtefactVersionChip({ sessionId }: { sessionId: string }): React.JSX.Element {
-  const shown = useArtefactStore((s) => s.version[sessionId] ?? 'live')
+export function ArtefactVersionChip({
+  sessionId,
+  openedAt
+}: {
+  sessionId: string
+  /** The open the choice belongs to: a new open starts on the live folder. */
+  openedAt: string
+}): React.JSX.Element {
+  const shown = useArtefactStore((s) => shownFor(s.version[sessionId], openedAt))
   const setVersion = useArtefactStore((s) => s.setVersion)
   const saved = useArtefactStore((s) => s.versionsSaved[sessionId] ?? 0)
   const [open, setOpen] = useState(false)
@@ -36,7 +43,7 @@ export function ArtefactVersionChip({ sessionId }: { sessionId: string }): React
   useEffect(() => read(), [read, saved])
   const versions = listed?.versions ?? []
   const latest = versions.at(-1)?.version
-  const choose = (next: string): void => setVersion(sessionId, next)
+  const choose = (next: string): void => setVersion(sessionId, openedAt, next)
   const row = (value: string, label: string, hint: string): React.JSX.Element => (
     <DropdownMenu.Item
       key={value}

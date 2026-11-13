@@ -25,6 +25,10 @@ const port = Number(args[args.indexOf('--port') + 1]);
 const store = args[args.indexOf('--store') + 1];
 let version = 0;
 http.createServer((req, res) => {
+  if (req.url === '/__slideless/versions' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ versions: Array.from({ length: version }, (_, i) => ({ version: i + 1, createdAt: '2026-11-13T10:00:00.000Z', fileCount: 2, entryPath: 'index.html' })) }));
+  }
   if (req.url === '/__slideless/snapshot' && req.method === 'POST') {
     if (req.headers['x-slideless'] !== 'snapshot') { res.writeHead(403); return res.end('{}'); }
     version++;
@@ -147,6 +151,17 @@ describe('artefact servers', () => {
     expect(await s.snapshot(deck)).toEqual({ version: 1, created: true })
     expect(await s.snapshot(deck)).toEqual({ version: 2, created: true })
     await expect(s.snapshot(join(deck, 'other'))).rejects.toThrow(/not being served/)
+  })
+
+  it('lists the versions through the dev server route, and refuses a target it does not serve', async () => {
+    const { deck, servers: s } = setup()
+    await s.serve(deck)
+    expect(await s.versions(deck)).toEqual({ versions: [] })
+    await s.snapshot(deck)
+    expect(await s.versions(deck)).toEqual({
+      versions: [{ version: 1, createdAt: '2026-11-13T10:00:00.000Z', fileCount: 2 }]
+    })
+    await expect(s.versions(join(deck, 'other'))).rejects.toThrow(/not being served/)
   })
 
   it('says why the CLI could not start, forgets the target, and reports no crash', async () => {

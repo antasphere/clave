@@ -27,7 +27,12 @@
 // (CLAVE_KEYCHAIN_FILE), so removing or signing in again to an account in a trial changes the
 // trial's copy and never the Mac's own. The file's password is kept in the login keychain.
 //
-// Ctrl-C here, or `npm run try -- --stop` from anywhere, ends the app, then the servers.
+// Ctrl-C here, or `npm run try -- --stop` from anywhere, ends the app, then the servers; a --stop
+// after the trial's own process died stops what it had started, from the pids it recorded.
+//
+// The trial window opens a DevTools port on the loopback for as long as it runs (the script drives
+// it: the server saved in the app, the workspace shown, the chat's tab selected). Any process of
+// this Mac can reach that port: a trial is for a developer's own machine.
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
@@ -100,11 +105,50 @@ function runningTrial() {
   return command.stdout?.includes('scripts/try.mjs') ? pid : null
 }
 
+/** The app's process group and the second server a trial recorded, when they outlived it. */
+async function stopLeftovers() {
+  const state = readJson(P.state) ?? {}
+  const left = []
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const groupUp = (pgid) => {
+    try {
+      process.kill(-pgid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (Number.isInteger(state.appGroup) && groupUp(state.appGroup)) {
+    process.kill(-state.appGroup, 'SIGTERM')
+    for (let i = 0; i < 60 && groupUp(state.appGroup); i++) await sleep(250)
+    if (groupUp(state.appGroup)) process.kill(-state.appGroup, 'SIGKILL')
+    left.push('the app')
+  }
+  if (Number.isInteger(state.serverPid)) {
+    const command = spawnSync('ps', ['-o', 'command=', '-p', String(state.serverPid)], {
+      encoding: 'utf-8'
+    }).stdout
+    if (command?.includes(P.server)) {
+      process.kill(state.serverPid, 'SIGTERM')
+      left.push('the trial server')
+    }
+  }
+  writePrivate(P.state, { ...state, appGroup: null, serverPid: null })
+  return left.join(' and ')
+}
+
 // ── --stop ──
 if (flag('stop')) {
   const pid = runningTrial()
   if (!pid) {
-    say('no trial of this checkout is running')
+    // The trial's own process may have died without its stop (a SIGKILL): what it
+    // started is stopped from the pids it recorded (verifier round 4, finding 4).
+    const left = await stopLeftovers()
+    say(
+      left
+        ? `stopped what an ended trial had left: ${left}`
+        : 'no trial of this checkout is running'
+    )
     process.exit(0)
   }
   process.kill(pid, 'SIGTERM')
@@ -504,11 +548,15 @@ async function stop(code) {
     if (second.exitCode === null && second.signalCode === null) second.kill('SIGKILL')
   }
   await own?.stop()
-  writePrivate(P.state, { ...readJson(P.state), pid: null })
+  // The app may have been started while this ran: stopped again, once it exists.
+  await stopApp()
+  writePrivate(P.state, { ...readJson(P.state), pid: null, appGroup: null, serverPid: null })
   process.exit(code)
 }
 process.on('SIGINT', () => void stop(0))
 process.on('SIGTERM', () => void stop(0))
+// Closing the terminal the trial runs in ends it the same way.
+process.on('SIGHUP', () => void stop(0))
 
 try {
   own = await startServerProcess({ repo: REPO, dataDir: P.mac, env })
@@ -537,6 +585,7 @@ try {
         openSync(path.join(P.logs, 'server.log'), 'a')
       ]
     })
+    writePrivate(P.state, { ...readJson(P.state), serverPid: second.pid })
     for (let i = 0; i < 120; i++) {
       const found = readServerDiscovery(P.server)
       if (found?.ok && found.pid === second.pid) break
@@ -564,6 +613,7 @@ try {
       env: { ...env, CLAVE_SERVER_URL: own.url, CLAVE_SERVER_TOKEN: own.token }
     }
   )
+  writePrivate(P.state, { ...readJson(P.state), appGroup: app.pid })
   app.once('exit', (code) => void stop(code ?? 0))
 
   const page = await theWindow(debugPort)

@@ -29,6 +29,7 @@ const api = {
     hold: recorded('hold', { holdId: 'h1', lease: 'l', url: 'u', ttlMs: 90_000 }),
     release: recorded('release', undefined),
     saveVersion: recorded('saveVersion', { version: 2, created: true }),
+    versions: recorded('versions', { versions: [] }),
     close: recorded('close', undefined),
     slidelessState: recorded('slidelessState', { phase: 'ready', version: '1', error: null }),
     installSlideless: recorded('installSlideless', {
@@ -73,6 +74,7 @@ describe('the artefacts over IPC', () => {
       version: 2,
       created: true
     })
+    await expect(invoke('artefacts:versions', 's1')).resolves.toEqual({ versions: [] })
     await invoke('artefacts:close', 's1')
     await expect(invoke('artefacts:slidelessState')).resolves.toMatchObject({ phase: 'ready' })
     await expect(invoke('artefacts:installSlideless')).resolves.toMatchObject({
@@ -84,6 +86,7 @@ describe('the artefacts over IPC', () => {
       { method: 'hold', args: ['s1', 'h1'] },
       { method: 'release', args: ['s1', 'h1'] },
       { method: 'saveVersion', args: ['s1'] },
+      { method: 'versions', args: ['s1'] },
       { method: 'close', args: ['s1'] },
       { method: 'slidelessState', args: [] },
       { method: 'installSlideless', args: [] }

@@ -24,6 +24,7 @@ import { GroupViewPanel } from './GroupViewPanel'
 import { SessionViewPanel } from './SessionViewPanel'
 import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
 import { settleOnReveal } from '../../lib/settle-on-reveal'
+import { nextKept, sameList, type KeptArtefacts } from '../../lib/kept-artefacts'
 
 /**
  * The ids this pane has shown at least once, in order of first appearance.
@@ -63,13 +64,13 @@ function useRecentlyShown(
   valid: (id: string) => boolean,
   limit: number
 ): string[] {
-  // Derived during render, as useEverShown above, for the same reason.
-  const [kept, setKept] = useState<string[]>([])
-  const next =
-    activeId && kept[0] !== activeId ? [activeId, ...kept.filter((id) => id !== activeId)] : kept
-  const live = next.filter(valid).slice(0, limit)
-  if (live.length !== kept.length || live.some((id, i) => id !== kept[i])) setKept(live)
-  return live
+  // Derived during render, as useEverShown above, for the same reason. The
+  // order drawn is the order first shown (kept-artefacts.ts): a frame moved in
+  // the page loads again.
+  const [state, setState] = useState<KeptArtefacts>({ kept: [], recent: [] })
+  const next = nextKept(state, activeId, valid, limit)
+  if (!sameList(next.kept, state.kept) || !sameList(next.recent, state.recent)) setState(next)
+  return next.kept
 }
 
 /** How many artefacts stay mounted while their sessions are not on screen. */

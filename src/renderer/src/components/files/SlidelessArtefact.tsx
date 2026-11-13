@@ -7,7 +7,7 @@ import { serverNameOf } from '../../lib/drop-refusal'
 import { startHoldLoop } from '../../lib/artefact-hold'
 import { useFileChanged } from '../../hooks/use-file-changed'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
-import { withVersion } from '../../lib/artefact-version'
+import { shownFor, withVersion } from '../../lib/artefact-version'
 
 /** How many times a minute the frame holds again a preview that died under it. */
 const RESTART_LIMIT = 3
@@ -112,7 +112,7 @@ export function SlidelessArtefact({
   const url = held?.openedAt === openedAt ? held.url : undefined
   // Slideless's own bar is hidden (`bar=0`): the version shown is chosen, and
   // a version saved, from Clave's bar above (PRDCT-4494); `v` is that choice.
-  const shown = useArtefactStore((s) => s.version[sessionId] ?? 'live')
+  const shown = useArtefactStore((s) => shownFor(s.version[sessionId], artefact.openedAt))
   const setPreviewUrl = useArtefactStore((s) => s.setPreviewUrl)
   const live = ready && !gaveUp ? (url ?? null) : null
   useEffect(() => {
