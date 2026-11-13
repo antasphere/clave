@@ -494,9 +494,10 @@ export async function run(t) {
     )
 
     // ── 18. The Mac's own output ──
+    // Bytes asked for too: a capture that read nothing would prove nothing.
     t.check(
       "18. the Mac's own output holds no key",
-      macStreams.length > 0 && !holdsKey(macOutput),
+      macStreams.length > 0 && macOutput.length > 0 && !holdsKey(macOutput),
       { streams: macStreams, bytes: macOutput.length, leaked: holdsKey(macOutput) }
     )
 

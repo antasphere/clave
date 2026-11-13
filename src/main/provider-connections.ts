@@ -119,6 +119,10 @@ export class ProviderConnectionsManager {
   private connections: StoredConnection[] | null = null
   private credentials: CredentialsFile | null = null
   private listeners = new Set<ChangeListener>()
+  /** A key save and a remove of the same connection never interleave: a
+   *  replace whose seal finishes while a remove waited on its discard would
+   *  otherwise leave the new key behind (verifier round 2). */
+  private queues = new Map<string, Promise<unknown>>()
 
   constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
 
@@ -243,8 +247,31 @@ export class ProviderConnectionsManager {
     return this.view(stored)
   }
 
+  /** Runs `op` once every earlier key operation of the same connection has
+   *  settled, whatever its outcome. */
+  private serialized<T>(id: string, op: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(id) ?? Promise.resolve()
+    const run = previous.then(
+      () => op(),
+      () => op()
+    )
+    const tail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    this.queues.set(id, tail)
+    void tail.then(() => {
+      if (this.queues.get(id) === tail) this.queues.delete(id)
+    })
+    return run
+  }
+
   /** Removing a connection forgets its key with it. */
-  async remove(id: string): Promise<boolean> {
+  remove(id: string): Promise<boolean> {
+    return this.serialized(id, () => this.doRemove(id))
+  }
+
+  private async doRemove(id: string): Promise<boolean> {
     const connections = this.loadConnections()
     if (!connections.some((c) => c.id === id)) return false
     const credentials = this.loadCredentials()
@@ -266,7 +293,11 @@ export class ProviderConnectionsManager {
   /** Store a pasted key, sealed by the secret port. Throws when there is no
    *  key, when the connection takes none, or when the port cannot seal
    *  (never falls back to plaintext). */
-  async setKey(id: string, apiKey: string): Promise<ProviderConnection> {
+  setKey(id: string, apiKey: string): Promise<ProviderConnection> {
+    return this.serialized(id, () => this.doSetKey(id, apiKey))
+  }
+
+  private async doSetKey(id: string, apiKey: string): Promise<ProviderConnection> {
     const trimmed = apiKey.trim()
     const stored = this.loadConnections().find((c) => c.id === id)
     if (!stored) throw new Error('Unknown provider connection')

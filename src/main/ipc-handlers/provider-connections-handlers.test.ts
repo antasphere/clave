@@ -102,7 +102,30 @@ describe('the provider connection handlers', () => {
     const spies = (['log', 'error', 'warn', 'info', 'debug'] as const).map((level) =>
       vi.spyOn(console, level).mockImplementation(() => {})
     )
-    await call('provider-connections:set-key', 'c1', KEY)
+    // The process streams too: a direct write would pass the console spies.
+    const streams = [
+      vi.spyOn(process.stdout, 'write').mockImplementation(() => true),
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    ]
+    const written: unknown[] = []
+    try {
+      await call('provider-connections:set-key', 'c1', KEY)
+    } finally {
+      // Read before the restore, which clears the recorded calls.
+      for (const stream of streams) {
+        for (const [chunk] of stream.mock.calls) written.push(chunk)
+        stream.mockRestore()
+      }
+    }
+    for (const chunk of written) {
+      const text = Buffer.isBuffer(chunk)
+        ? chunk.toString('utf-8')
+        : chunk instanceof Uint8Array
+          ? Buffer.from(chunk).toString('utf-8')
+          : String(chunk)
+      // Compared as a boolean, so a failure never prints the key.
+      expect(text.includes(KEY)).toBe(false)
+    }
     for (const spy of spies) {
       for (const args of spy.mock.calls) {
         expect(

@@ -243,16 +243,92 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       })
       const saving = gated.setKey(work.id, KEY)
       saving.catch(() => {})
-      // Let the save run up to its seal before the remove lands.
+      // Let the save run up to its seal before the remove lands. The remove
+      // waits for the save (one connection's key operations run one after
+      // the other), so it is started, the seal released, then both awaited.
       await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(await gated.remove(work.id)).toBe(true)
+      const removing = gated.remove(work.id)
       release()
-      await expect(saving).rejects.toThrow(/No such connection/)
+      await saving
+      expect(await removing).toBe(true)
       expect(gated.list()).toEqual([])
+      expect(await gated.openKey(work.id)).toBeUndefined()
       expect(new ProviderConnectionsManager(ports).list()).toEqual([])
       const onDisk = JSON.parse(fs.readFileSync(credentialsPath(), 'utf-8'))
       expect(Object.keys(onDisk)).not.toContain(work.id)
       expect(fs.readFileSync(credentialsPath(), 'utf-8')).not.toContain(KEY)
+      if (standalone) expect(security().items.size).toBe(0)
+    })
+
+    it('a replace that finishes while a remove waits forgets the new key too', async () => {
+      const work = manager.add({ company: 'moonshot' })
+      await manager.setKey(work.id, KEY)
+      // Gates on both seal and discard, each released by hand.
+      const sealGates: Array<() => void> = []
+      const discardGates: Array<() => void> = []
+      const sealedByTheSave: string[] = []
+      const discarded: string[] = []
+      const gated = new ProviderConnectionsManager({
+        ...ports,
+        secrets: {
+          available: () => ports.secrets.available(),
+          open: (sealed) => ports.secrets.open(sealed),
+          seal: async (plain) => {
+            await new Promise<void>((resolve) => sealGates.push(resolve))
+            const sealed = await ports.secrets.seal(plain)
+            sealedByTheSave.push(sealed)
+            return sealed
+          },
+          discard: async (sealed) => {
+            await new Promise<void>((resolve) => discardGates.push(resolve))
+            discarded.push(sealed)
+            return ports.secrets.discard(sealed)
+          }
+        }
+      })
+      const settledOrder: string[] = []
+      let saveError: unknown = null
+      const saving = gated.setKey(work.id, OTHER_KEY).then(
+        () => settledOrder.push('save'),
+        (error) => {
+          saveError = error
+          settledOrder.push('save')
+        }
+      )
+      const removing = gated.remove(work.id).then((removed) => {
+        settledOrder.push('remove')
+        return removed
+      })
+      const settle = async (): Promise<void> => {
+        for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      await settle()
+      // The seal first, then the discards, until both operations settle.
+      for (let round = 0; round < 10 && settledOrder.length < 2; round++) {
+        for (const release of sealGates.splice(0)) release()
+        await settle()
+        for (const release of discardGates.splice(0)) release()
+        await settle()
+      }
+      await saving
+      expect(await removing).toBe(true)
+      expect(settledOrder).toHaveLength(2)
+
+      if (saveError === null) {
+        // The save ran first: the remove saw its key and forgot it.
+        expect(sealedByTheSave).toHaveLength(1)
+        // Compared as a boolean, so a failure never prints a sealed value.
+        expect(discarded.includes(sealedByTheSave[0])).toBe(true)
+      } else {
+        // The remove ran first: the save found no connection.
+        expect(String(saveError)).toMatch(/No such connection|Unknown provider connection/)
+      }
+      expect(gated.list()).toEqual([])
+      expect(new ProviderConnectionsManager(ports).list()).toEqual([])
+      const onDisk = JSON.parse(fs.readFileSync(credentialsPath(), 'utf-8'))
+      expect(Object.keys(onDisk)).not.toContain(work.id)
+      expect(await gated.openKey(work.id)).toBeUndefined()
+      expect(await new ProviderConnectionsManager(ports).openKey(work.id)).toBeUndefined()
       if (standalone) expect(security().items.size).toBe(0)
     })
 
