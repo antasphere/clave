@@ -111,11 +111,17 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
   const label = 'Default model'
   const description = `What a click on ${harness.name} in the launcher runs; hovering the row offers the others.`
 
-  if (pool === null) {
+  // Pi and OpenCode run on a provider's stored key only when the launcher
+  // names one (PRDCT-4496): their default is their own configuration's.
+  if (!isAccountPoolId(pool)) {
     return (
       <SettingsRow
         label={label}
-        description={`${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`}
+        description={
+          pool === null
+            ? `${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`
+            : `${harness.name} runs the model its own configuration names; a model of a stored connection is picked in the launcher.`
+        }
       />
     )
   }

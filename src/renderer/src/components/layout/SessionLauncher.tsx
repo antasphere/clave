@@ -27,7 +27,11 @@ import {
   useModelsCatalogStore,
   useUsageLineStore
 } from '../../store/models-catalog-store'
-import { PROVIDER_COMPANY_BY_ID } from '../../../../main/models-catalog-overlay'
+import { PROVIDER_LISTING_FACTS } from '../../../../main/models-catalog-overlay'
+import {
+  startProviderConnectionsEvents,
+  useProviderConnectionsStore
+} from '../../store/provider-connections-store'
 import {
   connectionsServingModel,
   modelsForProviderConnections
@@ -205,6 +209,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const usageLines = useUsageLineStore((s) => s.byConnection)
   void modelsCatalogs
   void usageLines
+  // Lane B's stored connections of each machine (PRDCT-4496), read at render
+  // by the sources' `providerConnections`.
+  const providerConnectionsByMachine = useProviderConnectionsStore((s) => s.byMachine)
+  void providerConnectionsByMachine
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const launchProfilePreferences = useLaunchProfileStore((s) => s.preferences)
   void launchProfilePreferences
@@ -295,6 +303,15 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     startServerSettingsEvents()
     for (const serverId of serversKey.split('\u0000')) void loadServerSettings(serverId)
   }, [serversKey])
+  // Lane C of the harness wave (PRDCT-4496): the stored provider connections
+  // of this Mac and of each server the menu draws, read once each and kept
+  // current by their pushes (`startProviderConnectionsEvents`).
+  useEffect(() => {
+    startProviderConnectionsEvents()
+    const store = useProviderConnectionsStore.getState()
+    for (const machine of [LOCAL_SERVER_ID, ...(serversKey ? serversKey.split('\u0000') : [])])
+      if (!store.byMachine[machine]) void store.load(machine)
+  }, [serversKey])
 
   const AgentLogo = AGENT_LOGOS[setup.kind]
   const setupFamily: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
@@ -302,19 +319,24 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   // else the pool's suggestion for the setup's model. Named only when the
   // pool has a choice to make.
   const setupPool = firstPoolOf(HARNESS_BY_ID[setupFamily])
+  // A Pi or OpenCode setup names its stored provider connection (PRDCT-4496).
   const connectionLabel =
-    isAccountPoolId(setupPool) && topSource.accounts(setupPool).length > 1
-      ? (() => {
-          const named = setupPool === 'claude' ? setup.claudeProfileId : setup.codexAccountId
-          const connections = topSource.connections(setupPool, setup.model)
-          return (
-            connections.find((c) => (named ? c.id === named : c.suggested)) ??
-            (named
-              ? undefined
-              : connections.find((c) => c.id === topSource.selectedAccountId(setupPool)))
-          )?.label
-        })()
-      : undefined
+    setup.kind === 'pi' || setup.kind === 'opencode'
+      ? setup.connectionId
+        ? setup.connectionLabel
+        : undefined
+      : isAccountPoolId(setupPool) && topSource.accounts(setupPool).length > 1
+        ? (() => {
+            const named = setupPool === 'claude' ? setup.claudeProfileId : setup.codexAccountId
+            const connections = topSource.connections(setupPool, setup.model)
+            return (
+              connections.find((c) => (named ? c.id === named : c.suggested)) ??
+              (named
+                ? undefined
+                : connections.find((c) => c.id === topSource.selectedAccountId(setupPool)))
+            )?.label
+          })()
+        : undefined
 
   /** Opening measures the agent button so the menu hangs off its left edge,
    *  not the caret's — see MENU_ICON_INSET. */
@@ -361,7 +383,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       const providerIds = [
         ...new Set(
           connections
-            .map((c) => PROVIDER_COMPANY_BY_ID[c.company]?.catalog)
+            .map((c) => PROVIDER_LISTING_FACTS[c.company]?.catalog)
             .filter((id): id is string => !!id)
         )
       ]
@@ -460,7 +482,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     return modelsForProviderConnections(
       source.catalog(),
       source.providerConnections(harness.id),
-      PROVIDER_COMPANY_BY_ID,
+      PROVIDER_LISTING_FACTS,
       pinned
     )
   }
@@ -477,7 +499,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       ? connectionsServingModel(
           source.catalog(),
           source.providerConnections(harness.id),
-          PROVIDER_COMPANY_BY_ID,
+          PROVIDER_LISTING_FACTS,
           model
         )
       : []

@@ -17,6 +17,7 @@ import {
 } from './provider-usage'
 // Lane C of the harness wave (PRDCT-4496): the line's text, from its new home
 import { usageLineText as contractUsageLineText } from '@clave/contract/settings/provider-usage-view'
+import { PROVIDER_COMPANY_IDS } from '@clave/contract/settings/provider-catalogue'
 
 const VALUE = 'sk-made-up-0123456789abcdef'
 const MALFORMED: unknown[] = [null, 'not a body', { something: 'else' }]
@@ -140,7 +141,10 @@ describe('the roads', () => {
       .filter(([, entry]) => 'url' in entry)
       .map(([id]) => id)
       .sort()
-    expect(roads).toEqual(['deepseek', 'openrouter', 'vercel'])
+    expect(roads).toEqual(['deepseek', 'openrouter', 'vercel-ai-gateway'])
+    // Keyed on lane B's ten ids, every one of them.
+    expect(Object.keys(PROVIDER_USAGE_ROADS).sort()).toEqual([...PROVIDER_COMPANY_IDS].sort())
+    expect(PROVIDER_USAGE_ROADS.generic).toEqual({ kind: 'payPerUse' })
     expect(PROVIDER_USAGE_ROADS.minimax).toEqual({ kind: 'plan' })
     expect(PROVIDER_USAGE_ROADS.mistral).toEqual({ kind: 'payPerUse' })
     expect(PROVIDER_USAGE_ROADS.ollama).toEqual({ kind: 'local' })
@@ -173,7 +177,7 @@ describe('ProviderUsage.read', () => {
     const { usage, fetch, openValue } = setup()
     expect(await usage.read({ id: 'k', company: 'moonshot' })).toEqual({ kind: 'plan' })
     expect(await usage.read({ id: 'o', company: 'ollama' })).toEqual({ kind: 'local' })
-    expect(await usage.read({ id: 'c', company: 'custom' })).toEqual({ kind: 'payPerUse' })
+    expect(await usage.read({ id: 'c', company: 'generic' })).toEqual({ kind: 'payPerUse' })
     expect(fetch).not.toHaveBeenCalled()
     expect(openValue).not.toHaveBeenCalled()
   })

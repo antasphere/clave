@@ -13,8 +13,13 @@ import type {
 import {
   launchModelsOf,
   localLaunchOptionsInput,
+  poolConnections,
   serverLaunchOptionsInput
 } from './launch-options-input'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import type { ProviderCompanyId } from '@clave/contract/settings/provider-catalogue'
+import type { ProviderConnection } from '../../../preload/index.d'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 
 // The session store reads localStorage at import; nothing here touches it.
 vi.mock('../store/session-store', () => ({ useSessionStore: {} }))
@@ -189,6 +194,88 @@ describe('serverLaunchOptionsInput', () => {
     ).harnesses.find((h) => h.id === 'claude')!
     expect(withRow.defaultModel).toBeNull()
     expect(withRow.launcherModel).toBe('opus')
+  })
+})
+
+describe("Pi's and OpenCode's provider pools (PRDCT-4496)", () => {
+  const view = (
+    id: string,
+    company: ProviderCompanyId,
+    over: Partial<ProviderConnection> = {}
+  ): ProviderConnection => ({
+    id,
+    label: `${id} label`,
+    company,
+    kind: 'key',
+    pool: company,
+    endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+    needsKey: true,
+    hasKey: true,
+    keySetAt: 1,
+    createdAt: 1,
+    ...over
+  })
+
+  it("lists each machine's stored connections under their company's pool, from lane B's store", () => {
+    useProviderConnectionsStore.setState({
+      byMachine: {
+        [LOCAL_SERVER_ID]: {
+          connections: [
+            view('mac-kimi', 'moonshot'),
+            view('mac-ds', 'deepseek', { hasKey: false, keySetAt: null })
+          ],
+          loading: false,
+          error: null
+        },
+        srv: {
+          connections: [view('srv-ollama', 'ollama', { needsKey: false, hasKey: false })],
+          loading: false,
+          error: null
+        }
+      }
+    })
+    const before = local.sources
+    try {
+      local.sources = {
+        claude: [],
+        codex: [],
+        claudeUsage: {},
+        codexUsage: {},
+        servers: {}
+      } satisfies AccountSources
+      const mac = launchOptions(
+        localLaunchOptionsInput({ ...facts, agents: [], preferRecommended: false })
+      )
+      for (const id of ['pi', 'opencode']) {
+        const h = mac.harnesses.find((x) => x.id === id)!
+        expect(h.connections.map((c) => [c.pool, c.id, c.usable])).toEqual([
+          ['moonshot', 'mac-kimi', true],
+          ['deepseek', 'mac-ds', false]
+        ])
+        expect(h.connectionNote).toBeNull()
+      }
+      const server = launchOptions(serverLaunchOptionsInput('srv', 'Studio box', settings, facts))
+      expect(
+        server.harnesses.find((x) => x.id === 'pi')!.connections.map((c) => [c.pool, c.id])
+      ).toEqual([['ollama', 'srv-ollama']])
+      // The pool answers through the one shape of a connection.
+      expect(poolConnections(local.sources as AccountSources, 'srv', 'ollama')).toEqual([
+        {
+          id: 'srv-ollama',
+          label: 'srv-ollama label',
+          pool: 'ollama',
+          company: 'ollama',
+          kind: 'key',
+          usable: true,
+          reportsUsage: false,
+          usage: undefined
+        }
+      ])
+      expect(poolConnections(local.sources as AccountSources, 'srv', 'moonshot')).toEqual([])
+    } finally {
+      local.sources = before
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
   })
 })
 

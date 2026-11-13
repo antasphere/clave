@@ -56,9 +56,15 @@ const deepseek: ConnectionForSpawn = {
   id: 'conn-1',
   label: 'DeepSeek',
   company: 'deepseek',
+  endpoint: { wireFormat: 'openai-chat', baseUrl: 'https://api.deepseek.com' },
   value: VALUE
 }
-const alibaba: ConnectionForSpawn = { ...deepseek, label: 'Alibaba', company: 'alibaba' }
+const alibaba: ConnectionForSpawn = {
+  ...deepseek,
+  label: 'Alibaba',
+  company: 'alibaba',
+  endpoint: { wireFormat: 'openai-chat', baseUrl: 'https://coding-intl.dashscope.aliyuncs.com/v1' }
+}
 
 describe('providerInjectionForSpawn', () => {
   it('gives nothing to a kind other than Pi or OpenCode, and never opens a connection', async () => {
@@ -80,6 +86,34 @@ describe('providerInjectionForSpawn', () => {
     await expect(
       providerInjectionForSpawn('opencode', { connectionId: 'gone' }, { ...d.all, source: null })
     ).rejects.toThrow('The selected connection is no longer available.')
+  })
+
+  it('refuses a connection that takes a key and has none, on a road and on a generic one', async () => {
+    const generic: ConnectionForSpawn = {
+      ...alibaba,
+      company: 'generic',
+      endpoint: { wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }
+    }
+    const d = deps({ road: { ...deepseek, value: null }, generic: { ...generic, value: null } })
+    for (const kind of ['pi', 'opencode'] as const)
+      for (const id of ['road', 'generic'])
+        await expect(providerInjectionForSpawn(kind, { connectionId: id }, d.all)).rejects.toThrow(
+          'The connection has no key yet.'
+        )
+    expect(d.sync).not.toHaveBeenCalled()
+  })
+
+  it('starts Ollama with no value: it takes none', async () => {
+    const ollama: ConnectionForSpawn = {
+      id: 'conn-1',
+      label: 'Ollama',
+      company: 'ollama',
+      endpoint: { wireFormat: 'openai-chat', baseUrl: 'http://localhost:11434/v1' },
+      value: null
+    }
+    const d = deps({ 'conn-1': ollama })
+    const out = await providerInjectionForSpawn('opencode', { connectionId: 'conn-1' }, d.all)
+    expect(out.providerEnv?.CLAVE_CONNECTION_API_KEY).toBe('ollama')
   })
 
   it('a Pi connection with a road: its variable, its provider, its own directory', async () => {

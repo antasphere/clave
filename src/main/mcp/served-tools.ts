@@ -48,6 +48,7 @@ import {
   type LaunchOptions
 } from '../../shared/launch-options'
 import type { LaunchProfile } from '../../shared/agent-launch'
+import { isAccountPoolId, type ConnectionPoolId } from '../../shared/connection'
 import { resolveProfileRef } from '../../shared/open-session-modes'
 
 export {
@@ -475,11 +476,16 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
     models: (id) => models.get(id) ?? 'unavailable',
     harnessSettings: shell.harnessSettings?.() ?? {},
     interactionMode: shell.interactionMode?.() ?? DEFAULT_INTERACTION_MODE,
-    connections: (pool) => shell.accounts(pool as 'claude' | 'codex'),
-    selectedConnectionId: (pool) => shell.selectedAccountId(pool as 'claude' | 'codex'),
+    // The account pools only: this road reads no provider pool's stored
+    // connections (PRDCT-4496; the window's and the daemon's roads do).
+    connections: (pool) => (isAccountPoolId(pool) ? shell.accounts(pool) : []),
+    selectedConnectionId: (pool) =>
+      isAccountPoolId(pool) ? shell.selectedAccountId(pool) : undefined,
     preferRecommended: shell.useRecommendedAccount?.() ?? false,
     launchModel: (pool, profileId) =>
-      shell.launchModel?.(pool as 'claude' | 'codex', profileId, workspaceId),
+      isAccountPoolId(pool as ConnectionPoolId)
+        ? shell.launchModel?.(pool as 'claude' | 'codex', profileId, workspaceId)
+        : undefined,
     now: Date.now()
   })
 }

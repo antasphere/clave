@@ -35,7 +35,7 @@ import {
   SPAWN_PERMISSION_MODES,
   launchModeFields
 } from '../../shared/runtime-choices'
-import { launchOptions, poolsOf } from '../../shared/launch-options'
+import { accountPoolsOf, launchOptions } from '../../shared/launch-options'
 import { firstPoolOf, isAccountPoolId } from '../../shared/connection'
 import { pickAccount } from '../../shared/account-pool'
 import { accountRefusal, openFormOf, resolveLaunch, type LaunchRequest } from '../routines/launch'
@@ -194,7 +194,8 @@ const ALL_HARNESSES = HARNESSES.map((h) => `${h.id} (${h.name})`).join(', ')
 const CHAT_HARNESSES = namesWhere((id) => HARNESS_BY_ID[id].chatAdapterId !== null)
 const MODEL_HARNESSES = namesWhere((id) => HARNESS_BY_ID[id].takesModel)
 const DANGEROUS_HARNESSES = namesWhere((id) => DANGEROUS_MODE_FAMILIES.has(id))
-const POOLED_HARNESSES = namesWhere((id) => poolsOf(HARNESS_BY_ID[id]).length > 0)
+// The account pools only: a provider pool's connection is never named by an account (PRDCT-4496).
+const POOLED_HARNESSES = namesWhere((id) => accountPoolsOf(HARNESS_BY_ID[id]).length > 0)
 /** The effort and the permission mode follow the launch fields rule (`launchModeFields`). */
 const EFFORT_HARNESSES = namesWhere((id) => id === 'claude' || id === 'codex')
 const CLAUDE_NAME = HARNESS_BY_ID.claude.name

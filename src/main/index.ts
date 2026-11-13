@@ -94,6 +94,8 @@ import { shellPlugins } from './plugins/shell-plugins'
 // ── ADR 0004: the routines, the shell's own service in-process (routines/shell-routines.ts) ──
 import { installRoutinesIpc, shellRoutines } from './routines/shell-routines'
 import { waitForMcpRuntime } from './mcp/mcp-runtime'
+// Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+import { wireProviderConnections } from './provider-injection-wiring'
 
 // The server to attach to, if any: ONE decision for the whole shell, taken
 // off the environment and the command line in `server-launch.ts` (the
@@ -687,6 +689,8 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers({ onChanged: () => buildAppMenu({ openWindow }) })
+  // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+  wireProviderConnections()
   registerWindowHandlers({ openWindow })
   // ── ADR 0004: the routines' IPC arm, the shell's own service in-process only ──
   installRoutinesIpc(serverLaunch.mode === 'in-process' ? shellRoutines() : null)

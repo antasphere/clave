@@ -1,4 +1,10 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import {
+  ensureUsageLine,
+  usageLineTextFor,
+  useUsageLineStore
+} from '../../store/models-catalog-store'
 import * as DropdownMenuPrimitive from '@clave/ui/primitives/dropdown-menu'
 import {
   ArrowTopRightOnSquareIcon,
@@ -53,6 +59,38 @@ function hostOf(url: string): string | null {
 function keyStateOf(connection: ProviderConnection): string {
   if (!connection.needsKey) return 'No key needed'
   return connection.hasKey ? 'Key stored' : 'No key yet'
+}
+
+/** Reads the usage line of every connection that can be read (its key
+ *  stored, or none needed) on `machine`, and subscribes the caller to the
+ *  lines. A key set or replaced since the last read is read again at once. */
+function useUsageLines(machine: string, connections: readonly ProviderConnection[]): void {
+  useUsageLineStore((s) => s.byConnection)
+  const readable = connections
+    .filter((c) => c.hasKey || !c.needsKey)
+    .map((c) => `${c.id}\u0001${c.keySetAt ?? ''}`)
+    .join('\u0000')
+  const seen = useRef(new Map<string, string>())
+  useEffect(() => {
+    if (!readable) return
+    const api = window.electronAPI
+    for (const entry of readable.split('\u0000')) {
+      const [connectionId, setAt] = entry.split('\u0001')
+      const seenKey = `${machine}\u0000${connectionId}`
+      const before = seen.current.get(seenKey)
+      seen.current.set(seenKey, setAt)
+      const force = before !== undefined && before !== setAt
+      void ensureUsageLine(
+        machine,
+        connectionId,
+        () =>
+          machine === LOCAL_SERVER_ID
+            ? api.providerUsageRead({ connectionId, force })
+            : api.fleetProviderUsage(machine, { connectionId, force }),
+        { force }
+      )
+    }
+  }, [machine, readable])
 }
 
 function useMachine(machine: string): MachineProviderConnections {
@@ -159,10 +197,13 @@ function KeyForm({
 function ConnectionRow({
   machine,
   connection,
+  usage,
   onKey
 }: {
   machine: string
   connection: ProviderConnection
+  /** Its usage line (PRDCT-4496), or null while it is not read. */
+  usage: string | null
   onKey: () => void
 }): ReactElement {
   const rename = useProviderConnectionsStore((s) => s.rename)
@@ -208,6 +249,11 @@ function ConnectionRow({
             {keyStateOf(connection)}
           </span>
         </div>
+        {usage && (
+          <p className="settings-row-description" data-provider-connection-usage={connection.id}>
+            {usage}
+          </p>
+        )}
         {host && (
           <div className="settings-row-tags">
             <span className="badge badge-muted">{host}</span>
@@ -439,6 +485,9 @@ export function ProviderConnectionsSections({
   useEffect(() => {
     void load(machine)
   }, [machine, load])
+  // Lane C of the harness wave (PRDCT-4496): each connection's usage line,
+  // read when the section shows it and again, forced, once its key is set.
+  useUsageLines(machine, state.connections)
   // A new pick closes the key form (derived during render, the
   // React-sanctioned shape) and clears the last sentence, which belonged to
   // another form.
@@ -477,6 +526,11 @@ export function ProviderConnectionsSections({
                   <ConnectionRow
                     machine={machine}
                     connection={connection}
+                    usage={
+                      connection.hasKey || !connection.needsKey
+                        ? usageLineTextFor(machine, connection.id)
+                        : null
+                    }
                     onKey={() => {
                       clearError(machine)
                       setKeyFor(connection.id)

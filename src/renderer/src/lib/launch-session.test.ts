@@ -74,8 +74,12 @@ import {
   launchSession,
   providerConnectionFields,
   setupSpawnFlags,
-  transportProfileFor
+  transportProfileFor,
+  withoutGoneConnection
 } from './launch-session'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
+import type { AgentSetup } from '../store/launch-prefs'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { useLaunchProfileStore } from '../store/launch-profile-store'
 import { DEFAULT_LAUNCH_PROFILE_PREFERENCES } from '../../../shared/agent-launch'
@@ -358,6 +362,60 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     expect(
       providerConnectionFields({ kind: 'claude', dangerousMode: false, connectionId: 'c1' })
     ).toEqual({})
+  })
+
+  it('drops a remembered connection the machine no longer stores, with its model, before the spawn (PRDCT-4496)', async () => {
+    const fleetProviderConnections = vi.fn(async () => [
+      { id: 'c-kept', label: 'Kept', company: 'deepseek', needsKey: true, hasKey: true }
+    ])
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn, fleetProviderConnections } })
+    f.spawn.mockResolvedValue({ id: 'new', cwd: '/private/triage', folderName: 'triage' })
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    const setup = (connectionId: string): AgentSetup => ({
+      kind: 'pi',
+      dangerousMode: false,
+      model: 'deepseek-chat',
+      connectionId,
+      connectionLabel: 'Named'
+    })
+    await launchSession({ ...request, setup: setup('c-gone'), remember: true, throwOnError: true })
+    // The list was read from the machine the launch runs on, once.
+    expect(fleetProviderConnections).toHaveBeenCalledWith(LOCAL_SERVER_ID)
+    const dropped = f.spawn.mock.calls[0][1]
+    expect(dropped).not.toHaveProperty('connectionId')
+    expect(dropped).not.toHaveProperty('connectionLabel')
+    expect(dropped).not.toHaveProperty('model')
+    // What is remembered is the setup without it, so the button never replays it.
+    expect(f.remember.mock.calls[0][1]).toEqual({ kind: 'pi', dangerousMode: false })
+    // A connection still stored goes out with its model; the list is not read again.
+    await launchSession({ ...request, setup: setup('c-kept'), throwOnError: true })
+    expect(f.spawn.mock.calls[1][1]).toMatchObject({
+      connectionId: 'c-kept',
+      model: 'deepseek-chat'
+    })
+    expect(fleetProviderConnections).toHaveBeenCalledTimes(1)
+    useProviderConnectionsStore.setState({ byMachine: {} })
+  })
+
+  it('keeps the remembered connection when the machine’s list could not be read: the spawn says why', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        spawnSession: f.spawn,
+        fleetProviderConnections: vi.fn(async () => {
+          throw new Error('unreachable')
+        })
+      }
+    })
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    const kept = await withoutGoneConnection(
+      { kind: 'opencode', dangerousMode: false, model: 'm', connectionId: 'c1' },
+      LOCAL_SERVER_ID
+    )
+    expect(kept).toMatchObject({ connectionId: 'c1', model: 'm' })
+    // Another harness, or no connection: untouched and nothing read.
+    const claude: AgentSetup = { kind: 'claude', dangerousMode: false, connectionId: 'c1' }
+    expect(await withoutGoneConnection(claude, LOCAL_SERVER_ID)).toBe(claude)
+    useProviderConnectionsStore.setState({ byMachine: {} })
   })
 
   it('rejects a different account from the existing pool helper before any spawn', async () => {

@@ -30,7 +30,11 @@ import type {
   PooledConnection
 } from '../../../shared/launch-options'
 import { modelsForProviderConnections } from '../../../shared/launch-models'
-import { PROVIDER_COMPANY_BY_ID } from '../../../main/models-catalog-overlay'
+import { PROVIDER_LISTING_FACTS } from '../../../main/models-catalog-overlay'
+import { isAccountPoolId, isConnectionPoolId } from '../../../shared/connection'
+import { providerConnection } from '../../../shared/provider-connection'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import type { ServerSettings } from '../store/server-settings-state'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from './launch-source'
 import { localOpenProfileId } from './launch-model'
@@ -93,7 +97,7 @@ export function launchModelsOf(
     const rows = modelsForProviderConnections(
       source.catalog(),
       source.providerConnections(harness),
-      PROVIDER_COMPANY_BY_ID,
+      PROVIDER_LISTING_FACTS,
       pinned
     )
     // The listing is synchronous and must answer something: while the
@@ -106,12 +110,26 @@ export function launchModelsOf(
 }
 
 /** One owner's pool as the shared function reads it: the pool's order, who
- *  can sign in, the API keys as fallback, each account's own usage. */
+ *  can sign in, the API keys as fallback, each account's own usage. A
+ *  provider pool (PRDCT-4496) is the owner's stored connections of that
+ *  company, as the one shape of a connection (`providerConnection`), from
+ *  lane B's store unless `providers` is given. */
 export function poolConnections(
   sources: AccountSources,
   owner: string,
-  pool: string
+  pool: string,
+  providers?: readonly ProviderConnectionView[]
 ): PooledConnection[] {
+  if (isConnectionPoolId(pool) && !isAccountPoolId(pool))
+    return (
+      providers ??
+      (useProviderConnectionsStore.getState().byMachine[owner]?.connections as
+        | readonly ProviderConnectionView[]
+        | undefined) ??
+      []
+    )
+      .filter((view) => view.company === pool)
+      .map(providerConnection)
   if (pool !== 'claude' && pool !== 'codex') return []
   const view = ownerViewFrom(sources, owner, pool as AccountProvider)
   return poolOf(view).map((a) => ({

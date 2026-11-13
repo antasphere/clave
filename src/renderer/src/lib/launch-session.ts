@@ -18,6 +18,7 @@ import {
 import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
 import { permissionRungFor, useLaunchSettingsStore } from '../store/launch-settings-store'
 import { HARNESS_BY_ID } from '../../../shared/harness'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { CHAT_PROFILE_IDS, chatDefaultFor } from '../../../shared/open-session-modes'
 import {
   profilesFor,
@@ -127,6 +128,28 @@ export function providerConnectionFields(
     connectionId: setup.connectionId,
     ...(setup.connectionLabel ? { connectionLabel: setup.connectionLabel } : {})
   }
+}
+
+/** A Pi or OpenCode setup whose remembered connection the machine no longer
+ *  stores, dropped with its model before the spawn (PRDCT-4496): the model
+ *  belongs to the connection, and the agent button never replays a deleted
+ *  one. The machine's list is read first when the window holds none yet; a
+ *  list that could not be read keeps the setup, and the spawn says why. */
+export async function withoutGoneConnection(
+  setup: AgentSetup | null,
+  machine: string
+): Promise<AgentSetup | null> {
+  if (!setup?.connectionId || (setup.kind !== 'pi' && setup.kind !== 'opencode')) return setup
+  const held = useProviderConnectionsStore.getState().byMachine[machine]
+  if (!held || held.loading) await useProviderConnectionsStore.getState().load(machine)
+  const entry = useProviderConnectionsStore.getState().byMachine[machine]
+  if (!entry || entry.error) return setup
+  if (entry.connections.some((c) => c.id === setup.connectionId)) return setup
+  const rest = { ...setup }
+  delete rest.connectionId
+  delete rest.connectionLabel
+  delete rest.model
+  return rest
 }
 
 export function setupSpawnFlags(
@@ -342,9 +365,10 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
   return id
 }
 
-async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
+async function launchSessionNow(input: LaunchRequest): Promise<string | null> {
   clearLaunchNotice()
-  const serverId = launchServer(req)
+  const serverId = launchServer(input)
+  const req = { ...input, setup: await withoutGoneConnection(input.setup, serverId) }
   if (serverId !== LOCAL_SERVER_ID) return launchOnServer(serverId, req)
   const folderPath = await resolveCwd(req.cwd)
   if (!folderPath) return null

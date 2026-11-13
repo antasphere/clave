@@ -121,6 +121,9 @@ import { TEST_NO_ACTIVATE } from './test-mode'
 import { standaloneLaunchFacts } from './mcp/standalone-launch-facts'
 import { modelsCatalog } from './models-catalog'
 import { providerConnectionsForListing } from './provider-injection-spawn'
+// Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+import { wireProviderConnections } from './provider-injection-wiring'
+import { providerConnectionsManager } from './provider-connections'
 import { standaloneHarnessDetection } from './agent-updates/standalone-detection'
 import { providerModels } from './provider-models'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
@@ -414,6 +417,8 @@ async function main(): Promise<void> {
     preference: (key) => preferencesManager.get(key as keyof Preferences),
     launchModel: rememberedSpawnModel
   })
+  // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+  wireProviderConnections(providerConnectionsManager)
   const agentLaunchFacts = standaloneLaunchFacts({
     facts: launchFacts,
     detection: standaloneHarnessDetection({ env: process.env, testMode: TEST_NO_ACTIVATE }),
@@ -423,7 +428,8 @@ async function main(): Promise<void> {
     homeDir: os.homedir(),
     defaultProfile: (family) => launchProfileManager.resolve(family),
     catalog: (providerIds) => modelsCatalog.view({ providerIds }),
-    providerConnections: (harness) => providerConnectionsForListing(harness)
+    providerConnections: (harness) => providerConnectionsForListing(harness),
+    providerConnectionViews: () => providerConnectionsManager.list()
   })
   // ── ADR 0004: the routines this server schedules, off its own workspace files ──
   const routines = createRoutineService({

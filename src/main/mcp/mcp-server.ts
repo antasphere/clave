@@ -92,7 +92,7 @@ import { agentUpdateManager } from '../agent-updates'
 import { providerModels } from '../provider-models'
 import { CLAUDE_MODELS } from '../../shared/claude-models'
 import { HARNESSES, type HarnessId } from '../../shared/harness'
-import { poolsOf, type LaunchModel } from '../../shared/launch-options'
+import { accountPoolsOf, type LaunchModel } from '../../shared/launch-options'
 import {
   INPUT_RESULT_DESCRIPTION,
   INPUT_SET_DESCRIPTION,
@@ -520,7 +520,8 @@ const ALL_HARNESS_NAMES = harnessNames(() => true, 'or')
 const CHAT_VIEW_NAMES = harnessNames((h) => h.chatAdapterId !== null, 'and')
 const CHAT_VIEW_MODES = harnessNames((h) => h.chatAdapterId !== null, 'and', true)
 const MODEL_TAKING_MODES = harnessNames((h) => h.takesModel, 'and', true)
-const POOLED_HARNESS_NAMES = harnessNames((h) => poolsOf(h).length > 0, 'and')
+// The account pools only: a provider pool's connection is never named by an account (PRDCT-4496).
+const POOLED_HARNESS_NAMES = harnessNames((h) => accountPoolsOf(h).length > 0, 'and')
 const DANGEROUS_MODES = harnessNames((h) => DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
 const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
 /** The effort follows the launch fields rule (`launchModeFields`): Claude and Codex. */

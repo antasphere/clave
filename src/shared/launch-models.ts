@@ -21,21 +21,21 @@ export interface ProviderModelRow {
 }
 
 /** A connection as the listing reads it. `company` is a `ProviderCompanyId`
- *  of `src/main/models-catalog-overlay.ts`, kept a string here: nothing in
- *  `src/shared` imports from main. */
+ *  of lane B's catalogue (`@clave/contract/settings/provider-catalogue`),
+ *  kept a string here. */
 export interface ProviderConnectionRef {
   id: string
   company: string
 }
 
-/** The two facts of a `ProviderCompany` the listing reads: its name, and its
- *  models.dev provider id (null when the catalogue has none). */
+/** The two facts of a company the listing reads: the catalogue's name, and
+ *  the overlay's models.dev provider id (null when there is none). */
 export interface ProviderCompanyFacts {
   name: string
   catalog: string | null
 }
 
-/** Every company by id: `PROVIDER_COMPANY_BY_ID` fits it. */
+/** Every company by id: the overlay's `PROVIDER_LISTING_FACTS` fits it. */
 export type ProviderCompanies = Readonly<Record<string, ProviderCompanyFacts>>
 
 export const DEFAULT_PROVIDER_MODEL: ProviderModelRow = {

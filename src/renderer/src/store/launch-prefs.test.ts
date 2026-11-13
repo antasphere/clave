@@ -170,6 +170,37 @@ describe('getLastAgentSetup and the recommended account', () => {
     expect(useLaunchPrefsStore.getState().byWorkspace.ws).toEqual(remembered)
     useAccountPolicyStore.setState({ useRecommendedAccount: false })
   })
+
+  it("drops a Pi or OpenCode setup's catalogue model with its connection: the model belongs to it (PRDCT-4496)", () => {
+    useLaunchPrefsStore.setState({
+      byWorkspace: {
+        pi: {
+          kind: 'pi',
+          dangerousMode: false,
+          model: 'kimi-k2',
+          connectionId: 'c1',
+          connectionLabel: 'Kimi'
+        },
+        oc: { kind: 'opencode', dangerousMode: false, model: 'deepseek-chat', connectionId: 'c2' },
+        // A model with no connection is the harness's own login's: it stays.
+        own: { kind: 'pi', dangerousMode: false, model: 'own-model' }
+      }
+    })
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    try {
+      expect(getLastAgentSetup('pi')).toEqual({ kind: 'pi', dangerousMode: false })
+      expect(getLastAgentSetup('oc')).toEqual({ kind: 'opencode', dangerousMode: false })
+      expect(getLastAgentSetup('own')).toEqual({
+        kind: 'pi',
+        dangerousMode: false,
+        model: 'own-model'
+      })
+    } finally {
+      useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    }
+    // With the setting off, the setup replays as remembered.
+    expect(getLastAgentSetup('pi')).toMatchObject({ model: 'kimi-k2', connectionId: 'c1' })
+  })
 })
 
 describe('parseSetup — a remembered launch profile (PRDCT-4423, verifier round 2)', () => {

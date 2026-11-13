@@ -21,11 +21,13 @@
 // the catalogue's cache is seeded fresh before the launch, and main's `fetch`
 // refuses that host.
 //
-// The seam: the connection store is not there yet (lane B), so the spec plugs
-// a made-up source through the test hooks' namespace
-// (`globalThis.__claveE2E.providerInjection.setConnectionSource`), which only
-// the in-process server consults: hence `server: 'in-process'`. A second pass
-// on the app's own separate server proves the two launches that need no
+// The road: the connections are stored the way Settings stores them, through
+// lane B's own calls (`providerConnectionAdd`, then `providerConnectionSetKey`
+// with a made-up key, Ollama with none), on the in-process server; their ids
+// come back from the store. The tabs' shells run with a `ZDOTDIR` of this
+// spec's own whose `.zshenv` exports the person's `PI_CODING_AGENT_DIR`, so a
+// profile that sets it cannot outrank the connection's directory. A second
+// pass on the app's own separate server proves the two launches that need no
 // connection at all.
 import { execFileSync } from 'node:child_process'
 import {
@@ -55,6 +57,9 @@ const DIR = userDataDir('provider-connections-launch')
 const DIR2 = userDataDir('provider-connections-launch-separate')
 const ROOT = fixturePath('provider-connections-launch-root')
 const PI_HOME = fixturePath('provider-connections-launch-pi-home')
+/** A `ZDOTDIR` of this spec's own: its `.zshenv` exports the person's Pi
+ *  directory, as a profile of theirs would. */
+const ZDOT = fixturePath('provider-connections-launch-zdotdir')
 const WS = {
   id: 'connections-ws',
   name: 'Connections',
@@ -110,7 +115,7 @@ const CATALOGUE = {
 const PI_PRINT = [
   'sh',
   '-c',
-  'printf "KIMI=%s\\nCLAVE=%s\\nDIR=%s\\nAUTH=%s\\nARGS=%s\\n" "$KIMI_API_KEY" "$CLAVE_CONNECTION_API_KEY" "$PI_CODING_AGENT_DIR" "$(test -e "$PI_CODING_AGENT_DIR/auth.json" && echo present || echo absent)" "$0 $*"; sleep 60'
+  'printf "ZENV=%s\\nKIMI=%s\\nCLAVE=%s\\nDIR=%s\\nAUTH=%s\\nARGS=%s\\n" "$CLAVE_E2E_ZSHENV" "$KIMI_API_KEY" "$CLAVE_CONNECTION_API_KEY" "$PI_CODING_AGENT_DIR" "$(test -e "$PI_CODING_AGENT_DIR/auth.json" && echo present || echo absent)" "$0 $*"; sleep 60'
 ]
 const OPENCODE_PRINT = [
   'sh',
@@ -135,7 +140,7 @@ function holdsValue(text) {
 function parsePrinted(raw) {
   const out = {}
   for (const line of raw.replace(/\r/g, '').split('\n')) {
-    const m = /^(KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG)=(.*)$/.exec(line)
+    const m = /^(ZENV|KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG)=(.*)$/.exec(line)
     if (m && !(m[1] in out)) out[m[1]] = m[2]
   }
   return 'ARGS' in out ? out : null
@@ -289,15 +294,21 @@ export async function run(t) {
   writeFixtures(DIR)
   rmSync(DIR2, { recursive: true, force: true })
 
-  const env = { PI_CODING_AGENT_DIR: PI_HOME }
+  // The tabs' zsh reads this `.zshenv`: the person's Pi directory exported,
+  // and the spec's own PATH so the shell finds what it always did.
+  rmSync(ZDOT, { recursive: true, force: true })
+  mkdirSync(ZDOT, { recursive: true })
+  writeFileSync(
+    path.join(ZDOT, '.zshenv'),
+    `export PATH=${JSON.stringify(process.env.PATH ?? '/usr/bin:/bin')}\nexport PI_CODING_AGENT_DIR=${JSON.stringify(PI_HOME)}\nexport CLAVE_E2E_ZSHENV=read\n`
+  )
+  const env = { PI_CODING_AGENT_DIR: PI_HOME, ZDOTDIR: ZDOT }
   const { app, win } = await launchApp(DIR, { server: 'in-process', env })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     await app.evaluate(() => {
-      const hooks = globalThis.__claveE2E
-      if (!hooks?.providerInjection) throw new Error('no providerInjection hook: is test mode on?')
-      const state = (globalThis.__connectionsFixture = { modelsDev: 0, asked: [] })
+      const state = (globalThis.__connectionsFixture = { modelsDev: 0 })
       // models.dev is never reached: the cache seeded on disk is fresh, and
       // a request that still goes there is refused and counted.
       const original = globalThis.fetch
@@ -308,43 +319,60 @@ export async function run(t) {
         }
         return original(url, init)
       }
-      const connections = {
-        'c-kimi': {
-          id: 'c-kimi',
-          label: 'Kimi work',
-          company: 'moonshot',
-          value: 'e2e-made-up-kimi-0001'
-        },
-        'c-ds': {
-          id: 'c-ds',
-          label: 'DeepSeek',
-          company: 'deepseek',
-          value: 'e2e-made-up-deepseek-0001'
-        },
-        'c-ali': {
-          id: 'c-ali',
-          label: 'Alibaba plan',
-          company: 'alibaba',
-          value: 'e2e-made-up-alibaba-0001'
-        },
-        'c-ollama': { id: 'c-ollama', label: 'Local Ollama', company: 'ollama', value: null }
-      }
-      hooks.providerInjection.setConnectionSource(async (id) => {
-        state.asked.push(id)
-        return connections[id] ?? null
-      })
     })
+    // ── The connections, stored through lane B's road ─────────────────────
+    const stored = await win.evaluate(
+      async ({ kimi, deepseek, alibaba }) => {
+        const api = window.electronAPI
+        const add = async (input, key) => {
+          const created = await api.providerConnectionAdd(input)
+          const view = key ? await api.providerConnectionSetKey(created.id, key) : created
+          return { id: view.id, hasKey: view.hasKey, needsKey: view.needsKey }
+        }
+        return {
+          kimi: await add({ company: 'moonshot', label: 'Kimi work' }, kimi),
+          ds: await add({ company: 'deepseek', label: 'DeepSeek' }, deepseek),
+          ali: await add({ company: 'alibaba', label: 'Alibaba plan' }, alibaba),
+          ollama: await add({ company: 'ollama', label: 'Local Ollama' }, null)
+        }
+      },
+      { kimi: KIMI, deepseek: DEEPSEEK, alibaba: ALIBABA }
+    )
+    const C = {
+      kimi: stored.kimi.id,
+      ds: stored.ds.id,
+      ali: stored.ali.id,
+      ollama: stored.ollama.id
+    }
+    t.check(
+      'the four connections are stored, the three keys sealed, Ollama taking none',
+      Object.values(C).every((id) => typeof id === 'string' && id.length > 0) &&
+        stored.kimi.hasKey &&
+        stored.ds.hasKey &&
+        stored.ali.hasKey &&
+        !stored.ollama.needsKey,
+      scrub(stored)
+    )
+    const listedConnections = JSON.stringify(
+      await win.evaluate(() => window.electronAPI.providerConnectionsList())
+    )
+    t.check(
+      'the store lists them, and its answer holds no key',
+      Object.values(C).every((id) => listedConnections.includes(id)) &&
+        !holdsValue(listedConnections),
+      holdsValue(listedConnections) ? '[a key in the list]' : listedConnections.length
+    )
     await setProfiles(win)
 
     // ── Pi on a Kimi connection: Pi's own provider, its own variable ─────
     const kimiId = await spawn(win, {
       piMode: true,
       launchProfileId: 'e2e-pi-print',
-      connectionId: 'c-kimi',
+      connectionId: C.kimi,
       connectionLabel: 'Kimi work'
     })
     const kimi = await printedBy(win, kimiId)
-    const kimiDir = path.join(DIR, 'pi-connections', 'c-kimi')
+    const kimiDir = path.join(DIR, 'pi-connections', C.kimi)
     t.check('the Pi tab on Kimi printed its lines', !!kimi, await rawOf(win, kimiId))
     t.check(
       'the Kimi value reached the process under KIMI_API_KEY',
@@ -357,9 +385,13 @@ export async function run(t) {
       scrub(kimi)
     )
     t.check(
-      "Pi runs in the connection's own directory",
-      kimi?.DIR === kimiDir ||
-        kimi?.DIR === path.join(realpathSync(DIR), 'pi-connections', 'c-kimi'),
+      "the Kimi tab's environment carries what the spec's .zshenv exports",
+      kimi?.ZENV === 'read',
+      { zenv: kimi?.ZENV }
+    )
+    t.check(
+      "Pi runs in the connection's own directory, though the shell's .zshenv exports the person's",
+      kimi?.DIR === kimiDir || kimi?.DIR === path.join(realpathSync(DIR), 'pi-connections', C.kimi),
       { printed: kimi?.DIR, expected: kimiDir }
     )
     t.check(
@@ -385,10 +417,17 @@ export async function run(t) {
       linkTo('sessions'),
       path.join(PI_HOME, 'sessions')
     )
-    t.equal(
-      'settings.json is a link to the person’s own',
-      linkTo('settings.json'),
-      path.join(PI_HOME, 'settings.json')
+    // A copy since f760bc15: what Pi saves in a connection tab stays there.
+    let settingsCopy = null
+    try {
+      settingsCopy = readFileSync(path.join(kimiDir, 'settings.json'), 'utf8')
+    } catch {
+      // Missing: fails below.
+    }
+    t.check(
+      'settings.json is a copy of the person’s own, not a link',
+      linkTo('settings.json') === 'not a link' && settingsCopy === PI_FILES['settings.json'],
+      { link: linkTo('settings.json'), copied: settingsCopy !== null }
     )
     t.check(
       'no auth.json in the connection’s directory',
@@ -434,7 +473,7 @@ export async function run(t) {
     )
     t.check(
       'and runs in the connection’s directory again',
-      resumed?.DIR?.endsWith(path.join('pi-connections', 'c-kimi')) && resumed?.AUTH === 'absent',
+      resumed?.DIR?.endsWith(path.join('pi-connections', C.kimi)) && resumed?.AUTH === 'absent',
       scrub(resumed)
     )
 
@@ -442,7 +481,7 @@ export async function run(t) {
     const aliId = await spawn(win, {
       piMode: true,
       launchProfileId: 'e2e-pi-print',
-      connectionId: 'c-ali',
+      connectionId: C.ali,
       connectionLabel: 'Alibaba plan',
       model: 'qwen3-coder-plus'
     })
@@ -466,7 +505,7 @@ export async function run(t) {
     let aliModels = null
     try {
       aliModels = JSON.parse(
-        readFileSync(path.join(DIR, 'pi-connections', 'c-ali', 'models.json'), 'utf8')
+        readFileSync(path.join(DIR, 'pi-connections', C.ali, 'models.json'), 'utf8')
       )
     } catch (e) {
       t.check("Alibaba's models.json is readable", false, e.message)
@@ -490,7 +529,7 @@ export async function run(t) {
     const ollamaId = await spawn(win, {
       piMode: true,
       launchProfileId: 'e2e-pi-print',
-      connectionId: 'c-ollama',
+      connectionId: C.ollama,
       connectionLabel: 'Local Ollama'
     })
     const ollama = await printedBy(win, ollamaId)
@@ -503,15 +542,15 @@ export async function run(t) {
     let ollamaModels = null
     try {
       ollamaModels = JSON.parse(
-        readFileSync(path.join(DIR, 'pi-connections', 'c-ollama', 'models.json'), 'utf8')
+        readFileSync(path.join(DIR, 'pi-connections', C.ollama, 'models.json'), 'utf8')
       )
     } catch (e) {
       t.check("Ollama's models.json is readable", false, e.message)
     }
     t.equal(
-      'the clave-ollama entry points at the local server',
+      'the clave-ollama entry points at the local server the connection stored',
       ollamaModels?.providers?.['clave-ollama']?.baseUrl,
-      'http://127.0.0.1:11434/v1'
+      'http://localhost:11434/v1'
     )
 
     // ── Pi on no connection: the harness's own login, as today ───────────
@@ -530,7 +569,7 @@ export async function run(t) {
     const dsId = await spawn(win, {
       opencodeMode: true,
       launchProfileId: 'e2e-opencode-print',
-      connectionId: 'c-ds',
+      connectionId: C.ds,
       connectionLabel: 'DeepSeek',
       model: 'deepseek-chat'
     })
@@ -604,11 +643,38 @@ export async function run(t) {
       refused?.includes('The selected connection is no longer available.'),
       refused
     )
-    const askedGone = await app.evaluate(() => globalThis.__connectionsFixture.asked)
     t.check(
-      'the source was asked for every connection named',
-      ['c-kimi', 'c-ali', 'c-ollama', 'c-ds', 'c-gone'].every((id) => askedGone.includes(id)),
-      askedGone
+      'c-gone is an id the store never held',
+      !Object.values(C).includes('c-gone') && !listedConnections.includes('"c-gone"')
+    )
+
+    // ── The settings page: the connections shown, no key on it ──────────
+    // Opened the way lane B's spec opens it (`openServersPage`): the footer's
+    // usage line, else the Settings button, then the Connections row.
+    const usageLine = win.locator('.sidebar-footer-line').first()
+    if (await usageLine.count()) await usageLine.click().catch(() => undefined)
+    else
+      await win
+        .getByRole('button', { name: 'Settings', exact: true })
+        .click({ timeout: 5000 })
+        .catch(() => undefined)
+    await win
+      .locator('[data-settings-nav-row="accounts"]')
+      .click({ timeout: 5000 })
+      .catch(() => undefined)
+    const accountsPage = win.locator('[data-settings-page="accounts"]')
+    const shown = await accountsPage
+      .locator(`[data-provider-connection-row="${C.kimi}"]`)
+      .waitFor({ timeout: 10_000 })
+      .then(
+        () => true,
+        () => false
+      )
+    const settingsText = shown ? await accountsPage.innerText() : ''
+    t.check(
+      "the settings page lists the Kimi connection and holds no connection's key",
+      shown && !holdsValue(settingsText),
+      { shown, leaked: holdsValue(settingsText) }
     )
 
     // ── The person's own Pi files, as they were ──────────────────────────
@@ -655,7 +721,7 @@ export async function run(t) {
     const kimiRecord = records.map((r) => JSON.parse(r)).find((r) => r.id === kimiId)
     t.check(
       'the Kimi record names its connection',
-      kimiRecord?.connectionId === 'c-kimi' && kimiRecord.connectionLabel === 'Kimi work',
+      kimiRecord?.connectionId === C.kimi && kimiRecord.connectionLabel === 'Kimi work',
       kimiRecord
         ? { connectionId: kimiRecord.connectionId, connectionLabel: kimiRecord.connectionLabel }
         : records.length

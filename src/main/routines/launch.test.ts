@@ -239,6 +239,24 @@ describe('resolveLaunch', () => {
   })
 })
 
+// Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on the provider pools
+describe('a routine naming an account on a harness whose pools are stored keys', () => {
+  it('is refused, never launched on no account, in the sentence of a harness with no pool', () => {
+    for (const agent of ['pi', 'opencode'] as const) {
+      // The pools are there: the refusal is not the old empty-pool case.
+      expect(HARNESS_BY_ID[agent].connectionPools.length).toBeGreaterThan(0)
+      const run = resolveLaunch(routine({ agent, account: 'Kimi work' }), facts())
+      expect(run.ok).toBe(false)
+      expect(run.ok ? '' : run.reason).toBe(
+        `The account argument applies to harnesses with a connection pool (Claude Code, Codex); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
+      )
+    }
+    // With no account named, Pi still launches, on no account.
+    const plain = resolveLaunch(routine({ agent: 'pi' }), facts())
+    expect(plain.ok && plain.account).toBeNull()
+  })
+})
+
 // ── Lane B (harness wave): provider connections ──
 describe('resolveLaunch on a harness whose first pool is a provider pool (PRDCT-4426)', () => {
   it('resolves no account, as for a harness on no pool', () => {

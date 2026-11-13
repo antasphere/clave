@@ -100,6 +100,8 @@ export const useUsageLineStore = create<{ byConnection: Record<string, UsageLine
 }))
 
 const lineInFlight = new Map<string, Promise<void>>()
+/** The latest read started per line: only its answer is kept. */
+const lineGeneration = new Map<string, number>()
 
 /** Read a connection's usage line unless it was read in the last five
  *  minutes, never twice at once. The roads answer an unknown line rather
@@ -107,14 +109,18 @@ const lineInFlight = new Map<string, Promise<void>>()
 export function ensureUsageLine(
   machineId: string,
   connectionId: string,
-  read: () => Promise<ProviderUsageLineView>
+  read: () => Promise<ProviderUsageLineView>,
+  /** `force`: read again whatever the last read's age (a key just set). */
+  options: { force?: boolean } = {}
 ): Promise<void> {
   const key = lineKey(machineId, connectionId)
   const pending = lineInFlight.get(key)
-  if (pending) return pending
+  if (pending && !options.force) return pending
   const entry = useUsageLineStore.getState().byConnection[key]
-  if (entry?.readAt != null && Date.now() - entry.readAt < USAGE_LINE_FRESH_MS)
+  if (!options.force && entry?.readAt != null && Date.now() - entry.readAt < USAGE_LINE_FRESH_MS)
     return Promise.resolve()
+  const generation = (lineGeneration.get(key) ?? 0) + 1
+  lineGeneration.set(key, generation)
   const run = (async () => {
     let line: ProviderUsageLineView
     try {
@@ -124,9 +130,11 @@ export function ensureUsageLine(
         kind: 'unknown',
         reason: error instanceof Error ? error.message : 'The read failed.'
       }
-    } finally {
-      lineInFlight.delete(key)
     }
+    // A forced read started meanwhile owns the line: this one says nothing
+    // about the key it was started for.
+    if (lineGeneration.get(key) !== generation) return
+    lineInFlight.delete(key)
     const state = useUsageLineStore.getState().byConnection
     useUsageLineStore.setState({
       byConnection: { ...state, [key]: { line, readAt: Date.now() } }

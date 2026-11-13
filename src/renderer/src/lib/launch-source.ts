@@ -30,8 +30,13 @@ import { describeCodexAccountAuth, useCodexAccountStore } from '../store/codex-a
 import { capStatusLine, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
 import { serverProfilesFor, type ServerSettings } from '../store/server-settings-store'
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
-import type { ProviderCompanyId } from '../../../main/models-catalog-overlay'
+import {
+  connectionServes,
+  type ProviderCompanyId
+} from '@clave/contract/settings/provider-catalogue'
+import { HARNESS_BY_ID } from '../../../shared/harness'
 import { modelsCatalogFor, usageLineTextFor } from '../store/models-catalog-store'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 
 /** A stored provider connection a Pi or OpenCode launch can run on
  *  (PRDCT-4496): its id, the name the person gave it, and its company. */
@@ -39,6 +44,21 @@ export interface ProviderLaunchConnection {
   id: string
   label: string
   company: ProviderCompanyId
+}
+
+/** A machine's stored provider connections a Pi or OpenCode launch can run
+ *  on (PRDCT-4496), from lane B's store (this Mac's under `LOCAL_SERVER_ID`,
+ *  a saved server's under its id): those whose endpoints speak a wire format
+ *  of the harness and that hold their key or need none, in the machine's
+ *  order. */
+export function machineProviderConnections(
+  machineId: string,
+  harness: 'pi' | 'opencode'
+): ProviderLaunchConnection[] {
+  const formats = HARNESS_BY_ID[harness].wireFormats
+  return (useProviderConnectionsStore.getState().byMachine[machineId]?.connections ?? [])
+    .filter((c) => connectionServes(c, formats) && (c.hasKey || !c.needsKey))
+    .map((c) => ({ id: c.id, label: c.label, company: c.company }))
 }
 
 /** A machine's catalogue as a source says it: `'loading'` before its first
@@ -125,8 +145,7 @@ export function localLaunchSource(workspaceId: string | null): LaunchSource {
         : useCodexAccountStore.getState().selectedAccountId,
     chatProfileId: (family) => selectedChatProfile(family, workspaceId) ?? CHAT_PROFILE_IDS[family],
     connections: (family, model) => connectionsForModel(family, model),
-    // Lane B's store plugs in here after its merge (PRDCT-4426).
-    providerConnections: () => [],
+    providerConnections: (harness) => machineProviderConnections(LOCAL_SERVER_ID, harness),
     catalog: () => catalogOf(LOCAL_SERVER_ID),
     usageLine: (connectionId) => usageLineTextFor(LOCAL_SERVER_ID, connectionId)
   }
@@ -161,8 +180,7 @@ export function serverLaunchSource(
     chatProfileId: (family) =>
       chatDefaultFor(preferences, family, null) ?? CHAT_PROFILE_IDS[family],
     connections: (family, model) => connectionsForModel(family, model, serverId),
-    // Lane B's server settings plug in here after its merge (PRDCT-4426).
-    providerConnections: () => [],
+    providerConnections: (harness) => machineProviderConnections(serverId, harness),
     catalog: () => catalogOf(serverId),
     usageLine: (connectionId) => usageLineTextFor(serverId, connectionId)
   }

@@ -52,10 +52,18 @@ describe('the pools', () => {
 })
 
 describe('the harness table names the pools each harness runs on', () => {
-  it('Claude Code on the Claude pool, Codex on the Codex pool, the three others on none yet', () => {
+  it('Claude Code on the Claude pool, Codex on the Codex pool, Pi and OpenCode on the ten provider pools, Antigravity on none', () => {
+    // The pools a stored key serves (PRDCT-4496).
+    const providers = PROVIDER_COMPANIES.map((c) => c.id)
     expect(
       Object.fromEntries(HARNESSES.map((harness) => [harness.id, [...harness.connectionPools]]))
-    ).toEqual({ claude: ['claude'], codex: ['codex'], antigravity: [], pi: [], opencode: [] })
+    ).toEqual({
+      claude: ['claude'],
+      codex: ['codex'],
+      antigravity: [],
+      pi: providers,
+      opencode: providers
+    })
   })
 
   it('names registered pools only', () => {
@@ -67,8 +75,8 @@ describe('the harness table names the pools each harness runs on', () => {
     expect(firstPoolOf(HARNESS_BY_ID.claude)).toBe('claude')
     expect(firstPoolOf(HARNESS_BY_ID.codex)).toBe('codex')
     expect(firstPoolOf(HARNESS_BY_ID.antigravity)).toBeNull()
-    expect(firstPoolOf(HARNESS_BY_ID.pi)).toBeNull()
-    expect(firstPoolOf(HARNESS_BY_ID.opencode)).toBeNull()
+    expect(firstPoolOf(HARNESS_BY_ID.pi)).toBe('moonshot')
+    expect(firstPoolOf(HARNESS_BY_ID.opencode)).toBe('moonshot')
     expect(firstPoolOf({ connectionPools: ['codex', 'claude'] })).toBe('codex')
   })
 })

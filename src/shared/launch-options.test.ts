@@ -3,6 +3,7 @@ import {
   launchOptions,
   suggestedConnection,
   poolsOf,
+  accountPoolsOf,
   type HarnessOptions,
   type HarnessPresence,
   type LaunchOptions,
@@ -16,6 +17,32 @@ import { CLAUDE_MODELS } from './claude-models'
 import { usageSummaryOf } from './usage-summary'
 import type { PoolUsageWindow } from './account-pool'
 import { codexConnection, poolAccountOf, type Connection } from './connection'
+import { providerConnection } from './provider-connection'
+import {
+  PROVIDER_COMPANY_IDS,
+  type ProviderCompanyId
+} from '@clave/contract/settings/provider-catalogue'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+
+/** A stored provider connection as lane B's store lists it. */
+const view = (
+  id: string,
+  company: ProviderCompanyId,
+  label: string,
+  needsKey = true,
+  hasKey = true
+): ProviderConnectionView => ({
+  id,
+  label,
+  company,
+  kind: 'key',
+  pool: company,
+  endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+  needsKey,
+  hasKey,
+  keySetAt: hasKey ? 1 : null,
+  createdAt: 1
+})
 
 /**
  * What an agent reads of the launcher (`clave_launch_options`). Silent when
@@ -382,8 +409,43 @@ describe('the connections that pay', () => {
     expect(pi.connectionNote).toBe(
       'Clave holds no connection for Pi: it runs on the login inside the harness.'
     )
-    expect(poolsOf(HARNESS_BY_ID.pi)).toEqual([])
+    const antigravity = launchOptions(input({ presence: () => undefined })).harnesses.find(
+      (h) => h.id === 'antigravity'
+    )!
+    expect(antigravity.connectionNote).toBe(
+      'Clave holds no connection for Antigravity: it runs on the login inside the harness.'
+    )
+    expect(poolsOf(HARNESS_BY_ID.antigravity)).toEqual([])
     expect(poolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
+  })
+  it("lists Pi's and OpenCode's stored connections under their provider pools (PRDCT-4496)", () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const ollama = providerConnection(view('c-ollama', 'ollama', 'Local', false))
+    const unkeyed = providerConnection(view('c-ds', 'deepseek', 'No key yet', true, false))
+    const options = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude'
+            ? [fableOut, open()]
+            : [kimi, ollama, unkeyed].filter((c) => c.pool === pool)
+      })
+    )
+    for (const id of ['pi', 'opencode'] as const) {
+      const h = harness(options, id)
+      expect(h.connections.map((c) => [c.pool, c.id, c.label, c.usable])).toEqual([
+        ['moonshot', 'c-kimi', 'Kimi work', true],
+        ['deepseek', 'c-ds', 'No key yet', false],
+        ['ollama', 'c-ollama', 'Local', true]
+      ])
+      expect(h.connectionNote).toBeNull()
+      // The harness's own login still runs a launch that names none: no
+      // remembered model, every model served.
+      expect(h.defaultModel).toBeNull()
+      expect(h.models.every((m) => m.served)).toBe(true)
+    }
+    expect(poolsOf(HARNESS_BY_ID.pi)).toEqual([...PROVIDER_COMPANY_IDS])
+    expect(accountPoolsOf(HARNESS_BY_ID.pi)).toEqual([])
+    expect(accountPoolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
   })
   it('follows the recommendation when the person opted in', () => {
     // Work renews later than Romain's week: the recommendation is Romain's on Opus.

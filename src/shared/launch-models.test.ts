@@ -3,7 +3,7 @@ import type {
   CatalogModelView,
   ModelsCatalogView
 } from '@clave/contract/settings/models-catalog-view'
-import { PROVIDER_COMPANY_BY_ID } from '../main/models-catalog-overlay'
+import { PROVIDER_LISTING_FACTS } from '../main/models-catalog-overlay'
 import {
   DEFAULT_PROVIDER_MODEL,
   connectionsServingModel,
@@ -43,7 +43,7 @@ describe('modelsForProviderConnections', () => {
         { id: 'c-or', company: 'openrouter' },
         { id: 'c-ds', company: 'deepseek' }
       ],
-      PROVIDER_COMPANY_BY_ID
+      PROVIDER_LISTING_FACTS
     )
     expect(ids(rows)).toEqual([undefined, 'or-a', 'deepseek-chat'])
     expect(rows !== 'loading' && rows[0]).toEqual(DEFAULT_PROVIDER_MODEL)
@@ -63,7 +63,7 @@ describe('modelsForProviderConnections', () => {
         { id: 'c-ds2', company: 'deepseek' },
         { id: 'c-or', company: 'openrouter' }
       ],
-      PROVIDER_COMPANY_BY_ID,
+      PROVIDER_LISTING_FACTS,
       ['qwen3', 'or-a', 'qwen3']
     )
     expect(ids(rows)).toEqual([undefined, 'deepseek-chat', 'or-a', 'qwen3'])
@@ -74,11 +74,11 @@ describe('modelsForProviderConnections', () => {
       modelsForProviderConnections(
         'loading',
         [{ id: 'c', company: 'deepseek' }],
-        PROVIDER_COMPANY_BY_ID
+        PROVIDER_LISTING_FACTS
       )
     ).toBe('loading')
     // No connection, or none with a catalogue: nothing to wait for.
-    expect(ids(modelsForProviderConnections('loading', [], PROVIDER_COMPANY_BY_ID, ['p']))).toEqual(
+    expect(ids(modelsForProviderConnections('loading', [], PROVIDER_LISTING_FACTS, ['p']))).toEqual(
       [undefined, 'p']
     )
     expect(
@@ -86,7 +86,7 @@ describe('modelsForProviderConnections', () => {
         modelsForProviderConnections(
           'loading',
           [{ id: 'c', company: 'ollama' }],
-          PROVIDER_COMPANY_BY_ID
+          PROVIDER_LISTING_FACTS
         )
       )
     ).toEqual([undefined])
@@ -98,10 +98,10 @@ describe('modelsForProviderConnections', () => {
         modelsForProviderConnections(
           VIEW,
           [
-            { id: 'c1', company: 'custom' },
+            { id: 'c1', company: 'generic' },
             { id: 'c2', company: 'ollama' }
           ],
-          PROVIDER_COMPANY_BY_ID
+          PROVIDER_LISTING_FACTS
         )
       )
     ).toEqual([undefined])
@@ -110,7 +110,7 @@ describe('modelsForProviderConnections', () => {
         modelsForProviderConnections(
           null,
           [{ id: 'c', company: 'deepseek' }],
-          PROVIDER_COMPANY_BY_ID
+          PROVIDER_LISTING_FACTS
         )
       )
     ).toEqual([undefined])
@@ -125,12 +125,12 @@ describe('connectionsServingModel', () => {
   ]
   it('offers every connection for the default row', () => {
     expect(
-      connectionsServingModel(VIEW, connections, PROVIDER_COMPANY_BY_ID, undefined).map((c) => c.id)
+      connectionsServingModel(VIEW, connections, PROVIDER_LISTING_FACTS, undefined).map((c) => c.id)
     ).toEqual(['c-ds', 'c-or', 'c-ol'])
   })
   it('offers the connections whose company lists the model, deprecated not', () => {
     const serving = (id: string): string[] =>
-      connectionsServingModel(VIEW, connections, PROVIDER_COMPANY_BY_ID, id).map((c) => c.id)
+      connectionsServingModel(VIEW, connections, PROVIDER_LISTING_FACTS, id).map((c) => c.id)
     expect(serving('deepseek-chat')).toEqual(['c-ds', 'c-or'])
     expect(serving('or-a')).toEqual(['c-or'])
     expect(serving('deepseek-old')).toEqual([])

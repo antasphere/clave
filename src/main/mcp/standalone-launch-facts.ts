@@ -28,7 +28,10 @@ import {
 import type { LaunchModel, LaunchOptionsInput } from '../../shared/launch-options'
 import { modelsForProviderConnections } from '../../shared/launch-models'
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
-import { PROVIDER_COMPANY_BY_ID, type ProviderCompanyId } from '../models-catalog-overlay'
+import { PROVIDER_LISTING_FACTS, type ProviderCompanyId } from '../models-catalog-overlay'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { isAccountPoolId, type Connection, type ConnectionPoolId } from '../../shared/connection'
+import { providerConnection } from '../../shared/provider-connection'
 import type { ModelOption } from '../../shared/session-model'
 import { usageSummaryForModel } from '../../shared/usage-summary'
 import type { HarnessDetection } from '../agent-updates/standalone-detection'
@@ -49,6 +52,9 @@ export interface StandaloneLaunchFacts extends LaunchFacts {
   interactionMode(): InteractionMode
   /** The server's own account switch mode (it has no workspace of its own). */
   switchMode(): AccountSwitchMode
+  /** A provider pool's stored connections (PRDCT-4496): that company's, in
+   *  the store's order, as the one shape of a connection. */
+  providerPool?(pool: ConnectionPoolId): readonly Connection[]
   now(): number
 }
 
@@ -71,6 +77,9 @@ export interface StandaloneLaunchDeps {
   readonly providerConnections?: (
     harness: 'pi' | 'opencode'
   ) => readonly { id: string; label: string; company: ProviderCompanyId }[]
+  /** Every stored provider connection of this server, never a key
+   *  (`providerConnectionsManager.list`); absent, none. */
+  readonly providerConnectionViews?: () => readonly ProviderConnectionView[]
   readonly now?: () => number
 }
 
@@ -134,7 +143,7 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
         const providerIds = [
           ...new Set(
             connections
-              .map((c) => PROVIDER_COMPANY_BY_ID[c.company]?.catalog)
+              .map((c) => PROVIDER_LISTING_FACTS[c.company]?.catalog)
               .filter((id): id is string => !!id)
           )
         ]
@@ -148,7 +157,7 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
             view = null
           }
         }
-        const rows = modelsForProviderConnections(view, connections, PROVIDER_COMPANY_BY_ID, pinned)
+        const rows = modelsForProviderConnections(view, connections, PROVIDER_LISTING_FACTS, pinned)
         // Never 'loading': the view is read or null by now.
         if (rows === 'loading')
           return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
@@ -171,6 +180,12 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
     },
     // The Mac's shell `switchMode(workspaceId)` with no workspace: the global one, else propose.
     switchMode: () => switchModeOf(deps.preferences('accountSwitchMode')) ?? 'propose',
+    providerPool: (pool) =>
+      isAccountPoolId(pool)
+        ? []
+        : (deps.providerConnectionViews?.() ?? [])
+            .filter((view) => view.company === pool)
+            .map(providerConnection),
     now: deps.now ?? (() => Date.now())
   }
 }
@@ -230,11 +245,17 @@ export function launchOptionsInput(
     models: (id) => models[id] ?? [],
     harnessSettings: facts.harnessSettings(),
     interactionMode: facts.interactionMode(),
-    connections: (pool) => facts.accounts(pool as AccountProvider),
-    selectedConnectionId: (pool) => facts.selectedAccountId(pool as AccountProvider),
+    // A provider pool lists the server's stored connections of that company
+    // (PRDCT-4496); an account pool its accounts.
+    connections: (pool) =>
+      isAccountPoolId(pool) ? facts.accounts(pool) : (facts.providerPool?.(pool) ?? []),
+    selectedConnectionId: (pool) =>
+      isAccountPoolId(pool) ? facts.selectedAccountId(pool) : undefined,
     preferRecommended: facts.useRecommendedAccount?.() ?? false,
     launchModel: (pool, profileId) =>
-      facts.launchModel?.(pool as AccountProvider, profileId, undefined),
+      isAccountPoolId(pool as ConnectionPoolId)
+        ? facts.launchModel?.(pool as AccountProvider, profileId, undefined)
+        : undefined,
     now: facts.now()
   }
 }

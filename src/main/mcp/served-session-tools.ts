@@ -36,7 +36,7 @@ import {
 } from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
-import { poolsOf } from '../../shared/launch-options'
+import { accountPoolsOf } from '../../shared/launch-options'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
@@ -68,7 +68,8 @@ export const WINDOW_FACT_TIMEOUT_MS = 2_000
 // ── Wave 7, lane A: the pooled harnesses, named from the table (PRDCT-4485) ──
 
 /** The harnesses Clave holds connections for, by name: "Claude Code, Codex". */
-const POOLED_NAMES = HARNESSES.filter((h) => poolsOf(h).length > 0)
+// The account pools only: a provider pool's connection is never named by an account (PRDCT-4496).
+const POOLED_NAMES = HARNESSES.filter((h) => accountPoolsOf(h).length > 0)
   .map((h) => h.name)
   .join(', ')
 

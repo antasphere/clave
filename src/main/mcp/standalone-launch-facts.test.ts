@@ -8,6 +8,9 @@ import type { AgentUpdateStatus } from '../../shared/agent-updates'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import { usageSummaryOf } from '../../shared/usage-summary'
 import type { LaunchFacts } from '../routines/launch'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { providerConnection } from '../../shared/provider-connection'
+import { launchOptions } from '../../shared/launch-options'
 import {
   accountOf,
   launchOptionsInput,
@@ -271,5 +274,45 @@ describe('launchOptionsInput', () => {
     expect(input.connections('codex')).toEqual([
       { id: 'key', label: 'API key', usable: true, fallback: true }
     ])
+  })
+
+  it("answers a provider pool with the server's stored connections of that company (PRDCT-4496)", async () => {
+    const view = (
+      id: string,
+      company: ProviderConnectionView['company'],
+      hasKey = true
+    ): ProviderConnectionView => ({
+      id,
+      label: `${id} label`,
+      company,
+      kind: 'key',
+      pool: company,
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+      needsKey: company !== 'ollama',
+      hasKey,
+      keySetAt: hasKey ? 1 : null,
+      createdAt: 1
+    })
+    const views = [view('k1', 'moonshot'), view('k2', 'moonshot', false), view('o1', 'ollama')]
+    const launch = standaloneLaunchFacts(deps({ providerConnectionViews: () => views }))
+    const input = launchOptionsInput(launch, undefined, await modelsOfHarnesses(launch))
+    expect(input.connections('moonshot')).toEqual([
+      providerConnection(views[0]),
+      providerConnection(views[1])
+    ])
+    expect(input.connections('moonshot').map((c) => c.usable)).toEqual([true, false])
+    expect(input.connections('ollama').map((c) => c.id)).toEqual(['o1'])
+    expect(input.connections('deepseek')).toEqual([])
+    expect(input.selectedConnectionId('moonshot')).toBeUndefined()
+    // The shared function lists them under Pi and OpenCode.
+    const pi = launchOptions(input).harnesses.find((h) => h.id === 'pi')!
+    expect(pi.connections.map((c) => [c.pool, c.id])).toEqual([
+      ['moonshot', 'k1'],
+      ['moonshot', 'k2'],
+      ['ollama', 'o1']
+    ])
+    // Without the store plugged in, no provider connection at all.
+    const bare = standaloneLaunchFacts(deps())
+    expect(launchOptionsInput(bare, undefined, {}).connections('moonshot')).toEqual([])
   })
 })

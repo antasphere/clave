@@ -16,6 +16,8 @@ import type { LauncherFamily } from './agent-launch'
 import type { ConnectionPoolId } from './connection'
 // ── Lane B (harness wave): provider connections ──
 import type { ProviderWireFormat } from '@clave/contract/settings/provider-catalogue'
+// Lane C of the harness wave (PRDCT-4496): the pools a stored key serves
+import { PROVIDER_COMPANY_IDS } from '@clave/contract/settings/provider-catalogue'
 
 export type HarnessId = LauncherFamily
 
@@ -184,7 +186,8 @@ export const HARNESSES: readonly Harness[] = [
     id: 'pi',
     name: 'Pi',
     command: 'pi',
-    connectionPools: [],
+    // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
+    connectionPools: [...PROVIDER_COMPANY_IDS],
     vendorOnly: false,
     chatAdapterId: null,
     takesModel: true,
@@ -206,7 +209,8 @@ export const HARNESSES: readonly Harness[] = [
     id: 'opencode',
     name: 'OpenCode',
     command: 'opencode',
-    connectionPools: [],
+    // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
+    connectionPools: [...PROVIDER_COMPANY_IDS],
     vendorOnly: false,
     chatAdapterId: null,
     takesModel: true,

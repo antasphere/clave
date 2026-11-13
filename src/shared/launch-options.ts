@@ -24,7 +24,13 @@ import {
   type PoolAccount
 } from './account-pool'
 import { usageSummaryForModel } from './usage-summary'
-import { poolAccountOf, type Connection, type ConnectionPoolId } from './connection'
+import {
+  isAccountPoolId,
+  poolAccountOf,
+  type AccountPoolId,
+  type Connection,
+  type ConnectionPoolId
+} from './connection'
 import { isChatProfileRef } from './open-session-modes'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
 
@@ -132,6 +138,16 @@ export function poolsOf(harness: Pick<Harness, 'connectionPools'>): readonly Con
   return harness.connectionPools
 }
 
+/** The pools of a harness backed by an account list (Claude, Codex): the
+ *  ones an `account` argument names a connection of. Pi's and OpenCode's
+ *  provider pools are not (PRDCT-4496): an agent never picks their stored
+ *  connection by an account. */
+export function accountPoolsOf(
+  harness: Pick<Harness, 'connectionPools'>
+): readonly AccountPoolId[] {
+  return harness.connectionPools.filter(isAccountPoolId)
+}
+
 /** The connection a launch naming none would start on: the served road's
  *  `accountForLaunch` rule (`served-accounts.ts`). Each connection judged
  *  for `model`'s caps; the selected one (else `default`) kept while it has
@@ -184,14 +200,19 @@ function harnessOptions(
 ): HarnessOptions {
   const { id } = harness
   const pools = poolsOf(harness)
+  // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode list the stored
+  // provider connections of their pools, and still run on the login inside
+  // the harness when none is named: only an account pool remembers a model
+  // or holds every model up to its connections.
+  const accountPool = accountPoolsOf(harness)[0]
   const defaultProfileId = input.defaultProfileId(id)
   // What an open passing no model lands on: the remembered chat model of
   // the profile that open resolves (the chat default under a chat
   // interaction mode), else the harness's own default (null). The
   // launcher's row passes its preferred model instead (`launcherModel`).
   const defaultModel =
-    harness.takesModel && pools.length > 0
-      ? (input.launchModel(pools[0], input.openProfileId(id)) ?? null)
+    harness.takesModel && accountPool
+      ? (input.launchModel(accountPool, input.openProfileId(id)) ?? null)
       : null
   const launcherModel = input.harnessSettings[id]?.preferredModel ?? null
   const model = defaultModel ?? undefined
@@ -228,7 +249,7 @@ function harnessOptions(
   ).map((m) => {
     const served =
       listedModels === 'unavailable' ||
-      pools.length === 0 ||
+      !accountPool ||
       all.length === 0 ||
       all.some((c) => c.usable && !isExhausted(usageSummaryForModel(c.usage, m.id ?? undefined)))
     return { ...m, served, reason: served ? null : `No connection with ${m.family} credits` }
@@ -246,7 +267,7 @@ function harnessOptions(
     models,
     connections,
     connectionNote:
-      pools.length === 0
+      pools.length === 0 || (!accountPool && all.length === 0)
         ? `Clave holds no connection for ${harness.name}: it runs on the login inside the harness.`
         : null,
     profiles: profiles.map((p) => ({

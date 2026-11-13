@@ -159,6 +159,10 @@ export function getLastAgentSetup(workspaceId: string | null): AgentSetup {
     const rest = { ...setup }
     delete rest.claudeProfileId
     delete rest.codexAccountId
+    // A Pi or OpenCode setup's catalogue model belongs to its stored
+    // connection (PRDCT-4496): the two are dropped together, so the replay
+    // never asks the harness's own login for a model of another company.
+    if (rest.connectionId) delete rest.model
     delete rest.connectionId
     delete rest.connectionLabel
     return rest

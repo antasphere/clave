@@ -19,7 +19,7 @@ import {
   type InteractionMode
 } from '../../shared/harness'
 import { firstPoolOf, isAccountPoolId } from '../../shared/connection'
-import { poolsOf } from '../../shared/launch-options'
+import { accountPoolsOf } from '../../shared/launch-options'
 import type { SpawnOptions } from '@clave/contract/sessions'
 import {
   BUILT_IN_LAUNCH_PROFILES,
@@ -48,7 +48,7 @@ const namesOf = (pick: (h: (typeof HARNESSES)[number]) => boolean): string =>
     .join(', ')
 /** The refusal of an account for a harness Clave holds no connection for. */
 export const accountRefusal = (agent: HarnessId): string =>
-  `The account argument applies to harnesses with a connection pool (${namesOf((h) => poolsOf(h).length > 0)}); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
+  `The account argument applies to harnesses with a connection pool (${namesOf((h) => accountPoolsOf(h).length > 0)}); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
 /** The refusal of a model for a harness that takes none on its command line. */
 export const modelRefusal = (agent: HarnessId): string =>
   `The model argument applies to harnesses that take a model (${namesOf((h) => h.takesModel)}); ${HARNESS_BY_ID[agent].name} takes none on its command line.`
@@ -214,7 +214,9 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
     return fail(`provider is for pi; ${agent} takes none`)
   const harness = HARNESS_BY_ID[agent as HarnessId]
   if (p.model !== undefined && !harness.takesModel) return fail(modelRefusal(harness.id))
-  if (p.account !== undefined && poolsOf(harness).length === 0)
+  // An account names a connection of an account pool: Pi and OpenCode, whose
+  // pools are a provider's stored keys (PRDCT-4496), take none.
+  if (p.account !== undefined && accountPoolsOf(harness).length === 0)
     return fail(accountRefusal(harness.id))
 
   const modes = resolveSpawnModes({

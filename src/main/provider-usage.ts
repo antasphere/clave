@@ -8,7 +8,7 @@
  * the request header and nowhere else: no error, no log, no returned line.
  */
 
-import type { ProviderCompanyId } from './models-catalog-overlay'
+import type { ProviderCompanyId } from '@clave/contract/settings/provider-catalogue'
 // Lane C of the harness wave (PRDCT-4496): the usage line, the window's shape
 import {
   usageLineText,
@@ -106,13 +106,16 @@ export const PROVIDER_USAGE_ROADS: Readonly<
 > = {
   deepseek: { url: 'https://api.deepseek.com/user/balance', parse: parseDeepSeekBalance },
   openrouter: { url: 'https://openrouter.ai/api/v1/key', parse: parseOpenRouterKey },
-  vercel: { url: 'https://ai-gateway.vercel.sh/v1/credits', parse: parseVercelCredits },
+  'vercel-ai-gateway': {
+    url: 'https://ai-gateway.vercel.sh/v1/credits',
+    parse: parseVercelCredits
+  },
   minimax: { kind: 'plan' },
   moonshot: { kind: 'plan' },
   zai: { kind: 'plan' },
   alibaba: { kind: 'plan' },
   mistral: { kind: 'payPerUse' },
-  custom: { kind: 'payPerUse' },
+  generic: { kind: 'payPerUse' },
   ollama: { kind: 'local' }
 }
 

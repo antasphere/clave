@@ -1,9 +1,10 @@
 import type { CatalogModel } from './models-catalog'
 import {
-  CLAVE_CONNECTION_KEY_ENV,
-  PROVIDER_COMPANY_BY_ID,
-  type ProviderCompanyId
-} from './models-catalog-overlay'
+  providerCompany,
+  type ProviderCompanyId,
+  type ProviderWireFormat
+} from '@clave/contract/settings/provider-catalogue'
+import { CLAVE_CONNECTION_KEY_ENV, PROVIDER_ROAD_BY_ID } from './models-catalog-overlay'
 
 /**
  * How a stored provider connection reaches a Pi or an OpenCode tab's process
@@ -21,12 +22,27 @@ export interface ConnectionForSpawn {
   id: string
   label: string
   company: ProviderCompanyId
-  /** The card's own, for `ollama` and `custom`: wins over the company row. */
-  baseUrl?: string | null
-  wire?: 'openai-completions' | 'anthropic-messages' | null
+  /** The stored connection's endpoint a provider Clave declares is pointed
+   *  at (lane B's `endpoints`, one chosen by the wiring); null when it has
+   *  none. A road the harness ships reads its own. */
+  endpoint: { wireFormat: ProviderWireFormat; baseUrl: string } | null
   /** What the provider issued, opened by the caller at spawn; null for Ollama. */
   value: string | null
   models?: string[]
+}
+
+/** The `api` of Pi's models.json for a wire format. */
+const PI_API: Readonly<Record<ProviderWireFormat, string>> = {
+  'openai-chat': 'openai-completions',
+  'openai-responses': 'openai-responses',
+  'anthropic-messages': 'anthropic-messages'
+}
+
+/** The AI SDK package OpenCode loads for a wire format. */
+const OPENCODE_PACKAGE: Readonly<Record<ProviderWireFormat, string>> = {
+  'anthropic-messages': '@ai-sdk/anthropic',
+  'openai-responses': '@ai-sdk/openai',
+  'openai-chat': '@ai-sdk/openai-compatible'
 }
 
 export interface PiProviderEntry {
@@ -79,9 +95,9 @@ export function providerInjection(input: {
       return { env: { [OPENCODE_CONFIG_ENV]: JSON.stringify({ model }) }, opencodeStandalone: true }
     return { env: {} }
   }
-  const company = PROVIDER_COMPANY_BY_ID[connection.company]
-  if (!company) throw new Error('The connection names a provider Clave does not know.')
-  const road = company[harness]
+  const roads = PROVIDER_ROAD_BY_ID[connection.company]
+  if (!roads) throw new Error('The connection names a provider Clave does not know.')
+  const road = roads[harness]
 
   if (road) {
     // A provider the harness ships: its own variable, and the harness told to
@@ -104,10 +120,10 @@ export function providerInjection(input: {
 
   // No provider of the harness's own: Clave declares one, its key read from
   // Clave's connection variable.
-  const providerId = `clave-${company.id}`
-  const baseUrl = connection.baseUrl ?? company.baseUrl
-  if (!baseUrl) throw new Error('The connection has no base URL.')
-  const wire = connection.wire ?? company.wire ?? 'openai-completions'
+  const providerId = `clave-${roads.id}`
+  const { endpoint } = connection
+  if (!endpoint) throw new Error('The connection has no endpoint.')
+  const name = providerCompany(connection.company).name
   const models = declaredModels(connection, input.catalogModels, model)
   const env: Record<string, string> = { [CLAVE_CONNECTION_KEY_ENV]: connection.value ?? NO_KEY }
   if (harness === 'pi') {
@@ -117,9 +133,9 @@ export function providerInjection(input: {
       piEntry: {
         providerId,
         entry: {
-          name: company.name,
-          baseUrl,
-          api: wire,
+          name,
+          baseUrl: endpoint.baseUrl,
+          api: PI_API[endpoint.wireFormat],
           apiKey: `$${CLAVE_CONNECTION_KEY_ENV}`,
           models
         }
@@ -129,9 +145,9 @@ export function providerInjection(input: {
   const config: Record<string, unknown> = {
     providers: {
       [providerId]: {
-        name: company.name,
-        package: wire === 'anthropic-messages' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible',
-        settings: { baseURL: baseUrl, apiKey: `{env:${CLAVE_CONNECTION_KEY_ENV}}` },
+        name,
+        package: OPENCODE_PACKAGE[endpoint.wireFormat],
+        settings: { baseURL: endpoint.baseUrl, apiKey: `{env:${CLAVE_CONNECTION_KEY_ENV}}` },
         models: Object.fromEntries(models.map((m) => [m.id, { name: m.name }]))
       }
     }
