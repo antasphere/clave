@@ -6,16 +6,22 @@ import type { PiProviderEntry } from './provider-injection'
  * A Pi agent directory for one connection (PRDCT-4496), used as the tab's
  * `PI_CODING_AGENT_DIR`. Pi reads `models.json` from its agent directory
  * alone and puts auth.json before it, so the connection's directory holds a
- * symlink for every top-level entry of the person's own (sessions,
- * extensions, settings stay shared) but no auth.json at all, and one real
- * `models.json`: the person's providers with the connection's entry over
- * them, its key a variable name. The person's directory is only ever read.
- * The same shape as a Codex account's home (`syncCodexHome`).
+ * symlink for every top-level entry of the person's own (sessions and
+ * extensions stay shared) but no auth.json at all, one real `models.json`:
+ * the person's providers with the connection's entry over them, its key a
+ * variable name, and a COPY of `settings.json` (a real file, mode 0o600, the
+ * person's content as it is, made again at every sync; absent when the person
+ * has none). Pi writes its default provider and model into settings.json, so
+ * a link would carry a choice made in a connection tab into the person's own
+ * settings; the copy keeps it in the connection's directory, and the next
+ * sync puts the person's settings back. The person's directory is only ever
+ * read. The same shape as a Codex account's home (`syncCodexHome`).
  */
 
 const MODELS_FILE = 'models.json'
 const AUTH_FILE = 'auth.json'
-const NOT_LINKED = new Set([MODELS_FILE, AUTH_FILE])
+const SETTINGS_FILE = 'settings.json'
+const NOT_LINKED = new Set([MODELS_FILE, AUTH_FILE, SETTINGS_FILE])
 
 type ModelsDoc = Record<string, unknown> & { providers: Record<string, unknown> }
 
@@ -94,6 +100,26 @@ export function syncPiConnectionDir(input: {
     } catch {
       // Best effort: an entry Pi creates and deletes in between is not worth
       // failing a spawn over.
+    }
+  }
+
+  // settings.json copied, never linked: what Pi saves in a connection tab
+  // stays here. A link or a stale copy is replaced; none when the person has
+  // none (a directory there is not ours and stays).
+  const settings = path.join(dir, SETTINGS_FILE)
+  const settingsStat = lstatOrNull(settings)
+  if (!settingsStat?.isDirectory()) {
+    let own: Buffer | null = null
+    try {
+      const source = path.join(input.homeAgentDir, SETTINGS_FILE)
+      if (fs.statSync(source).isFile()) own = fs.readFileSync(source)
+    } catch {
+      // The person has no settings.json: the connection has none either.
+    }
+    if (settingsStat) fs.unlinkSync(settings)
+    if (own) {
+      fs.writeFileSync(settings, own, { mode: 0o600 })
+      fs.chmodSync(settings, 0o600)
     }
   }
 

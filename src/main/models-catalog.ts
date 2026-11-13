@@ -146,14 +146,77 @@ function modelView(m: CatalogModel): CatalogModelView {
   }
 }
 
-/** The stored document read back: a snapshot only when it is well formed. */
+/** A stored model read back under the rules `pruneModel` applies to
+ *  models.dev (the stored shape is the pruned one): no string id or not an
+ *  object costs the model, a status other than the three is dropped, a number
+ *  that is not finite is dropped. */
+function readStoredModel(raw: unknown): CatalogModel | null {
+  if (!isRecord(raw)) return null
+  const id = nonEmptyString(raw.id)
+  if (!id) return null
+  const model: CatalogModel = {
+    id,
+    name: nonEmptyString(raw.name) ?? id,
+    reasoning: raw.reasoning === true,
+    toolCall: raw.toolCall === true
+  }
+  if (raw.status === 'deprecated' || raw.status === 'beta' || raw.status === 'alpha')
+    model.status = raw.status
+  const context = finiteNumber(raw.contextLimit)
+  const output = finiteNumber(raw.outputLimit)
+  if (context !== undefined) model.contextLimit = context
+  if (output !== undefined) model.outputLimit = output
+  const releaseDate = nonEmptyString(raw.releaseDate)
+  if (releaseDate) model.releaseDate = releaseDate
+  if (isRecord(raw.cost)) {
+    const costIn = finiteNumber(raw.cost.input)
+    const costOut = finiteNumber(raw.cost.output)
+    if (costIn !== undefined || costOut !== undefined)
+      model.cost = {
+        ...(costIn !== undefined && { input: costIn }),
+        ...(costOut !== undefined && { output: costOut })
+      }
+  }
+  return model
+}
+
+/** A stored provider read back under `pruneProvider`'s rules: no string id
+ *  costs the provider, a provider whose models are missing or malformed keeps
+ *  the valid ones (none at worst), and every model is read again. */
+function readStoredProvider(raw: unknown): CatalogProvider | null {
+  if (!isRecord(raw)) return null
+  const id = nonEmptyString(raw.id)
+  if (!id) return null
+  const env = Array.isArray(raw.env)
+    ? raw.env.filter((v): v is string => typeof v === 'string' && v !== '')
+    : []
+  const models: CatalogModel[] = []
+  if (Array.isArray(raw.models))
+    for (const value of raw.models) {
+      const model = readStoredModel(value)
+      if (model) models.push(model)
+    }
+  const provider: CatalogProvider = { id, name: nonEmptyString(raw.name) ?? id, env, models }
+  const api = nonEmptyString(raw.api)
+  const npm = nonEmptyString(raw.npm)
+  if (api) provider.api = api
+  if (npm) provider.npm = npm
+  return provider
+}
+
+/** The stored document read back: a snapshot only when it is well formed,
+ *  each provider and each model validated as `pruneModelsDev` validates the
+ *  service's answer, so a malformed cache never makes `view()` or `modelsOf()`
+ *  reject: it costs the malformed rows only. */
 function readSnapshot(raw: unknown): ModelsCatalogSnapshot | null {
   if (!isRecord(raw)) return null
   const fetchedAt = finiteNumber(raw.fetchedAt)
   if (fetchedAt === undefined || !Array.isArray(raw.providers)) return null
-  const providers = raw.providers.filter(
-    (p): p is CatalogProvider => isRecord(p) && typeof p.id === 'string' && Array.isArray(p.models)
-  )
+  const providers: CatalogProvider[] = []
+  for (const value of raw.providers) {
+    const provider = readStoredProvider(value)
+    if (provider) providers.push(provider)
+  }
   return { fetchedAt, providers }
 }
 

@@ -67,6 +67,7 @@ import { canMoveToOngoing, moveToOngoing } from '../../lib/ongoing-actions'
 import { accountSpawnFields, accountSessionFields } from '../../store/claude-profile-store'
 import { primeClaudeAccountsUsage, primeCodexAccountsUsage } from '../../store/usage-store'
 import { codexAccountSessionFields } from '../../store/codex-account-store'
+import { connectionSessionFields } from '../../lib/connection-fields'
 import {
   accountProviderOf,
   switchModeLabel,
@@ -1070,6 +1071,8 @@ export function Sidebar(): React.JSX.Element {
               // machine login while every readout still named the account.
               ...(dupClaudeKind ? accountSpawnFields(session) : {}),
               ...(session.codexMode ? codexAccountSessionFields(session) : {}),
+              // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+              ...connectionSessionFields(session),
               // A duplicate belongs where its source lives, not to the active view.
               workspaceId: session.workspaceId
             }
@@ -1098,6 +1101,8 @@ export function Sidebar(): React.JSX.Element {
             piThinking: sessionInfo.piThinking,
             ...(dupClaudeKind ? accountSessionFields(session) : {}),
             ...(session.codexMode ? codexAccountSessionFields(session) : {}),
+            // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+            ...connectionSessionFields(session),
             // Persist so re-duplicating the clone also re-primes.
             initialPrompt,
             sessionType: 'local',
@@ -1145,6 +1150,8 @@ export function Sidebar(): React.JSX.Element {
           resumeSessionId: conversationId,
           // The conversation resumes on the account it ran on.
           ...(isPi ? {} : accountSpawnFields(session)),
+          // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+          ...connectionSessionFields(session),
           // The resumed conversation stays in its session's workspace.
           workspaceId: session.workspaceId
         })
@@ -1168,6 +1175,8 @@ export function Sidebar(): React.JSX.Element {
           piProvider: sessionInfo.piProvider,
           piThinking: sessionInfo.piThinking,
           ...(isPi ? {} : accountSessionFields(session)),
+          // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+          ...connectionSessionFields(session),
           sessionType: 'local'
         })
         useSessionStore.getState().selectSession(sessionInfo.id, false)

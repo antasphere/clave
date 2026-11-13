@@ -348,3 +348,75 @@ describe('ModelsCatalog.view', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('a malformed cached document costs its malformed rows only (F2)', () => {
+  const cached = (): void =>
+    fs.writeFileSync(
+      path.join(ports.dir, MODELS_CATALOG_FILE),
+      JSON.stringify({
+        fetchedAt: T0 - 1000,
+        providers: [
+          { id: 'nulls', name: 'Nulls', env: [], models: [null] },
+          {
+            id: 'mixed',
+            name: 'Mixed',
+            env: ['MIXED_KEY', 7],
+            models: [
+              { name: 'No id' },
+              { id: 42, name: 'Number id' },
+              'not-a-model',
+              {
+                id: 'good',
+                name: 'Good',
+                reasoning: true,
+                toolCall: true,
+                status: 'retired',
+                contextLimit: 'big',
+                outputLimit: 8000
+              },
+              { id: 'old', name: 'Old', status: 'deprecated' }
+            ]
+          },
+          { id: 'bare', name: 'Bare' },
+          { name: 'No provider id', models: [] },
+          null
+        ]
+      })
+    )
+
+  it('view() answers the valid rows, never rejecting', async () => {
+    cached()
+    const fetchMock = okFetch()
+    const view = await make(fetchMock).view()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(view.providers).toEqual([
+      { id: 'nulls', name: 'Nulls', models: [] },
+      {
+        id: 'mixed',
+        name: 'Mixed',
+        models: [
+          { id: 'good', name: 'Good', reasoning: true, toolCall: true, outputLimit: 8000 },
+          { id: 'old', name: 'Old', reasoning: false, toolCall: false, status: 'deprecated' }
+        ]
+      },
+      { id: 'bare', name: 'Bare', models: [] }
+    ])
+  })
+
+  it('modelsOf() answers the valid rows of each provider, never rejecting', async () => {
+    cached()
+    const catalog = make(okFetch())
+    await expect(catalog.modelsOf('nulls')).resolves.toEqual([])
+    await expect(catalog.modelsOf('bare')).resolves.toEqual([])
+    const mixed = await catalog.modelsOf('mixed')
+    expect(mixed.map((m) => m.id)).toEqual(['good'])
+    expect(mixed[0].status).toBeUndefined()
+    expect(mixed[0].contextLimit).toBeUndefined()
+  })
+
+  it('providers() keeps only the string env entries', async () => {
+    cached()
+    const [mixed] = await make(okFetch()).providers(['mixed'])
+    expect(mixed.env).toEqual(['MIXED_KEY'])
+  })
+})

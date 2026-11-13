@@ -6,7 +6,7 @@ import { syncPiConnectionDir } from './provider-injection-pi-dir'
 
 /**
  * A Pi connection's agent directory (PRDCT-4496): the person's own entries
- * linked, no auth.json at all (Pi reads it before models.json, so one there
+ * linked, settings.json copied rather than linked, no auth.json at all (Pi reads it before models.json, so one there
  * would be the credential instead of the connection), and a models.json whose
  * entry for the provider names the variable. The person's directory is read
  * only. All values here are made up.
@@ -62,15 +62,16 @@ function snapshot(dir: string): Record<string, string> {
 }
 
 describe('syncPiConnectionDir', () => {
-  it('links every entry of the home but auth.json and models.json', () => {
+  it('links every entry of the home but auth.json, models.json and settings.json', () => {
     const dir = sync()
     expect(dir).toBe(path.join(root, 'conn-1'))
-    for (const name of ['sessions', 'extensions', 'settings.json']) {
+    for (const name of ['sessions', 'extensions']) {
       const target = path.join(dir, name)
       expect(fs.lstatSync(target).isSymbolicLink()).toBe(true)
       expect(fs.readlinkSync(target)).toBe(path.join(home, name))
     }
     expect(fs.lstatSync(path.join(dir, 'models.json')).isSymbolicLink()).toBe(false)
+    expect(fs.lstatSync(path.join(dir, 'settings.json')).isSymbolicLink()).toBe(false)
     expect(fs.readdirSync(dir).sort()).toEqual(
       ['extensions', 'models.json', 'sessions', 'settings.json'].sort()
     )
@@ -122,11 +123,61 @@ describe('syncPiConnectionDir', () => {
     const dir = sync()
     fs.unlinkSync(path.join(dir, 'sessions'))
     fs.symlinkSync(path.join(tmp, 'elsewhere'), path.join(dir, 'sessions'))
-    fs.unlinkSync(path.join(dir, 'settings.json'))
-    fs.writeFileSync(path.join(dir, 'settings.json'), 'own')
+    fs.unlinkSync(path.join(dir, 'extensions'))
+    fs.writeFileSync(path.join(dir, 'extensions'), 'own')
     sync()
     expect(fs.readlinkSync(path.join(dir, 'sessions'))).toBe(path.join(home, 'sessions'))
-    expect(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')).toBe('own')
+    expect(fs.readFileSync(path.join(dir, 'extensions'), 'utf8')).toBe('own')
+  })
+
+  // Lane C of the harness wave (PRDCT-4496), N3: a default provider or model
+  // Pi saves in a connection tab never lands in the person's own settings.
+  describe('settings.json is a copy, never a link (N3)', () => {
+    const own = '{"theme":"dark"}\n'
+
+    it("copies the person's settings as they are, readable by its owner alone", () => {
+      const dir = sync()
+      const copy = path.join(dir, 'settings.json')
+      expect(fs.lstatSync(copy).isFile()).toBe(true)
+      expect(fs.readFileSync(copy, 'utf8')).toBe(own)
+      expect(fs.statSync(copy).mode & 0o777).toBe(0o600)
+    })
+
+    it("keeps the person's settings.json byte-identical after a write into the copy", () => {
+      const dir = sync()
+      const before = fs.readFileSync(path.join(home, 'settings.json'))
+      fs.writeFileSync(
+        path.join(dir, 'settings.json'),
+        '{"defaultProvider":"deepseek","defaultModel":"made-up-model"}\n'
+      )
+      expect(fs.readFileSync(path.join(home, 'settings.json')).equals(before)).toBe(true)
+      // The next sync puts the person's settings back in the copy.
+      sync()
+      expect(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')).toBe(own)
+      expect(fs.readFileSync(path.join(home, 'settings.json')).equals(before)).toBe(true)
+    })
+
+    it('replaces a stale link to the person’s settings with the copy', () => {
+      const dir = sync()
+      const copy = path.join(dir, 'settings.json')
+      fs.unlinkSync(copy)
+      fs.symlinkSync(path.join(home, 'settings.json'), copy)
+      fs.chmodSync(path.join(home, 'settings.json'), 0o644)
+      sync()
+      expect(fs.lstatSync(copy).isSymbolicLink()).toBe(false)
+      expect(fs.readFileSync(copy, 'utf8')).toBe(own)
+      expect(fs.statSync(copy).mode & 0o777).toBe(0o600)
+      // The person's own file keeps its mode: the copy was never written through the link.
+      expect(fs.statSync(path.join(home, 'settings.json')).mode & 0o777).toBe(0o644)
+    })
+
+    it('has no settings.json when the person has none, and drops a copy left from before', () => {
+      const dir = sync()
+      fs.rmSync(path.join(home, 'settings.json'))
+      sync()
+      // Neither a file nor a link (a dangling one included) is left there.
+      expect(fs.readdirSync(dir)).not.toContain('settings.json')
+    })
   })
 
   it('a missing home gives a directory with models.json alone', () => {
