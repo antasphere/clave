@@ -21,6 +21,7 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   callMcp,
+  openWindow,
   until,
   userDataDir,
   fixturePath
@@ -161,31 +162,74 @@ export async function run(t) {
     t.check('the pane shows the tool card', !!toolCard, (await chat(id).innerText()).slice(0, 600))
     const chipText = async () =>
       chat(id).locator('.chat-model-trigger[aria-label="Model"]').first().innerText()
-    const chipOk = await until(async () => /stand-in\/one/.test(await chipText()), { tries: 40 })
-    t.check('the chip reads the model the agent runs (stand-in/one)', !!chipOk, await chipText())
-    console.log(`      chip reads: ${JSON.stringify(await chipText())}`)
+    // The model by the name the agent gives it (`stand-in/One`, its provider
+    // prefix off), the way the menu lists it (PRDCT-4427).
+    const chipOk = await until(async () => (await chipText()) === 'OpenCode · One', { tries: 40 })
+    t.check('the chip names the model the agent runs (OpenCode · One)', !!chipOk, await chipText())
+    t.check(
+      'a chat on no stored connection names none',
+      (await pane(id).locator('[data-connection-chip]').count()) === 0
+    )
     await chat(id).locator('.chat-model-trigger[aria-label="Model"]').first().click()
     const ownRow = win.locator('.chat-model-provider[data-adapter="opencode-chat"]')
     await ownRow.waitFor({ timeout: 5_000 })
     await ownRow.hover()
-    await win.waitForTimeout(800)
-    const offered = await win.locator('[aria-label="Models"] .chat-model-option').allInnerTexts()
-    const menuText = await win
-      .locator('[aria-label="Models"]')
-      .innerText()
-      .catch(() => '')
-    console.log(`      model menu: ${JSON.stringify(menuText)}`)
-    t.check(
-      'the chip’s menu offers no OpenCode model to pick',
-      !offered.some((text) => /stand-in/.test(text)),
-      offered
+    const offered = await until(
+      async () => {
+        const rows = await win.locator('[aria-label="Models"] .chat-model-option').allInnerTexts()
+        return rows.length >= 3 ? rows : null
+      },
+      { tries: 30 }
     )
-    const otherProviders = await win
-      .locator('.chat-model-provider')
-      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-adapter')))
-    console.log(`      providers listed: ${JSON.stringify(otherProviders)}`)
-    await win.keyboard.press('Escape')
-    await win.keyboard.press('Escape')
+    t.equal(
+      'the chip’s menu lists the models the agent offers',
+      JSON.stringify((offered ?? []).map((text) => text.trim())),
+      JSON.stringify(['One', 'Two', 'Three'])
+    )
+    // Picking one switches: the agent is told, the chip follows.
+    await win.locator('[aria-label="Models"] .chat-model-option', { hasText: 'Two' }).click()
+    const switched = await until(
+      () =>
+        lines(FRAMES).find(
+          (f) =>
+            f.frame?.method === 'session/set_config_option' &&
+            f.frame?.params?.configId === 'model' &&
+            f.frame?.params?.value === 'stand-in/two'
+        ) ?? null,
+      { tries: 40 }
+    )
+    t.check('the pick reaches the agent (session/set_config_option stand-in/two)', !!switched)
+    const followed = await until(async () => (await chipText()) === 'OpenCode · Two', {
+      tries: 40
+    })
+    t.check('the chip follows the switch (OpenCode · Two)', !!followed, await chipText())
+    await win.keyboard.press('Escape').catch(() => undefined)
+
+    // ── 2b. A subscriber that comes after the session said its model ──
+    // A second window subscribes to the chat the way a pane does, on its own
+    // connection to the server: the agent named its model once, at its
+    // handshake, long before. (The views of one pane all stay mounted, and a
+    // chat off tmux cannot move windows, so this is the late subscriber the
+    // app can make here.)
+    const windowB = await openWindow(app, win, WS.id)
+    const heard = await windowB.page.evaluate(async (id) => {
+      const models = []
+      const stop = window.electronAPI.onSessionStream(id, (stream) => {
+        if (stream.kind === 'event' && stream.event.type === 'session_meta')
+          models.push(stream.event.model)
+      })
+      await window.electronAPI.sessionsSubscribe(id)
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      stop()
+      await window.electronAPI.sessionsUnsubscribe(id)
+      return models
+    }, id)
+    t.equal(
+      'a subscriber that comes after the session is ready is told its model (stand-in/two)',
+      JSON.stringify(heard),
+      JSON.stringify(['stand-in/two'])
+    )
+    await windowB.page.close().catch(() => undefined)
 
     // ── 3. The record keeps the OpenCode session ──
     const chatRecord = await until(async () => records(id).find((r) => r.opencodeSessionId))
