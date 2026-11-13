@@ -536,8 +536,8 @@ describe('transportProfileFor', () => {
   // button, the shortcuts and a server launch run on the family's chat default
   // when the mode is a chat view, on nothing (the terminal) otherwise. Round 1
   // of the verifier: only the rows followed the mode.
-  const chat = (family: 'claude' | 'codex'): string | undefined =>
-    family === 'claude' ? 'chat:claude:work' : undefined
+  const chat = (family: 'claude' | 'codex' | 'opencode'): string | undefined =>
+    family === 'claude' ? 'chat:claude:work' : family === 'opencode' ? 'opencode-chat' : undefined
   afterEach(() => {
     useLaunchSettingsStore.setState({ interactionMode: 'chat' })
     vi.unstubAllGlobals()
@@ -551,6 +551,10 @@ describe('transportProfileFor', () => {
     // A plugin's adapter selected as the default has no chat form: main runs
     // it as it is (the echo adapter of the chat-view specs).
     expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBeUndefined()
+    // OpenCode has a chat view (lane D, PRDCT-4427): its chat default.
+    expect(transportProfileFor({ kind: 'opencode', dangerousMode: false }, chat)).toBe(
+      'opencode-chat'
+    )
   })
   it('answers nothing in Terminal mode, for a harness with no chat, for claude agents, and for a Claude chat on Windows', () => {
     vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })

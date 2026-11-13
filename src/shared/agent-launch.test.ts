@@ -3,6 +3,7 @@ import {
   BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
+  chatProfileSource,
   codexProfilePolicy,
   codexRungPolicy,
   resolveLaunchProfile,
@@ -62,6 +63,22 @@ describe('a carried launch profile', () => {
     }
     expect(sanitizeCarriedLaunchProfile(codex)).toEqual(codex)
     expect(sanitizeCarriedLaunchProfile({ ...codex, id: 'chat:claude:x' })).toBeNull()
+  })
+
+  // Lane D (PRDCT-4427): OpenCode's saved profiles have a chat form too.
+  it('accepts the chat form of a saved OpenCode profile, for its own family only', () => {
+    const opencode = {
+      id: 'chat:opencode:x',
+      name: 'X (chat)',
+      family: 'opencode',
+      command: ['opencode'],
+      additionalArgs: [],
+      sourceProfileId: 'x'
+    }
+    expect(sanitizeCarriedLaunchProfile(opencode)).toEqual(opencode)
+    expect(sanitizeCarriedLaunchProfile({ ...opencode, family: 'codex' })).toBeNull()
+    expect(chatProfileSource('chat:opencode:x')).toEqual({ family: 'opencode', id: 'x' })
+    expect(chatProfileSource('chat:pi:x')).toBeUndefined()
   })
 
   it.each([

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CHAT_PROFILE_IDS,
   chatDefaultFor,
   chatOfInteractionMode,
+  isChatProfileRef,
   resolveSpawnModes,
   resolveProfileRef
 } from './open-session-modes'
@@ -242,5 +244,52 @@ describe('clave_open_session chat default', () => {
     expect(
       chatDefaultFor({ customProfiles: [] } as unknown as LaunchProfilePreferences, 'codex', 'ws1')
     ).toBe('codex-chat')
+  })
+})
+
+// Lane D (PRDCT-4427): OpenCode opens in the chat view, over the ACP adapter.
+describe('OpenCode has a chat view (lane D, PRDCT-4427)', () => {
+  it('names its built-in chat profile, and the chat form of a saved profile', () => {
+    expect(CHAT_PROFILE_IDS.opencode).toBe('opencode-chat')
+    expect(isChatProfileRef('opencode', 'opencode-chat')).toBe(true)
+    expect(isChatProfileRef('opencode', 'chat:opencode:x')).toBe(true)
+    expect(isChatProfileRef('opencode', 'chat:codex:x')).toBe(false)
+    expect(isChatProfileRef('codex', 'chat:opencode:x')).toBe(false)
+  })
+  it('opens an OpenCode chat with chat: true, and follows the interaction mode without it', () => {
+    expect(resolveProfileRef({ mode: 'opencode', chat: true })).toBe('opencode-chat')
+    expect(resolveProfileRef({ mode: 'opencode', chat: true }, 'chat:opencode:mine')).toBe(
+      'chat:opencode:mine'
+    )
+    expect(resolveProfileRef({ mode: 'opencode' }, undefined, 'chat')).toBe('opencode-chat')
+    expect(resolveProfileRef({ mode: 'opencode' }, undefined, 'terminal')).toBeUndefined()
+    expect(chatOfInteractionMode({ mode: 'opencode' }, 'chat')).toBe(true)
+    expect(chatOfInteractionMode({ mode: 'opencode' }, 'terminal')).toBe(false)
+  })
+  it('answers the chat form of a saved OpenCode default, the built-in chat for the built-in', () => {
+    const p: LaunchProfilePreferences = {
+      version: 1,
+      customProfiles: [
+        {
+          id: 'mine',
+          name: 'Mine',
+          family: 'opencode',
+          command: ['opencode'],
+          additionalArgs: ['--auto']
+        },
+        {
+          id: 'chat:opencode:mine',
+          name: 'Mine (chat)',
+          family: 'opencode',
+          command: ['opencode'],
+          additionalArgs: ['--auto'],
+          sourceProfileId: 'mine'
+        }
+      ],
+      globalDefaults: { opencode: 'mine' },
+      workspaceOverrides: {}
+    }
+    expect(chatDefaultFor(p, 'opencode', null)).toBe('chat:opencode:mine')
+    expect(chatDefaultFor({ ...p, globalDefaults: {} }, 'opencode', null)).toBe('opencode-chat')
   })
 })

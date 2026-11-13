@@ -90,13 +90,14 @@ const THINKING_VALUES = new Set<PiThinkingLevel>([
 ])
 const TOKEN_MAX_LENGTH = 4_096
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-const CHAT_PROFILE_ID_RE = /^chat:(claude|codex):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
+// Lane D (PRDCT-4427): OpenCode's saved profiles have a chat form too.
+const CHAT_PROFILE_ID_RE = /^chat:(claude|codex|opencode):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
 
 export function chatProfileSource(
   id?: string | null
-): { family: 'claude' | 'codex'; id: string } | undefined {
+): { family: 'claude' | 'codex' | 'opencode'; id: string } | undefined {
   const match = id ? CHAT_PROFILE_ID_RE.exec(id) : null
-  return match ? { family: match[1] as 'claude' | 'codex', id: match[2] } : undefined
+  return match ? { family: match[1] as 'claude' | 'codex' | 'opencode', id: match[2] } : undefined
 }
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/

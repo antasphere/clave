@@ -522,6 +522,9 @@ export interface SessionRecord {
   codexAccountLabel?: string
   /** The thread a Codex chat tab resumes on relaunch. */
   codexThreadId?: string
+  /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
+   *  on relaunch. */
+  opencodeSessionId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string

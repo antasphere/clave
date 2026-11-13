@@ -569,6 +569,10 @@ export interface SessionRecord {
    *  tab's first `session_meta`. Absent until the thread is up, and for every
    *  other kind of session. */
   codexThreadId?: string
+  /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes, the id
+   *  `opencode --session` takes in a terminal; from the tab's first
+   *  `session_meta`. */
+  opencodeSessionId?: string
   /** When the process was first started, carried across adoption: what a
    *  Codex terminal's thread is found by (the rollout it wrote after this). */
   startedAt?: number
@@ -1742,6 +1746,17 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta || meta.codexThreadId === threadId) return
     writeSessionRecord({ ...meta, codexThreadId: threadId })
+  }
+
+  /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes,
+   *  from its `session_meta`. Mirrors setSessionCodexThreadId. */
+  setSessionOpencodeSessionId(id: string, sessionId: string): void {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return
+    const key = this.recordKeyForSession(id)
+    if (!key) return
+    const meta = readSessionRecord(key)
+    if (!meta || meta.opencodeSessionId === sessionId) return
+    writeSessionRecord({ ...meta, opencodeSessionId: sessionId })
   }
 
   /** What the chat is running on now, as the provider last acknowledged it

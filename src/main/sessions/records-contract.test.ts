@@ -42,6 +42,7 @@ const full = {
   codexAccountId: 'ca1',
   codexAccountLabel: 'Default',
   codexThreadId: 'thr-1',
+  opencodeSessionId: 'ses_1',
   startedAt: 123,
   workspaceId: 'ws1',
   windowKey: 'w1',

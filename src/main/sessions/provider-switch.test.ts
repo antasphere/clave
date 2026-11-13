@@ -5,6 +5,7 @@ import {
   firstTurn,
   isTransportSwitch,
   launchProfileFor,
+  PROVIDER_LABELS,
   planRoad,
   providerOf,
   providerSwitchOptions,
@@ -431,5 +432,84 @@ describe('the transport switch: the same harness, chat to terminal and back (lan
     expect(() =>
       transportSwitchOptions({ claudeMode: false }, { adapterId: 'pty', resume: 'x' })
     ).toThrow()
+  })
+})
+
+// Lane D (PRDCT-4427): OpenCode's chat over the Agent Client Protocol.
+describe('the provider switch knows OpenCode (lane D, PRDCT-4427)', () => {
+  it('names OpenCode and Pi, and their chat adapters', () => {
+    expect(PROVIDER_LABELS.opencode).toBe('OpenCode')
+    expect(PROVIDER_LABELS.pi).toBe('Pi')
+    expect(providerOf('opencode-chat')).toBe('opencode')
+    expect(providerOf('pi-chat')).toBe('pi')
+    expect(launchProfileFor('opencode-chat')).toBe('opencode-chat')
+    expect(
+      switchRoad({ ...facts, fromAdapterId: 'claude-chat', toAdapterId: 'opencode-chat' })
+    ).toEqual({
+      road: 'handoff',
+      reason:
+        'No converter exists from Claude to OpenCode yet; the conversation goes as a handoff message.'
+    })
+  })
+  const claudeChat: PtySpawnOptions = {
+    claudeMode: true,
+    codexMode: false,
+    launchProfileId: 'claude-chat',
+    claudeProfileId: 'work',
+    claudeProfileLabel: 'Work',
+    configDir: '/cfg/work',
+    codexAccountId: 'c1',
+    codexAccountLabel: 'Codex 1',
+    claudeSessionId: 'claude-conv',
+    adoptSessionId: 'tab-1'
+  }
+  it('a move onto opencode-chat sets the OpenCode family and drops the Claude and Codex accounts', () => {
+    const options = providerSwitchOptions(claudeChat, {
+      adapterId: 'opencode-chat',
+      firstMessage: 'handoff'
+    })
+    expect(options).toMatchObject({
+      opencodeMode: true,
+      claudeMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      antigravityMode: false,
+      launchProfileId: 'opencode-chat',
+      initialPrompt: 'handoff',
+      adoptSessionId: 'tab-1'
+    })
+    for (const key of [
+      'claudeProfileId',
+      'claudeProfileLabel',
+      'configDir',
+      'codexAccountId',
+      'codexAccountLabel',
+      'claudeSessionId'
+    ] as const)
+      expect(options[key], key).toBeUndefined()
+  })
+  it('and back onto claude-chat: the Claude family, the OpenCode flag off', () => {
+    const onOpencode = providerSwitchOptions(claudeChat, {
+      adapterId: 'opencode-chat',
+      firstMessage: 'handoff'
+    })
+    const back = providerSwitchOptions(
+      { ...onOpencode, claudeProfileId: 'home' },
+      { adapterId: 'claude-chat', firstMessage: 'handoff back' }
+    )
+    expect(back).toMatchObject({
+      claudeMode: true,
+      codexMode: false,
+      opencodeMode: false,
+      piMode: false,
+      launchProfileId: 'claude-chat',
+      claudeProfileId: 'home'
+    })
+  })
+  it('a move between an OpenCode chat and its terminal is a transport switch', () => {
+    expect(isTransportSwitch('opencode-chat', 'pty', 'opencode')).toBe(true)
+    expect(isTransportSwitch('pty', 'opencode-chat', 'opencode')).toBe(true)
+    expect(familyOfOptions({ claudeMode: false, opencodeMode: true })).toBe('opencode')
   })
 })

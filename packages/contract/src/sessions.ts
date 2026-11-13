@@ -743,6 +743,9 @@ export const SessionRecord = Schema.Struct({
   work: Schema.optional(WorkAssignment),
   /** The conversation came from another provider (PRDCT-4300). */
   continuedFrom: Schema.optional(ContinuedFrom),
+  /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes (PRDCT-4427),
+   *  the id `opencode --session` takes in a terminal. */
+  opencodeSessionId: Schema.optional(Schema.String),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })

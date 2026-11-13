@@ -44,7 +44,7 @@ export interface Harness {
   vendorOnly: boolean
   /** The chat adapter that drives this harness in Clave's chat views, or null
    *  for a harness that runs in a terminal only. */
-  chatAdapterId: 'claude-chat' | 'codex-chat' | null
+  chatAdapterId: 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat' | null
   /** Whether the CLI takes a model on its command line (`--model`, `-m`). */
   takesModel: boolean
   /** The harness's own permission ladder, empty for a harness that never asks
@@ -186,12 +186,14 @@ export const HARNESSES: readonly Harness[] = [
     // does, the TUI does not: the model is picked inside it or set in its
     // config), and its permissions are config rules, not a CLI ladder; its
     // one flag, `--auto`, is what `dangerousMode` passes.
+    // Lane D (PRDCT-4427): OpenCode's chat runs through `opencode acp`, the
+    // protocol the TUI's binary speaks itself (the Agent Client Protocol).
     id: 'opencode',
     name: 'OpenCode',
     command: 'opencode',
     connectionPools: [],
     vendorOnly: false,
-    chatAdapterId: null,
+    chatAdapterId: 'opencode-chat',
     takesModel: false,
     permissionRungs: [],
     defaultRung: null,

@@ -44,6 +44,8 @@ import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
 const BUILT_IN_PROFILES: Record<string, string> = {
   'claude-chat': 'claude-chat',
   'codex-chat': 'codex-chat',
+  // Lane D (PRDCT-4427): OpenCode's chat over the Agent Client Protocol.
+  'opencode-chat': 'opencode-chat',
   echo: 'dev-echo-adapter'
 }
 /** The launch profile a restart onto `adapterId` names. */
@@ -55,6 +57,9 @@ export function launchProfileFor(adapterId: string): string {
 export const PROVIDER_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
+  // Lane D (PRDCT-4427).
+  opencode: 'OpenCode',
+  pi: 'Pi',
   echo: 'Echo'
 }
 
@@ -106,6 +111,9 @@ export function switchRoad(facts: {
 export function providerOf(adapterId: string): string {
   if (adapterId === 'claude-chat') return 'claude'
   if (adapterId === 'codex-chat') return 'codex'
+  // Lane D (PRDCT-4427): `pi-chat` is the next piece's, named here already.
+  if (adapterId === 'opencode-chat') return 'opencode'
+  if (adapterId === 'pi-chat') return 'pi'
   return adapterId
 }
 
@@ -120,16 +128,22 @@ export function providerSwitchOptions(
   previous: PtySpawnOptions,
   target: ProviderOverride
 ): PtySpawnOptions {
+  // The family flags from the TARGET adapter (lane D, PRDCT-4427): a plugin's
+  // adapter (and the echo fixture) joins the Claude family, as at launch.
   const codex = target.adapterId === 'codex-chat'
   const claude = target.adapterId === 'claude-chat'
+  const opencode = target.adapterId === 'opencode-chat'
+  const pi = target.adapterId === 'pi-chat'
+  // A target with no account of either kind keeps neither's.
+  const unpooled = opencode || pi
   return {
     ...previous,
-    claudeMode: !codex,
+    claudeMode: !codex && !opencode && !pi,
     codexMode: codex,
     claudeAgentsMode: false,
     antigravityMode: false,
-    piMode: false,
-    opencodeMode: false,
+    piMode: pi,
+    opencodeMode: opencode,
     launchProfileId: launchProfileFor(target.adapterId),
     launchProfile: undefined,
     model: target.model,
@@ -149,10 +163,10 @@ export function providerSwitchOptions(
     initialInput: undefined,
     // The account the move lands on comes with the override's own account
     // fields; the other provider's are not the target's.
-    ...(codex
+    ...(codex || unpooled
       ? { claudeProfileId: undefined, claudeProfileLabel: undefined, configDir: undefined }
       : {}),
-    ...(claude ? { codexAccountId: undefined, codexAccountLabel: undefined } : {}),
+    ...(claude || unpooled ? { codexAccountId: undefined, codexAccountLabel: undefined } : {}),
     ...(target.continuedFrom ? { continuedFrom: target.continuedFrom } : {})
   }
 }

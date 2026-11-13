@@ -80,13 +80,16 @@ export function resolveSpawnModes(payload: {
  *  (src/main/launch-profile-manager.ts, CHAT_PROFILES). */
 export const CHAT_PROFILE_IDS: Partial<Record<OpenSessionMode, string>> = {
   claude: 'claude-chat',
-  codex: 'codex-chat'
+  codex: 'codex-chat',
+  // Lane D (PRDCT-4427): OpenCode's chat, over the Agent Client Protocol.
+  opencode: 'opencode-chat'
 }
 
-/** The families with a chat view, the ones `CHAT_PROFILE_IDS` names. */
-type ChatFamily = 'claude' | 'codex'
+/** The families with a chat view, the ones `CHAT_PROFILE_IDS` names: Claude,
+ *  Codex and OpenCode (lane D, PRDCT-4427). */
+type ChatFamily = 'claude' | 'codex' | 'opencode'
 const chatFamilyOf = (family: LauncherFamily): ChatFamily | undefined =>
-  family === 'claude' || family === 'codex' ? family : undefined
+  family === 'claude' || family === 'codex' || family === 'opencode' ? family : undefined
 
 /** Is this id a chat profile of the family: its built-in chat profile, or the
  *  chat form of one of its saved profiles (`chat:<family>:<id>`, the id the

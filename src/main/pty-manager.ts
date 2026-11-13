@@ -76,6 +76,7 @@ import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
+import { AcpAdapter } from './sessions/adapters/acp-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
@@ -106,6 +107,17 @@ sessionManager.registerAdapter(echoAdapter)
 sessionManager.registerAdapter(claudeAdapter)
 const codexAdapter = new CodexAdapter()
 sessionManager.registerAdapter(codexAdapter)
+// Lane D (PRDCT-4427): OpenCode in the chat view, over the Agent Client
+// Protocol its own binary speaks (`opencode acp`).
+const opencodeChatAdapter = new AcpAdapter({
+  id: 'opencode-chat',
+  provider: 'opencode',
+  label: 'OpenCode'
+})
+sessionManager.registerAdapter(opencodeChatAdapter)
+/** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
+type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat'
+const CHAT_RECORD_ADAPTERS = new Set<string>(['claude-chat', 'codex-chat', 'opencode-chat'])
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -146,6 +158,9 @@ class PtyManager {
   private spawns = new Map<string, { cwd: string; options?: PtySpawnOptions }>()
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
+  /** An OpenCode chat session's id, from the ACP agent's own meta (lane D,
+   *  PRDCT-4427). */
+  private opencodeSessions = new Map<string, string>()
   private limitListeners = new Set<(sessionId: string, report: LimitReport) => void>()
   /** The limit report still open on a session (ADR 0002, PRDCT-4302): the
    *  message the CLI's report rejected, whatever cap the CLI typed (its enum
@@ -345,7 +360,9 @@ class PtyManager {
     }
     // A restored chat tab that never got a message has an id but no
     // transcript (Claude) or rollout (Codex), and resuming it fails: it
-    // relaunches fresh under the same id instead.
+    // relaunches fresh under the same id instead. An OpenCode chat's id is
+    // passed as given: the ACP adapter falls back to a new session, with a
+    // notice, when the agent refuses the load (lane D, PRDCT-4427).
     const resume =
       options?.resumeSessionId &&
       ((adapter.id === 'claude-chat' &&
@@ -376,6 +393,18 @@ class PtyManager {
         options?.initialPrompt
       )
     }
+    // Lane D (PRDCT-4427): the binary and `acp` alone. A saved profile's
+    // `additionalArgs` (`--auto`, a `--session`) are the TUI's words, not the
+    // protocol's; the ACP agent asks its permissions over the protocol.
+    if (isEvents && adapter.id === 'opencode-chat') {
+      const opencodeProfile =
+        carried ?? launchProfileManager.resolve('opencode', options?.workspaceId, profileId)
+      opencodeChatAdapter.configure(session.id, {
+        command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
+        env: buildSpawnEnv(getLoginShellEnv(), {}),
+        initialPrompt: options?.initialPrompt
+      })
+    }
     const handle = isEvents
       ? await adapter.spawn({
           ...record,
@@ -383,9 +412,13 @@ class PtyManager {
             resume,
             model: options?.model,
             effort,
-            // The echo fixture takes its launch prompt here; Claude's and
-            // Codex's come through their configure above.
+            // The echo fixture takes its launch prompt here; Claude's,
+            // Codex's and OpenCode's come through their configure above.
             ...(echo && options?.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+            // Lane D (PRDCT-4427): the ACP agent asks its permissions over
+            // the protocol; a launch that skips them answers allow itself.
+            autoApprove:
+              adapter.id === 'opencode-chat' && options?.dangerousMode === true ? true : undefined,
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
@@ -430,8 +463,8 @@ class PtyManager {
     if (isEvents) this.eventSessions.set(session.id, session)
     if (isEvents) session.startedAt = Date.now()
     this.spawns.set(session.id, { cwd, options })
-    if (isEvents && (adapter.id === 'claude-chat' || adapter.id === 'codex-chat'))
-      this.writeChatRecord(adapter.id, session, profileId, options, resume)
+    if (isEvents && CHAT_RECORD_ADAPTERS.has(adapter.id))
+      this.writeChatRecord(adapter.id as ChatRecordAdapter, session, profileId, options, resume)
     // A fresh conversation is named by its first message (the terminal path
     // reads it off the transcript; a chat tab's crosses `sessions:write`). A
     // resumed one keeps the name it was saved under. The title runs the agent
@@ -455,13 +488,17 @@ class PtyManager {
    *  its first `session_meta` (attachListeners). Without a record the tab is
    *  simply gone at the next launch, which is what every Codex chat tab was. */
   private writeChatRecord(
-    adapterId: 'claude-chat' | 'codex-chat',
+    adapterId: ChatRecordAdapter,
     session: PtySession,
     profileId: string | undefined,
     options: PtySpawnOptions | undefined,
     resume: string | undefined
   ): void {
     const codex = adapterId === 'codex-chat'
+    // Lane D (PRDCT-4427): each family's own fields, the Claude account's for
+    // a Claude chat alone (an OpenCode chat has no account of either kind).
+    const claude = adapterId === 'claude-chat'
+    const opencode = adapterId === 'opencode-chat'
     // A restored tab rewrites the record it was restored from: the name lives
     // only there, so it must be carried over or the tab survives one restart
     // with its name and comes back as its folder at the next.
@@ -470,17 +507,18 @@ class PtyManager {
       adapterId,
       transport: 'events',
       id: session.id,
-      claudeSessionId: codex ? undefined : session.claudeSessionId,
+      claudeSessionId: claude ? session.claudeSessionId : undefined,
       codexThreadId: codex ? resume : undefined,
+      opencodeSessionId: opencode ? resume : undefined,
       cwd: session.cwd,
       folderName: session.folderName,
       displayName: previous?.displayName,
       userRenamed: previous?.userRenamed,
-      claudeMode: !codex,
+      claudeMode: claude,
       antigravityMode: false,
       codexMode: codex,
       piMode: false,
-      opencodeMode: false,
+      opencodeMode: opencode,
       claudeAgentsMode: false,
       // Whether bypass is available to the chat: launched skipping the
       // permissions, or resumed in another mode with bypass kept reachable.
@@ -488,9 +526,9 @@ class PtyManager {
       model: options?.model,
       launchProfileId: profileId,
       launchProfile: options?.launchProfile,
-      configDir: codex ? undefined : options?.configDir,
-      claudeProfileId: codex ? undefined : options?.claudeProfileId,
-      claudeProfileLabel: codex ? undefined : options?.claudeProfileLabel,
+      configDir: claude ? options?.configDir : undefined,
+      claudeProfileId: claude ? options?.claudeProfileId : undefined,
+      claudeProfileLabel: claude ? options?.claudeProfileLabel : undefined,
       codexAccountId: codex ? options?.codexAccountId : undefined,
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
@@ -549,6 +587,14 @@ class PtyManager {
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
           this.codexThreads.set(id, stream.event.providerSessionId)
           ptyBackend.setSessionCodexThreadId(id, stream.event.providerSessionId)
+        }
+        // Lane D (PRDCT-4427): the OpenCode session the ACP agent opened.
+        if (
+          sessionManager.get(id)?.adapterId === 'opencode-chat' &&
+          stream.event.providerSessionId
+        ) {
+          this.opencodeSessions.set(id, stream.event.providerSessionId)
+          ptyBackend.setSessionOpencodeSessionId(id, stream.event.providerSessionId)
         }
       }
       // The mode and the effort the chat runs at, as the provider says them
@@ -648,6 +694,7 @@ class PtyManager {
     if (killTmuxSession) {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
+      this.opencodeSessions.delete(id)
       this.rejected.delete(id)
       this.openReports.delete(id)
       if (!this.carriedReports.delete(id)) this.reported.delete(id)
@@ -710,6 +757,9 @@ class PtyManager {
     if (session.claudeSessionId) return session.claudeSessionId
     const chatThread = this.codexThreads.get(id)
     if (chatThread) return chatThread
+    // Lane D (PRDCT-4427): an OpenCode chat's session.
+    const opencodeSession = this.opencodeSessions.get(id)
+    if (opencodeSession) return opencodeSession
     const spawn = this.spawns.get(id)
     if (spawn?.options?.codexMode && session.startedAt) {
       return findCodexThreadForSession(

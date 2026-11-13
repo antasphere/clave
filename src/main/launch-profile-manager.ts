@@ -43,6 +43,17 @@ const CHAT_PROFILES: EventsLaunchProfile[] = [
     adapterId: 'codex-chat',
     viewId: 'clave.chat-view/chat',
     builtIn: true
+  },
+  // Lane D (PRDCT-4427): OpenCode in the chat view, through `opencode acp`.
+  {
+    id: 'opencode-chat',
+    name: 'OpenCode (chat)',
+    family: 'opencode',
+    command: ['opencode'],
+    additionalArgs: [],
+    adapterId: 'opencode-chat',
+    viewId: 'clave.chat-view/chat',
+    builtIn: true
   }
 ]
 /**
