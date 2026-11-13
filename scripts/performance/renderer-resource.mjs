@@ -204,7 +204,7 @@ export function validateOwnershipRunner(realUid, effectiveUid, fixtureBound) {
 // Exact reviewed fixture/spawn sources: these paths must enter the NEW freeze.
 // Source inheritance is conditional on this fixed echo fixture, never child EUID proof.
 export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
-  'tests/e2e/harness.mjs': '95d423be331ece290c9073fc31529dae777a1bf7f64fac53b61057bbd0eb8254',
+  'tests/e2e/harness.mjs': '612b9dfa840bacaa1e45b492a2cc234f9a0472940175cfe78acc83d4e8d9d1cc',
   'tests/e2e/renderer-resource-workload.mjs':
     '7375b8e899c59e91a4f183b4ceac35d2560f2a190fd76e68555c0ef8ff62504f',
   'tests/e2e/renderer-resource-fixture.mjs':
