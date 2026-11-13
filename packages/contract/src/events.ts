@@ -22,6 +22,8 @@ import { GitEvent } from './git'
 import { ServerUpgradeEvent } from './server-info'
 // ── ADR 0004: the routines ──
 import { RoutinesChanged } from './routines/model'
+// ── Mobile wave, lane A: the devices (a phone paired, asking, or revoked) ──
+import { DevicePairingRequested, DevicesChanged } from './devices'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -30,6 +32,9 @@ export const ServerEvent = Schema.Union(
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
   // ── Sessions (lane A) ──
+  /** A session was registered. Clients reconcile their local projection;
+   *  this is not a request to start or resume its provider. */
+  Schema.TaggedStruct('session.registered', { id: Schema.String }),
   Schema.TaggedStruct('session.state_changed', { id: Schema.String, state: AgentState }),
   /** The tab's name, earned from its first message. */
   Schema.TaggedStruct('session.title_changed', { id: Schema.String, title: Schema.String }),
@@ -126,7 +131,10 @@ export const ServerEvent = Schema.Union(
   // ── Issue #266: the server's self-upgrade changed state ──
   ServerUpgradeEvent,
   // ── ADR 0004: the routines (the routines or their runs changed) ──
-  RoutinesChanged
+  RoutinesChanged,
+  // ── Mobile wave, lane A: the paired phones or the pending pairings changed; a phone asked ──
+  DevicesChanged,
+  DevicePairingRequested
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

@@ -38,6 +38,12 @@ export function publishOrSend(event: ServerEvent, legacy: () => void): void {
   )
 }
 
+/** Registration is published only after the session's record is available.
+ *  A desktop that missed the event reads the records on its next connect. */
+export function sessionRegistered(id: string): void {
+  publishOrSend({ _tag: 'session.registered', id }, () => {})
+}
+
 /** Every attached client hears a session change state, whether or not it
  *  follows that session's stream: the manager's state changes go out as
  *  `session.state_changed` on the publisher given. Returns the way to stop.
@@ -122,4 +128,55 @@ export function sessionCleared(
   publishOrSend({ _tag: 'session.cleared', id, providerSessionId }, () =>
     send(windowKey, `session:clear-detected:${id}`, providerSessionId)
   )
+}
+
+// ── The mobile wave, lane B: what the write ledger learns from where the sessions live ──
+
+let initializeWrites: ((id: string) => void) | null = null
+/** The observation in force, so a quit can end it before the sessions go. */
+let stopWriteObservation: (() => void) | null = null
+
+/** Establish an empty complete ledger only for a newly generated session id
+ *  (`lifecycle.ts` at a spawn that adopts no record): a session that never
+ *  existed before cannot have been written to, so an id it never saw is
+ *  `absent` rather than `unknown`. Nothing happens while nothing observes. */
+export function initializeSessionWrites(id: string): void {
+  initializeWrites?.(id)
+}
+
+/** End the observation in force: the quit calls it before the sessions go. */
+export function stopSessionWritesObservation(): void {
+  stopWriteObservation?.()
+  stopWriteObservation = null
+}
+
+/**
+ * Feed the server's own history of writes (`packages/server/src/sessions/writes.ts`)
+ * what only the process hosting the sessions sees: a `user_message` carrying
+ * a client message id passing on a session's stream, which is the durable
+ * evidence that the provider took it, and the sessions generated here, whose
+ * ledger starts complete. Both entries wire it once their server starts and
+ * stop it before their sessions are shut down. Returns the way to stop.
+ */
+export function observeSessionWrites(
+  manager: SessionManager,
+  evidence: (sessionId: string, clientMessageId: string, at: number) => void,
+  initialize: (sessionId: string) => void
+): () => void {
+  stopWriteObservation?.()
+  initializeWrites = initialize
+  let stopped = false
+  const offAll = manager.subscribeAll((id, stream) => {
+    if (stopped || stream.kind !== 'event') return
+    if (stream.event.type === 'user_message' && stream.event.clientMessageId !== undefined)
+      evidence(id, stream.event.clientMessageId, Date.now())
+  })
+  const stop = (): void => {
+    stopped = true
+    if (initializeWrites === initialize) initializeWrites = null
+    if (stopWriteObservation === stop) stopWriteObservation = null
+    offAll()
+  }
+  stopWriteObservation = stop
+  return stop
 }

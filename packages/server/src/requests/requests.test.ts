@@ -121,6 +121,7 @@ describe('shared requests over authenticated HTTP and push', () => {
           headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
           body: JSON.stringify(body)
         })
+        // The owner's unidentified write keeps the old empty answer (PRDCT-4448).
         expect(result.status).toBe(route === '/sessions/write' ? 204 : 200)
         expect(requests.snapshot().pending).toEqual([])
         expect(respond).toHaveBeenLastCalledWith(i, {

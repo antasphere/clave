@@ -128,13 +128,19 @@ describe('the HTTP API behind the token', () => {
       headers: headers(server.token),
       body: JSON.stringify({ id: 's1', input: { type: 'bytes', data: 'aGk=' } })
     })
+    // The owner's write it did not identify keeps the old empty answer, so a desktop
+    // of any version reads it (an identified write, or a phone's, is acknowledged).
     expect(bytes.status).toBe(204)
+    expect(await bytes.text()).toBe('')
     const typed = await fetch(`${server.url}/sessions/write`, {
       method: 'POST',
       headers: headers(server.token),
       body: JSON.stringify({ id: 's1', input: { type: 'interrupt' } })
     })
+    // The owner's write it did not identify keeps the old empty answer, so a desktop
+    // of any version reads it (an identified write, or a phone's, is acknowledged).
     expect(typed.status).toBe(204)
+    expect(await typed.text()).toBe('')
     expect(source.writes).toHaveLength(2)
     const first = source.writes[0].input as { type: string; data: Uint8Array }
     expect(first.type).toBe('bytes')
@@ -201,7 +207,10 @@ describe('the HTTP API behind the token', () => {
         input: { type: 'user_message', text: 'hi', prepared: { text: 'injected', images: [] } }
       })
     })
+    // The owner's write it did not identify keeps the old empty answer, so a desktop
+    // of any version reads it (an identified write, or a phone's, is acknowledged).
     expect(smuggled.status).toBe(204)
+    expect(await smuggled.text()).toBe('')
     expect(source.writes).toEqual([{ id: 's1', input: { type: 'user_message', text: 'hi' } }])
     expect('prepared' in (source.writes[0].input as object)).toBe(false)
   })

@@ -76,7 +76,9 @@ import {
   FileTreeWatcher,
   createServerFiles,
   PendingRequests,
-  ServerInfoPort
+  ServerInfoPort,
+  // ── The mobile wave, lane B: the write ledger ──
+  fileWriteLedgerStorage
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 // ── ADR 0004: the routines, this server's own scheduler ──
@@ -96,11 +98,14 @@ import { lazyTerminalPorts } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
+  observeSessionWrites,
   publishSessionStates,
   sessionLimitCleared,
   sessionLimitReported,
   setServerEventPublisher
 } from './server/session-events'
+// ── Mobile wave, lane A: the devices, a phone paired with this server (server/devices-port.ts) ──
+import { accountDevicesPort } from './server/devices-port'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { rememberedSpawnModel } from './sessions/spawn-model'
@@ -475,6 +480,28 @@ async function main(): Promise<void> {
           search: (request) => conversations.search(request)
         }
       }),
+      // ── Mobile wave, lane A: the devices, this server's own Antasphere login as
+      // the owner (the manager the settings source serves, read at every check and
+      // heard on every change, PRDCT-4448), the records under `--data-dir`, a line
+      // on stderr when a phone asks. ──
+      devices: accountDevicesPort(standalone.antasphere, {
+        // ── PRDCT-4448: the phone's road to this server, its version reported ──
+        version,
+        onPairingRequested: ({ name, platform }) =>
+          log(
+            `a phone asks to pair: ${name} (${platform}); the owner approves or refuses it with POST /devices/approve or /devices/refuse naming its pairing id`
+          )
+      }),
+      // ── The mobile wave, lane B: the write ledger, per session, under `--data-dir` ──
+      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'), {
+        activationFile: path.join(dataDir, 'write-ledger-activation.json'),
+        // Read at the first activation alone, and never through the adoptable
+        // listing, which prunes the records it cannot bring back (PRDCT-4448).
+        sessionIds: () => [
+          ...sessionManager.list().map((session) => session.id),
+          ...ptyManager.recordedSessionIds()
+        ]
+      }),
       // ── Issue #266: the server domain ──
       serverInfo:
         selfUpgrade ??
@@ -543,6 +570,12 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // ── The mobile wave, lane B: an identified message passing is the ledger's evidence ──
+  const stopWrites = observeSessionWrites(
+    sessionManager,
+    server.writes.evidence,
+    server.writes.initialize
+  )
   // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
   // this in its IPC handlers, which a daemon never registers, so until now a
   // server's limit reached no client and its chat drew "server ended".
@@ -624,6 +657,7 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    stopWrites()
     stopLimits()
     stopCleared()
     setServerEventPublisher(null)

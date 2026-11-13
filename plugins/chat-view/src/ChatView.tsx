@@ -1,6 +1,6 @@
 import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
-import { bindFleetCatchup } from './fleet-sync'
-import { bindReconnectReset } from './reconnect'
+import { bindConversation } from './bind-conversation'
+import type { ConversationReader, HistorySource } from './conversation-reader'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import { parseResourceKey } from '@clave/contract/fleet'
 import {
@@ -81,7 +81,6 @@ import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
-import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
 import { acceptRung } from '../../../src/renderer/src/lib/account-policy'
 import { useLimitSentence } from './limit-words'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
@@ -106,8 +105,8 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
-import { EarlierLoading, JumpPill, PastFailed } from './EarlierLoading'
-import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
+import { EarlierLoading, JumpPill, PastFailed, PastTruncated } from './EarlierLoading'
+import { pastHead, pastStep, type PastState } from './past'
 import {
   attachmentIssue,
   MAX_TOTAL_IMAGE_BYTES,
@@ -508,12 +507,13 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // older; `pastRead` holds the empty state back until the first answer, so a
   // long conversation never flashes "Start a conversation" on its way in.
   const [before, setBefore] = useState<number | null>(null)
+  const [truncated, setTruncated] = useState(false)
   // `reading` until the first answer; `failed` when a round of asking found
   // none (`readPast`): the pane says so instead of showing an empty
   // conversation, and offers to ask again (`pastHead`).
   const [past, setPast] = useState<PastState>('reading')
-  const pastRead = past !== 'reading'
-  const pastReader = useRef<PastReader | null>(null)
+  const pastRead = past === 'read'
+  const pastReader = useRef<ConversationReader | null>(null)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
@@ -540,94 +540,39 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
-    // A server's connection coming back may be to a server that counts its
-    // runs from 1 again: the run heard so far is forgotten first, bound
-    // ahead of every frame (PRDCT-4191, `reconnect.ts`).
-    const stopReconnect = bindReconnectReset(session.id, () => dispatch({ reconnected: true }))
-    const catchup = bindFleetCatchup(session.id, (page) => {
-      if (!live) return
-      dispatch({ sync: page.items })
-      dispatchSubagents({ sync: page.items })
-      setBefore(page.before)
-      setReady(true)
-    })
-    // An end is taken only once the record confirms it: after a move to
-    // another account the old process's end can arrive after this pane has
-    // remounted on the new one, and closed it over a live agent.
-    const confirmed = (then: () => void): void =>
-      void endIsCurrent(session.id)
-        .then((current) => {
-          if (current && live) then()
-        })
-        .catch(console.error)
-    const stop = window.electronAPI.onSessionStream(session.id, (value) => {
-      catchup.changed()
-      if (value.kind !== 'event') return
-      const event = value.event
-      const take = (): void => {
-        dispatch({ event })
+    const reader = bindConversation(session.id, {
+      page: (page, replace, incomplete, preserve) => {
+        dispatch(replace ? { snapshot: page.items, preserve } : { prepend: page.items })
+        dispatchSubagents(replace ? { sync: page.items } : { items: page.items })
+        setBefore(page.before)
+        setTruncated(incomplete)
+        const usage = page.items.findLast((item) => item.event.type === 'context_usage')
+        if (usage) dispatchStatus(usage.event)
+        setPast('read')
+      },
+      event: ({ event, at, current }) => {
+        dispatch({ event, at, current })
         dispatchStatus(event)
         dispatchSubagents({ event })
-      }
-      if (event.type === 'state_change' && event.state === 'ended') confirmed(take)
-      else take()
-    })
-    const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
-      confirmed(() => dispatch({ exit: code }))
-    )
-    let stopConnected: () => void = () => {}
-    void window.electronAPI
-      .sessionsSubscribe(session.id)
-      .then((current) => {
-        if (!live) return
-        // The host's own word on the session, now (PRDCT-4191): the seed
-        // above is the list the pane read at mount, a copy a server restart
-        // and a Resume leave stale (a remounted pane read `ended` while the
-        // server had the chat back, and the composer refused to type). A
-        // live word is taken as it is; an end is taken once the record
-        // confirms it, as an end heard on the stream is.
-        const word = {
-          state: current.state,
-          ...(current.run !== undefined ? { run: current.run } : {})
-        }
-        if (word.state === 'ended') confirmed(() => dispatch({ session: word }))
-        else dispatch({ session: word })
-        setReady(true)
-        // Asked once subscribed, when the adapter has read the transcript;
-        // whatever streamed meanwhile is newer and stays after it. A read
-        // that is lost (a server busy restoring every tab after an update
-        // answered it too late) is asked again until it lands, and again
-        // whenever the server connection comes back (PRDCT-3526): asked once
-        // and dropped, it left a resumed chat empty for good while its live
-        // turns kept arriving.
-        pastReader.current = readPast(() => window.electronAPI.sessionsHistory(session.id), {
-          read: (page) => {
-            dispatch({ prepend: page.items })
-            dispatchSubagents({ items: page.items })
-            setBefore(page.before)
-            // The newest page holds the context as the conversation left it.
-            const usage = page.items.findLast((item) => item.event.type === 'context_usage')
-            if (usage) dispatchStatus(usage.event)
-            setPast((now) => pastStep(now, 'read'))
-          },
-          failed: (error) => {
-            console.error(`[chat-view] the past of ${session.id} could not be read`, error)
-            setPast((now) => pastStep(now, 'failed'))
+      },
+      session: (current) => {
+        dispatch({
+          session: {
+            state: current.state,
+            ...(current.run !== undefined ? { run: current.run } : {})
           }
         })
-        const localOff = window.electronAPI.onServerConnected(() => {
-          if (!isRemoteKey(session.id)) pastReader.current?.retry()
-        })
-        const fleetOff = window.electronAPI.onFleetStatus?.((status) => {
-          if (status.serverId === ownerOf(session.id) && status.state === 'connected')
-            pastReader.current?.retry()
-        })
-        stopConnected = () => {
-          localOff()
-          fleetOff?.()
-        }
-      })
-      .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
+        setReady(true)
+      },
+      exit: (code) => dispatch({ exit: code }),
+      reconnected: () => dispatch({ reconnected: true }),
+      reading: () => setPast('reading'),
+      failed: (error) => {
+        console.error(`[conversation] the past of ${session.id} could not be read`, error)
+        setPast('failed')
+      }
+    })
+    pastReader.current = reader
     // Whether an attached image can go as image content is the adapter's
     // word; until it arrives the composer assumes not, which only ever asks
     // the reader one more question, never sends a byte the adapter refuses.
@@ -639,14 +584,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       .catch(() => {})
     return () => {
       live = false
-      stopReconnect()
-      catchup.close()
-      pastReader.current?.stop()
+      reader.stop()
       pastReader.current = null
-      stopConnected()
-      stop()
-      stopExit()
-      void window.electronAPI.sessionsUnsubscribe(session.id)
     }
   }, [session.id])
   /* The pane's state is the kernel's record, the same one the sidebar follows:
@@ -662,13 +601,17 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const transcript = useTranscriptEnd(presentation.entries, stickSlack, visible)
   const fetchEarlier = useCallback<EarlierPage>(async () => {
     if (before === null) return null
-    const page = await window.electronAPI.sessionsHistory(session.id, before)
+    const source = pastReader.current?.source()
+    if (!source) return null
+    const page = await source.read(before)
     return () => {
+      if (!source.current()) return
+      if (page.truncated) setTruncated(true)
       dispatch({ prepend: page.items })
       dispatchSubagents({ items: page.items })
       setBefore(page.before)
     }
-  }, [session.id, before])
+  }, [before])
   const earlier = useEarlier(
     transcript,
     visible && before !== null,
@@ -680,25 +623,36 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // front of it first, so a long conversation is copied whole and not from
   // where the reader happened to scroll. Read from a ref, so the exporter
   // registered once per session always sees the entries as they are now.
-  const exportSource = useRef({ conversation, before })
-  exportSource.current = { conversation, before }
+  const exportSource = useRef<{
+    conversation: typeof conversation
+    before: number | null
+    history?: HistorySource
+  }>({ conversation, before })
+  exportSource.current = { conversation, before, history: pastReader.current?.source() }
   useEffect(
     () =>
       registerTranscriptExporter(session.id, async () => {
+        const { history } = exportSource.current
         let { conversation: whole, before: cursor } = exportSource.current
+        if (history && !history.current())
+          throw new Error('Conversation is still loading. Try again.')
         while (cursor !== null) {
-          const page = await window.electronAPI.sessionsHistory(session.id, cursor, 2000)
+          const page = history
+            ? await history.read(cursor, 2000)
+            : await window.electronAPI.sessionsHistory(session.id, cursor, 2000)
           whole = reduceConversation(whole, { prepend: page.items })
           // A cursor that does not move would ask the same page forever.
           cursor = page.before !== null && page.before < cursor ? page.before : null
         }
+        if (history && !history.current()) throw new Error('Conversation changed. Try again.')
         const record = useViewSessionStore.getState().sessions.find((s) => s.id === session.id)
         return transcriptMarkdown(whole.entries, {
           title: record?.name ?? session.title,
           agent: AGENT_NAMES[session.provider] ?? session.provider,
           cwd: session.cwd,
           model: whole.model,
-          exportedAt: new Date()
+          exportedAt: new Date(),
+          truncated: history?.truncated
         })
       }),
     [session.id, session.title, session.provider, session.cwd]
@@ -1159,6 +1113,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
+            {truncated && <PastTruncated />}
             {head === 'failed' && (
               <PastFailed
                 onRetry={() => {

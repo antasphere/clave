@@ -108,3 +108,33 @@ export {
   type RoutineReportInput,
   routineHandlers
 } from './routines'
+
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export {
+  DevicesPort,
+  memoryDeviceStorage,
+  type DevicesPortService,
+  type DeviceDocumentStorage,
+  type RelayAddressPreference,
+  DeviceSessions,
+  type DeviceSessionsService,
+  deviceHandlers,
+  DevicesEventsLive,
+  deviceMayCall,
+  deviceHearsEvent,
+  resolveAntasphereIssuer,
+  ANTASPHERE_ISSUER_ENV,
+  devicesPushTargets,
+  type PushTarget,
+  type PushTargets
+} from './devices'
+// ── The mobile wave, lane B: the write ledger ──
+export {
+  SessionWrites,
+  WriteLedger,
+  fileWriteLedgerStorage,
+  memoryWriteLedgerStorage,
+  sanitizeReason,
+  type LedgerEntry,
+  type WriteLedgerStorage
+} from './sessions/writes'

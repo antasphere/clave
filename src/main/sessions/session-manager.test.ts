@@ -128,7 +128,7 @@ describe('SessionManager', () => {
       'tool_result',
       'state_change'
     ])
-    expect(first[2]).toEqual({
+    expect(first[2]).toMatchObject({
       kind: 'event',
       event: { type: 'assistant_text', delta: 'hello', final: true }
     })
@@ -196,7 +196,7 @@ describe('SessionManager', () => {
     emitter.emit('stream', { kind: 'pty', data })
     manager.setState('a', 'working')
     manager.setState('a', 'working')
-    expect(streams.mock.calls).toEqual([
+    expect(streams.mock.calls).toMatchObject([
       [{ kind: 'pty', data }],
       // Stamped with the run the state belongs to (PRDCT-4191): the first
       // process under the id is run 1.
@@ -250,16 +250,16 @@ describe('SessionManager', () => {
     // A new process under the same id: the old one's list goes with it.
     await manager.attach('a')
     expect(manager.background('a')).toEqual([])
-    expect(streams).toHaveBeenLastCalledWith(snapshot([]))
+    expect(streams).toHaveBeenLastCalledWith(expect.objectContaining(snapshot([])))
     emitter.emit('stream', snapshot([task]))
     streams.mockClear()
     emitter.emit('exit', 0)
     expect(manager.background('a')).toEqual([])
-    expect(streams).toHaveBeenCalledWith(snapshot([]))
+    expect(streams).toHaveBeenCalledWith(expect.objectContaining(snapshot([])))
     // Nothing to clear is not a change worth publishing.
     streams.mockClear()
     await manager.attach('a')
-    expect(streams).not.toHaveBeenCalledWith(snapshot([]))
+    expect(streams).not.toHaveBeenCalledWith(expect.objectContaining(snapshot([])))
     expect(manager.background('absent')).toEqual([])
   })
 
@@ -307,9 +307,12 @@ describe('SessionManager', () => {
     const streams = vi.fn()
     manager.subscribe('a', streams)
     manager.setState('a', 'working')
+    // A frame of an events session carries its timeline position too (the
+    // mobile wave's ordered history): a new adoption is a new generation.
     expect(streams).toHaveBeenCalledWith({
       kind: 'event',
-      event: { type: 'state_change', state: 'working', run: 2 }
+      event: { type: 'state_change', state: 'working', run: 2 },
+      position: { generation: expect.any(String), sequence: 1 }
     })
     expect(manager.currentState('a')).toEqual({ type: 'state_change', state: 'working', run: 2 })
     expect(manager.currentState('absent')).toBeUndefined()
@@ -349,5 +352,49 @@ describe('SessionManager', () => {
     await manager.attach('a')
     manager.write('a', { type: 'user_message', text: 'once' })
     expect(listener).toHaveBeenCalledTimes(6)
+  })
+})
+
+describe('an identified write waits for its provider (PRDCT-4448)', () => {
+  it('answers when the adapter acknowledges, and fails as the adapter fails', async () => {
+    const { manager, adapter } = fixture()
+    await manager.create(session('a'))
+    let acknowledge!: () => void
+    let refuse!: (error: Error) => void
+    const write = vi.spyOn(adapter, 'write')
+    write.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledge = resolve
+        })
+    )
+    const sent = manager.write('a', {
+      type: 'user_message',
+      text: 'hello',
+      clientMessageId: 'phone-0001'
+    })
+    expect(sent).toBeInstanceOf(Promise)
+    let settled = false
+    void (sent as Promise<void>).then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    acknowledge()
+    await sent
+    expect(settled).toBe(true)
+    write.mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => {
+          refuse = reject
+        })
+    )
+    const unconfirmed = manager.write('a', {
+      type: 'user_message',
+      text: 'again',
+      clientMessageId: 'phone-0002'
+    })
+    refuse(new Error('the provider did not confirm whether the message arrived'))
+    await expect(unconfirmed).rejects.toThrow('did not confirm')
   })
 })

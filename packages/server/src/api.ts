@@ -4,6 +4,7 @@
  * traces a call the same way whatever transport brought it. One `<Domain>Live`
  * group per domain, one line each in `ApiLive`; a lane adds its own.
  */
+import { GetSessionTimeline } from '@clave/contract/timeline'
 import { Layer } from 'effect'
 import * as HttpApiBuilder from '@effect/platform/HttpApiBuilder'
 import { Health, HttpCqrs } from '@structure-ai/http'
@@ -41,7 +42,9 @@ import {
   SetSessionPage,
   TypeIntoSession,
   // ── PRDCT-4123: which work a session does ──
-  ChangeSessionWork
+  ChangeSessionWork,
+  // ── The mobile wave, lane B: whether a client's message landed ──
+  GetSessionWriteStatus
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
@@ -86,6 +89,8 @@ import {
   ResolvePendingRequest,
   SetPendingRequestAnswers
 } from '../../contract/src/requests'
+// ── Mobile wave, lane A: the devices (`devices/api.ts`) ──
+import { DevicesLive } from './devices/api'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
   handlers
@@ -145,6 +150,9 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('restart', HttpCqrs.command(RestartSession))
     // ── PRDCT-4123: which work a session does ──
     .handle('changeWork', HttpCqrs.command(ChangeSessionWork))
+    // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
+    .handle('writeStatus', HttpCqrs.query(GetSessionWriteStatus))
+    .handle('timeline', HttpCqrs.query(GetSessionTimeline))
 )
 
 // ── Lane A: the clients the shell registers as ──
@@ -240,6 +248,9 @@ export const HistoryLive = HttpApiBuilder.group(ClaveApi, 'history', (handlers) 
     .handle('search', HttpCqrs.query(SearchServerHistory))
 )
 
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export { DevicesLive }
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -270,6 +281,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       RoutinesLive,
       // ── PRDCT-4327: the digests ──
       DigestsLive,
+      // ── Mobile wave, lane A: the devices ──
+      DevicesLive,
       // ── PRDCT-4411: the speech ──
       SpeechLive,
       HealthLive

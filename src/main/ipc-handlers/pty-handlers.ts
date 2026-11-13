@@ -39,6 +39,7 @@ import { electronSessionWindows } from '../sessions/electron-windows'
 import { getSessionHost } from '../sessions/host'
 import { restartOverridesFromWire } from './restart-overrides-wire'
 import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
+import { adoptRunningChats } from './adopt-running-chats'
 
 export function registerPtyHandlers(): void {
   // The shell wires the terminal layer's MCP config port to its own MCP
@@ -287,6 +288,23 @@ export function registerPtyHandlers(): void {
   // the primary, and every window that exists (live or persisted). Null for
   // a sender that is not a Clave window.
   ipcMain.handle('records:adoption-scope', (event) => adoptionScopeOf(event.sender))
+  ipcMain.handle('records:adopt-running-chats', async (event) => {
+    const scope = adoptionScopeOf(event.sender)
+    if (!scope) return []
+    const api = isServerExternal() ? (await serverClient.api()).sessions : null
+    return adoptRunningChats(scope, {
+      list: async (ids) =>
+        api ? api.listAdoptable(ids) : getSessionHost().listAdoptableRecords(ids),
+      keep: async (id, fields) => {
+        if (api) await api.keepOnRecord(id, fields)
+        else getSessionHost().keepOnRecord(id, fields)
+      },
+      bind: (id, key) => {
+        const win = windowRegistry.getWindowByKey(key)
+        if (win) windowRegistry.bindSession(id, win.id)
+      }
+    })
+  })
 
   // User declined to bring a survivor back → destroy it (record + tmux session).
   ipcMain.handle('records:discard', (_event, key: string) => {

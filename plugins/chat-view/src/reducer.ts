@@ -11,6 +11,12 @@ import { sameId } from './models'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
+const permissionDefinition = (request: Permission): string =>
+  JSON.stringify(request, (_key, value: unknown) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value
+  )
 /** What a request does, as the session's host read it (PRDCT-4331). */
 export type PermissionReading = Extract<SessionEvent, { type: 'permission_explained' }>
 export type Entry =
@@ -173,7 +179,7 @@ export const emptyConversation: Conversation = {
   explained: {}
 }
 export type Action =
-  | { event: ChatEvent; at?: number }
+  | { event: ChatEvent; at?: number; current?: boolean }
   | { answer: string; optionId: string; answers?: Record<string, string | string[]> }
   | { exit: number }
   /** A page of the conversation's past, oldest first, in front of what is here.
@@ -181,6 +187,8 @@ export type Action =
    *  its result, an interrupt and its message), so it reduces on its own. */
   | { prepend: HistoryItem[] }
   | { sync: HistoryItem[] }
+  /** A positioned snapshot is authoritative, including an empty generation. */
+  | { snapshot: HistoryItem[]; preserve?: number }
   /** The reader took their last message back before any answer to it. */
   | { withdraw: true }
   /** The reader's typing into an open form was sent to its draft
@@ -348,8 +356,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     entries[last] = { ...message, withdrawn: true }
     return { ...state, entries }
   }
-  if ('sync' in action) {
-    if (!action.sync.length) return state
+  if ('sync' in action || 'snapshot' in action) {
+    const items = 'snapshot' in action ? action.snapshot : action.sync
+    if ('sync' in action && !items.length) return state
     // The past rebuilds the entries, never the state: the state is the
     // kernel's word on the stream (and the subscribe's answer), and a
     // replayed page may hold a fatal error or a blocked request of a process
@@ -358,7 +367,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // read under the live `working` would mark every message as mid-turn.
     // The mode is replayed from no mode, so the past's first word on it is
     // no change; the live word stands when the past says none.
-    const synced = action.sync.reduce(reduceConversation, {
+    const boundary = 'snapshot' in action ? action.preserve : undefined
+    let synced = items.slice(0, boundary).reduce(reduceConversation, {
       ...state,
       entries: [],
       first: 0,
@@ -366,6 +376,30 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       permissionMode: null,
       launchedMode: undefined
     })
+    if (boundary !== undefined) {
+      // Same-generation history cannot recover private typing or fields the
+      // person cleared. Keep the view's current open hosted form at its last
+      // applied position, then replay genuinely newer events over it.
+      synced.entries = synced.entries.map((entry) => {
+        if (
+          entry.kind !== 'permission' ||
+          isSettled(entry) ||
+          !inputRequestMeta(entry.request.input)
+        )
+          return entry
+        const previous = state.entries.findLast(
+          (old) => old.kind === 'permission' && old.request.id === entry.request.id
+        )
+        if (
+          previous?.kind !== 'permission' ||
+          isSettled(previous) ||
+          permissionDefinition(previous.request) !== permissionDefinition(entry.request)
+        )
+          return entry
+        return { ...entry, draft: previous.draft, typed: previous.typed, notes: previous.notes }
+      })
+      synced = items.slice(boundary).reduce(reduceConversation, synced)
+    }
     return {
       ...synced,
       state: state.state,
@@ -493,7 +527,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       // The reader's own typing, kept by the server for this view: only an
       // open form takes it, and never into the agent's draft (PRDCT-4210).
       if (event.sent || entry.answer || entry.answeredElsewhere) return state
-      entries[index] = { ...entry, typed: { ...entry.typed, ...event.answers } }
+      // Replaying the server's typing retires the earlier agent fill just
+      // as typedSent does, so a remounted card cannot land that old fill.
+      const draft = { ...entry.draft }
+      for (const key of Object.keys(event.answers)) delete draft[key]
+      entries[index] = { ...entry, draft, typed: { ...entry.typed, ...event.answers } }
       return { ...state, entries }
     }
     if (event.sent || entry.answer) {
@@ -584,10 +622,24 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       else entries[index] = tool
       break
     }
-    case 'permission_request':
-      if (!entries.some((e) => e.kind === 'permission' && e.request.id === event.id))
-        entries.push({ kind: 'permission', request: event, at })
+    case 'permission_request': {
+      const index = entries.findLastIndex(
+        (e) => e.kind === 'permission' && e.request.id === event.id
+      )
+      const previous = entries[index]
+      if (previous?.kind !== 'permission') entries.push({ kind: 'permission', request: event, at })
+      // A restarted provider can reuse an id for a different question. Its
+      // current definition and masking must not inherit the older card's
+      // answers or typing. An identical repeat keeps the current draft.
+      else if (permissionDefinition(previous.request) !== permissionDefinition(event))
+        entries[index] = { kind: 'permission', request: event, at }
+      // The unpositioned subscribe reply begins a complete current hosted
+      // draft, including an empty one. This also applies when it arrives
+      // after the HTTP snapshot. Settled cards cannot be reopened by it.
+      else if (action.current && !isSettled(previous) && inputRequestMeta(event.input))
+        entries[index] = { ...previous, draft: undefined, typed: undefined, notes: undefined }
       return { ...state, entries, state: 'blocked' }
+    }
     case 'session_meta': {
       // The provider's word on the model. A pick is confirmed by the word
       // that names it (the switch's own echo, or the settings read after it

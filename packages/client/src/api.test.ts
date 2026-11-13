@@ -5,6 +5,12 @@ import { FakeSource, aSession } from '@clave/server/test-support'
 import { SessionNotFound, SessionWriteRefused } from '@clave/contract/sessions'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import { type ClaveApiClient, createApiClient } from './api'
+import { ManagedRuntime, Schema } from 'effect'
+import * as FetchHttpClient from '@effect/platform/FetchHttpClient'
+import { Command } from '@structure-ai/cqrs'
+import { Api, ApiGroup, HttpCqrs } from '@structure-ai/http'
+import * as StructureClient from '@structure-ai/client'
+import { WriteSession } from '@clave/contract/sessions'
 import { ServerRefused, ServerUnreachable } from './errors'
 
 let server: EmbeddedServer
@@ -190,5 +196,91 @@ describe('the typed request client', () => {
     expect(error.url).toBe(url)
     expect(Date.now() - started).toBeLessThan(1500)
     await gone.dispose()
+  })
+})
+
+describe('a write between desktop and server versions (PRDCT-4448)', () => {
+  it('keeps the old empty answer on the wire for a write the desktop did not identify', async () => {
+    // What a desktop of any version before the phone's protocol decodes: 204, no body.
+    const answer = await fetch(`${server.url}/sessions/write`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 's1', input: { type: 'interrupt' } })
+    })
+    expect(answer.status).toBe(204)
+    expect(await answer.text()).toBe('')
+  })
+
+  it('takes this server’s answers to both kinds of write, the acknowledged one included', async () => {
+    server.writes.initialize('s1')
+    await expect(api.sessions.write('s1', { type: 'interrupt' })).resolves.toBeUndefined()
+    await expect(
+      api.sessions.write('s1', {
+        type: 'user_message',
+        text: 'hi',
+        clientMessageId: 'desktop-0001'
+      })
+    ).resolves.toBeUndefined()
+    expect(source.writes).toHaveLength(2)
+  })
+
+  it('lets a desktop of the old contract write to this server: its codec decodes the answer, once', async () => {
+    // Dev's WriteSession before the phone's protocol: the same payload, a Void success (204).
+    const OldWrite = Command.define('WriteSession', {
+      payload: WriteSession.payload,
+      success: Schema.Void,
+      failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+    })
+    const OldApi = Api.make('clave').add(
+      ApiGroup.make('sessions').add(HttpCqrs.commandEndpoint('write', '/sessions/write', OldWrite))
+    )
+    const runtime = ManagedRuntime.make(FetchHttpClient.layer)
+    try {
+      const old = await runtime.runPromise(
+        StructureClient.make(OldApi, {
+          baseUrl: server.url,
+          bearer: () => server.token,
+          timeout: 10_000,
+          retry: { attempts: 1 }
+        })
+      )
+      await expect(
+        runtime.runPromise(
+          old.sessions.write({ payload: { id: 's1', input: { type: 'interrupt' } } })
+        )
+      ).resolves.toBeUndefined()
+      expect(source.writes).toEqual([{ id: 's1', input: { type: 'interrupt' } }])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('takes an older server’s empty answer to any write, as before the phone’s protocol', async () => {
+    const old = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        if (request.url === '/sessions/write') response.writeHead(204).end()
+        else response.writeHead(404).end()
+      })
+    })
+    await new Promise<void>((resolve) => old.listen(0, '127.0.0.1', resolve))
+    const address = old.address() as { port: number }
+    const client = createApiClient({
+      url: `http://127.0.0.1:${address.port}`,
+      token: 'older-server-token'
+    })
+    try {
+      await expect(client.sessions.write('s1', { type: 'interrupt' })).resolves.toBeUndefined()
+      await expect(
+        client.sessions.write('s1', {
+          type: 'user_message',
+          text: 'hi',
+          clientMessageId: 'desktop-0002'
+        })
+      ).resolves.toBeUndefined()
+    } finally {
+      await client.dispose()
+      await new Promise<void>((resolve) => old.close(() => resolve()))
+    }
   })
 })

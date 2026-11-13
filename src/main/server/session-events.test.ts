@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   hasServerEventPublisher,
+  initializeSessionWrites,
+  observeSessionWrites,
   publishOrSend,
   sessionCleared,
   sessionLimitCleared,
   sessionLimitReported,
   sessionModelChanged,
+  sessionRegistered,
   sessionPlanDetected,
   sessionTitleChanged,
-  setServerEventPublisher
+  setServerEventPublisher,
+  stopSessionWritesObservation
 } from './session-events'
 import {
   inMemorySessionWindows,
@@ -72,6 +76,17 @@ describe('a session’s model travels on both transports, the window picking one
 afterEach(() => {
   setServerEventPublisher(null)
   installSessionWindows(null)
+})
+
+it('announces registration without starting a provider or targeting a window', async () => {
+  const published: unknown[] = []
+  sessionRegistered('before-server')
+  setServerEventPublisher(async (event) => {
+    published.push(event)
+  })
+  sessionRegistered('windowless')
+  await Promise.resolve()
+  expect(published).toEqual([{ _tag: 'session.registered', id: 'windowless' }])
 })
 
 describe('a session’s news travels on one transport, never both', () => {
@@ -180,5 +195,74 @@ describe('a session’s limit report closes on both transports (PRDCT-4415)', ()
     await Promise.resolve()
     expect(sent).toEqual([['session:limit-cleared', { id: 's1' }]])
     expect(published).toEqual([{ _tag: 'session.limit_cleared', id: 's1' }])
+  })
+})
+
+describe('the write ledger hears identified messages where the sessions live (mobile wave, lane B)', () => {
+  const managerOf = (): {
+    manager: Parameters<typeof observeSessionWrites>[0]
+    emit: (id: string, stream: unknown) => void
+  } => {
+    const all = new Set<(id: string, stream: unknown) => void>()
+    const manager = {
+      subscribeAll: (listener: (id: string, stream: unknown) => void) => {
+        all.add(listener)
+        return () => all.delete(listener)
+      }
+    } as unknown as Parameters<typeof observeSessionWrites>[0]
+    return { manager, emit: (id, stream) => all.forEach((listener) => listener(id, stream)) }
+  }
+  afterEach(() => stopSessionWritesObservation())
+
+  it('records an identified message as evidence, once per frame, and nothing else', () => {
+    const { manager, emit } = managerOf()
+    const evidence = vi.fn()
+    observeSessionWrites(manager, evidence, vi.fn())
+    emit('s1', {
+      kind: 'event',
+      event: { type: 'user_message', text: 'hi', clientMessageId: 'phone-0001' }
+    })
+    emit('s1', { kind: 'event', event: { type: 'user_message', text: 'typed on the Mac' } })
+    emit('s1', { kind: 'event', event: { type: 'assistant_text', delta: 'hi', final: true } })
+    emit('s1', { kind: 'pty', data: new Uint8Array([104, 105]) })
+    expect(evidence).toHaveBeenCalledTimes(1)
+    expect(evidence).toHaveBeenCalledWith('s1', 'phone-0001', expect.any(Number))
+  })
+
+  it('initializes a new session only while observing, and hears nothing once stopped', () => {
+    const { manager, emit } = managerOf()
+    const evidence = vi.fn()
+    const initialize = vi.fn()
+    initializeSessionWrites('before')
+    const stop = observeSessionWrites(manager, evidence, initialize)
+    initializeSessionWrites('fresh')
+    expect(initialize.mock.calls).toEqual([['fresh']])
+    stop()
+    initializeSessionWrites('after')
+    emit('s1', {
+      kind: 'event',
+      event: { type: 'user_message', text: 'hi', clientMessageId: 'phone-0002' }
+    })
+    expect(initialize.mock.calls).toEqual([['fresh']])
+    expect(evidence).not.toHaveBeenCalled()
+  })
+
+  it('a second observation replaces the first, as a restarted server does', () => {
+    const first = managerOf()
+    const second = managerOf()
+    const old = vi.fn()
+    const current = vi.fn()
+    observeSessionWrites(first.manager, old, vi.fn())
+    observeSessionWrites(second.manager, current, vi.fn())
+    first.emit('s1', {
+      kind: 'event',
+      event: { type: 'user_message', text: 'x', clientMessageId: 'phone-0003' }
+    })
+    second.emit('s1', {
+      kind: 'event',
+      event: { type: 'user_message', text: 'x', clientMessageId: 'phone-0004' }
+    })
+    expect(old).not.toHaveBeenCalled()
+    expect(current).toHaveBeenCalledWith('s1', 'phone-0004', expect.any(Number))
   })
 })

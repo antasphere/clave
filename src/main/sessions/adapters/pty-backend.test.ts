@@ -442,3 +442,45 @@ describe('the session records', () => {
     expect(() => Schema.decodeUnknownSync(SessionRecord)(listed)).not.toThrow()
   })
 })
+
+describe('the record inventory the write ledger seeds from (PRDCT-4448)', () => {
+  it('names every recorded session and leaves every record in place, a malformed one and one whose folder is gone included', () => {
+    const session = backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
+    backend.kill(session.id, false)
+    const gone = '22222222-2222-4222-8222-222222222222'
+    fs.writeFileSync(recordFile('11111111-1111-4111-8111-111111111111'), '{not json')
+    fs.writeFileSync(
+      recordFile(gone),
+      JSON.stringify({
+        id: gone,
+        cwd: path.join(dir, 'gone'),
+        folderName: 'gone',
+        claudeMode: false
+      })
+    )
+    // A record of no known shape: listed by nobody, removed by nobody here.
+    fs.writeFileSync(
+      recordFile('33333333-3333-4333-8333-333333333333'),
+      JSON.stringify({ id: 'x' })
+    )
+    const folder = path.join(dir, SESSION_RECORDS_FOLDER)
+    const before = fs.readdirSync(folder).sort()
+    const contents = before.map((file) => fs.readFileSync(path.join(folder, file), 'utf-8'))
+    expect(before).toHaveLength(4)
+    expect(new PtyBackend().recordedSessionIds().sort()).toEqual([session.id, gone].sort())
+    expect(fs.readdirSync(folder).sort()).toEqual(before)
+    expect(before.map((file) => fs.readFileSync(path.join(folder, file), 'utf-8'))).toEqual(
+      contents
+    )
+    // The adoption still judges them, as before: it is what prunes.
+    expect(new PtyBackend().listAdoptableSessions().map((r) => r.id)).toEqual([session.id])
+    expect(fs.readdirSync(folder)).toEqual([`${session.id}.json`])
+  })
+
+  it('names nobody, and creates nothing, when there is no records folder at all', () => {
+    const folder = path.join(dir, SESSION_RECORDS_FOLDER)
+    expect(fs.existsSync(folder)).toBe(false)
+    expect(new PtyBackend().recordedSessionIds()).toEqual([])
+    expect(fs.existsSync(folder)).toBe(false)
+  })
+})

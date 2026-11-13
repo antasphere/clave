@@ -22,6 +22,8 @@ import { Readiness } from '@structure-ai/runtime'
 import type { ServerEvent } from '@clave/contract/events'
 import { CLOSE_SERVER_STOPPING } from '@clave/contract/push'
 import { ServerEvents } from './events'
+// ── The mobile wave, lane B: the server's own history of writes ──
+import { SessionWrites } from './sessions/writes'
 import type { ServerPorts } from './ports'
 import type { PushHub } from './push/hub'
 import { PushHubService } from './push/route'
@@ -78,6 +80,13 @@ export interface EmbeddedServer {
   readonly connections: () => number
   /** Stop, in the order `stopEmbedded` says; idempotent, the same report twice. */
   readonly stop: () => Promise<StopReport>
+  /** The mobile wave, lane B: a `user_message` carrying a client message id
+   *  passed on a session's stream; the server's own history of writes
+   *  records it (`sessions/writes.ts`). */
+  readonly writes: {
+    readonly initialize: (sessionId: string) => void
+    readonly evidence: (sessionId: string, clientMessageId: string, at: number) => void
+  }
 }
 
 /** A request already accepted gets this long to be answered before the handlers go. */
@@ -109,6 +118,8 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
     if (address._tag !== 'TcpAddress') throw new Error('The embedded server needs a TCP address')
     const events = Context.get(context, ServerEvents)
     const hub = Context.get(context, PushHubService)
+    // ── The mobile wave, lane B ──
+    const ledger = Context.get(context, SessionWrites)
     await Effect.runPromise(Context.get(context, Readiness).setReady)
     let stopping: Promise<StopReport> | null = null
     return {
@@ -117,6 +128,12 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
       serverId,
       publish: (event) => Effect.runPromise(events.publish(event)).then(() => undefined),
       connections: () => hub.connections,
+      // ── The mobile wave, lane B ──
+      writes: {
+        initialize: (sessionId) => ledger.initialize(sessionId),
+        evidence: (sessionId, clientMessageId, at) =>
+          ledger.evidence(sessionId, clientMessageId, at)
+      },
       stop: () =>
         (stopping ??= stopEmbedded({
           node,

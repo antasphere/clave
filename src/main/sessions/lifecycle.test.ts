@@ -27,7 +27,8 @@ const mocks = vi.hoisted(() => ({
   lastWorkspace: vi.fn((): string | null => null),
   scheduleTitle: vi.fn(),
   cleanupTitle: vi.fn(),
-  clearState: vi.fn()
+  clearState: vi.fn(),
+  initializeWrites: vi.fn()
 }))
 vi.mock('../pty-manager', () => ({
   loginShellEnvAsync: mocks.loginShellEnvAsync,
@@ -65,6 +66,11 @@ vi.mock('../title-generator', () => ({
   notifyClear: vi.fn()
 }))
 vi.mock('../agent-state-manager', () => ({ clearState: mocks.clearState }))
+// PRDCT-4448: the write ledger of a session this spawn creates starts complete.
+vi.mock('../server/session-events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../server/session-events')>()),
+  initializeSessionWrites: (id: string) => mocks.initializeWrites(id)
+}))
 import {
   readScreen,
   restartSession,
@@ -626,5 +632,23 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     plan(id)
     spawned(id)
     await expect(restartSession(id, { claudeProfileId: 'acc-2' })).resolves.toMatchObject({ id })
+  })
+})
+
+describe('a new session starts with a complete write ledger (PRDCT-4448)', () => {
+  it('initializes the ledger of a session this spawn creates, never of one it adopts', async () => {
+    windows()
+    const fresh = `life-${++sequence}`
+    spawned(fresh)
+    mocks.initializeWrites.mockClear()
+    await spawnSession('w1', '/work/app', { claudeMode: false })
+    // A session nobody could have written to: an id it never saw is absent, not unknown.
+    expect(mocks.initializeWrites.mock.calls).toEqual([[fresh]])
+    const adopted = `life-${++sequence}`
+    spawned(adopted)
+    mocks.initializeWrites.mockClear()
+    await spawnSession('w1', '/work/app', { claudeMode: false, adoptSessionId: adopted })
+    // An adopted session may have been written to before: its ledger is never declared complete.
+    expect(mocks.initializeWrites).not.toHaveBeenCalled()
   })
 })

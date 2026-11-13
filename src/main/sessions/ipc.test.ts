@@ -83,6 +83,7 @@ it('fans out through production IPC and detaches the consumer when its WebConten
   mocks.handlers.get('sessions:write')(event, id, { type: 'user_message', text: 'hello' })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: { type: 'assistant_text', delta: 'hello', final: true }
   })
   sender.send.mockClear()
@@ -160,6 +161,7 @@ it('readies an adapter only once and only after stream and exit notifications ar
   mocks.handlers.get('sessions:subscribe')({ sender }, id)
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: { type: 'user_message', text: 'initial prompt' }
   })
   expect(sender.send).toHaveBeenCalledWith(`sessions:exit:${id}`, 0)
@@ -202,6 +204,7 @@ it('keeps subscriptions after ready errors and retries until one successful call
   expect(subscribe()).toEqual({ ...record, run: 1 })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: {
       type: 'error',
       message: 'Session readiness failed: temporary startup failure',
@@ -212,6 +215,7 @@ it('keeps subscriptions after ready errors and retries until one successful call
   sessionManager.write(id, { type: 'user_message', text: 'subscription still works' })
   expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
     kind: 'event',
+    position: { generation: expect.any(String), sequence: expect.any(Number) },
     event: { type: 'user_message', text: 'subscription still works' }
   })
   subscribe()
@@ -476,8 +480,18 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   )
   // A cursor or a size that is not a count is ignored, never trusted.
   expect(history(event, id, 'x', -3)).toEqual(newest)
+  const timeline = mocks.handlers.get('sessions:timeline')
+  const snapshot = timeline(event, id)
+  expect(snapshot.items.at(-1)).toMatchObject({
+    event: { type: 'user_message', text: 'm499' },
+    at: 499,
+    position: { sequence: 500 }
+  })
+  expect(snapshot.cursor.sequence).toBe(500)
+  expect(timeline(event, id, snapshot.before, 10).items).toHaveLength(10)
   mocks.keyForWindow.mockReturnValue('other-window')
   expect(() => history(event, id)).toThrow('another window')
+  expect(() => timeline(event, id)).toThrow('another window')
   mocks.keyForWindow.mockReturnValue('window')
 })
 

@@ -1,3 +1,5 @@
+import { CapabilityUnavailable } from '@clave/contract/errors'
+import { SessionTimeline } from './timeline'
 import type { SessionHostService } from '@clave/server'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
@@ -36,6 +38,7 @@ export function stoppedSession(record: SessionRecord): Session {
     state: 'ended',
     createdAt: record.startedAt ?? 0,
     title: record.displayName ?? record.folderName,
+    ...(record.workspaceId !== undefined && { workspaceId: record.workspaceId }),
     transport: record.transport ?? 'pty',
     adapterId: record.adapterId ?? 'pty',
     provider: record.codexMode
@@ -90,6 +93,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       }
     }
   })
+  const stoppedTimelines = new Map<string, SessionTimeline>()
   const bindings = new Map<string, Set<() => void>>()
   const unsubscriptions = new Set<() => void>()
   const bind = (id: string): void => {
@@ -187,6 +191,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         if (record) base.discardRecord(record.tmuxName ?? record.id)
         history.remove(id)
         observedAt.delete(id)
+        stoppedTimelines.delete(id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, id)
       } finally {
         closing.delete(id)
@@ -200,6 +205,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       if (record) {
         history.remove(record.id)
         observedAt.delete(record.id)
+        stoppedTimelines.delete(record.id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, record.id)
       }
     },
@@ -248,6 +254,24 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       }
       // Adapters without available history still have the daemon's captured stream.
       return pageHistory(history.read(id).items, before, limit)
+    },
+    timeline: (id, before, limit) => {
+      if (!get(id)) throw new Error(`Unknown session: ${id}`)
+      if (base.get(id)) {
+        if (!base.timeline)
+          throw new CapabilityUnavailable({
+            capability: 'session timeline',
+            message: 'This host does not provide ordered conversation history.'
+          })
+        return base.timeline(id, before, limit)
+      }
+      let saved = stoppedTimelines.get(id)
+      if (!saved) {
+        // A checkpoint is bounded and has no durable ordering generation.
+        saved = new SessionTimeline(() => history.read(id).items, true)
+        stoppedTimelines.set(id, saved)
+      }
+      return saved.read(before, limit)
     },
     write: async (id, input) => {
       requireLive(id)
@@ -314,6 +338,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
           const result = await base.restart(id, account, resendRejected, undefined, provider)
           bind(id)
           if (base.get(id)?.transport === 'events') options.ready(id)
+          stoppedTimelines.delete(id)
           return result
         }
         const record = recordOf(id)
@@ -346,6 +371,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
           record.link?.kind === 'group-terminal' ? record.link.groupId : null
         )
         bind(id)
+        stoppedTimelines.delete(id)
         if (base.get(id)?.transport === 'events') options.ready(id)
         return { ...result, resumed: !!spawn.resumeSessionId }
       }

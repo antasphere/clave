@@ -29,6 +29,16 @@ export function PastFailed({ onRetry }: { onRetry: () => void }): React.JSX.Elem
   )
 }
 
+/** The host explicitly says its bounded retention dropped older events. */
+export function PastTruncated(): React.JSX.Element {
+  return (
+    <div className="chat-past-failed" role="status">
+      <ExclamationCircleIcon />
+      <span>Some earlier messages are no longer retained by this server.</span>
+    </div>
+  )
+}
+
 /** Over the transcript's head while another tab's card is being found here
  *  (`useExchangeJump`): reading older history for it, or saying it is not in
  *  this conversation. The same pill as the past on its way, out of the flow. */

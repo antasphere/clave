@@ -59,6 +59,10 @@ import { HistoryPort, historyHandlers } from './history'
 import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
 // ── PRDCT-4327: the digests ──
 import { DigestsPort, digestHandlers } from './digests'
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+import { DeviceSessions, DevicesEventsLive, PhoneRoad, deviceHandlers } from './devices'
+// ── The mobile wave, lane B: the write ledger ──
+import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
 // ── PRDCT-4411: the speech ──
 import { SpeechPort, speechHandlers } from './speech'
 
@@ -110,6 +114,12 @@ export type ServerServices =
   | Routines
   // ── PRDCT-4327: the digests ──
   | DigestsPort
+  // ── Mobile wave, lane A: the devices ──
+  | DeviceSessions
+  // ── PRDCT-4448: the phone's road to this server without a relay ──
+  | PhoneRoad
+  // ── The mobile wave, lane B: the write ledger ──
+  | SessionWrites
   // ── PRDCT-4411: the speech ──
   | SpeechPort
 
@@ -125,10 +135,18 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave 3, lane A: the reviews a `.clave` read waits on ──
     ReviewDesk.layer({
       ...(options.reviewTimeoutMs !== undefined && { timeoutMs: options.reviewTimeoutMs })
-    })
+    }),
+    // ── The mobile wave, lane B: the ids of the messages written once ──
+    SessionWrites.layer(options.ports.writeLedger ?? memoryWriteLedgerStorage())
   )
   const events = ServerEvents.layer(options.serverId).pipe(Layer.provide(foundations))
-  const services = Layer.mergeAll(foundations, events)
+  // ── Mobile wave, lane A: the devices domain over its port, beside the events ──
+  const devices = DeviceSessions.layer({ serverId: options.serverId }).pipe(
+    Layer.provide(foundations)
+  )
+  // ── PRDCT-4448: the phone's road, built once over the devices port ──
+  const road = PhoneRoad.layer.pipe(Layer.provide(foundations))
+  const services = Layer.mergeAll(foundations, events, devices, road)
   const hub = PushHubService.layer(options).pipe(Layer.provide(services))
   // ── Lane D: the settings source's changes go out as server events ──
   const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
@@ -153,6 +171,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
   // ── ADR 0004: the scheduler's news told to the clients ──
   const routinesEvents = RoutinesEventsLive.pipe(Layer.provide(services))
+  // ── Mobile wave, lane A: every change of the devices told to the clients ──
+  const devicesEvents = DevicesEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -172,7 +192,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Issue #266: the server domain ──
     serverInfoEvents,
     // ── ADR 0004: the routines ──
-    routinesEvents
+    routinesEvents,
+    // ── Mobile wave, lane A: the devices ──
+    devicesEvents
   )
 }
 
@@ -219,6 +241,8 @@ export const BusesLive = busesLayer.pipe(
       ...routineHandlers,
       // ── PRDCT-4327: the digests ──
       ...digestHandlers,
+      // ── Mobile wave, lane A: the devices ──
+      ...deviceHandlers,
       // ── PRDCT-4411: the speech ──
       ...speechHandlers
       // ── Lane B: ...terminalHandlers ──
@@ -226,17 +250,31 @@ export const BusesLive = busesLayer.pipe(
   )
 )
 
-/** The middleware outside the router, outermost first: the loopback CORS
- *  answer, the push upgrade, then the token check, then (test mode only)
- *  the fixture route, inside the token check so it is never open. */
+/** The middleware outside the router, outermost first: the phone's road
+ *  (its alias resolved before anything else reads the path, PRDCT-4448),
+ *  the loopback CORS answer, the push upgrade, then the token check, then
+ *  (test mode only) the fixture route, inside the token check so it is never
+ *  open. The token check also knows the phones' device sessions (mobile
+ *  wave, lane A). */
 const outer =
   (options: ServerOptions) =>
-  (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
-    Effect.flatMap(PushHubService, (hub) =>
-      corsForLoopback(
-        pushRoute(hub)(
-          bearerAuth(options.token)(
-            fixtureRoute(options.testFixtures === true)(boundedFileRequest(privateAnswerJson(app)))
+  (app: HttpApp.Default): HttpApp.Default<never, PushHubService | DeviceSessions | PhoneRoad> =>
+    Effect.flatMap(PhoneRoad, (road) =>
+      road.wrap(
+        Effect.flatMap(PushHubService, (hub) =>
+          Effect.flatMap(DeviceSessions, (devices) =>
+            corsForLoopback(
+              pushRoute(hub)(
+                bearerAuth(
+                  options.token,
+                  devices
+                )(
+                  fixtureRoute(options.testFixtures === true)(
+                    boundedFileRequest(privateAnswerJson(app))
+                  )
+                )
+              )
+            )
           )
         )
       )
