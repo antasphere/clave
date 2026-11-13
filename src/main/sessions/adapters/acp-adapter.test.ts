@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AcpAdapter, type AcpSpawnOptions } from './acp-adapter'
+import { AcpAdapter, acpModelOptions, type AcpSpawnOptions } from './acp-adapter'
 import type { SessionHandle } from '../adapter'
 import type { SessionEvent } from '../../../shared/session-model'
 
@@ -100,6 +100,96 @@ const done = (events: SessionEvent[], from = 0): boolean =>
   events.slice(from).some((e) => e.type === 'state_change' && e.state === 'done')
 const states = (events: SessionEvent[]): string[] =>
   events.flatMap((e) => (e.type === 'state_change' ? [e.state] : []))
+
+describe('acpModelOptions (PRDCT-4427)', () => {
+  it('reads the configOptions of a real opencode acp 2.3.0 session/new on a connection', () => {
+    // As `opencode acp` 2.3.0 answered it, under `enabled_providers` naming
+    // the connection's provider alone (a made-up key).
+    const configOptions = [
+      {
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        type: 'select',
+        currentValue: 'kimi-code-plan-global/k3',
+        options: [
+          {
+            value: 'kimi-code-plan-global/kimi-for-coding-highspeed',
+            name: 'kimi-code-plan-global/Kimi For Coding HighSpeed'
+          },
+          { value: 'kimi-code-plan-global/k3', name: 'kimi-code-plan-global/Kimi K3' },
+          { value: 'kimi-code-plan-global/k3-256k', name: 'kimi-code-plan-global/Kimi K3-256K' },
+          { value: 'kimi-code-plan-global/k3.1-pro', name: 'kimi-code-plan-global/Kimi K3.1 Pro' },
+          {
+            value: 'kimi-code-plan-global/k3.1-pro-highspeed',
+            name: 'kimi-code-plan-global/Kimi K3.1 Pro Highspeed'
+          },
+          {
+            value: 'kimi-code-plan-global/kimi-for-coding',
+            name: 'kimi-code-plan-global/kimi-for-coding'
+          }
+        ]
+      },
+      {
+        id: 'effort',
+        name: 'Effort',
+        description: 'Available effort levels for this model',
+        category: 'thought_level',
+        type: 'select',
+        currentValue: 'default',
+        options: [
+          { value: 'none', name: 'None' },
+          { value: 'low', name: 'Low' },
+          { value: 'high', name: 'High' },
+          { value: 'max', name: 'Max' },
+          { value: 'default', name: 'Default' }
+        ]
+      },
+      {
+        id: 'mode',
+        name: 'Session Mode',
+        category: 'mode',
+        type: 'select',
+        currentValue: 'build',
+        options: [
+          { value: 'build', name: 'Build', description: 'The default agent.' },
+          { value: 'plan', name: 'Plan', description: 'Read-only agent.' }
+        ]
+      }
+    ]
+    expect(acpModelOptions(configOptions)).toEqual([
+      { id: 'kimi-code-plan-global/kimi-for-coding-highspeed', label: 'Kimi For Coding HighSpeed' },
+      { id: 'kimi-code-plan-global/k3', label: 'Kimi K3' },
+      { id: 'kimi-code-plan-global/k3-256k', label: 'Kimi K3-256K' },
+      { id: 'kimi-code-plan-global/k3.1-pro', label: 'Kimi K3.1 Pro' },
+      { id: 'kimi-code-plan-global/k3.1-pro-highspeed', label: 'Kimi K3.1 Pro Highspeed' },
+      { id: 'kimi-code-plan-global/kimi-for-coding', label: 'kimi-for-coding' }
+    ])
+  })
+
+  it('reads grouped options, keeps a gloss as the hint, and lists nothing without a model option', () => {
+    expect(
+      acpModelOptions([
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'a/x',
+          options: [
+            { group: 'a', options: [{ value: 'a/x', name: 'X', description: 'Fast' }] },
+            { value: 'b/y', name: 'b/Y' }
+          ]
+        }
+      ])
+    ).toEqual([
+      { id: 'a/x', label: 'X', hint: 'Fast' },
+      { id: 'b/y', label: 'Y' }
+    ])
+    expect(acpModelOptions([{ id: 'mode', category: 'mode', options: [{ value: 'build' }] }])).toEqual(
+      []
+    )
+    expect(acpModelOptions(undefined)).toEqual([])
+  })
+})
 
 describe('AcpAdapter against the stand-in agent', () => {
   it('opens a session and names its id and model', async () => {
@@ -262,6 +352,20 @@ describe('AcpAdapter against the stand-in agent', () => {
     expect(
       frames(s.state).find((f) => f.method === 'session/set_config_option')?.params
     ).toMatchObject({ configId: 'model', value: 'stand-in/two' })
+  })
+
+  it('models() lists what the model option offers, the provider prefix off each name (PRDCT-4427)', async () => {
+    const s = await open()
+    expect(await s.adapter.models(s.handle)).toEqual([
+      { id: 'stand-in/one', label: 'One' },
+      { id: 'stand-in/two', label: 'Two' },
+      { id: 'stand-in/three', label: 'Three' }
+    ])
+    // A pick from that list switches, as the menu's pick does.
+    s.adapter.write(s.handle, { type: 'set_model', model: 'stand-in/two' })
+    await expect
+      .poll(() => s.events.filter((e) => e.type === 'session_meta').map((e) => e.model))
+      .toEqual(['stand-in/one', 'stand-in/two'])
   })
 
   it('a spawn with a listed model sets it after session/new', async () => {
