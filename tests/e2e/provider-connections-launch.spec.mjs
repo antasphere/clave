@@ -79,7 +79,11 @@ const MADE_UP = { KIMI, DEEPSEEK, ALIBABA, PI_OWN, OWN_PROVIDER }
 
 const PI_FILES = {
   'auth.json': JSON.stringify({ 'kimi-coding': { type: 'api_key', key: PI_OWN } }, null, 2) + '\n',
-  'settings.json': '{}\n',
+  // The person's own Pi default is a Kimi model, the second Kimi lists: a Pi
+  // tab on Kimi that names no model starts on it; one on another provider
+  // starts on that provider's first listed model (PRDCT-4496).
+  'settings.json':
+    JSON.stringify({ defaultProvider: 'kimi-coding', defaultModel: 'k-second' }, null, 2) + '\n',
   'models.json':
     JSON.stringify(
       {
@@ -104,10 +108,26 @@ const CATALOGUE = {
       id: 'alibaba-coding-plan',
       name: 'Alibaba Coding Plan',
       env: ['ALIBABA_CODING_PLAN_API_KEY'],
+      // The deprecated one first: the first model LISTED is the next one.
       models: [
-        { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus', reasoning: false, toolCall: true },
-        { id: 'old-one', name: 'Old', reasoning: false, toolCall: false, status: 'deprecated' }
+        { id: 'old-one', name: 'Old', reasoning: false, toolCall: false, status: 'deprecated' },
+        { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus', reasoning: false, toolCall: true }
       ]
+    },
+    {
+      id: 'kimi-code-plan-global',
+      name: 'Kimi For Coding',
+      env: ['KIMI_API_KEY'],
+      models: [
+        { id: 'k-first', name: 'Kimi First', reasoning: false, toolCall: true },
+        { id: 'k-second', name: 'Kimi Second', reasoning: false, toolCall: true }
+      ]
+    },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      env: ['DEEPSEEK_API_KEY'],
+      models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: false, toolCall: true }]
     }
   ]
 }
@@ -120,7 +140,9 @@ const PI_PRINT = [
 const OPENCODE_PRINT = [
   'sh',
   '-c',
-  'printf "DS=%s\\nCFG=%s\\nARGS=%s\\n" "$DEEPSEEK_API_KEY" "$OPENCODE_CONFIG_CONTENT" "$0 $*"; sleep 60'
+  // MODEL and ENABLED are short excerpts of CFG: a line a pane can wrap is
+  // read back whole through clave_read_session.
+  'printf "DS=%s\\nCFG=%s\\nMODEL=%s\\nENABLED=%s\\nARGS=%s\\n" "$DEEPSEEK_API_KEY" "$OPENCODE_CONFIG_CONTENT" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"model":"[^"]*"\')" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"enabled_providers":\\[[^]]*\\]\')" "$0 $*"; sleep 60'
 ]
 
 /** Never a value in a failure detail, made up or not. */
@@ -140,7 +162,7 @@ function holdsValue(text) {
 function parsePrinted(raw) {
   const out = {}
   for (const line of raw.replace(/\r/g, '').split('\n')) {
-    const m = /^(ZENV|KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG)=(.*)$/.exec(line)
+    const m = /^(ZENV|KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG|MODEL|ENABLED)=(.*)$/.exec(line)
     if (m && !(m[1] in out)) out[m[1]] = m[2]
   }
   return 'ARGS' in out ? out : null
@@ -289,10 +311,10 @@ async function mcpOpenPrinted(app, payload) {
       raw = read?.text ?? ''
       const out = {}
       for (const line of raw.replace(/\r/g, '').split('\n')) {
-        const m = /^(KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG)=(.*)$/.exec(line.trim())
+        const m = /^(KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG|MODEL|ENABLED)=(.*)$/.exec(line.trim())
         if (m && !(m[1] in out)) out[m[1]] = m[2]
       }
-      return 'KIMI' in out || 'DS' in out ? out : null
+      return 'ARGS' in out ? out : null
     },
     { tries: 60, gapMs: 500 }
   )
@@ -431,6 +453,13 @@ export async function run(t) {
       hasPair(kimi, '--provider', 'kimi-coding'),
       scrub(kimi?.ARGS)
     )
+    // Pi refuses --provider without --model (Pi 1.5.2): no model was named,
+    // so the person's own Pi default, a Kimi model, is the one (PRDCT-4496).
+    t.check(
+      "and --model k-second, the person's own Pi default, Kimi's",
+      hasPair(kimi, '--model', 'k-second'),
+      scrub(kimi?.ARGS)
+    )
     const linkTo = (name) => {
       try {
         const st = lstatSync(path.join(kimiDir, name))
@@ -552,12 +581,47 @@ export async function run(t) {
     t.check('the catalogue’s model is declared', aliIds.includes('qwen3-coder-plus'), aliIds)
     t.check('the deprecated model is not', !aliIds.includes('old-one'), aliIds)
 
+    // ── Pi on Alibaba with no model: the first model listed for it ───────
+    // The person's own default is Kimi's, not Alibaba's: the tab starts on
+    // the first model the launcher lists for Alibaba, the deprecated one
+    // before it skipped (PRDCT-4496).
+    const aliDefaultId = await spawn(win, {
+      piMode: true,
+      launchProfileId: 'e2e-pi-print',
+      connectionId: C.ali,
+      connectionLabel: 'Alibaba plan'
+    })
+    const aliDefault = await printedBy(win, aliDefaultId)
+    t.check(
+      'a Pi tab on Alibaba with no model is told --model qwen3-coder-plus, the first listed',
+      hasPair(aliDefault, '--provider', 'clave-alibaba') &&
+        hasPair(aliDefault, '--model', 'qwen3-coder-plus'),
+      aliDefault ? scrub(aliDefault.ARGS) : await rawOf(win, aliDefaultId)
+    )
+
+    // ── Pi on a local Ollama with no model: nothing listed, refused ──────
+    const ollamaNoModel = await spawnRefusal(win, {
+      piMode: true,
+      launchProfileId: 'e2e-pi-print',
+      connectionId: C.ollama,
+      connectionLabel: 'Local Ollama'
+    })
+    t.equal(
+      'a Pi tab on Ollama with no model is refused in one sentence, never started on something else',
+      String(ollamaNoModel ?? '').replace(
+        /^Error invoking remote method '[^']+': (?:Error: )?/,
+        ''
+      ),
+      'No model is listed for the connection "Local Ollama": name one to open Pi on it.'
+    )
+
     // ── Pi on a local Ollama: no value, a placeholder the server ignores ──
     const ollamaId = await spawn(win, {
       piMode: true,
       launchProfileId: 'e2e-pi-print',
       connectionId: C.ollama,
-      connectionLabel: 'Local Ollama'
+      connectionLabel: 'Local Ollama',
+      model: 'llama-made-up'
     })
     const ollama = await printedBy(win, ollamaId)
     t.check('Ollama runs on the placeholder key', ollama?.CLAVE === 'ollama', scrub(ollama))
@@ -675,6 +739,11 @@ export async function run(t) {
       piByLabel.printed?.KIMI === KIMI,
       piByLabel.printed ? scrub(piByLabel.printed) : scrub(piByLabel.raw)
     )
+    t.check(
+      "and, naming no model, starts on the person's own default as the launcher's tab did: --model k-second",
+      hasPair(piByLabel.printed, '--model', 'k-second'),
+      piByLabel.printed ? scrub(piByLabel.printed.ARGS) : scrub(piByLabel.raw)
+    )
     const piAny = await mcpOpenPrinted(app, {
       mode: 'pi',
       workspace: WS.id,
@@ -686,13 +755,102 @@ export async function run(t) {
       piAny.printed?.KIMI === KIMI,
       piAny.printed ? scrub(piAny.printed) : scrub(piAny.raw)
     )
-    // Ended with the spec's own print tabs, so neither holds the quit up.
+    t.check(
+      "and on account 'any' too: --model k-second",
+      hasPair(piAny.printed, '--model', 'k-second'),
+      piAny.printed ? scrub(piAny.printed.ARGS) : scrub(piAny.raw)
+    )
+
+    // ── What clave_launch_options says a Pi connection opens on ──────────
+    // The Mac's served road: the same rule as the open, so the listing names
+    // the model each tab above was handed (PRDCT-4496).
+    const listing = await callMcp(app, 'launchOptions', {})
+    const piListed = listing?.harnesses?.find((h) => h.id === 'pi')?.connections ?? []
+    const startOf = (id) => piListed.find((c) => c.id === id)
+    t.check(
+      'clave_launch_options says the Kimi connection opens on k-second, as its tabs did',
+      startOf(C.kimi)?.startModel === 'k-second',
+      startOf(C.kimi) ?? piListed.length
+    )
+    t.check(
+      'the Alibaba connection on qwen3-coder-plus, as its tab did',
+      startOf(C.ali)?.startModel === 'qwen3-coder-plus',
+      startOf(C.ali) ?? piListed.length
+    )
+    t.check(
+      'and the Ollama connection on none, with the refusal the open says',
+      startOf(C.ollama)?.startModel === null &&
+        startOf(C.ollama)?.startRefusal ===
+          'No model is listed for the connection "Local Ollama": name one to open Pi on it.',
+      startOf(C.ollama) ?? piListed.length
+    )
+
+    // ── An agent names an OpenCode tab's model (PRDCT-4496) ──────────────
+    // The open used to drop it: the tab is handed it in OpenCode's own
+    // provider/model form, a model already in that form never prefixed twice.
+    const ocByAgent = await mcpOpenPrinted(app, {
+      mode: 'opencode',
+      chat: false,
+      workspace: WS.id,
+      account: 'DeepSeek',
+      model: 'deepseek-chat',
+      name: 'OpenCode on DeepSeek, a model, by an agent'
+    })
+    t.equal(
+      "an agent's OpenCode tab with model deepseek-chat is handed deepseek/deepseek-chat",
+      ocByAgent.printed?.MODEL,
+      '"model":"deepseek/deepseek-chat"'
+    )
+    t.equal(
+      "on the connection's provider alone",
+      ocByAgent.printed?.ENABLED,
+      '"enabled_providers":["deepseek"]'
+    )
+    t.check(
+      'on the DeepSeek value',
+      ocByAgent.printed?.DS === DEEPSEEK,
+      ocByAgent.printed ? scrub(ocByAgent.printed) : scrub(ocByAgent.raw)
+    )
+    const ocByAgentRef = await mcpOpenPrinted(app, {
+      mode: 'opencode',
+      chat: false,
+      workspace: WS.id,
+      account: 'DeepSeek',
+      model: 'deepseek/deepseek-chat',
+      name: 'OpenCode on DeepSeek, a provider/model, by an agent'
+    })
+    t.equal(
+      'one named deepseek/deepseek-chat is handed it as it is, never prefixed twice',
+      ocByAgentRef.printed?.MODEL,
+      '"model":"deepseek/deepseek-chat"'
+    )
+    const ocNoModel = await mcpOpenPrinted(app, {
+      mode: 'opencode',
+      chat: false,
+      workspace: WS.id,
+      account: 'DeepSeek',
+      name: 'OpenCode on DeepSeek, no model, by an agent'
+    })
+    t.check(
+      "an agent's OpenCode tab with no model is kept on the connection's provider alone, no model named",
+      ocNoModel.printed?.ENABLED === '"enabled_providers":["deepseek"]' &&
+        ocNoModel.printed?.MODEL === '' &&
+        ocNoModel.printed?.DS === DEEPSEEK,
+      ocNoModel.printed ? scrub(ocNoModel.printed) : scrub(ocNoModel.raw)
+    )
+    // Ended with the spec's own print tabs, so none holds the quit up.
     await win.evaluate(
       (ids) => {
         const out = (window.__connectionsOut ??= {})
         for (const id of ids) out[id] ??= ''
       },
-      [piByLabel.sessionId, piAny.sessionId]
+      [
+        piByLabel.sessionId,
+        piAny.sessionId,
+        ocByAgent.sessionId,
+        ocByAgentRef.sessionId,
+        ocNoModel.sessionId
+      ]
     )
     let unknownRefusal = null
     try {
@@ -910,6 +1068,11 @@ export async function run(t) {
       "on a separate server, an agent's Pi tab on account 'Kimi work' got the Kimi value",
       sepPi.printed?.KIMI === KIMI,
       sepPi.printed ? scrub(sepPi.printed) : scrub(sepPi.raw)
+    )
+    t.check(
+      "and starts on the person's own Pi default there too: --model k-second",
+      hasPair(sepPi.printed, '--model', 'k-second'),
+      sepPi.printed ? scrub(sepPi.printed.ARGS) : scrub(sepPi.raw)
     )
   } finally {
     await stopTabs(separate.win)
