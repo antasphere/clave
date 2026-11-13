@@ -49,6 +49,32 @@ function useEverShown(activeId: string | null, valid: (id: string) => boolean): 
   return live
 }
 
+/**
+ * The artefacts this pane keeps mounted, the last `limit` shown, most recent
+ * first (PRDCT-4474, Romain's amendment of 13 November 2026). An artefact's
+ * frame unmounted on a change of tab lost its scroll and its page's state, and
+ * loaded again on the way back; the last few now stay mounted, hidden while
+ * their session is not on screen. Each still holds its preview on the server
+ * it runs on, which is why the count is bounded, and why a session closed,
+ * hidden or of another workspace lets its frame go at once.
+ */
+function useRecentlyShown(
+  activeId: string | null,
+  valid: (id: string) => boolean,
+  limit: number
+): string[] {
+  // Derived during render, as useEverShown above, for the same reason.
+  const [kept, setKept] = useState<string[]>([])
+  const next =
+    activeId && kept[0] !== activeId ? [activeId, ...kept.filter((id) => id !== activeId)] : kept
+  const live = next.filter(valid).slice(0, limit)
+  if (live.length !== kept.length || live.some((id, i) => id !== kept[i])) setKept(live)
+  return live
+}
+
+/** How many artefacts stay mounted while their sessions are not on screen. */
+const KEPT_ARTEFACTS = 4
+
 function computeGridLayout(count: number): { cols: number; rows: number } {
   if (count <= 1) return { cols: 1, rows: 1 }
   if (count === 2) return { cols: 2, rows: 1 }
@@ -219,6 +245,19 @@ export function TerminalGrid(): React.JSX.Element {
       ? (artefactSplit[artefactActive.sessionId] ?? SPLIT_DEFAULT)
       : undefined
   const cardActive = cardSplit !== undefined
+  const keptArtefacts = useRecentlyShown(
+    artefactActive?.sessionId ?? null,
+    (id) => {
+      const session = sessions.find((s) => s.id === id)
+      return (
+        !!session &&
+        !!artefacts[id] &&
+        shownArtefacts.has(id) &&
+        inActiveWorkspace(session, activeWorkspaceId)
+      )
+    },
+    KEPT_ARTEFACTS
+  )
 
   if (sessions.length === 0 && fileTabs.length === 0) {
     return (
@@ -345,52 +384,60 @@ export function TerminalGrid(): React.JSX.Element {
           <LinkedDocumentPanel document={doc} />
         </div>
       ))}
-      {/* The artefact of the session alone in the pane, mounted only while it
-          shows: the frame holds the server's preview for as long as it is
-          mounted, and a hidden or unselected one holds nothing. */}
-      {artefactActive && (
-        <div
-          key={`artefact:${artefactActive.sessionId}`}
-          className="linked-document-slot"
-          style={{ left: `${(cardSplit ?? SPLIT_DEFAULT) * 100}%` }}
-        >
+      {/* The artefacts of the last sessions shown alone in the pane
+          (useRecentlyShown): the one of the session on screen shows, the others
+          stay mounted and hidden, so a change of tab keeps each page where it
+          was. A frame holds its server's preview for as long as it is mounted,
+          and one hidden by its button or past the bound holds nothing. */}
+      {keptArtefacts.map((id) => {
+        const artefact = artefacts[id]
+        const showing = artefactActive?.sessionId === id
+        const split = artefactSplit[id] ?? SPLIT_DEFAULT
+        return (
           <div
-            className="linked-document-divider"
-            role="separator"
-            aria-label="Resize artefact"
-            aria-orientation="vertical"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            key={`artefact:${id}`}
+            className="linked-document-slot"
+            style={{
+              left: `${split * 100}%`,
+              ...(showing ? {} : { visibility: 'hidden', pointerEvents: 'none' })
+            }}
+            aria-hidden={showing ? undefined : true}
+            data-artefact-session={id}
+          >
+            <div
+              className="linked-document-divider"
+              role="separator"
+              aria-label="Resize artefact"
+              aria-orientation="vertical"
+              tabIndex={showing ? 0 : -1}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  useArtefactStore
+                    .getState()
+                    .setSplit(id, split + (event.key === 'ArrowLeft' ? -0.05 : 0.05))
+                }
+              }}
+              onPointerDown={(event) => {
                 event.preventDefault()
-                useArtefactStore
-                  .getState()
-                  .setSplit(
-                    artefactActive.sessionId,
-                    (cardSplit ?? SPLIT_DEFAULT) + (event.key === 'ArrowLeft' ? -0.05 : 0.05)
-                  )
-              }
-            }}
-            onPointerDown={(event) => {
-              event.preventDefault()
-              const parent = event.currentTarget.parentElement?.parentElement
-              if (!parent) return
-              const bounds = parent.getBoundingClientRect()
-              const id = artefactActive.sessionId
-              const move = (e: PointerEvent): void => {
-                useArtefactStore.getState().setSplit(id, (e.clientX - bounds.left) / bounds.width)
-              }
-              const up = (): void => {
-                window.removeEventListener('pointermove', move)
-                window.removeEventListener('pointerup', up)
-              }
-              window.addEventListener('pointermove', move)
-              window.addEventListener('pointerup', up)
-            }}
-          />
-          <ArtefactPanel sessionId={artefactActive.sessionId} artefact={artefactActive} />
-        </div>
-      )}
+                const parent = event.currentTarget.parentElement?.parentElement
+                if (!parent) return
+                const bounds = parent.getBoundingClientRect()
+                const move = (e: PointerEvent): void => {
+                  useArtefactStore.getState().setSplit(id, (e.clientX - bounds.left) / bounds.width)
+                }
+                const up = (): void => {
+                  window.removeEventListener('pointermove', move)
+                  window.removeEventListener('pointerup', up)
+                }
+                window.addEventListener('pointermove', move)
+                window.addEventListener('pointerup', up)
+              }}
+            />
+            <ArtefactPanel sessionId={id} artefact={artefact} />
+          </div>
+        )
+      })}
       {/* A hidden document or artefact is reopened from the session's own
           header (LinkedDocumentReopen), not from a chip floating over its content. */}
 
