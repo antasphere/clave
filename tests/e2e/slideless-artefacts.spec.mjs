@@ -264,7 +264,7 @@ export async function run(t, server = 'in-process') {
     const src = await frame.getAttribute('src')
     t.check(
       'the panel frames the local Slideless page',
-      /^http:\/\/127\.0\.0\.1:\d+\/$/.test(src),
+      /^http:\/\/127\.0\.0\.1:\d+\/\?bar=0$/.test(src),
       src
     )
     const deckText = () =>
@@ -297,13 +297,27 @@ export async function run(t, server = 'in-process') {
     await sleep(1500)
     t.equal('a turn that changed nothing saves no version', versions(), 2)
 
-    const options = await win
-      .frameLocator('[data-testid="slideless-artefact"]')
-      .locator('#sel option')
-      .allTextContents()
+    // The versions are chosen from Clave's bar, Slideless's own bar hidden in
+    // the frame (PRDCT-4494).
     t.check(
-      'the panel’s version bar lists both versions',
-      options.some((o) => o.startsWith('v1 ')) && options.some((o) => o.startsWith('v2 ')),
+      'the frame asks the preview for its page without Slideless’s bar',
+      ((await frame.getAttribute('src')) ?? '').includes('bar=0'),
+      await frame.getAttribute('src')
+    )
+    await win.locator('[aria-label="Version shown"]:visible').click()
+    // The menu reads the list again as it opens: its rows arrive a moment after.
+    const rows = win.locator('[aria-label="Versions"] [role="menuitem"]')
+    const both = (texts) =>
+      texts.some((o) => o.startsWith('v1')) && texts.some((o) => o.startsWith('v2'))
+    const options =
+      (await until(async () => {
+        const texts = await rows.allTextContents()
+        return both(texts) ? texts : null
+      }, 50)) ?? (await rows.allTextContents())
+    await win.keyboard.press('Escape')
+    t.check(
+      'the version chip in the panel’s bar lists both versions',
+      options.some((o) => o.startsWith('v1')) && options.some((o) => o.startsWith('v2')),
       options
     )
     t.check('nothing was written into the artefact folder', !existsSync(`${BRIEF}/.slideless`))

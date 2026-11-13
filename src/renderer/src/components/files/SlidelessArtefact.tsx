@@ -7,6 +7,7 @@ import { serverNameOf } from '../../lib/drop-refusal'
 import { startHoldLoop } from '../../lib/artefact-hold'
 import { useFileChanged } from '../../hooks/use-file-changed'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
+import { withVersion } from '../../lib/artefact-version'
 
 /** How many times a minute the frame holds again a preview that died under it. */
 const RESTART_LIMIT = 3
@@ -109,11 +110,15 @@ export function SlidelessArtefact({
   useFileChanged(own && !ready ? artefact.page : null, () => setReloadKey((k) => k + 1))
 
   const url = held?.openedAt === openedAt ? held.url : undefined
-  if (ready && url && !gaveUp)
+  // Slideless's own bar is hidden (`bar=0`): the version shown is chosen, and
+  // a version saved, from Clave's bar above (PRDCT-4494); `v` is that choice.
+  const shown = useArtefactStore((s) => s.version[sessionId] ?? 'live')
+  const framed = url ? withVersion(url, shown) : undefined
+  if (ready && framed && !gaveUp)
     return (
       <iframe
-        key={`${url}#${reloads}`}
-        src={url}
+        key={`${framed}#${reloads}`}
+        src={framed}
         data-testid="slideless-artefact"
         // The preview runs on its own loopback origin, never the app's; its
         // deck sits in a sandboxed frame of its own inside it.

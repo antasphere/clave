@@ -205,6 +205,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   'artefacts.hold': routed,
   'artefacts.release': routed,
   'artefacts.saveVersion': routed,
+  'artefacts.versions': routed,
   'artefacts.close': routed,
   'artefacts.onChanged': routed,
   'artefacts.onPreviewExited': routed,

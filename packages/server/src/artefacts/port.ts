@@ -13,6 +13,7 @@ import type {
   ArtefactEvent,
   ArtefactPreview,
   ArtefactVersion,
+  ArtefactVersions,
   SlidelessState
 } from '@clave/contract/artefacts'
 
@@ -42,6 +43,8 @@ export interface ArtefactsService {
   readonly release: (sessionId: string, holdId: string) => Promise<void>
   /** Save a version of the session's artefact now. */
   readonly saveVersion: (sessionId: string) => Promise<ArtefactVersion>
+  /** The versions of the session's artefact, from its running preview. */
+  readonly versions: (sessionId: string) => Promise<ArtefactVersions>
   readonly list: () => Promise<readonly Artefact[]>
   readonly slidelessState: () => Promise<SlidelessState>
   /** Install, or update to, the registry's latest release. */
@@ -69,6 +72,7 @@ export class ArtefactsPort extends Context.Tag('@clave/server/Artefacts')<
     hold: refuse,
     release: refuse,
     saveVersion: refuse,
+    versions: refuse,
     list: refuse,
     slidelessState: refuse,
     installSlideless: refuse,

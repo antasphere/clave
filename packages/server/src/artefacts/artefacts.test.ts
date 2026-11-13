@@ -68,6 +68,10 @@ function fakePort(): {
       if (sessionId === 'broken') throw new Error('the disk is full')
       return { version: 2, created: true }
     },
+    versions: async (sessionId) => {
+      asked.push(['versions', sessionId])
+      return { versions: [{ version: 2, createdAt: '2026-11-13T10:58:30.951Z', fileCount: 3 }] }
+    },
     list: async () => {
       asked.push(['list'])
       return [artefact]
@@ -111,6 +115,9 @@ describe('the artefacts over HTTP', () => {
       version: 2,
       created: true
     })
+    expect(await (await get('/artefacts/versions?sessionId=s1')).json()).toEqual({
+      versions: [{ version: 2, createdAt: '2026-11-13T10:58:30.951Z', fileCount: 3 }]
+    })
     expect(await (await get('/artefacts')).json()).toEqual([artefact])
     expect(await (await get('/artefacts/slideless')).json()).toEqual(ready)
     expect(await (await post('/artefacts/slideless/install', {})).json()).toEqual(ready)
@@ -121,6 +128,7 @@ describe('the artefacts over HTTP', () => {
       ['hold', 's1', 'h7'],
       ['release', 's1', 'h7'],
       ['saveVersion', 's1'],
+      ['versions', 's1'],
       ['list'],
       ['slidelessState'],
       ['installSlideless']

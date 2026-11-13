@@ -58,7 +58,7 @@ import type {
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { Artefact, SlidelessState } from '@clave/contract/artefacts/model'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   HelperAccount,
@@ -778,6 +778,8 @@ export interface ArtefactsAPI {
   hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
   release(sessionId: string, holdId: string): Promise<void>
   saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
+  /** The versions the session's artefact keeps, from its running preview (PRDCT-4494). */
+  versions(sessionId: string): Promise<ArtefactVersions>
   /** The session shows no artefact any more, for every window and every Mac. */
   close(sessionId: string): Promise<void>
   onChanged(

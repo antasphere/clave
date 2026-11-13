@@ -76,6 +76,21 @@ export const ArtefactVersion = Schema.Struct({
 })
 export type ArtefactVersion = typeof ArtefactVersion.Type
 
+/** One kept version of an artefact, as its preview lists it (PRDCT-4494). */
+export const ArtefactVersionEntry = Schema.Struct({
+  version: Schema.Number,
+  createdAt: Schema.String,
+  fileCount: Schema.Number
+})
+export type ArtefactVersionEntry = typeof ArtefactVersionEntry.Type
+
+/** The versions an artefact's preview keeps, oldest first; `error` when they cannot be read. */
+export const ArtefactVersions = Schema.Struct({
+  versions: Schema.Array(ArtefactVersionEntry),
+  error: Schema.optional(Schema.String)
+})
+export type ArtefactVersions = typeof ArtefactVersions.Type
+
 /** The server said no; `message` is the sentence shown to the person. */
 export class ArtefactRefused extends Schema.TaggedError<ArtefactRefused>()('ArtefactRefused', {
   message: Schema.String
@@ -134,6 +149,13 @@ export const ListArtefacts = Query.define('ListArtefacts', {
   payload: Schema.Struct({}),
   success: Schema.Array(Artefact),
   failure: CapabilityUnavailable
+})
+
+/** The versions of the session's artefact, read from its running preview (PRDCT-4494). */
+export const ListArtefactVersions = Query.define('ListArtefactVersions', {
+  payload: Schema.Struct({ sessionId: SessionId }),
+  success: ArtefactVersions,
+  failure: RefusedOrUnavailable
 })
 
 export const GetSlidelessState = Query.define('GetSlidelessState', {

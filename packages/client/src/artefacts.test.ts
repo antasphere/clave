@@ -42,6 +42,9 @@ const port = (asked: unknown[]): ArtefactsService => ({
   },
   release: async (sessionId, holdId) => void asked.push(['release', sessionId, holdId]),
   saveVersion: async () => ({ version: 1, created: true }),
+  versions: async () => ({
+    versions: [{ version: 1, createdAt: '2026-11-13T10:44:40.854Z', fileCount: 1 }]
+  }),
   list: async () => [],
   slidelessState: async () => state,
   installSlideless: async () => state,
@@ -59,6 +62,9 @@ describe('the artefacts of the client', () => {
     await api.artefacts.release('s1', 'h2')
     await api.artefacts.close('s1')
     expect(await api.artefacts.saveVersion('s1')).toEqual({ version: 1, created: true })
+    expect(await api.artefacts.versions('s1')).toEqual({
+      versions: [{ version: 1, createdAt: '2026-11-13T10:44:40.854Z', fileCount: 1 }]
+    })
     expect(await api.artefacts.list()).toEqual([])
     expect(await api.artefacts.slidelessState()).toEqual(state)
     expect(await api.artefacts.installSlideless()).toEqual(state)

@@ -13,5 +13,6 @@ export const ArtefactsLive = HttpApiBuilder.group(ClaveApi, 'artefacts', (handle
     .handle('hold', HttpCqrs.command(A.HoldArtefactPreview))
     .handle('release', HttpCqrs.command(A.ReleaseArtefactPreview))
     .handle('saveVersion', HttpCqrs.command(A.SaveArtefactVersion))
+    .handle('versions', HttpCqrs.query(A.ListArtefactVersions))
     .handle('installSlideless', HttpCqrs.command(A.InstallSlideless))
 )

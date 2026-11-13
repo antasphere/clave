@@ -37,6 +37,7 @@ import type {
   ArtefactEvent,
   ArtefactPreview,
   ArtefactVersion,
+  ArtefactVersions,
   SlidelessState
 } from '@clave/contract/artefacts'
 import type { AgentState } from '@clave/contract/sessions'
@@ -430,6 +431,16 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     )
   }
 
+  // The versions the preview keeps, for the bar's version chip (PRDCT-4494):
+  // read from the running preview, the one a window that asks is holding.
+  const versions = async (sessionId: string): Promise<ArtefactVersions> => {
+    const link = linkOf(sessionId)
+    if (!link) throw new ArtefactRefusal(NO_ARTEFACT_OPEN)
+    if (!servers.targets().includes(link.target))
+      return { versions: [], error: 'The preview of this artefact is not running.' }
+    return servers.versions(link.target)
+  }
+
   // ── A version at each finished turn ──
   const onState = (sessionId: string, next: AgentState): void => {
     const previous = previousState.get(sessionId)
@@ -496,6 +507,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       if (holds.get(holdId)?.sessionId === sessionId) dropHold(holdId)
     },
     saveVersion,
+    versions,
     // Every link of the document, whether its session is known yet or not.
     list: async () =>
       Object.entries(deps.links.all()).map(([sessionId, link]) => ({ sessionId, ...link })),

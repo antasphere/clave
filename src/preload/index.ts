@@ -16,7 +16,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { Artefact, SlidelessState } from '@clave/contract/artefacts/model'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -1894,6 +1894,10 @@ const electronAPI = {
     saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
       ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
       server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    }),
+    versions: viaOwnServer<[string], ArtefactVersions>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:versions', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.versions(sessionId)
     }),
     close: viaOwnServer<[string], void>({
       ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),

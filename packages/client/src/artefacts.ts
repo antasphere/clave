@@ -14,6 +14,7 @@ import type {
   Artefact,
   ArtefactPreview,
   ArtefactVersion,
+  ArtefactVersions,
   SlidelessState
 } from '@clave/contract/artefacts'
 import type { Call } from './call'
@@ -24,6 +25,7 @@ export interface ArtefactsClient {
   readonly hold: (sessionId: string, holdId?: string) => Promise<ArtefactPreview>
   readonly release: (sessionId: string, holdId: string) => Promise<void>
   readonly saveVersion: (sessionId: string) => Promise<ArtefactVersion>
+  readonly versions: (sessionId: string) => Promise<ArtefactVersions>
   readonly list: () => Promise<readonly Artefact[]>
   readonly slidelessState: () => Promise<SlidelessState>
   readonly installSlideless: () => Promise<SlidelessState>
@@ -40,6 +42,7 @@ export const artefactsClient = (call: Call, patientCall: Call = call): Artefacts
   release: (sessionId, holdId) =>
     call((c) => c.artefacts.release({ payload: { sessionId, holdId } })).then(() => undefined),
   saveVersion: (sessionId) => call((c) => c.artefacts.saveVersion({ payload: { sessionId } })),
+  versions: (sessionId) => call((c) => c.artefacts.versions({ payload: { sessionId } })),
   list: () => call((c) => c.artefacts.list({ payload: {} })),
   slidelessState: () => call((c) => c.artefacts.slidelessState({ payload: {} })),
   installSlideless: () => patientCall((c) => c.artefacts.installSlideless({ payload: {} }))

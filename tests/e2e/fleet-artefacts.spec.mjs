@@ -18,7 +18,7 @@
  *     server's port nor its preview's;
  *  3. inside the frame the version bar page shows the deck; an edit on the
  *     server's disk changes the text without the panel loading again;
- *  4. the frame's own Save version saves on the server: one more version;
+ *  4. Save version, in the panel's ⋯ menu, saves on the server: one more version;
  *  5. a plain request to the Mac's port from this process is refused (403):
  *     the port is the windows' alone; a page of a target this spec serves,
  *     registered on the server and framed in the Mac's window, opens a
@@ -237,7 +237,7 @@ export async function run(t) {
     const port = (url) => Number(new URL(url).port)
     t.check(
       'the frame is a loopback port of the Mac, neither the server’s nor its preview’s',
-      /^http:\/\/127\.0\.0\.1:\d+\/$/.test(src) &&
+      /^http:\/\/127\.0\.0\.1:\d+\/\?bar=0$/.test(src) &&
         port(src) !== port(preview.url) &&
         port(src) !== port(server.url),
       { src, preview: preview.url, server: port(server.url) }
@@ -272,11 +272,12 @@ export async function run(t) {
       'kept'
     )
 
-    // ── 4. The frame's own Save version ──
+    // ── 4. Save version, from Clave's bar (PRDCT-4494) ──
     const before = versionsOf(server, DECK)
-    await mac.win.frameLocator('[data-testid="slideless-artefact"]').locator('#snap').click()
+    await mac.win.locator('[aria-label="Artefact menu"]:visible').click()
+    await mac.win.locator('[role="menuitem"]', { hasText: 'Save version' }).click()
     t.check(
-      'the frame’s own Save version saves one more version on the server',
+      'Save version in the panel’s menu saves one more version on the server',
       !!(await until(() => versionsOf(server, DECK) === before + 1, { tries: 150, gapMs: 100 })),
       { before, after: versionsOf(server, DECK) }
     )

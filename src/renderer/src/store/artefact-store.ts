@@ -83,6 +83,13 @@ interface ArtefactState extends ArtefactView {
   /** Hide the artefact the session shows now (its `openedAt`), or show it again (null). */
   setHidden: (sessionId: string, openedAt: string | null) => void
   setSplit: (sessionId: string, value: number) => void
+  /** What each session's panel shows, by session: `live`, `latest` or a version's number
+   *  (PRDCT-4494). Kept in memory: a new start shows the live folder. */
+  version: Record<string, string>
+  setVersion: (sessionId: string, shown: string) => void
+  /** Bumped when a version is saved from the bar, so its chip reads the list again. */
+  versionsSaved: Record<string, number>
+  noteSaved: (sessionId: string) => void
   /** Read a machine's Slideless once; later changes arrive pushed. */
   readSlideless: (owner: string) => void
   install: (owner: string) => Promise<void>
@@ -111,6 +118,14 @@ export const useArtefactStore = create<ArtefactState>((set, get) => {
     },
     setSplit: (sessionId, value) =>
       keep({ split: { ...get().split, [sessionId]: clampSplit(value) } }),
+    version: {},
+    setVersion: (sessionId, shown) =>
+      set((s) => ({ version: { ...s.version, [sessionId]: shown } })),
+    versionsSaved: {},
+    noteSaved: (sessionId) =>
+      set((s) => ({
+        versionsSaved: { ...s.versionsSaved, [sessionId]: (s.versionsSaved[sessionId] ?? 0) + 1 }
+      })),
     readSlideless: (owner) => {
       if (asked.has(owner)) return
       asked.add(owner)

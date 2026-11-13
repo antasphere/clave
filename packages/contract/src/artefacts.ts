@@ -11,6 +11,7 @@ import {
   HoldArtefactPreview,
   InstallSlideless,
   ListArtefacts,
+  ListArtefactVersions,
   OpenArtefact,
   ReleaseArtefactPreview,
   SaveArtefactVersion
@@ -26,6 +27,7 @@ export const artefactsGroup = ApiGroup.make('artefacts')
   .add(HttpCqrs.commandEndpoint('hold', '/artefacts/hold', HoldArtefactPreview))
   .add(HttpCqrs.commandEndpoint('release', '/artefacts/release', ReleaseArtefactPreview))
   .add(HttpCqrs.commandEndpoint('saveVersion', '/artefacts/save-version', SaveArtefactVersion))
+  .add(HttpCqrs.queryEndpoint('versions', '/artefacts/versions', ListArtefactVersions))
   .add(
     HttpCqrs.commandEndpoint('installSlideless', '/artefacts/slideless/install', InstallSlideless)
   )

@@ -46,6 +46,7 @@ export function registerArtefactHandlers(deps: ArtefactHandlerDeps = defaults): 
   )
   on('release', (api, sessionId, holdId) => api.artefacts.release(text(sessionId), text(holdId)))
   on('saveVersion', (api, sessionId) => api.artefacts.saveVersion(text(sessionId)))
+  on('versions', (api, sessionId) => api.artefacts.versions(text(sessionId)))
   on('close', (api, sessionId) => api.artefacts.close(text(sessionId)))
   on('slidelessState', (api) => api.artefacts.slidelessState())
   on('installSlideless', (api) => api.artefacts.installSlideless())

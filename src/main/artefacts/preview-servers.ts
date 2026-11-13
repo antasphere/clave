@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { createServer } from 'net'
 import { isAbsolute, resolve } from 'path'
-import type { ArtefactVersion } from '@clave/contract/artefacts'
+import type { ArtefactVersion, ArtefactVersions } from '@clave/contract/artefacts'
 import type { ResolvedCli } from './slideless-cli'
 
 /**
@@ -185,6 +185,42 @@ export class PreviewServers {
     if (!entry || !entry.holderIds.delete(holder)) return
     entry.holders--
     if (entry.holders <= 0) this.stop(entry)
+  }
+
+  /** The versions a served target keeps, as its preview lists them (`GET /__slideless/versions`). */
+  async versions(raw: string): Promise<ArtefactVersions> {
+    const entry = this.running.get(resolve(raw))
+    if (!entry) throw new Error('This artefact is not being served')
+    const base = await entry.url
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), SNAPSHOT_TIMEOUT_MS)
+    try {
+      const res = await this.deps.fetch(`${base}__slideless/versions`, {
+        signal: controller.signal
+      })
+      const body = (await res.json().catch(() => ({}))) as { versions?: unknown; error?: unknown }
+      const listed = Array.isArray(body.versions) ? body.versions : []
+      return {
+        versions: listed.flatMap((v) => {
+          const item = v as { version?: unknown; createdAt?: unknown; fileCount?: unknown }
+          return typeof item.version === 'number'
+            ? [
+                {
+                  version: item.version,
+                  createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
+                  fileCount: typeof item.fileCount === 'number' ? item.fileCount : 0
+                }
+              ]
+            : []
+        }),
+        ...(typeof body.error === 'string' ? { error: body.error } : {}),
+        ...(!res.ok && typeof body.error !== 'string'
+          ? { error: `Versions answered ${res.status}` }
+          : {})
+      }
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** Save a version of a served target. */

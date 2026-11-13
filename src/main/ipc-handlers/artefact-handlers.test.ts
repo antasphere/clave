@@ -59,7 +59,8 @@ describe('the artefacts over IPC', () => {
       'artefacts:list',
       'artefacts:release',
       'artefacts:saveVersion',
-      'artefacts:slidelessState'
+      'artefacts:slidelessState',
+      'artefacts:versions'
     ])
   })
 

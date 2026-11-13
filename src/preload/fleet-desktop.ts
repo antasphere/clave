@@ -1432,6 +1432,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         (wireId) => local.artefacts.saveVersion(wireId),
         (b, wireId) => b.api.artefacts.saveVersion(wireId)
       ),
+    versions: (id) =>
+      route(
+        id,
+        (wireId) => local.artefacts.versions(wireId),
+        (b, wireId) => b.api.artefacts.versions(wireId)
+      ),
     close: (id) =>
       route(
         id,

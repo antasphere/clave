@@ -15,6 +15,7 @@ import {
   HoldArtefactPreview,
   InstallSlideless,
   ListArtefacts,
+  ListArtefactVersions,
   OpenArtefact,
   ReleaseArtefactPreview,
   SaveArtefactVersion
@@ -64,5 +65,6 @@ export const artefactHandlers = [
     plain((a) => a.release(p.sessionId, p.holdId))
   ),
   CommandHandler.make(SaveArtefactVersion, (p) => call((a) => a.saveVersion(p.sessionId))),
+  QueryHandler.make(ListArtefactVersions, (p) => call((a) => a.versions(p.sessionId))),
   CommandHandler.make(InstallSlideless, () => plain((a) => a.installSlideless()))
 ] as const
