@@ -41,7 +41,14 @@ import { sessionTools } from './served-session-tools'
 import { workTools } from './served-work-tools'
 import { isServerTabRef } from './session-targets'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
-import { DEFAULT_INTERACTION_MODE, HARNESSES, type HarnessId } from '../../shared/harness'
+import {
+  DEFAULT_INTERACTION_MODE,
+  HARNESSES,
+  HARNESS_BY_ID,
+  type HarnessId
+} from '../../shared/harness'
+import { harnessProviderConnections } from '../../shared/provider-connection-pick'
+import type { PiStartModel } from '../../shared/pi-start-model'
 import {
   launchOptions as launchOptionsOf,
   type LaunchModel,
@@ -52,6 +59,7 @@ import { isAccountPoolId, type ConnectionPoolId } from '../../shared/connection'
 import { resolveProfileRef } from '../../shared/open-session-modes'
 import {
   pinnedPiModels,
+  piStartModels,
   providerHarnessModels,
   providerPoolConnections,
   type ProviderListingDeps
@@ -470,6 +478,15 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
     })
   )
   const workspaceId = (ctx.win ? shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
+  // What each Pi connection starts on with no model named, by the spawn's
+  // own rule (PRDCT-4496): the person's Pi default, else the first listed.
+  const piStarts = await piStartModels(
+    harnessProviderConnections(HARNESS_BY_ID.pi, shell.providerConnectionViews?.() ?? []),
+    {
+      ...listing,
+      ...(shell.piOwnDefault ? { piOwnDefault: () => shell.piOwnDefault!() } : {})
+    }
+  ).catch(() => new Map<string, PiStartModel>())
   return launchOptionsOf({
     machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
     harnesses: HARNESSES,
@@ -511,6 +528,8 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
       isAccountPoolId(pool as ConnectionPoolId)
         ? shell.launchModel?.(pool as 'claude' | 'codex', profileId, workspaceId)
         : undefined,
+    providerStartModel: (id, connectionId) =>
+      id === 'pi' ? piStarts.get(connectionId) : undefined,
     now: Date.now()
   })
 }

@@ -376,8 +376,17 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     }
   }
   if ('prepend' in action) {
-    if (!action.prepend.length) return state
-    const earlier = action.prepend.reduce(reduceConversation, emptyConversation)
+    // A notice the adapter keeps in the past AND said live (a Pi or OpenCode
+    // chat refused at start, PRDCT-4427) is shown once: the past's copy of a
+    // notice this pane already heard live is dropped.
+    const heard = new Set(state.entries.flatMap((e) => (e.kind === 'error' ? [e.message] : [])))
+    const items = heard.size
+      ? action.prepend.filter(
+          (item) => item.event.type !== 'error' || !heard.has(item.event.message)
+        )
+      : action.prepend
+    if (!items.length) return state
+    const earlier = items.reduce(reduceConversation, emptyConversation)
     const past = earlier.entries
     return {
       ...state,

@@ -17,6 +17,7 @@ import {
   providerCompany,
   type ProviderCompanyId
 } from '@clave/contract/settings/provider-catalogue'
+import { CLAVE_PROVIDER_PREFIX } from '../shared/provider-prefix'
 
 export type { ProviderCompanyId }
 
@@ -111,6 +112,12 @@ export const PROVIDER_LISTING_FACTS: Readonly<
  *  Clave's connection variable when the harness ships no provider for it. */
 export function envForHarness(company: ProviderCompanyId, harness: 'pi' | 'opencode'): string {
   return PROVIDER_ROAD_BY_ID[company][harness]?.env ?? CLAVE_CONNECTION_KEY_ENV
+}
+
+/** Pi's provider id for a company's connection: the one Pi ships, else the
+ *  one Clave declares in the connection's own directory (`clave-<company>`). */
+export function piProviderOf(company: ProviderCompanyId): string {
+  return PROVIDER_ROAD_BY_ID[company].pi?.provider ?? `${CLAVE_PROVIDER_PREFIX}${company}`
 }
 
 /** Every key variable a harness may read, sorted and distinct: the names a

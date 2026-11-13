@@ -1,5 +1,10 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { shellSettingsSource as settings } from '../settings/shell-source'
+import { HARNESS_BY_ID } from '../../shared/harness'
+import { harnessProviderConnections } from '../../shared/provider-connection-pick'
+import { piStartModels } from '../mcp/provider-launch-listing'
+import { modelsCatalog } from '../models-catalog'
+import { piOwnDefault } from '../provider-injection-spawn'
 
 /** The provider connections and their keys, over IPC (PRDCT-4426): the same
  *  settings source the server answers from (`settings/shell-source.ts`), so a
@@ -7,6 +12,22 @@ import { shellSettingsSource as settings } from '../settings/shell-source'
  *  never comes out: the renderer learns `hasKey`, nothing more. */
 export function registerProviderConnectionsHandlers(): void {
   ipcMain.handle('provider-connections:list', () => settings.providerConnections.list())
+  // What each Pi connection starts on when an open names no model, by id
+  // (PRDCT-4496): the spawn's own rule, for the window's clave_launch_options.
+  // The person's Pi default is read here, on the machine whose Pi runs.
+  ipcMain.handle('provider-connections:pi-start-models', async () =>
+    Object.fromEntries(
+      await piStartModels(
+        harnessProviderConnections(HARNESS_BY_ID.pi, [
+          ...(await settings.providerConnections.list())
+        ]),
+        {
+          catalog: (providerIds) => modelsCatalog.view({ providerIds }),
+          piOwnDefault: () => piOwnDefault()
+        }
+      )
+    )
+  )
   ipcMain.handle('provider-connections:add', (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('Pick a provider first.')
     const { company, label, baseUrl, wireFormat } = input as Record<string, unknown>

@@ -36,6 +36,7 @@ import { isAccountPoolId, isConnectionPoolId } from '../../../shared/connection'
 import { providerConnection } from '../../../shared/provider-connection'
 import { servesHarnessPool } from '../../../shared/provider-connection-pick'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import type { PiStartModel } from '../../../shared/pi-start-model'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import type { ServerSettings } from '../store/server-settings-state'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from './launch-source'
@@ -203,6 +204,9 @@ export function localLaunchOptionsInput(
     /** The model a launch naming none runs, per pool, on the profile its
      *  open resolves (`localOpenProfileId`). */
     readonly launchModels?: Partial<Record<AccountProvider, string | undefined>>
+    /** What each Pi connection starts on with no model named, by id, as
+     *  main computes it for the spawn (`providerPiStartModels`). */
+    readonly piStarts?: Readonly<Record<string, PiStartModel>>
   }
 ): LaunchOptionsInput {
   const source = localLaunchSource(null)
@@ -233,6 +237,12 @@ export function localLaunchOptionsInput(
       isPool(pool) ? (source.selectedAccountId(pool) ?? undefined) : undefined,
     preferRecommended: facts.preferRecommended,
     launchModel: (pool) => (isPool(pool) ? facts.launchModels?.[pool] : undefined),
+    ...(facts.piStarts
+      ? {
+          providerStartModel: (harness: HarnessId, connectionId: string) =>
+            harness === 'pi' ? facts.piStarts?.[connectionId] : undefined
+        }
+      : {}),
     now: facts.now
   }
 }

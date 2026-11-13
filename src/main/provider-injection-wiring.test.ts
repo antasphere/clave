@@ -154,11 +154,12 @@ describe('wireProviderConnections', () => {
   it('a spawn on a road opens the key once, and a second spawn opens it again', async () => {
     const { manager, openKey } = fakeManager([view({ id: 'k' })])
     wireProviderConnections(manager, { invalidate: () => undefined })
-    const first = await providerInjectionForSpawn('pi', { connectionId: 'k' }, spawnDeps)
+    const picked = { connectionId: 'k', model: 'made-up-kimi-model' }
+    const first = await providerInjectionForSpawn('pi', picked, spawnDeps)
     expect(first.providerEnv?.KIMI_API_KEY).toBe(KEY)
     expect(first.piProvider).toBe('kimi-coding')
     expect(openKey).toHaveBeenCalledTimes(1)
-    await providerInjectionForSpawn('pi', { connectionId: 'k' }, spawnDeps)
+    await providerInjectionForSpawn('pi', picked, spawnDeps)
     // Never cached in the wiring: each spawn asks the store.
     expect(openKey).toHaveBeenCalledTimes(2)
   })

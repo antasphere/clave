@@ -40,6 +40,7 @@ import {
 } from './connection'
 import { isChatProfileRef } from './open-session-modes'
 import { pickProviderConnection } from './provider-connection-pick'
+import type { PiStartModel } from './pi-start-model'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
 
 /** What agent-updates knows of a harness on the machine; undefined when this road never checks (the Mac's view of a server). */
@@ -87,6 +88,14 @@ export interface LaunchOptionsInput {
   readonly preferRecommended: boolean
   /** The remembered chat model when none is named. */
   readonly launchModel: (pool: string, profileId: string | undefined) => string | undefined
+  /** What a tab on a stored provider connection starts on when the open
+   *  names no model (PRDCT-4496, `piStartModel`: Pi's rule, read by the spawn
+   *  too); undefined where this road cannot know it (Pi's own default lives
+   *  on the machine that runs it) or the harness needs none. */
+  readonly providerStartModel?: (
+    harness: HarnessId,
+    connectionId: string
+  ) => PiStartModel | undefined
   readonly now: number
 }
 export interface ConnectionWindow {
@@ -103,6 +112,12 @@ export type ConnectionOption = PooledConnection & {
   readonly exhausted: boolean
   readonly headroom: string | null
   readonly windows: readonly ConnectionWindow[]
+  /** A Pi connection (PRDCT-4496): the model a tab on it opens on when the
+   *  open names none, the very one the spawn picks; null when it opens on
+   *  none (`startRefusal` says why: name a model). Absent where the road
+   *  cannot know it. */
+  readonly startModel?: string | null
+  readonly startRefusal?: string
 }
 export interface ModelOption extends LaunchModel {
   readonly served: boolean
@@ -261,21 +276,29 @@ function harnessOptions(
     const suggested = isAccountPoolId(pool)
       ? suggestedConnection(rows, input.selectedConnectionId(pool), input.preferRecommended, model)
       : providerSuggested
-    return rows.map((c) => ({
-      ...c,
-      pool,
-      suggested: c.id === suggested,
-      exhausted: isExhausted(usageSummaryForModel(c.usage, model)),
-      // With no model named, the account view: its shared headroom and
-      // every family that is out ("72% left · Overall · Fable out · …").
-      headroom: c.usage
-        ? capStatusLine(model ? usageSummaryForModel(c.usage, model) : c.usage, {
-            now: input.now,
-            reset: 'in'
-          })
-        : null,
-      windows: windowsOf(c.usage, input.now)
-    }))
+    return rows.map((c) => {
+      const start = isAccountPoolId(pool) ? undefined : input.providerStartModel?.(id, c.id)
+      return {
+        ...c,
+        pool,
+        ...(start
+          ? start.ok
+            ? { startModel: start.model }
+            : { startModel: null, startRefusal: start.reason }
+          : {}),
+        suggested: c.id === suggested,
+        exhausted: isExhausted(usageSummaryForModel(c.usage, model)),
+        // With no model named, the account view: its shared headroom and
+        // every family that is out ("72% left · Overall · Fable out · …").
+        headroom: c.usage
+          ? capStatusLine(model ? usageSummaryForModel(c.usage, model) : c.usage, {
+              now: input.now,
+              reset: 'in'
+            })
+          : null,
+        windows: windowsOf(c.usage, input.now)
+      }
+    })
   })
   const all = pools.flatMap((pool) => input.connections(pool, harness))
 

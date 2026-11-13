@@ -236,6 +236,14 @@ describe('resolveLaunch', () => {
       spawn: { opencodeMode: true, dangerousMode: true }
     })
   })
+
+  it("keeps an OpenCode launch's model, the daemon's clave_open_session road included (PRDCT-4496)", () => {
+    for (const model of ['deepseek-chat', 'deepseek/deepseek-chat']) {
+      const oc = resolveLaunch(routine({ agent: 'opencode', model }), facts())
+      expect(oc.ok && oc.model).toBe(model)
+      expect(oc.ok && oc.spawn).toMatchObject({ opencodeMode: true, model })
+    }
+  })
 })
 
 // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on the provider pools

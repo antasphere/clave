@@ -17,7 +17,7 @@ describe('clave_open_session spawn modes', () => {
     expect(modes.dangerousMode).toBe(true)
     expect(modes.family).toBe('codex')
   })
-  it('opens OpenCode in its own mode, with --auto as its skip-approvals flag and no model', () => {
+  it('opens OpenCode in its own mode, with --auto as its skip-approvals flag and its model', () => {
     const modes = resolveSpawnModes({ mode: 'opencode', dangerous: true, model: 'x/y' })
     expect(modes).toMatchObject({
       opencodeMode: true,
@@ -26,7 +26,15 @@ describe('clave_open_session spawn modes', () => {
       dangerousMode: true,
       family: 'opencode'
     })
-    expect(modes.model).toBeUndefined()
+    // PRDCT-4496: the model reaches OpenCode's configuration, which every
+    // road builds from it (`providerInjection`); it used to be dropped here.
+    expect(modes.model).toBe('x/y')
+  })
+  it('drops a model only where there is nowhere to put it: Antigravity, a terminal', () => {
+    expect(resolveSpawnModes({ mode: 'antigravity', model: 'm' }).model).toBeUndefined()
+    expect(resolveSpawnModes({ mode: 'terminal', model: 'm' }).model).toBeUndefined()
+    for (const mode of ['claude', 'codex', 'pi', 'opencode'] as const)
+      expect(resolveSpawnModes({ mode, model: 'm' }).model).toBe('m')
   })
   it('keeps the flag for claude', () => {
     expect(resolveSpawnModes({ mode: 'claude', dangerous: true }).dangerousMode).toBe(true)

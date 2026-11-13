@@ -364,6 +364,52 @@ describe('AcpAdapter against the stand-in agent', () => {
       { type: 'state_change', state: 'ended' }
     ])
     expect(alive(s.pid)).toBe(false)
+    // Kept in the past too, for a pane that subscribes after it was said.
+    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([s.events[0]])
+  })
+
+  it('an agent that prints a line and exits 1 before it speaks: that line and the status, never its environment', async () => {
+    const secret = 'made-up-key-value-0002'
+    const adapter = new AcpAdapter({ id: 'opencode-chat', provider: 'opencode', label: 'OpenCode' })
+    const id = `acp-${++sequence}`
+    adapter.configure(id, {
+      command: [
+        process.execPath,
+        '-e',
+        'process.stderr.write("Error: no provider configured (key " + process.env.DEEPSEEK_API_KEY + ")\\n"); process.exit(1)'
+      ],
+      env: { ...process.env, DEEPSEEK_API_KEY: secret }
+    })
+    const handle = await adapter.spawn({
+      id,
+      provider: 'opencode',
+      transport: 'events',
+      cwd: tmp(),
+      windowKey: 'w',
+      state: 'idle',
+      createdAt: 0,
+      adapterId: 'opencode-chat',
+      title: 'OpenCode',
+      options: {}
+    })
+    live.push({ adapter, handle })
+    const events: SessionEvent[] = []
+    const exits: number[] = []
+    adapter.on(handle, 'stream', (stream) => {
+      if (stream.kind === 'event') events.push(stream.event)
+    })
+    adapter.on(handle, 'exit', (code) => exits.push(code))
+    adapter.ready(handle)
+    await expect.poll(() => exits).toEqual([1])
+    const refusal = {
+      type: 'error',
+      message:
+        'OpenCode could not start: Error: no provider configured (key ‹hidden›) (exit status 1)',
+      fatal: false
+    }
+    expect(events).toEqual([refusal, { type: 'state_change', state: 'ended' }])
+    expect(JSON.stringify(events)).not.toContain(secret)
+    expect(adapter.history(handle).map((item) => item.event)).toEqual([refusal])
   })
 
   it('kill ends the child', async () => {

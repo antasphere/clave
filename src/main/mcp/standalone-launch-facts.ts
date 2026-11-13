@@ -19,6 +19,7 @@ import { CLAUDE_MODELS } from '../../shared/claude-models'
 import {
   DEFAULT_INTERACTION_MODE,
   HARNESSES,
+  HARNESS_BY_ID,
   isInteractionMode,
   sanitizeHarnessSettings,
   type Harness,
@@ -32,12 +33,17 @@ import { isAccountPoolId, type Connection, type ConnectionPoolId } from '../../s
 import type { ModelOption } from '../../shared/session-model'
 import {
   pinnedPiModels,
+  piStartModels,
   providerHarnessModels,
   providerPoolConnections,
   type ProviderListingDeps
 } from './provider-launch-listing'
 import { usageSummaryForModel } from '../../shared/usage-summary'
-import { listedProviderConnection } from '../../shared/provider-connection-pick'
+import {
+  harnessProviderConnections,
+  listedProviderConnection
+} from '../../shared/provider-connection-pick'
+import type { PiStartModel } from '../../shared/pi-start-model'
 import type { HarnessDetection } from '../agent-updates/standalone-detection'
 import { openProfileIdFor, type LaunchFacts } from '../routines/launch'
 import type { AccountProvider, AccountSwitchMode, ServedAccount } from './served-core'
@@ -60,6 +66,9 @@ export interface StandaloneLaunchFacts extends LaunchFacts {
    *  company's serving a wire format the harness speaks, in the store's
    *  order, as the one shape of a connection. */
   providerPool?(pool: ConnectionPoolId, harness: Harness): readonly Connection[]
+  /** What each of this server's Pi connections starts on with no model
+   *  named, by id (`piStartModels`, the spawn's rule). */
+  piStartModels?(): Promise<Map<string, PiStartModel>>
   now(): number
 }
 
@@ -151,6 +160,11 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
     switchMode: () => switchModeOf(deps.preferences('accountSwitchMode')) ?? 'propose',
     providerPool: (pool, harness) =>
       providerPoolConnections(pool, deps.providerConnectionViews?.() ?? [], harness),
+    piStartModels: () =>
+      piStartModels(
+        harnessProviderConnections(HARNESS_BY_ID.pi, deps.providerConnectionViews?.() ?? []),
+        deps
+      ),
     now: deps.now ?? (() => Date.now())
   }
 }
@@ -193,7 +207,8 @@ export function accountOf(facts: LaunchFacts, record: SessionRecord): ServedAcco
 export function launchOptionsInput(
   facts: StandaloneLaunchFacts,
   statuses: ReadonlyArray<AgentUpdateStatus> | undefined,
-  models: Partial<Record<HarnessId, readonly LaunchModel[] | 'unavailable'>>
+  models: Partial<Record<HarnessId, readonly LaunchModel[] | 'unavailable'>>,
+  piStarts?: ReadonlyMap<string, PiStartModel>
 ): LaunchOptionsInput {
   return {
     machine: facts.machine(),
@@ -230,6 +245,13 @@ export function launchOptionsInput(
       isAccountPoolId(pool as ConnectionPoolId)
         ? facts.launchModel?.(pool as AccountProvider, profileId, undefined)
         : undefined,
+    // What a Pi connection starts on with no model named: the spawn's rule.
+    ...(piStarts
+      ? {
+          providerStartModel: (id, connectionId) =>
+            id === 'pi' ? piStarts.get(connectionId) : undefined
+        }
+      : {}),
     now: facts.now()
   }
 }

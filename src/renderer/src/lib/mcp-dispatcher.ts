@@ -1789,12 +1789,16 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
         )
       )
     )
+    // What each Pi connection starts on with no model named (PRDCT-4496):
+    // main's answer, by the spawn's own rule; unsaid when it cannot be read.
+    const piStarts = await window.electronAPI?.providerPiStartModels?.().catch(() => undefined)
     return launchOptions(
       localLaunchOptionsInput({
         ...facts,
         agents: useAgentUpdatesStore.getState().agents,
         preferRecommended: useAccountPolicyStore.getState().useRecommendedAccount,
-        launchModels
+        launchModels,
+        ...(piStarts ? { piStarts } : {})
       })
     )
   }

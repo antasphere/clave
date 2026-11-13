@@ -298,8 +298,18 @@ class PtyManager {
     // A fresh chat that names no model starts on the one last picked in a
     // chat composer. A restored or resumed tab keeps its own, and a launch
     // that names a model (MCP, a .clave file) gets exactly that.
+    // A Pi or OpenCode chat on a stored connection is not: the connection
+    // decides what an open naming no model starts on, as its terminal does
+    // (`providerInjectionForSpawn`, PRDCT-4496), never a model last picked on
+    // another provider.
+    const onConnection =
+      !!options?.connectionId && (adapter.id === 'pi-chat' || adapter.id === 'opencode-chat')
     const remembered =
-      events && !options?.model && !options?.adoptSessionId && !options?.resumeSessionId
+      events &&
+      !onConnection &&
+      !options?.model &&
+      !options?.adoptSessionId &&
+      !options?.resumeSessionId
         ? rememberedChatModel(adapter.id)
         : undefined
     if (remembered) options = { ...options, model: remembered }
@@ -333,10 +343,12 @@ class PtyManager {
             options?.claudeProfileId
           ),
           // A Pi or OpenCode tab's stored connection, opened the same way and
-          // for those two alone (PRDCT-4496).
+          // for those two alone (PRDCT-4496). A Pi tab on one that names no
+          // model (neither the open nor its profile) comes back with the model
+          // it starts on, which the spread puts on its command line and record.
           ...(await providerInjectionForSpawn(family, {
             connectionId: options?.connectionId,
-            model: options?.model
+            model: options?.model ?? (family === 'pi' ? ownProfile?.pi?.model : undefined)
           }))
         })
     // A live tmux session this process takes BACK (an app relaunch, a move
@@ -395,9 +407,16 @@ class PtyManager {
       (adapter.id === 'opencode-chat' || adapter.id === 'pi-chat')
         ? await providerInjectionForSpawn(adapter.id === 'pi-chat' ? 'pi' : 'opencode', {
             connectionId: options.connectionId,
-            model: options.model
+            model: options.model ?? (adapter.id === 'pi-chat' ? ownProfile?.pi?.model : undefined)
           })
         : {}
+    // The model a Pi chat on a connection starts on when none was picked, the
+    // terminal's by the same rule: on its command line, its record and its
+    // session, as a picked one is.
+    if (chatConnection.model) {
+      options = { ...options, model: chatConnection.model }
+      session.model = chatConnection.model
+    }
     const chatEnvAccount = chatConnection.providerEnv
       ? { providerEnv: chatConnection.providerEnv }
       : {}

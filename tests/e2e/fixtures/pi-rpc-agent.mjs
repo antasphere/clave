@@ -10,8 +10,13 @@
 //   <timestamp>_<id>.jsonl        each session in Pi's own file format (v3),
 //                                 written at its first message, as Pi does
 //
+// Like Pi 1.5.2, `--provider` without `--model` is refused on stderr with exit
+// code 1 before any frame.
+//
 // Behaviour switches: `PI_STAND_IN_DELAY_MS` waits between the events of a
-// run; `PI_STAND_IN_NO_MODEL=1` leaves the model out of `get_state` and fails
+// run; `PI_STAND_IN_ANY_PROVIDER=1` takes `--provider p --model m` for any
+// provider but its own, as Pi takes one its models.json declares;
+// `PI_STAND_IN_NO_MODEL=1` leaves the model out of `get_state` and fails
 // every prompt with `No model selected`; `PI_STAND_IN_STREAMING_ONCE=1` refuses
 // the first prompt with `Agent is streaming` and runs nothing;
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
@@ -53,6 +58,14 @@ if (flags['--mode'] !== 'rpc') {
   )
   process.exit(2)
 }
+// Pi 1.5.2's own refusal, before it speaks the protocol (checked by hand:
+// `pi --provider kimi-coding --mode rpc` prints this and exits 1).
+if (flags['--provider'] !== undefined && flags['--model'] === undefined) {
+  process.stderr.write(
+    `Error: --provider requires --model (for example: --provider ${flags['--provider']} --model <pattern>)\n`
+  )
+  process.exit(1)
+}
 const stateDir = flags['--session-dir'] ?? process.env.PI_STAND_IN_STATE
 if (!stateDir) {
   process.stderr.write('PI_STAND_IN_STATE or --session-dir is required\n')
@@ -62,6 +75,7 @@ mkdirSync(stateDir, { recursive: true })
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.PI_STAND_IN_DELAY_MS ?? 0) || 0
 const noModel = process.env.PI_STAND_IN_NO_MODEL === '1'
+const anyProvider = process.env.PI_STAND_IN_ANY_PROVIDER === '1'
 let streamingOnce = process.env.PI_STAND_IN_STREAMING_ONCE === '1'
 const idleSteer = process.env.PI_STAND_IN_IDLE_STEER
 
@@ -188,7 +202,11 @@ if (!noModel) {
     const slash = pattern.indexOf('/')
     const provider = slash >= 0 ? pattern.slice(0, slash) : (flags['--provider'] ?? 'stand-in')
     const id = slash >= 0 ? pattern.slice(slash + 1) : pattern
-    session.model = findModel(provider, id)
+    session.model =
+      findModel(provider, id) ??
+      // A provider a connection's directory declares, as real Pi reads it
+      // from that directory's models.json.
+      (anyProvider && provider !== 'stand-in' ? { ...modelObject(id), provider } : undefined)
     if (!session.model) {
       process.stderr.write(`Model not found: ${provider}/${id}\n`)
       process.exit(1)

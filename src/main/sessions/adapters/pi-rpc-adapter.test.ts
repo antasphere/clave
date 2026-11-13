@@ -406,12 +406,61 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     expect(second.events.some((e) => e.type === 'user_message')).toBe(false)
   })
 
-  it('a session Pi cannot open: the refusal, ended and exit 1', async () => {
+  it('a session Pi cannot open: the refusal in its own words, ended and exit 1', async () => {
     const s = await open({ resume: 'nope' }, { session: ['--session', 'nope'] })
     await expect.poll(() => s.exits).toEqual([1])
-    expect(s.events).toEqual([
-      { type: 'error', message: 'Pi could not start: Pi exited with code 1', fatal: false },
-      { type: 'state_change', state: 'ended' }
+    const refusal = {
+      type: 'error',
+      message: 'Pi could not start: Session not found: nope (exit status 1)',
+      fatal: false
+    }
+    expect(s.events).toEqual([refusal, { type: 'state_change', state: 'ended' }])
+    // Kept in the past too, for a pane that subscribes after it was said.
+    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([refusal])
+  })
+
+  it('a Pi that prints a line and exits 1 before it speaks: that line and the status, never its environment', async () => {
+    const secret = 'made-up-key-value-0001'
+    const adapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+    const id = `pi-${++sequence}`
+    // A stand-in for Pi 1.5.2's own refusal (`--provider` without `--model`),
+    // which also prints the key it was handed to show it never reaches the
+    // reader.
+    adapter.configure(id, {
+      command: [
+        process.execPath,
+        '-e',
+        'process.stderr.write("\\u001b[31mError: --provider requires --model\\u001b[0m (key " + process.env.KIMI_API_KEY + ")\\n"); process.exit(1)'
+      ],
+      env: { ...process.env, KIMI_API_KEY: secret, PI_CODING_AGENT_DIR: '/made-up/dir' }
+    })
+    const handle = await adapter.spawn({
+      id,
+      provider: 'pi',
+      transport: 'events',
+      cwd: tmp(),
+      windowKey: 'w',
+      state: 'idle',
+      createdAt: 0,
+      adapterId: 'pi-chat',
+      title: 'Pi',
+      options: {}
+    })
+    live.push({ adapter, handle })
+    const events: SessionEvent[] = []
+    const exits: number[] = []
+    adapter.on(handle, 'stream', (stream) => {
+      if (stream.kind === 'event') events.push(stream.event)
+    })
+    adapter.on(handle, 'exit', (code) => exits.push(code))
+    adapter.ready(handle)
+    await expect.poll(() => exits).toEqual([1])
+    const message =
+      'Pi could not start: Error: --provider requires --model (key ‹hidden›) (exit status 1)'
+    expect(notices(events)).toEqual([message])
+    expect(JSON.stringify(events)).not.toContain(secret)
+    expect(adapter.history(handle).map((item) => item.event)).toEqual([
+      { type: 'error', message, fatal: false }
     ])
   })
 
