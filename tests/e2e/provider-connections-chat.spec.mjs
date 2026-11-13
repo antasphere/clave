@@ -20,6 +20,13 @@
 //   the person's Pi home has no `sessions` folder, so the session Pi writes
 //   lands in the connection's directory alone, and a Resume of the chat
 //   resumes it (`--session <id>`): the guard looked where Pi runs;
+// - Pi refuses `--provider` without `--model` (Pi 1.5.2, and the stand-in
+//   does the same): the agent's Pi chat on Kimi names no model, so it starts
+//   on the first model listed for Kimi, the person's default being another
+//   provider's (PRDCT-4496);
+// - a Pi or OpenCode chat whose agent prints a line and exits before it
+//   speaks shows that line and the status, once, in process and on the app's
+//   own separate server (PRDCT-4427);
 // - a spawn on a connection with no key, or one that is gone, is refused in
 //   that one sentence, on the chat road as on the terminal road; a Resume of
 //   a chat whose connection was removed fails on the same sentence;
@@ -52,9 +59,13 @@ import {
 } from './harness.mjs'
 
 const DIR = userDataDir('provider-connections-chat')
+const DIR_SEPARATE = userDataDir('provider-connections-chat-separate')
 const ROOT = fixturePath('provider-connections-chat-root')
 const PI_HOME = path.join(ROOT, 'pi-agent')
 const SEEN = path.join(ROOT, 'seen.jsonl')
+// While this file exists, both stand-ins print a line on stderr and exit 3
+// before they speak their protocol (defect 2 of the trial, PRDCT-4427).
+const REFUSE_MARK = path.join(ROOT, 'refuse-before-protocol')
 const ACP_STATE = path.join(ROOT, 'acp-state')
 const ACP_FRAMES = path.join(ACP_STATE, 'frames.jsonl')
 const ACP_AGENT = path.join(REPO, 'tests/e2e/fixtures/acp-agent.mjs')
@@ -72,6 +83,34 @@ const PI_CWD_FOLDER = `--${ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--
 const KIMI = 'e2e-made-up-chat-kimi-0001'
 const DEEPSEEK = 'e2e-made-up-chat-deepseek-0001'
 const MADE_UP = { KIMI, DEEPSEEK }
+
+const CATALOGUE = {
+  fetchedAt: Date.now(),
+  providers: [
+    {
+      id: 'kimi-code-plan-global',
+      name: 'Kimi For Coding',
+      env: ['KIMI_API_KEY'],
+      models: [
+        {
+          id: 'k-retired',
+          name: 'Retired',
+          reasoning: false,
+          toolCall: true,
+          status: 'deprecated'
+        },
+        { id: 'k-first', name: 'Kimi First', reasoning: false, toolCall: true },
+        { id: 'k-second', name: 'Kimi Second', reasoning: false, toolCall: true }
+      ]
+    },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      env: ['DEEPSEEK_API_KEY'],
+      models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: false, toolCall: true }]
+    }
+  ]
+}
 
 const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
 
@@ -93,9 +132,22 @@ function writeFixtures() {
   // The person's Pi home: a settings file, and no `sessions` folder yet (a
   // person whose first Pi runs on a connection).
   mkdirSync(PI_HOME, { recursive: true })
-  writeFileSync(path.join(PI_HOME, 'settings.json'), '{}\n')
+  // The person's own Pi default is on another provider than Kimi's: a Pi
+  // chat on Kimi that names no model starts on the first model the launcher
+  // lists for Kimi (PRDCT-4496).
+  writeFileSync(
+    path.join(PI_HOME, 'settings.json'),
+    JSON.stringify({ defaultProvider: 'anthropic', defaultModel: 'claude-made-up' }) + '\n'
+  )
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+  // The catalogue's cache, fresh: models.dev is never asked, and the list the
+  // launcher shows for Kimi is this one.
+  writeFileSync(path.join(DIR, 'models-catalog.json'), JSON.stringify(CATALOGUE))
   seedTrustedRoots(DIR, [ROOT])
+  // The second pass, on the app's own separate server (defect 2 was met there).
+  rmSync(DIR_SEPARATE, { recursive: true, force: true })
+  seedWorkspaces(DIR_SEPARATE, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+  seedTrustedRoots(DIR_SEPARATE, [ROOT])
   writeFileSync(
     `${ROOT}/bin/bash`,
     '#!/bin/sh\nif [ "$1" = "-lic" ]; then env -0; else shift; exec /bin/bash --noprofile --norc "$@"; fi\n',
@@ -119,6 +171,10 @@ appendFileSync(file, JSON.stringify({
     `#!/bin/sh
 if [ "$1" = "acp" ]; then
   ${quote(process.execPath)} ${quote(`${ROOT}/bin/seen.mjs`)} ${quote(SEEN)} opencode "$@"
+  if [ -f ${quote(REFUSE_MARK)} ]; then
+    echo "opencode stand-in: refused before speaking" >&2
+    exit 3
+  fi
   ACP_STAND_IN_STATE=${quote(ACP_STATE)}
   export ACP_STAND_IN_STATE
   exec ${quote(process.execPath)} ${quote(ACP_AGENT)} acp
@@ -137,8 +193,13 @@ exec sleep 600
 case " $* " in
   *" --mode rpc "*)
     ${quote(process.execPath)} ${quote(`${ROOT}/bin/seen.mjs`)} ${quote(SEEN)} pi "$@"
+    if [ -f ${quote(REFUSE_MARK)} ]; then
+      echo "pi stand-in: refused before speaking" >&2
+      exit 3
+    fi
     PI_STAND_IN_STATE="\${PI_CODING_AGENT_DIR}/sessions/${PI_CWD_FOLDER}"
-    export PI_STAND_IN_STATE
+    PI_STAND_IN_ANY_PROVIDER=1
+    export PI_STAND_IN_STATE PI_STAND_IN_ANY_PROVIDER
     exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
     ;;
 esac
@@ -185,6 +246,61 @@ function regularFiles(dir) {
   }
   walk(dir)
   return out
+}
+
+/** A Pi and an OpenCode chat whose agent prints a line on stderr and exits 3
+ *  before it speaks its protocol: the pane shows that line and the status,
+ *  once, and no connection value (PRDCT-4427). The stand-ins refuse while
+ *  `REFUSE_MARK` exists. */
+async function refusedAtStart(t, app, win, { account, where }) {
+  const chat = (id) =>
+    win.locator(`.chat-host[data-session-id="${id}"]`).locator('[data-testid="chat-view"]').first()
+  const chatText = async (id) =>
+    chat(id)
+      .innerText()
+      .catch(() => '')
+  writeFileSync(REFUSE_MARK, '')
+  try {
+    for (const [name, mode, words] of [
+      ['Pi', 'pi', 'pi stand-in: refused before speaking'],
+      ['OpenCode', 'opencode', 'opencode stand-in: refused before speaking']
+    ]) {
+      const opened = await callMcp(app, 'openSession', {
+        cwd: ROOT,
+        mode,
+        chat: true,
+        workspace: WS.id,
+        ...(account ? { account } : {}),
+        ...(mode === 'pi' && account ? { model: 'kimi-for-coding' } : {}),
+        name: `${name} refused`
+      }).catch((e) => ({ error: String(e?.message ?? e) }))
+      const id = opened?.sessionId
+      t.check(`(${where}) the ${name} chat whose agent refuses opened`, !!id, scrub(opened))
+      if (!id) continue
+      await callMcp(app, 'focus', { sessionId: id })
+      await chat(id)
+        .waitFor({ timeout: 20_000 })
+        .catch(() => undefined)
+      const said = await until(async () => ((await chatText(id)).includes(words) ? true : null), {
+        tries: 60
+      })
+      const shown = await chatText(id)
+      t.check(
+        `(${where}) the ${name} chat shows the agent's last words, not only "Session ended"`,
+        !!said,
+        scrub(shown).slice(0, 600)
+      )
+      t.check(
+        `(${where}) and its exit status`,
+        /exit status 3/.test(shown),
+        scrub(shown).slice(0, 600)
+      )
+      t.equal(`(${where}) once`, shown.split(words).length - 1, 1)
+      t.check(`(${where}) and no connection value`, !holdsValue(shown), shown.length)
+    }
+  } finally {
+    rmSync(REFUSE_MARK, { force: true })
+  }
 }
 
 export async function run(t) {
@@ -506,6 +622,15 @@ export async function run(t) {
       after(piSeen?.argv, '--provider') === 'kimi-coding',
       scrub(piSeen?.argv)
     )
+    // Pi refuses --provider without --model before it speaks (Pi 1.5.2; the
+    // stand-in does the same): the agent named no model, so the chat starts
+    // on the first model the launcher lists for Kimi, the person's own Pi
+    // default being another provider's (PRDCT-4496).
+    t.equal(
+      "and --model k-first, the first model listed for Kimi (the person's default is another provider's)",
+      after(piSeen?.argv, '--model'),
+      'k-first'
+    )
     await say(piId, 'hello on kimi')
     const piAnswered = await until(
       async () => (/You said: hello on kimi/.test(await chatText(piId)) ? true : null),
@@ -521,6 +646,7 @@ export async function run(t) {
         typeof piSession === 'string',
       piRecord ? { connectionId: piRecord.connectionId, piSessionId: piSession } : null
     )
+    t.equal('and the model it started on', piRecord?.model, 'k-first')
     const connSessions = path.join(piSeen?.DIR ?? kimiDir, 'sessions', PI_CWD_FOLDER)
     const written = await until(
       () =>
@@ -619,6 +745,10 @@ export async function run(t) {
     )
     t.equal('no process was started by a refused spawn', lines(SEEN).length, startsBefore)
 
+    // ── 4b. An agent that ends before it speaks: its last words and its
+    // status in the pane, never only "Session ended" (PRDCT-4427) ──
+    await refusedAtStart(t, app, win, { account: 'Kimi work', where: 'in-process' })
+
     // ── 5. The values are nowhere but the processes ──
     const leaks = []
     for (const { file, size } of regularFiles(DIR)) {
@@ -703,5 +833,29 @@ export async function run(t) {
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
     if (app) await app.close()
+  }
+
+  // ── 7. The same refusals on the app's own separate server, where the trial
+  // met them: the queue there is let go before the pane subscribes, and the
+  // pane reads the chat's past (PRDCT-4427). No connection: the stand-ins
+  // refuse on the marker alone. ──
+  let separate = null
+  try {
+    separate = await launchApp(DIR_SEPARATE, {
+      server: 'separate',
+      args: ['--test-no-machine-usage'],
+      env
+    })
+    await separate.win.evaluate(() => window.electronAPI.preferencesSet('tmuxMode', false))
+    await until(async () => {
+      try {
+        return await callMcp(separate.app, 'list', {})
+      } catch {
+        return false
+      }
+    })
+    await refusedAtStart(t, separate.app, separate.win, { where: 'separate server' })
+  } finally {
+    if (separate) await separate.app.close()
   }
 }
