@@ -17,6 +17,7 @@ import { type LauncherFamily } from '../../../../shared/agent-launch'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from '../../lib/launch-source'
 import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
+import { firstPoolOf } from '../../../../shared/connection'
 import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models'
 import { isChatProfileRef } from '../../../../shared/open-session-modes'
 import type { ModelOption } from '../../../../shared/session-model'
@@ -278,7 +279,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   // The connection the button's click goes out on: the one the setup names,
   // else the pool's suggestion for the setup's model. Named only when the
   // pool has a choice to make.
-  const setupPool = HARNESS_BY_ID[setupFamily].connectionPool
+  const setupPool = firstPoolOf(HARNESS_BY_ID[setupFamily])
   const connectionLabel =
     setupPool && topSource.accounts(setupPool).length > 1
       ? (() => {
@@ -431,7 +432,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     const Logo = AGENT_LOGOS[harness.id]
     const shortcut = options.shortcuts ? (HARNESS_SHORTCUTS[harness.id] ?? undefined) : undefined
     const preferredModel = harnessSettings[harness.id]?.preferredModel
-    const pool = harness.connectionPool
+    const pool = firstPoolOf(harness)
     const go = (choice: { model?: string; accountId?: string; launchProfileId?: string }): void =>
       launch(
         {
