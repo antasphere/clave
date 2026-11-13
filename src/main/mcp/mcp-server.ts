@@ -91,7 +91,7 @@ import * as os from 'os'
 import { agentUpdateManager } from '../agent-updates'
 import { providerModels } from '../provider-models'
 import { modelsCatalog } from '../models-catalog'
-import { providerConnectionsForListing } from '../provider-injection-spawn'
+import { piOwnDefault, providerConnectionsForListing } from '../provider-injection-spawn'
 import { providerConnectionsManager } from '../provider-connections'
 import { servedAccountOf } from './provider-launch-listing'
 import { CLAUDE_MODELS } from '../../shared/claude-models'
@@ -652,7 +652,8 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   // Pi's and OpenCode's rows (PRDCT-4496), read as the daemon reads them.
   catalog: (providerIds) => modelsCatalog.view({ providerIds }),
   providerConnections: (harness) => providerConnectionsForListing(harness),
-  providerConnectionViews: () => providerConnectionsManager.list()
+  providerConnectionViews: () => providerConnectionsManager.list(),
+  piOwnDefault: () => piOwnDefault()
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
@@ -1135,7 +1136,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(200)
           .optional()
           .describe(
-            `Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"), as clave_launch_options lists them. ${MODEL_TAKING_MODES} only (the OpenCode TUI takes no model flag: pick it inside OpenCode); omitted = the launch profile's default, else the CLI's. The user can still switch later with /model inside the tab.`
+            `Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"), as clave_launch_options lists them. ${MODEL_TAKING_MODES} only (OpenCode reads it as provider/model; on a stored connection a bare id is put under the connection's provider); omitted = the launch profile's default, else the CLI's (a Pi tab on a stored connection: the model clave_launch_options names as that connection's startModel). The user can still switch later with /model inside the tab.`
           ),
         profile: z
           .string()

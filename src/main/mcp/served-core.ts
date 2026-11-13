@@ -26,6 +26,7 @@ import type { LaunchModel } from '../../shared/launch-options'
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { ProviderCompanyId } from '../models-catalog-overlay'
+import type { PiOwnDefault } from '../../shared/pi-start-model'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 
 export const NOT_SERVED: unique symbol = Symbol('not served')
@@ -175,6 +176,9 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   /** Every stored provider connection, never a key
    *  (`providerConnectionsManager.list`); absent, no provider pool lists one. */
   providerConnectionViews?(): readonly ProviderConnectionView[]
+  /** The person's own Pi default on this machine (`piOwnDefault`), for what
+   *  a Pi connection starts on with no model named; absent, not said. */
+  piOwnDefault?(): PiOwnDefault | null
 }
 
 export interface ServedContext<W extends ToolWindow = ToolWindow> {

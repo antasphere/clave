@@ -120,7 +120,7 @@ import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
 import { standaloneLaunchFacts } from './mcp/standalone-launch-facts'
 import { modelsCatalog } from './models-catalog'
-import { providerConnectionsForListing } from './provider-injection-spawn'
+import { piOwnDefault, providerConnectionsForListing } from './provider-injection-spawn'
 // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
 import { wireProviderConnections } from './provider-injection-wiring'
 import { providerConnectionsManager } from './provider-connections'
@@ -431,7 +431,8 @@ async function main(): Promise<void> {
     defaultProfile: (family) => launchProfileManager.resolve(family),
     catalog: (providerIds) => modelsCatalog.view({ providerIds }),
     providerConnections: (harness) => providerConnectionsForListing(harness),
-    providerConnectionViews: () => providerConnectionsManager.list()
+    providerConnectionViews: () => providerConnectionsManager.list(),
+    piOwnDefault: () => piOwnDefault()
   })
   // ── ADR 0004: the routines this server schedules, off its own workspace files ──
   const routines = createRoutineService({

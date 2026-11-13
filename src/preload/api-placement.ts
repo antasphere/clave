@@ -629,6 +629,10 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   providerConnectionsList: localBecause(
     "this Mac's provider connections; a server's are fleetProviderConnections"
   ),
+  // PRDCT-4496: what this Mac's Pi connections start on with no model named.
+  providerPiStartModels: localBecause(
+    "this Mac's Pi connections and Pi default; a server's own clave_launch_options says its"
+  ),
   providerConnectionAdd: localBecause(
     "this Mac's provider connections; a server's are fleetProviderConnections"
   ),

@@ -452,6 +452,43 @@ describe('the connections that pay', () => {
     expect(accountPoolsOf(HARNESS_BY_ID.pi)).toEqual([])
     expect(accountPoolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
   })
+  it("says what a Pi tab on each stored connection opens on with no model named, the open's own rule (PRDCT-4496)", () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const ollama = providerConnection(view('c-ollama', 'ollama', 'Local', false))
+    const refusal = 'No model is listed for the connection "Local": name one to open Pi on it.'
+    const asked: string[] = []
+    const options = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude' ? [fableOut, open()] : [kimi, ollama].filter((c) => c.pool === pool),
+        providerStartModel: (id, connectionId) => {
+          asked.push(`${id}:${connectionId}`)
+          if (id !== 'pi') return undefined
+          return connectionId === 'c-kimi'
+            ? { ok: true, model: 'k-second', from: 'own-default' }
+            : { ok: false, reason: refusal }
+        }
+      })
+    )
+    const pi = harness(options, 'pi').connections
+    expect(pi.find((c) => c.id === 'c-kimi')).toMatchObject({ startModel: 'k-second' })
+    expect(pi.find((c) => c.id === 'c-kimi')).not.toHaveProperty('startRefusal')
+    expect(pi.find((c) => c.id === 'c-ollama')).toMatchObject({
+      startModel: null,
+      startRefusal: refusal
+    })
+    // OpenCode's rows say nothing of it; an account pool is never asked.
+    for (const c of harness(options, 'opencode').connections)
+      expect(c).not.toHaveProperty('startModel')
+    for (const c of harness(options, 'claude').connections)
+      expect(c).not.toHaveProperty('startModel')
+    expect(asked.some((a) => a.startsWith('claude:'))).toBe(false)
+    // A road that cannot know it says nothing.
+    const silent = launchOptions(
+      input({ connections: (pool) => (pool === 'moonshot' ? [kimi] : []) })
+    )
+    expect(harness(silent, 'pi').connections[0]).not.toHaveProperty('startModel')
+  })
   it('suggests, across the provider pools, the first stored connection with a key, an account pool still its own (PRDCT-4496)', () => {
     const unkeyed = providerConnection(view('c-kimi-unkeyed', 'moonshot', 'Kimi', true, false))
     const work = providerConnection(view('c-kimi-work', 'moonshot', 'Kimi work'))

@@ -4,7 +4,11 @@
  * Mac's served one (`served-tools.ts`): a person and an agent read the same
  * lists. Pure over its inputs; nothing here imports Electron or a store.
  */
-import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import {
+  catalogModelsOf,
+  type ModelsCatalogView
+} from '@clave/contract/settings/models-catalog-view'
+import { piStartModel, type PiOwnDefault, type PiStartModel } from '../../shared/pi-start-model'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { LaunchProfile } from '../../shared/agent-launch'
 import type { LaunchModel } from '../../shared/launch-options'
@@ -15,7 +19,11 @@ import { listedProviderConnection, servesHarnessPool } from '../../shared/provid
 import type { Harness } from '../../shared/harness'
 import type { SessionRecord } from '@clave/contract/sessions'
 import type { AccountProvider, ServedAccount } from './served-core'
-import { PROVIDER_LISTING_FACTS, type ProviderCompanyId } from '../models-catalog-overlay'
+import {
+  PROVIDER_LISTING_FACTS,
+  piProviderOf,
+  type ProviderCompanyId
+} from '../models-catalog-overlay'
 
 /** The launcher's DEFAULT_MODEL: the harness's own default, no flag passed. */
 const DEFAULT_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
@@ -29,6 +37,53 @@ export interface ProviderListingDeps {
   readonly providerConnections?: (
     harness: 'pi' | 'opencode'
   ) => readonly { id: string; label: string; company: ProviderCompanyId }[]
+  /** The person's own Pi default on this machine (`piOwnDefault`); absent,
+   *  the listing says nothing of what a Pi connection starts on. */
+  readonly piOwnDefault?: () => PiOwnDefault | null
+}
+
+/** What each Pi connection starts on when the open names no model, by its
+ *  id, by the spawn's own rule (`piStartModel`, `piConnectionStartModel`):
+ *  the person's default when it is the connection's provider's, else the
+ *  first catalogue model the launcher lists for it. Empty when the road
+ *  cannot read the person's default. */
+export async function piStartModels(
+  connections: readonly { id: string; label: string; company: string }[],
+  deps: Pick<ProviderListingDeps, 'catalog' | 'piOwnDefault'>
+): Promise<Map<string, PiStartModel>> {
+  const out = new Map<string, PiStartModel>()
+  if (!deps.piOwnDefault || connections.length === 0) return out
+  const known = connections.filter(
+    (c): c is { id: string; label: string; company: ProviderCompanyId } =>
+      c.company in PROVIDER_LISTING_FACTS
+  )
+  const catalogIds = [
+    ...new Set(
+      known.map((c) => PROVIDER_LISTING_FACTS[c.company].catalog).filter((id): id is string => !!id)
+    )
+  ]
+  let view: ModelsCatalogView | null = null
+  if (catalogIds.length > 0 && deps.catalog) {
+    try {
+      view = await deps.catalog(catalogIds)
+    } catch {
+      view = null
+    }
+  }
+  const ownDefault = deps.piOwnDefault()
+  for (const c of known) {
+    const catalog = PROVIDER_LISTING_FACTS[c.company].catalog
+    out.set(
+      c.id,
+      piStartModel({
+        provider: piProviderOf(c.company),
+        ownDefault,
+        listed: view && catalog ? catalogModelsOf(view, catalog).map((m) => m.id) : [],
+        label: c.label
+      })
+    )
+  }
+  return out
 }
 
 /** The models Pi's launch profiles pin, each once, in the profiles' order. */

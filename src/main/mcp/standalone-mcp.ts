@@ -555,7 +555,8 @@ function buildServer(
           warnings.push(message(error))
         }
         const models = await modelsOfHarnesses(launch)
-        const answer = launchOptions(launchOptionsInput(launch, statuses, models))
+        const piStarts = await launch.piStartModels?.().catch(() => undefined)
+        const answer = launchOptions(launchOptionsInput(launch, statuses, models, piStarts))
         return text(warnings.length > 0 ? { ...answer, warnings } : answer)
       }
     )
