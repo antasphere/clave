@@ -3020,10 +3020,12 @@ const electronAPI = {
     server: async ({ api }) =>
       loose<ProviderConnection[]>([...(await api.settings.providerConnections.list())])
   }),
-  // PRDCT-4496: main reads the person's Pi default on the machine whose Pi runs.
-  providerPiStartModels: (): Promise<
-    Record<string, import('../shared/pi-start-model').PiStartModel>
-  > => ipcRenderer.invoke('provider-connections:pi-start-models'),
+  // PRDCT-4496: main reads the person's Pi default on the machine whose Pi runs,
+  // over the connections the window lists (a separate server's own).
+  providerPiStartModels: (
+    connections?: readonly unknown[]
+  ): Promise<Record<string, import('../shared/pi-start-model').PiStartModel>> =>
+    ipcRenderer.invoke('provider-connections:pi-start-models', connections),
   providerConnectionAdd: viaServer<[ProviderConnectionAddInput], ProviderConnection>({
     ipc: (input) => ipcRenderer.invoke('provider-connections:add', input),
     server: async ({ api }, input) =>

@@ -1708,10 +1708,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** This Mac's provider connections (PRDCT-4426); a server's are `fleetProviderConnections`. */
   providerConnectionsList: () => Promise<ProviderConnection[]>
   /** What each of this machine's Pi connections starts on when an open names
-   *  no model, by connection id (PRDCT-4496, `piStartModel`). */
-  providerPiStartModels: () => Promise<
-    Record<string, import('../shared/pi-start-model').PiStartModel>
-  >
+   *  no model, by connection id (PRDCT-4496, `piStartModel`), over the
+   *  connections passed (the ones the window lists), else main's own. */
+  providerPiStartModels: (
+    connections?: readonly ProviderConnection[]
+  ) => Promise<Record<string, import('../shared/pi-start-model').PiStartModel>>
   /** Refuses (the sentence in the error) an unknown company, a generic one
    *  without its base URL and wire format, or a base URL that is not http(s). */
   providerConnectionAdd: (input: ProviderConnectionAddInput) => Promise<ProviderConnection>

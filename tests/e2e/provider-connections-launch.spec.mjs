@@ -1074,6 +1074,18 @@ export async function run(t) {
       hasPair(sepPi.printed, '--model', 'k-second'),
       sepPi.printed ? scrub(sepPi.printed.ARGS) : scrub(sepPi.raw)
     )
+    // ── What the window's clave_launch_options says there (PRDCT-4496) ───
+    // A separate server keeps the connections in its own store: the window's
+    // listing names the model the tab above started on, read on that server.
+    const sepListing = await callMcp(separate.app, 'launchOptions', {})
+    const sepKimi = sepListing?.harnesses
+      ?.find((h) => h.id === 'pi')
+      ?.connections?.find((c) => c.id === sepStored?.id)
+    t.check(
+      "on a separate server, the window's clave_launch_options says the Kimi connection opens on k-second, as the tab did",
+      sepKimi?.startModel === 'k-second',
+      sepKimi ?? 'no Kimi row'
+    )
   } finally {
     await stopTabs(separate.win)
     await separate.app.close()

@@ -11,6 +11,7 @@ import {
   readProviderConnections
 } from './mcp-fleet-session'
 import { ownerOf } from './fleet-identity'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
 import {
@@ -1790,8 +1791,14 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
       )
     )
     // What each Pi connection starts on with no model named (PRDCT-4496):
-    // main's answer, by the spawn's own rule; unsaid when it cannot be read.
-    const piStarts = await window.electronAPI?.providerPiStartModels?.().catch(() => undefined)
+    // main's answer, by the spawn's own rule, over the very connections this
+    // listing shows (with the server as a separate process they are that
+    // server's, and main's own store holds none of them); unsaid when it
+    // cannot be read.
+    const listed = useProviderConnectionsStore.getState().byMachine[LOCAL_SERVER_ID]?.connections
+    const piStarts = listed
+      ? await window.electronAPI?.providerPiStartModels?.([...listed]).catch(() => undefined)
+      : undefined
     return launchOptions(
       localLaunchOptionsInput({
         ...facts,

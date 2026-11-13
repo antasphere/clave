@@ -5,6 +5,26 @@ import { harnessProviderConnections } from '../../shared/provider-connection-pic
 import { piStartModels } from '../mcp/provider-launch-listing'
 import { modelsCatalog } from '../models-catalog'
 import { piOwnDefault } from '../provider-injection-spawn'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+
+/** A connection view as the window passes it: what the Pi rule reads of one
+ *  (its id, label, company, endpoints and whether it has a key). Never a key. */
+function isConnectionView(value: unknown): value is ProviderConnectionView {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    typeof v.label === 'string' &&
+    typeof v.company === 'string' &&
+    Array.isArray(v.endpoints) &&
+    v.endpoints.every(
+      (e) =>
+        !!e &&
+        typeof e === 'object' &&
+        typeof (e as Record<string, unknown>).wireFormat === 'string'
+    )
+  )
+}
 
 /** The provider connections and their keys, over IPC (PRDCT-4426): the same
  *  settings source the server answers from (`settings/shell-source.ts`), so a
@@ -14,13 +34,19 @@ export function registerProviderConnectionsHandlers(): void {
   ipcMain.handle('provider-connections:list', () => settings.providerConnections.list())
   // What each Pi connection starts on when an open names no model, by id
   // (PRDCT-4496): the spawn's own rule, for the window's clave_launch_options.
-  // The person's Pi default is read here, on the machine whose Pi runs.
-  ipcMain.handle('provider-connections:pi-start-models', async () =>
+  // The person's Pi default is read here, on the machine whose Pi runs. The
+  // window passes the connections it lists: with the server as a separate
+  // process (the packaged default) they are that server's, and this
+  // process's own store holds none of them.
+  ipcMain.handle('provider-connections:pi-start-models', async (_event, listed: unknown) =>
     Object.fromEntries(
       await piStartModels(
-        harnessProviderConnections(HARNESS_BY_ID.pi, [
-          ...(await settings.providerConnections.list())
-        ]),
+        harnessProviderConnections(
+          HARNESS_BY_ID.pi,
+          Array.isArray(listed)
+            ? listed.filter(isConnectionView)
+            : [...(await settings.providerConnections.list())]
+        ),
         {
           catalog: (providerIds) => modelsCatalog.view({ providerIds }),
           piOwnDefault: () => piOwnDefault()
