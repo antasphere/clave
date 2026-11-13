@@ -149,6 +149,32 @@ describe('a Codex account as its pool reads it', () => {
   })
 })
 
+describe('a connection reports usage only when its pool reads it', () => {
+  it('holds for every connection the two builders make', () => {
+    const built = [
+      claudeConnection(
+        { id: 'default', label: 'Default', hasToken: false, tokenInvalid: false },
+        fresh
+      ),
+      claudeConnection(
+        { id: 'c1', label: 'Anthropic 2', hasToken: true, tokenInvalid: false },
+        spent
+      ),
+      codexConnection(
+        { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+        fresh
+      ),
+      codexConnection({ id: 'k1', label: 'OpenAI 2', kind: 'apiKey', hasCredential: true }, spent)
+    ]
+    for (const connection of built) {
+      const pool = CONNECTION_POOL_BY_ID[connection.pool]
+      if (connection.reportsUsage) expect(pool.reportsUsage).toBe(true)
+      if (!connection.reportsUsage) expect(connection.usage).toBeUndefined()
+      expect(connection.company).toBe(pool.company.id)
+    }
+  })
+})
+
 describe('the pool rule reads the shape unchanged', () => {
   const pool: Connection[] = [
     codexConnection(

@@ -35,9 +35,12 @@ export interface Company {
 export interface ConnectionPool {
   id: ConnectionPoolId
   company: Company
-  /** Whether the pool reads its connections' usage (their caps and when
-   *  they reset). A pool paid per use reads none: its connections say
-   *  "Pay per use", and the pool's rule never calls one exhausted. */
+  /** Whether the pool has a usage read for its connections at all (the
+   *  Claude and Codex caps and when they reset). A connection of such a pool
+   *  may still report none of its own (a Codex API key, `Connection.reportsUsage`);
+   *  a pool paid per use reads none, every connection of it reports none,
+   *  and the pool's rule never calls one exhausted. The builders below read
+   *  this flag: a connection reports usage only when its pool reads it. */
   reportsUsage: boolean
 }
 
@@ -142,8 +145,8 @@ export function claudeConnection(
     company: CLAUDE_POOL.company.id,
     kind: 'subscription',
     usable: account.id === MACHINE_LOGIN_ID || (account.hasToken && !account.tokenInvalid),
-    reportsUsage: true,
-    usage
+    reportsUsage: CLAUDE_POOL.reportsUsage,
+    usage: CLAUDE_POOL.reportsUsage ? usage : undefined
   }
 }
 
@@ -163,7 +166,7 @@ export function codexConnection(
   account: CodexAccountFacts,
   usage?: AccountUsageSummary
 ): Connection {
-  const reportsUsage = account.kind === 'chatgpt'
+  const reportsUsage = CODEX_POOL.reportsUsage && account.kind === 'chatgpt'
   return {
     id: account.id,
     label: account.label,
