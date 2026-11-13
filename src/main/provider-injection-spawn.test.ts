@@ -110,6 +110,19 @@ describe('providerInjectionForSpawn', () => {
     expect(d.sync).not.toHaveBeenCalled()
   })
 
+  it('names the provider the tab’s harness puts in front of the connection’s models (PRDCT-4427)', async () => {
+    const d = deps({ ds: deepseek, ali: alibaba })
+    const of = async (kind: 'pi' | 'opencode', id: string): Promise<string | undefined> =>
+      (await providerInjectionForSpawn(kind, { connectionId: id, model: 'm' }, d.all)).modelProvider
+    expect(await of('pi', 'ds')).toBe('deepseek')
+    expect(await of('opencode', 'ds')).toBe('deepseek')
+    // No road of Pi's own for Alibaba: the one Clave declares.
+    expect(await of('pi', 'ali')).toBe('clave-alibaba')
+    expect(await of('opencode', 'ali')).toBe('alibaba-coding-plan')
+    // On no connection: none.
+    expect((await providerInjectionForSpawn('pi', {}, d.all)).modelProvider).toBeUndefined()
+  })
+
   it('starts Ollama with no value: it takes none', async () => {
     const ollama: ConnectionForSpawn = {
       id: 'conn-1',

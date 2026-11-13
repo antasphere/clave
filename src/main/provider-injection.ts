@@ -81,8 +81,31 @@ export function opencodeModelRef(providerId: string, model: string): string {
 }
 
 /** The bare id of a model a harness may report as `provider/model`. */
-function bareModel(providerId: string, model: string | undefined): string | undefined {
+export function bareModel(providerId: string, model: string | undefined): string | undefined {
   return model?.startsWith(`${providerId}/`) ? model.slice(providerId.length + 1) : model
+}
+
+/** The provider a Pi or OpenCode tab on a connection of this company names
+ *  its models under: the harness's own provider when it ships one (Pi's
+ *  `kimi-coding`, OpenCode's `kimi-code-plan-global`), else the `clave-…` one
+ *  Clave declares. Undefined for a company Clave does not know. */
+export function connectionModelProvider(
+  company: ProviderCompanyId,
+  harness: 'pi' | 'opencode'
+): string | undefined {
+  const roads = PROVIDER_ROAD_BY_ID[company]
+  if (!roads) return undefined
+  return roads[harness]?.provider ?? `${CLAVE_PROVIDER_PREFIX}${roads.id}`
+}
+
+/** The model a chat's tab keeps on its record (PRDCT-4427). On a connection
+ *  (`provider` is the one the tab's harness names its models under), the
+ *  bare id, since the connection already says the provider and the launcher,
+ *  `clave_launch_options` and `clave_list` name a model that way; a model of
+ *  any other provider, or a tab on no connection (`provider` undefined),
+ *  keeps the reported form, `provider/model` included. */
+export function recordedChatModel(provider: string | undefined, model: string): string {
+  return (provider && bareModel(provider, model)) || model
 }
 
 /** The model an OpenCode process is configured to start on, read off the

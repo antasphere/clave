@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
+  connectionModelProvider,
   opencodeConfiguredModel,
   opencodeModelRef,
   providerInjection,
+  recordedChatModel,
   type ConnectionForSpawn
 } from './provider-injection'
 import {
@@ -311,5 +313,37 @@ describe('OpenCode on a connection stays on it (PRDCT-4427)', () => {
     ).toBeUndefined()
     expect(opencodeConfiguredModel(undefined)).toBeUndefined()
     expect(opencodeConfiguredModel({ OPENCODE_CONFIG_CONTENT: 'not json' })).toBeUndefined()
+  })
+})
+
+describe('the model a chat tab keeps on its record (PRDCT-4427)', () => {
+  it('names the provider each harness puts in front of a connection’s models', () => {
+    expect(connectionModelProvider('moonshot', 'pi')).toBe('kimi-coding')
+    expect(connectionModelProvider('moonshot', 'opencode')).toBe('kimi-code-plan-global')
+    // A provider Clave declares: its `clave-…` id, on Pi and OpenCode alike.
+    expect(connectionModelProvider('ollama', 'pi')).toBe('clave-ollama')
+    expect(connectionModelProvider('ollama', 'opencode')).toBe('clave-ollama')
+    expect(connectionModelProvider('alibaba', 'pi')).toBe('clave-alibaba')
+  })
+
+  it('on a connection, its own provider’s model is kept bare', () => {
+    expect(recordedChatModel('kimi-coding', 'kimi-coding/k-first')).toBe('k-first')
+    expect(recordedChatModel('kimi-code-plan-global', 'kimi-code-plan-global/k3')).toBe('k3')
+    expect(recordedChatModel('clave-ollama', 'clave-ollama/qwen3:8b')).toBe('qwen3:8b')
+    // Already bare: as it is.
+    expect(recordedChatModel('kimi-coding', 'k-first')).toBe('k-first')
+  })
+
+  it('on a connection, a model of another provider is kept as reported', () => {
+    expect(recordedChatModel('kimi-coding', 'opencode/big-pickle')).toBe('opencode/big-pickle')
+    // A prefix that only starts like the provider's is another provider.
+    expect(recordedChatModel('kimi-coding', 'kimi-coding-plus/k3')).toBe('kimi-coding-plus/k3')
+    // The provider with nothing after it names no model: kept as reported.
+    expect(recordedChatModel('kimi-coding', 'kimi-coding/')).toBe('kimi-coding/')
+  })
+
+  it('on no connection, the model is kept as reported, `provider/model` included', () => {
+    expect(recordedChatModel(undefined, 'kimi-coding/k-first')).toBe('kimi-coding/k-first')
+    expect(recordedChatModel(undefined, 'k-first')).toBe('k-first')
   })
 })

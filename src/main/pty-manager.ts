@@ -28,7 +28,7 @@ import {
   providerInjectionForSpawn,
   type ProviderSpawnFields
 } from './provider-injection-spawn'
-import { opencodeConfiguredModel } from './provider-injection'
+import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -168,6 +168,14 @@ export interface RestartOverrides {
   viewId?: string
 }
 
+/** A connection's spawn fields a terminal's options take: the chat's own
+ *  `modelProvider` stays out of them. */
+function processFields(fields: ProviderSpawnFields): Omit<ProviderSpawnFields, 'modelProvider'> {
+  const rest = { ...fields }
+  delete rest.modelProvider
+  return rest
+}
+
 class PtyManager {
   private eventSessions = new Map<string, PtySession>()
   private listeners = new Map<string, () => void>()
@@ -179,6 +187,9 @@ class PtyManager {
   /** An OpenCode chat session's id, from the ACP agent's own meta (lane D,
    *  PRDCT-4427). */
   private opencodeSessions = new Map<string, string>()
+  /** The provider a Pi or OpenCode chat on a connection names its models
+   *  under, so the model it reports reaches the record bare (PRDCT-4427). */
+  private chatModelProviders = new Map<string, string>()
   private limitListeners = new Set<(sessionId: string, report: LimitReport) => void>()
   /** The limit report still open on a session (ADR 0002, PRDCT-4302): the
    *  message the CLI's report rejected, whatever cap the CLI typed (its enum
@@ -346,10 +357,12 @@ class PtyManager {
           // for those two alone (PRDCT-4496). A Pi tab on one that names no
           // model (neither the open nor its profile) comes back with the model
           // it starts on, which the spread puts on its command line and record.
-          ...(await providerInjectionForSpawn(family, {
-            connectionId: options?.connectionId,
-            model: options?.model ?? (family === 'pi' ? ownProfile?.pi?.model : undefined)
-          }))
+          ...processFields(
+            await providerInjectionForSpawn(family, {
+              connectionId: options?.connectionId,
+              model: options?.model ?? (family === 'pi' ? ownProfile?.pi?.model : undefined)
+            })
+          )
         })
     // A live tmux session this process takes BACK (an app relaunch, a move
     // from another window) is born with the word its hooks last wrote, not
@@ -417,6 +430,9 @@ class PtyManager {
       options = { ...options, model: chatConnection.model }
       session.model = chatConnection.model
     }
+    if (chatConnection.modelProvider)
+      this.chatModelProviders.set(session.id, chatConnection.modelProvider)
+    else this.chatModelProviders.delete(session.id)
     const chatEnvAccount = chatConnection.providerEnv
       ? { providerEnv: chatConnection.providerEnv }
       : {}
@@ -681,14 +697,18 @@ class PtyManager {
         // nothing, so it never erases a model already known here.
         const session = this.eventSessions.get(id)
         if (session && stream.event.model) {
-          const changed = session.model !== stream.event.model
-          session.model = stream.event.model
+          // A Pi or OpenCode chat on a connection reports its own provider's
+          // model as `provider/model`; the tab names it bare, as the
+          // launcher, `clave_launch_options` and `clave_list` do (PRDCT-4427).
+          const model = recordedChatModel(this.chatModelProviders.get(id), stream.event.model)
+          const changed = session.model !== model
+          session.model = model
           // On the record too (PRDCT-4191): a Resume relaunches on it.
-          ptyBackend.setSessionRuntime(id, { model: stream.event.model })
+          ptyBackend.setSessionRuntime(id, { model })
           // And to the windows (PRDCT-4256): the sidebar's store used to keep
           // the launch model for the tab's whole life, so its foot judged the
           // caps by a model the chat had long left.
-          sessionModelChanged(id, stream.event.model)
+          sessionModelChanged(id, model)
           // A family's cap rejected a turn and the model changed (the policy's
           // model rung, or the person from the chip): the message the cap
           // rejected goes again on the new model, once, while the report is
@@ -807,6 +827,7 @@ class PtyManager {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
       this.opencodeSessions.delete(id)
+      this.chatModelProviders.delete(id)
       this.rejected.delete(id)
       this.openReports.delete(id)
       if (!this.carriedReports.delete(id)) this.reported.delete(id)

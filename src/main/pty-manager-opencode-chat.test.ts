@@ -486,6 +486,60 @@ describe('an OpenCode chat on a stored connection (PRDCT-4496 with PRDCT-4427)',
     injection.forSpawn.mockReset()
     injection.forSpawn.mockImplementation(async () => ({}))
   })
+  it('on a connection, the model the agent reports reaches the record bare, and a restart opens on it (PRDCT-4427)', async () => {
+    injection.forSpawn.mockResolvedValue({
+      providerEnv: { KIMI_API_KEY: STAND_IN_KEY },
+      modelProvider: 'kimi-code-plan-global'
+    })
+    const session = await openOpencodeChat({ connectionId: 'conn-1', model: 'k3' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', model: 'kimi-code-plan-global/k3.1' }
+    })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenLastCalledWith(session.id, { model: 'k3.1' })
+    // A model of another provider is kept as reported.
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', model: 'opencode/big-pickle' }
+    })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenLastCalledWith(session.id, {
+      model: 'opencode/big-pickle'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id
+        ? { id: session.id, adapterId: 'opencode-chat', model: 'k3.1' }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { onlyIfStopped: true })
+    await ptyManager.kill(session.id, true)
+    await ptyManager.spawn(plan!.cwd, plan!.options)
+    // The connection's configuration puts the provider back in front.
+    expect(injection.forSpawn).toHaveBeenLastCalledWith('opencode', {
+      connectionId: 'conn-1',
+      model: 'k3.1'
+    })
+    injection.forSpawn.mockReset()
+    injection.forSpawn.mockImplementation(async () => ({}))
+  })
+  it('on no connection, the model the agent reports reaches the record as reported (PRDCT-4427)', async () => {
+    const session = await openOpencodeChat({ model: 'stand-in/one' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', model: 'stand-in/two' }
+    })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenLastCalledWith(session.id, {
+      model: 'stand-in/two'
+    })
+  })
   it('a chat on no connection hands the adapter the launch’s model as it is', async () => {
     await openOpencodeChat({ model: 'stand-in/two' })
     expect(spawnOptions().model).toBe('stand-in/two')

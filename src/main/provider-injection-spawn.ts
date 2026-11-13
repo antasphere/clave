@@ -9,7 +9,11 @@ import {
 } from '@clave/contract/settings/provider-catalogue'
 import { PROVIDER_ROAD_BY_ID, piProviderOf } from './models-catalog-overlay'
 import { lazySettingsPorts } from './ports/registry'
-import { providerInjection, type ConnectionForSpawn } from './provider-injection'
+import {
+  connectionModelProvider,
+  providerInjection,
+  type ConnectionForSpawn
+} from './provider-injection'
 import { readPiOwnDefault, syncPiConnectionDir } from './provider-injection-pi-dir'
 import { piStartModel, type PiOwnDefault, type PiStartModel } from '../shared/pi-start-model'
 import { getLoginShellEnv } from './sessions/adapters/pty-backend'
@@ -78,6 +82,11 @@ export interface ProviderSpawnFields {
   /** The model a Pi tab on a connection starts on when none was picked
    *  (`piStartModel`): set only then, so a picked model is never replaced. */
   model?: string
+  /** The provider the tab's harness names its models under on the connection
+   *  (`connectionModelProvider`), set only on one: what a reported
+   *  `provider/model` is read against before it reaches the record
+   *  (`recordedChatModel`, PRDCT-4427). Never on a command line. */
+  modelProvider?: string
 }
 
 /** The person's own Pi agent directory, as their Pi finds it: the login
@@ -201,5 +210,7 @@ export async function providerInjectionForSpawn(
   if (injection.piProvider) out.piProvider = injection.piProvider
   if (injection.opencodeStandalone) out.opencodeStandalone = true
   if (startModel) out.model = startModel
+  const modelProvider = connection && connectionModelProvider(connection.company, kind)
+  if (modelProvider) out.modelProvider = modelProvider
   return out
 }

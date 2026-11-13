@@ -404,6 +404,64 @@ describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => 
     injection.forSpawn.mockReset()
     injection.forSpawn.mockImplementation(async () => ({}))
   })
+  it('on a connection, the model Pi reports reaches the record bare, and a restart relaunches on it (PRDCT-4427)', async () => {
+    injection.forSpawn.mockResolvedValue({
+      providerEnv: { KIMI_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
+      piProvider: 'kimi-coding',
+      modelProvider: 'kimi-coding'
+    })
+    let listener: ((stream: unknown) => void) | undefined
+    mocks.manager.subscribe.mockImplementation(((_id: string, fn: (stream: unknown) => void) => {
+      listener = fn
+      return () => undefined
+    }) as never)
+    const session = await openPiChat({ connectionId: 'conn-1', model: 'k3' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    // A pick in the chat's menu: Pi reports its own provider's model.
+    listener?.({ kind: 'event', event: { type: 'session_meta', model: 'kimi-coding/k3.1-pro' } })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenLastCalledWith(session.id, {
+      model: 'k3.1-pro'
+    })
+    // A model of another provider is kept as reported.
+    listener?.({ kind: 'event', event: { type: 'session_meta', model: 'openrouter/x' } })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenLastCalledWith(session.id, {
+      model: 'openrouter/x'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id
+        ? { id: session.id, adapterId: 'pi-chat', model: 'k3.1-pro' }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {})
+    expect(plan?.options).toMatchObject({ model: 'k3.1-pro', connectionId: 'conn-1' })
+    await ptyManager.kill(session.id, true)
+    await ptyManager.spawn(plan!.cwd, plan!.options)
+    const { command } = configured()
+    expect(after(command, '--provider')).toBe('kimi-coding')
+    expect(after(command, '--model')).toBe('k3.1-pro')
+    injection.forSpawn.mockReset()
+    injection.forSpawn.mockImplementation(async () => ({}))
+  })
+  it('on no connection, the model Pi reports reaches the record as reported (PRDCT-4427)', async () => {
+    let listener: ((stream: unknown) => void) | undefined
+    mocks.manager.subscribe.mockImplementation(((_id: string, fn: (stream: unknown) => void) => {
+      listener = fn
+      return () => undefined
+    }) as never)
+    const session = await openPiChat({ model: 'kimi-coding/k3' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    listener?.({ kind: 'event', event: { type: 'session_meta', model: 'kimi-coding/k3.1-pro' } })
+    expect(mocks.backend.setSessionRuntime).toHaveBeenLastCalledWith(session.id, {
+      model: 'kimi-coding/k3.1-pro'
+    })
+  })
   it('a refusal at start (no key yet) ends the spawn before Pi is configured or started', async () => {
     injection.forSpawn.mockRejectedValueOnce(new Error('The connection has no key yet.'))
     await expect(openPiChat({ connectionId: 'conn-1' })).rejects.toThrow(
