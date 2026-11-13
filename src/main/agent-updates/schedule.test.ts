@@ -34,6 +34,24 @@ describe('when the agent updater runs on its own', () => {
   })
 })
 
+describe('the look at boot of a build without timers', () => {
+  it('happens in a dev build and in the shipped app', () => {
+    expect(agentUpdateSchedule({ ...base, packaged: false }).looksAtBoot).toBe(true)
+    expect(agentUpdateSchedule(base).looksAtBoot).toBe(true)
+  })
+
+  it('never happens in test mode, packaged or not (PRDCT-4495)', () => {
+    expect(agentUpdateSchedule({ ...base, testMode: true }).looksAtBoot).toBe(false)
+    expect(agentUpdateSchedule({ ...base, testMode: true, packaged: false }).looksAtBoot).toBe(
+      false
+    )
+  })
+
+  it('never happens on Windows', () => {
+    expect(agentUpdateSchedule({ ...base, platform: 'win32' }).looksAtBoot).toBe(false)
+  })
+})
+
 describe('the test seams', () => {
   it('are honoured in test mode', () => {
     const s = agentUpdateSchedule({ ...base, testMode: true, env: seams })

@@ -77,6 +77,9 @@ export interface AgentUpdateDeps {
   setAutoUpdate: (value: boolean) => void
   /** Whether the timers run at all (off under test mode and in dev). */
   scheduled: boolean
+  /** Whether a build without the timers looks once at boot (never in test
+   *  mode, `schedule.ts`). */
+  looksAtBoot: boolean
   /** False where the installers' commands cannot run (Windows, for now). */
   supported: boolean
   broadcast: (state: AgentUpdatesState) => void
@@ -133,9 +136,11 @@ export class AgentUpdateManager {
     // but it still LOOKS once: the launcher and Settings → Harnesses list the
     // harnesses the check found on the PATH (PRDCT-4423), and until a check
     // has run every row reads as present. Found on 12 November 2026 when a
-    // Mac with Claude Code alone showed four rows.
+    // Mac with Claude Code alone showed four rows. A test instance does not
+    // look: its specs say which harnesses are there, and count the calls their
+    // fixture CLIs get (13 November 2026, PRDCT-4495).
     if (!this.deps.scheduled) {
-      void this.detectAll()
+      if (this.deps.looksAtBoot) void this.detectAll()
       return
     }
     if (this.initialTimer || this.intervalTimer) return

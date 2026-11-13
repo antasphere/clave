@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
   writes: [] as [string, string][],
-  states: new Map<string, { state: string; transport: string }>(),
+  states: new Map<string, { state: string; transport: string; viewId?: string }>(),
   preference: vi.fn<(key: string) => unknown>(() => undefined),
   lastWorkspace: vi.fn((): string | null => null),
   scheduleTitle: vi.fn(),
@@ -350,6 +350,27 @@ describe('a restart on another account', () => {
     expect(parentOf(id)).toBe('coordinator')
     expect(mocks.setSessionDisplayName).toHaveBeenCalledWith(id, 'Lane D', true)
     expect(mocks.setSessionViewRecord).toHaveBeenCalledWith(id, { url: 'http://127.0.0.1:4814' })
+  })
+  it('brings the tab back in the view it was read in (PRDCT-4495)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    await spawnSession('w1', '/work/app', { claudeMode: true })
+    mocks.states.set(id, { state: 'idle', transport: 'events', viewId: 'clave.chat-view/terminal' })
+    plan(id)
+    spawned(id)
+    await restartSession(id, { claudeProfileId: 'acc-2' })
+    expect(mocks.spawn.mock.calls.at(-1)![1]).toMatchObject({
+      claudeProfileId: 'acc-2',
+      viewId: 'clave.chat-view/terminal'
+    })
+    // A tab with no view of its own takes the one a new tab opens in.
+    mocks.states.set(id, { state: 'idle', transport: 'events' })
+    plan(id)
+    spawned(id)
+    await restartSession(id, {})
+    expect(mocks.spawn.mock.calls.at(-1)![1]).not.toHaveProperty('viewId')
+    mocks.states.delete(id)
   })
   it('takes the key the caller names, and refuses a tab it did not spawn', async () => {
     const id = `life-${++sequence}`

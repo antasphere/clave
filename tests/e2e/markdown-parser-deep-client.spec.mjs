@@ -14,7 +14,7 @@ import {
   callMcp
 } from './harness.mjs'
 import { chatSelector } from './renderer-workload.mjs'
-import { inject } from './chat-view.spec.mjs'
+import { inject, seedEchoViewMode } from './chat-view.spec.mjs'
 import {
   DEPTHS,
   STAGES,
@@ -166,13 +166,14 @@ export async function run(t) {
       const dir = path.join(owned, view + '-user-data'),
         root = seed(dir)
       let fixture
-      ;({ app, win, fixture } = await launchApp(dir, {
-        args: [
-          '--dev-echo-adapter',
-          '--dev-echo-view=clave.chat-view/' + view,
-          '--test-no-machine-usage'
-        ]
-      }))
+      const args = [
+        '--dev-echo-adapter',
+        '--dev-echo-view=clave.chat-view/' + view,
+        '--test-no-machine-usage'
+      ]
+      // The view is the interaction mode's since PRDCT-4425 (PRDCT-4495).
+      seedEchoViewMode(dir, args)
+      ;({ app, win, fixture } = await launchApp(dir, { args }))
       captureErrors(win)
       await hidden(app)
       for (const depth of DEPTHS) {

@@ -837,6 +837,11 @@ function liveTmuxSessions(tmuxPath: string): Set<string> {
 }
 
 export interface PtySpawnOptions {
+  /** The view the tab is read in (`<pluginId>/<viewId>`), carried across a
+   *  restart (an account switch, a Resume): the tab's own pick, which the
+   *  kill takes with the old record (PRDCT-4495). Absent: the view a new tab
+   *  opens in (`initialChatView`). */
+  viewId?: string
   dangerousMode?: boolean
   /** Model the agent CLI starts on (alias like "opus" or a full model id).
    *  claude → `--model`, codex → `-m`; ignored for antigravity/terminal.

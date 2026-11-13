@@ -325,9 +325,13 @@ class PtyManager {
       createdAt: Date.now(),
       title: session.folderName,
       groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
-      // The view the reader last picked, else the profile's default when it
-      // names one; the pane's picker overwrites it on the record from there on.
-      viewId: isEvents ? initialChatView(defaultViewFor(profileId)) : defaultViewFor(profileId)
+      // The tab's own view when a restart carries it; else the view a new
+      // chat opens in (the interaction mode's, `initialChatView`), or the
+      // profile's default for a terminal. The pane's picker overwrites it on
+      // the record from there on.
+      viewId:
+        options?.viewId ??
+        (isEvents ? initialChatView(defaultViewFor(profileId)) : defaultViewFor(profileId))
     }
     // A restored chat tab that never got a message has an id but no
     // transcript (Claude) or rollout (Codex), and resuming it fails: it
