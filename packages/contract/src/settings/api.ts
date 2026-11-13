@@ -63,6 +63,14 @@ import {
   UpdateWorkspacePins,
   UpdateWorkspaceRegistry
 } from './workspaces'
+// ── Lane B (harness wave): provider connections ──
+import {
+  AddProviderConnection,
+  ListProviderConnections,
+  RemoveProviderConnection,
+  RenameProviderConnection,
+  SetProviderConnectionKey
+} from './connections'
 
 export const settingsGroup = ApiGroup.make('settings')
   // Claude accounts
@@ -266,5 +274,41 @@ export const settingsGroup = ApiGroup.make('settings')
       'setLastActiveWorkspace',
       '/workspaces/last-active',
       SetLastActiveWorkspace
+    )
+  )
+  // ── Lane B (harness wave): provider connections ──
+  .add(
+    HttpCqrs.queryEndpoint(
+      'listProviderConnections',
+      '/connections/providers',
+      ListProviderConnections
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'addProviderConnection',
+      '/connections/providers',
+      AddProviderConnection
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'renameProviderConnection',
+      '/connections/providers/rename',
+      RenameProviderConnection
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'removeProviderConnection',
+      '/connections/providers/remove',
+      RemoveProviderConnection
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'setProviderConnectionKey',
+      '/connections/providers/key',
+      SetProviderConnectionKey
     )
   )
