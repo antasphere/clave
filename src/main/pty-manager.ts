@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
+  buildAgentArgv,
   isCodexRung,
   profileSetsPermissions,
   sanitizeCarriedLaunchProfile,
@@ -73,10 +74,12 @@ import {
   transportTarget
 } from './sessions/provider-switch'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
+import { findPiSession } from './session-history/pi'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { AcpAdapter } from './sessions/adapters/acp-adapter'
+import { PiRpcAdapter } from './sessions/adapters/pi-rpc-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
@@ -115,9 +118,18 @@ const opencodeChatAdapter = new AcpAdapter({
   label: 'OpenCode'
 })
 sessionManager.registerAdapter(opencodeChatAdapter)
+// Lane D (PRDCT-4427): Pi in the chat view, over Pi's own rpc mode
+// (`pi --mode rpc`).
+const piChatAdapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+sessionManager.registerAdapter(piChatAdapter)
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
-type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat'
-const CHAT_RECORD_ADAPTERS = new Set<string>(['claude-chat', 'codex-chat', 'opencode-chat'])
+type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat'
+const CHAT_RECORD_ADAPTERS = new Set<string>([
+  'claude-chat',
+  'codex-chat',
+  'opencode-chat',
+  'pi-chat'
+])
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -368,7 +380,11 @@ class PtyManager {
       ((adapter.id === 'claude-chat' &&
         !findTranscript(options.resumeSessionId, cwd, options.configDir)) ||
         (adapter.id === 'codex-chat' &&
-          !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))))
+          !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))) ||
+        // Lane D (PRDCT-4427): a Pi session exists once Pi wrote its file
+        // (at the first message); until then the chat starts under its id.
+        (adapter.id === 'pi-chat' &&
+          !findPiSession(options.resumeSessionId, cwd, getLoginShellEnv())))
         ? undefined
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {
@@ -405,6 +421,30 @@ class PtyManager {
         initialPrompt: options?.initialPrompt
       })
     }
+    // Lane D (PRDCT-4427): Pi's chat runs Pi's own command line, built as the
+    // terminal's is (`buildAgentArgv`), in rpc mode. The session id is
+    // Clave's: resumed (`--session`) when Pi wrote its file, else started
+    // under it (`--session-id`), the id the terminal resumes later. The state
+    // extension is the terminal's, never the chat's.
+    if (isEvents && adapter.id === 'pi-chat') {
+      const piProfile =
+        carried ?? launchProfileManager.resolve('pi', options?.workspaceId, profileId)
+      session.piSessionId = options?.resumeSessionId ?? randomUUID()
+      const argv = buildAgentArgv({
+        kind: 'pi',
+        profile: piProfile,
+        sessionId: resume ? undefined : session.piSessionId,
+        resumeSessionId: resume,
+        model: options?.model,
+        provider: options?.piProvider,
+        thinking: options?.piThinking
+      })
+      piChatAdapter.configure(session.id, {
+        command: [...argv, '--mode', 'rpc'],
+        env: buildSpawnEnv(getLoginShellEnv(), {}),
+        initialPrompt: options?.initialPrompt
+      })
+    }
     const handle = isEvents
       ? await adapter.spawn({
           ...record,
@@ -413,7 +453,7 @@ class PtyManager {
             model: options?.model,
             effort,
             // The echo fixture takes its launch prompt here; Claude's,
-            // Codex's and OpenCode's come through their configure above.
+            // Codex's, OpenCode's and Pi's come through their configure above.
             ...(echo && options?.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
             // Lane D (PRDCT-4427): the ACP agent asks its permissions over
             // the protocol; a launch that skips them answers allow itself.
@@ -499,6 +539,7 @@ class PtyManager {
     // a Claude chat alone (an OpenCode chat has no account of either kind).
     const claude = adapterId === 'claude-chat'
     const opencode = adapterId === 'opencode-chat'
+    const pi = adapterId === 'pi-chat'
     // A restored tab rewrites the record it was restored from: the name lives
     // only there, so it must be carried over or the tab survives one restart
     // with its name and comes back as its folder at the next.
@@ -510,6 +551,11 @@ class PtyManager {
       claudeSessionId: claude ? session.claudeSessionId : undefined,
       codexThreadId: codex ? resume : undefined,
       opencodeSessionId: opencode ? resume : undefined,
+      // Lane D (PRDCT-4427): a Pi chat's session, Clave's own id from the
+      // start, and the provider and thinking it was launched on.
+      piSessionId: pi ? session.piSessionId : undefined,
+      piProvider: pi ? options?.piProvider : undefined,
+      piThinking: pi ? options?.piThinking : undefined,
       cwd: session.cwd,
       folderName: session.folderName,
       displayName: previous?.displayName,
@@ -517,7 +563,7 @@ class PtyManager {
       claudeMode: claude,
       antigravityMode: false,
       codexMode: codex,
-      piMode: false,
+      piMode: pi,
       opencodeMode: opencode,
       claudeAgentsMode: false,
       // Whether bypass is available to the chat: launched skipping the
@@ -755,6 +801,9 @@ class PtyManager {
     const session = this.getSession(id)
     if (!session) return null
     if (session.claudeSessionId) return session.claudeSessionId
+    // Lane D (PRDCT-4427): a Pi chat's or a Pi terminal's session, the same
+    // id either way.
+    if (session.piSessionId) return session.piSessionId
     const chatThread = this.codexThreads.get(id)
     if (chatThread) return chatThread
     // Lane D (PRDCT-4427): an OpenCode chat's session.

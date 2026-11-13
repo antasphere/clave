@@ -513,3 +513,34 @@ describe('the provider switch knows OpenCode (lane D, PRDCT-4427)', () => {
     expect(familyOfOptions({ claudeMode: false, opencodeMode: true })).toBe('opencode')
   })
 })
+
+// Lane D (PRDCT-4427): Pi's chat over its own rpc mode.
+describe('the provider switch knows Pi (lane D, PRDCT-4427)', () => {
+  it('names the pi-chat profile a restart onto it launches', () => {
+    expect(launchProfileFor('pi-chat')).toBe('pi-chat')
+    expect(providerOf('pi-chat')).toBe('pi')
+  })
+  it('a move between a Pi chat and its terminal is a transport switch', () => {
+    expect(isTransportSwitch('pi-chat', 'pty', 'pi')).toBe(true)
+    expect(isTransportSwitch('pty', 'pi-chat', 'pi')).toBe(true)
+    expect(isTransportSwitch('pty', 'pi-chat', 'opencode')).toBe(false)
+  })
+  it("resumes Pi's session either way, its terminal never started under the id", () => {
+    const none = (): boolean => false
+    expect(transportTarget({ adapterId: 'pty' }, 'p1', 'pi', none)).toEqual({
+      adapterId: 'pty',
+      resume: 'p1'
+    })
+    const toChat = transportSwitchOptions(
+      { claudeMode: false, piMode: true, piSessionId: 'p1', adoptSessionId: 'tab-1' },
+      { adapterId: 'pi-chat', resume: 'p1', viewId: 'clave.chat-view/chat' }
+    )
+    expect(toChat).toMatchObject({
+      piMode: true,
+      launchProfileId: 'pi-chat',
+      resumeSessionId: 'p1',
+      viewId: 'clave.chat-view/chat'
+    })
+    expect(toChat.piSessionId).toBeUndefined()
+  })
+})

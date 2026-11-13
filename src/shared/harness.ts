@@ -173,7 +173,9 @@ export const HARNESSES: readonly Harness[] = [
     command: 'pi',
     connectionPools: [],
     vendorOnly: false,
-    chatAdapterId: null,
+    // Lane D (PRDCT-4427): Pi's chat runs through `pi --mode rpc`, Pi's own
+    // interface.
+    chatAdapterId: 'pi-chat',
     takesModel: true,
     permissionRungs: [],
     defaultRung: null,

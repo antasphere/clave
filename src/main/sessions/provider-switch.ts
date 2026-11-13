@@ -46,6 +46,8 @@ const BUILT_IN_PROFILES: Record<string, string> = {
   'codex-chat': 'codex-chat',
   // Lane D (PRDCT-4427): OpenCode's chat over the Agent Client Protocol.
   'opencode-chat': 'opencode-chat',
+  // Lane D (PRDCT-4427): Pi's chat over its own rpc mode.
+  'pi-chat': 'pi-chat',
   echo: 'dev-echo-adapter'
 }
 /** The launch profile a restart onto `adapterId` names. */

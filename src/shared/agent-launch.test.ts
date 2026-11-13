@@ -78,7 +78,23 @@ describe('a carried launch profile', () => {
     expect(sanitizeCarriedLaunchProfile(opencode)).toEqual(opencode)
     expect(sanitizeCarriedLaunchProfile({ ...opencode, family: 'codex' })).toBeNull()
     expect(chatProfileSource('chat:opencode:x')).toEqual({ family: 'opencode', id: 'x' })
-    expect(chatProfileSource('chat:pi:x')).toBeUndefined()
+    expect(chatProfileSource('chat:antigravity:x')).toBeUndefined()
+  })
+
+  // Lane D (PRDCT-4427): Pi's saved profiles have a chat form too.
+  it('accepts the chat form of a saved Pi profile, its Pi settings kept, for its own family only', () => {
+    const pi = {
+      id: 'chat:pi:x',
+      name: 'X (chat)',
+      family: 'pi',
+      command: ['pi'],
+      additionalArgs: [],
+      sourceProfileId: 'x',
+      pi: { provider: 'anthropic', model: 'sonnet', thinking: 'high' }
+    }
+    expect(sanitizeCarriedLaunchProfile(pi)).toEqual(pi)
+    expect(sanitizeCarriedLaunchProfile({ ...pi, family: 'opencode' })).toBeNull()
+    expect(chatProfileSource('chat:pi:x')).toEqual({ family: 'pi', id: 'x' })
   })
 
   it.each([
