@@ -5,6 +5,7 @@ import {
   type ProviderWireFormat
 } from '@clave/contract/settings/provider-catalogue'
 import { CLAVE_CONNECTION_KEY_ENV, PROVIDER_ROAD_BY_ID } from './models-catalog-overlay'
+import { CLAVE_PROVIDER_PREFIX } from '../shared/provider-prefix'
 
 /**
  * How a stored provider connection reaches a Pi or an OpenCode tab's process
@@ -120,7 +121,7 @@ export function providerInjection(input: {
 
   // No provider of the harness's own: Clave declares one, its key read from
   // Clave's connection variable.
-  const providerId = `clave-${roads.id}`
+  const providerId = `${CLAVE_PROVIDER_PREFIX}${roads.id}`
   const { endpoint } = connection
   if (!endpoint) throw new Error('The connection has no endpoint.')
   const name = providerCompany(connection.company).name

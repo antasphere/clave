@@ -219,12 +219,10 @@ function harnessOptions(
 
   const connections: ConnectionOption[] = pools.flatMap((pool) => {
     const rows = input.connections(pool)
-    const suggested = suggestedConnection(
-      rows,
-      input.selectedConnectionId(pool),
-      input.preferRecommended,
-      model
-    )
+    // A provider pool suggests nothing: naming no connection runs on the harness's own login (PRDCT-4496).
+    const suggested = isAccountPoolId(pool)
+      ? suggestedConnection(rows, input.selectedConnectionId(pool), input.preferRecommended, model)
+      : null
     return rows.map((c) => ({
       ...c,
       pool,

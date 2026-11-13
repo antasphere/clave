@@ -447,6 +447,21 @@ describe('the connections that pay', () => {
     expect(accountPoolsOf(HARNESS_BY_ID.pi)).toEqual([])
     expect(accountPoolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
   })
+  it('suggests no stored connection under a provider pool, an account pool still one (PRDCT-4496)', () => {
+    const work = providerConnection(view('c-kimi-work', 'moonshot', 'Kimi work'))
+    const home = providerConnection(view('c-kimi-home', 'moonshot', 'Kimi home'))
+    const options = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude' ? [fableOut, open()] : pool === 'moonshot' ? [work, home] : []
+      })
+    )
+    expect(harness(options, 'pi').connections.map((c) => [c.id, c.suggested])).toEqual([
+      ['c-kimi-work', false],
+      ['c-kimi-home', false]
+    ])
+    expect(harness(options, 'claude').connections.filter((c) => c.suggested)).toHaveLength(1)
+  })
   it('follows the recommendation when the person opted in', () => {
     // Work renews later than Romain's week: the recommendation is Romain's on Opus.
     expect(suggestedConnection([fableOut, open()], 'work', true, OPUS)).toBe('default')
