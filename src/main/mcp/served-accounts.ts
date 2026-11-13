@@ -9,7 +9,8 @@
  * standalone entry's settings source otherwise.
  */
 import type { AccountOverride } from '@clave/contract/sessions'
-import { pickAccount, type PoolAccount } from '../../shared/account-pool'
+import type { PoolAccount } from '../../shared/account-pool'
+import { suggestedConnection } from '../../shared/launch-options'
 import { usageSummaryForModel } from '../../shared/usage-summary'
 import type { AccountProvider, ServedPoolAccount } from './served-core'
 
@@ -47,13 +48,14 @@ export function accountForLaunch(
   model?: string
 ): ServedPoolAccount {
   const accounts = facts.accounts(provider)
-  const selected = facts.selectedAccountId(provider) ?? 'default'
-  const id = pickAccount({
-    accounts: poolOf(accounts),
-    usage: usageOf(accounts, { model }),
-    preferredId: selected,
-    preferRecommended: facts.useRecommendedAccount?.() === true
-  })
+  // The rule lives once, in the shared module clave_launch_options answers
+  // from too (PRDCT-4485): what it marks suggested is what a launch lands on.
+  const id = suggestedConnection(
+    accounts,
+    facts.selectedAccountId(provider),
+    facts.useRecommendedAccount?.() ?? false,
+    model
+  )
   return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
 }
 

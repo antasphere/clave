@@ -82,4 +82,19 @@ describe('MCP server instructions', () => {
       /clave_open_artefact with its folder \(index\.html inside\): open it ONCE/
     )
   })
+
+  it('registers clave_launch_options on the Mac, routed to the launchOptions command (PRDCT-4485)', () => {
+    const src = readFileSync(join(__dirname, 'mcp-server.ts'), 'utf8')
+    const at = src.indexOf("server.registerTool(\n    'clave_launch_options',")
+    expect(at).toBeGreaterThanOrEqual(0)
+    const block = src.slice(at, src.indexOf('\n  )\n', at))
+    expect(block).toContain('description: LAUNCH_OPTIONS_DESCRIPTION')
+    expect(block).toContain("run('launchOptions', { ...args, callerSessionId })")
+    expect(src).toMatch(
+      /const LAUNCH_OPTIONS_DESCRIPTION =\n {2}'Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine \(or for a connected server with server\)/
+    )
+    expect(src).toMatch(
+      /Pass what you read to clave_open_session as mode, model, account and profile\.'/
+    )
+  })
 })

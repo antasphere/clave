@@ -35,6 +35,8 @@ import {
   usageOf
 } from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
+import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import { poolsOf } from '../../shared/launch-options'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
@@ -62,6 +64,23 @@ import {
 /** How long a tool waits for a window's own answer (a tab's pin, a pin's
  *  state) before it keeps the window road for the whole call. */
 export const WINDOW_FACT_TIMEOUT_MS = 2_000
+
+// ── Wave 7, lane A: the pooled harnesses, named from the table (PRDCT-4485) ──
+
+/** The harnesses Clave holds connections for, by name: "Claude Code, Codex". */
+const POOLED_NAMES = HARNESSES.filter((h) => poolsOf(h).length > 0)
+  .map((h) => h.name)
+  .join(', ')
+
+/** Why a mode takes no account: its harness signs in by itself, a terminal
+ *  runs none. `gemini` is Antigravity's deprecated alias. */
+function noConnectionWhy(mode: string): string {
+  const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
+  return harness
+    ? `${harness.name} runs on the login inside the harness.`
+    : `A ${mode} runs no harness.`
+}
+
 /** The size a session with no pane starts at, as the hidden spawns do. */
 const HIDDEN_COLS = 120
 const HIDDEN_ROWS = 30
@@ -311,7 +330,10 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
   const session = id ? await ctx.api.sessions.get(id).catch(() => null) : null
   if (!session) throw new Error(`Unknown session "${ref}"`)
   const provider = providerOf(ctx, session)
-  if (!provider) throw new Error('Only Claude and Codex tabs run on an account')
+  if (!provider)
+    throw new Error(
+      `Only a tab on a harness with a connection pool (${POOLED_NAMES}) runs on a connection`
+    )
   const record = ctx.shell.record(session.id)
   const current =
     (provider === 'codex' ? record?.codexAccountId : record?.claudeProfileId) ?? 'default'
@@ -443,7 +465,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   const accountRef = str(p.account)
   if (accountRef && !claudeMode && !codexMode) {
     throw new Error(
-      `The account argument applies to claude and codex modes only (got mode "${mode}")`
+      `The account argument applies to harnesses with a connection pool (${POOLED_NAMES}); ${noConnectionWhy(mode)}`
     )
   }
   // The account is judged for the model the tab will run: a Fable week

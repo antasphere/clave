@@ -20,8 +20,16 @@ import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
 import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
 import { launchProfileManager } from '../launch-profile-manager'
-import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
-import { chatDefaultFor, chatOfInteractionMode } from '../../shared/open-session-modes'
+import {
+  BUILT_IN_LAUNCH_PROFILES,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../shared/agent-launch'
+import {
+  DANGEROUS_MODE_FAMILIES,
+  chatDefaultFor,
+  chatOfInteractionMode
+} from '../../shared/open-session-modes'
 import { getLaunchSettings } from '../launch-settings'
 import { getPreference } from '../ipc-handlers/clave-file-handlers'
 import { initLineage, parentOf, setParent } from '../sessions/lineage'
@@ -78,6 +86,12 @@ import {
 } from '../secret-request-manager'
 import { createOffer } from '../copy-offer-manager'
 import { rememberedSpawnModel } from '../sessions/spawn-model'
+import * as os from 'os'
+import { agentUpdateManager } from '../agent-updates'
+import { providerModels } from '../provider-models'
+import { CLAUDE_MODELS } from '../../shared/claude-models'
+import { HARNESSES, type HarnessId } from '../../shared/harness'
+import { poolsOf, type LaunchModel } from '../../shared/launch-options'
 import {
   INPUT_RESULT_DESCRIPTION,
   INPUT_SET_DESCRIPTION,
@@ -444,6 +458,74 @@ function exhaustedFrom(
   return isExhausted(context ? usageSummaryForModel(summary, context.model) : summary)
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** The launch profiles of a family as rows: the built-ins, then the person's. */
+function launchProfileRowsOf(family: LauncherFamily): LaunchProfile[] {
+  return [
+    ...BUILT_IN_LAUNCH_PROFILES,
+    ...launchProfileManager.getPreferences().customProfiles
+  ].filter((profile) => profile.family === family)
+}
+
+/** The launcher's DEFAULT_MODEL: the harness's own default, no flag passed. */
+const DEFAULT_LAUNCH_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
+
+/** The models the launcher offers on a harness's row (`SessionLauncher.tsx`'s
+ *  `modelsFor`), read on this Mac: Claude's from the table, Codex's from its
+ *  adapter (unavailable when the list fails or is empty), Pi's default and the
+ *  models its saved profiles pin; a harness taking no model, none. */
+async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | 'unavailable'> {
+  if (harness === 'claude')
+    return CLAUDE_MODELS.map((model) => ({
+      id: model.id,
+      label: model.name,
+      family: model.alias.charAt(0).toUpperCase() + model.alias.slice(1)
+    }))
+  if (harness === 'codex') {
+    const models = await providerModels('codex-chat', os.homedir()).catch(() => [])
+    return models.length > 0
+      ? models.map((model) => ({ id: model.id, label: model.label, family: model.label }))
+      : 'unavailable'
+  }
+  if (harness === 'pi') {
+    const pinned = [
+      ...new Set(
+        launchProfileRowsOf('pi')
+          .map((profile) => profile.pi?.model)
+          .filter((model): model is string => !!model)
+      )
+    ]
+    return [DEFAULT_LAUNCH_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+  }
+  return []
+}
+
+/** The harness table's names, for the tools' descriptions (PRDCT-4485):
+ *  every one, and the ones that have a chat view, take a model, start
+ *  without approvals, run on a connection pool. With `ids`, each name carries
+ *  the `mode` an agent passes: "Claude Code (claude)". */
+function harnessNames(
+  pick: (harness: (typeof HARNESSES)[number]) => boolean,
+  conjunction: 'and' | 'or',
+  ids = false
+): string {
+  const names = HARNESSES.filter(pick).map((h) => (ids ? `${h.name} (${h.id})` : h.name))
+  return names.length > 1
+    ? `${names.slice(0, -1).join(', ')} ${conjunction} ${names[names.length - 1]}`
+    : (names[0] ?? 'none')
+}
+const ALL_HARNESS_NAMES = harnessNames(() => true, 'or')
+const CHAT_VIEW_NAMES = harnessNames((h) => h.chatAdapterId !== null, 'and')
+const CHAT_VIEW_MODES = harnessNames((h) => h.chatAdapterId !== null, 'and', true)
+const MODEL_TAKING_MODES = harnessNames((h) => h.takesModel, 'and', true)
+const POOLED_HARNESS_NAMES = harnessNames((h) => poolsOf(h).length > 0, 'and')
+const DANGEROUS_MODES = harnessNames((h) => DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
+const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
+
+const LAUNCH_OPTIONS_DESCRIPTION =
+  'Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model, its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile.'
+
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
   raw === 'propose' || raw === 'automatic' ? raw : null
 
@@ -563,7 +645,20 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
     publishOrSend(event, () => sessionWindows().send(windowKey, 'pinned-group:launched', event)),
   notify: (title, body) => {
     if (Notification.isSupported()) new Notification({ title, body }).show()
-  }
+  },
+  // ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+  machine: () => ({ id: 'local', name: 'This Mac' }),
+  presence: () => agentUpdateManager.getState().agents,
+  models: (harness) => macModels(harness),
+  harnessSettings: () => getLaunchSettings().harnesses,
+  defaultProfileId: (family) => {
+    try {
+      return launchProfileManager.resolve(family).id
+    } catch {
+      return undefined
+    }
+  },
+  launchProfileRows: (family) => launchProfileRowsOf(family)
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
@@ -723,9 +818,12 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // window there.
       const attached = getClaveServerEndpoint()?.mode === 'attached'
       // Fleet launches and listings need the window's merged owner inventory.
+      // clave_launch_options goes there only for a server it names: this Mac
+      // answers for itself without a window round-trip (PRDCT-4485).
       const fleetTool =
-        (command === 'openSession' || command === 'list') &&
-        (p.server !== undefined || serverConnectionRegistry().list().length > 0)
+        ((command === 'openSession' || command === 'list') &&
+          (p.server !== undefined || serverConnectionRegistry().list().length > 0)) ||
+        (command === 'launchOptions' && typeof p.server === 'string' && p.server !== 'local')
       if (!fleetTool && (sidebarTransport() === 'server' || attached)) {
         const api = await serverClient.api()
         const served = await serveCommand(command, p, {
@@ -890,8 +988,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_list',
     {
-      description:
-        'List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
+      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a session on a harness with a connection pool (${POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit).`,
       inputSchema: {
         workspace: z
           .string()
@@ -902,6 +999,25 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       }
     },
     (args) => run('list', { ...args, callerSessionId })
+  )
+
+  // ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+  server.registerTool(
+    'clave_launch_options',
+    {
+      description: LAUNCH_OPTIONS_DESCRIPTION,
+      inputSchema: {
+        server: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            'A connected server id or name from clave_list, or local for this Mac; omit for the machine your tab runs on'
+          )
+      }
+    },
+    (args) => run('launchOptions', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -964,8 +1080,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_open_session',
     {
-      description:
-        "Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex open in Clave's CHAT VIEW — the conversation interface with message bubbles and a composer — or in the terminal. Omit `chat` to open the way the person's launcher does (their interaction mode: a chat view or the terminal); `chat: true` forces a chat view, `chat: false` the terminal. Optionally place it in a group — pass a groupId, an exact group name, or \"mine\" for the calling tab's own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch.",
+      description: `Open a new tab in Clave: a ${ALL_HARNESS_NAMES} session, or a plain terminal, in the given directory. ${CHAT_VIEW_NAMES} open in Clave's CHAT VIEW — the conversation interface with message bubbles and a composer — or in the terminal. Omit \`chat\` to open the way the person's launcher does (their interaction mode: a chat view or the terminal); \`chat: true\` forces a chat view, \`chat: false\` the terminal. Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab's own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch. clave_launch_options lists what each machine can launch: harnesses, models, connections with their headroom, profiles.`,
       inputSchema: {
         attachToParent: z
           .boolean()
@@ -1001,7 +1116,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .enum(['claude', 'antigravity', 'gemini', 'codex', 'pi', 'opencode', 'terminal'])
           .optional()
           .describe(
-            "Which agent CLI to start, or terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused."
+            `Which harness to start, by its id: ${harnessNames(() => true, 'or', true)}; terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused.`
           ),
         groupId: z
           .string()
@@ -1012,13 +1127,13 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .boolean()
           .optional()
           .describe(
-            'true forces Clave\'s chat view ("chat", "chat mode", "chat session", "the chat UI"), false the terminal; omit it to open the way the person\'s launcher does (their interaction mode). true is for claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.'
+            `true forces Clave's chat view ("chat", "chat mode", "chat session", "the chat UI"), false the terminal; omit it to open the way the person's launcher does (their interaction mode). true is for ${CHAT_VIEW_MODES} only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person's own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.`
           ),
         dangerous: z
           .boolean()
           .optional()
           .describe(
-            'Start the agent without approval prompts: claude with --dangerously-skip-permissions, codex with --yolo, opencode with --auto. Ignored for antigravity, pi and terminal.'
+            `Start the agent without approval prompts: ${DANGEROUS_MODES} only (Claude Code with --dangerously-skip-permissions, Codex with --yolo, OpenCode with --auto). Ignored for ${NOT_DANGEROUS_MODES} and terminal.`
           ),
         model: z
           .string()
@@ -1026,7 +1141,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(200)
           .optional()
           .describe(
-            'Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"). claude, codex and pi modes only (the OpenCode TUI takes no model flag: pick it inside OpenCode); omitted = the launch profile\'s default, else the CLI\'s. The user can still switch later with /model inside the tab.'
+            `Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"), as clave_launch_options lists them. ${MODEL_TAKING_MODES} only (the OpenCode TUI takes no model flag: pick it inside OpenCode); omitted = the launch profile's default, else the CLI's. The user can still switch later with /model inside the tab.`
           ),
         profile: z
           .string()
@@ -1042,7 +1157,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe(
-            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
+            `The connection (a subscription or a key) the new tab runs on: its id or exact name as Settings → Connections lists it ("default" is the machine login), or "any" for whichever connection of the pool has headroom, judged on the model the tab will run. Harnesses with a connection pool only (${POOLED_HARNESS_NAMES}). Omit to follow Settings → Connections: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. Unknown names error with the list; clave_launch_options lists them with their headroom.`
           ),
         permissionMode: z
           .enum(SPAWN_PERMISSION_MODES)
@@ -1359,15 +1474,16 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_switch_account',
     {
-      description:
-        'Switch a tab to another account (subscription) when the one it runs on is about to hit its limit, or when the user asks to move it: the same tab, its agent restarted on the other account with the conversation resumed. Claude and Codex tabs only. "mine" moves your own tab (your process restarts; finish what you are writing first). The account is an id, an exact name from Settings → Accounts, or "any" for whichever account of the pool has headroom. Per the mode set in Settings the switch is made at once or proposed to the user first; the answer says which.',
+      description: `Switch a tab to another connection (a subscription or a key) when the one it runs on is about to hit its limit, or when the user asks to move it: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only (${POOLED_HARNESS_NAMES}). "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name from Settings → Connections, or "any" for whichever connection of the pool has headroom. Per the mode set in Settings the switch is made at once or proposed to the user first; the answer says which.`,
       inputSchema: {
         sessionId: z.string().describe('Id of the session to move, or "mine" for the calling tab'),
         account: z
           .string()
           .min(1)
           .max(128)
-          .describe('Account id, exact name, or "any" for the pool\'s next account with headroom')
+          .describe(
+            'Connection id, exact name, or "any" for the pool\'s next connection with headroom'
+          )
       }
     },
     (args) => run('switchAccount', args)

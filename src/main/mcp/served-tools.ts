@@ -41,6 +41,13 @@ import { sessionTools } from './served-session-tools'
 import { workTools } from './served-work-tools'
 import { isServerTabRef } from './session-targets'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
+import { DEFAULT_INTERACTION_MODE, HARNESSES, type HarnessId } from '../../shared/harness'
+import {
+  launchOptions as launchOptionsOf,
+  type LaunchModel,
+  type LaunchOptions
+} from '../../shared/launch-options'
+import type { LaunchProfile } from '../../shared/agent-launch'
 
 export {
   NOT_SERVED,
@@ -415,6 +422,58 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   }
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** `clave_launch_options` on the machine the shell describes: the shell's
+ *  facts assembled into the shared function's input, the rules all
+ *  `launchOptions`' (`src/shared/launch-options.ts`). A shell missing a fact
+ *  still answers: no presence lists every harness as unchecked, no model
+ *  list offers the harness's Default. */
+async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
+  const { shell } = ctx
+  const presence = shell.presence?.()
+  const models = new Map<HarnessId, readonly LaunchModel[] | 'unavailable'>()
+  await Promise.all(
+    HARNESSES.filter((h) => h.takesModel).map(async (h) => {
+      const listed = shell.models
+        ? await shell.models(h.id).catch(() => 'unavailable' as const)
+        : 'unavailable'
+      models.set(h.id, listed)
+    })
+  )
+  const profiles = (family: HarnessId): readonly LaunchProfile[] =>
+    shell.launchProfileRows?.(family) ??
+    shell
+      .launchProfiles(family)
+      .map(({ id, name }) => ({ id, name, family, command: [], additionalArgs: [] }))
+  const workspaceId = (ctx.win ? shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
+  return launchOptionsOf({
+    machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
+    harnesses: HARNESSES,
+    presence: (id) => {
+      const status = presence?.find((p) => p.id === id)
+      return status
+        ? {
+            installed: status.installed,
+            version: status.currentVersion,
+            checkedAt: status.lastCheckedAt
+          }
+        : undefined
+    },
+    profiles,
+    defaultProfileId: (id) => shell.defaultProfileId?.(id),
+    models: (id) => models.get(id) ?? 'unavailable',
+    harnessSettings: shell.harnessSettings?.() ?? {},
+    interactionMode: shell.interactionMode?.() ?? DEFAULT_INTERACTION_MODE,
+    connections: (pool) => shell.accounts(pool as 'claude' | 'codex'),
+    selectedConnectionId: (pool) => shell.selectedAccountId(pool as 'claude' | 'codex'),
+    preferRecommended: shell.useRecommendedAccount?.() ?? false,
+    launchModel: (pool, profileId) =>
+      shell.launchModel?.(pool as 'claude' | 'codex', profileId, workspaceId),
+    now: Date.now()
+  })
+}
+
 /** Wave 3's tools here, wave 4's in `served-session-tools.ts`. */
 const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unknown>> = {
   list,
@@ -426,7 +485,8 @@ const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unkno
   addGroupTerminal,
   closeSession,
   ...sessionTools.others,
-  ...workTools
+  ...workTools,
+  launchOptions: (ctx) => launchOptions(ctx)
 }
 const SERVED = new Set(Object.keys(TOOLS))
 
