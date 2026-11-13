@@ -170,6 +170,9 @@ export interface RestartOverridesInput {
   /** The first message of the fresh conversation when nothing is resumed (the handoff). */
   firstMessage?: string
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId?: string
 }
 
 /** The server a History row's conversation ran on (PRDCT-4321): absent for
@@ -526,6 +529,9 @@ export interface SessionRecord {
   connectionLabel?: string
   /** The thread a Codex chat tab resumes on relaunch. */
   codexThreadId?: string
+  /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
+   *  on relaunch. */
+  opencodeSessionId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string

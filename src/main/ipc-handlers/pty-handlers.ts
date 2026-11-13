@@ -38,6 +38,7 @@ import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
 import { getSessionHost } from '../sessions/host'
 import { restartOverridesFromWire } from './restart-overrides-wire'
+import { NO_CONVERSATION_TO_CARRY } from '../sessions/provider-switch'
 import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
@@ -126,6 +127,8 @@ export function registerPtyHandlers(): void {
         resume?: unknown
         firstMessage?: unknown
         continuedFrom?: unknown
+        /** Lane D (PRDCT-4427): the view a move onto the chat opens in. */
+        viewId?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
@@ -142,7 +145,10 @@ export function registerPtyHandlers(): void {
         const message = error instanceof Error ? error.message : String(error)
         if (
           message === 'This session cannot be restarted from here.' ||
-          message === 'This session is running; there is nothing to resume.'
+          message === 'This session is running; there is nothing to resume.' ||
+          // Lane D (PRDCT-4427): a terminal with no conversation to carry
+          // into a chat is refused in a sentence the menu shows.
+          message === NO_CONVERSATION_TO_CARRY
         )
           return { error: message }
         throw error

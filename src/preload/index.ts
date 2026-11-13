@@ -2647,6 +2647,8 @@ const electronAPI = {
         resume,
         firstMessage,
         continuedFrom,
+        // Lane D (PRDCT-4427): the view a move onto the chat opens in.
+        viewId,
         ...account
       },
       requestId
@@ -2665,7 +2667,9 @@ const electronAPI = {
               ...(model !== undefined && { model }),
               ...(resume !== undefined && { resume }),
               ...(firstMessage !== undefined && { firstMessage }),
-              ...(continuedFrom !== undefined && { continuedFrom })
+              ...(continuedFrom !== undefined && { continuedFrom }),
+              // Lane D (PRDCT-4427).
+              ...(viewId ? { viewId } : {})
             }
           )
         : onlyIfStopped === true

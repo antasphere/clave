@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resumeLaunch, runtimeChoices, launchModeFields } from './runtime-choices'
+import { conversationIdOf, resumeLaunch, runtimeChoices, launchModeFields } from './runtime-choices'
 
 // PRDCT-4191: "Lane · Company AI keys" came back from a Resume in Manual on
 // opus after it had run with permissions skipped on another model. The record
@@ -153,5 +153,14 @@ describe('launchModeFields: the mode and the effort an open names', () => {
         allowDangerous: false
       })
     ).toEqual({})
+  })
+})
+
+// Lane D (PRDCT-4427): an OpenCode chat's record resumes its OpenCode session.
+describe('conversationIdOf', () => {
+  it("answers an OpenCode chat's session, after the other providers' ids", () => {
+    expect(conversationIdOf({ opencodeSessionId: 'ses_1' })).toBe('ses_1')
+    expect(conversationIdOf({ piSessionId: 'p1', opencodeSessionId: 'ses_1' })).toBe('p1')
+    expect(conversationIdOf({ opencodeSessionId: null })).toBeUndefined()
   })
 })

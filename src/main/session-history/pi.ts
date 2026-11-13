@@ -176,6 +176,48 @@ export function listPiSessions(root: string, cache: PiCache): PiSessionInfo[] {
     .filter((info): info is PiSessionInfo => info !== null)
 }
 
+// ── Lane D (PRDCT-4427): where a Pi chat's session lives ──
+
+/** Pi's own home (`PI_CODING_AGENT_DIR`, else `~/.pi/agent`), from the
+ *  environment Pi runs in. */
+export function piAgentDir(env: Record<string, string | undefined> = process.env): string {
+  return env.PI_CODING_AGENT_DIR?.trim() || path.join(homedir(), '.pi', 'agent')
+}
+
+/** The folder Pi keeps a working directory's sessions in, by Pi's own
+ *  convention: `<agent dir>/sessions/--<cwd without its leading slash, every
+ *  / \ : turned into ->--`. */
+export function piSessionDir(
+  cwd: string,
+  env: Record<string, string | undefined> = process.env
+): string {
+  const encoded = cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')
+  return path.join(piAgentDir(env), 'sessions', `--${encoded}--`)
+}
+
+/** Pi's session ids: letters, digits, `.`, `_`, `-`, a letter or digit at
+ *  each end. Anything else is never looked up. */
+const PI_SESSION_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/
+
+/** The session file Pi wrote for this id in this working directory
+ *  (`<timestamp>_<id>.jsonl`, written at the first message), else null. */
+export function findPiSession(
+  id: string,
+  cwd: string,
+  env: Record<string, string | undefined> = process.env
+): string | null {
+  if (!PI_SESSION_ID_RE.test(id)) return null
+  const dir = piSessionDir(cwd, env)
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return null
+  }
+  const name = names.find((entry) => entry.endsWith(`_${id}.jsonl`))
+  return name ? path.join(dir, name) : null
+}
+
 function readPiPreviewText(filePath: string, fileSize: number): string {
   const fd = fs.openSync(filePath, 'r')
   try {

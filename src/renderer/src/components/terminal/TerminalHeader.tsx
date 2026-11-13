@@ -24,6 +24,7 @@ import { LinkedDocumentReopen } from '../files/LinkedDocumentReopen'
 import { SessionStatus } from '../session/SessionItem'
 import { WorkBreadcrumb } from '../session/WorkEntryItem'
 import { FleetBadge } from '../fleet/FleetControls'
+import { SessionMenu } from '../../views/SessionMenu'
 
 interface TerminalHeaderProps {
   sessionId: string
@@ -215,6 +216,15 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               )}
             </>
           )}
+          {/* The pane menu (lane D, PRDCT-4427): a harness terminal's « View
+              as » offers its chat views, each a restart on the same
+              conversation; a plain terminal's menu has the session rows. */}
+          <SessionMenu
+            sessionId={sessionId}
+            views={[]}
+            active={undefined}
+            label="Terminal session menu"
+          />
           <button
             onClick={() => setShowConfirm(true)}
             className="panel-icon-btn"

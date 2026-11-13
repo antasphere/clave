@@ -368,7 +368,8 @@ describe('localLaunchOptionsInput', () => {
     // its chat form the built-in chat.
     const chat = localLaunchOptionsInput({ ...facts, agents: [], preferRecommended: false })
     expect(chat.openProfileId('claude')).toBe('claude-chat')
-    expect(chat.openProfileId('pi')).toBe('builtin-pi')
+    // Pi has a chat view since PRDCT-4427: Antigravity is the harness left without one.
+    expect(chat.openProfileId('antigravity')).toBe('builtin-antigravity')
     const terminal = localLaunchOptionsInput({
       ...facts,
       interactionMode: 'terminal',

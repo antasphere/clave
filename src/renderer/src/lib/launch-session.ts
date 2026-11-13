@@ -193,7 +193,8 @@ export function setupSpawnFlags(
  */
 export function transportProfileFor(
   setup: AgentSetup | null,
-  chatDefault: (family: 'claude' | 'codex') => string | undefined
+  // OpenCode has a chat view too (lane D, PRDCT-4427).
+  chatDefault: (family: 'claude' | 'codex' | 'opencode') => string | undefined
 ): string | undefined {
   if (!setup) return undefined
   if (setup.launchProfileId) return setup.launchProfileId
@@ -202,7 +203,7 @@ export function transportProfileFor(
   if (!harness.chatAdapterId) return undefined
   if (useLaunchSettingsStore.getState().interactionMode === 'terminal') return undefined
   if (setup.kind === 'claude' && window.electronAPI?.platform === 'win32') return undefined
-  return chatDefault(setup.kind as 'claude' | 'codex')
+  return chatDefault(setup.kind as 'claude' | 'codex' | 'opencode')
 }
 
 const NO_AGENT = {

@@ -321,7 +321,10 @@ async function spawnFromRecord(
             ? { resumeSessionId: s.piSessionId }
             : s.codexMode && s.codexThreadId
               ? { resumeSessionId: s.codexThreadId }
-              : {}),
+              : // Lane D (PRDCT-4427): an OpenCode chat resumes its session.
+                s.opencodeMode && s.opencodeSessionId
+                ? { resumeSessionId: s.opencodeSessionId }
+                : {}),
       launchProfileId: s.launchProfileId,
       piProvider: s.piProvider,
       piThinking: s.piThinking,

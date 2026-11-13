@@ -335,7 +335,8 @@ describe('the models and the default one', () => {
       { id: null, label: 'Default', family: 'Default', served: true, reason: null }
     ])
     expect(opencode.defaultModel).toBeNull()
-    expect(opencode.chatView).toBe(false)
+    // OpenCode has a chat view since PRDCT-4427.
+    expect(opencode.chatView).toBe(true)
     expect(harness(launchOptions(input()), 'claude').chatView).toBe(true)
   })
 })
