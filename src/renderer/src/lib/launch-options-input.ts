@@ -29,6 +29,8 @@ import type {
   LaunchOptionsInput,
   PooledConnection
 } from '../../../shared/launch-options'
+import { modelsForProviderConnections } from '../../../shared/launch-models'
+import { PROVIDER_COMPANY_BY_ID } from '../../../main/models-catalog-overlay'
 import type { ServerSettings } from '../store/server-settings-state'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from './launch-source'
 import { localOpenProfileId } from './launch-model'
@@ -57,10 +59,12 @@ export interface WindowLaunchFacts {
 }
 
 /** The launcher's `modelsFor`, on a source: Claude's from the table, Codex's
- *  from the list read (unavailable when it failed or was empty), Pi's default
- *  and the models the machine's Pi profiles pin; none for the rest. */
+ *  from the list read (unavailable when it failed or was empty); Pi's and
+ *  OpenCode's the menu's own list (PRDCT-4496): the default, the catalogue
+ *  models of each stored connection's company, then, for Pi, the models the
+ *  machine's Pi profiles pin; none for the rest. */
 export function launchModelsOf(
-  source: Pick<LaunchSource, 'profilesFor'>,
+  source: Pick<LaunchSource, 'profilesFor' | 'catalog' | 'providerConnections'>,
   harness: HarnessId,
   codexModels: CodexModels
 ): readonly LaunchModel[] | 'unavailable' {
@@ -74,16 +78,29 @@ export function launchModelsOf(
     return codexModels === 'unavailable' || codexModels.length === 0
       ? 'unavailable'
       : codexModels.map((model) => ({ id: model.id, label: model.label, family: model.label }))
-  if (harness === 'pi') {
-    const pinned = [
-      ...new Set(
-        source
-          .profilesFor('pi')
-          .map((profile) => profile.pi?.model)
-          .filter((model): model is string => !!model)
-      )
-    ]
-    return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+  if (harness === 'pi' || harness === 'opencode') {
+    const pinned =
+      harness === 'pi'
+        ? [
+            ...new Set(
+              source
+                .profilesFor('pi')
+                .map((profile) => profile.pi?.model)
+                .filter((model): model is string => !!model)
+            )
+          ]
+        : []
+    const rows = modelsForProviderConnections(
+      source.catalog(),
+      source.providerConnections(harness),
+      PROVIDER_COMPANY_BY_ID,
+      pinned
+    )
+    // The listing is synchronous and must answer something: while the
+    // catalogue is still being read, the default and the pinned models.
+    if (rows === 'loading')
+      return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+    return rows.map((row) => ({ id: row.id ?? null, label: row.label, family: row.family }))
   }
   return []
 }

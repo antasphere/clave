@@ -26,6 +26,9 @@ import {
   type InteractionMode
 } from '../../shared/harness'
 import type { LaunchModel, LaunchOptionsInput } from '../../shared/launch-options'
+import { modelsForProviderConnections } from '../../shared/launch-models'
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import { PROVIDER_COMPANY_BY_ID, type ProviderCompanyId } from '../models-catalog-overlay'
 import type { ModelOption } from '../../shared/session-model'
 import { usageSummaryForModel } from '../../shared/usage-summary'
 import type { HarnessDetection } from '../agent-updates/standalone-detection'
@@ -60,6 +63,14 @@ export interface StandaloneLaunchDeps {
   readonly homeDir: string
   /** `launchProfileManager.resolve(family)`: the family's default profile; may throw. */
   readonly defaultProfile: (family: HarnessId) => { id: string }
+  /** The catalogue of those models.dev provider ids (`modelsCatalog.view`);
+   *  absent, no catalogue model is listed. */
+  readonly catalog?: (providerIds: readonly string[]) => Promise<ModelsCatalogView>
+  /** The stored connections of a Pi or OpenCode launch
+   *  (`providerConnectionsForListing`); absent, none. */
+  readonly providerConnections?: (
+    harness: 'pi' | 'opencode'
+  ) => readonly { id: string; label: string; company: ProviderCompanyId }[]
   readonly now?: () => number
 }
 
@@ -105,17 +116,43 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
           return 'unavailable'
         }
       }
-      if (harness === 'pi') {
-        // Pi runs whichever provider its own config names: its default, and
-        // the models its saved profiles pin.
-        const pinned = [
+      if (harness === 'pi' || harness === 'opencode') {
+        // The launcher menu's list (PRDCT-4496): the harness's own default
+        // (whatever its own config names), the catalogue models of each
+        // stored connection's company, then the models Pi's profiles pin.
+        const pinned =
+          harness === 'pi'
+            ? [
+                ...new Set(
+                  profilesOf(facts, 'pi')
+                    .map((profile) => profile.pi?.model)
+                    .filter((model): model is string => !!model)
+                )
+              ]
+            : []
+        const connections = deps.providerConnections?.(harness) ?? []
+        const providerIds = [
           ...new Set(
-            profilesOf(facts, 'pi')
-              .map((profile) => profile.pi?.model)
-              .filter((model): model is string => !!model)
+            connections
+              .map((c) => PROVIDER_COMPANY_BY_ID[c.company]?.catalog)
+              .filter((id): id is string => !!id)
           )
         ]
-        return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+        // A failed read lists no catalogue model, never 'unavailable': the
+        // harness's own login is always a row.
+        let view: ModelsCatalogView | null = null
+        if (providerIds.length > 0 && deps.catalog) {
+          try {
+            view = await deps.catalog(providerIds)
+          } catch {
+            view = null
+          }
+        }
+        const rows = modelsForProviderConnections(view, connections, PROVIDER_COMPANY_BY_ID, pinned)
+        // Never 'loading': the view is read or null by now.
+        if (rows === 'loading')
+          return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+        return rows.map((row) => ({ id: row.id ?? null, label: row.label, family: row.family }))
       }
       return []
     },

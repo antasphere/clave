@@ -4,13 +4,13 @@
  * order, the catalogue models of its company (deduplicated by id, the
  * deprecated ones hidden by `catalogModelsOf`), then the models Pi's saved
  * profiles pin. A company with no catalogue id (Ollama, another provider)
- * lists no catalogue model. Pure, so the menu's logic has a unit test.
+ * lists no catalogue model. Pure and shared, so the launcher menu, the
+ * window's `clave_launch_options` and the daemon's read the same lists.
  */
 import {
   catalogModelsOf,
   type ModelsCatalogView
 } from '@clave/contract/settings/models-catalog-view'
-import type { ProviderCompany, ProviderCompanyId } from '../../../main/models-catalog-overlay'
 
 /** A model row: `id` undefined is the harness's own default (no flag). */
 export interface ProviderModelRow {
@@ -20,14 +20,23 @@ export interface ProviderModelRow {
   family: string
 }
 
+/** A connection as the listing reads it. `company` is a `ProviderCompanyId`
+ *  of `src/main/models-catalog-overlay.ts`, kept a string here: nothing in
+ *  `src/shared` imports from main. */
 export interface ProviderConnectionRef {
   id: string
-  company: ProviderCompanyId
+  company: string
 }
 
-export type ProviderCompanies = Readonly<
-  Record<ProviderCompanyId, Pick<ProviderCompany, 'name' | 'catalog'>>
->
+/** The two facts of a `ProviderCompany` the listing reads: its name, and its
+ *  models.dev provider id (null when the catalogue has none). */
+export interface ProviderCompanyFacts {
+  name: string
+  catalog: string | null
+}
+
+/** Every company by id: `PROVIDER_COMPANY_BY_ID` fits it. */
+export type ProviderCompanies = Readonly<Record<string, ProviderCompanyFacts>>
 
 export const DEFAULT_PROVIDER_MODEL: ProviderModelRow = {
   id: undefined,

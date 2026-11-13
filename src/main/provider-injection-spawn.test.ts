@@ -13,7 +13,11 @@ vi.mock('./mcp/mcp-runtime', () => ({
   deleteSessionMcpConfig: () => undefined
 }))
 
-import { providerInjectionForSpawn } from './provider-injection-spawn'
+import {
+  providerConnectionsForListing,
+  providerInjectionForSpawn,
+  setConnectionListingSource
+} from './provider-injection-spawn'
 import type { ConnectionForSpawn } from './provider-injection'
 import type { syncPiConnectionDir } from './provider-injection-pi-dir'
 import type { CatalogModel } from './models-catalog'
@@ -142,5 +146,22 @@ describe('providerInjectionForSpawn', () => {
     const oc = await providerInjectionForSpawn('opencode', { model: 'deepseek/m' }, d.all)
     expect(oc.providerEnv).toEqual({ OPENCODE_CONFIG_CONTENT: '{"model":"deepseek/m"}' })
     expect(d.source).not.toHaveBeenCalled()
+  })
+})
+
+describe('providerConnectionsForListing', () => {
+  it('lists none until the store plugs in, then what it answers for the harness', () => {
+    expect(providerConnectionsForListing('pi')).toEqual([])
+    setConnectionListingSource((harness) =>
+      harness === 'pi' ? [{ id: 'c-1', label: 'Made-up', company: 'deepseek' }] : []
+    )
+    try {
+      expect(providerConnectionsForListing('pi')).toEqual([
+        { id: 'c-1', label: 'Made-up', company: 'deepseek' }
+      ])
+      expect(providerConnectionsForListing('opencode')).toEqual([])
+    } finally {
+      setConnectionListingSource(null)
+    }
   })
 })

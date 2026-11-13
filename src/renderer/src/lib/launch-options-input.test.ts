@@ -5,6 +5,11 @@ import type { ServerSettings } from '../store/server-settings-state'
 import type { AccountUsageSummary } from '../store/usage-store'
 import type { ClaudeAccount } from '../../../preload/index.d'
 import type { AccountSources } from './session-accounts'
+import type { ProviderLaunchConnection } from './launch-source'
+import type {
+  CatalogModelView,
+  ModelsCatalogView
+} from '@clave/contract/settings/models-catalog-view'
 import {
   launchModelsOf,
   localLaunchOptionsInput,
@@ -30,7 +35,9 @@ vi.mock('./launch-source', async (importOriginal) => {
       accounts: () => [],
       selectedAccountId: (family: string) => (family === 'claude' ? local.selected : null),
       chatProfileId: () => undefined,
-      connections: () => []
+      connections: () => [],
+      providerConnections: () => [],
+      catalog: () => null
     })
   }
 })
@@ -242,7 +249,75 @@ describe('localLaunchOptionsInput', () => {
 })
 
 describe('launchModelsOf', () => {
-  const none = { profilesFor: () => [] }
+  const none = { profilesFor: () => [], catalog: () => null, providerConnections: () => [] }
+  // A machine with two stored connections and one saved Pi profile; the
+  // catalogue lists both companies' models (a deprecated one hidden).
+  const catalogModel = (id: string, deprecated = false): CatalogModelView => ({
+    id,
+    name: `${id} name`,
+    reasoning: true,
+    toolCall: true,
+    ...(deprecated ? { status: 'deprecated' as const } : {})
+  })
+  const VIEW: ModelsCatalogView = {
+    fetchedAt: 1,
+    stale: false,
+    providers: [
+      { id: 'deepseek', name: 'DeepSeek', models: [catalogModel('deepseek-chat')] },
+      {
+        id: 'mistral',
+        name: 'Mistral',
+        models: [catalogModel('devstral'), catalogModel('old', true)]
+      }
+    ]
+  }
+  const stored = (
+    view: ModelsCatalogView | 'loading' | null,
+    connections: readonly ProviderLaunchConnection[] = [
+      { id: 'c-mi', label: 'Mistral work', company: 'mistral' },
+      { id: 'c-ds', label: 'DeepSeek', company: 'deepseek' }
+    ]
+  ): Parameters<typeof launchModelsOf>[0] => ({
+    profilesFor: (family) =>
+      family === 'pi'
+        ? ([{ id: 'pi-glm', family: 'pi', pi: { model: 'glm-5' } }] as ReturnType<
+            Parameters<typeof launchModelsOf>[0]['profilesFor']
+          >)
+        : [],
+    catalog: () => view,
+    providerConnections: () => connections
+  })
+  const DEFAULT = { id: null, label: 'Default', family: 'Default' }
+
+  it("lists Pi's default, the catalogue models of each connection's company in order, then the pinned", () => {
+    expect(launchModelsOf(stored(VIEW), 'pi', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+      { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' },
+      { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+    ])
+  })
+  it("lists OpenCode's default and the catalogue models, no pinned model", () => {
+    expect(launchModelsOf(stored(VIEW), 'opencode', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+      { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' }
+    ])
+  })
+  it('answers the default and the pinned while the catalogue is read', () => {
+    expect(launchModelsOf(stored('loading'), 'pi', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+    ])
+    expect(launchModelsOf(stored('loading'), 'opencode', 'unavailable')).toEqual([DEFAULT])
+  })
+  it('answers the default and the pinned with no connection stored', () => {
+    expect(launchModelsOf(stored(VIEW, []), 'pi', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+    ])
+    expect(launchModelsOf(stored(VIEW, []), 'opencode', 'unavailable')).toEqual([DEFAULT])
+  })
   it('reads a Codex list that failed or came back empty as unavailable', () => {
     expect(launchModelsOf(none, 'codex', 'unavailable')).toBe('unavailable')
     expect(launchModelsOf(none, 'codex', [])).toBe('unavailable')

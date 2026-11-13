@@ -28,7 +28,10 @@ import {
   useUsageLineStore
 } from '../../store/models-catalog-store'
 import { PROVIDER_COMPANY_BY_ID } from '../../../../main/models-catalog-overlay'
-import { connectionsServingModel, modelsForProviderConnections } from '../../lib/launch-models'
+import {
+  connectionsServingModel,
+  modelsForProviderConnections
+} from '../../../../shared/launch-models'
 import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
 import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models'

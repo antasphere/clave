@@ -1825,7 +1825,9 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(pi.connectionNote).toBe(
       'Clave holds no connection for Pi: it runs on the login inside the harness.'
     )
-    expect(opencode).toMatchObject({ installed: true, version: '2.0.1', models: [] })
+    // OpenCode lists its own default, and no catalogue model with no stored connection (PRDCT-4496).
+    expect(opencode).toMatchObject({ installed: true, version: '2.0.1' })
+    expect((opencode.models as Array<Record<string, unknown>>).map((m) => m.id)).toEqual([null])
   }, 15_000)
 
   it('clave_launch_options judges defaultModel on the profile an open with no model resolves, and the open lands on its suggested connection (verifier, round 2)', async () => {

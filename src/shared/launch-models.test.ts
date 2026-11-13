@@ -3,7 +3,7 @@ import type {
   CatalogModelView,
   ModelsCatalogView
 } from '@clave/contract/settings/models-catalog-view'
-import { PROVIDER_COMPANY_BY_ID } from '../../../main/models-catalog-overlay'
+import { PROVIDER_COMPANY_BY_ID } from '../main/models-catalog-overlay'
 import {
   DEFAULT_PROVIDER_MODEL,
   connectionsServingModel,

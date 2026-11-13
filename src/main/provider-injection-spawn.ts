@@ -3,7 +3,7 @@ import path from 'path'
 import type { AgentKind } from '../shared/agent-launch'
 import type { CatalogModel } from './models-catalog'
 import { modelsCatalog } from './models-catalog'
-import { PROVIDER_COMPANY_BY_ID } from './models-catalog-overlay'
+import { PROVIDER_COMPANY_BY_ID, type ProviderCompanyId } from './models-catalog-overlay'
 import { lazySettingsPorts } from './ports/registry'
 import { providerInjection, type ConnectionForSpawn } from './provider-injection'
 import { syncPiConnectionDir } from './provider-injection-pi-dir'
@@ -31,12 +31,37 @@ export function setConnectionSource(fn: ConnectionSource): void {
   connectionSource = fn
 }
 
+/** A stored connection as the daemon's model listing reads it: no value. */
+export interface ProviderConnectionListing {
+  id: string
+  label: string
+  company: ProviderCompanyId
+}
+
+type ConnectionListingSource = (harness: 'pi' | 'opencode') => readonly ProviderConnectionListing[]
+
+let connectionListingSource: ConnectionListingSource | null = null
+
+/** The store of connections plugs its `forHarness` in here; none until it does. */
+export function setConnectionListingSource(fn: ConnectionListingSource | null): void {
+  connectionListingSource = fn
+}
+
+/** The stored connections a Pi or OpenCode launch can run on, in the store's
+ *  order, for the daemon's `clave_launch_options` (PRDCT-4496); none until
+ *  the store plugs in. */
+export function providerConnectionsForListing(
+  harness: 'pi' | 'opencode'
+): readonly ProviderConnectionListing[] {
+  return connectionListingSource ? connectionListingSource(harness) : []
+}
+
 // The test hooks' namespace (`--test-no-activate` only): a spec plugs made-up
 // connections here until the connection store exists. Consulted by the
 // in-process server alone, as the settings hook is (settings/shell-source.ts).
 if (TEST_NO_ACTIVATE) {
   const hooks = ((globalThis as { __claveE2E?: Record<string, unknown> }).__claveE2E ??= {})
-  hooks.providerInjection = { setConnectionSource }
+  hooks.providerInjection = { setConnectionSource, setConnectionListingSource }
   hooks.providerUsage = { setConnectionRefSource, setConnectionValueSource }
 }
 
