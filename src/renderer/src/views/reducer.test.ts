@@ -263,6 +263,23 @@ describe('conversation stream', () => {
     expect(merged.first).toBe(live.first - 3)
     expect(reduceConversation(merged, { prepend: [] })).toBe(merged)
   })
+  it('shows once a start refusal the adapter said live and kept in the past (PRDCT-4427)', () => {
+    const refusal: ChatEvent = {
+      type: 'error',
+      message: 'Pi could not start: Error: --provider requires --model (exit status 1)',
+      fatal: false
+    }
+    const errors = (c: Conversation): number => c.entries.filter((e) => e.kind === 'error').length
+    // Heard live, then read in the past: once.
+    const heard = run([refusal])
+    expect(errors(reduceConversation(heard, { prepend: [{ event: refusal, at: 1 }] }))).toBe(1)
+    // Not heard live (a pane that subscribed after it was said): from the past.
+    const late = reduceConversation(emptyConversation, { prepend: [{ event: refusal, at: 1 }] })
+    expect(late.entries).toMatchObject([{ kind: 'error', message: refusal.message }])
+    // Another notice of the past still comes in.
+    const other: ChatEvent = { type: 'error', message: 'something else', fatal: false }
+    expect(errors(reduceConversation(heard, { prepend: [{ event: other, at: 1 }] }))).toBe(2)
+  })
 })
 
 describe('a request the agent no longer holds', () => {

@@ -25,6 +25,7 @@ import {
   type RpcNotification,
   type RpcRequest
 } from './acp-client'
+import { startRefusal } from './start-refusal'
 
 /**
  * A chat over the Agent Client Protocol (version 1): one agent process per
@@ -261,7 +262,7 @@ export class AcpAdapter implements SessionAdapter {
       notification: (frame) => this.notification(state, frame),
       request: (frame) => this.request(state, frame),
       error: (error) => this.notice(state, error.message),
-      exit: (code) => this.exited(state, code)
+      exit: (code, stderrTail) => this.exited(state, code, stderrTail)
     })
     state.started = this.handshake(state)
     await state.started
@@ -474,7 +475,7 @@ export class AcpAdapter implements SessionAdapter {
    *  the session ends with code 1. */
   private refuse(state: HandleState, error: unknown): void {
     const auth = state.authMethods.find((method) => method.description)
-    this.notice(
+    this.startNotice(
       state,
       `${this.label} could not start a session: ${errorMessage(error)}${auth ? `. ${auth.description}` : ''}`
     )
@@ -809,9 +810,24 @@ export class AcpAdapter implements SessionAdapter {
     this.emit(state, { type: 'error', message, fatal: false })
   }
 
-  private exited(state: HandleState, code: number): void {
+  /** Why the agent would not start (PRDCT-4427): said live, and kept in the
+   *  session's past, for the pane that subscribes after the queue was let go
+   *  and reads only the past (the Pi adapter's `startNotice`). */
+  private startNotice(state: HandleState, message: string): void {
     if (state.ended) return
-    if (state.turnRunning && !state.closing)
+    this.notice(state, message)
+    state.history.push({ event: { type: 'error', message, fatal: false }, at: Date.now() })
+  }
+
+  private exited(state: HandleState, code: number, stderrTail?: string): void {
+    if (state.ended) return
+    if (!state.sessionId && !state.closing && state.exitCode === undefined) {
+      // The agent died before it opened a session: a refusal, said as one,
+      // in its own last words and with its status (PRDCT-4427). Its pending
+      // request fails after this, and the handshake finds the session ended.
+      this.startNotice(state, startRefusal(this.label, code, stderrTail, state.launch.env))
+      state.exitCode = code || 1
+    } else if (state.turnRunning && !state.closing)
       this.notice(state, `${this.label} stopped during the turn (exit code ${code})`)
     state.ended = true
     state.turnRunning = false

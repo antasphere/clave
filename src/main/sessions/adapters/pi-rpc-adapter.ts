@@ -18,6 +18,7 @@ import type {
   Unsubscribe
 } from '../adapter'
 import { PiRpcConnection, record, type PiRpcEvent } from './pi-rpc-client'
+import { startRefusal } from './start-refusal'
 
 /**
  * A chat with Pi over its rpc mode (`pi --mode rpc`, Pi 1.5): one Pi process
@@ -258,7 +259,7 @@ export class PiRpcAdapter implements SessionAdapter {
     state.connection = new PiRpcConnection(child, {
       event: (frame) => this.event(state, frame),
       error: (error) => this.notice(state, error.message),
-      exit: (code) => this.exited(state, code)
+      exit: (code, stderrTail) => this.exited(state, code, stderrTail)
     })
     state.started = this.handshake(state)
     await state.started
@@ -427,7 +428,7 @@ export class PiRpcAdapter implements SessionAdapter {
    *  open): its word, then the session ends with code 1. */
   private refuse(state: HandleState, error: unknown): void {
     if (state.ended || state.closing) return
-    this.notice(state, `${this.label} could not start: ${errorMessage(error)}`)
+    this.startNotice(state, `${this.label} could not start: ${errorMessage(error)}`)
     state.exitCode = 1
     if (state.connection && !state.connection.closed) void state.connection.close()
     else this.exited(state, 1)
@@ -738,12 +739,26 @@ export class PiRpcAdapter implements SessionAdapter {
     this.emit(state, { type: 'error', message, fatal: false })
   }
 
-  private exited(state: HandleState, code: number): void {
+  /** Why Pi would not start (PRDCT-4427): said live, and kept in the
+   *  session's past. The live word reaches only the views subscribed when the
+   *  queue is let go, and the first subscriber lets it go: a pane that opens
+   *  after it (another view of the window subscribed first, a server's push
+   *  subscription shared) reads the past and nothing else, and saw only
+   *  "Session ended". The view drops the past's copy of a notice it already
+   *  shows. */
+  private startNotice(state: HandleState, message: string): void {
+    if (state.ended) return
+    this.notice(state, message)
+    state.history.push({ event: { type: 'error', message, fatal: false }, at: Date.now() })
+  }
+
+  private exited(state: HandleState, code: number, stderrTail?: string): void {
     if (state.ended) return
     if (state.starting && !state.closing && state.exitCode === undefined) {
-      // Pi died before it gave its state: a refusal, said as one.
-      this.notice(state, `${this.label} could not start: Pi exited with code ${code}`)
-      state.exitCode = 1
+      // Pi died before it gave its state: a refusal, said as one, in Pi's
+      // own last words and with its status (PRDCT-4427).
+      this.startNotice(state, startRefusal(this.label, code, stderrTail, state.launch.env))
+      state.exitCode = code || 1
     } else if (state.turnRunning && !state.closing)
       this.notice(state, `${this.label} stopped during the turn (exit code ${code})`)
     state.ended = true
