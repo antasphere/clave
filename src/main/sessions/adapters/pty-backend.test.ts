@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { installSettingsPorts, resetSettingsPorts } from '../../ports/registry'
-import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
+import {
+  installTerminalPorts,
+  resetTerminalPorts,
+  resourcesDirOfEntry
+} from '../../ports/terminals'
 import { fileStorage } from '../../ports/storage'
 import type { TerminalPort, TerminalProcess, TerminalSpawn } from '../../ports/terminal'
 import { electronTestPorts, tempDataDir } from '../../ports/testing'
@@ -176,6 +180,23 @@ describe('a plain terminal', () => {
     backend.kill(kept.id, false)
     expect(terminals.processes[1].killed).toBe(true)
     expect(fs.existsSync(recordFile(kept.id))).toBe(true)
+  })
+})
+
+describe('a Pi session (PRDCT-4496)', () => {
+  it("starts with an --extension that names Clave's Pi extension as it is on disk, from the server entry's folder", () => {
+    // The resources folder as the server names it when run from source
+    // (Bun, the harness, the trial): from server-entry.ts's own folder.
+    const entryDir = path.resolve(__dirname, '..', '..')
+    expect(fs.existsSync(path.join(entryDir, 'server-entry.ts'))).toBe(true)
+    installTerminalPorts({ resourcesDir: resourcesDirOfEntry(entryDir) })
+    const session = backend.spawn(cwd, { piMode: true, tmuxMode: false })
+    backend.start(session.id, 80, 24)
+    const command = terminals.processes[0].spec.args.join(' ')
+    const extension = /'--extension' '([^']+)'/.exec(command)?.[1]
+    expect(extension).toBeDefined()
+    expect(path.basename(extension!)).toBe('pi-clave-state.js')
+    expect(fs.existsSync(extension!)).toBe(true)
   })
 })
 
