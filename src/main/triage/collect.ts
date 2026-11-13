@@ -201,6 +201,7 @@ function recordKind(r: Record<string, unknown>): TriageRecordKind {
   if (r.antigravityMode === true) return 'antigravity'
   if (r.codexMode === true) return 'codex'
   if (r.piMode === true) return 'pi'
+  if (r.opencodeMode === true) return 'opencode'
   if (r.claudeAgentsMode === true) return 'claude'
   // An absent `claudeMode` always meant Claude (pty-backend's listing rule).
   if (r.claudeMode !== false) return 'claude'

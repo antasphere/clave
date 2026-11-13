@@ -96,3 +96,23 @@ describe('the helpers of an older server (PRDCT-4330)', () => {
     expect(HELPERS_NEED_UPDATE).toBe(shared.HELPERS_NEED_UPDATE)
   })
 })
+
+describe('the integrations of an older server (PRDCT-4410)', () => {
+  it('a router 404 on the integrations routes is said as an update the server needs', async () => {
+    const { IntegrationsMissing, INTEGRATIONS_NEED_UPDATE } = await import('./settings')
+    old = createServer((_request, response) => {
+      response
+        .writeHead(404, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ error: 'NotFound', message: 'route not found', correlationId: 'c' }))
+    })
+    await new Promise<void>((resolve) => old!.listen(0, '127.0.0.1', resolve))
+    const { port } = old.address() as { port: number }
+    api = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
+    await expect(api.settings.integrations.read()).rejects.toBeInstanceOf(IntegrationsMissing)
+    await expect(api.settings.integrations.setElevenLabsKey('xi-old-server')).rejects.toThrow(
+      INTEGRATIONS_NEED_UPDATE
+    )
+    const shared = await import('../../../src/shared/elevenlabs')
+    expect(INTEGRATIONS_NEED_UPDATE).toBe(shared.INTEGRATIONS_NEED_UPDATE)
+  })
+})

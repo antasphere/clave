@@ -106,7 +106,7 @@ describe("an agent row's line", () => {
     ).toBe('Homebrew does not have 1 yet.')
     expect(agentStatusLine(agent({ lastUpdatedAt: null }), true)).toBe('Up to date')
     expect(agentStatusLine(agent({ installed: false, lastCheckedAt: null }), true)).toBe(
-      'Not checked yet'
+      'Checking…'
     )
   })
 

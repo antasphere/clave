@@ -7,6 +7,7 @@
  * identity of a tab). No Electron here: the shell comes in through the
  * interface, so every tool is tested on fakes.
  */
+import type { InteractionMode } from '../../shared/harness'
 import { workspaceForPath } from '../../shared/workspace-types'
 import type { ClaveApiClient } from '@clave/client'
 import type { LayoutSnapshot, SidebarGroup } from '@clave/contract/sidebar'
@@ -108,6 +109,9 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   /** The chat profile the launcher would open that family's chat on in that
    *  workspace (`chatDefaultFor`); undefined when its default has no chat form. */
   chatDefault(family: LauncherFamily, workspaceId: string | undefined): string | undefined
+  /** The person's interaction mode on this machine (PRDCT-4425): what an
+   *  open with `chat` omitted follows. Absent on a host with no setting. */
+  interactionMode?(): InteractionMode
   /** The model a launch naming none will run once spawned (`rememberedSpawnModel`):
    *  the chat model last picked on the adapter of the profile it lands on. The
    *  account pick judges by it (PRDCT-4253). Undefined when it is not known
@@ -175,11 +179,12 @@ export function modeOf(record: SessionRecord | undefined, provider: string): str
     if (record.antigravityMode) return 'antigravity'
     if (record.codexMode) return 'codex'
     if (record.piMode) return 'pi'
+    if (record.opencodeMode) return 'opencode'
     if (record.claudeAgentsMode) return 'claude-agents'
     if (record.claudeMode) return 'claude'
     return 'terminal'
   }
-  return ['claude', 'codex', 'antigravity', 'pi', 'claude-agents'].includes(provider)
+  return ['claude', 'codex', 'antigravity', 'pi', 'opencode', 'claude-agents'].includes(provider)
     ? provider
     : 'terminal'
 }
@@ -317,7 +322,7 @@ export function endpointOf(
 ): EndpointIdentity | null {
   const record = ctx.shell.record(session.id)
   const mode = modeOf(record, session.provider)
-  if (mode === 'pi') return null
+  if (mode === 'pi' || mode === 'opencode') return null
   const group = groupOfSession(layouts, session.id)
   return {
     sessionId: session.id,

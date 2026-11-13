@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./embedded": "./src/embedded.ts",
+    "./forward-registry": "./src/forward/registry.ts",
     "./test-support": "./src/test-support.ts",
     "./settings/test-support": "./src/settings/test-support.ts",
     "./sidebar-layouts": "./src/sidebar/light.ts",
@@ -28,6 +29,7 @@
     "@structure-ai/grpc": "0.3.0",
     "@structure-ai/http": "0.3.0",
     "@structure-ai/runtime": "0.3.0",
-    "effect": "3.22.1"
+    "effect": "3.22.1",
+    "ws": "^8.19.0"
   }
 }

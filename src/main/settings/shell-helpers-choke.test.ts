@@ -60,7 +60,10 @@ const INPUTS: Record<string, unknown> = {
     toolDescription: 'Runs a command in a terminal on the computer.',
     input: { command: 'ls' },
     floor: 'reads'
-  }
+  },
+  // Folio's two reads (`helpers/folio.ts`).
+  'spoken-rendering': '# Done\n\nAll green.',
+  'page-title': 'Why does the build fail?'
 }
 
 async function boot(mode: 'in-process' | 'separate' | 'attached'): Promise<{

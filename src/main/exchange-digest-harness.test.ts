@@ -70,7 +70,12 @@ vi.mock('./exchange-digest-store', () => ({
   }
 }))
 
-import { requestDigest, requestWorkDigest } from './exchange-digest'
+import {
+  requestDigest,
+  requestPageTitle,
+  requestSpoken,
+  requestWorkDigest
+} from './exchange-digest'
 import { setHelperConfigSource } from './helpers/registry'
 
 const REPLY = JSON.stringify({ needs_you: false, message: null, summary: 'All quiet.' })
@@ -133,15 +138,34 @@ beforeAll(() => {
 afterAll(() => {
   fs.rmSync(mocks.dataDir, { recursive: true, force: true })
 })
+const spokenRequest = (
+  launch: { claudeProfileId?: string } = {}
+): Parameters<typeof requestSpoken>[0] => ({
+  sessionId: `sp${++n}`,
+  key: `spoken-1-${n}`,
+  launch,
+  markdown: '# Done'
+})
+const titleRequest = (): Parameters<typeof requestPageTitle>[0] => ({
+  sessionId: `pt${++n}`,
+  key: `title-1-${n}`,
+  launch: {},
+  message: 'Why?'
+})
+
 beforeEach(() => {
   process.env.CLAVE_E2E_DIGEST_REPLY = REPLY
   process.env.CLAVE_E2E_WORK_DIGEST_REPLY = WORK_REPLY
+  process.env.CLAVE_E2E_SPOKEN_REPLY = '<spoken>Done, on {account}.</spoken>'
+  process.env.CLAVE_E2E_PAGE_TITLE_REPLY = 'Why it is done'
   mocks.execFile.mockReset()
   fs.rmSync(path.join(mocks.dataDir, 'e2e-digest-reads.jsonl'), { force: true })
 })
 afterEach(() => {
   delete process.env.CLAVE_E2E_DIGEST_REPLY
   delete process.env.CLAVE_E2E_WORK_DIGEST_REPLY
+  delete process.env.CLAVE_E2E_SPOKEN_REPLY
+  delete process.env.CLAVE_E2E_PAGE_TITLE_REPLY
   delete process.env.CLAVE_E2E_DIGEST_RUNNER
   setHelperConfigSource()
   mocks.accounts.length = 0
@@ -204,6 +228,59 @@ describe('the harness journals every read that goes ahead, in the reading proces
     await requestDigest(request())
     await requestWorkDigest(workRequest())
     expect(journaled()).toEqual([])
+  })
+})
+
+describe('Folio’s reads under the harness', () => {
+  it('read the canned replies with the real parsers, on the tab’s account, and journal them', async () => {
+    const spoken = spokenRequest({ claudeProfileId: 'tab-account' })
+    const title = titleRequest()
+    await expect(requestSpoken(spoken)).resolves.toEqual({
+      ok: true,
+      text: 'Done, on tab-account.',
+      blocks: [{ n: 1, text: 'Done, on tab-account.' }]
+    })
+    await expect(requestPageTitle(title)).resolves.toEqual({ ok: true, title: 'Why it is done' })
+    expect(journaled()).toMatchObject([
+      { kind: 'spoken', sessionId: spoken.sessionId, key: spoken.key },
+      { kind: 'title', sessionId: title.sessionId, key: title.key }
+    ])
+  })
+
+  it('switched off, say so before the reply, and journal nothing', async () => {
+    setHelperConfigSource((id) =>
+      id === 'spoken-rendering' || id === 'page-title' ? { enabled: false } : undefined
+    )
+    await expect(requestSpoken(spokenRequest())).resolves.toEqual({
+      ok: false,
+      error: 'Switched off in Settings › Helpers (Spoken renderings).',
+      reason: 'disabled'
+    })
+    await expect(requestPageTitle(titleRequest())).resolves.toMatchObject({
+      ok: false,
+      reason: 'disabled'
+    })
+    expect(journaled()).toEqual([])
+  })
+
+  it('E2E_FAIL:<reason> fails with that reason; an unparsable reply is unreadable', async () => {
+    process.env.CLAVE_E2E_SPOKEN_REPLY = 'E2E_FAIL:limit'
+    process.env.CLAVE_E2E_PAGE_TITLE_REPLY =
+      'I would title it like this, and then some more words.\nSecond line.'
+    await expect(requestSpoken(spokenRequest())).resolves.toMatchObject({
+      ok: false,
+      reason: 'limit'
+    })
+    await expect(requestPageTitle(titleRequest())).resolves.toEqual({
+      ok: false,
+      error: 'Unreadable test reply'
+    })
+  })
+
+  it('an account this process lacks fails as auth', async () => {
+    await expect(
+      requestSpoken(spokenRequest({ claudeProfileId: 'unknown' }))
+    ).resolves.toMatchObject({ ok: false, reason: 'auth' })
   })
 })
 

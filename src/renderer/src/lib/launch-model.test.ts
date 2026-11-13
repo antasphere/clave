@@ -28,12 +28,26 @@ describe('chatAdapterOf', () => {
 })
 
 describe('rememberedLaunchModel', () => {
-  const read = (models: unknown): ((key: string) => Promise<unknown>) => vi.fn(async () => models)
+  /** Main's answer per adapter (PRDCT-4420: the read goes to the manager
+   *  that holds the composer's pick, keyed by adapter, never to a key of the
+   *  renderer's own preference file). */
+  const read = (models: unknown): ((adapterId: string) => Promise<string | null | undefined>) =>
+    vi.fn(async (adapterId: string) =>
+      models && typeof models === 'object'
+        ? ((models as Record<string, string>)[adapterId] ?? null)
+        : (models as string | null | undefined)
+    )
   it('reads the remembered model of the chat adapter the launch profile stands for', async () => {
     const r = read({ 'claude-chat': 'claude-opus-5-5', 'codex-chat': 'gpt-5.5' })
     expect(await rememberedLaunchModel('claude', 'claude-chat', null, r)).toBe('claude-opus-5-5')
     expect(await rememberedLaunchModel('codex', 'chat:codex:work', 'ws', r)).toBe('gpt-5.5')
-    expect(r).toHaveBeenCalledWith('chatModels')
+    expect(r).toHaveBeenCalledWith('claude-chat')
+    expect(r).toHaveBeenCalledWith('codex-chat')
+  })
+  it('asks main by adapter id, never the renderer preference file by key', async () => {
+    const r = read({ 'claude-chat': 'claude-opus-5-5' })
+    await rememberedLaunchModel('claude', 'claude-chat', null, r)
+    expect(r).not.toHaveBeenCalledWith('chatModels')
   })
   it("falls to the family's selected profile when the launch names none", async () => {
     const r = read({ 'claude-chat': 'claude-opus-5-5', 'codex-chat': 'gpt-5.5' })
@@ -48,7 +62,7 @@ describe('rememberedLaunchModel', () => {
     expect(
       await rememberedLaunchModel('claude', 'claude-chat', null, read(undefined))
     ).toBeUndefined()
-    expect(await rememberedLaunchModel('claude', 'claude-chat', null, read('nope'))).toBeUndefined()
+    expect(await rememberedLaunchModel('claude', 'claude-chat', null, read(42))).toBeUndefined()
     expect(
       await rememberedLaunchModel('claude', 'claude-chat', null, read({ 'claude-chat': 'bad..id' }))
     ).toBeUndefined()

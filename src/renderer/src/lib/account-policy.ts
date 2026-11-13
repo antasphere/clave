@@ -360,4 +360,18 @@ export function startAccountPolicy(): void {
     if (provider) refreshSessionAccountUsage(session, provider)
     schedule()
   })
+  // The account served the tab a turn again (PRDCT-4415): the report and
+  // what it proposed close, on a server tab as on this Mac's, since the pass
+  // above never moves a server tab and so never settles its report. A turn
+  // refused again reports again.
+  window.electronAPI?.onSessionLimitCleared?.(({ id }) => {
+    const store = useSessionStore.getState()
+    const session = store.sessions.find((s) => s.id === id)
+    if (!session) return
+    if (session.limitReported) store.setLimitReported(id, null)
+    if (session.accountProposal) store.setAccountProposal(id, null)
+    reportedOn.delete(id)
+    pendingModels.forget(id)
+    schedule()
+  })
 }

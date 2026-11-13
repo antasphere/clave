@@ -42,5 +42,9 @@ export * as Work from './work'
 export * as Routines from './routines'
 // ── PRDCT-4327: the digests read by the server a tab runs on ──
 export * as Digests from './digests'
+// ── PRDCT-4411: the speech of the server a tab runs on ──
+export * as Speech from './speech'
+// ── PRDCT-4472: the artefacts of the server a session runs on ──
+export * as Artefacts from './artefacts'
 
 // ── Lane B: terminals · Lane D: settings served ──

@@ -2,7 +2,7 @@
 
 Every one-shot model call Clave makes on its own (no tab, no person typing) is a
 **helper**: tab titles, exchange digests, work-card titles, commit messages, push
-summaries (PRDCT-4326). One registry declares them, one runner runs them.
+summaries (PRDCT-4326), permission explanations, Folio's spoken renderings and page titles. One registry declares them, one runner runs them.
 
 | File          | What it holds                                                                            |
 | ------------- | ---------------------------------------------------------------------------------------- |
@@ -11,6 +11,7 @@ summaries (PRDCT-4326). One registry declares them, one runner runs them.
 | `title.ts`    | the tab title (`title-generator.ts` calls it)                                            |
 | `digests.ts`  | the exchange digest and the work-card title (`exchange-digest.ts` calls them)            |
 | `git.ts`      | the commit message and the push summary (`git-manager.ts` calls them)                    |
+| `folio.ts`    | Folio's spoken rendering and page title (`exchange-digest.ts` calls them)                |
 
 The prompt helpers every builder shares (`asData`, `replyLines`, the system preamble,
 `HelperFailureReason`) live in `src/shared/helper-prompt.ts`, so the shared digest
@@ -43,7 +44,8 @@ catalog, and the standalone server knows a helper only once the catalog has load
 helper the catalog does not name.
 
 Nothing in the runner changes for a new helper. Priorities today: permission explainer
-100 (`explainer.ts`; a person is waiting on the card, PRDCT-4331), commit message 80, tab title 70, push
+100 (`explainer.ts`; a person is waiting on the card, PRDCT-4331), commit message 80, tab title 70,
+spoken rendering 60 (`folio.ts`; a person is waiting to hear the answer), page title 50, push
 summary 40, exchange digest 30, work digest 20.
 
 Only `background` helpers (the two digests) count against `MAX_RUNNING_HELPERS`, and the
@@ -65,7 +67,8 @@ unreadable reply; the git helpers one retry after any failure, a timeout include
 - **The history marker opens the prompt.** A helper's transcript lands in the store like
   any conversation; `session-history/index.ts` keeps it out of the history by the
   prompt's first words (`TITLE_HELPER_MARKER`, `DIGEST_HELPER_MARKER`,
-  `WORK_DIGEST_MARKER`, `GIT_HELPER_MARKER`, `PERMISSION_EXPLAINER_MARKER`). A new helper
+  `WORK_DIGEST_MARKER`, `GIT_HELPER_MARKER`, `PERMISSION_EXPLAINER_MARKER`,
+  `SPOKEN_MARKER`, `PAGE_TITLE_MARKER`). A new helper
   adds its marker there.
 - **No Electron.** The standalone server loads the runner with the title generator and
   the exchange digest (`sessions/host-graph.test.ts`).

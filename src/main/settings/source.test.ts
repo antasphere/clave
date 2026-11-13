@@ -13,6 +13,7 @@ import { LaunchProfileManager } from '../launch-profile-manager'
 import { PreferencesManager } from '../preferences-manager'
 import { WorkspaceManager } from '../workspace-manager'
 import { HelperPreferences } from '../helpers/preferences'
+import { ElevenLabsIntegration } from '../integrations/elevenlabs'
 import type { LoginJob } from '../account-login'
 import { electronTestPorts, tempDataDir } from '../ports/testing'
 import {
@@ -181,6 +182,35 @@ describe('the settings source over the real managers', () => {
       enabled: false,
       claudeProfileId: null
     })
+  })
+
+  it('refuses the integrations without a store, and seals the key on this host with one (PRDCT-4410)', async () => {
+    const bare = settingsSourceFromManagers(managers)
+    await expect(Promise.resolve().then(() => bare.integrations.read())).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'integrations',
+      message: 'This server has no integrations.'
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ tier: 'free' }), { status: 200 }))
+    )
+    try {
+      const source = settingsSourceFromManagers({
+        ...build(),
+        integrations: new ElevenLabsIntegration(electronTestPorts(dir), {
+          baseUrl: () => 'http://elevenlabs.test'
+        })
+      })
+      const answer = await source.integrations.setElevenLabsKey('xi-source-test-key')
+      expect(answer.elevenLabs).toMatchObject({ configured: true, tier: 'free' })
+      expect(JSON.stringify(answer)).not.toContain('xi-source-test-key')
+      expect(fs.readFileSync(path.join(dir, 'integrations.json'), 'utf-8')).not.toContain(
+        'xi-source-test-key'
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('loads the login manager once, and emits its progress', async () => {

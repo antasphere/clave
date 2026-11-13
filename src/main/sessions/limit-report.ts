@@ -155,3 +155,35 @@ function codexBucketReport(id: string, bucket: Record<string, unknown>): LimitRe
 export function providerEventReportsLimit(provider: string, payload: unknown): boolean {
   return limitReportOf(provider, payload) !== null
 }
+
+/** Whether a provider's own frame says the account serves the session again,
+ *  which closes a limit report still open on it (PRDCT-4415). Claude: a reply
+ *  the model wrote, any frame of type `assistant` that is not the CLI's
+ *  `<synthetic>` stand-in (the refusal itself is one). Codex: a rate-limits
+ *  update with buckets and none of them at its cap, the same frame that
+ *  reported the cap now saying it is gone (the app-server's `turn/completed`
+ *  never reaches the provider stream). A turn refused again reports again. */
+export function limitLiftedBy(provider: string, payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false
+  const p = payload as Record<string, unknown>
+  if (provider === 'claude') {
+    if (p.type !== 'assistant') return false
+    // A subagent's reply runs on its own model: a family cap the session's
+    // model hit may still stand (PRDCT-4422).
+    if (p.parent_tool_use_id != null) return false
+    const message = p.message as Record<string, unknown> | undefined
+    return !!message && typeof message === 'object' && message.model !== '<synthetic>'
+  }
+  if (provider === 'codex') {
+    if (p.method !== 'account/rateLimits/updated') return false
+    const params = p.params as Record<string, unknown> | undefined
+    if (!params) return false
+    const multi = params.rateLimitsByLimitId as Record<string, unknown> | undefined
+    const legacy = params.rateLimits as Record<string, unknown> | undefined
+    const hasBuckets =
+      (multi && typeof multi === 'object' && Object.keys(multi).length > 0) ||
+      (legacy && typeof legacy === 'object')
+    return !!hasBuckets && limitReportOf(provider, payload) === null
+  }
+  return false
+}

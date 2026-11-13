@@ -14,6 +14,11 @@
  *   for a session, by key: what a tab shows on opening, the same for every
  *   client of that server.
  *
+ * - `ReadSpokenRendering` / `GetSpokenRenderings` and `ReadPageTitle` /
+ *   `GetPageTitles`: Folio's two reads, on the same terms: a finished answer
+ *   written for the ear (read aloud), and the title of the page a reader's
+ *   question opens.
+ *
  * A read that could not be made is an answer, not a failure of the call:
  * `ok: false` with the class of the reason (`timeout | auth | limit |
  * unreadable | cancelled | disabled | failed`), which the card says.
@@ -80,6 +85,21 @@ export const ExchangeDigestKey = Schema.String.pipe(Schema.pattern(/^\d{1,4}-[0-
 /** `workDigestKey`'s shape. */
 export const WorkDigestKey = Schema.String.pipe(Schema.pattern(/^work-\d{1,4}-[0-9a-z]{1,8}$/))
 
+/* Folio's reads: an answer's markdown is clipped to 60,000 characters and a
+ * reader's message to 1,500 (`SPOKEN_MAX_CHARS`, `PAGE_TITLE_MESSAGE_CHARS`
+ * in the app's shared code, plus the mark of the cut); the bounds follow with
+ * a small margin, and `digest-clip.test.ts` in the app holds them to it. */
+/** The longest an answer's markdown may be. */
+export const DIGEST_MAX_SPOKEN = 61_440
+/** The longest a reader's message may be. */
+export const DIGEST_MAX_TITLE_MESSAGE = 1_536
+/** `spokenKey`'s shape: the length, then the hash, in base 36. */
+export const SpokenKey = Schema.String.pipe(Schema.pattern(/^spoken-[0-9a-z]{1,8}-[0-9a-z]{1,8}$/))
+/** `pageTitleKey`'s shape. */
+export const PageTitleKey = Schema.String.pipe(
+  Schema.pattern(/^title-[0-9a-z]{1,8}-[0-9a-z]{1,8}$/)
+)
+
 export const DigestMessage = Schema.Struct({
   from: Schema.String.pipe(Schema.maxLength(DIGEST_MAX_FROM)),
   text: Text,
@@ -104,6 +124,24 @@ export const WorkDigestDone = Schema.Struct({
 })
 export const WorkDigestResult = Schema.Union(WorkDigestDone, NotRead)
 export type WorkDigestResult = typeof WorkDigestResult.Type
+
+/** One block of a spoken rendering, numbered as the page's blocks
+ *  (PRDCT-4430). A server released before the blocks sends none. */
+export const SpokenBlock = Schema.Struct({ n: Schema.Int, text: Schema.String })
+export const SpokenDone = Schema.Struct({
+  ok: Schema.Literal(true),
+  text: Schema.String,
+  blocks: Schema.optional(Schema.Array(SpokenBlock))
+})
+export const SpokenResult = Schema.Union(SpokenDone, NotRead)
+export type SpokenResult = typeof SpokenResult.Type
+
+export const PageTitleDone = Schema.Struct({
+  ok: Schema.Literal(true),
+  title: Schema.String
+})
+export const PageTitleResult = Schema.Union(PageTitleDone, NotRead)
+export type PageTitleResult = typeof PageTitleResult.Type
 
 export const ReadExchangeDigest = Command.define('ReadExchangeDigest', {
   payload: Schema.Struct({
@@ -138,11 +176,49 @@ export const GetWorkDigests = Query.define('GetWorkDigests', {
   failure: CapabilityUnavailable
 })
 
+export const ReadSpokenRendering = Command.define('ReadSpokenRendering', {
+  payload: Schema.Struct({
+    sessionId: SessionId,
+    key: SpokenKey,
+    markdown: Schema.String.pipe(Schema.maxLength(DIGEST_MAX_SPOKEN))
+  }),
+  success: SpokenResult,
+  failure: CapabilityUnavailable
+})
+
+export const GetSpokenRenderings = Query.define('GetSpokenRenderings', {
+  payload: Schema.Struct({ sessionId: SessionId }),
+  success: Schema.Record({ key: Schema.String, value: SpokenDone }),
+  failure: CapabilityUnavailable
+})
+
+export const ReadPageTitle = Command.define('ReadPageTitle', {
+  payload: Schema.Struct({
+    sessionId: SessionId,
+    key: PageTitleKey,
+    message: Schema.String.pipe(Schema.maxLength(DIGEST_MAX_TITLE_MESSAGE))
+  }),
+  success: PageTitleResult,
+  failure: CapabilityUnavailable
+})
+
+export const GetPageTitles = Query.define('GetPageTitles', {
+  payload: Schema.Struct({ sessionId: SessionId }),
+  success: Schema.Record({ key: Schema.String, value: PageTitleDone }),
+  failure: CapabilityUnavailable
+})
+
 export type ExchangeDigestRead = typeof ReadExchangeDigest.payload.Type
 export type WorkDigestRead = typeof ReadWorkDigest.payload.Type
+export type SpokenRenderingRead = typeof ReadSpokenRendering.payload.Type
+export type PageTitleRead = typeof ReadPageTitle.payload.Type
 
 export const digestsGroup = ApiGroup.make('digests')
   .add(HttpCqrs.commandEndpoint('exchange', '/digests/exchange', ReadExchangeDigest))
   .add(HttpCqrs.queryEndpoint('exchangesOf', '/digests/exchanges-of', GetExchangeDigests))
   .add(HttpCqrs.commandEndpoint('work', '/digests/work', ReadWorkDigest))
   .add(HttpCqrs.queryEndpoint('workOf', '/digests/work-of', GetWorkDigests))
+  .add(HttpCqrs.commandEndpoint('spoken', '/digests/spoken', ReadSpokenRendering))
+  .add(HttpCqrs.queryEndpoint('spokenOf', '/digests/spoken-of', GetSpokenRenderings))
+  .add(HttpCqrs.commandEndpoint('title', '/digests/title', ReadPageTitle))
+  .add(HttpCqrs.queryEndpoint('titleOf', '/digests/title-of', GetPageTitles))

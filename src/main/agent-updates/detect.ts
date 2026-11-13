@@ -9,10 +9,13 @@ import type { AgentInstall, AgentUpdateId } from '../../shared/agent-updates'
 
 /** The npm package each agent is published as, when Clave knows it. Used for
  *  the latest version of an install whose path does not name its package
- *  (Claude's native installer, a Homebrew cask). Antigravity is not on npm. */
+ *  (Claude's and OpenCode's native installers, a Homebrew cask). Antigravity
+ *  is not on npm. OpenCode 2 is `@opencode/cli`, the package its docs name
+ *  (`opencode-ai` is the 1.x line). */
 export const KNOWN_PACKAGES: Partial<Record<AgentUpdateId, string>> = {
   claude: '@anthropic-ai/claude-code',
-  codex: '@openai/codex'
+  codex: '@openai/codex',
+  opencode: '@opencode/cli'
 }
 
 /** The package directory under a `node_modules/` segment: `@scope/name` or `name`. */
@@ -42,6 +45,7 @@ export function classifyInstall(realPath: string, id: AgentUpdateId): AgentInsta
   if (id === 'claude' && p.includes('/.local/share/claude/versions/')) {
     return { kind: 'claude-native' }
   }
+  if (id === 'opencode' && p.includes('/.opencode/bin/')) return { kind: 'opencode-native' }
 
   const cask = /\/Caskroom\/([^/]+)\//.exec(p)
   if (cask) return { kind: 'homebrew', name: cask[1], cask: true }
@@ -73,6 +77,8 @@ export function describeInstall(install: AgentInstall): string {
   switch (install.kind) {
     case 'claude-native':
       return "Claude's installer"
+    case 'opencode-native':
+      return "OpenCode's installer"
     case 'homebrew':
       return install.cask ? `Homebrew cask ${install.name}` : `Homebrew formula ${install.name}`
     case 'package':
@@ -157,7 +163,8 @@ export function releaseSource(
   if (install.kind === 'claude-native') {
     return { pkg: known, tag: claudeChannel === 'stable' ? 'stable' : 'latest' }
   }
-  if (install.kind === 'homebrew') return { pkg: known, tag: 'latest' }
+  if (install.kind === 'homebrew' || install.kind === 'opencode-native')
+    return { pkg: known, tag: 'latest' }
   return null
 }
 
@@ -190,6 +197,8 @@ export function upgradeCommand(
   switch (install.kind) {
     case 'claude-native':
       return { file: bin, args: ['update'] }
+    case 'opencode-native':
+      return { file: bin, args: ['upgrade'] }
     case 'homebrew':
       return {
         file: 'brew',

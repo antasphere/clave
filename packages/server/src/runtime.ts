@@ -32,6 +32,8 @@ import { ServerEvents } from './events'
 import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } from './ports'
 import { PushHubService, pushRoute } from './push/route'
 import { fixtureRoute } from './fixtures/route'
+// ── PRDCT-4473: the forwarded pages ──
+import { forwardRoute } from './forward/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, WorkspacesWelcomeLive, settingsHandlers } from './settings'
 import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
@@ -59,6 +61,10 @@ import { HistoryPort, historyHandlers } from './history'
 import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
 // ── PRDCT-4327: the digests ──
 import { DigestsPort, digestHandlers } from './digests'
+// ── PRDCT-4411: the speech ──
+import { SpeechPort, speechHandlers } from './speech'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactsEventsLive, ArtefactsPort, artefactHandlers } from './artefacts'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -108,6 +114,10 @@ export type ServerServices =
   | Routines
   // ── PRDCT-4327: the digests ──
   | DigestsPort
+  // ── PRDCT-4411: the speech ──
+  | SpeechPort
+  // ── PRDCT-4472: the artefacts ──
+  | ArtefactsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -149,6 +159,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
   // ── ADR 0004: the scheduler's news told to the clients ──
   const routinesEvents = RoutinesEventsLive.pipe(Layer.provide(services))
+  // ── PRDCT-4472: a session's artefact, its preview and Slideless told to the clients ──
+  const artefactsEvents = ArtefactsEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -168,7 +180,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Issue #266: the server domain ──
     serverInfoEvents,
     // ── ADR 0004: the routines ──
-    routinesEvents
+    routinesEvents,
+    // ── PRDCT-4472: the artefacts ──
+    artefactsEvents
   )
 }
 
@@ -214,15 +228,22 @@ export const BusesLive = busesLayer.pipe(
       // ── ADR 0004: the routines ──
       ...routineHandlers,
       // ── PRDCT-4327: the digests ──
-      ...digestHandlers
+      ...digestHandlers,
+      // ── PRDCT-4411: the speech ──
+      ...speechHandlers,
+      // ── PRDCT-4472: the artefacts ──
+      ...artefactHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )
 )
 
 /** The middleware outside the router, outermost first: the loopback CORS
- *  answer, the push upgrade, then the token check, then (test mode only)
- *  the fixture route, inside the token check so it is never open. */
+ *  answer, the push upgrade, then the token check, then the forwarded pages
+ *  (PRDCT-4473, `forward/route.ts`) and (test mode only) the fixture route,
+ *  both inside the token check so neither is ever open. The forward route
+ *  sits before the body bounds: its bodies are streamed to the page, never
+ *  read here, so no limit applies to them. */
 const outer =
   (options: ServerOptions) =>
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
@@ -230,7 +251,11 @@ const outer =
       corsForLoopback(
         pushRoute(hub)(
           bearerAuth(options.token)(
-            fixtureRoute(options.testFixtures === true)(boundedFileRequest(privateAnswerJson(app)))
+            forwardRoute(options.ports.forwards)(
+              fixtureRoute(options.testFixtures === true)(
+                boundedFileRequest(privateAnswerJson(app))
+              )
+            )
           )
         )
       )
@@ -261,9 +286,13 @@ export const ServerLive = (
 
 /** The largest body a digest command may send (PRDCT-4327). */
 export const DIGEST_BODY_LIMIT = 3 * 1024 * 1024
+/** The largest body a speech command may send (PRDCT-4411): 5,000
+ *  characters of text, a voice and a model, with room for JSON escaping. */
+export const SPEECH_BODY_LIMIT = 64 * 1024
 
 /** Bound transfer and sensitive resolution bodies before JSON decoding.
- * Authentication runs first; oversized secret inputs are never echoed. */
+ * Authentication runs first; oversized secret inputs are never echoed.
+ * `/forward/` never reaches this: its route answers before it (`outer`). */
 const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
     const limit =
@@ -276,7 +305,10 @@ const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
             // in the worst JSON escaping): nothing bigger is read or parsed.
             request.url.startsWith('/digests/')
             ? DIGEST_BODY_LIMIT
-            : undefined
+            : // PRDCT-4411: a speech command carries one part of a page.
+              request.url.startsWith('/speech/')
+              ? SPEECH_BODY_LIMIT
+              : undefined
     if (limit === undefined) return app
     const length = Number(request.headers['content-length'])
     if (Number.isFinite(length) && length > limit)

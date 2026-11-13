@@ -2,7 +2,7 @@ import { ArrowDownTrayIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import type { AgentUpdateId, AgentUpdateStatus } from '../../../../shared/agent-updates'
 import { agentStatusLine, installLabel, timeOf } from '../../lib/agent-update-status'
-import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo, OpenCodeLogo } from '../icons/cli-logos'
 import {
   SettingsCallout,
   SettingsCard,
@@ -15,17 +15,24 @@ const LOGOS: Record<AgentUpdateId, (p: { className?: string }) => React.JSX.Elem
   claude: ClaudeLogo,
   codex: CodexLogo,
   antigravity: AntigravityLogo,
-  pi: PiLogo
+  pi: PiLogo,
+  opencode: OpenCodeLogo
 }
 
-function AgentRow({
+/** One agent CLI's row: logo, name and version, how it was installed, its
+ *  update state and the Update button. Shared by Software Update and
+ *  Settings → Harnesses; `action` is a control of the caller's beside it
+ *  (the Harnesses page's Install). */
+export function AgentRow({
   agent,
   autoUpdate,
-  onUpdate
+  onUpdate,
+  action
 }: {
   agent: AgentUpdateStatus
   autoUpdate: boolean
   onUpdate: () => void
+  action?: React.ReactNode
 }): React.JSX.Element {
   const Logo = LOGOS[agent.id]
   const badge = installLabel(agent.install)
@@ -63,6 +70,7 @@ function AgentRow({
           {agent.phase === 'updating' ? 'Updating…' : 'Update'}
         </button>
       )}
+      {action}
     </SettingsRow>
   )
 }

@@ -26,6 +26,7 @@ import { WorkBreadcrumb } from '../components/session/WorkEntryItem'
 import { PaneSearch } from './PaneSearch'
 import { usePaneSearchStore } from './pane-search'
 import { useBackgroundTasks } from './background-tasks'
+import { settleOnReveal } from '../lib/settle-on-reveal'
 
 function RegisteredSessionView({
   sessionId,
@@ -239,7 +240,10 @@ function RegisteredSessionView({
               <MagnifyingGlassIcon className="w-4 h-4" />
             </button>
           )}
+          {/* inline-flex: an inline wrapper adds half a pixel of line box to the
+              bar, which then stands taller than a file's (PRDCT-4491). */}
           <span
+            className="inline-flex"
             title={
               terminalSessionId
                 ? terminal
@@ -285,7 +289,15 @@ function RegisteredSessionView({
         // view is cheap and stays mounted to keep what it holds privately.
         if (view.kind === 'surface' && hidden) return null
         return (
-          <div key={view.id} className="chat-content-slot" data-view-id={view.id} hidden={hidden}>
+          // A view chosen again leaves `hidden`, as a tab does `display:
+          // none`: what stood in it stands still (PRDCT-4419).
+          <div
+            key={view.id}
+            ref={settleOnReveal}
+            className="chat-content-slot"
+            data-view-id={view.id}
+            hidden={hidden}
+          >
             {view.kind === 'surface' ? (
               <PluginViewSurface
                 key={`${view.id}:${session.id}`}

@@ -27,6 +27,7 @@ const fake = vi.hoisted(() => ({
   view: undefined as AccountUsageSummary | undefined,
   switched: [] as [string, string, unknown][],
   limitListener: null as null | ((payload: { id: string; report: unknown }) => void),
+  clearedListener: null as null | ((payload: { id: string }) => void),
   noopStore: { subscribe: () => () => {}, getState: () => ({}) }
 }))
 vi.mock('./fleet-identity', () => ({ isRemoteKey: () => false }))
@@ -190,6 +191,10 @@ beforeEach(() => {
       getCodexUsageLimits: async () => {},
       onSessionLimitReported: (cb: (payload: { id: string; report: unknown }) => void) => {
         fake.limitListener = cb
+        return () => {}
+      },
+      onSessionLimitCleared: (cb: (payload: { id: string }) => void) => {
+        fake.clearedListener = cb
         return () => {}
       }
     }
@@ -455,6 +460,32 @@ describe('a Codex tab (integration round 1, F6, G4)', () => {
       reason: 'reported',
       rungs: [{ kind: 'account', accountId: 'play', label: 'play' }]
     })
+  })
+})
+
+describe('the account serves the tab again (PRDCT-4415)', () => {
+  it('closes the report and its proposal; a refusal after reports again', () => {
+    fake.sessions = [chat()]
+    startAccountPolicy()
+    fake.limitListener!({ id: idOf(), report: { scope: 'shared' } })
+    runAccountPolicy()
+    expect(lastProposal()).not.toBeNull()
+    fake.clearedListener!({ id: idOf() })
+    expect(fake.sessions[0].limitReported).toBeNull()
+    expect(lastProposal()).toBeNull()
+    // The pass that follows proposes nothing: the account's read is not out.
+    runAccountPolicy()
+    expect(lastProposal()).toBeNull()
+    fake.limitListener!({ id: idOf(), report: { scope: 'shared' } })
+    expect(fake.sessions[0].limitReported).toEqual({ scope: 'shared' })
+  })
+
+  it('a cleared word for a tab it does not hold changes nothing', () => {
+    fake.sessions = [chat({ limitReported: { scope: 'shared' } })]
+    startAccountPolicy()
+    fake.clearedListener!({ id: 'elsewhere' })
+    expect(fake.sessions[0].limitReported).toEqual({ scope: 'shared' })
+    expect(fake.reports).toEqual([])
   })
 })
 

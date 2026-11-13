@@ -48,6 +48,14 @@ import {
   UpsertLaunchProfile
 } from './launch-profiles'
 import { ListHelperPreferences, SetHelperPreference } from './helpers'
+import {
+  CheckElevenLabs,
+  ListElevenLabsVoices,
+  ReadIntegrations,
+  RemoveElevenLabsKey,
+  SetElevenLabsKey,
+  SetElevenLabsVoice
+} from './integrations'
 import { SetAppIcon } from './preferences'
 import {
   LoadWorkspaceState,
@@ -212,6 +220,35 @@ export const settingsGroup = ApiGroup.make('settings')
   // The helpers (PRDCT-4330)
   .add(HttpCqrs.queryEndpoint('listHelperPreferences', '/helpers', ListHelperPreferences))
   .add(HttpCqrs.commandEndpoint('setHelperPreference', '/helpers', SetHelperPreference))
+  // The integrations (PRDCT-4410): the ElevenLabs key sealed on the machine
+  .add(HttpCqrs.queryEndpoint('readIntegrations', '/integrations', ReadIntegrations))
+  .add(
+    HttpCqrs.commandEndpoint('setElevenLabsKey', '/integrations/elevenlabs/key', SetElevenLabsKey)
+  )
+  .add(
+    HttpCqrs.commandEndpoint('checkElevenLabs', '/integrations/elevenlabs/check', CheckElevenLabs)
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'removeElevenLabsKey',
+      '/integrations/elevenlabs/remove',
+      RemoveElevenLabsKey
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'setElevenLabsVoice',
+      '/integrations/elevenlabs/voice',
+      SetElevenLabsVoice
+    )
+  )
+  .add(
+    HttpCqrs.queryEndpoint(
+      'listElevenLabsVoices',
+      '/integrations/elevenlabs/voices',
+      ListElevenLabsVoices
+    )
+  )
   // Preferences
   .add(HttpCqrs.commandEndpoint('setAppIcon', '/preferences/app-icon', SetAppIcon))
   // Workspaces

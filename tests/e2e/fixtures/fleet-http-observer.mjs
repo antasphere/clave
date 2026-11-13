@@ -130,10 +130,25 @@ export async function observeDaemon(url) {
   }
 }
 
-export function assertFileEndpoint(observers, marks, owner, route) {
-  const seen = observers.map((observer, index) =>
-    observer.entries.slice(marks[index]).filter((entry) => entry.path === route)
-  )
+export async function assertFileEndpoint(
+  observers,
+  marks,
+  owner,
+  route,
+  { timeoutMs = 10_000 } = {}
+) {
+  // Filesystem visibility can precede the HTTP reply. Await the observed
+  // response before checking its owner and status, without retrying a request.
+  const deadline = Date.now() + timeoutMs
+  const observed = () =>
+    observers.map((observer, index) =>
+      observer.entries.slice(marks[index]).filter((entry) => entry.path === route)
+    )
+  let seen = observed()
+  while (!seen.some((entries) => entries.length) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    seen = observed()
+  }
   assert.ok(
     seen[owner].some((entry) => entry.status === 200 || entry.status === 204),
     `${route} must complete on owner ${owner + 1}: ${JSON.stringify(seen)}`

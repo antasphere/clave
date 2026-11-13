@@ -12,6 +12,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WORK_DIGEST_MARKER } from '../../shared/work-digest'
+import { SPOKEN_MARKER, spokenPrompt } from '../../shared/spoken-rendering'
+import { PAGE_TITLE_MARKER, pageTitlePrompt } from '../../shared/page-title'
 import { SessionLedger, normalizeLedgerRow, type LedgerRow } from './ledger'
 import {
   captureEventsToRows,
@@ -342,6 +344,13 @@ describe('isTitleHelperConversation', () => {
   })
   it('skips the work digest’s one-shots too (the card titles of the agent’s working notes)', () => {
     expect(isTitleHelperConversation(`${WORK_DIGEST_MARKER}, so its human knows`)).toBe(true)
+  })
+  it('skips Folio’s spoken renderings and page titles too', () => {
+    expect(isTitleHelperConversation(spokenPrompt('# Done\n\nAll green.'))).toBe(true)
+    expect(isTitleHelperConversation(pageTitlePrompt('Why does the build fail?'))).toBe(true)
+    expect(isTitleHelperConversation(`${SPOKEN_MARKER}.`)).toBe(true)
+    expect(isTitleHelperConversation(`${PAGE_TITLE_MARKER}.`)).toBe(true)
+    expect(isTitleHelperConversation('Say this answer aloud for me')).toBe(false)
   })
 })
 

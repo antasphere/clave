@@ -28,6 +28,7 @@ export function staleAgentRelease(
     codexMode?: boolean
     antigravityMode?: boolean
     piMode?: boolean
+    opencodeMode?: boolean
   },
   agents: AgentUpdateStatus[],
   dismissedAt: number | undefined

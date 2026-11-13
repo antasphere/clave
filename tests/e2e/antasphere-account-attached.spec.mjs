@@ -298,6 +298,12 @@ export async function run(t) {
     const { page: win2 } = await openWindow(app, win)
     win2.on('pageerror', (e) => errors.push(e.message))
     const { section: section2 } = await openAccounts(win2)
+    // The initial "Reading…" placeholder is signed-out too. Wait for the
+    // account read, independently of the cancellation notice asserted below.
+    await section2.locator('[data-antasphere-sign-in]:enabled').waitFor({
+      state: 'visible',
+      timeout: 10_000
+    })
     await until(async () => (await phaseOf(section2)) === 'signed-out')
     t.equal(
       'the second window sees the cancel too',

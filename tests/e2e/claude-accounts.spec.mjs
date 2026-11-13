@@ -31,7 +31,8 @@ import {
   callMcp,
   until,
   userDataDir,
-  fixturePath
+  fixturePath,
+  markHarnessesInstalled
 } from './harness.mjs'
 
 const DIR = userDataDir('claude-accounts')
@@ -136,6 +137,10 @@ export async function run(t) {
         additionalArgs: []
       })
       await window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'e2e-printenv')
+      // The launcher's rows run the transport of the interaction mode
+      // (PRDCT-4425): Terminal, so a row starts the workspace's profile above
+      // rather than a chat on the real claude.
+      await window.electronAPI.launchSettingsSet({ interactionMode: 'terminal' })
     }, WS.id)
     await win.reload()
     await win.waitForSelector('.sidebar-footer-line[data-usage-provider="claude"]')
@@ -171,12 +176,13 @@ export async function run(t) {
     await win.locator('[data-settings-nav-row="accounts"]').click()
     const accountsPage = win.locator('[data-settings-page="accounts"]')
     await accountsPage.waitFor()
-    await accountsPage.getByRole('button', { name: 'Add with a token', exact: true }).click()
+    await accountsPage.locator('[data-connect]').click()
+    await win.locator('[data-connect-secondary="anthropic"]').click()
     const form = accountsPage.locator('[data-claude-token-form]')
     await form.waitFor()
-    await form.getByLabel('Account name').fill('Work')
+    await form.getByLabel('Connection name').fill('Work')
     await form.getByLabel('Claude Code token').fill(WORK_TOKEN)
-    await form.getByRole('button', { name: 'Add account', exact: true }).click()
+    await form.getByRole('button', { name: 'Add connection', exact: true }).click()
     await form.locator('[data-claude-token-note]').waitFor()
     const note = await form.locator('[data-claude-token-note]').textContent()
     t.equal(
@@ -248,10 +254,11 @@ export async function run(t) {
     // A refused token leaves no half-account behind.
     await win.locator('[data-settings-nav-row="accounts"]').click()
     await accountsPage.waitFor()
-    await accountsPage.getByRole('button', { name: 'Add with a token', exact: true }).click()
-    await form.getByLabel('Account name').fill('Broken')
+    await accountsPage.locator('[data-connect]').click()
+    await win.locator('[data-connect-secondary="anthropic"]').click()
+    await form.getByLabel('Connection name').fill('Broken')
     await form.getByLabel('Claude Code token').fill('not-a-token')
-    await form.getByRole('button', { name: 'Add account', exact: true }).click()
+    await form.getByRole('button', { name: 'Add connection', exact: true }).click()
     await form.locator('[data-claude-token-note="error"]').waitFor()
     t.check(
       'a value that is not a token is refused with a reason',
@@ -414,8 +421,9 @@ export async function run(t) {
         })
         await win.locator('.launcher-caret:not([disabled])').waitFor()
         await win.click('.launcher-caret')
+        await markHarnessesInstalled(win)
         const shown = await win
-          .locator('[data-claude-entry="Claude Code"]')
+          .locator('[data-harness-row="claude"]')
           .waitFor({ timeout: 1_500 })
           .then(
             () => true,
@@ -440,28 +448,42 @@ export async function run(t) {
       menu: menuBox.x,
       button: buttonBox.x
     })
-    const claudeEntry = win.locator('[data-claude-entry="Claude Code"]')
+    const claudeEntry = win.locator('[data-harness-row="claude"]')
     await claudeEntry.hover()
-    // Two launch profiles (the built-in claude and printenv) and two
-    // accounts: hovering Claude Code lists the profiles, and hovering a
-    // profile opens its accounts in a third menu beside the second.
-    const profilesMenu = win.locator('[role="menu"]').nth(1)
-    const printenvEntry = profilesMenu.locator('[data-launch-profile-entry="e2e-printenv"]')
-    await printenvEntry.waitFor()
-    const profileRows = await profilesMenu
+    // Two connections (the machine login and Work): hovering Claude Code
+    // lists the models (PRDCT-4423), and hovering a model opens its
+    // connections in a third menu beside the second.
+    const modelsMenu = win.locator('[role="menu"]').nth(1)
+    const modelEntry = modelsMenu.locator(
+      '[data-harness-model]:not([data-harness-model="default"])'
+    )
+    await modelEntry.first().waitFor()
+    const modelRows = await modelsMenu
+      .locator('[data-harness-model]')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-harness-model')))
+    t.check(
+      'hovering Claude Code lists the models, not connections',
+      modelRows.length > 0 && (await modelsMenu.locator('[data-harness-connection]').count()) === 0,
+      modelRows
+    )
+    // The saved profiles sit under Advanced, never their chat twins.
+    await modelsMenu.locator('[data-harness-advanced="claude"]').hover()
+    const advancedMenu = win.locator('[role="menu"]').nth(2)
+    await advancedMenu.locator('[data-launch-profile-entry="e2e-printenv"]').waitFor()
+    const profileRows = await advancedMenu
       .locator('[data-launch-profile-entry]')
       .evaluateAll((els) => els.map((el) => el.getAttribute('data-launch-profile-entry')))
     t.check(
-      'hovering Claude Code lists the launch profiles, terminal and chat, not accounts',
+      'Advanced lists the saved launch profiles, never a chat twin',
       profileRows.includes('builtin-claude') &&
         profileRows.includes('e2e-printenv') &&
-        profileRows.some((id) => id.startsWith('chat:') || id === 'claude-chat') &&
-        (await profilesMenu.locator('[data-claude-account]').count()) === 0,
+        !profileRows.some((id) => id.startsWith('chat:') || id === 'claude-chat'),
       profileRows
     )
-    await printenvEntry.hover()
+    const model = modelEntry.first()
+    await model.hover()
     const accountsMenu = win.locator('[role="menu"]').nth(2)
-    const rows = accountsMenu.locator('[data-claude-account]')
+    const rows = accountsMenu.locator('[data-harness-connection]')
     await until(async () => (await rows.count()) === 2)
     const boxes = await Promise.all(
       [0, 1, 2].map((i) => win.locator('[role="menu"]').nth(i).boundingBox())
@@ -473,10 +495,10 @@ export async function run(t) {
         boxes[2].x >= boxes[1].x + boxes[1].width + 4,
       boxes
     )
-    t.equal('hovering Claude Code offers both accounts', await rows.count(), 2)
+    t.equal('hovering a model offers both connections', await rows.count(), 2)
     const workRowText = await rows.filter({ hasText: 'Work' }).first().textContent()
     t.check(
-      "the account row shows the account's headroom",
+      "the connection row shows the account's headroom",
       workRowText.includes('Work') && workRowText.includes('90% left'),
       workRowText
     )
@@ -490,12 +512,22 @@ export async function run(t) {
 
     // ── A claude agents tab, and its duplicate, run on the account too ──
     // Round 2 of verification: the clone of an agents tab was on the machine
-    // login. Started from the launcher's own submenu, as a user would.
+    // login. Started from the launcher's own submenu, as a user would: the
+    // "Agents…" item (PRDCT-4423) takes no connection of its own, it runs on
+    // the selected one, which the user sets on the Connections page.
     await win.keyboard.press('Escape')
+    await win.locator('.sidebar-footer-line').click()
+    await win.locator('[data-settings-nav-row="accounts"]').click()
+    await win
+      .locator('[data-settings-page="accounts"]')
+      .getByRole('radio', { name: 'Start new sessions on Work', exact: true })
+      .click()
+    await back()
     const idsBeforeAgents = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
     await openCaret()
+    await win.locator('[data-harness-row="claude"]').hover()
     try {
-      await win.locator('[data-claude-entry="Claude Agents"]').hover({ timeout: 8_000 })
+      await win.locator('[role="menu"] [data-harness-agents]').click({ timeout: 8_000 })
     } catch (e) {
       const menus = await win.locator('[role="menu"]').evaluateAll((els) =>
         els.map((el) => ({
@@ -503,32 +535,18 @@ export async function run(t) {
           text: el.textContent?.slice(0, 200)
         }))
       )
-      const entries = await win
-        .locator('[data-claude-entry]')
-        .evaluateAll((els) => els.map((el) => el.getAttribute('data-claude-entry')))
-      t.check('the caret menu offers the Claude Agents entry', false, {
+      t.check('Claude Code’s submenu offers the Agents… item', false, {
         menus,
-        entries,
         error: e.message.split('\n')[0]
       })
       throw e
     }
-    // The Claude Code submenus the pointer crossed may still be fading out:
-    // the Agents submenus are the newest menus in the document.
-    await win
-      .locator('[role="menu"]')
-      .last()
-      .locator('[data-launch-profile-entry="e2e-printenv"]')
-      .hover()
-    const agentsRows = win.locator('[role="menu"]').last().locator('[data-claude-account]')
-    await until(async () => (await agentsRows.count()) === 2)
-    await agentsRows.filter({ hasText: 'Work' }).first().click()
     const agents = await until(async () => {
       const list = await callMcp(app, 'list', {})
       return list.sessions.find((s) => !idsBeforeAgents.has(s.id)) ?? null
     })
     t.check(
-      'the submenu started a claude agents tab on the account',
+      'the Agents… item started a claude agents tab on the selected account',
       agents?.mode === 'claude-agents' && agents.account?.label === 'Work',
       agents
     )

@@ -28,17 +28,17 @@ export async function rememberedLaunchModel(
   provider: PooledProvider,
   launchProfileId: string | undefined,
   workspaceId: string | null,
-  read: (key: string) => Promise<unknown> = (key) =>
-    window.electronAPI?.preferencesGet(key) ?? Promise.resolve(undefined)
+  read: (adapterId: string) => Promise<string | null | undefined> = (adapterId) =>
+    window.electronAPI?.launchRememberedModel?.(adapterId) ?? Promise.resolve(undefined)
 ): Promise<string | undefined> {
   const profileId = launchProfileId ?? selectedLaunchProfile(provider, workspaceId).id
   const adapterId = chatAdapterOf(provider, profileId)
   if (!adapterId) return undefined
-  const models = await read('chatModels').catch(() => undefined)
-  const model =
-    models && typeof models === 'object'
-      ? (models as Record<string, unknown>)[adapterId]
-      : undefined
+  // One read, from main (PRDCT-4420): until 11 November 2026 this asked
+  // `preferences:get`, which answers from `clave-preferences.json`, while the
+  // composer's pick is written to `preferences.json`; the launch never knew
+  // its model and the suggested account was judged on the shared caps alone.
+  const model = await read(adapterId).catch(() => undefined)
   if (typeof model !== 'string' || !isValidModelName(model)) return undefined
   if (adapterId === 'claude-chat' && isDefaultClaudeAlias(model)) return undefined
   return model

@@ -443,8 +443,11 @@ export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-a
         client = serverClient(own.url, own.token)
         const launched = await launchApp(dir, {
           server: { url: proxy.url, token: own.token },
-          settleMs: 300,
-          waitForServer: false
+          // Observe the main-process registration while it is pending. A
+          // renderer boot can outlast its 5 s budget on a loaded runner.
+          // The held/listed/undecided assertion below remains the barrier.
+          waitForServer: false,
+          waitForWindow: false
         })
         app = launched.app
         const keepLifecycleLines = (chunk) => {

@@ -14,10 +14,12 @@ import type { DigestDone } from '../shared/exchange-digest'
  * leaves half a file; a file that cannot be read is set aside and the store
  * starts empty rather than failing every call; writes are gathered for a
  * moment so a burst of digests is one write. Bounded: a session keeps its
- * latest PER_SESSION digests, and the store its latest SESSIONS sessions.
+ * latest PER_SESSION digests (or the cap its caller files a bucket under:
+ * Folio's page titles keep more, its spoken renderings, large, as many), and
+ * the store its latest SESSIONS sessions.
  */
 
-const PER_SESSION = 40
+export const PER_SESSION = 40
 const SESSIONS = 300
 const SAVE_DELAY_MS = 400
 
@@ -64,15 +66,15 @@ export class DigestStore {
     return this.load()[sessionId]?.[key]?.digest
   }
 
-  put(sessionId: string, key: string, digest: DigestDone): void {
+  /** File a digest; the bucket keeps its latest `cap` (PER_SESSION unless
+   *  the caller says otherwise). */
+  put(sessionId: string, key: string, digest: DigestDone, cap = PER_SESSION): void {
     const data = this.load()
     const filed = (data[sessionId] ??= {})
     filed[key] = { at: Date.now(), digest }
     const keys = Object.keys(filed)
-    if (keys.length > PER_SESSION)
-      for (const old of keys
-        .sort((a, b) => filed[a].at - filed[b].at)
-        .slice(0, keys.length - PER_SESSION))
+    if (keys.length > cap)
+      for (const old of keys.sort((a, b) => filed[a].at - filed[b].at).slice(0, keys.length - cap))
         delete filed[old]
     const sessions = Object.keys(data)
     if (sessions.length > SESSIONS) {

@@ -3,6 +3,9 @@ import { parseDelivery, type ProvenanceSender } from '../../../../src/shared/exc
 import type { Entry } from '../reducer'
 import { visibleEntries, type ToolEntry } from '../tools'
 import type { PermissionEntry } from '../approvals'
+import { clipText } from '../../../../src/shared/helper-prompt'
+import { PAGE_TITLE_MESSAGE_CHARS, pageTitleKey } from '../../../../src/shared/page-title'
+import { joinBlocks, splitBlocks } from '../../../../src/shared/spoken-rendering'
 
 /* Folio reads the conversation as a book of pages, one per question: the
    reader's message is the page's title, the agent's answer is its text, and
@@ -42,15 +45,32 @@ export interface Page {
   question: UserEntry[]
   /** Another tab, when the message came from one (`clave_send_to_session`). */
   from: ProvenanceSender | null | undefined
+  /** The stand-in title: the question's first sentence (`headline`), shown
+   *  at once and kept when no written title comes (`PageTitle`). */
   title: string
+  /** The key of the title a helper writes for the page (PRDCT-4412), null
+   *  for a page with no question to title. */
+  titleKey: string | null
+  /** The question sent for its title: the reader's words (`fullMessage`)
+   *  clipped as the host clips them, so what is sent is what is keyed and
+   *  the wire never refuses a long question. Empty with no question. */
+  message: string
+  /** The question as the reader wrote it: its messages' bodies, delivery
+   *  headers taken out, joined with a blank line. Empty with no question. */
+  fullMessage: string
   /** The question as the reader wrote it, without a delivery header; empty
-   *  when the title already says all of it. */
+   *  when the stand-in title already says all of it (`briefFor` says what
+   *  shows under a written title). */
   brief: string
   rows: PageRow[]
   status: PageStatus
   at: number
-  /** The answer's text, joined, for copying and for reading aloud. */
+  /** The answer's text, joined, for copying. */
   answer: string
+  /** What is read aloud (PRDCT-4430): the page's blocks (`pageBlocks`)
+   *  joined so that `splitBlocks` cuts it back into exactly those blocks, so
+   *  the spoken rendering asked on it is numbered as the page is. */
+  spoken: string
   tools: number
   failed: number
 }
@@ -84,11 +104,31 @@ export function headline(text: string): string {
   return `${(space > TITLE_MAX * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, '')}…`
 }
 
+const flat = (s: string): string => s.replace(MARKER, '').replace(/\s+/g, ' ').trim()
+
 /** Whether the message says more than its title: the brief is shown under it. */
 function briefOf(body: string, title: string): string {
-  const flat = (s: string): string => s.replace(MARKER, '').replace(/\s+/g, ' ').trim()
   const full = flat(body)
   return full === '' || full === title || full === title.replace(/…$/, '') ? '' : body.trim()
+}
+
+/** What shows under the title on screen: under the stand-in, the page's own
+ *  brief (empty when the first sentence was the whole message); under a
+ *  title a helper wrote, the whole message, since the written title is not
+ *  the reader's words — unless it happens to say exactly them. */
+export function briefFor(
+  page: Pick<Page, 'title' | 'brief' | 'fullMessage'>,
+  shown: string
+): string {
+  if (shown === page.title) return page.brief
+  const full = flat(page.fullMessage)
+  return full === '' || full === flat(shown) ? '' : page.fullMessage.trim()
+}
+
+/** The key of a page's written title: the message clipped as the host clips
+ *  it before keying, so both sides name the same text. */
+export function titleKeyOf(message: string): string {
+  return pageTitleKey(clipText(message, PAGE_TITLE_MESSAGE_CHARS))
 }
 
 function bodyOf(entry: UserEntry): { body: string; from: ProvenanceSender | null | undefined } {
@@ -181,6 +221,7 @@ export function buildPages(
     const answer = draft.rows
       .flatMap((row) => (row.prose ? [row.prose.text.trim()] : []))
       .join('\n\n')
+    const spoken = joinBlocks(blocksOf(draft.rows).map((block) => block.markdown))
     return {
       key: draft.key,
       holds: draft.holds,
@@ -188,15 +229,54 @@ export function buildPages(
       question: draft.question,
       from: parsed[0]?.from,
       title,
+      titleKey: first && flat(body) ? titleKeyOf(body) : null,
+      message: first ? clipText(body, PAGE_TITLE_MESSAGE_CHARS) : '',
+      fullMessage: first ? body : '',
       brief: briefOf(body, title),
       rows: draft.rows,
       status: statusOf(draft.question, draft.rows, lastPage ? state : 'done'),
       at: draft.at,
       answer,
+      spoken,
       tools: tools.length,
       failed: tools.filter((tool) => tool.failed === true).length
     }
   })
+}
+
+/** One block of a page (PRDCT-4430): its number across the page's prose
+ *  entries in order (block 1 is the first block of the first prose entry),
+ *  its markdown, and the row it is written in. */
+export interface PageBlock {
+  n: number
+  markdown: string
+  rowKey: string
+}
+
+/** The blocks of one prose entry: the split the page renders and the voice
+ *  is asked on. */
+export const entryBlocks = (text: string): string[] => splitBlocks(text)
+
+function blocksOf(rows: PageRow[]): PageBlock[] {
+  const blocks: PageBlock[] = []
+  for (const row of rows)
+    if (row.prose)
+      for (const markdown of entryBlocks(row.prose.text))
+        blocks.push({ n: blocks.length + 1, markdown, rowKey: row.key })
+  return blocks
+}
+
+/** A page's blocks, numbered across its prose entries. Pure. */
+export function pageBlocks(page: Pick<Page, 'rows'>): PageBlock[] {
+  return blocksOf(page.rows)
+}
+
+/** The number of each row's first block, for the rows that have prose. */
+export function firstBlocks(page: Pick<Page, 'rows'>): Map<string, number> {
+  const first = new Map<string, number>()
+  for (const block of blocksOf(page.rows))
+    if (!first.has(block.rowKey)) first.set(block.rowKey, block.n)
+  return first
 }
 
 function statusOf(question: UserEntry[], rows: PageRow[], state: AgentState): PageStatus {

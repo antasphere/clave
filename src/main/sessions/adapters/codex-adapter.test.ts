@@ -941,6 +941,40 @@ describe('Codex chat permissions', () => {
       )
     ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
   })
+  it("starts on the person's rung when the profile asks nothing of its own; a profile's flags win over it (PRDCT-4424)", async () => {
+    // A saved profile is a deliberate choice: a YOLO profile stays YOLO under
+    // a Read-only default (the verifier's round 1, F6).
+    expect(
+      await threadParams(
+        { permissionRung: 'read-only' },
+        profile('--sandbox', 'danger-full-access', '--approve-for-me')
+      )
+    ).toMatchObject({
+      // `--approve-for-me` after `--sandbox`: the later flag wins, as on the
+      // command line (workspace-write, reviewed by the agent).
+      sandbox: 'workspace-write',
+      approvalsReviewer: 'auto_review'
+    })
+    expect(await threadParams({ permissionRung: 'danger-full-access' }, profile())).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never'
+    })
+    expect(await threadParams({ permissionRung: 'read-only' }, profile())).toMatchObject({
+      sandbox: 'read-only',
+      approvalPolicy: 'on-request'
+    })
+    expect(
+      await threadParams({ permissionRung: 'plan' }, profile('-s', 'workspace-write'))
+    ).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'on-request' })
+  })
+  it('lets dangerous mode win over the rung', async () => {
+    expect(
+      await threadParams(
+        { permissionMode: 'never', sandbox: 'danger-full-access', permissionRung: 'read-only' },
+        profile()
+      )
+    ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
+  })
   /* The thread's binding to this tab's own Clave tool server, by its fresh
      name. Codex asks before every tool of a server left on its default mode
      (auto: any tool not annotated read-only, and Clave's carry no

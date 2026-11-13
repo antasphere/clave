@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { emptyConversation, reduceConversation, type Entry } from '../reducer'
 import type { SessionEvent } from '../../../../src/shared/session-model'
-import { buildPages, currentPage, headline, turnPage, type Page } from './pages'
+import { pageTitleKey } from '../../../../src/shared/page-title'
+import { ANONYMOUS_PROVENANCE_HEADER } from '../../../../src/shared/exchange-provenance'
+import { splitBlocks, spokenPrompt } from '../../../../src/shared/spoken-rendering'
+import {
+  briefFor,
+  buildPages,
+  currentPage,
+  firstBlocks,
+  headline,
+  pageBlocks,
+  titleKeyOf,
+  turnPage,
+  type Page
+} from './pages'
 
 const reduce = (events: SessionEvent[]): Entry[] =>
   events.reduce((c, event) => reduceConversation(c, { event, at: 1 }), emptyConversation).entries
@@ -219,5 +232,107 @@ describe('turning pages', () => {
     expect(turnPage(pages, null, -1)?.title).toBe('two')
     expect(turnPage(pages, pages[0].key, -1)?.title).toBe('one')
     expect(turnPage(pages, pages[1].key, 5)?.title).toBe('three')
+  })
+})
+
+describe('a page titled by a helper (PRDCT-4412)', () => {
+  it('carries the question as the reader wrote it, and the key of its title', () => {
+    const [page] = pagesOf([
+      { type: 'user_message', text: 'Do the thing' },
+      { type: 'user_message', text: 'and the other one too' },
+      { type: 'assistant_text', delta: 'On it', final: true }
+    ])
+    expect(page.message).toBe('Do the thing\n\nand the other one too')
+    expect(page.titleKey).toBe(pageTitleKey(page.message))
+    expect(page.title).toBe('Do the thing')
+  })
+
+  it('takes the delivery header out of the message it titles', () => {
+    const [page] = pagesOf([
+      { type: 'user_message', text: `${ANONYMOUS_PROVENANCE_HEADER}\nCheck the build please` }
+    ])
+    expect(page.message).toBe('Check the build please')
+    expect(page.titleKey).toBe(titleKeyOf('Check the build please'))
+  })
+
+  it('keys a long message as the host does, on its clipped text', () => {
+    const long = 'word '.repeat(600)
+    const [page] = pagesOf([{ type: 'user_message', text: long }])
+    expect(page.titleKey).toBe(titleKeyOf(long.trimEnd()))
+    expect(titleKeyOf(long)).toBe(titleKeyOf(`${long}and more past the clip`))
+  })
+
+  it('sends a long question clipped, so what is sent is what is keyed', () => {
+    const long = 'a'.repeat(2270)
+    const [page] = pagesOf([{ type: 'user_message', text: long }])
+    expect(page.message).toHaveLength(1501)
+    expect(page.titleKey).toBe(titleKeyOf(page.message))
+    expect(page.titleKey).toBe(pageTitleKey(page.message))
+    // The brief under a written title still reads the whole question.
+    expect(page.fullMessage).toBe(long)
+    expect(briefFor(page, 'A written title')).toBe(long)
+  })
+
+  it('has no title to ask for a page with no question', () => {
+    const [page] = pagesOf([{ type: 'assistant_text', delta: 'Before anything', final: true }])
+    expect(page.titleKey).toBeNull()
+    expect(page.message).toBe('')
+    expect(page.fullMessage).toBe('')
+  })
+
+  it('shows the whole message under a written title, the brief under the stand-in', () => {
+    const [short] = pagesOf([{ type: 'user_message', text: 'tell me about the weather' }])
+    expect(short.brief).toBe('')
+    expect(briefFor(short, short.title)).toBe('')
+    expect(briefFor(short, 'The weather')).toBe('tell me about the weather')
+    // A written title that says exactly the reader's words adds nothing.
+    expect(briefFor(short, 'tell me about the weather')).toBe('')
+    const [long] = pagesOf([
+      { type: 'user_message', text: 'Why does the build fail? It worked yesterday.' }
+    ])
+    expect(long.title).toBe('Why does the build fail?')
+    expect(briefFor(long, long.title)).toBe(long.brief)
+    expect(briefFor(long, 'A failing build')).toBe('Why does the build fail? It worked yesterday.')
+  })
+})
+
+describe('a page by blocks (PRDCT-4430)', () => {
+  const page = (): Page =>
+    pagesOf([
+      { type: 'user_message', text: 'Fix it' },
+      { type: 'assistant_text', delta: '## Plan\n\nFirst I read.\n\n- a\n- b', final: true },
+      { type: 'tool_call', id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
+      { type: 'tool_result', id: 't1', output: 'x' },
+      // A list right after a list in the entry before: still two blocks.
+      { type: 'assistant_text', delta: '- c\n\n---\n\nDone.', final: true }
+    ])[0]
+
+  it('numbers the blocks across the prose entries, each with its row', () => {
+    const p = page()
+    expect(pageBlocks(p)).toEqual([
+      { n: 1, markdown: '## Plan', rowKey: p.rows[0].key },
+      { n: 2, markdown: 'First I read.', rowKey: p.rows[0].key },
+      { n: 3, markdown: '- a\n- b', rowKey: p.rows[0].key },
+      { n: 4, markdown: '- c', rowKey: p.rows[1].key },
+      { n: 5, markdown: 'Done.', rowKey: p.rows[1].key }
+    ])
+    expect([...firstBlocks(p)]).toEqual([
+      [p.rows[0].key, 1],
+      [p.rows[1].key, 4]
+    ])
+  })
+
+  it('reads aloud a text the prompt cuts into exactly the page’s blocks', () => {
+    const p = page()
+    const markdowns = pageBlocks(p).map((block) => block.markdown)
+    expect(splitBlocks(p.spoken)).toEqual(markdowns)
+    const prompt = spokenPrompt(p.spoken)
+    const sent = [...prompt.matchAll(/<b n="(\d+)">\n([\s\S]*?)\n<\/b>/g)].map((m) => [
+      Number(m[1]),
+      m[2]
+    ])
+    expect(sent).toEqual(markdowns.map((markdown, i) => [i + 1, markdown]))
+    // The copy keeps the answer as written.
+    expect(p.answer).toBe('## Plan\n\nFirst I read.\n\n- a\n- b\n\n- c\n\n---\n\nDone.')
   })
 })

@@ -23,6 +23,7 @@
     "dev": "npm run native:build && node scripts/copy-private-fonts.mjs && electron-vite dev",
     "dev:attached": "npm run native:build && node scripts/copy-private-fonts.mjs && node scripts/dev-attached.mjs",
     "dev:server": "node scripts/dev-attached.mjs --server-only",
+    "try": "npm run native:build && node scripts/copy-private-fonts.mjs && node scripts/try.mjs",
     "native:build": "bash scripts/build-native.sh",
     "build": "npm run native:build && node scripts/copy-private-fonts.mjs && npm run typecheck && electron-vite build",
     "postinstall": "node scripts/postinstall.cjs",
@@ -34,6 +35,7 @@
     "release": "bash scripts/release.sh",
     "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
+    "test:e2e:parallel": "node tests/e2e/parallel.mjs",
     "check:packaged": "node scripts/check-packaged-requires.mjs",
     "proto:gen": "buf generate"
   },
@@ -147,7 +149,8 @@
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "yaml": "2.9.1"
   },
   "workspaces": [
     "packages/ui",

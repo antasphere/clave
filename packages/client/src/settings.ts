@@ -28,6 +28,23 @@ const helpersMissing = <T>(run: Promise<T>): Promise<T> =>
       ? new HelperPreferencesMissing()
       : error
   })
+
+/** A server released before the integrations (PRDCT-4410): the same 404,
+ *  said as the update it needs. */
+export const INTEGRATIONS_NEED_UPDATE = 'This server needs an update to show its integrations.'
+export class IntegrationsMissing extends Error {
+  readonly _tag = 'IntegrationsMissing'
+  constructor() {
+    super(INTEGRATIONS_NEED_UPDATE)
+    this.name = 'IntegrationsMissing'
+  }
+}
+const integrationsMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new IntegrationsMissing()
+      : error
+  })
 export type CodexAccount = typeof S.CodexAccountView.Type
 export type CodexAccountKind = typeof S.CodexAccountKind.Type
 export type AccountProvider = typeof S.AccountProvider.Type
@@ -47,6 +64,9 @@ export interface HelperPreferencePatch {
   readonly model?: string | null
   readonly account?: HelperAccount
 }
+export type IntegrationsStatus = typeof S.IntegrationsView.Type
+export type ElevenLabsModelId = typeof S.ElevenLabsModelId.Type
+export type ElevenLabsVoices = typeof S.ElevenLabsVoicesView.Type
 export type Workspace = typeof S.WorkspaceView.Type
 export type WorkspaceState = typeof S.WorkspaceStateView.Type
 export type RegistryWriteResult = typeof S.UpdateWorkspaceRegistry.success.Type
@@ -109,6 +129,21 @@ export interface SettingsClient {
       helperId: string,
       patch: HelperPreferencePatch
     ) => Promise<ReadonlyArray<HelperPreference>>
+  }
+  /** The integrations of that server (PRDCT-4410): the ElevenLabs key goes
+   *  in once, as the redacted field's plain string, and comes back in no
+   *  answer; every write answers the status. */
+  readonly integrations: {
+    readonly read: () => Promise<IntegrationsStatus>
+    readonly setElevenLabsKey: (apiKey: string) => Promise<IntegrationsStatus>
+    readonly checkElevenLabs: () => Promise<IntegrationsStatus>
+    readonly removeElevenLabsKey: () => Promise<IntegrationsStatus>
+    readonly setElevenLabsVoice: (
+      voiceId: string,
+      voiceName: string,
+      modelId?: ElevenLabsModelId
+    ) => Promise<IntegrationsStatus>
+    readonly listElevenLabsVoices: () => Promise<ElevenLabsVoices>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
@@ -222,6 +257,24 @@ export function settingsClient(callApi: Call): SettingsClient {
         helpersMissing(
           call((g) => g.setHelperPreference({ payload: { helperId, ...patch } }))
         ).then((v) => v.helpers)
+    },
+    integrations: {
+      read: () => integrationsMissing(call((g) => g.readIntegrations({ payload: {} }))),
+      setElevenLabsKey: (apiKey) =>
+        integrationsMissing(call((g) => g.setElevenLabsKey({ payload: { apiKey } }))),
+      checkElevenLabs: () => integrationsMissing(call((g) => g.checkElevenLabs({ payload: {} }))),
+      removeElevenLabsKey: () =>
+        integrationsMissing(call((g) => g.removeElevenLabsKey({ payload: {} }))),
+      setElevenLabsVoice: (voiceId, voiceName, modelId) =>
+        integrationsMissing(
+          call((g) =>
+            g.setElevenLabsVoice({
+              payload: { voiceId, voiceName, ...(modelId !== undefined && { modelId }) }
+            })
+          )
+        ),
+      listElevenLabsVoices: () =>
+        integrationsMissing(call((g) => g.listElevenLabsVoices({ payload: {} })))
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)

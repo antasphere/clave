@@ -26,6 +26,7 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     codexMode: record.codexMode,
     antigravityMode: record.antigravityMode,
     piMode: record.piMode,
+    opencodeMode: record.opencodeMode,
     claudeAgentsMode: record.claudeAgentsMode,
     dangerousMode: runtime.dangerousMode,
     model: runtime.model,

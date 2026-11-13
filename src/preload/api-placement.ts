@@ -113,6 +113,13 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   launchProfileSetWorkspace: local,
   helpersList: localBecause("this Mac's helpers; a server's are fleetHelpers"),
   helperSet: localBecause("this Mac's helpers; a server's are fleetHelperSet"),
+  integrationsRead: localBecause("this Mac's integrations; a server's are fleetIntegrations"),
+  elevenLabsSetKey: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsSetKey"),
+  elevenLabsCheck: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsCheck"),
+  elevenLabsRemove: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsRemove"),
+  elevenLabsSetVoice: localBecause("this Mac's voice; a server's is fleetElevenLabsSetVoice"),
+  elevenLabsVoices: localBecause("this Mac's voices; a server's are fleetElevenLabsVoices"),
+  elevenLabsPreview: localBecause("this Mac's voice preview; a server's is fleetElevenLabsPreview"),
   spawnSession: routed,
   writeSession: routed,
   startSession: routed,
@@ -154,6 +161,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onSessionAutoTitle: routed,
   onPlanDetected: routed,
   onSessionLimitReported: routed,
+  onSessionLimitCleared: routed,
   onClearDetected: routed,
   onAgentState: routed,
   onMcpCommand: local,
@@ -192,17 +200,18 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   secretSubmit: local,
   secretDismiss: local,
   onSecretRequestsChanged: local,
-  'slideless.getState': local,
-  'slideless.install': local,
-  'slideless.serve': wrongForServerTab(
-    "serves a target of this Mac's disk: a server file's key is not served (unverified, PRDCT-4334)"
-  ),
-  'slideless.release': localBecause('releases the lease serve() gave on this Mac'),
-  'slideless.snapshot': wrongForServerTab(
-    "snapshots a target of this Mac's disk (unverified for a server file, PRDCT-4334)"
-  ),
-  'slideless.onState': local,
-  'slideless.onServerExited': local,
+  // ── PRDCT-4474: a session's artefact, on the server it runs on ──
+  'artefacts.list': routed,
+  'artefacts.hold': routed,
+  'artefacts.release': routed,
+  'artefacts.saveVersion': routed,
+  'artefacts.versions': routed,
+  'artefacts.close': routed,
+  'artefacts.onChanged': routed,
+  'artefacts.onPreviewExited': routed,
+  'artefacts.slidelessState': routed,
+  'artefacts.installSlideless': routed,
+  'artefacts.onSlidelessState': routed,
   'linkedDocuments.getDefaultSignature': local,
   'linkedDocuments.setDefaultSignature': localBecause('a file of this Mac'),
   'linkedDocuments.list': local,
@@ -244,6 +253,11 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   exchangeDigestsOf: routed,
   workDigest: routed,
   workDigestsOf: routed,
+  spokenRendering: routed,
+  spokenRenderingsOf: routed,
+  speakText: routed,
+  pageTitle: routed,
+  pageTitlesOf: routed,
   githubPull: local,
   githubPullDiff: local,
   githubPullComment: local,
@@ -522,6 +536,15 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onRecommendedAccountChanged: localBecause(
     "this Mac's launch choice, on purpose; a server tab's account is its server's, read by the seam (session-accounts.ts: fleetAccounts; PRDCT-4328)"
   ),
+  // The launch settings are this Mac's (PRDCT-4423, PRDCT-4425): the
+  // interaction mode and the per-harness defaults the launcher reads; a
+  // server's launcher reads its own, through the fleet's settings.
+  launchSettingsGet: local,
+  launchSettingsSet: local,
+  onLaunchSettingsChanged: local,
+  launchRememberedModel: localBecause(
+    "this Mac's composer pick, by adapter id; a server tab's model is judged by its server (PRDCT-4420)"
+  ),
   getMicAccess: local,
   requestMicAccess: local,
   openMicPrivacySettings: local,
@@ -567,6 +590,13 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetLaunchProfileSetGlobal: routed,
   fleetHelpers: routed,
   fleetHelperSet: routed,
+  fleetIntegrations: routed,
+  fleetElevenLabsSetKey: routed,
+  fleetElevenLabsCheck: routed,
+  fleetElevenLabsRemove: routed,
+  fleetElevenLabsSetVoice: routed,
+  fleetElevenLabsVoices: routed,
+  fleetElevenLabsPreview: routed,
   fleetSaveLayout: routed,
   fleetWorkspaces: routed,
   fleetAddWorkspace: routed,

@@ -86,6 +86,7 @@ function machine(opts: {
       auto = value
     },
     scheduled: false,
+    looksAtBoot: true,
     supported: true,
     broadcast: (state) => states.push(state),
     notify: (title, body) => notes.push(`${title} | ${body}`),
@@ -491,13 +492,34 @@ describe('the schedule', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
-  it('never starts a timer when not scheduled (test mode, dev builds)', async () => {
-    vi.useFakeTimers()
-    const { deps } = machine({})
+  it('never starts a timer in a dev build, but looks once at boot', async () => {
+    const { m, deps } = machine({ installed: PI, latest: PI_LATEST })
     const manager = new AgentUpdateManager(deps)
-    const spy = vi.spyOn(manager, 'checkAll')
+    const checks = vi.spyOn(manager, 'checkAll')
+    const looks = vi.spyOn(manager, 'detectAll')
+    manager.start()
+    // One look, so the launcher lists what is on the PATH (PRDCT-4423, 12
+    // November 2026: a Mac with Claude Code alone showed four rows); no
+    // upgrade, since a dev build never runs the installers on its own.
+    expect(looks).toHaveBeenCalledTimes(1)
+    const state = await looks.mock.results[0].value
+    expect(checks).not.toHaveBeenCalled()
+    expect(state.agents.find((a) => a.id === 'pi')?.installed).toBe(true)
+    expect(state.agents.find((a) => a.id === 'claude')?.installed).toBe(false)
+    expect(m.runs.every((run) => run.includes('--version'))).toBe(true)
+  })
+
+  it('never looks at boot in test mode: the specs say which harnesses are there (PRDCT-4495)', async () => {
+    vi.useFakeTimers()
+    const { m, deps } = machine({ installed: PI, latest: PI_LATEST })
+    const manager = new AgentUpdateManager({ ...deps, looksAtBoot: false })
+    const checks = vi.spyOn(manager, 'checkAll')
+    const looks = vi.spyOn(manager, 'detectAll')
     manager.start()
     await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS * 2)
-    expect(spy).not.toHaveBeenCalled()
+    expect(looks).not.toHaveBeenCalled()
+    expect(checks).not.toHaveBeenCalled()
+    expect(m.runs).toEqual([])
+    expect(manager.getState().agents.every((a) => a.lastCheckedAt === null)).toBe(true)
   })
 })

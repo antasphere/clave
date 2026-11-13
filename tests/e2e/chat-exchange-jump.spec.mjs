@@ -70,14 +70,18 @@ export async function run(t) {
           return {
             inView: box.bottom > port.top && box.top < port.bottom,
             awayFromEnd: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > 200,
-            holdsBefore: row.textContent.includes('Before question 28')
+            holdsBefore: row.textContent.includes('Before question 28'),
+            // The flash plays, not finished by the tab's reveal (PRDCT-4422).
+            flashing: [...(row.querySelector(':scope > .chat-row')?.getAnimations() ?? [])].some(
+              (a) => a.animationName === 'jump-flash' && a.playState === 'running'
+            )
           }
         }),
       8000
     )
     t.check(
       "the card's button opens the other tab at the row holding the send, far up, and flashes it",
-      !!landed && landed.inView && landed.awayFromEnd && landed.holdsBefore,
+      !!landed && landed.inView && landed.awayFromEnd && landed.holdsBefore && landed.flashing,
       landed
     )
 

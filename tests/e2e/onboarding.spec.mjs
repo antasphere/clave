@@ -124,8 +124,8 @@ export async function run(t) {
       await win.locator('[data-onboarding-chat-view]').first().waitFor()
       assert.equal(await title(win), 'What kind of chat do you prefer?')
       t.check(
-        'three chat styles are offered',
-        (await win.locator('[data-onboarding-chat-view]').count()) === 3
+        'four ways to open a conversation are offered',
+        (await win.locator('[data-onboarding-chat-view]').count()) === 4
       )
       await win.locator('[data-onboarding-chat-view="clave.chat-view/lab"]').click()
       t.check(
@@ -160,7 +160,7 @@ export async function run(t) {
       await walk.waitFor({ state: 'detached', timeout: 5_000 })
 
       const prefs = JSON.parse(readFileSync(path.join(dir, 'preferences.json'), 'utf-8'))
-      t.check('the chosen style is the default view', prefs.chatView === 'clave.chat-view/lab')
+      t.check('the chosen style is the interaction mode', prefs.interactionMode === 'folio')
       t.check('the walk is recorded as done', prefs.onboarding === 'done')
       t.check('the picked skin is kept', prefs.activeSkinId === 'coffee')
       await win.waitForTimeout(600)

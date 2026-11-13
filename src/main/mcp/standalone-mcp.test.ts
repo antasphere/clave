@@ -25,6 +25,8 @@ import { sidebarHandlers } from '../../../packages/server/src/sidebar/handlers'
 import { SidebarLayoutsPort } from '../../../packages/server/src/sidebar/port'
 import { ServerEvents } from '../../../packages/server/src/events'
 import type { SessionHostService } from '@clave/server'
+import { ArtefactsPort, type ArtefactsService } from '@clave/server'
+import { ArtefactRefusal } from '../artefacts/service'
 import type { HistoryConversation } from '@clave/contract/history'
 import type { ServerConversations } from '../session-history/server-conversations'
 
@@ -37,7 +39,7 @@ const payload = (result: Awaited<ReturnType<Client['callTool']>>): Record<string
   expect(content[0].type).toBe('text')
   return JSON.parse(content[0].text!)
 }
-async function fixture(): Promise<{
+async function fixture(options: { artefacts?: ArtefactsService } = {}): Promise<{
   requests: PendingRequests
   client: Client
   other: Client
@@ -68,6 +70,7 @@ async function fixture(): Promise<{
     },
     requests,
     agentTools: tokens,
+    ...(options.artefacts && { artefacts: options.artefacts }),
     executeSecret: async (action, value) => {
       const result = await executeSecretAction(action, value, { shell: '/bin/sh', env: {} })
       if (!result.ok) throw new Error('Action failed.')
@@ -1488,4 +1491,56 @@ describe('standalone MCP and the server’s own History (PRDCT-4321)', () => {
     expect(limited).toMatchObject({ shown: 1, total: 3 })
     expect(await call({ open: true, limit: 1 })).toMatchObject({ shown: 1, total: 2 })
   }, 15_000)
+})
+
+describe('clave_open_artefact on the server (PRDCT-4472)', () => {
+  const artefactsFor = (opened: unknown[]): ArtefactsService => ({
+    ...ArtefactsPort.none,
+    open: async (sessionId, path) => {
+      opened.push([sessionId, path])
+      if (path.endsWith('.txt'))
+        throw new ArtefactRefusal(
+          'An artefact is a folder holding an HTML page, or one .html file.'
+        )
+      return {
+        sessionId,
+        target: path,
+        page: `${path}/index.html`,
+        title: 'deck',
+        openedAt: '2026-11-12T10:00:00.000Z'
+      }
+    }
+  })
+
+  it('is listed when the server shows artefacts, and absent when it shows none', async () => {
+    const shown = await fixture({ artefacts: artefactsFor([]) })
+    const names = (await shown.client.listTools()).tools.map((t) => t.name)
+    expect(names).toContain('clave_open_artefact')
+    const none = await fixture()
+    expect((await none.client.listTools()).tools.map((t) => t.name)).not.toContain(
+      'clave_open_artefact'
+    )
+  })
+
+  it("opens the artefact for the CALLER's session and answers its title and page", async () => {
+    const opened: unknown[] = []
+    const { client } = await fixture({ artefacts: artefactsFor(opened) })
+    const answer = payload(
+      await client.callTool({ name: 'clave_open_artefact', arguments: { path: '/work/deck' } })
+    )
+    expect(answer).toEqual({ opened: true, title: 'deck', page: '/work/deck/index.html' })
+    expect(opened).toEqual([['caller', '/work/deck']])
+  })
+
+  it('answers a refusal as an error carrying its sentence', async () => {
+    const { client } = await fixture({ artefacts: artefactsFor([]) })
+    const result = await client.callTool({
+      name: 'clave_open_artefact',
+      arguments: { path: '/work/notes.txt' }
+    })
+    expect(result.isError).toBe(true)
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe(
+      'An artefact is a folder holding an HTML page, or one .html file.'
+    )
+  })
 })

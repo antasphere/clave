@@ -392,6 +392,20 @@ describe('starting a session on the wire', () => {
   it('takes spawn options with no field at all', () => {
     expect(decode(SpawnOptions, {})).toEqual(Either.right({}))
   })
+  it.each([
+    'acceptEdits',
+    'workspace-write',
+    'danger-full-access',
+    'accept-edits',
+    'bypassPermissions'
+  ])(
+    "takes every harness's permission rung by the CLI's own name: %s (PRDCT-4424)",
+    (permissionMode) => {
+      // Until 11 November 2026 the five Claude names were the whole list and a
+      // Codex or Antigravity rung was refused on the wire: no tab, no message.
+      expect(decode(SpawnOptions, { permissionMode })).toEqual(Either.right({ permissionMode }))
+    }
+  )
   it.each(links.map((link) => [link.kind, link]))(
     'takes the full option set with a link of kind %s',
     (_, link) => {
@@ -500,6 +514,11 @@ describe('the sessions’ server events', () => {
     expect(
       Either.isLeft(decode(ServerEvent, { _tag: 'session.model_changed', id: 's1', model: null }))
     ).toBe(true)
+  })
+  it('carries a session’s limit report closing with its id alone (PRDCT-4415)', () => {
+    const event = { _tag: 'session.limit_cleared', id: 's1' }
+    expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
+    expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.limit_cleared' }))).toBe(true)
   })
 })
 

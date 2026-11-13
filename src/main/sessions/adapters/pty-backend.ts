@@ -459,6 +459,7 @@ function getTmuxConfigPath(): string {
 
 function agentModeTag(options?: PtySpawnOptions): string {
   if (options?.piMode) return 'pi'
+  if (options?.opencodeMode) return 'opencode'
   if (options?.antigravityMode) return 'antigravity'
   if (options?.codexMode) return 'codex'
   if (options?.claudeAgentsMode) return 'agents'
@@ -543,6 +544,8 @@ export interface SessionRecord {
   antigravityMode: boolean
   codexMode: boolean
   piMode: boolean
+  /** Optional: a record written before OpenCode has none. */
+  opencodeMode?: boolean
   claudeAgentsMode: boolean
   dangerousMode: boolean
   /** Model the session was launched on (claude/codex), so a dead-sidecar
@@ -648,6 +651,8 @@ function isValidTmuxName(name: string): boolean {
 
 /** Plain records are keyed by the PTY session id (a UUID). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** An OpenCode session id as its CLI takes it on `--session` (`ses_…`). */
+const OPENCODE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
 /** A record file's basename: the tmux name for tmux-backed sessions, the
  *  session id for plain ones. Everything that touches the filesystem or a
@@ -832,6 +837,11 @@ function liveTmuxSessions(tmuxPath: string): Set<string> {
 }
 
 export interface PtySpawnOptions {
+  /** The view the tab is read in (`<pluginId>/<viewId>`), carried across a
+   *  restart (an account switch, a Resume): the tab's own pick, which the
+   *  kill takes with the old record (PRDCT-4495). Absent: the view a new tab
+   *  opens in (`initialChatView`). */
+  viewId?: string
   dangerousMode?: boolean
   /** Model the agent CLI starts on (alias like "opus" or a full model id).
    *  claude → `--model`, codex → `-m`; ignored for antigravity/terminal.
@@ -841,6 +851,7 @@ export interface PtySpawnOptions {
   antigravityMode?: boolean
   codexMode?: boolean
   piMode?: boolean
+  opencodeMode?: boolean
   claudeAgentsMode?: boolean
   resumeSessionId?: string
   claudeSessionId?: string
@@ -1094,26 +1105,30 @@ export class PtyBackend {
     const useAntigravityMode = options?.antigravityMode === true
     const useCodexMode = options?.codexMode === true
     const usePiMode = options?.piMode === true
+    const useOpencodeMode = options?.opencodeMode === true && !usePiMode
     const useClaudeMode =
       options?.claudeMode !== false &&
       !useAntigravityMode &&
       !useCodexMode &&
       !useAgentsMode &&
-      !usePiMode
+      !usePiMode &&
+      !useOpencodeMode
 
     let claudeSessionId: string | undefined
     let piSessionId: string | undefined
     const kind: AgentKind | null = usePiMode
       ? 'pi'
-      : useAntigravityMode
-        ? 'antigravity'
-        : useCodexMode
-          ? 'codex'
-          : useAgentsMode
-            ? 'claude-agents'
-            : useClaudeMode
-              ? 'claude'
-              : null
+      : useOpencodeMode
+        ? 'opencode'
+        : useAntigravityMode
+          ? 'antigravity'
+          : useCodexMode
+            ? 'codex'
+            : useAgentsMode
+              ? 'claude-agents'
+              : useClaudeMode
+                ? 'claude'
+                : null
     const launchProfile: LaunchProfile | undefined = kind
       ? (options?.launchProfile ??
         launchProfileManager.resolve(
@@ -1160,6 +1175,8 @@ export class PtyBackend {
       // Windows: cmd.exe with /c to exec the command directly (no echoed prompt).
       if (usePiMode) {
         throw new Error('Pi sessions are supported on macOS only')
+      } else if (useOpencodeMode) {
+        throw new Error('OpenCode sessions are supported on macOS only')
       } else if (useAntigravityMode) {
         shellArgs = ['/c', 'agy']
       } else if (useCodexMode) {
@@ -1212,6 +1229,14 @@ export class PtyBackend {
           (kind === 'claude' || kind === 'pi' || kind === 'codex') &&
           options?.resumeSessionId &&
           !isValidClaudeSessionId(options.resumeSessionId)
+        ) {
+          throw new Error('Invalid resume session id')
+        }
+        // OpenCode names its sessions itself (`ses_…`), never a UUID.
+        if (
+          kind === 'opencode' &&
+          options?.resumeSessionId &&
+          !OPENCODE_SESSION_ID_RE.test(options.resumeSessionId)
         ) {
           throw new Error('Invalid resume session id')
         }
@@ -1307,6 +1332,7 @@ export class PtyBackend {
       antigravityMode: useAntigravityMode,
       codexMode: useCodexMode,
       piMode: usePiMode,
+      opencodeMode: useOpencodeMode,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,
@@ -1818,6 +1844,7 @@ export class PtyBackend {
         meta.claudeMode ??= true // absent always meant Claude (`claudeMode !== false`)
         meta.codexMode ??= false
         meta.piMode ??= false
+        meta.opencodeMode ??= false
         meta.claudeAgentsMode ??= false
         meta.dangerousMode ??= false
       }

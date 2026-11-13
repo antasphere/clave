@@ -131,6 +131,7 @@ export async function spawnSession(
     !options?.antigravityMode &&
     !options?.codexMode &&
     !options?.piMode &&
+    !options?.opencodeMode &&
     !options?.claudeAgentsMode
   const isResumed = !!options?.resumeSessionId
 
@@ -294,7 +295,8 @@ function planFromRecord(
  * The same tab restarted under the same id on another account (ADR 0002):
  * the spawn read back before the kill, the process stopped and waited for,
  * the same spawn made again with the account changed and the conversation
- * resumed, the record's name and view put back (the kill took them). The
+ * resumed, the record's name and view put back (the kill took them), and
+ * the chat view the tab is read in carried into the spawn (PRDCT-4495). The
  * window's `pty:restart` and the server's `RestartSession` share it. The
  * tab stays in the window that holds it unless the caller names another key.
  */
@@ -349,6 +351,10 @@ export async function restartSession(
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).
   const parent = parentOf(id)
+  // The chat view the tab is read in lives on the session the kill ends: a
+  // tab put on Enclave from its menu came back in the interaction mode's view
+  // after an account switch or a Resume (PRDCT-4495).
+  const viewId = current?.viewId
   // Only a process this one runs is ended. A tab with none (placed stopped
   // by a restart, PRDCT-4236) has only its record, and a kill is a close
   // for good: it would discard that record before the spawn reads it back
@@ -356,7 +362,11 @@ export async function restartSession(
   // nothing to resume from.
   if (current) await ptyManager.killAndWait(id)
   windows.unbind(id)
-  const info = await spawnSession(key, plan.cwd, plan.options)
+  const info = await spawnSession(
+    key,
+    plan.cwd,
+    viewId ? { ...plan.options, viewId } : plan.options
+  )
   // A record keyed by a tmux name the new process did not take (a chat tab's
   // record is keyed by its id) would stay beside the one the spawn wrote,
   // and the next launch would bring the tab back twice.

@@ -81,6 +81,30 @@ export async function run(t) {
     assert.match(await card.locator('.chat-prompt-eyebrow').innerText(), /asks/i)
     assert.match(await card.innerText(), /Three things before this machine is set up\./)
     assert.equal(await card.locator('.chat-field-wrap').count(), 4, 'one field per question')
+    // One question open at a time (PRDCT-4416): the first, the rest folded to
+    // their line; the rail ends on an empty seat level with the buttons.
+    assert.equal(
+      await card.locator('.chat-ask-field[data-folded="true"][data-state="upcoming"]').count(),
+      3,
+      'only the first question of the form is open'
+    )
+    assert.equal(await card.locator('.chat-ask-end[data-ready="true"]').count(), 0)
+    assert.equal(
+      await card.locator('.chat-ask-owed').innerText(),
+      '3 answers to go',
+      'an Approve that is off says how many answers are owed'
+    )
+    const [endSeat, approveBox] = await Promise.all([
+      card.locator('.chat-ask-end > .chat-ask-seat').boundingBox(),
+      card.getByRole('button', { name: /^Approve/ }).boundingBox()
+    ])
+    assert.ok(
+      endSeat &&
+        approveBox &&
+        Math.abs(endSeat.y + endSeat.height / 2 - (approveBox.y + approveBox.height / 2)) <= 1,
+      `the rail's end seat is level with the buttons: ${JSON.stringify({ endSeat, approveBox })}`
+    )
+    t.check('the form opens on its first question, the rail ending level with Approve', true)
     const first = payload(await asked)
     t.check(
       'the call returned pending with its request id once the timeout passed',
@@ -101,7 +125,10 @@ export async function run(t) {
       'an empty field is not judged when the person leaves it for the composer'
     )
     await email.fill('luca@antasphere')
-    await card.getByRole('button', { name: /^Approve/ }).click()
+    // Approve is off while an answer is owed (PRDCT-4418); the count beside
+    // it leads to the first one owed and says what is wrong there.
+    assert.equal(await card.getByRole('button', { name: /^Approve/ }).isDisabled(), true)
+    await card.locator('.chat-ask-owed').click()
     await card.locator('.chat-field-problem').first().waitFor()
     assert.match(await card.locator('.chat-field-problem').first().innerText(), /not an e-mail/)
     assert.equal(await card.count(), 1, 'the card stays until the answers fit')
@@ -109,10 +136,22 @@ export async function run(t) {
 
     /* 3. The answers, sent, reach the agent keyed by id. */
     await email.fill('luca@antasphere.com')
+    // The answer stays open, and the next question opens under it.
+    const folds = await until(async () => {
+      const n = await card.locator('.chat-ask-field[data-folded="true"]').count()
+      return n === 2 ? n : null
+    })
+    assert.equal(folds, 2, 'the question after the answered one opened, the others still folded')
+    assert.equal(await email.isVisible(), true, 'the answered question stays open')
+    t.check('answering a question keeps it open and opens the next', true)
     await card.locator('.chat-field-wrap[data-kind="github-login"] input').fill('luca-a')
+    // The optional question stands last (PRDCT-4429): it opens once the
+    // link above it is confirmed.
+    await card.getByRole('button', { name: "I'm signed in" }).click()
     await card.getByRole('checkbox', { name: /reb/ }).click()
     await card.getByRole('checkbox', { name: /wat/ }).click()
-    await card.getByRole('button', { name: "I'm signed in" }).click()
+    await card.locator('.chat-ask-end[data-ready="true"]').waitFor()
+    t.check('every answer in, the rail ends on a filled seat', true)
     await card.getByRole('button', { name: /^Approve/ }).click()
     const result = payload(
       await mcp.call('clave_input_result', { requestId: first.requestId, waitSeconds: 10 })
@@ -137,6 +176,11 @@ export async function run(t) {
     assert.match(await row.innerText(), /reb, wat/)
     assert.match(await row.innerText(), /Approved/i)
     assert.equal(await row.locator('.chat-ask-field[data-folded="true"]').count(), 4)
+    assert.equal(
+      await row.locator('.chat-ask-end[data-ready="true"]').count(),
+      1,
+      'the record ends its rail on a filled seat'
+    )
     assert.equal(await card.count(), 0, 'the card closed into its record')
     t.check('the approved card stays as the closed form, every step folded with its answer', true)
     // Nothing polled when the person approved (the tool's own wait had
@@ -536,6 +580,58 @@ export async function run(t) {
     )
     assert.equal(skipped.status, 'dismissed', JSON.stringify(skipped))
     t.check('a skipped request answers dismissed to the agent', true)
+
+    /* 5b. A form stands its optional questions last, an optional one left
+           empty says "Nothing to say" to open the next, and the record of a
+           skip runs its accent no further than its last answer (PRDCT-4429). */
+    const fourth = payload(
+      await mcp.call('clave_request_input', {
+        description: 'Two small things.',
+        questions: [
+          { id: 'note', label: 'Anything to add?', optional: true },
+          { id: 'nick', label: 'Your nickname' },
+          {
+            id: 'tone',
+            label: 'Which tone?',
+            kind: 'choice',
+            optional: true,
+            options: [{ label: 'Short' }, { label: 'Long' }]
+          }
+        ]
+      })
+    )
+    await card.waitFor()
+    assert.deepEqual(
+      await card.locator('.chat-ask-field .chat-field-question').allTextContents(),
+      ['Your nickname', 'Anything to add?', 'Which tone?'],
+      'the required question first, the optional ones after, in the order asked'
+    )
+    await card.locator('.chat-field-wrap input').first().fill('Lu')
+    const pass = card.getByRole('button', { name: 'Nothing to say' })
+    await pass.waitFor()
+    assert.equal(await card.locator('.chat-ask-field[data-folded="true"]').count(), 1)
+    await pass.click()
+    assert.ok(
+      await until(async () =>
+        (await card.locator('.chat-ask-field[data-folded="true"]').count()) === 0 ? true : null
+      ),
+      'the next question opened'
+    )
+    assert.equal(await pass.count(), 0, 'the last question has no way on to offer')
+    assert.equal(await card.getByRole('button', { name: /^Approve/ }).isDisabled(), false)
+    t.check('optional questions stand last and "Nothing to say" opens the next', true)
+    await card.getByRole('button', { name: 'Skip', exact: true }).click()
+    payload(await mcp.call('clave_input_result', { requestId: fourth.requestId, waitSeconds: 10 }))
+    const skippedRecord = view
+      .locator('.chat-permission-row[data-kind="question"]', { hasText: 'Two small things.' })
+      .last()
+    await skippedRecord.waitFor()
+    const rail = await skippedRecord.locator('.chat-ask-fields').evaluate((ol) => ({
+      accent: parseFloat(getComputedStyle(ol, '::after').height),
+      line: parseFloat(getComputedStyle(ol, '::before').height)
+    }))
+    assert.ok(rail.accent < rail.line / 2, `the skip's accent stops short: ${JSON.stringify(rail)}`)
+    t.check("a skipped record's accent runs no further than its last answer", true)
     await view.locator('.chat-scroll').evaluate((el) => {
       el.scrollTop = el.scrollHeight
     })

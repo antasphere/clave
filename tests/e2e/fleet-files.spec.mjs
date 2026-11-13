@@ -44,13 +44,13 @@ export async function run(t) {
       await clickReady(folder)
       await notes.waitFor({ state: 'visible' })
     })
-    assertFileEndpoint(observers, opening, 0, '/files/list')
+    await assertFileEndpoint(observers, opening, 0, '/files/list')
     const reading = mark()
     await notes.click({ button: 'right' })
     await clickReady(mac.win.getByRole('menuitem', { name: 'Open in Tab', exact: true }))
     const editor = mac.win.locator('.cm-content[contenteditable="true"]:visible')
     await editor.waitFor()
-    assertFileEndpoint(observers, reading, 0, '/files/read')
+    await assertFileEndpoint(observers, reading, 0, '/files/read')
     const editing = mark()
     await editor.fill('Edited on owner one through the desktop')
     await editor.press('Meta+s')
@@ -61,14 +61,14 @@ export async function run(t) {
       'UI editor saves on owning filesystem'
     )
     assert.equal(readFileSync(path.join(b.root, other.file), 'utf8'), other.content)
-    assertFileEndpoint(observers, editing, 0, '/files/write')
+    await assertFileEndpoint(observers, editing, 0, '/files/write')
     const peerReading = mark()
     const peerRead = await macB.win.evaluate(
       ({ root, file }) => window.electronAPI.readFile(root, file),
       { root: owned('file', macB.owners[0].id, a.root), file: value.file }
     )
     assert.equal(peerRead.content, 'Edited on owner one through the desktop')
-    assertFileEndpoint(observers, peerReading, 0, '/files/read')
+    await assertFileEndpoint(observers, peerReading, 0, '/files/read')
     t.check('remote file editor writes real owner bytes and the second Mac reads the edit', true)
 
     await clickReady(mac.win.locator(`[data-sidebar-item-id="${session}"]`))
@@ -107,7 +107,7 @@ export async function run(t) {
     if (uploadComplete) {
       assert.equal(readFileSync(path.join(a.root, uploaded), 'utf8'), 'Mac upload byte sentinel')
       assert.equal(existsSync(path.join(b.root, uploaded)), false)
-      assertFileEndpoint(observers, uploading, 0, '/files/upload')
+      await assertFileEndpoint(observers, uploading, 0, '/files/upload')
       t.check('UI upload transfers exact bytes to the owning server', true)
     }
     const downloaded = path.join(mac.root, 'downloaded-notes.txt')
@@ -119,7 +119,7 @@ export async function run(t) {
     await clickReady(mac.win.getByRole('menuitem', { name: 'Download', exact: true }))
     await eventually(() => existsSync(downloaded), 'remote download reaches selected Mac path')
     assert.equal(readFileSync(downloaded, 'utf8'), 'Edited on owner one through the desktop')
-    assertFileEndpoint(observers, downloading, 0, '/files/download')
+    await assertFileEndpoint(observers, downloading, 0, '/files/download')
     t.check('UI download transfers exact owner bytes to the selected Mac path', true)
 
     await mac.win.locator(`[data-sidebar-item-id="${session}"]`).click()

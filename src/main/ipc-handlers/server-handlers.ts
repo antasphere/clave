@@ -16,6 +16,7 @@ import {
 } from '../../../packages/contract/src/fleet'
 import { settingsPorts } from '../ports/registry'
 import { ServerConnectionRegistry } from '../server-connections/registry'
+import { registerForwardHandlers } from '../forwards'
 import {
   createVersionSync,
   type ServerRead,
@@ -193,6 +194,9 @@ export function registerServerHandlers(
     if (!versions) throw new Error('Server upgrades are not available.')
     return versions.upgradeNow(id)
   })
+  // PRDCT-4473: a page a saved server serves on its loopback, framed here
+  // through a listener of this Mac's, the token read at every request.
+  registerForwardHandlers((id) => connections().endpoint(id))
   // PRDCT-4241: the server's own name, set from this Mac and read again.
   ipcMain.handle(FLEET_IPC.setServerName, (_event, id: string, name: string) => {
     if (!versions) throw new Error('Server names cannot be set from this app.')

@@ -60,16 +60,21 @@ import { formMessage } from '../../../shared/form-message'
 import { foldModelOptions } from '../../../../plugins/chat-view/src/models'
 
 /** What the adapter wrote to the CLI since the last read, without the
- *  get_settings reads it makes at ready and after every confirmed switch to
- *  learn the effort (their own tests read the raw stream); null when nothing
- *  else was written. */
+ *  get_settings and get_context_usage reads it makes at ready and after every
+ *  confirmed switch to learn the effort and the window (their own tests read
+ *  the raw stream); null when nothing else was written. */
 function written(child: { stdin: PassThrough }): string | null {
   const raw = child.stdin.read() as Buffer | null
   if (!raw) return null
   const lines = raw
     .toString()
     .split('\n')
-    .filter((line) => line && !line.includes('"subtype":"get_settings"'))
+    .filter(
+      (line) =>
+        line &&
+        !line.includes('"subtype":"get_settings"') &&
+        !line.includes('"subtype":"get_context_usage"')
+    )
   return lines.length ? lines.map((line) => `${line}\n`).join('') : null
 }
 import { NdjsonLines } from './ndjson'
@@ -2535,9 +2540,10 @@ describe('the reasoning effort of a Claude chat', () => {
   it('asks for the settings at ready, and after a model switch only once the CLI took it', async () => {
     const { adapter, handle, child } = await started('effort-ready')
     adapter.ready(handle)
-    const [first, resolution, ...rest] = sent(child)
+    const [first, context, resolution, ...rest] = sent(child)
     expect(rest).toEqual([])
     expect(first).toMatchObject({ type: 'control_request', request: { subtype: 'get_settings' } })
+    expect(context).toMatchObject({ request: { subtype: 'get_context_usage' } })
     expect(resolution).toMatchObject({ request: { subtype: 'initialize' } })
     // A CLI too old to say what it applied: nothing is shown, and nothing leaks.
     const before = events.length
@@ -2548,9 +2554,10 @@ describe('the reasoning effort of a Claude chat', () => {
     expect(switched).toHaveLength(1)
     expect(switched[0]).toMatchObject({ request: { subtype: 'set_model' } })
     answer(child, { subtype: 'success', request_id: switched[0].request_id })
-    const [after, ...none] = sent(child)
+    const [after, window, ...none] = sent(child)
     expect(none).toEqual([])
     expect(after).toMatchObject({ request: { subtype: 'get_settings' } })
+    expect(window).toMatchObject({ request: { subtype: 'get_context_usage' } })
     // A model that takes no effort runs at none, and says so as null.
     answer(child, {
       subtype: 'success',
@@ -2630,6 +2637,205 @@ describe('the reasoning effort of a Claude chat', () => {
     await expect(
       adapter.spawn({ ...spec, id: 'effort-argv-bad-2', options: { effort: 'high;rm' } })
     ).rejects.toThrow()
+  })
+})
+describe("the context window, in the CLI's own word (PRDCT-4456)", () => {
+  type Child = EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough }
+  type Frame = { type: string; request_id: string; request: Record<string, unknown> }
+  /** Every line written to the CLI since the last read. */
+  const sent = (child: Child): Frame[] => {
+    const raw = child.stdin.read() as Buffer | null
+    return raw
+      ? raw
+          .toString()
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      : []
+  }
+  const asked = (frames: Frame[]): Frame | undefined =>
+    frames.find((frame) => frame.request?.subtype === 'get_context_usage')
+  const answer = (child: Child, response: Record<string, unknown>): void => {
+    child.stdout.write(JSON.stringify({ type: 'control_response', response }) + '\n')
+  }
+  const usages = (): SessionEvent[] => events.filter((e) => e.type === 'context_usage')
+  async function started(
+    id: string,
+    options?: Record<string, unknown>
+  ): Promise<{
+    adapter: ClaudeAdapter
+    handle: Awaited<ReturnType<ClaudeAdapter['spawn']>>
+    child: Child
+  }> {
+    const child: Child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn({ ...spec, id, ...(options ? { options } : {}) })
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    return { adapter, handle, child }
+  }
+
+  it("fills a resumed chat on a model Clave's table does not list: the replay's count, the CLI's window", async () => {
+    // The screenshot's case: a chat resumed after a restart, on a model newer
+    // than the table, read "(510k)" beside a hair-wide bar until a turn ended.
+    const root = mkdtempSync(join(tmpdir(), 'clave-context-'))
+    vi.stubEnv('CLAVE_TRANSCRIPTS_ROOT', root)
+    mkdirSync(join(root, '-tmp'))
+    const usage = {
+      input_tokens: 10,
+      cache_read_input_tokens: 510_000,
+      cache_creation_input_tokens: 400,
+      output_tokens: 21
+    }
+    writeFileSync(
+      join(root, '-tmp', 'resumed-id.jsonl'),
+      [
+        { type: 'user', message: { role: 'user', content: 'a long question' } },
+        {
+          type: 'assistant',
+          message: {
+            model: 'claude-fable-7-3',
+            content: [{ type: 'text', text: 'an answer' }],
+            usage
+          }
+        }
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n')
+    )
+    try {
+      const { adapter, handle, child } = await started('context-resumed', {
+        resume: 'resumed-id',
+        model: 'claude-fable-7-3'
+      })
+      adapter.ready(handle)
+      // The replay knows the count and no window: the model names none.
+      const replayed = adapter
+        .history(handle)
+        .map((item) => item.event)
+        .filter((e) => e.type === 'context_usage')
+      expect(replayed).toEqual([{ type: 'context_usage', used: 510_431, window: null }])
+      const request = asked(sent(child))
+      expect(request).toBeDefined()
+      expect(usages()).toEqual([])
+      // The CLI counts the resumed conversation a little differently; the
+      // replay's count stays, so the meter does not jump.
+      answer(child, {
+        subtype: 'success',
+        request_id: request!.request_id,
+        response: { maxTokens: 1_000_000, totalTokens: 508_708 }
+      })
+      expect(usages()).toEqual([{ type: 'context_usage', used: 510_431, window: 1_000_000 }])
+      child.emit('close', 0)
+      await adapter.kill(handle)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("starts a fresh chat on the CLI's count, and keeps its window over the table's for the model", async () => {
+    const { adapter, handle, child } = await started('context-fresh', { model: 'claude-opus-5-5' })
+    adapter.ready(handle)
+    const request = asked(sent(child))
+    answer(child, {
+      subtype: 'success',
+      request_id: request!.request_id,
+      response: { maxTokens: 200_000, totalTokens: 15_299 }
+    })
+    expect(usages()).toEqual([{ type: 'context_usage', used: 15_299, window: 200_000 }])
+    // The first answer's own count, beside the window the CLI named: the
+    // table's figure for the answering model (a million) does not replace it.
+    child.stdout.write(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-5-5',
+          content: [{ type: 'text', text: 'hello' }],
+          usage: { input_tokens: 20_000, output_tokens: 5 }
+        }
+      }) + '\n'
+    )
+    expect(usages().at(-1)).toEqual({ type: 'context_usage', used: 20_005, window: 200_000 })
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('asks again after a confirmed switch, and takes the new window with the same count', async () => {
+    const { adapter, handle, child } = await started('context-switch', { model: 'claude-opus-5-5' })
+    adapter.ready(handle)
+    const first = asked(sent(child))
+    answer(child, {
+      subtype: 'success',
+      request_id: first!.request_id,
+      response: { maxTokens: 1_000_000, totalTokens: 30_000 }
+    })
+    adapter.write(handle, { type: 'set_model', model: 'claude-haiku-4-5-20251001' })
+    const [switched] = sent(child)
+    // Nothing is asked before the CLI took the switch.
+    answer(child, { subtype: 'success', request_id: switched.request_id })
+    const again = asked(sent(child))
+    expect(again).toBeDefined()
+    expect(again!.request_id).not.toBe(first!.request_id)
+    answer(child, {
+      subtype: 'success',
+      request_id: again!.request_id,
+      response: { maxTokens: 200_000, totalTokens: 30_000 }
+    })
+    expect(usages()).toEqual([
+      { type: 'context_usage', used: 30_000, window: 1_000_000 },
+      { type: 'context_usage', used: 30_000, window: 200_000 }
+    ])
+    // The same word twice says nothing new.
+    adapter.write(handle, { type: 'set_model', model: 'claude-haiku-4-5-20251001' })
+    const [twice] = sent(child)
+    answer(child, { subtype: 'success', request_id: twice.request_id })
+    const same = asked(sent(child))
+    answer(child, {
+      subtype: 'success',
+      request_id: same!.request_id,
+      response: { maxTokens: 200_000, totalTokens: 31_000 }
+    })
+    expect(usages()).toHaveLength(2)
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it('keeps what it had when the CLI does not know the request, or answers without a window', async () => {
+    const { adapter, handle, child } = await started('context-refused', {
+      model: 'claude-opus-5-5'
+    })
+    adapter.ready(handle)
+    const request = asked(sent(child))
+    const before = events.length
+    // An older CLI's own refusal: no error reaches the reader, nothing is shown.
+    answer(child, {
+      subtype: 'error',
+      request_id: request!.request_id,
+      error: 'Unsupported control request subtype: get_context_usage'
+    })
+    expect(events.length).toBe(before)
+    // An answer that names no window, or a window that is not a count, is not one.
+    adapter.write(handle, { type: 'set_model', model: 'claude-sonnet-5-5' })
+    const [switched] = sent(child)
+    answer(child, { subtype: 'success', request_id: switched.request_id })
+    const blank = asked(sent(child))
+    const afterSwitch = events.length
+    answer(child, {
+      subtype: 'success',
+      request_id: blank!.request_id,
+      response: { maxTokens: '1M', totalTokens: 12 }
+    })
+    expect(events.length).toBe(afterSwitch)
+    expect(usages()).toEqual([])
+    child.emit('close', 0)
+    await adapter.kill(handle)
   })
 })
 describe('a background list that names a task before its call', () => {

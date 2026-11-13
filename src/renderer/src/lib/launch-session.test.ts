@@ -70,7 +70,10 @@ vi.mock('../store/launch-prefs', () => ({
   agentSetupToModes: () => f.modes,
   rememberAgentSetup: f.remember
 }))
-import { launchSession } from './launch-session'
+import { launchSession, setupSpawnFlags, transportProfileFor } from './launch-session'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
+import { useLaunchProfileStore } from '../store/launch-profile-store'
+import { DEFAULT_LAUNCH_PROFILE_PREFERENCES } from '../../../shared/agent-launch'
 
 afterEach(() => {
   vi.resetAllMocks()
@@ -84,6 +87,7 @@ afterEach(() => {
   f.activeWorkspaceId = 'workspace'
   f.workspaces.clear()
   f.statuses = {}
+  useLaunchSettingsStore.setState({ harnesses: {} })
 })
 
 describe('launchSession acknowledgement and opt-in errors', () => {
@@ -279,6 +283,52 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     })
     await launchSession({ ...request, throwOnError: true })
     expect(f.accountCalls).toEqual([['codex', 'work', undefined]])
+  })
+
+  it('judges the account on the model picked in the launcher and passes it and the permission rung to the spawn (PRDCT-4423)', async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.spawn.mockResolvedValue({ id: 'new', cwd: '/private/triage', folderName: 'triage' })
+    f.modes = { claudeMode: true }
+    f.launchModel.mockResolvedValue('claude-opus-5-5')
+    useLaunchSettingsStore.setState({
+      harnesses: { claude: { permissionDefault: 'acceptEdits' } }
+    })
+    await launchSession({
+      ...request,
+      setup: {
+        kind: 'claude',
+        dangerousMode: false,
+        launchProfileId: 'claude-chat',
+        model: 'claude-fable-5-1[1m]'
+      },
+      throwOnError: true
+    })
+    // The picked model wins over the composer's remembered one.
+    expect(f.accountCalls).toEqual([['claude', undefined, 'claude-fable-5-1[1m]']])
+    expect(f.spawn).toHaveBeenCalledWith(
+      '/private/triage',
+      expect.objectContaining({ model: 'claude-fable-5-1[1m]', permissionMode: 'acceptEdits' })
+    )
+  })
+
+  it('never sends a rung with a skip-approvals launch, nor a model it was not given', async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.spawn.mockResolvedValue({ id: 'new', cwd: '/private/triage', folderName: 'triage' })
+    useLaunchSettingsStore.setState({
+      harnesses: { codex: { permissionDefault: 'workspace-write' } }
+    })
+    await launchSession({
+      ...request,
+      setup: { ...request.setup, dangerousMode: true },
+      throwOnError: true
+    })
+    const options = f.spawn.mock.calls[0][1]
+    expect(options.dangerousMode).toBe(true)
+    expect(options).not.toHaveProperty('permissionMode')
+    expect(options).not.toHaveProperty('model')
+    f.spawn.mockClear()
+    await launchSession({ ...request, throwOnError: true })
+    expect(f.spawn.mock.calls[0][1]).toMatchObject({ permissionMode: 'workspace-write' })
   })
 
   it('rejects a different account from the existing pool helper before any spawn', async () => {
@@ -478,5 +528,90 @@ describe('launches in a server workspace (#241)', () => {
     expect(await launchSession({ setup, cwd: { kind: 'workspace-root' } })).toBeNull()
     expect(f.notice).toHaveBeenCalledWith(expect.stringContaining('could not start the session'))
     expect(f.setState).not.toHaveBeenCalled()
+  })
+})
+
+describe('transportProfileFor', () => {
+  // The transport of every road (PRDCT-4425): the launcher's rows, the agent
+  // button, the shortcuts and a server launch run on the family's chat default
+  // when the mode is a chat view, on nothing (the terminal) otherwise. Round 1
+  // of the verifier: only the rows followed the mode.
+  const chat = (family: 'claude' | 'codex'): string | undefined =>
+    family === 'claude' ? 'chat:claude:work' : undefined
+  afterEach(() => {
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
+    vi.unstubAllGlobals()
+  })
+  it("answers the chat default in a chat mode, and nothing when the family's selected profile is a chat-capable agent of its own", () => {
+    vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
+    useLaunchSettingsStore.setState({ interactionMode: 'folio' })
+    expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBe(
+      'chat:claude:work'
+    )
+    // A plugin's adapter selected as the default has no chat form: main runs
+    // it as it is (the echo adapter of the chat-view specs).
+    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, chat)).toBeUndefined()
+  })
+  it('answers nothing in Terminal mode, for a harness with no chat, for claude agents, and for a Claude chat on Windows', () => {
+    vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBeUndefined()
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
+    expect(transportProfileFor({ kind: 'pi', dangerousMode: false }, chat)).toBeUndefined()
+    expect(transportProfileFor({ kind: 'antigravity', dangerousMode: false }, chat)).toBeUndefined()
+    expect(
+      transportProfileFor({ kind: 'claude-agents', dangerousMode: false }, chat)
+    ).toBeUndefined()
+    expect(transportProfileFor(null, chat)).toBeUndefined()
+    vi.stubGlobal('window', { electronAPI: { platform: 'win32' } })
+    expect(transportProfileFor({ kind: 'claude', dangerousMode: false }, chat)).toBeUndefined()
+    expect(transportProfileFor({ kind: 'codex', dangerousMode: false }, () => 'codex-chat')).toBe(
+      'codex-chat'
+    )
+  })
+  it('keeps a profile the setup names, whatever the mode', () => {
+    vi.stubGlobal('window', { electronAPI: { platform: 'darwin' } })
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    expect(
+      transportProfileFor({ kind: 'claude', dangerousMode: false, launchProfileId: 'work' }, chat)
+    ).toBe('work')
+  })
+})
+
+describe('setupSpawnFlags', () => {
+  // The person's default rung never travels with a profile that sets its own
+  // permissions (verifier, round 3: the renderer's guard is the only one on
+  // the Claude chat road).
+  afterEach(() => {
+    useLaunchSettingsStore.setState({ harnesses: {} })
+    useLaunchProfileStore.setState({ preferences: DEFAULT_LAUNCH_PROFILE_PREFERENCES })
+  })
+  it('sends the default rung for a bare profile, none for a profile with a mode of its own', () => {
+    useLaunchSettingsStore.setState({
+      harnesses: { claude: { permissionDefault: 'bypassPermissions' } }
+    })
+    useLaunchProfileStore.setState({
+      preferences: {
+        ...DEFAULT_LAUNCH_PROFILE_PREFERENCES,
+        customProfiles: [
+          {
+            id: 'planned',
+            name: 'Planned',
+            family: 'claude',
+            command: ['claude'],
+            additionalArgs: ['--permission-mode', 'plan']
+          }
+        ]
+      }
+    })
+    const setup = { kind: 'claude' as const, dangerousMode: false, model: 'claude-opus-5-5' }
+    expect(setupSpawnFlags(setup)).toEqual({
+      model: 'claude-opus-5-5',
+      permissionMode: 'bypassPermissions'
+    })
+    expect(setupSpawnFlags(setup, 'planned')).toEqual({ model: 'claude-opus-5-5' })
+    expect(setupSpawnFlags({ ...setup, dangerousMode: true }, 'planned')).toEqual({
+      model: 'claude-opus-5-5'
+    })
   })
 })

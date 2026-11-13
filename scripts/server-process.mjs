@@ -266,7 +266,8 @@ export async function startTerminalProcess({
  * its parent, so a runner that dies takes it along. `terminalProcess`
  * answers the process the server runs NOW, read off the server's own
  * discovery file: `pid()` and `address()` change when the server starts a
- * new one, `null` while it is being started again.
+ * new one, `null` while it is being started again. `processState()` reads
+ * this server child's exit code and signal without probing its listener.
  */
 export async function startServerProcess({
   repo,
@@ -313,6 +314,7 @@ export async function startServerProcess({
     pid: child.pid,
     dataDir,
     stderr,
+    processState: () => ({ exitCode: child.exitCode, signalCode: child.signalCode }),
     terminalProcess:
       terminals === 'sidecar'
         ? {

@@ -5,10 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // written at spawn, dropped on a real close, kept on quit, and a restore
 // resumes the conversation under the tab's own id.
 
+/** The person's launch settings (Settings → Harnesses), per test. */
+const launch = vi.hoisted(() => ({
+  harnesses: {} as Record<string, { permissionDefault?: string }>
+}))
 const mocks = vi.hoisted(() => {
   const handles = new Map<string, { id: string }>()
   return {
     handles,
+    /** The profile `launchProfileManager.resolve` answers for a test that
+     *  needs one with flags of its own; null answers the bare chat id. */
+    resolvedProfile: null as null | Record<string, unknown>,
     backend: {
       writeEventSessionRecord: vi.fn(() => true),
       discardSessionRecord: vi.fn(),
@@ -91,6 +98,12 @@ vi.mock('./sessions/chat-model-default', () => ({
   rememberedChatModel: mocks.remembered,
   rememberedChatEffort: mocks.rememberedEffort
 }))
+vi.mock('./preferences-manager', () => ({
+  preferencesManager: {
+    get: (key: string) => (key === 'harnessSettings' ? launch.harnesses : undefined),
+    set: () => {}
+  }
+}))
 vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))
@@ -101,7 +114,7 @@ vi.mock('./launch-profile-manager', () => ({
   eventsProfile: (id?: string) =>
     id === 'claude-chat' || id === 'codex-chat' ? { id, adapterId: id } : undefined,
   isEchoLaunchProfile: () => false,
-  launchProfileManager: { resolve: () => ({ id: 'claude-chat' }) }
+  launchProfileManager: { resolve: () => mocks.resolvedProfile ?? { id: 'claude-chat' } }
 }))
 
 import { ptyManager } from './pty-manager'
@@ -583,6 +596,67 @@ describe("a chat tab's dangerous mode reaches its agent", () => {
         options: expect.objectContaining({ permissionMode: 'bypassPermissions' })
       })
     )
+  })
+})
+
+describe("the person's permission default reaches a chat (PRDCT-4424)", () => {
+  const optionsOf = (adapter: {
+    spawn: { mock: { calls: unknown[][] } }
+  }): Record<string, unknown> =>
+    (adapter.spawn.mock.calls.at(-1) as unknown as [{ options: Record<string, unknown> }])[0]
+      .options
+  beforeEach(() => {
+    launch.harnesses = {}
+  })
+
+  it('hands a Codex chat its rung, and a Claude chat its mode', async () => {
+    launch.harnesses = {
+      codex: { permissionDefault: 'workspace-write' },
+      claude: { permissionDefault: 'acceptEdits' }
+    }
+    const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }
+    mocks.manager.getAdapter.mockReturnValue(codex)
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', codexMode: true })
+    expect(optionsOf(codex)).toMatchObject({ permissionRung: 'workspace-write' })
+    expect(optionsOf(codex).permissionMode).toBeUndefined()
+    mocks.manager.getAdapter.mockReturnValue(mocks.claude)
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'acceptEdits' })
+  })
+
+  it("lets the spawn's own mode and the dangerous flag win, and drops a rung off the ladder", async () => {
+    launch.harnesses = { claude: { permissionDefault: 'plan' } }
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', permissionMode: 'auto' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'auto' })
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', dangerousMode: true })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'bypassPermissions' })
+    launch.harnesses = { claude: { permissionDefault: 'workspace-write' } }
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude).permissionMode).toBeUndefined()
+  })
+
+  it('applies no default rung to a profile that sets its own permissions (verifier, round 3)', async () => {
+    launch.harnesses = { claude: { permissionDefault: 'bypassPermissions' } }
+    mocks.resolvedProfile = {
+      id: 'claude-chat',
+      name: 'Claude (chat)',
+      family: 'claude',
+      command: ['claude'],
+      additionalArgs: ['--permission-mode', 'plan']
+    }
+    try {
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+      expect(optionsOf(mocks.claude).permissionMode).toBeUndefined()
+      expect(optionsOf(mocks.claude).dangerousMode).not.toBe(true)
+    } finally {
+      mocks.resolvedProfile = null
+    }
+  })
+
+  it('turns the bypass rung into the dangerous flag', async () => {
+    launch.harnesses = { claude: { permissionDefault: 'bypassPermissions' } }
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ permissionMode: 'bypassPermissions' })
   })
 })
 

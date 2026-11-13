@@ -30,6 +30,7 @@ import { launchProfileManager } from '../launch-profile-manager'
 import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
@@ -73,6 +74,7 @@ export function standaloneSettingsSource(
     preferences: preferencesManager,
     workspaces: workspaceManager,
     helpers: helperPreferences,
+    integrations: elevenLabsIntegration,
     // Loaded on first use, as the shell's: the daemon's login reaches the
     // login shell's environment through the terminal backend, which the
     // source's own import graph must not reach (`boot-graph.test.ts`).

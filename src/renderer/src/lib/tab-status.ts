@@ -48,6 +48,7 @@ type StatusFields = Pick<
   | 'antigravityMode'
   | 'codexMode'
   | 'piMode'
+  | 'opencodeMode'
 >
 
 /** Whether the session reports a lifecycle (working / blocked / done) Clave can
@@ -59,7 +60,8 @@ export function hasLifecycleState(session: StatusFields): boolean {
     !session.claudeAgentsMode &&
     !session.antigravityMode &&
     !session.codexMode &&
-    !session.piMode
+    !session.piMode &&
+    !session.opencodeMode
   return claudeCode || session.codexMode === true || session.piMode === true
 }
 
@@ -165,14 +167,7 @@ export function tabStatusPresentation(session: StatusFields): TabStatusPresentat
   }
 }
 
-/**
- * Whether a state change leaves something new to read: a turn that was running
- * (or waiting on the reader) has come to rest. Codex rests on `idle`, Claude and
- * Pi on `done`. A first state after a restore (undefined → done) is not news.
- */
-export function finishesTurn(
-  previous: Session['agentState'],
-  next: Session['agentState']
-): boolean {
-  return (previous === 'working' || previous === 'blocked') && (next === 'done' || next === 'idle')
-}
+// The turn-end rule lives in `src/shared/turn-state.ts` (PRDCT-4472), where the
+// server that saves an artefact's versions reads it too; re-exported for the
+// renderer's existing imports.
+export { finishesTurn } from '../../../shared/turn-state'

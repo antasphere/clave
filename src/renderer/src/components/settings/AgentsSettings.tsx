@@ -16,7 +16,7 @@ import type {
   LauncherFamily,
   PiThinkingLevel
 } from '../../../../shared/agent-launch'
-import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo, OpenCodeLogo } from '../icons/cli-logos'
 import {
   SettingsCallout,
   SettingsCard,
@@ -34,7 +34,8 @@ const FAMILIES: {
   { id: 'claude', label: 'Claude', Logo: ClaudeLogo },
   { id: 'antigravity', label: 'Antigravity', Logo: AntigravityLogo },
   { id: 'codex', label: 'Codex', Logo: CodexLogo },
-  { id: 'pi', label: 'Pi', Logo: PiLogo }
+  { id: 'pi', label: 'Pi', Logo: PiLogo },
+  { id: 'opencode', label: 'OpenCode', Logo: OpenCodeLogo }
 ]
 const THINKING: PiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 /** The select's value for "the Pi default": a select's value is a string, and
@@ -266,6 +267,125 @@ function useLocalLaunchProfileSource(): LaunchProfileSource {
   }
 }
 
+/**
+ * One family's launch profiles: the global default, this workspace's
+ * override, the profiles themselves and the editor. Rendered as its own
+ * section on a server's page, and inside each harness's Advanced fold on
+ * Settings → Harnesses (PRDCT-4424).
+ */
+export function LaunchProfilesFamily({
+  family,
+  label,
+  source: given
+}: {
+  family: LauncherFamily
+  label: string
+  /** Where the profiles come from; this Mac's store when absent. */
+  source?: LaunchProfileSource
+}): React.JSX.Element {
+  const local = useLocalLaunchProfileSource()
+  const source = given ?? local
+  const { preferences, workspaceId: activeWorkspaceId } = source
+  const [editing, setEditing] = useState<LaunchProfile | null>(null)
+  const setWorkspaceDefault = async (
+    workspaceId: string,
+    profileId: string | null
+  ): Promise<void> => {
+    await source.setWorkspace?.(workspaceId, family, profileId)
+  }
+  const profiles = source.profilesFor(family)
+  const globalId =
+    preferences.globalDefaults[family] ?? profiles.find((profile) => profile.builtIn)?.id
+  const workspaceId = activeWorkspaceId
+    ? (preferences.workspaceOverrides[activeWorkspaceId]?.[family] ?? '')
+    : ''
+  const profileOptions = profiles.map((profile) => ({
+    value: profile.id,
+    label: profile.name
+  }))
+  return (
+    <>
+      <SettingsCard data-launch-profiles={family}>
+        <SettingsRow label="Global default">
+          <SettingsSelect
+            value={globalId ?? ''}
+            options={profileOptions}
+            onChange={(value) => void source.setGlobal(family, value)}
+            ariaLabel={`Global default profile for ${label}`}
+            testId={`global-${family}`}
+          />
+        </SettingsRow>
+        {activeWorkspaceId && source.setWorkspace && (
+          <SettingsRow label="This workspace" description="Overrides the global default here only">
+            <SettingsSelect
+              value={workspaceId || USE_GLOBAL}
+              options={[{ value: USE_GLOBAL, label: 'Use global default' }, ...profileOptions]}
+              onChange={(value) =>
+                void setWorkspaceDefault(activeWorkspaceId, value === USE_GLOBAL ? null : value)
+              }
+              ariaLabel={`Workspace override for ${label}`}
+              testId={`workspace-${family}`}
+            />
+          </SettingsRow>
+        )}
+        {profiles
+          .filter((profile) => !profile.sourceProfileId)
+          .map((profile) => (
+            <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
+              <div className="min-w-0">
+                <div className="settings-row-title truncate">{profile.name}</div>
+                <div className="settings-row-description font-mono truncate">
+                  {profile.command.join(' ')}
+                </div>
+              </div>
+              <div className="settings-row-controls">
+                {profile.builtIn ? (
+                  <span className="badge badge-muted">Built in</span>
+                ) : (
+                  <>
+                    <button className="btn-secondary" onClick={() => setEditing(profile)}>
+                      Edit
+                    </button>
+                    <button
+                      className="btn-icon btn-icon-sm btn-icon--danger"
+                      onClick={() => void source.remove(profile.id)}
+                      title="Delete profile"
+                      aria-label={`Delete profile ${profile.name}`}
+                    >
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        <button
+          className="settings-row-action"
+          onClick={() =>
+            setEditing({
+              id: crypto.randomUUID(),
+              name: `Custom ${label}`,
+              family,
+              command: [family === 'antigravity' ? 'agy' : family],
+              additionalArgs: []
+            })
+          }
+        >
+          <PlusIcon className="w-4 h-4" /> Add profile
+        </button>
+      </SettingsCard>
+      {editing && (
+        <ProfileEditor profile={editing} onSave={source.upsert} onDone={() => setEditing(null)} />
+      )}
+    </>
+  )
+}
+
+/**
+ * The launch profiles of every family, one section each: a server's
+ * Harnesses page (this Mac's own is Settings → Harnesses, whose harness rows
+ * carry the same blocks in their Advanced folds).
+ */
 export function AgentsSettings(props: {
   source?: LaunchProfileSource
   title?: string
@@ -273,134 +393,28 @@ export function AgentsSettings(props: {
 }): React.JSX.Element {
   const local = useLocalLaunchProfileSource()
   const source = props.source ?? local
-  const { preferences, workspaceId: activeWorkspaceId } = source
-  const [editing, setEditing] = useState<LaunchProfile | null>(null)
-  const setWorkspaceDefault = async (
-    workspaceId: string,
-    family: LauncherFamily,
-    profileId: string | null
-  ): Promise<void> => {
-    await source.setWorkspace?.(workspaceId, family, profileId)
-  }
   return (
     <SettingsPage
-      title={props.title ?? 'Agents'}
+      title={props.title ?? 'Harnesses'}
       description={
         props.description ??
-        'The command each agent family launches with. Keep passwords and API keys out of it: profiles are stored in plain text.'
+        'The command each harness launches with. Keep passwords and API keys out of it: profiles are stored in plain text.'
       }
       testId="agents"
     >
-      {FAMILIES.map(({ id: family, label, Logo }) => {
-        const profiles = source.profilesFor(family)
-        const globalId =
-          preferences.globalDefaults[family] ?? profiles.find((profile) => profile.builtIn)?.id
-        const workspaceId = activeWorkspaceId
-          ? (preferences.workspaceOverrides[activeWorkspaceId]?.[family] ?? '')
-          : ''
-        const profileOptions = profiles.map((profile) => ({
-          value: profile.id,
-          label: profile.name
-        }))
-        return (
-          <SettingsSection
-            key={family}
-            title={
-              <>
-                <Logo />
-                {label}
-              </>
-            }
-          >
-            <SettingsCard>
-              <SettingsRow label="Global default">
-                <SettingsSelect
-                  value={globalId ?? ''}
-                  options={profileOptions}
-                  onChange={(value) => void source.setGlobal(family, value)}
-                  ariaLabel={`Global default profile for ${label}`}
-                  testId={`global-${family}`}
-                />
-              </SettingsRow>
-              {activeWorkspaceId && source.setWorkspace && (
-                <SettingsRow
-                  label="This workspace"
-                  description="Overrides the global default here only"
-                >
-                  <SettingsSelect
-                    value={workspaceId || USE_GLOBAL}
-                    options={[
-                      { value: USE_GLOBAL, label: 'Use global default' },
-                      ...profileOptions
-                    ]}
-                    onChange={(value) =>
-                      void setWorkspaceDefault(
-                        activeWorkspaceId,
-                        family,
-                        value === USE_GLOBAL ? null : value
-                      )
-                    }
-                    ariaLabel={`Workspace override for ${label}`}
-                    testId={`workspace-${family}`}
-                  />
-                </SettingsRow>
-              )}
-              {profiles
-                .filter((profile) => !profile.sourceProfileId)
-                .map((profile) => (
-                  <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
-                    <div className="min-w-0">
-                      <div className="settings-row-title truncate">{profile.name}</div>
-                      <div className="settings-row-description font-mono truncate">
-                        {profile.command.join(' ')}
-                      </div>
-                    </div>
-                    <div className="settings-row-controls">
-                      {profile.builtIn ? (
-                        <span className="badge badge-muted">Built in</span>
-                      ) : (
-                        <>
-                          <button className="btn-secondary" onClick={() => setEditing(profile)}>
-                            Edit
-                          </button>
-                          <button
-                            className="btn-icon btn-icon-sm btn-icon--danger"
-                            onClick={() => void source.remove(profile.id)}
-                            title="Delete profile"
-                            aria-label={`Delete profile ${profile.name}`}
-                          >
-                            <TrashIcon className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              <button
-                className="settings-row-action"
-                onClick={() =>
-                  setEditing({
-                    id: crypto.randomUUID(),
-                    name: `Custom ${label}`,
-                    family,
-                    command: [family === 'antigravity' ? 'agy' : family],
-                    additionalArgs: []
-                  })
-                }
-              >
-                <PlusIcon className="w-4 h-4" /> Add profile
-              </button>
-            </SettingsCard>
-            {editing?.family === family && (
-              <ProfileEditor
-                profile={editing}
-                onSave={source.upsert}
-                onDone={() => setEditing(null)}
-              />
-            )}
-          </SettingsSection>
-        )
-      })}
+      {FAMILIES.map(({ id: family, label, Logo }) => (
+        <SettingsSection
+          key={family}
+          title={
+            <>
+              <Logo />
+              {label}
+            </>
+          }
+        >
+          <LaunchProfilesFamily family={family} label={label} source={source} />
+        </SettingsSection>
+      ))}
     </SettingsPage>
   )
 }

@@ -98,7 +98,7 @@ export async function run(t) {
       await bar.waitFor({ state: 'visible' })
       await eventually(async () => (await bar.innerText()).includes('main'), 'branch of owner one')
     })
-    assertFileEndpoint(observers, opening, 0, '/git/status')
+    await assertFileEndpoint(observers, opening, 0, '/git/status')
     await eventually(
       () => observers[0].entries.some((e) => e.path === '/git/watches' && e.status === 200),
       'the panel sent the server its watch map naming the repository'
@@ -153,7 +153,7 @@ export async function run(t) {
       )
     for (const route of ['/git/stage', '/git/commit', '/git/push']) {
       await recorded(route, writing)
-      assertFileEndpoint(observers, writing, 0, route)
+      await assertFileEndpoint(observers, writing, 0, route)
     }
     assert.equal(git(b.root, 'log', '-1', '--format=%s'), 'init', 'owner two is untouched')
     assert.equal(
@@ -217,7 +217,7 @@ export async function run(t) {
       )
     })
     await recorded('/git/magic-sync', syncing)
-    assertFileEndpoint(observers, syncing, 0, '/git/magic-sync')
+    await assertFileEndpoint(observers, syncing, 0, '/git/magic-sync')
     assert.deepEqual(await localWrites(), [], 'Magic sync never reached the Mac’s git IPC')
     t.check(
       'a commit message on a server without a Claude login fails with one clear sentence',

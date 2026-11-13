@@ -1,9 +1,9 @@
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync
 } from 'fs'
@@ -19,6 +19,7 @@ import {
   type LinkedUpdate
 } from '../../shared/linked-documents'
 import { digest, validateEmailHtml, importSignature } from './email'
+import { sidePanelRefusal } from '../mcp/artefact-tool'
 
 /** Fields a build before PRDCT-3438 persisted for the composer's built-in send, removed since. */
 const LEGACY_DELIVERY_FIELDS = ['delivery', 'deliveries', 'preparedPackages'] as const
@@ -33,6 +34,34 @@ export class LinkedDocumentStore {
     private changed: () => void = () => {}
   ) {
     mkdirSync(root, { recursive: true, mode: 0o700 })
+    this.dropHtml()
+  }
+  /**
+   * An HTML page is an artefact of the server its session runs on since
+   * PRDCT-4474, never a linked document: a record of that kind a build
+   * before it kept is dropped at load, its page on disk left alone.
+   */
+  private dropHtml(): void {
+    let index: Record<string, string>
+    try {
+      index = this.index()
+    } catch {
+      return
+    }
+    let dropped = false
+    for (const [sessionId, id] of Object.entries(index)) {
+      let kind: unknown
+      try {
+        kind = (JSON.parse(readFileSync(this.file(id), 'utf8')) as { kind?: unknown }).kind
+      } catch {
+        continue
+      }
+      if (kind !== 'html') continue
+      rmSync(this.file(id), { force: true })
+      delete index[sessionId]
+      dropped = true
+    }
+    if (dropped) this.write(join(this.root, 'index.json'), index)
   }
   private file = (id: string): string => {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid document id')
@@ -82,27 +111,6 @@ export class LinkedDocumentStore {
     const abs = resolve(p)
     if (!statSync(abs).isFile()) throw new Error('Expected a regular file')
     return abs
-  }
-  /** A folder an agent opened, or undefined when the path is not one. */
-  private resolveFolder(p: string): string | undefined {
-    if (!isAbsolute(p)) throw new Error('Use an absolute local file path')
-    const abs = resolve(p)
-    return existsSync(abs) && statSync(abs).isDirectory() ? abs : undefined
-  }
-  /** A folder's entry page: index.html, else its one .html file. */
-  private entryOf(root: string): string {
-    for (const name of ['index.html', 'index.htm'])
-      if (existsSync(join(root, name)) && statSync(join(root, name)).isFile())
-        return join(root, name)
-    const pages = readdirSync(root).filter(
-      (name) => /\.html?$/i.test(name) && statSync(join(root, name)).isFile()
-    )
-    if (pages.length === 1) return join(root, pages[0]!)
-    throw new Error(
-      pages.length === 0
-        ? 'The folder holds no HTML page: write its index.html first'
-        : 'The folder holds several HTML pages and no index.html: name one index.html'
-    )
   }
   private readText(p: string): string {
     const abs = this.resolveFile(p)
@@ -179,17 +187,16 @@ export class LinkedDocumentStore {
     const signature = input.signaturePath
       ? await importSignature(this.resolveFile(input.signaturePath))
       : undefined
-    const root = input.path ? this.resolveFolder(input.path) : undefined
-    const filePath = root
-      ? this.entryOf(root)
-      : input.path
-        ? this.resolveFile(input.path)
-        : undefined
+    // An HTML page or a folder is the session's artefact, not a document of
+    // the panel: refused with the sentence the agent tool says too.
+    const refusal = sidePanelRefusal(input.path)
+    if (refusal) throw new Error(refusal)
+    const filePath = input.path ? this.resolveFile(input.path) : undefined
     const ext = filePath ? extname(filePath).toLowerCase() : ''
-    if (filePath && !['.md', '.markdown', '.html', '.htm'].includes(ext))
-      throw new Error('Linked files support Markdown, HTML, and a folder holding an HTML page')
+    if (filePath && !['.md', '.markdown'].includes(ext))
+      throw new Error('Linked files support Markdown')
     const prior = this.index()[sessionId]
-    if (prior && filePath && this.get(prior).path === filePath && this.get(prior).root === root) {
+    if (prior && filePath && this.get(prior).path === filePath) {
       const was = this.get(prior)
       // Opening the same file again shows what is on disk now (PRDCT-4261):
       // an agent that edited it and opens it again must not see the old page.
@@ -204,11 +211,10 @@ export class LinkedDocumentStore {
     const doc: LinkedDocument = {
       id: randomUUID(),
       sessionId,
-      kind: filePath ? (ext === '.md' || ext === '.markdown' ? 'markdown' : 'html') : 'email',
+      kind: filePath ? 'markdown' : 'email',
       title: input.title || (filePath ? basename(filePath) : 'Email'),
       revision: 1,
       path: filePath,
-      ...(root ? { root } : {}),
       content,
       sourceHash: filePath ? digest(content) : undefined,
       email: input.email,

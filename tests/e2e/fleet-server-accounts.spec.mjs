@@ -371,20 +371,17 @@ export async function run(t) {
     })
     const defaultPane = win.locator(`.chat-host[data-session-id="${onDefault.sessionId}"]`)
     await callMcp(app, 'focus', { sessionId: onDefault.sessionId })
-    // A new chat opens in the view the reader picked last (Enclave, above).
+    // A new chat opens in the interaction mode's view: the Enclave pick above
+    // is that tab's own since the launcher's three words (PRDCT-4425), so this
+    // one is put on Enclave from its own pane's menu, as a reader would; the
+    // first tab's menu is on screen beside it (PRDCT-4495).
     const defaultStatus = defaultPane.locator('[data-testid="terminal-view"] .term-status')
-    const inEnclave = await defaultStatus
-      .waitFor({ timeout: 15_000 })
-      .then(() => true)
-      .catch(() => false)
-    if (!inEnclave) {
-      await win.getByLabel('Session menu', { exact: true }).click()
-      const tile2 = win.locator('.view-tile', { hasText: /^Enclave$/ })
-      await tile2.waitFor()
-      await win.waitForTimeout(500)
-      await tile2.click({ force: true })
-      await defaultStatus.waitFor({ timeout: 10_000 })
-    }
+    await defaultPane.getByLabel('Session menu', { exact: true }).click()
+    const tile2 = win.locator('.view-tile', { hasText: /^Enclave$/ })
+    await tile2.waitFor()
+    await win.waitForTimeout(500)
+    await tile2.click({ force: true })
+    await defaultStatus.waitFor({ timeout: 10_000 })
     const defaultChip = defaultPane.locator('[data-account-chip="default"]')
     await defaultChip.waitFor({ timeout: 10_000 })
     t.equal(

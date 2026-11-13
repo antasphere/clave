@@ -97,6 +97,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
   publishSessionStates,
+  sessionLimitCleared,
   sessionLimitReported,
   setServerEventPublisher
 } from './server/session-events'
@@ -106,6 +107,15 @@ import { rememberedSpawnModel } from './sessions/spawn-model'
 import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { hostDigests, sessionLaunchOf } from './exchange-digest'
+import { hostSpeech } from './speech'
+import {
+  startWatching as startAgentStateWatching,
+  stopWatching as stopAgentStateWatching
+} from './agent-state-manager'
+// ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
+import { ForwardRegistry } from '@clave/server/forward-registry'
+import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
+import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -430,6 +440,36 @@ async function main(): Promise<void> {
     log: (level, message) => process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
   })
   installE2eHooks({ routines })
+  // ── PRDCT-4472: a session's HTML artefact, its preview and its versions ──
+  // This server's own: the links in `--data-dir/artefacts.json`, its own copy
+  // of Slideless under `--data-dir/slideless`, run under the Node the entry
+  // was told (`--node`, as the terminal process gets it) or its own; a
+  // preview a window holds reaches it through `/forward/<lease>/…`.
+  const forwards = new ForwardRegistry()
+  // Under test mode only: a spec registers a target of its own on this server.
+  installE2eHooks({ forwards })
+  const recordOf = sessionLaunchOf(ptyManager)
+  const artefacts = createArtefactService({
+    dataDir,
+    execPath: arg('node') ?? process.execPath,
+    env: process.env,
+    links: new ArtefactLinks(fileLinksStorage(path.join(dataDir, 'artefacts.json')), (line) =>
+      log(line)
+    ),
+    forwards,
+    sessions: {
+      knows: (id) => Boolean(recordOf(id)),
+      // Read as `publishSessionStates` reads it (`server/session-events.ts`).
+      onState: (listener) =>
+        sessionManager.subscribeAll((id, stream) => {
+          if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+          listener(id, stream.event.state)
+        })
+    },
+    // A test instance never reaches npm: it installs only from the fixture registry it was given.
+    autoInstall: !TEST_NO_ACTIVATE || Boolean(process.env[REGISTRY_ENV]),
+    log: (line) => log(line)
+  })
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -450,6 +490,12 @@ async function main(): Promise<void> {
       // ── PRDCT-4327: the digests a client asks for, read on this server's
       // own record of the session, filed in its data folder ──
       digests: hostDigests(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-4411: speech with this server's ElevenLabs key and voice, for
+      // a session it has a record of ──
+      speech: hostSpeech(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
+      artefacts,
+      forwards,
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.
@@ -489,6 +535,8 @@ async function main(): Promise<void> {
     testFixtures: TEST_NO_ACTIVATE
   })
   listeningServerId = server.serverId
+  // ── PRDCT-4472: the preview host written, the stale links dropped, the sweep and the turn saves armed ──
+  artefacts.start()
 
   const mcp = config.daemon
     ? await startStandaloneMcp({
@@ -497,6 +545,8 @@ async function main(): Promise<void> {
         requests,
         createHosted: requestHost.createHosted,
         routines,
+        // PRDCT-4472: `clave_open_artefact`, on this server's own artefacts.
+        artefacts,
         // PRDCT-4243: the routine tools on this server: its workspaces, its files, its name.
         routineTools: {
           workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
@@ -538,10 +588,20 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // A tab that runs in a terminal says its state through its lifecycle hooks,
+  // which write under this server's own data folder: they are read here
+  // (PRDCT-4472). Until now only the desktop app read its own folder, so on a
+  // server running on its own such a tab never said a turn had ended, to the
+  // clients (ADR 0003, wave 5, named there as a gap) or to the artefact
+  // service, which saves a version at that moment. A chat's state comes from
+  // its stream and is left alone by the watch.
+  startAgentStateWatching(() => undefined)
   // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
   // this in its IPC handlers, which a daemon never registers, so until now a
   // server's limit reached no client and its chat drew "server ended".
   const stopLimits = ptyManager.onLimitReported((id, report) => sessionLimitReported(id, report))
+  // The account served a turn again (PRDCT-4415): the clients close the report.
+  const stopCleared = ptyManager.onLimitCleared((id) => sessionLimitCleared(id))
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
@@ -617,12 +677,16 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    stopAgentStateWatching()
     stopLimits()
+    stopCleared()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
     plugins.close()
     // ── ADR 0004: the scheduler's tick and viewer go with the server; the runs die with their sessions ──
     void routines.close()
+    // ── PRDCT-4472: the previews go before the sessions (the preview host ends them anyway on any exit) ──
+    void artefacts.stop()
     // The sessions go with the server, as they go with the app at its quit
     // (`index.ts`): a chat's CLI is a detached child of this process and
     // would outlive it; a terminal's tmux session is left for the next

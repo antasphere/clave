@@ -11,7 +11,8 @@ import {
   UserCircleIcon,
   MicrophoneIcon,
   ServerIcon,
-  SparklesIcon
+  SparklesIcon,
+  SquaresPlusIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
@@ -39,9 +40,10 @@ const GROUPS: { label: string; rows: Row[] }[] = [
   {
     label: 'Agents',
     rows: [
-      { id: 'agents', label: 'Agents', icon: CpuChipIcon },
+      { id: 'agents', label: 'Harnesses', icon: CpuChipIcon },
       { id: 'helpers', label: 'Helpers', icon: SparklesIcon },
-      { id: 'accounts', label: 'Accounts', icon: UserCircleIcon },
+      { id: 'integrations', label: 'Integrations', icon: SquaresPlusIcon },
+      { id: 'accounts', label: 'Connections', icon: UserCircleIcon },
       { id: 'usage', label: 'Usage', icon: ChartBarIcon },
       { id: 'activity', label: 'Activity', icon: ClockIcon }
     ]

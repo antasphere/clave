@@ -17,7 +17,11 @@ import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
-import { hasServerEventPublisher, sessionLimitReported } from '../server/session-events'
+import {
+  hasServerEventPublisher,
+  sessionLimitCleared,
+  sessionLimitReported
+} from '../server/session-events'
 import { isServerExternal } from '../server/endpoint'
 import { adoptableRecordsFor, serverHoldsRecordsFor, tmuxAvailableFor } from './boot-reads'
 import { serverClient } from '../mcp/server-client'
@@ -84,6 +88,8 @@ export function registerPtyHandlers(): void {
   // policy there offers a model of the same account, another account, or a
   // provider, and makes the move in automatic mode.
   ptyManager.onLimitReported((sessionId, report) => sessionLimitReported(sessionId, report))
+  // The account served a turn again (PRDCT-4415): the report closes there too.
+  ptyManager.onLimitCleared((sessionId) => sessionLimitCleared(sessionId))
 
   // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
   // renderer's spawn never carries one. Nor `work` (PRDCT-4123): a session's

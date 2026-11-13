@@ -120,6 +120,7 @@ export function providerSwitchOptions(
     claudeAgentsMode: false,
     antigravityMode: false,
     piMode: false,
+    opencodeMode: false,
     launchProfileId: launchProfileFor(target.adapterId),
     launchProfile: undefined,
     model: target.model,

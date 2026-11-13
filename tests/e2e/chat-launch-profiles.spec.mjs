@@ -8,6 +8,7 @@ import {
   seedTrustedRoots,
   until,
   fixturePath,
+  markHarnessesInstalled,
   serverDataDirOf
 } from './harness.mjs'
 
@@ -90,8 +91,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].webContents.send('menu:open-settings-section', 'agents')
     })
-    await win.getByRole('heading', { name: 'Agents', exact: true }).waitFor()
+    await win.getByRole('heading', { name: 'Harnesses', exact: true }).waitFor()
     for (const family of ['claude', 'codex']) {
+      // The launch profiles sit under each harness's Advanced fold (PRDCT-4424).
+      await win.locator(`[data-harness-advanced="${family}"]`).click()
       assert.equal(await win.locator(`[data-launch-profile="${family}-work"]`).count(), 1)
       assert.equal(
         await win.locator(`[data-launch-profile="chat:${family}:${family}-work"]`).count(),
@@ -107,13 +110,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     )
     for (const family of ['claude', 'codex']) {
       await win.locator('.launcher-caret').click()
-      await win
-        .getByRole('menuitem', {
-          name: family === 'claude' ? 'Claude Code' : 'Codex CLI',
-          exact: true
-        })
-        .hover()
-      await win.getByRole('menuitem', { name: `${family} work (chat)`, exact: true }).click()
+      await markHarnessesInstalled(win)
+      // The harness row launches on a click (PRDCT-4423): the interaction
+      // mode is Chat, so it opens the family's chat default, the saved
+      // profile's chat form picked in Settings.
+      await win.locator(`[data-harness-row="${family}"]`).click()
       const session = await until(async () =>
         (await win.evaluate(() => window.electronAPI.sessionsList())).find(
           (s) => s.adapterId === `${family}-chat`
@@ -136,7 +137,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
         .getByText(family === 'claude' ? 'CLAVE_OK' : 'CODEX_PROFILE_OK', { exact: true })
         .waitFor()
       const prefs = await win.evaluate(() => window.electronAPI.launchProfilesList())
-      assert.equal(prefs.workspaceOverrides.profiles[family], `chat:${family}:${family}-work`)
+      assert.equal(prefs.globalDefaults[family], `chat:${family}:${family}-work`)
       t.check(
         `${family} launcher chat choice runs its wrapper and arguments and completes a conversation`,
         true
@@ -149,7 +150,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     const persisted = JSON.parse(
       readFileSync(`${serverDataDirOf(data)}/agent-launch-profiles.json`, 'utf8')
     )
-    assert.equal(persisted.workspaceOverrides.profiles.claude, 'chat:claude:claude-work')
+    assert.equal(persisted.globalDefaults.claude, 'chat:claude:claude-work')
     assert.ok(
       persisted.customProfiles.every((p) => !p.id.startsWith('chat:')),
       'Derived profiles must not be saved as editable copies'

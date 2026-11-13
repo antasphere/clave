@@ -58,13 +58,14 @@ import type {
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { SlidelessAPI } from '../shared/slideless'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   HelperAccount,
   HelperPreference,
   HelperPreferencePatch
 } from '../shared/helper-preferences'
+import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -75,6 +76,7 @@ import type {
 export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
 export type { HelperAccount, HelperPreference, HelperPreferencePatch }
+export type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus }
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -101,7 +103,7 @@ export interface HistoryLedgerRow {
   claudeSessionId: string | null
   name: string
   cwd: string
-  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'claude-agents' | 'terminal'
+  mode: 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode' | 'claude-agents' | 'terminal'
   model: string | null
   workspaceId: string | null
   groupId: string | null
@@ -329,6 +331,7 @@ export interface ClaveFileGroupData {
     antigravityMode: boolean
     codexMode: boolean
     piMode?: boolean
+    opencodeMode?: boolean
     claudeAgentsMode?: boolean
     dangerousMode: boolean
     prompt?: string
@@ -398,6 +401,7 @@ export interface ClaveFileWriteData {
     antigravityMode: boolean
     codexMode: boolean
     piMode?: boolean
+    opencodeMode?: boolean
     claudeAgentsMode?: boolean
     dangerousMode: boolean
     prompt?: string
@@ -432,6 +436,7 @@ export interface ClaveFileWriteData {
       antigravityMode: boolean
       codexMode: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       dangerousMode: boolean
       prompt?: string
@@ -498,6 +503,7 @@ export interface SessionRecord {
   antigravityMode: boolean
   codexMode: boolean
   piMode: boolean
+  opencodeMode: boolean
   claudeAgentsMode: boolean
   dangerousMode: boolean
   /** Model the session was launched on (claude/codex); re-applied on re-spawn. */
@@ -730,12 +736,15 @@ import type { MicAccessState } from '../shared/mic'
 import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
 import type {
   OnboardingAgent,
-  OnboardingAgentId,
+  InstallableAgentId,
   OnboardingInstallResult,
   OnboardingState
 } from '../shared/onboarding'
 import type { DigestDone, DigestRequest, DigestResult } from '../shared/exchange-digest'
 import type { WorkDigestDone, WorkDigestRequest, WorkDigestResult } from '../shared/work-digest'
+import type { SpokenDone, SpokenRequest, SpokenResult } from '../shared/spoken-rendering'
+import type { SpeakRequest, SpeakResult } from '../shared/speech'
+import type { PageTitleDone, PageTitleRequest, PageTitleResult } from '../shared/page-title'
 import type {
   ServerInstallProgress,
   ServerInstallResult,
@@ -761,6 +770,31 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
+/** The window's road to the artefacts (PRDCT-4474). */
+export interface ArtefactsAPI {
+  /** Every artefact this window can show: this Mac's own server's, and each connected server's, their session ids as the window keys them. */
+  list(): Promise<Artefact[]>
+  /** Hold the preview of a session's artefact; call again with the holdId before ttlMs runs out. The url is one this window can frame. */
+  hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
+  release(sessionId: string, holdId: string): Promise<void>
+  saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
+  /** The versions the session's artefact keeps, from its running preview (PRDCT-4494). */
+  versions(sessionId: string): Promise<ArtefactVersions>
+  /** The session shows no artefact any more, for every window and every Mac. */
+  close(sessionId: string): Promise<void>
+  onChanged(
+    callback: (change: { sessionId: string; artefact: Artefact | null }) => void
+  ): () => void
+  /** The preview died under its holders: hold again. */
+  onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
+  slidelessState(serverId?: string): Promise<SlidelessState>
+  installSlideless(serverId?: string): Promise<SlidelessState>
+  onSlidelessState(
+    callback: (change: { serverId: string | null; state: SlidelessState }) => void
+  ): () => void
+}
+
 export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
@@ -892,6 +926,23 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `fleetHelpers` / `fleetHelperSet`. */
   helpersList: () => Promise<HelperPreference[]>
   helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's integrations (PRDCT-4410): the ElevenLabs key sealed on the
+   *  machine, its account check, the voice and model. Every write answers
+   *  the status, which never carries the key. A server's are
+   *  `fleetIntegrations` and the `fleetElevenLabs*` members. */
+  integrationsRead: () => Promise<IntegrationsStatus>
+  elevenLabsSetKey: (apiKey: string) => Promise<IntegrationsStatus>
+  elevenLabsCheck: () => Promise<IntegrationsStatus>
+  elevenLabsRemove: () => Promise<IntegrationsStatus>
+  elevenLabsSetVoice: (
+    voiceId: string,
+    voiceName: string,
+    modelId: ElevenLabsModelId | undefined
+  ) => Promise<IntegrationsStatus>
+  elevenLabsVoices: () => Promise<{ voices: ElevenLabsVoice[] }>
+  /** A voice's preview sample, fetched by this Mac's server (PRDCT-4411).
+   *  A failure is a result, never a rejection. */
+  elevenLabsPreview: (voiceId: string) => Promise<SpeakResult>
   spawnSession: (
     cwd: string,
     options?: {
@@ -901,6 +952,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
       antigravityMode?: boolean
       codexMode?: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       resumeSessionId?: string
       claudeSessionId?: string
@@ -1016,6 +1068,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionLimitReported: (
     callback: (payload: { id: string; report: LimitReport }) => void
   ) => () => void
+  /** The account served that session a turn again after its limit report
+   *  (PRDCT-4415): the report is closed; both transports. */
+  onSessionLimitCleared: (callback: (payload: { id: string }) => void) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (
@@ -1109,7 +1164,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
   secretSubmit: (id: string, secret: string) => Promise<SecretRequestView>
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
-  slideless: SlidelessAPI
+  /**
+   * A session's HTML artefact (PRDCT-4474), on the server the session runs
+   * on: this Mac's own server for its own sessions, a connected server for
+   * its sessions, their ids keyed as the window keys them.
+   */
+  artefacts: ArtefactsAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
@@ -1176,6 +1236,21 @@ export interface ElectronAPI extends FleetDesktopAPI {
   workDigest: (request: WorkDigestRequest) => Promise<WorkDigestResult>
   /** Every work digest already read for a tab, by the key of its notes. */
   workDigestsOf: (sessionId: string) => Promise<Record<string, WorkDigestDone>>
+  /** Folio: a finished answer written for the ear, to be read aloud, keyed
+   *  by its clipped markdown (`spokenKey`). A failure is a result, never a
+   *  rejection. */
+  spokenRendering: (request: SpokenRequest) => Promise<SpokenResult>
+  /** Every spoken rendering already read for a tab, by key. */
+  spokenRenderingsOf: (sessionId: string) => Promise<Record<string, SpokenDone>>
+  /** Folio: the title of a page, from the reader's clipped message
+   *  (`pageTitleKey`). A failure is a result, never a rejection. */
+  /** Folio: a part of a page's spoken rendering in the ElevenLabs voice of
+   *  the server the tab runs on (PRDCT-4411). A failure is a result with its
+   *  reason (no key, no voice, refused, credits spent…), never a rejection. */
+  speakText: (request: SpeakRequest) => Promise<SpeakResult>
+  pageTitle: (request: PageTitleRequest) => Promise<PageTitleResult>
+  /** Every page title already read for a tab, by key. */
+  pageTitlesOf: (sessionId: string) => Promise<Record<string, PageTitleDone>>
   /** The GitHub pull request panel's reads and writes, through the user's own
    *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
   githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>
@@ -1215,7 +1290,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onOpenTriage: (callback: () => void) => () => void
   onboardingGetState: () => Promise<OnboardingState>
   onboardingAgents: (fresh?: boolean) => Promise<OnboardingAgent[]>
-  onboardingInstall: (id: OnboardingAgentId) => Promise<OnboardingInstallResult>
+  onboardingInstall: (id: InstallableAgentId) => Promise<OnboardingInstallResult>
   onboardingComplete: () => Promise<void>
   onboardingSetChatView: (viewId: string) => Promise<void>
   onboardingCreateFolder: (parent: string, name: string) => Promise<string>
@@ -1510,6 +1585,14 @@ export interface ElectronAPI extends FleetDesktopAPI {
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
   onRecommendedAccountChanged: (callback: (enabled: boolean) => void) => () => void
+  launchSettingsGet: () => Promise<import('../shared/harness').LaunchSettings>
+  launchSettingsSet: (
+    patch: import('../shared/harness').LaunchSettingsPatch
+  ) => Promise<import('../shared/harness').LaunchSettings>
+  onLaunchSettingsChanged: (
+    callback: (settings: import('../shared/harness').LaunchSettings) => void
+  ) => () => void
+  launchRememberedModel: (adapterId: string) => Promise<string | null>
   getMicAccess: () => Promise<MicAccessState>
   requestMicAccess: () => Promise<MicAccessState>
   openMicPrivacySettings: () => Promise<void>

@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { openChat } from './chat-view.spec.mjs'
 import { until, fixturePath, REPO } from './harness.mjs'
+import { waitForRegistryFailure } from './fixtures/registry-failure.mjs'
 
 export async function run(t) {
   const modulePath = fixturePath('retry-chat-registry.mjs')
@@ -45,7 +46,9 @@ export async function run(t) {
     })
     await win.locator('.launcher-split .launcher-btn').click()
     await win.locator('.xterm').waitFor()
-    assert.ok(await fixture.evaluate(() => globalThis.__registryFailures > 0))
+    // A mounted terminal can precede the asynchronous registry read. Observe
+    // the injected failure before healing it, without retrying that read.
+    await waitForRegistryFailure(fixture)
     await fixture.evaluate(() => {
       globalThis.__claveE2E.plugins.list = globalThis.__registryList
     })

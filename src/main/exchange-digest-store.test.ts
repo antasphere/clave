@@ -57,4 +57,17 @@ describe('DigestStore', () => {
     expect(kept).toHaveLength(40)
     expect(store.get('tab', 'k44')).toBeDefined()
   })
+
+  it('keeps a bucket to the cap it is filed under, the others to forty', () => {
+    const store = new DigestStore(file)
+    for (let i = 0; i < 205; i++) store.put('tab:title', `t${i}`, digest(String(i)), 200)
+    for (let i = 0; i < 45; i++) store.put('tab:spoken', `s${i}`, digest(String(i)), 40)
+    for (let i = 0; i < 45; i++) store.put('tab', `k${i}`, digest(String(i)))
+    expect(Object.keys(store.of('tab:title'))).toHaveLength(200)
+    expect(store.get('tab:title', 't4')).toBeUndefined()
+    expect(store.get('tab:title', 't5')).toBeDefined()
+    expect(Object.keys(store.of('tab:spoken'))).toHaveLength(40)
+    expect(store.get('tab:spoken', 's44')).toBeDefined()
+    expect(Object.keys(store.of('tab'))).toHaveLength(40)
+  })
 })

@@ -7,7 +7,8 @@ import * as helperRunner from './helpers/runner'
 import { helperAccountId } from './helpers/runner'
 import { helperConfig } from './helpers/registry'
 import { DIGEST_TIMEOUT_MS, exchangeDigestHelper, workDigestHelper } from './helpers/digests'
-import type { HelperFailureReason } from '../shared/helper-prompt'
+import { pageTitleHelper, spokenRenderingHelper } from './helpers/folio'
+import { clipText, type HelperFailureReason } from '../shared/helper-prompt'
 import {
   clipDigestMessages,
   digestKey,
@@ -28,6 +29,25 @@ import {
   type WorkDigestRequest,
   type WorkDigestResult
 } from '../shared/work-digest'
+import {
+  SPOKEN_MAX_CHARS,
+  parseSpokenReply,
+  splitBlocks,
+  spokenBucket,
+  spokenKey,
+  type SpokenDone,
+  type SpokenRequest,
+  type SpokenResult
+} from '../shared/spoken-rendering'
+import {
+  PAGE_TITLE_MESSAGE_CHARS,
+  pageTitleBucket,
+  pageTitleKey,
+  parsePageTitleReply,
+  type PageTitleDone,
+  type PageTitleRequest,
+  type PageTitleResult
+} from '../shared/page-title'
 
 /**
  * The exchange digest (`src/shared/exchange-digest.ts` says what it is for)
@@ -35,7 +55,9 @@ import {
  * the agent's working notes, PRDCT-4212): two helpers (`helpers/digests.ts`)
  * run by the helpers' runner, on the agent and the account the session runs,
  * their answers filed by session so a timeline reads them once. The queue,
- * the cap and the kill on quit are the runner's (PRDCT-3375).
+ * the cap and the kill on quit are the runner's (PRDCT-3375). Folio's two
+ * reads (`helpers/folio.ts`: the spoken rendering of an answer, the title of
+ * a page) are run and filed the same way, each in a bucket of its own.
  */
 
 export { DIGEST_TIMEOUT_MS }
@@ -109,6 +131,69 @@ export function requestWorkDigest(request: WorkDigestRequest): Promise<WorkDiges
 }
 const workInflight = new Map<string, Promise<WorkDigestResult>>()
 
+/** How many of a tab's spoken renderings are kept: their texts are large. */
+export const SPOKEN_PER_SESSION = 40
+/** How many of a tab's page titles are kept: one per question it was asked. */
+export const PAGE_TITLES_PER_SESSION = 200
+
+/** Every spoken rendering read for a tab (`spokenBucket`), by key. */
+export function spokenRenderingsOf(sessionId: string): Record<string, SpokenDone> {
+  return digests().of(spokenBucket(sessionId)) as unknown as Record<string, SpokenDone>
+}
+
+/** Every page title read for a tab (`pageTitleBucket`), by key. */
+export function pageTitlesOf(sessionId: string): Record<string, PageTitleDone> {
+  return digests().of(pageTitleBucket(sessionId)) as unknown as Record<string, PageTitleDone>
+}
+
+/** The spoken rendering of an answer: the one filed for this markdown, or a
+ *  call read now and filed when it answers (`spoken-rendering.ts`). */
+export function requestSpoken(request: SpokenRequest): Promise<SpokenResult> {
+  if (helperRunner.isShutDown())
+    return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
+  if (!request.markdown.trim())
+    return Promise.resolve({ ok: false, error: 'No answer', reason: 'refused' })
+  const bucket = spokenBucket(request.sessionId)
+  const filed = digests().get(bucket, request.key) as unknown as SpokenDone | undefined
+  if (filed) return Promise.resolve(filed)
+  const id = `${bucket}|${request.key}`
+  const running = spokenInflight.get(id)
+  if (running) return running
+  const ask = readSpoken(request).then((result) => {
+    spokenInflight.delete(id)
+    if (result.ok)
+      digests().put(bucket, request.key, result as unknown as DigestDone, SPOKEN_PER_SESSION)
+    return result
+  })
+  spokenInflight.set(id, ask)
+  return ask
+}
+const spokenInflight = new Map<string, Promise<SpokenResult>>()
+
+/** The title of a page: the one filed for this message, or a call read now
+ *  and filed when it answers (`page-title.ts`). */
+export function requestPageTitle(request: PageTitleRequest): Promise<PageTitleResult> {
+  if (helperRunner.isShutDown())
+    return Promise.resolve({ ok: false, error: 'Clave is quitting', reason: 'cancelled' })
+  if (!request.message.trim())
+    return Promise.resolve({ ok: false, error: 'No message', reason: 'refused' })
+  const bucket = pageTitleBucket(request.sessionId)
+  const filed = digests().get(bucket, request.key) as unknown as PageTitleDone | undefined
+  if (filed) return Promise.resolve(filed)
+  const id = `${bucket}|${request.key}`
+  const running = pageTitleInflight.get(id)
+  if (running) return running
+  const ask = readPageTitle(request).then((result) => {
+    pageTitleInflight.delete(id)
+    if (result.ok)
+      digests().put(bucket, request.key, result as unknown as DigestDone, PAGE_TITLES_PER_SESSION)
+    return result
+  })
+  pageTitleInflight.set(id, ask)
+  return ask
+}
+const pageTitleInflight = new Map<string, Promise<PageTitleResult>>()
+
 // ── PRDCT-4330 (helpers-settings lane) ──
 /** Whether the harness's canned reply stands in for the model. A spec that
  *  puts a stub `claude` on the PATH sets CLAVE_E2E_DIGEST_RUNNER=1 to send the
@@ -116,10 +201,24 @@ const workInflight = new Map<string, Promise<WorkDigestResult>>()
 const harnessReplies = (): boolean =>
   TEST_NO_ACTIVATE && process.env.CLAVE_E2E_DIGEST_RUNNER !== '1'
 
+/** How long the harness's canned reply takes to come back: 600 ms, the beat
+ *  every spec is written against, or CLAVE_E2E_READ_BEAT_MS for the Folio
+ *  reads (the title, the spoken version) when a visual pass needs the head's
+ *  loader or the read control's Preparing on screen long enough to shoot it
+ *  (tests/visual/folio-voice.mjs). */
+const folioBeat = (): number => {
+  const asked = Number(process.env.CLAVE_E2E_READ_BEAT_MS)
+  return Number.isFinite(asked) && asked > 0 ? asked : 600
+}
+
 /** A helper that is off never reaches the harness's reply either: the
  *  preference is read first, as the runner reads it. */
 function switchedOff(
-  helper: typeof exchangeDigestHelper | typeof workDigestHelper
+  helper:
+    | typeof exchangeDigestHelper
+    | typeof workDigestHelper
+    | typeof spokenRenderingHelper
+    | typeof pageTitleHelper
 ): { ok: false; error: string; reason: 'disabled' } | null {
   return helperConfig(helper).enabled
     ? null
@@ -216,11 +315,94 @@ async function readWork(request: WorkDigestRequest): Promise<WorkDigestResult> {
     })
 }
 
+async function readSpoken(request: SpokenRequest): Promise<SpokenResult> {
+  // Under the harness, the reply comes from CLAVE_E2E_SPOKEN_REPLY.
+  if (TEST_NO_ACTIVATE) {
+    const off = switchedOff(spokenRenderingHelper)
+    if (off) return off
+    journalRead('spoken', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
+    const reply = testReply(process.env.CLAVE_E2E_SPOKEN_REPLY, request.launch)
+    if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
+    return testAccount(spokenRenderingHelper, request.launch).then(
+      (refused) =>
+        refused ??
+        new Promise<SpokenResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                testFailure(reply) ??
+                  parseSpokenReply(
+                    reply,
+                    splitBlocks(clipText(request.markdown, SPOKEN_MAX_CHARS)).length
+                  ) ?? { ok: false, error: 'Unreadable test reply' }
+              ),
+            folioBeat()
+          )
+        )
+    )
+  }
+  const markdown = clipText(request.markdown, SPOKEN_MAX_CHARS)
+  return helperRunner
+    .runHelper(spokenRenderingHelper, markdown, request.launch)
+    .then((outcome): SpokenResult => {
+      if (!outcome.ok) {
+        if (outcome.reason === 'unreadable')
+          console.warn('[exchange-digest] unreadable spoken reply:', outcome.detail.slice(0, 200))
+        return { ok: false, error: failureText(outcome), reason: outcome.reason }
+      }
+      return outcome.value
+    })
+}
+
+async function readPageTitle(request: PageTitleRequest): Promise<PageTitleResult> {
+  // Under the harness, the reply comes from CLAVE_E2E_PAGE_TITLE_REPLY.
+  if (TEST_NO_ACTIVATE) {
+    const off = switchedOff(pageTitleHelper)
+    if (off) return off
+    journalRead('title', request.sessionId, request.key)
+  }
+  if (harnessReplies()) {
+    const reply = testReply(process.env.CLAVE_E2E_PAGE_TITLE_REPLY, request.launch)
+    if (!reply) return Promise.resolve({ ok: false, error: 'No model under test' })
+    return testAccount(pageTitleHelper, request.launch).then(
+      (refused) =>
+        refused ??
+        new Promise<PageTitleResult>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                testFailure(reply) ??
+                  parsePageTitleReply(reply) ?? { ok: false, error: 'Unreadable test reply' }
+              ),
+            folioBeat()
+          )
+        )
+    )
+  }
+  const message = clipText(request.message, PAGE_TITLE_MESSAGE_CHARS)
+  return helperRunner
+    .runHelper(pageTitleHelper, message, request.launch)
+    .then((outcome): PageTitleResult => {
+      if (!outcome.ok) {
+        if (outcome.reason === 'unreadable')
+          console.warn('[exchange-digest] unreadable page title:', outcome.detail.slice(0, 200))
+        return { ok: false, error: failureText(outcome), reason: outcome.reason }
+      }
+      return outcome.value
+    })
+}
+
 /** Under the harness, every read is journaled where THIS process keeps its
  *  data (main: the app's user data; a separate server: `userData/server`;
  *  a daemon: its data dir), one JSON line each, so a spec tells which
  *  process read a digest (`chat-digest-early.spec.mjs`). */
-function journalRead(kind: 'exchange' | 'work', sessionId: string, key: string): void {
+function journalRead(
+  kind: 'exchange' | 'work' | 'spoken' | 'title',
+  sessionId: string,
+  key: string
+): void {
   try {
     fs.appendFileSync(
       settingsPorts().storage.pathOf('e2e-digest-reads.jsonl'),
@@ -318,11 +500,26 @@ export interface HostWorkDigestRequest {
   tools: number
 }
 
+export interface HostSpokenRequest {
+  sessionId: string
+  key: string
+  markdown: string
+}
+export interface HostPageTitleRequest {
+  sessionId: string
+  key: string
+  message: string
+}
+
 export interface HostDigests {
   exchangeDigest: (request: HostDigestRequest) => Promise<DigestResult>
   exchangeDigestsOf: (sessionId: string) => Record<string, DigestDone>
   workDigest: (request: HostWorkDigestRequest) => Promise<WorkDigestResult>
   workDigestsOf: (sessionId: string) => Record<string, WorkDigestDone>
+  spoken: (request: HostSpokenRequest) => Promise<SpokenResult>
+  spokenOf: (sessionId: string) => Record<string, SpokenDone>
+  pageTitle: (request: HostPageTitleRequest) => Promise<PageTitleResult>
+  pageTitlesOf: (sessionId: string) => Record<string, PageTitleDone>
 }
 
 /** A session this host has no record of: said, never read on a guess. */
@@ -344,10 +541,24 @@ export function sessionLaunchOf(source: DigestLaunchSource): DigestRecordOf {
   return (sessionId) => source.getSessionRecord(sessionId) ?? source.spawnLaunchOf(sessionId)
 }
 
-/** How many reads a session may have waiting on the host at once: a client
- *  asking for more is told to ask again in a moment, so no client can queue
- *  model calls without end, nor push a tab's real digests out of its store. */
+/** How many reads of one kind a session may have waiting on the host at
+ *  once: a client asking for more is told to ask again in a moment, so no
+ *  client can queue model calls without end, nor push a tab's real digests
+ *  out of its store. The two digests share one set; page titles have their
+ *  own, so a long book's titles never starve a digest or a reading. */
 export const MAX_WAITING_PER_SESSION = 10
+
+/** How many spoken renderings a session may have waiting at once: one page
+ *  is read aloud at a time, so two leaves room for a turn of the page. */
+export const MAX_WAITING_SPOKEN = 2
+
+/** The kinds of read a session's waiting count is kept by, with their cap. */
+const WAITING_CAP = {
+  digest: MAX_WAITING_PER_SESSION,
+  title: MAX_WAITING_PER_SESSION,
+  spoken: MAX_WAITING_SPOKEN
+} as const
+type WaitingKind = keyof typeof WAITING_CAP
 
 /** A key that is not the key of what it came with: a call would cost a model
  *  read for content the store files under a name it does not have. */
@@ -356,30 +567,35 @@ export const KEY_MISMATCH_ERROR = 'The key does not match what was sent'
 /** The digests as a host serves them to its clients. Every request is read
  *  on the launch of the host's own record of the session, under the key the
  *  host recomputes from the content (a key that does not match is refused),
- *  and at most MAX_WAITING_PER_SESSION distinct reads wait per session. */
+ *  and at most a kind's cap of distinct reads wait per session and kind
+ *  (`WAITING_CAP`). */
 export function hostDigests(recordOf: DigestRecordOf): HostDigests {
   const launchOf = (sessionId: string): DigestLaunch | null => {
     const record = recordOf(sessionId)
     return record ? launchFromRecord(record) : null
   }
+  /** The reads waiting, by `${sessionId}|${kind}`. */
   const waiting = new Map<string, Set<string>>()
-  /** Run a read, unless it is one more than the session may have waiting.
-   *  A read filed already, or one already waiting, costs nothing more. */
+  /** Run a read, unless it is one more than the session may have waiting of
+   *  its kind. A read filed already, or one already waiting, costs nothing
+   *  more. */
   const admit = <R>(
     sessionId: string,
+    kind: WaitingKind,
     id: string,
     filed: boolean,
     run: () => Promise<R>,
     busy: R
   ): Promise<R> => {
     if (filed) return run()
-    const pending = waiting.get(sessionId) ?? new Set<string>()
-    if (!pending.has(id) && pending.size >= MAX_WAITING_PER_SESSION) return Promise.resolve(busy)
+    const slot = `${sessionId}|${kind}`
+    const pending = waiting.get(slot) ?? new Set<string>()
+    if (!pending.has(id) && pending.size >= WAITING_CAP[kind]) return Promise.resolve(busy)
     pending.add(id)
-    waiting.set(sessionId, pending)
+    waiting.set(slot, pending)
     return run().finally(() => {
       pending.delete(id)
-      if (pending.size === 0 && waiting.get(sessionId) === pending) waiting.delete(sessionId)
+      if (pending.size === 0 && waiting.get(slot) === pending) waiting.delete(slot)
     })
   }
   const unknown = {
@@ -402,6 +618,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       if (!launch) return Promise.resolve(unknown)
       return admit<DigestResult>(
         request.sessionId,
+        'digest',
         request.key,
         digests().get(request.sessionId, request.key) !== undefined,
         () => requestDigest({ sessionId: request.sessionId, key: request.key, messages, launch }),
@@ -416,6 +633,7 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
       if (!launch) return Promise.resolve(unknown)
       return admit<WorkDigestResult>(
         request.sessionId,
+        'digest',
         request.key,
         digests().get(workDigestBucket(request.sessionId), request.key) !== undefined,
         () =>
@@ -429,7 +647,37 @@ export function hostDigests(recordOf: DigestRecordOf): HostDigests {
         busy
       )
     },
-    workDigestsOf
+    workDigestsOf,
+    spoken: (request) => {
+      const markdown = clipText(request.markdown, SPOKEN_MAX_CHARS)
+      if (spokenKey(markdown) !== request.key) return Promise.resolve(mismatch)
+      const launch = launchOf(request.sessionId)
+      if (!launch) return Promise.resolve(unknown)
+      return admit<SpokenResult>(
+        request.sessionId,
+        'spoken',
+        request.key,
+        digests().get(spokenBucket(request.sessionId), request.key) !== undefined,
+        () => requestSpoken({ sessionId: request.sessionId, key: request.key, markdown, launch }),
+        busy
+      )
+    },
+    spokenOf: spokenRenderingsOf,
+    pageTitle: (request) => {
+      const message = clipText(request.message, PAGE_TITLE_MESSAGE_CHARS)
+      if (pageTitleKey(message) !== request.key) return Promise.resolve(mismatch)
+      const launch = launchOf(request.sessionId)
+      if (!launch) return Promise.resolve(unknown)
+      return admit<PageTitleResult>(
+        request.sessionId,
+        'title',
+        request.key,
+        digests().get(pageTitleBucket(request.sessionId), request.key) !== undefined,
+        () => requestPageTitle({ sessionId: request.sessionId, key: request.key, message, launch }),
+        busy
+      )
+    },
+    pageTitlesOf
   }
 }
 

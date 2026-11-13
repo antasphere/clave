@@ -48,6 +48,7 @@ export const TRUSTED_LITERALS: ReadonlySet<string> = new Set([
   'codex',
   'antigravity',
   'pi',
+  'opencode',
   'terminal'
 ])
 

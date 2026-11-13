@@ -124,6 +124,17 @@ describe('what a row offers', () => {
     expect(store.helperWhenOff('permission-explainer')).toContain('the level the rules found')
     expect(store.helperWhenOff('permission-explainer')).toContain('"Not verified"')
     expect(store.helperWhenOff('permission-explainer')).toContain('"Could not read what this does"')
+    // Folio's two reads: the spoken rendering and the page title.
+    expect(store.helperDoes('spoken-rendering')).toMatch(/Folio reads it aloud/)
+    expect(store.helperWhenOff('spoken-rendering')).toBe(
+      'Off: Folio reads the answer as written, markdown stripped.'
+    )
+    expect(store.helperDoes('page-title')).toBe(
+      'Titles each Folio page from the question it holds.'
+    )
+    expect(store.helperWhenOff('page-title')).toBe(
+      'Off: a page is titled by the first sentence of the message.'
+    )
     // A helper declared later and named nowhere here still says something true.
     expect(store.helperDoes('zz-later-helper')).toMatch(/short call/)
     expect(store.helperWhenOff('zz-later-helper')).toMatch(/goes without it/)

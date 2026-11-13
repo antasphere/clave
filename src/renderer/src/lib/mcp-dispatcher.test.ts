@@ -90,7 +90,7 @@ beforeEach(() => {
   globals.window.electronAPI = {
     spawnSession,
     captureTabSpawn: vi.fn(),
-    preferencesGet: vi.fn(async () => undefined)
+    launchRememberedModel: vi.fn(async () => null)
   }
 })
 afterEach(() => {
@@ -961,10 +961,9 @@ describe('the account of a window-road open', () => {
     // Main starts a chat that names no model on the one last picked in a chat
     // composer of its adapter (`pty-manager.ts`); the account must be judged
     // for that one, or a spent Fable week lands a Fable tab on it.
-    globals.window.electronAPI.preferencesGet = vi.fn(async (key: string) =>
-      key === 'chatModels'
-        ? { 'claude-chat': 'claude-fable-5-1', 'codex-chat': 'gpt-5.5' }
-        : undefined
+    globals.window.electronAPI.launchRememberedModel = vi.fn(
+      async (adapterId: string) =>
+        ({ 'claude-chat': 'claude-fable-5-1', 'codex-chat': 'gpt-5.5' })[adapterId] ?? null
     )
     const base = preferences({})
     useLaunchProfileStore.setState({

@@ -223,6 +223,72 @@ describe('the helpers on the server (PRDCT-4330)', () => {
   })
 })
 
+describe('the integrations on the server (PRDCT-4410)', () => {
+  const KEY = 'xi-server-test-key'
+  it('hands the ElevenLabs key to the source and to no answer', async () => {
+    const before = await get('/integrations')
+    expect(before.status).toBe(200)
+    expect(await before.json()).toMatchObject({ elevenLabs: { configured: false } })
+    const set = await post('/integrations/elevenlabs/key', { apiKey: KEY })
+    expect(set.status).toBe(200)
+    const text = await set.text()
+    expect(text).not.toContain(KEY)
+    expect(JSON.parse(text)).toMatchObject({ elevenLabs: { configured: true, tier: 'creator' } })
+    expect(fake.secrets).toEqual([KEY])
+    expect(fake.calls.find((c) => c.method === 'integrations.setElevenLabsKey')?.args).toEqual([])
+    expect(await (await get('/integrations')).text()).not.toContain(KEY)
+  })
+
+  it('checks, lists the voices, sets one with its model, and removes the key', async () => {
+    await post('/integrations/elevenlabs/key', { apiKey: KEY })
+    expect((await post('/integrations/elevenlabs/check', {})).status).toBe(200)
+    const voices = await get('/integrations/elevenlabs/voices')
+    expect(voices.status).toBe(200)
+    expect(await voices.json()).toEqual({
+      voices: [
+        { voiceId: 'v1', name: 'Voice one', category: 'premade', labels: {}, previewUrl: null }
+      ]
+    })
+    const voice = await post('/integrations/elevenlabs/voice', {
+      voiceId: 'v1',
+      voiceName: 'Voice one',
+      modelId: 'eleven_multilingual_v2'
+    })
+    expect(await voice.json()).toMatchObject({
+      elevenLabs: { voiceId: 'v1', voiceName: 'Voice one', modelId: 'eleven_multilingual_v2' }
+    })
+    expect(
+      (
+        await post('/integrations/elevenlabs/voice', {
+          voiceId: 'v1',
+          voiceName: 'Voice one',
+          modelId: 'eleven_v9'
+        })
+      ).status
+    ).toBe(400)
+    const removed = await post('/integrations/elevenlabs/remove', {})
+    expect(await removed.json()).toMatchObject({ elevenLabs: { configured: false } })
+  })
+
+  it('says a refusal in its sentence, and a host with none as unavailable', async () => {
+    const voices = await get('/integrations/elevenlabs/voices')
+    expect(voices.status).toBe(422)
+    expect(await voices.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'No ElevenLabs key on this machine.'
+    })
+    fake.refuse.integrations = true
+    const read = await get('/integrations')
+    expect(read.status).toBe(422)
+    expect(await read.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'integrations'
+    })
+    expect((await post('/integrations/elevenlabs/key', { apiKey: KEY })).status).toBe(422)
+    expect(fake.secrets).toEqual([])
+  })
+})
+
 describe('the settings events on the push channel', () => {
   const welcomed = async (): Promise<Peer> => {
     const peer = new Peer(server.url.replace('http', 'ws') + '/push')

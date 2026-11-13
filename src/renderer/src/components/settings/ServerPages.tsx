@@ -23,6 +23,7 @@ import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { QuotaOverview, ToolToggle, type QuotaProvider, type Tool } from '../usage/UsagePanel'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
 import { HelpersList } from './HelpersSettings'
+import { IntegrationsList } from './IntegrationsSettings'
 import { SettingsPage, SettingsSection, SettingsCard, SettingsCallout } from './primitives'
 
 /**
@@ -137,7 +138,7 @@ export function ServerAgentsSettings({ serverId }: { serverId: string }): ReactE
   }
   if (!page.connected || settings.status === 'error')
     return (
-      <SettingsPage title="Agents" description={`The launch profiles of ${page.name}.`}>
+      <SettingsPage title="Harnesses" description={`The launch profiles of ${page.name}.`}>
         <ServerNotice serverId={serverId} {...page} />
       </SettingsPage>
     )
@@ -168,6 +169,29 @@ export function ServerHelpersSettings({ serverId }: { serverId: string }): React
         <ServerNotice serverId={serverId} {...page} />
         {page.connected && settings.status !== 'error' && (
           <HelpersList machine={serverId} machineName={name} accounts={settings.claude} />
+        )}
+      </div>
+    </SettingsPage>
+  )
+}
+
+// ── Integrations ────────────────────────────────────────────────────────────
+
+/** The integrations of a server (PRDCT-4410): the ElevenLabs key is sealed
+ *  on the server itself, by its own secret port, and checked from there. */
+export function ServerIntegrationsSettings({ serverId }: { serverId: string }): ReactElement {
+  const page = useServerPage(serverId)
+  const { settings, name } = page
+  return (
+    <SettingsPage
+      title="Integrations"
+      description={`The services ${name} uses on your behalf, each with your own key.`}
+      testId="integrations"
+    >
+      <div className="settings-page-sections" data-server-settings={serverId}>
+        <ServerNotice serverId={serverId} {...page} />
+        {page.connected && settings.status !== 'error' && (
+          <IntegrationsList machine={serverId} machineName={name} />
         )}
       </div>
     </SettingsPage>
@@ -251,7 +275,7 @@ export function ServerAccountsSettings({ serverId }: { serverId: string }): Reac
   const { settings, name } = page
   return (
     <SettingsPage
-      title="Accounts"
+      title="Connections"
       description={`The Claude and Codex accounts signed in on ${name}. Sessions started there run on them, in this order.`}
       testId="accounts"
     >

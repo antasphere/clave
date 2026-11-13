@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { until, fixturePath } from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
+import { waitForAttachmentCaret } from './fixtures/attachment-caret.mjs'
 
 /* Files and sessions into the chat composer: dropped on the pane, pasted,
    picked with the paperclip, or a sidebar tab dragged over. Each becomes a
@@ -142,6 +143,9 @@ export async function run(t) {
     const notesChip = composerChips.filter({ hasText: 'notes.txt' }).filter({ hasText: 'Text ·' })
     await notesChip.waitFor()
     assert.equal(await input.inputValue(), '[File #1] ', 'a file is labelled by its delivery')
+    // This fixture waits for the deferred caret move before typing. It avoids
+    // the product race in #345; it does not test or fix typing during that frame.
+    await waitForAttachmentCaret(win)
     await input.press('End')
     await input.pressSequentially('read this')
     await input.press('Enter')
@@ -203,6 +207,7 @@ export async function run(t) {
       .filter({ hasText: /Image #1/i })
       .waitFor()
     assert.equal(await input.inputValue(), '[Image #1] ', 'a cleared composer numbers from one')
+    await waitForAttachmentCaret(win)
     await input.press('End')
     await input.press('Backspace')
     await input.press('Backspace')
@@ -249,6 +254,7 @@ export async function run(t) {
     assert.equal(await input.inputValue(), '[Folder #1] ', 'the folder marker lands in the text')
     assert.deepEqual(await prepared(), [folder], 'main made the folder record')
     assert.equal(await win.getByRole('alert').count(), 0, 'a folder is no error')
+    await waitForAttachmentCaret(win)
     await input.press('End')
     await input.pressSequentially('list it')
     await input.press('Enter')
@@ -401,6 +407,7 @@ export async function run(t) {
     assert.equal(await input.inputValue(), 'finish when [Session #1] ')
     await fire('clave:sessions-drop', { sessionIds: [record.id] })
     assert.equal(await sessionChip.count(), 1, 'a tab is attached once')
+    await waitForAttachmentCaret(win)
     await input.press('End')
     await input.pressSequentially('is done')
     await input.press('Enter')

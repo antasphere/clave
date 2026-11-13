@@ -304,6 +304,7 @@ function syncToClaveFile(pg: PinnedGroup): void {
           antigravityMode: s.antigravityMode,
           codexMode: s.codexMode,
           piMode: s.piMode,
+          opencodeMode: s.opencodeMode,
           claudeAgentsMode: s.claudeAgentsMode,
           dangerousMode: s.dangerousMode,
           ...(s.prompt ? { prompt: s.prompt } : {}),
@@ -359,6 +360,7 @@ function createPinnedFromGroup(
       antigravityMode: boolean
       codexMode: boolean
       piMode?: boolean
+      opencodeMode?: boolean
       claudeAgentsMode?: boolean
       dangerousMode: boolean
       prompt?: string
@@ -669,6 +671,7 @@ export async function exportClaveFile(
       antigravityMode: s.antigravityMode,
       codexMode: s.codexMode,
       piMode: s.piMode,
+      opencodeMode: s.opencodeMode,
       claudeAgentsMode: s.claudeAgentsMode,
       dangerousMode: s.dangerousMode,
       ...(s.account ? { account: s.account } : {})
@@ -851,6 +854,7 @@ export function pinGroupFromCurrent(groupId: string): void {
       antigravityMode: s.antigravityMode,
       codexMode: s.codexMode,
       piMode: s.piMode,
+      opencodeMode: s.opencodeMode,
       claudeAgentsMode: s.claudeAgentsMode,
       dangerousMode: s.dangerousMode,
       // A root-anchored group keeps its anchor through the pin. The session is
@@ -958,7 +962,11 @@ async function spawnPinnedGroup(
   for (const session of pg.sessions) {
     try {
       const pinOtherProvider =
-        session.antigravityMode || session.codexMode || session.piMode || session.claudeAgentsMode
+        session.antigravityMode ||
+        session.codexMode ||
+        session.piMode ||
+        session.opencodeMode ||
+        session.claudeAgentsMode
       // rootSession: spawn at the workspace root instead of the session's cwd
       // (which stays the project dir). No-op if the pin has no workspaceRoot.
       const atRoot = session.rootSession === true && !!pg.workspaceRoot
@@ -979,13 +987,15 @@ async function spawnPinnedGroup(
           ? 'claude-agents'
           : session.piMode
             ? 'pi'
-            : session.codexMode
-              ? 'codex'
-              : session.antigravityMode
-                ? 'antigravity'
-                : session.claudeMode
-                  ? 'claude'
-                  : null
+            : session.opencodeMode
+              ? 'opencode'
+              : session.codexMode
+                ? 'codex'
+                : session.antigravityMode
+                  ? 'antigravity'
+                  : session.claudeMode
+                    ? 'claude'
+                    : null
         const id = await launchSession({
           serverId,
           cwd: { kind: 'path', path: spawnCwd },
@@ -1011,6 +1021,7 @@ async function spawnPinnedGroup(
         antigravityMode: session.antigravityMode,
         codexMode: session.codexMode,
         piMode: session.piMode,
+        opencodeMode: session.opencodeMode,
         claudeAgentsMode: session.claudeAgentsMode,
         dangerousMode: session.dangerousMode,
         initialPrompt,
@@ -1032,6 +1043,7 @@ async function spawnPinnedGroup(
         antigravityMode: session.antigravityMode,
         codexMode: session.codexMode,
         piMode: session.piMode,
+        opencodeMode: session.opencodeMode,
         claudeAgentsMode: session.claudeAgentsMode,
         dangerousMode: session.dangerousMode,
         ...accountFields,
@@ -1202,6 +1214,7 @@ export function resyncPinnedGroup(groupId: string): void {
       antigravityMode: s.antigravityMode,
       codexMode: s.codexMode,
       piMode: s.piMode,
+      opencodeMode: s.opencodeMode,
       claudeAgentsMode: s.claudeAgentsMode,
       dangerousMode: s.dangerousMode,
       ...pinnedAccountField(s)
@@ -1281,6 +1294,7 @@ export function isPinnedOutOfSync(groupId: string): boolean {
       s.antigravityMode !== ps.antigravityMode ||
       s.codexMode !== ps.codexMode ||
       !!s.piMode !== !!ps.piMode ||
+      !!s.opencodeMode !== !!ps.opencodeMode ||
       !!s.claudeAgentsMode !== !!ps.claudeAgentsMode ||
       s.dangerousMode !== ps.dangerousMode
     )
