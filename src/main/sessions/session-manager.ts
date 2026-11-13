@@ -29,6 +29,11 @@ interface Entry {
    *  turn. Held here, not only in a pane's log, so a pane that subscribes late
    *  reads the live list and a process that goes away takes its list with it. */
   background: BackgroundTask[]
+  /** The provider's last `session_meta`: the model it said it runs on. Held
+   *  the way `background` is, so a pane that subscribes after the adapter
+   *  said it (OpenCode and Pi say it once, at the handshake) still names the
+   *  model. */
+  meta: Extract<SessionEvent, { type: 'session_meta' }> | null
 }
 
 /** What an adoption knows beyond the record. */
@@ -105,7 +110,8 @@ export class SessionManager {
       exits: new Set(),
       exited: false,
       ready: false,
-      background: []
+      background: [],
+      meta: null
     }
     this.entries.set(parsed.id, entry)
     try {
@@ -128,6 +134,8 @@ export class SessionManager {
         } else {
           if (stream.kind === 'event' && stream.event.type === 'background_tasks')
             entry.background = stream.event.tasks
+          if (stream.kind === 'event' && stream.event.type === 'session_meta')
+            entry.meta = stream.event
           this.publish(entry, stream)
         }
       })
@@ -384,6 +392,13 @@ export class SessionManager {
   /** What the session still runs in the background, as its provider last said. */
   background(id: string): BackgroundTask[] {
     return [...(this.entries.get(id)?.background ?? [])]
+  }
+
+  /** The provider's last word on the model, for a pane that subscribes after
+   *  it was said; null until the provider has said one. */
+  meta(id: string): Extract<SessionEvent, { type: 'session_meta' }> | null {
+    const meta = this.entries.get(id)?.meta
+    return meta ? { ...meta } : null
   }
 
   private clearBackground(entry: Entry): void {

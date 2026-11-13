@@ -404,6 +404,16 @@ describe('the session records', () => {
       permissionMode: 'bypassPermissions',
       effort: 'high'
     })
+    // OpenCode's and Pi's word, `provider/model`, is kept as it is
+    // (PRDCT-4427): a Resume relaunches on it.
+    backend.setSessionRuntime(id, { model: 'kimi-coding/k3' })
+    expect(readRecord(id)).toMatchObject({ model: 'kimi-coding/k3' })
+    backend.setSessionRuntime(id, { model: 'kimi-code-plan-global/k3.1-pro' })
+    expect(readRecord(id)).toMatchObject({ model: 'kimi-code-plan-global/k3.1-pro' })
+    backend.setSessionRuntime(id, { model: 'a/../b' })
+    backend.setSessionRuntime(id, { model: '--model' })
+    expect(readRecord(id)).toMatchObject({ model: 'kimi-code-plan-global/k3.1-pro' })
+    backend.setSessionRuntime(id, { model: 'claude-sonnet-4-5[1m]' })
     // An effort of null: the model runs at none, the key goes.
     backend.setSessionRuntime(id, { effort: null })
     expect(readRecord(id)).not.toHaveProperty('effort')

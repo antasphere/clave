@@ -377,6 +377,33 @@ describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => 
     injection.forSpawn.mockReset()
     injection.forSpawn.mockImplementation(async () => ({}))
   })
+  it('a restart after Pi reported its model relaunches on it, provider/model beside --provider (PRDCT-4427)', async () => {
+    injection.forSpawn.mockResolvedValue({
+      providerEnv: { KIMI_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
+      piProvider: 'kimi-coding'
+    })
+    const session = await openPiChat({ connectionId: 'conn-1', model: 'k3' })
+    // The record holds the model Pi reported (setSessionRuntime keeps it as
+    // it is), a pick from the chip's menu included.
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id
+        ? { id: session.id, adapterId: 'pi-chat', model: 'kimi-coding/k3.1-pro' }
+        : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, {})
+    expect(plan?.options).toMatchObject({ model: 'kimi-coding/k3.1-pro', connectionId: 'conn-1' })
+    await ptyManager.kill(session.id, true)
+    await ptyManager.spawn(plan!.cwd, plan!.options)
+    const { command } = configured()
+    // What Pi 1.5.2 takes and opens on (checked on the real program, a
+    // made-up key): `--provider kimi-coding --model kimi-coding/k3`.
+    expect(after(command, '--provider')).toBe('kimi-coding')
+    expect(after(command, '--model')).toBe('kimi-coding/k3.1-pro')
+    // The adapter is handed the same: it equals what Pi reports, so it
+    // switches nothing.
+    expect(spawnOptions().model).toBe('kimi-coding/k3.1-pro')
+    injection.forSpawn.mockReset()
+    injection.forSpawn.mockImplementation(async () => ({}))
+  })
   it('a refusal at start (no key yet) ends the spawn before Pi is configured or started', async () => {
     injection.forSpawn.mockRejectedValueOnce(new Error('The connection has no key yet.'))
     await expect(openPiChat({ connectionId: 'conn-1' })).rejects.toThrow(

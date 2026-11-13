@@ -51,10 +51,11 @@ const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.ACP_STAND_IN_DELAY_MS ?? 0) || 0
 const refuse = process.env.ACP_STAND_IN_REFUSE
 
+// Named the way OpenCode 2.3.0 names them: `provider/Name`.
 const OWN_MODELS = [
-  { value: 'stand-in/one', name: 'One' },
-  { value: 'stand-in/two', name: 'Two' },
-  { value: 'stand-in/three', name: 'Three' }
+  { value: 'stand-in/one', name: 'stand-in/One' },
+  { value: 'stand-in/two', name: 'stand-in/Two' },
+  { value: 'stand-in/three', name: 'stand-in/Three' }
 ]
 // The configuration in the environment (`OPENCODE_CONFIG_CONTENT`), read the
 // way the real `opencode acp` 2.3.0 reads it (checked by hand, a made-up key):

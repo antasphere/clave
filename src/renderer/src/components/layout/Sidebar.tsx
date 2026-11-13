@@ -76,7 +76,9 @@ import {
   switchSessionAccount,
   type SwitchTarget
 } from '../../lib/switch-account'
-import { AccountMenuHeader } from './AccountMenuHeader'
+import { AccountMenuHeader, ConnectionMenuHeader } from './AccountMenuHeader'
+import { sessionConnection } from '../../lib/session-connection'
+import { useProviderConnectionsStore } from '../../store/provider-connections-store'
 import { AccountSwitchRow, AccountUsagePreview } from './AccountSwitchMenu'
 import { effectiveSwitchMode, loadAccountPolicy } from '../../store/account-policy-store'
 import { startAccountPolicy } from '../../lib/account-policy'
@@ -1327,9 +1329,20 @@ export function Sidebar(): React.JSX.Element {
         session: NonNullable<typeof session>
         rowsOf: (targets: SwitchTarget[]) => ContextMenuItem[]
       } | null = null
+      // A Pi or OpenCode tab names its stored connection there (PRDCT-4427).
+      const connection = sessionConnection(
+        session,
+        useProviderConnectionsStore.getState().byMachine
+      )
       const header =
         session && accountProviderOf(session) ? (
           <AccountMenuHeader session={session} chart />
+        ) : connection ? (
+          <ConnectionMenuHeader
+            label={connection.label}
+            id={connection.id}
+            pi={session?.piMode === true}
+          />
         ) : undefined
       // Every other account of the tab's provider, those with headroom first
       // and the one whose week renews soonest on top (Suggested), in one

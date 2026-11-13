@@ -1834,8 +1834,9 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta) return
     const next: SessionRecord = { ...meta }
-    if (patch.model !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,127}$/.test(patch.model))
-      next.model = patch.model
+    // The shape a launch accepts (`isValidModelName`): OpenCode and Pi report
+    // `provider/model`, and a Resume relaunches on it (PRDCT-4427).
+    if (patch.model !== undefined && isValidModelName(patch.model)) next.model = patch.model
     if (patch.permissionMode !== undefined && /^[a-zA-Z]{1,32}$/.test(patch.permissionMode))
       next.permissionMode = patch.permissionMode
     if (patch.effort === null) delete next.effort

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PiRpcAdapter, type PiRpcSpawnOptions } from './pi-rpc-adapter'
+import { PiRpcAdapter, piModelOptions, type PiRpcSpawnOptions } from './pi-rpc-adapter'
 import type { SessionHandle } from '../adapter'
 import type { SessionEvent } from '../../../shared/session-model'
 
@@ -117,6 +117,69 @@ const done = (events: SessionEvent[], from = 0): boolean =>
   events.slice(from).some((e) => e.type === 'state_change' && e.state === 'done')
 const notices = (events: SessionEvent[]): string[] =>
   events.flatMap((e) => (e.type === 'error' ? [e.message] : []))
+
+describe('piModelOptions (PRDCT-4427)', () => {
+  it('reads a real pi --mode rpc 1.5.2 get_available_models answer on a connection', () => {
+    // As Pi 1.5.2 answered it under a connection's agent directory (a
+    // made-up key); each Model object is cut to the fields Pi always sends.
+    const model = (
+      id: string,
+      name: string,
+      thinkingLevelMap: Record<string, string | null>
+    ): Record<string, unknown> => ({
+      id,
+      name,
+      api: 'openai-completions',
+      provider: 'kimi-coding',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      reasoning: true,
+      input: ['text', 'image'],
+      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+      contextWindow: 262144,
+      maxTokens: 32768,
+      compat: { supportsReasoningEffort: true, maxTokensField: 'max_tokens' },
+      thinkingLevelMap,
+      inputLimits: { images: { resize: { maxWidth: 2000, maxHeight: 2000 } } },
+      type: 'chat'
+    })
+    const levels = {
+      off: null,
+      minimal: null,
+      low: 'low',
+      medium: null,
+      high: 'high',
+      xhigh: null,
+      max: 'max'
+    }
+    const data = {
+      models: [
+        model('k3', 'Kimi K3', levels),
+        model('k3-256k', 'Kimi K3-256K', levels),
+        model('k3.1-pro', 'Kimi K3.1 Pro', levels),
+        model('k3.1-pro-highspeed', 'Kimi K3.1 Pro Highspeed', levels),
+        model('kimi-for-coding', 'kimi-for-coding', levels),
+        model('kimi-for-coding-highspeed', 'Kimi For Coding HighSpeed', { off: null })
+      ]
+    }
+    expect(piModelOptions(data)).toEqual([
+      { id: 'kimi-coding/k3', label: 'Kimi K3' },
+      { id: 'kimi-coding/k3-256k', label: 'Kimi K3-256K' },
+      { id: 'kimi-coding/k3.1-pro', label: 'Kimi K3.1 Pro' },
+      { id: 'kimi-coding/k3.1-pro-highspeed', label: 'Kimi K3.1 Pro Highspeed' },
+      { id: 'kimi-coding/kimi-for-coding', label: 'kimi-for-coding' },
+      { id: 'kimi-coding/kimi-for-coding-highspeed', label: 'Kimi For Coding HighSpeed' }
+    ])
+  })
+
+  it('skips a model with no id, a repeat, and an answer with no list', () => {
+    expect(
+      piModelOptions({
+        models: [{ name: 'Nameless' }, { id: 'a', provider: 'p' }, { id: 'a', provider: 'p' }]
+      })
+    ).toEqual([{ id: 'p/a', label: 'a' }])
+    expect(piModelOptions(undefined)).toEqual([])
+  })
+})
 
 describe('PiRpcAdapter against the stand-in Pi', () => {
   it('spawns: session_meta names the session id and the model as provider/id', async () => {
@@ -348,6 +411,23 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       provider: 'stand-in',
       modelId: 'two'
     })
+  })
+
+  it('models() lists what Pi offers as provider/id, by name; a pick switches (PRDCT-4427)', async () => {
+    const s = await open()
+    expect(await s.adapter.models(s.handle)).toEqual([
+      { id: 'stand-in/one', label: 'Stand-in one' },
+      { id: 'stand-in/two', label: 'Stand-in two' },
+      { id: 'stand-in/three', label: 'Stand-in three' }
+    ])
+    // Asked once for the session.
+    await s.adapter.models(s.handle)
+    expect(frames(s.state).filter((f) => f.type === 'get_available_models')).toHaveLength(1)
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'set_model', model: 'stand-in/three' })
+    await expect
+      .poll(() => s.events.find((e) => e.type === 'session_meta'))
+      .toMatchObject({ model: 'stand-in/three' })
   })
 
   it('a bare model id takes the session’s provider', async () => {

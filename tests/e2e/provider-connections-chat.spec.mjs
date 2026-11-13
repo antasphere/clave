@@ -456,6 +456,39 @@ export async function run(t) {
       ocRecord?.connectionId === C.ds && ocRecord?.connectionLabel === 'DeepSeek',
       ocRecord ? { connectionId: ocRecord.connectionId, label: ocRecord.connectionLabel } : null
     )
+    // Named where a Claude tab names its account (PRDCT-4427): a chip beside
+    // the model chip, and the sidebar's foot while the tab is focused.
+    const connectionChip = (id) => pane(id).locator(`[data-connection-chip]`).first()
+    const ocChip = await until(
+      async () =>
+        (await connectionChip(ocId)
+          .innerText()
+          .catch(() => '')) === 'DeepSeek'
+          ? true
+          : null,
+      { tries: 40 }
+    )
+    t.check(
+      'the OpenCode chat names its connection beside the model (DeepSeek)',
+      !!ocChip &&
+        (await connectionChip(ocId).getAttribute('data-connection-chip')) === C.ds &&
+        (await connectionChip(ocId).locator('[title]').first().getAttribute('title')) ===
+          'Connection: DeepSeek',
+      await connectionChip(ocId)
+        .innerText()
+        .catch((e) => e.message)
+    )
+    const footLine = win.locator('.sidebar-footer-line[data-connection-line]')
+    const footOk = await until(
+      async () =>
+        (await footLine.innerText().catch(() => '')) === 'OpenCode · DeepSeek' ? true : null,
+      { tries: 40 }
+    )
+    t.check(
+      'the sidebar’s foot names it while the tab is focused (OpenCode · DeepSeek)',
+      !!footOk,
+      await footLine.innerText().catch((e) => e.message)
+    )
 
     // ── 1b. An OpenCode chat on DeepSeek with a picked model, the launcher's
     // call: the bare id `deepseek-chat`, as the launcher names it ──
@@ -535,14 +568,23 @@ export async function run(t) {
     t.check('the agent’s session runs on deepseek/deepseek-chat', !!agentModel, standInModels())
     const chipText = async () =>
       chat(ocModelId).locator('.chat-model-trigger[aria-label="Model"]').first().innerText()
+    // By the name the agent lists it under, its provider prefix off.
     const chipOk = await until(
-      async () => /deepseek\/deepseek-chat/.test(await chipText().catch(() => '')),
+      async () => (await chipText().catch(() => '')) === 'OpenCode · deepseek-chat',
       { tries: 40 }
     )
     t.check(
-      'the chat’s model chip reads deepseek/deepseek-chat',
+      'the chat’s model chip names deepseek/deepseek-chat (OpenCode · deepseek-chat)',
       !!chipOk,
       await chipText().catch((e) => e.message)
+    )
+    // The menu lists the models of the connection's provider alone
+    // (`enabled_providers`), never the agent's own.
+    const ocModels = await win.evaluate((id) => window.electronAPI.sessionsModels(id), ocModelId)
+    t.equal(
+      'its menu lists the connection’s provider’s models alone',
+      JSON.stringify(ocModels),
+      JSON.stringify([{ id: 'deepseek/deepseek-chat', label: 'deepseek-chat' }])
     )
     await win.evaluate(
       async (id) =>
@@ -637,6 +679,62 @@ export async function run(t) {
       { tries: 60 }
     )
     t.check('the Pi chat answers a message', !!piAnswered, (await chatText(piId)).slice(0, 500))
+    const piChip = await until(
+      async () =>
+        (await connectionChip(piId)
+          .innerText()
+          .catch(() => '')) === 'Kimi work'
+          ? true
+          : null,
+      { tries: 40 }
+    )
+    t.check(
+      'the Pi chat names its connection beside the model (Kimi work)',
+      !!piChip && (await connectionChip(piId).getAttribute('data-connection-chip')) === C.kimi,
+      await connectionChip(piId)
+        .innerText()
+        .catch((e) => e.message)
+    )
+
+    // ── 2b. Terminals: one on a connection names it in its header, one on
+    // none names nothing ──
+    const tile = (id) => win.locator(`[data-terminal-tile="${id}"]`)
+    const openTerminal = async (extra) =>
+      (
+        await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'opencode',
+          chat: false,
+          workspace: WS.id,
+          ...extra
+        })
+      )?.sessionId
+    const ocTermId = await openTerminal({
+      account: 'DeepSeek',
+      name: 'OpenCode terminal on DeepSeek'
+    })
+    t.check('an OpenCode terminal on DeepSeek opened', !!ocTermId)
+    await callMcp(app, 'focus', { sessionId: ocTermId })
+    const badge = tile(ocTermId).locator('[data-connection-badge]').first()
+    const badgeOk = await until(
+      async () => ((await badge.innerText().catch(() => '')) === 'DeepSeek' ? true : null),
+      { tries: 40 }
+    )
+    t.check(
+      'its header names the connection (DeepSeek)',
+      !!badgeOk && (await badge.getAttribute('title')) === 'Connection: DeepSeek',
+      await badge.innerText().catch((e) => e.message)
+    )
+    const plainTermId = await openTerminal({ name: 'OpenCode terminal on no connection' })
+    t.check('an OpenCode terminal on no connection opened', !!plainTermId)
+    await callMcp(app, 'focus', { sessionId: plainTermId })
+    await tile(plainTermId).waitFor({ timeout: 20_000 })
+    await win.waitForTimeout(500)
+    t.check(
+      'its header names none',
+      (await tile(plainTermId).locator('[data-connection-badge]').count()) === 0
+    )
+    await callMcp(app, 'focus', { sessionId: piId })
     const piRecord = await until(async () => recordOf(piId)?.piSessionId && recordOf(piId))
     const piSession = piRecord?.piSessionId
     t.check(

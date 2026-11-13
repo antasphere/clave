@@ -5,6 +5,7 @@ import {
   userMessageEvent,
   type CommandOption,
   type HistoryItem,
+  type ModelOption,
   type SessionEvent,
   type SessionInput
 } from '../../../shared/session-model'
@@ -70,6 +71,20 @@ function modelName(model: unknown): string | null {
   if (!id) return null
   const provider = text(m.provider)
   return provider ? `${provider}/${id}` : id
+}
+
+/** Pi's `get_available_models` answer as the chat's menu lists it: each
+ *  model as `provider/id` (what the session reports and `set_model` splits)
+ *  and by its name. Under a stored connection Pi lists the models it has a
+ *  key for, that connection's provider's. */
+export function piModelOptions(data: unknown): ModelOption[] {
+  const seen = new Set<string>()
+  return array(record(data).models).flatMap((raw) => {
+    const id = modelName(raw)
+    if (!id || seen.has(id)) return []
+    seen.add(id)
+    return [{ id, label: text(record(raw).name) || text(record(raw).id) }]
+  })
 }
 
 /** A resumed conversation's messages as the history a view pages through. */
@@ -164,6 +179,8 @@ interface HandleState {
   toolCalls: Set<string>
   /** Pi's thinking levels for the session, asked once. */
   levels?: Promise<string[]>
+  /** The models Pi offers the session, asked once. */
+  available?: Promise<ModelOption[]>
   /** `parse` failures Pi reported for frames this adapter sent. */
   parseFailures: number
   initialPrompt?: string
@@ -335,6 +352,22 @@ export class PiRpcAdapter implements SessionAdapter {
 
   async commands(handle: SessionHandle): Promise<CommandOption[]> {
     return this.require(handle).commands
+  }
+
+  /** The models Pi offers, asked once the handshake is over; a failed
+   *  question is asked again at the next look. */
+  async models(handle: SessionHandle): Promise<ModelOption[]> {
+    const state = this.require(handle)
+    if (state.started) await state.started.catch(() => {})
+    const connection = state.connection
+    if (!connection || connection.closed || state.ended) return []
+    state.available ??= connection.command('get_available_models').then(piModelOptions)
+    try {
+      return await state.available
+    } catch (error) {
+      state.available = undefined
+      throw error
+    }
   }
 
   async kill(handle: SessionHandle): Promise<void> {

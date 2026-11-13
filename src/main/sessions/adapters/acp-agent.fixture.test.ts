@@ -135,9 +135,9 @@ describe('the ACP stand-in agent', () => {
         type: 'select',
         currentValue: 'stand-in/one',
         options: [
-          { value: 'stand-in/one', name: 'One' },
-          { value: 'stand-in/two', name: 'Two' },
-          { value: 'stand-in/three', name: 'Three' }
+          { value: 'stand-in/one', name: 'stand-in/One' },
+          { value: 'stand-in/two', name: 'stand-in/Two' },
+          { value: 'stand-in/three', name: 'stand-in/Three' }
         ]
       }
     ])

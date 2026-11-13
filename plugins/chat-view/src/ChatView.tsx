@@ -38,6 +38,7 @@ import {
 } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
+import { ConnectionChip } from './AccountChip'
 import { EffortMenu } from './EffortMenu'
 import { ContinuedFromCard, ProviderSwitch } from './ProviderSwitch'
 import { midTurn, noteAgentName, useProviderSwitch } from './use-provider-switch'
@@ -1515,6 +1516,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               cwd={session.cwd}
               onSwitchProvider={isRemoteKey(session.id) ? undefined : providerSwitch.begin}
             />
+            <ConnectionChip sessionId={session.id} />
             <EffortMenu
               sessionId={session.id}
               model={conversation.pendingModel ?? conversation.model}

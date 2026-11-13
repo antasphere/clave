@@ -41,6 +41,7 @@ import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
 import { UserIconDisplay } from '../ui/UserIconDisplay'
 import { BrandField } from '../ui/BrandField'
 import { fieldAccent } from '../../lib/brand-field'
+import { useSessionConnection } from '../../lib/session-connection'
 import { cn } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
@@ -302,6 +303,9 @@ export function SidebarFooter(): React.ReactElement {
       ? null
       : (s.sessions.find((session) => session.id === s.focusedSessionId) ?? null)
   )
+  // A Pi or OpenCode tab's stored connection, named where a Claude tab's
+  // account is (PRDCT-4427).
+  const connection = useSessionConnection(focusedSession)
   // Subscribed so the launcher's pick follows the reads as they land.
   useClaudeAccountsUsage((s) => s.byAccount)
   const selectedCodexId = useCodexAccountStore((s) => s.selectedAccountId)
@@ -385,13 +389,24 @@ export function SidebarFooter(): React.ReactElement {
   const piTotals = provider === 'pi' && pi.status !== 'error' ? pi.data : null
   const providerStatus = provider === 'pi' ? pi.status : quota.status
   const showProviderStatus = (quotaProvider !== null || provider === 'pi') && !usage && !piTotals
+  // The connection's line when nothing above says it: an OpenCode tab, which
+  // has no usage to read.
+  const showConnection =
+    connection !== null && !usage && !remoteUsage && !piTotals && !showProviderStatus
+  const connectionPart = connection ? `${connection.label} · ` : ''
   const showWork =
-    !usage && !piTotals && !showProviderStatus && trackerEnabled && trackerMinutes > 0
+    !usage &&
+    !piTotals &&
+    !showProviderStatus &&
+    !showConnection &&
+    trackerEnabled &&
+    trackerMinutes > 0
   const showMetaRow =
     usage !== null ||
     remoteUsage !== null ||
     piTotals !== null ||
     showProviderStatus ||
+    showConnection ||
     showWork ||
     showFeedbackIcon
 
@@ -472,10 +487,11 @@ export function SidebarFooter(): React.ReactElement {
                 className="sidebar-footer-line"
                 data-usage-provider="pi"
                 onClick={() => openUsage('pi')}
-                title={`Pi · ${piTodaySummary(piTotals)} · Local totals, not account quota`}
+                title={`Pi · ${connectionPart}${piTodaySummary(piTotals)} · Local totals, not account quota`}
               >
                 <PiLogo className="w-3.5 h-3.5 flex-shrink-0" />
                 <span className="text-[11px] text-text-secondary tabular-nums truncate">
+                  {connectionPart}
                   {piTodaySummary(piTotals)}
                 </span>
               </button>
@@ -487,7 +503,7 @@ export function SidebarFooter(): React.ReactElement {
                 title={`${USAGE_PROVIDER_LABELS[provider]} usage`}
               >
                 <span className="text-[11px] text-text-tertiary truncate">
-                  {USAGE_PROVIDER_LABELS[provider]} ·{' '}
+                  {USAGE_PROVIDER_LABELS[provider]} · {provider === 'pi' ? connectionPart : ''}
                   {providerStatus === 'idle' || providerStatus === 'loading'
                     ? 'Loading usage…'
                     : providerStatus === 'error'
@@ -495,6 +511,16 @@ export function SidebarFooter(): React.ReactElement {
                       : 'No quota reported'}
                 </span>
               </button>
+            ) : showConnection && connection ? (
+              <span
+                className="sidebar-footer-line"
+                data-connection-line={connection.id}
+                title={`Connection: ${connection.label}`}
+              >
+                <span className="text-[11px] text-text-secondary truncate">
+                  {focusedSession?.piMode ? 'Pi' : 'OpenCode'} · {connection.label}
+                </span>
+              </span>
             ) : showWork ? (
               <WorkLine />
             ) : (

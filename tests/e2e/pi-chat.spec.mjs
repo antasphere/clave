@@ -22,6 +22,7 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   callMcp,
+  openWindow,
   until,
   userDataDir,
   fixturePath
@@ -182,9 +183,74 @@ export async function run(t) {
     console.log(`      tool rows: ${JSON.stringify(toolCard)}`)
     const chipText = async () =>
       chat(id).locator('.chat-model-trigger[aria-label="Model"]').first().innerText()
-    const chipOk = await until(async () => /stand-in\/one/.test(await chipText()), { tries: 40 })
-    t.check('the chip reads the model Pi runs (stand-in/one)', !!chipOk, await chipText())
-    console.log(`      chip reads: ${JSON.stringify(await chipText())}`)
+    // The model by the name Pi gives it, the way the menu lists it (PRDCT-4427).
+    const chipOk = await until(async () => (await chipText()) === 'Pi · Stand-in one', {
+      tries: 40
+    })
+    t.check('the chip names the model Pi runs (Pi · Stand-in one)', !!chipOk, await chipText())
+    t.check(
+      'a chat on no stored connection names none',
+      (await pane(id).locator('[data-connection-chip]').count()) === 0
+    )
+    await chat(id).locator('.chat-model-trigger[aria-label="Model"]').first().click()
+    const ownRow = win.locator('.chat-model-provider[data-adapter="pi-chat"]')
+    await ownRow.waitFor({ timeout: 5_000 })
+    await ownRow.hover()
+    const offered = await until(
+      async () => {
+        const rows = await win.locator('[aria-label="Models"] .chat-model-option').allInnerTexts()
+        return rows.length >= 3 ? rows : null
+      },
+      { tries: 30 }
+    )
+    t.equal(
+      'the chip’s menu lists the models Pi offers',
+      JSON.stringify((offered ?? []).map((text) => text.trim())),
+      JSON.stringify(['Stand-in one', 'Stand-in two', 'Stand-in three'])
+    )
+    // Picking one switches: Pi is told, the chip follows.
+    await win
+      .locator('[aria-label="Models"] .chat-model-option', { hasText: 'Stand-in two' })
+      .click()
+    const switched = await until(
+      () =>
+        lines(FRAMES).find(
+          (f) =>
+            f.frame?.type === 'set_model' &&
+            f.frame?.provider === 'stand-in' &&
+            f.frame?.modelId === 'two'
+        ) ?? null,
+      { tries: 40 }
+    )
+    t.check('the pick reaches Pi (set_model stand-in two)', !!switched)
+    const followed = await until(async () => (await chipText()) === 'Pi · Stand-in two', {
+      tries: 40
+    })
+    t.check('the chip follows the switch (Pi · Stand-in two)', !!followed, await chipText())
+    await win.keyboard.press('Escape').catch(() => undefined)
+
+    // ── 2b. A subscriber that comes after the session said its model ──
+    // A second window subscribes the way a pane does, on its own connection:
+    // Pi's model was said once, at the handshake, long before.
+    const windowB = await openWindow(app, win, WS.id)
+    const heard = await windowB.page.evaluate(async (id) => {
+      const models = []
+      const stop = window.electronAPI.onSessionStream(id, (stream) => {
+        if (stream.kind === 'event' && stream.event.type === 'session_meta')
+          models.push(stream.event.model)
+      })
+      await window.electronAPI.sessionsSubscribe(id)
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      stop()
+      await window.electronAPI.sessionsUnsubscribe(id)
+      return models
+    }, id)
+    t.equal(
+      'a subscriber that comes after the session is ready is told its model (stand-in/two)',
+      JSON.stringify(heard),
+      JSON.stringify(['stand-in/two'])
+    )
+    await windowB.page.close().catch(() => undefined)
 
     // ── 3. The record keeps the Pi session, Clave's own id ──
     const chatRecord = await until(async () => records(id).find((r) => r.piSessionId))

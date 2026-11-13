@@ -280,6 +280,23 @@ describe('conversation stream', () => {
     const other: ChatEvent = { type: 'error', message: 'something else', fatal: false }
     expect(errors(reduceConversation(heard, { prepend: [{ event: other, at: 1 }] }))).toBe(2)
   })
+  it('keeps the past’s word on the model until the live one says its own (PRDCT-4427)', () => {
+    const meta = (model: string): ChatEvent => ({
+      type: 'session_meta',
+      model,
+      providerSessionId: 's'
+    })
+    const page = [
+      { event: meta('kimi-coding/k3'), at: 1 },
+      { event: { type: 'user_message', text: 'old' } as ChatEvent, at: 2 }
+    ]
+    const fresh = run([{ type: 'user_message', text: 'new' }])
+    expect(fresh.model).toBeNull()
+    expect(reduceConversation(fresh, { prepend: page }).model).toBe('kimi-coding/k3')
+    // The live word stands over the past's.
+    const live = run([meta('kimi-coding/k3.1-pro')])
+    expect(reduceConversation(live, { prepend: page }).model).toBe('kimi-coding/k3.1-pro')
+  })
 })
 
 describe('a request the agent no longer holds', () => {

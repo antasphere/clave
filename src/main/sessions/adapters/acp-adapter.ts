@@ -5,6 +5,7 @@ import {
   userMessageEvent,
   type CommandOption,
   type HistoryItem,
+  type ModelOption,
   type SessionEvent,
   type SessionInput
 } from '../../../shared/session-model'
@@ -61,11 +62,18 @@ export interface AcpSessionSummary {
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
 const array = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 
+interface ConfigChoice {
+  value: string
+  name: string
+  description: string
+}
 interface ConfigOption {
   id: string
   category: string
   currentValue: string
   values: string[]
+  /** The same values with the names the agent gives them. */
+  choices: ConfigChoice[]
 }
 interface AuthMethod {
   id: string
@@ -143,18 +151,40 @@ function parseConfigOptions(value: unknown): ConfigOption[] {
     const option = object(raw)
     const id = text(option.id)
     if (!id) return []
+    const choice = (entry: unknown): ConfigChoice => {
+      const e = object(entry)
+      return { value: text(e.value), name: text(e.name), description: text(e.description) }
+    }
+    // Options may be flat or grouped (`{ group, options: [...] }`).
+    const choices = array(option.options).flatMap((entry) => {
+      const e = object(entry)
+      if (Array.isArray(e.options)) return e.options.map(choice)
+      return [choice(e)]
+    })
     return [
       {
         id,
         category: text(option.category),
         currentValue: text(option.currentValue),
-        // Options may be flat or grouped (`{ group, options: [...] }`).
-        values: array(option.options).flatMap((entry) => {
-          const e = object(entry)
-          if (Array.isArray(e.options)) return e.options.map((o) => text(object(o).value))
-          return [text(e.value)]
-        })
+        values: choices.map((c) => c.value),
+        choices
       }
+    ]
+  })
+}
+/** The models an agent's model option offers, as the chat's menu lists
+ *  them: its value as the id (OpenCode's `provider/model`, what the session
+ *  reports and `session/set_config_option` takes) and its name without the
+ *  `provider/` OpenCode puts in front ("kimi-code-plan-global/Kimi K3" reads
+ *  "Kimi K3"). */
+function modelChoices(option: ConfigOption | undefined): ModelOption[] {
+  return (option?.choices ?? []).flatMap((c) => {
+    if (!c.value) return []
+    const slash = c.value.indexOf('/')
+    const prefix = slash > 0 ? `${c.value.slice(0, slash)}/` : ''
+    const name = prefix && c.name.startsWith(prefix) ? c.name.slice(prefix.length) : c.name
+    return [
+      { id: c.value, label: name || c.value, ...(c.description ? { hint: c.description } : {}) }
     ]
   })
 }
@@ -168,9 +198,14 @@ function parseAuthMethods(value: unknown): AuthMethod[] {
     }
   })
 }
+const findModelOption = (options: ConfigOption[]): ConfigOption | undefined =>
+  options.find((option) => option.id === 'model') ??
+  options.find((option) => option.category === 'model')
 const modelOption = (state: HandleState): ConfigOption | undefined =>
-  state.configOptions.find((option) => option.id === 'model') ??
-  state.configOptions.find((option) => option.category === 'model')
+  findModelOption(state.configOptions)
+/** The models a `configOptions` answer offers, as the chat's menu lists them. */
+export const acpModelOptions = (configOptions: unknown): ModelOption[] =>
+  modelChoices(findModelOption(parseConfigOptions(configOptions)))
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
@@ -331,6 +366,14 @@ export class AcpAdapter implements SessionAdapter {
 
   async commands(handle: SessionHandle): Promise<CommandOption[]> {
     return this.require(handle).commands
+  }
+
+  /** The models the agent's model option offers: under a stored connection,
+   *  that connection's provider's alone (`enabled_providers`). */
+  async models(handle: SessionHandle): Promise<ModelOption[]> {
+    const state = this.require(handle)
+    if (state.started) await state.started.catch(() => {})
+    return modelChoices(modelOption(state))
   }
 
   async kill(handle: SessionHandle): Promise<void> {
