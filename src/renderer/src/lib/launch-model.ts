@@ -1,7 +1,9 @@
-import { isChatProfileRef } from '../../../shared/open-session-modes'
+import { isChatProfileRef, resolveProfileRef } from '../../../shared/open-session-modes'
 import { isDefaultClaudeAlias } from '../../../shared/claude-models'
 import { isValidModelName } from '../../../shared/model-name'
-import { selectedLaunchProfile } from '../store/launch-profile-store'
+import type { LauncherFamily } from '../../../shared/agent-launch'
+import type { InteractionMode } from '../../../shared/harness'
+import { selectedChatProfile, selectedLaunchProfile } from '../store/launch-profile-store'
 
 /**
  * The model a launch will run, as far as this Mac knows before the spawn
@@ -19,6 +21,33 @@ type PooledProvider = 'claude' | 'codex'
  *  or null for a terminal. */
 export function chatAdapterOf(provider: PooledProvider, launchProfileId: string): string | null {
   return isChatProfileRef(provider, launchProfileId) ? `${provider}-chat` : null
+}
+
+/**
+ * The launch profile an open on this Mac that names no profile and no chat
+ * flag resolves (`clave_launch_options`' `openProfileId`, PRDCT-4485): the
+ * launcher's rule (`transportProfileFor`, launch-session.ts) and the open's
+ * (`mcp-server.ts` turns an omitted chat into the interaction mode's, Claude
+ * on Windows aside, then `resolveProfileRef` takes the chat default): the
+ * family's chat default under a chat interaction mode, else its selected
+ * profile. A family with no chat view answers its selected profile.
+ */
+export function localOpenProfileId(
+  family: LauncherFamily,
+  interactionMode: InteractionMode,
+  workspaceId: string | null,
+  platform: string | undefined = typeof window !== 'undefined'
+    ? window.electronAPI?.platform
+    : undefined
+): string {
+  const terminal = interactionMode === 'terminal' || (family === 'claude' && platform === 'win32')
+  return (
+    resolveProfileRef(
+      { mode: family },
+      selectedChatProfile(family, workspaceId),
+      terminal ? 'terminal' : interactionMode
+    ) ?? selectedLaunchProfile(family, workspaceId).id
+  )
 }
 
 /** The model the launch will run, or undefined when this Mac cannot know

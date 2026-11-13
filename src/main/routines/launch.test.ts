@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import { type LaunchFacts, resolveLaunch } from './launch'
+import { HARNESSES } from '../../shared/harness'
 
 const prefs: LaunchProfilePreferences = {
   version: 1,
@@ -186,7 +187,7 @@ describe('resolveLaunch', () => {
     const reasons = [
       resolveLaunch(routine({ agent: 'gemini' }), facts()),
       resolveLaunch(routine({ form: 'window' }), facts()),
-      resolveLaunch(routine({ agent: 'pi', form: 'chat' }), facts()),
+      resolveLaunch(routine({ agent: 'antigravity', form: 'chat' }), facts()),
       resolveLaunch(routine({ agent: 'pi', dangerousMode: true }), facts()),
       resolveLaunch(routine({ agent: 'codex', permissionMode: 'plan' }), facts()),
       resolveLaunch(routine({ effort: 'Very High' }), facts()),
@@ -198,17 +199,41 @@ describe('resolveLaunch', () => {
     ]
     for (const r of reasons) expect(r.ok).toBe(false)
     expect(reasons.map((r) => (r.ok ? '' : r.reason))).toEqual([
-      'agent "gemini" is not one of claude, codex, pi, antigravity',
+      'agent "gemini" is not one of claude, codex, antigravity, pi, opencode',
       'form "window" is not chat or terminal',
-      'form "chat" needs agent claude or codex; pi has no chat view',
-      'dangerousMode is for claude and codex; pi has no such flag',
+      `form "chat" needs a harness with a chat view (${HARNESSES.filter(
+        (h) => h.chatAdapterId !== null
+      )
+        .map((h) => h.name)
+        .join(', ')}); Antigravity has none`,
+      'dangerousMode is for Claude Code, Codex, OpenCode; pi has no such flag',
       'permissionMode is for claude; codex takes none',
       'effort "Very High" is not a level Claude knows',
       'thinking "ultra" is not one of off, minimal, low, medium, high, xhigh, max',
-      'antigravity takes no model',
+      'The model argument applies to harnesses that take a model (Claude Code, Codex, Pi); Antigravity takes none on its command line.',
       'launch profile "Nope" is not a claude profile here ("Claude", "Work", "Work (chat)")',
       'Unknown Claude account "Nobody". Available: "Default" (default), "Antasphere" (acc-2)',
-      'account is for claude and codex; pi has no account pool'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'
     ])
+  })
+
+  it('takes an effort on Codex as on Claude (the launch fields rule), and refuses it on Pi', () => {
+    const codex = resolveLaunch(routine({ agent: 'codex', effort: 'xhigh' }), facts())
+    expect(codex.ok && codex.spawn).toMatchObject({ codexMode: true, effort: 'xhigh' })
+    const pi = resolveLaunch(routine({ agent: 'pi', effort: 'high' }), facts())
+    expect(pi.ok ? '' : pi.reason).toBe('effort is for claude and codex; pi takes none here')
+  })
+
+  it('resolves an OpenCode launch from the harness table: no pool, no model, its skip flag kept', () => {
+    const oc = resolveLaunch(routine({ agent: 'opencode', dangerousMode: true }), facts())
+    expect(oc.ok && oc).toMatchObject({
+      form: 'terminal',
+      account: null,
+      spawn: { opencodeMode: true, dangerousMode: true }
+    })
+    const account = resolveLaunch(routine({ agent: 'opencode', account: 'any' }), facts())
+    expect(account.ok ? '' : account.reason).toBe(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); OpenCode runs on the login inside the harness.'
+    )
   })
 })

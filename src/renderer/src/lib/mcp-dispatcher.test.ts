@@ -49,6 +49,22 @@ vi.mock('./switch-account', () => ({
 vi.mock('./session-accounts', () => ({
   sessionOwnAccount: () => ({ id: 'default', label: 'Default', removed: false })
 }))
+/* clave_launch_options loads these on the call (the usage store polls on
+   import): the window's input is recorded, the server settings never read. */
+const launchInput = vi.hoisted(() => ({
+  local: vi.fn(),
+  server: vi.fn(),
+  loadServerSettings: vi.fn(async () => undefined),
+  serverSettingsFor: vi.fn(() => ({ status: 'ready' }))
+}))
+vi.mock('./launch-options-input', () => ({
+  localLaunchOptionsInput: launchInput.local,
+  serverLaunchOptionsInput: launchInput.server
+}))
+vi.mock('../store/server-settings-store', () => ({
+  loadServerSettings: launchInput.loadServerSettings,
+  serverSettingsFor: launchInput.serverSettingsFor
+}))
 import { openSessionProgrammatically, initMcpDispatcher } from './mcp-dispatcher'
 import { usePinnedStore } from '../store/pinned-store'
 import { resourceKey } from '@clave/contract/fleet'
@@ -57,6 +73,10 @@ import { useWorkspaceStore } from '../store/workspace-store'
 import { useSessionStore } from '../store/session-store'
 import { useFleetStore } from '../store/fleet-store'
 import { usePairingStore } from '../store/pairing-store'
+import { useAccountPolicyStore } from '../store/account-policy-store'
+import { DEFAULT_INTERACTION_MODE, HARNESSES } from '../../../shared/harness'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
+import { launchOptions, type LaunchOptionsInput } from '../../../shared/launch-options'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
@@ -1092,5 +1112,112 @@ describe('an agent switches the account of a server tab', () => {
     expect(
       useSessionStore.getState().sessions.find((s) => s.id === SERVER_TAB)?.accountProposal
     ).toMatchObject({ rungs: [{ kind: 'account', accountId: 'srv-two', label: 'Play' }] })
+  })
+})
+
+describe('clave_launch_options on the window road (PRDCT-4485)', () => {
+  /** This Mac as the input names it: one Claude connection, a remembered model. */
+  const input: LaunchOptionsInput = {
+    machine: { id: 'local', name: 'This Mac' },
+    harnesses: HARNESSES,
+    presence: () => undefined,
+    profiles: () => [],
+    defaultProfileId: () => undefined,
+    openProfileId: () => undefined,
+    models: () => 'unavailable',
+    harnessSettings: {},
+    interactionMode: 'chat',
+    connections: (pool) =>
+      pool === 'claude' ? [{ id: 'default', label: 'Me', usable: true }] : [],
+    selectedConnectionId: () => 'default',
+    preferRecommended: true,
+    launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
+    now: 1
+  }
+  beforeEach(() => {
+    launchInput.local.mockReset().mockReturnValue(input)
+    launchInput.server.mockReset()
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    // A full id: a bare default alias is the CLI's own default, read as none.
+    // Only the chat adapter remembers a model; a terminal has none.
+    globals.window.electronAPI.launchRememberedModel = vi.fn(async (adapterId: string) =>
+      adapterId === 'claude-chat' ? 'claude-opus-5-5' : undefined
+    )
+    // The default profile is the built-in TERMINAL one, as on a fresh
+    // install; the chat default is a profile apart (the built-in chat). An
+    // open in a chat interaction mode lands on the chat default, so the
+    // remembered model is read there (verifier, round 2: a default profile
+    // set to the chat hid the difference).
+    useLaunchProfileStore.setState({ preferences: preferences({}), loaded: true })
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
+  })
+  afterEach(() => {
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    useLaunchSettingsStore.setState({ interactionMode: DEFAULT_INTERACTION_MODE })
+  })
+
+  it('reads the remembered model on the chat default in a chat mode, none in a terminal mode', async () => {
+    expect(useLaunchProfileStore.getState().preferences.globalDefaults.claude).toBeUndefined()
+    const ask = async (): Promise<unknown> => {
+      let receive: (msg: {
+        requestId: string
+        command: string
+        payload: unknown
+      }) => void = () => {}
+      const response = new Promise<{ ok: boolean; result?: unknown }>((resolve) => {
+        globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+          receive = handler
+          return () => {}
+        }
+        globals.window.electronAPI.mcpRespond = resolve
+      })
+      const unsubscribe = initMcpDispatcher()
+      receive({ requestId: 'options', command: 'launchOptions', payload: { server: undefined } })
+      try {
+        return await response
+      } finally {
+        unsubscribe()
+      }
+    }
+    await ask()
+    expect(globals.window.electronAPI.launchRememberedModel).toHaveBeenCalledWith('claude-chat')
+    expect(launchInput.local).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        launchModels: expect.objectContaining({ claude: 'claude-opus-5-5' })
+      })
+    )
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    await ask()
+    expect(launchInput.local).toHaveBeenLastCalledWith(
+      expect.objectContaining({ launchModels: expect.objectContaining({ claude: undefined }) })
+    )
+  })
+
+  it('answers this Mac with the shared function, from the stores the window keeps', async () => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'options', command: 'launchOptions', payload: { server: undefined } })
+    try {
+      const answer = await response
+      expect(answer).toMatchObject({ requestId: 'options', ok: true })
+      expect(answer.result).toEqual(launchOptions(input))
+      expect(launchInput.server).not.toHaveBeenCalled()
+      expect(launchInput.local).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preferRecommended: true,
+          codexModels: 'unavailable',
+          launchModels: expect.objectContaining({ claude: 'claude-opus-5-5' })
+        })
+      )
+    } finally {
+      unsubscribe()
+    }
   })
 })

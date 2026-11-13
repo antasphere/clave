@@ -26,7 +26,7 @@ import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinn
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
-import { rememberedLaunchModel } from './launch-model'
+import { localOpenProfileId, rememberedLaunchModel } from './launch-model'
 import { claudeProfileSpawnFields, type ClaudeProfile } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
 import {
@@ -55,6 +55,12 @@ import {
   workToolAnswer
 } from '../../../shared/work-tools'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
+import { launchOptions } from '../../../shared/launch-options'
+import type { CodexModels } from './launch-options-input'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
+import { useAgentUpdatesStore } from '../store/agent-updates-store'
+import { useAccountPolicyStore } from '../store/account-policy-store'
+import { getWorkspaceById } from '../store/workspace-store'
 import {
   buildCheckpointProvenance,
   buildProvenanceHeader
@@ -1707,6 +1713,70 @@ function handlePinnedState(payload: { pinnedId: string }): unknown {
   return { state: getPinnedState(pin), groupId: pin.activeGroupId }
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** `clave_launch_options` in the window: for a connected server, from the
+ *  settings this Mac keeps of it (read first when it has none); without one,
+ *  this Mac from its own stores. The server reference resolves as
+ *  `clave_open_session`'s does. Codex's models are this Mac's list, as the
+ *  launcher offers them under every machine. */
+async function handleLaunchOptions(payload: { server?: string }): Promise<unknown> {
+  // Loaded on the call: the launch sources and the server settings pull in
+  // the usage store, which starts its polling on import.
+  const [{ localLaunchOptionsInput, serverLaunchOptionsInput }, serverSettings] = await Promise.all(
+    [import('./launch-options-input'), import('../store/server-settings-store')]
+  )
+  const { loadServerSettings, serverSettingsFor } = serverSettings
+  const serverId =
+    payload.server === undefined
+      ? LOCAL_SERVER_ID
+      : resolveSessionTarget({
+          server: payload.server,
+          connections: useFleetStore.getState().connections,
+          workspaces: []
+        }).serverId
+  // The launcher's own read (SessionLauncher.tsx): the active workspace's root, else '/'.
+  const cwd = getWorkspaceById(useWorkspaceStore.getState().activeWorkspaceId)?.rootDir ?? '/'
+  const read = window.electronAPI?.adaptersModels?.('codex-chat', cwd)
+  const codexModels: CodexModels = read
+    ? await read.then((models) => models as CodexModels).catch(() => 'unavailable' as const)
+    : 'unavailable'
+  const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
+  const facts = { harnessSettings: harnesses, interactionMode, codexModels, now: Date.now() }
+  if (serverId === LOCAL_SERVER_ID) {
+    // Each pool's remembered model on the profile an open naming none
+    // resolves (the chat default in a chat interaction mode), as the listing's
+    // `openProfileId` says: never on the terminal default (verifier, round 2).
+    const launchModels = Object.fromEntries(
+      await Promise.all(
+        (['claude', 'codex'] as const).map(
+          async (pool) =>
+            [
+              pool,
+              await rememberedLaunchModel(
+                pool,
+                localOpenProfileId(pool, interactionMode, null),
+                null
+              ).catch(() => undefined)
+            ] as const
+        )
+      )
+    )
+    return launchOptions(
+      localLaunchOptionsInput({
+        ...facts,
+        agents: useAgentUpdatesStore.getState().agents,
+        preferRecommended: useAccountPolicyStore.getState().useRecommendedAccount,
+        launchModels
+      })
+    )
+  }
+  if (serverSettingsFor(serverId).status !== 'ready')
+    await loadServerSettings(serverId).catch(() => undefined)
+  const name = useFleetStore.getState().connections.find((c) => c.id === serverId)?.name ?? serverId
+  return launchOptions(serverLaunchOptionsInput(serverId, name, serverSettingsFor(serverId), facts))
+}
+
 async function execute(command: string, payload: unknown): Promise<unknown> {
   switch (command) {
     case 'list':
@@ -1725,6 +1795,8 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return openSessionProgrammatically(
         payload as Parameters<typeof openSessionProgrammatically>[0]
       )
+    case 'launchOptions':
+      return handleLaunchOptions(payload as { server?: string })
     case 'moveSession':
       return handleMoveSession(payload as Parameters<typeof handleMoveSession>[0])
     case 'launchGroup':

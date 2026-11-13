@@ -12,6 +12,14 @@
  * server) feed it from what they have.
  */
 import type { RoutineAgent, RoutineDeclaration, RoutineForm } from '@clave/contract/routines'
+import {
+  HARNESSES,
+  HARNESS_BY_ID,
+  type HarnessId,
+  type InteractionMode
+} from '../../shared/harness'
+import { firstPoolOf } from '../../shared/connection'
+import { poolsOf } from '../../shared/launch-options'
 import type { SpawnOptions } from '@clave/contract/sessions'
 import {
   BUILT_IN_LAUNCH_PROFILES,
@@ -24,13 +32,26 @@ import {
   CHAT_PROFILE_IDS,
   DANGEROUS_MODE_FAMILIES,
   chatDefaultFor,
+  chatOfInteractionMode,
   isChatProfileRef,
   resolveProfileRef,
   resolveSpawnModes
 } from '../../shared/open-session-modes'
 import { type AccountFacts, resolveAccountRef, spawnFieldsOf } from '../mcp/served-accounts'
 
-const AGENTS: ReadonlySet<string> = new Set<RoutineAgent>(['claude', 'codex', 'pi', 'antigravity'])
+/** Every harness of the table: a routine's schema narrows it to its four
+ *  agents, the daemon's `clave_open_session` resolves any of them here. */
+const AGENTS: ReadonlySet<string> = new Set<string>(HARNESSES.map((h) => h.id))
+const namesOf = (pick: (h: (typeof HARNESSES)[number]) => boolean): string =>
+  HARNESSES.filter(pick)
+    .map((h) => h.name)
+    .join(', ')
+/** The refusal of an account for a harness Clave holds no connection for. */
+export const accountRefusal = (agent: HarnessId): string =>
+  `The account argument applies to harnesses with a connection pool (${namesOf((h) => poolsOf(h).length > 0)}); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
+/** The refusal of a model for a harness that takes none on its command line. */
+export const modelRefusal = (agent: HarnessId): string =>
+  `The model argument applies to harnesses that take a model (${namesOf((h) => h.takesModel)}); ${HARNESS_BY_ID[agent].name} takes none on its command line.`
 const FORMS: ReadonlySet<string> = new Set<RoutineForm>(['chat', 'terminal'])
 const THINKING: ReadonlySet<string> = new Set<PiThinkingLevel>([
   'off',
@@ -73,29 +94,114 @@ export const REPORTING_AGENTS: ReadonlySet<RoutineAgent> = new Set<RoutineAgent>
   'codex'
 ])
 
-export function resolveLaunch(
-  routine: Pick<RoutineDeclaration, 'launch' | 'workspaceId' | 'name'>,
-  facts: LaunchFacts
-): ResolvedLaunch {
+/** What a launch is resolved from: a routine's declaration, or the daemon's
+ *  `clave_open_session` arguments laid out the same way (any harness, every
+ *  permission mode a spawn may name, no workspace when the server has none). */
+export interface LaunchRequest {
+  readonly name: string
+  readonly workspaceId?: string | null | undefined
+  readonly launch: Omit<RoutineDeclaration['launch'], 'agent' | 'permissionMode'> & {
+    readonly agent?: string | undefined
+    readonly permissionMode?: string | undefined
+  }
+}
+
+/**
+ * The form a daemon's `clave_open_session` opens (PRDCT-4485): the call's
+ * `chat` when it says, else the person's launcher (`chatOfInteractionMode`:
+ * their interaction mode for a harness with a chat view and no profile
+ * named), else the named profile's own form; a harness with no chat view
+ * runs in a terminal. `chat`/`profile` are the call's, a built-in chat id
+ * already read as the chat view.
+ */
+export function openFormOf(
+  agent: HarnessId,
+  call: { readonly chat?: boolean | undefined; readonly profile?: string | undefined },
+  interactionMode: InteractionMode
+): RoutineForm {
+  const decided = chatOfInteractionMode(
+    {
+      mode: agent,
+      ...(call.chat !== undefined ? { chat: call.chat } : {}),
+      ...(call.profile ? { profile: call.profile } : {})
+    },
+    interactionMode
+  )
+  if (decided === true) return 'chat'
+  if (decided === false || HARNESS_BY_ID[agent].chatAdapterId === null) return 'terminal'
+  return call.profile !== undefined && isChatProfileRef(agent, call.profile) ? 'chat' : 'terminal'
+}
+
+/**
+ * The launch profile a resolved launch runs on: `profileRef` (already in the
+ * form's shape) when one is named, else the chat default of the workspace
+ * for a chat, else undefined (main runs the family's selected profile).
+ * Throws what `resolveProfileRef` refuses.
+ */
+function launchProfileIdOf(
+  preferences: LaunchProfilePreferences,
+  agent: HarnessId,
+  form: RoutineForm,
+  profileRef: string | undefined,
+  workspaceId: string | null | undefined
+): string | undefined {
+  return resolveProfileRef(
+    {
+      mode: agent,
+      chat: form === 'chat',
+      ...(profileRef !== undefined ? { profile: profileRef } : {})
+    },
+    form === 'chat' ? chatDefaultFor(preferences, agent, workspaceId ?? null) : undefined
+  )
+}
+
+/**
+ * The launch profile a daemon's open that names no profile and no chat flag
+ * resolves (`openFormOf` then `resolveLaunch`'s profile step, the same two
+ * functions): the harness's chat default under a chat interaction mode,
+ * undefined for a terminal (main then runs the family's selected profile).
+ * `clave_launch_options` judges its `defaultModel` on it, so the listing and
+ * the open cannot drift (verifier, round 2).
+ */
+export function openProfileIdFor(
+  preferences: LaunchProfilePreferences,
+  family: HarnessId,
+  interactionMode: InteractionMode,
+  workspaceId?: string | null
+): string | undefined {
+  return launchProfileIdOf(
+    preferences,
+    family,
+    openFormOf(family, {}, interactionMode),
+    undefined,
+    workspaceId
+  )
+}
+
+export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): ResolvedLaunch {
   const p = routine.launch
   const fail = (reason: string): ResolvedLaunch => ({ ok: false, reason })
 
   const agent = (p.agent ?? 'claude') as RoutineAgent
   if (!AGENTS.has(agent))
-    return fail(`agent "${String(p.agent)}" is not one of claude, codex, pi, antigravity`)
+    return fail(`agent "${String(p.agent)}" is not one of ${[...AGENTS].join(', ')}`)
   // The chat is the form a run is watched in (its blocked and done states);
   // an agent with no chat view runs in a terminal.
   const form = (p.form ?? (CHAT_PROFILE_IDS[agent] ? 'chat' : 'terminal')) as RoutineForm
   if (!FORMS.has(form)) return fail(`form "${String(p.form)}" is not chat or terminal`)
   if (form === 'chat' && !CHAT_PROFILE_IDS[agent])
-    return fail(`form "chat" needs agent claude or codex; ${agent} has no chat view`)
+    return fail(
+      `form "chat" needs a harness with a chat view (${namesOf((h) => h.chatAdapterId !== null)}); ${HARNESS_BY_ID[agent as HarnessId].name} has none`
+    )
 
   if (p.dangerousMode === true && !DANGEROUS_MODE_FAMILIES.has(agent as LauncherFamily))
-    return fail(`dangerousMode is for claude and codex; ${agent} has no such flag`)
+    return fail(
+      `dangerousMode is for ${namesOf((h) => DANGEROUS_MODE_FAMILIES.has(h.id as LauncherFamily))}; ${agent} has no such flag`
+    )
   if (p.permissionMode !== undefined && agent !== 'claude')
     return fail(`permissionMode is for claude; ${agent} takes none`)
-  if (p.effort !== undefined && agent !== 'claude')
-    return fail(`effort is for claude; ${agent} takes none here`)
+  if (p.effort !== undefined && agent !== 'claude' && agent !== 'codex')
+    return fail(`effort is for claude and codex; ${agent} takes none here`)
   if (p.effort !== undefined && !isValidEffort(p.effort))
     return fail(`effort "${p.effort}" is not a level Claude knows`)
   if (p.thinking !== undefined && agent !== 'pi')
@@ -106,9 +212,10 @@ export function resolveLaunch(
     )
   if (p.provider !== undefined && agent !== 'pi')
     return fail(`provider is for pi; ${agent} takes none`)
-  if (p.model !== undefined && agent === 'antigravity') return fail('antigravity takes no model')
-  if (p.account !== undefined && agent !== 'claude' && agent !== 'codex')
-    return fail(`account is for claude and codex; ${agent} has no account pool`)
+  const harness = HARNESS_BY_ID[agent as HarnessId]
+  if (p.model !== undefined && !harness.takesModel) return fail(modelRefusal(harness.id))
+  if (p.account !== undefined && poolsOf(harness).length === 0)
+    return fail(accountRefusal(harness.id))
 
   const modes = resolveSpawnModes({
     mode: agent,
@@ -144,28 +251,29 @@ export function resolveLaunch(
   }
   let launchProfileId: string | undefined
   try {
-    launchProfileId = resolveProfileRef(
-      {
-        mode: agent,
-        chat: form === 'chat',
-        ...(profileRef !== undefined ? { profile: profileRef } : {})
-      },
-      form === 'chat' ? chatDefaultFor(preferences, family, routine.workspaceId) : undefined
+    launchProfileId = launchProfileIdOf(
+      preferences,
+      agent as HarnessId,
+      form,
+      profileRef,
+      routine.workspaceId
     )
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error))
   }
 
-  // The account (ADR 0002): claude and codex only, the pool's pick for `any` or nothing.
+  // The account (ADR 0002): a harness with a connection pool only, the pool's pick for `any` or nothing.
   let accountFields: SpawnOptions = {}
   let account: string | null = null
-  if (agent === 'claude' || agent === 'codex') {
+  const pool = firstPoolOf(harness)
+  if (pool !== null) {
     try {
       // A routine naming no model runs the one main remembers for its chat:
       // the account is judged for that one, never on the shared caps alone.
-      const model = modes.model ?? facts.launchModel?.(agent, launchProfileId, routine.workspaceId)
-      const resolved = resolveAccountRef(facts, agent, p.account, model)
-      accountFields = spawnFieldsOf(agent, resolved)
+      const model =
+        modes.model ?? facts.launchModel?.(pool, launchProfileId, routine.workspaceId ?? undefined)
+      const resolved = resolveAccountRef(facts, pool, p.account, model)
+      accountFields = spawnFieldsOf(pool, resolved)
       account = resolved.label
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error))

@@ -868,7 +868,7 @@ describe('an account switch', () => {
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(
-      'Only Claude and Codex tabs run on an account'
+      'Only a tab on a harness with a connection pool (Claude Code, Codex) runs on a connection'
     )
     await expect(run(h, 'switchAccount', { sessionId: 'zz', account: 'any' })).rejects.toThrow(
       'Unknown session "zz"'
@@ -1167,7 +1167,10 @@ describe('opening a session', () => {
     await expect(
       run(h, 'openSession', { cwd: '/p', mode: 'terminal', account: 'x' })
     ).rejects.toThrow(
-      'The account argument applies to claude and codex modes only (got mode "terminal")'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); a terminal runs no harness.'
+    )
+    await expect(run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'x' })).rejects.toThrow(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'
     )
     await expect(run(h, 'openSession', { cwd: '/p', groupId: 'zz' })).rejects.toThrow(
       'No group with id or name "zz"'

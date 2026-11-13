@@ -15,6 +15,11 @@ import {
 
 vi.mock('./roads', () => ({ noteRoad: vi.fn() }))
 import { noteRoad } from './roads'
+import type { ServedPoolAccount } from './served-core'
+import { accountForLaunch } from './served-accounts'
+import { HARNESSES } from '../../shared/harness'
+import type { LaunchProfile } from '../../shared/agent-launch'
+import { suggestedConnection, type LaunchOptions } from '../../shared/launch-options'
 
 const group = (id: string, extra: Partial<SidebarGroup> = {}): SidebarGroup => ({
   ...{ id, name: id, sessionIds: [], collapsed: false, cwd: null, terminals: [] },
@@ -546,5 +551,251 @@ describe('resolveGroupRef', () => {
     await expect(
       serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
     ).rejects.toThrow('No session with id "mine"')
+  })
+})
+
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+describe('launchOptions, served: what this machine can launch', () => {
+  const week = (used: number, resetsAt: number | null = null): ServedPoolAccount['usage'] => {
+    const w = {
+      kind: 'weekly_all',
+      scope: null,
+      usedPercentage: used,
+      severity: used >= 100 ? 'critical' : 'normal',
+      resetsAt
+    }
+    return { tightest: w, windows: [w] }
+  }
+  const NOW = Date.UTC(2026, 10, 13, 12)
+  const profile = (
+    id: string,
+    family: LaunchProfile['family'],
+    extra: Partial<LaunchProfile> = {}
+  ): LaunchProfile => ({ id, name: id, family, command: [], additionalArgs: [], ...extra })
+  /** The base shell with every lane A fact a Mac answers. */
+  const full = (h: Harness, over: Partial<ServedShell> = {}): ServedContext => {
+    const base = h.ctx()
+    const accounts: Record<'claude' | 'codex', ServedPoolAccount[]> = {
+      claude: [
+        { id: 'default', label: 'Default', usable: true, usage: week(100, NOW + 3_600_000) },
+        { id: 'acc-2', label: 'Second', usable: true, usage: week(20) }
+      ],
+      codex: [{ id: 'key', label: 'API key', usable: true, fallback: true }]
+    }
+    const shell: ServedShell = {
+      ...base.shell,
+      machine: () => ({ id: 'local', name: 'This Mac' }),
+      presence: () => [
+        { id: 'claude', installed: true, currentVersion: '3.1.0', lastCheckedAt: NOW },
+        { id: 'codex', installed: true, currentVersion: '0.90.0', lastCheckedAt: NOW },
+        { id: 'antigravity', installed: false, currentVersion: null, lastCheckedAt: NOW },
+        { id: 'pi', installed: true, currentVersion: '1.2.0', lastCheckedAt: NOW },
+        { id: 'opencode', installed: false, currentVersion: null, lastCheckedAt: null }
+      ],
+      models: async (harness) =>
+        harness === 'codex'
+          ? 'unavailable'
+          : harness === 'claude'
+            ? [{ id: 'opus', label: 'Opus', family: 'Opus' }]
+            : [{ id: null, label: 'Default', family: 'Default' }],
+      // The launcher's row passes sonnet; an open passing no model lands on
+      // the remembered chat model, opus.
+      harnessSettings: () => ({ claude: { preferredModel: 'sonnet' } }),
+      launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
+      defaultProfileId: (family) => (family === 'claude' ? 'claude-chat' : undefined),
+      launchProfileRows: (family) =>
+        family === 'claude'
+          ? [
+              profile('builtin-claude', 'claude', { builtIn: true }),
+              profile('claude-chat', 'claude')
+            ]
+          : [],
+      accounts: (pool) => accounts[pool],
+      selectedAccountId: (pool) => (pool === 'claude' ? 'default' : undefined),
+      useRecommendedAccount: () => false,
+      interactionMode: () => 'terminal',
+      ...over
+    }
+    return { ...base, shell }
+  }
+
+  it('answers the machine, the harnesses in table order with their presence, and names the absent ones', async () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      const h = setup()
+      const answer = (await serveCommand('launchOptions', {}, full(h))) as LaunchOptions
+      expect(answer.machine).toEqual({ id: 'local', name: 'This Mac' })
+      expect(answer.interactionMode).toBe('terminal')
+      // Antigravity was checked and is absent; OpenCode was never checked, so it stays listed.
+      expect(answer.harnesses.map((x) => [x.id, x.installed, x.version])).toEqual([
+        ['claude', true, '3.1.0'],
+        ['codex', true, '0.90.0'],
+        ['pi', true, '1.2.0'],
+        ['opencode', false, null]
+      ])
+      expect(answer.notInstalled).toEqual(['Antigravity'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks the suggested connection, the exhausted one with its windows, and the Default row when Codex has no list', async () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      const h = setup()
+      const answer = (await serveCommand('launchOptions', {}, full(h))) as LaunchOptions
+      const claude = answer.harnesses.find((x) => x.id === 'claude')!
+      expect(claude.defaultModel).toBe('opus')
+      expect(claude.launcherModel).toBe('sonnet')
+      expect(
+        claude.connections.map((c) => [c.id, c.suggested, c.exhausted, c.headroom !== null])
+      ).toEqual([
+        ['default', false, true, true],
+        ['acc-2', true, false, true]
+      ])
+      expect(claude.connections[0].windows).toEqual([
+        {
+          name: 'Overall',
+          kind: 'weekly_all',
+          scope: null,
+          leftPercent: 0,
+          resetsAt: NOW + 3_600_000,
+          resetIn: 'in 1h'
+        }
+      ])
+      expect(claude.profiles).toEqual([
+        { id: 'builtin-claude', name: 'builtin-claude', form: 'terminal', default: false },
+        { id: 'claude-chat', name: 'claude-chat', form: 'chat', default: true }
+      ])
+      const codex = answer.harnesses.find((x) => x.id === 'codex')!
+      expect(codex.models).toEqual([
+        { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+      ])
+      expect(codex.connections).toEqual([
+        expect.objectContaining({ id: 'key', fallback: true, suggested: true, exhausted: false })
+      ])
+      const pi = answer.harnesses.find((x) => x.id === 'pi')!
+      expect(pi.connections).toEqual([])
+      expect(pi.connectionNote).toMatch(/runs on the login inside the harness/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('judges defaultModel on the chat default an open resolves in a chat mode, not on the default profile', async () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      const h = setup()
+      // The default profile is the built-in terminal; the person's chat
+      // default is the chat form of a profile of theirs, and only a chat
+      // remembers a model.
+      const asked: (string | undefined)[] = []
+      const world = (mode: 'chat' | 'terminal'): Partial<ServedShell> => ({
+        defaultProfileId: (family) => (family === 'claude' ? 'builtin-claude' : undefined),
+        chatDefault: (family) => (family === 'claude' ? 'chat:claude:mine' : undefined),
+        launchModel: (pool, profileId) => {
+          if (pool !== 'claude') return undefined
+          asked.push(profileId)
+          return profileId === 'chat:claude:mine' ? 'opus' : undefined
+        },
+        interactionMode: () => mode
+      })
+      const claudeOf = async (
+        mode: 'chat' | 'terminal'
+      ): Promise<LaunchOptions['harnesses'][number]> =>
+        (
+          (await serveCommand('launchOptions', {}, full(h, world(mode)))) as LaunchOptions
+        ).harnesses.find((x) => x.id === 'claude')!
+      const chat = await claudeOf('chat')
+      expect(chat.defaultModel).toBe('opus')
+      expect(asked).toEqual(['chat:claude:mine'])
+      expect(chat.profiles.find((p) => p.default)?.id).toBe('builtin-claude')
+      const terminal = await claudeOf('terminal')
+      expect(terminal.defaultModel).toBeNull()
+      expect(asked[1]).toBe('builtin-claude')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks the recommendation when the person opted in: what accountForLaunch picks, not the next along', async () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      const h = setup()
+      // The selected one spent; next along "Later" (its week resets in five
+      // days), the recommendation "Sooner" (its week resets in a day).
+      const claude: ServedPoolAccount[] = [
+        { id: 'default', label: 'Default', usable: true, usage: week(100, NOW + 86_400_000) },
+        { id: 'later', label: 'Later', usable: true, usage: week(20, NOW + 5 * 86_400_000) },
+        { id: 'sooner', label: 'Sooner', usable: true, usage: week(40, NOW + 86_400_000) }
+      ]
+      const world = (recommended: boolean): Partial<ServedShell> => ({
+        accounts: (pool) => (pool === 'claude' ? claude : []),
+        useRecommendedAccount: () => recommended
+      })
+      const suggested = async (recommended: boolean): Promise<string[]> =>
+        (
+          (await serveCommand('launchOptions', {}, full(h, world(recommended)))) as LaunchOptions
+        ).harnesses
+          .find((x) => x.id === 'claude')!
+          .connections.filter((c) => c.suggested)
+          .map((c) => c.id)
+      const facts = {
+        accounts: () => claude,
+        selectedAccountId: () => 'default',
+        useRecommendedAccount: () => true
+      }
+      expect(accountForLaunch(facts, 'claude', 'opus').id).toBe('sooner')
+      expect(await suggested(true)).toEqual(['sooner'])
+      expect(await suggested(false)).toEqual(['later'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still answers on a shell with none of the lane A facts: installed unknown, models unavailable', async () => {
+    const h = setup()
+    const answer = (await serveCommand('launchOptions', {}, h.ctx())) as LaunchOptions
+    expect(answer.machine).toEqual({ id: 'local', name: 'This Mac' })
+    expect(answer.harnesses.map((x) => x.id)).toEqual(HARNESSES.map((x) => x.id))
+    expect(answer.harnesses.every((x) => x.installed === null)).toBe(true)
+    expect(answer.notInstalled).toEqual([])
+    expect(answer.harnesses.find((x) => x.id === 'claude')!.models).toEqual([
+      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+    ])
+    expect(answer.interactionMode).toBe('chat')
+  })
+
+  it("a model list that throws reads as unavailable, never as the tool's error", async () => {
+    const h = setup()
+    const answer = (await serveCommand(
+      'launchOptions',
+      {},
+      full(h, {
+        models: async () => {
+          throw new Error('no app-server')
+        }
+      })
+    )) as LaunchOptions
+    expect(answer.harnesses.find((x) => x.id === 'claude')!.models.map((m) => m.label)).toEqual([
+      'Default'
+    ])
+  })
+})
+
+describe('accountForLaunch follows the shared rule (PRDCT-4485)', () => {
+  it('picks what suggestedConnection picks: the selected account spent, the next with headroom', () => {
+    const spent = { kind: 'weekly_all', scope: null, usedPercentage: 100, severity: 'critical' }
+    const open = { kind: 'weekly_all', scope: null, usedPercentage: 10, severity: 'normal' }
+    const accounts: ServedPoolAccount[] = [
+      { id: 'default', label: 'Default', usable: true, usage: { tightest: open, windows: [open] } },
+      { id: 'main', label: 'Main', usable: true, usage: { tightest: spent, windows: [spent] } },
+      { id: 'spare', label: 'Spare', usable: true, usage: { tightest: open, windows: [open] } }
+    ]
+    const facts = { accounts: () => accounts, selectedAccountId: () => 'main' }
+    const shared = suggestedConnection(accounts, 'main', false, undefined)
+    expect(shared).not.toBe('main')
+    expect(accountForLaunch(facts, 'claude').id).toBe(shared)
   })
 })
