@@ -18,7 +18,7 @@ import {
   type HarnessId,
   type InteractionMode
 } from '../../shared/harness'
-import { firstPoolOf } from '../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../shared/connection'
 import { poolsOf } from '../../shared/launch-options'
 import type { SpawnOptions } from '@clave/contract/sessions'
 import {
@@ -266,7 +266,7 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
   let accountFields: SpawnOptions = {}
   let account: string | null = null
   const pool = firstPoolOf(harness)
-  if (pool !== null) {
+  if (isAccountPoolId(pool)) {
     try {
       // A routine naming no model runs the one main remembers for its chat:
       // the account is judged for that one, never on the shared caps alone.

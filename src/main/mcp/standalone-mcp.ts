@@ -36,7 +36,7 @@ import {
   launchModeFields
 } from '../../shared/runtime-choices'
 import { launchOptions, poolsOf } from '../../shared/launch-options'
-import { firstPoolOf } from '../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../shared/connection'
 import { pickAccount } from '../../shared/account-pool'
 import { accountRefusal, openFormOf, resolveLaunch, type LaunchRequest } from '../routines/launch'
 import { poolOf, resolveAccountRef, spawnFieldsOf, usageOf } from './served-accounts'
@@ -974,7 +974,7 @@ function buildServer(
         const mode = recordModeOf(record as ServedRecord | undefined, session.provider)
         const harness = HARNESS_BY_ID[(mode === 'claude-agents' ? 'claude' : mode) as HarnessId]
         const pool = harness ? firstPoolOf(harness) : null
-        if (!pool)
+        if (!isAccountPoolId(pool))
           throw new Error(
             `Only a tab on a harness with a connection pool (${POOLED_HARNESSES}) runs on a connection`
           )

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import { type LaunchFacts, resolveLaunch } from './launch'
-import { HARNESSES } from '../../shared/harness'
+import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
+import type { ConnectionPoolId } from '../../shared/connection'
 
 const prefs: LaunchProfilePreferences = {
   version: 1,
@@ -235,5 +236,22 @@ describe('resolveLaunch', () => {
     expect(account.ok ? '' : account.reason).toBe(
       'The account argument applies to harnesses with a connection pool (Claude Code, Codex); OpenCode runs on the login inside the harness.'
     )
+  })
+})
+
+// ── Lane B (harness wave): provider connections ──
+describe('resolveLaunch on a harness whose first pool is a provider pool (PRDCT-4426)', () => {
+  it('resolves no account, as for a harness on no pool', () => {
+    const claude = HARNESS_BY_ID.claude as { connectionPools: readonly ConnectionPoolId[] }
+    const pools = claude.connectionPools
+    claude.connectionPools = ['moonshot']
+    try {
+      const run = resolveLaunch(routine({ agent: 'claude' }), facts())
+      expect(run.ok && run.account).toBeNull()
+      expect(run.ok && run.spawn).not.toHaveProperty('claudeProfileId')
+      expect(run.ok && run.spawn).not.toHaveProperty('codexAccountId')
+    } finally {
+      claude.connectionPools = pools
+    }
   })
 })

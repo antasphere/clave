@@ -1,5 +1,6 @@
 import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
-import { codexConnection } from '../../shared/connection'
+import { codexConnection, type ConnectionPoolId } from '../../shared/connection'
+import { HARNESS_BY_ID } from '../../shared/harness'
 import { asPoolRow } from '../routines/facts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -2206,5 +2207,54 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     const withLaunch = await sessionFixture()
     const all = (await withLaunch.client.listTools()).tools.map((t) => t.name)
     expect(all).toEqual(expect.arrayContaining(['clave_launch_options', 'clave_switch_account']))
+  }, 15_000)
+})
+
+// ── Lane B (harness wave): provider connections ──
+describe('clave_switch_account on a harness whose first pool is a provider pool (PRDCT-4426)', () => {
+  it('resolves no account and refuses with the sentence of a tab on no pool', async () => {
+    const claude = HARNESS_BY_ID.claude as { connectionPools: readonly ConnectionPoolId[] }
+    const pools = claude.connectionPools
+    claude.connectionPools = ['moonshot']
+    try {
+      const restarted: unknown[][] = []
+      const record: SessionRecord = {
+        id: 'caller',
+        cwd: '/srv/repo',
+        folderName: 'repo',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeProfileId: 'default'
+      }
+      const { client } = await sessionFixture({
+        records: [record],
+        launch: { switchMode: 'automatic' },
+        host: {
+          restart: async (...args) => {
+            restarted.push(args)
+            return { id: String(args[0]), alive: true, resumed: true } as never
+          }
+        }
+      })
+      for (const account of ['any', 'Work']) {
+        expect(
+          errorText(
+            await client.callTool({
+              name: 'clave_switch_account',
+              arguments: { sessionId: 'mine', account }
+            })
+          )
+        ).toBe(
+          'Only a tab on a harness with a connection pool (Claude Code, Codex) runs on a connection'
+        )
+      }
+      expect(restarted).toHaveLength(0)
+    } finally {
+      claude.connectionPools = pools
+    }
   }, 15_000)
 })
