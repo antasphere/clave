@@ -23,7 +23,7 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
-import { providerInjectionForSpawn } from './provider-injection-spawn'
+import { providerInjectionForSpawn, type ProviderSpawnFields } from './provider-injection-spawn'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -416,6 +416,22 @@ class PtyManager {
         options?.initialPrompt
       )
     }
+    // A Pi or OpenCode chat on a stored connection opens it the way the
+    // terminal does (PRDCT-4496): its variables on the process alone, Pi's
+    // provider on its command line, never on the record. A chat on no
+    // connection keeps the login shell's environment as it was.
+    const chatConnection: ProviderSpawnFields =
+      isEvents &&
+      options?.connectionId &&
+      (adapter.id === 'opencode-chat' || adapter.id === 'pi-chat')
+        ? await providerInjectionForSpawn(adapter.id === 'pi-chat' ? 'pi' : 'opencode', {
+            connectionId: options.connectionId,
+            model: options.model
+          })
+        : {}
+    const chatEnvAccount = chatConnection.providerEnv
+      ? { providerEnv: chatConnection.providerEnv }
+      : {}
     // Lane D (PRDCT-4427): the binary and `acp` alone. A saved profile's
     // `additionalArgs` (`--auto`, a `--session`) are the TUI's words, not the
     // protocol's; the ACP agent asks its permissions over the protocol.
@@ -424,7 +440,7 @@ class PtyManager {
         carried ?? launchProfileManager.resolve('opencode', options?.workspaceId, profileId)
       opencodeChatAdapter.configure(session.id, {
         command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
-        env: buildSpawnEnv(getLoginShellEnv(), {}),
+        env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
         initialPrompt: options?.initialPrompt
       })
     }
@@ -443,12 +459,12 @@ class PtyManager {
         sessionId: resume ? undefined : session.piSessionId,
         resumeSessionId: resume,
         model: options?.model,
-        provider: options?.piProvider,
+        provider: chatConnection.piProvider ?? options?.piProvider,
         thinking: options?.piThinking
       })
       piChatAdapter.configure(session.id, {
         command: [...argv, '--mode', 'rpc'],
-        env: buildSpawnEnv(getLoginShellEnv(), {}),
+        env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
         initialPrompt: options?.initialPrompt
       })
     }
@@ -563,6 +579,10 @@ class PtyManager {
       piSessionId: pi ? session.piSessionId : undefined,
       piProvider: pi ? options?.piProvider : undefined,
       piThinking: pi ? options?.piThinking : undefined,
+      // The stored connection a Pi or OpenCode chat runs on (PRDCT-4496), so
+      // a restored tab opens it again; its name only, never its value.
+      connectionId: pi || opencode ? options?.connectionId : undefined,
+      connectionLabel: pi || opencode ? options?.connectionLabel : undefined,
       cwd: session.cwd,
       folderName: session.folderName,
       displayName: previous?.displayName,

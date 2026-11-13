@@ -80,6 +80,17 @@ vi.mock('./sessions/adapters/pty-backend', () => ({
   codexHomeForSpawn: () => undefined,
   getLoginShellEnv: () => ({ ...mocks.loginEnv })
 }))
+// The stored connection's half (PRDCT-4496): what the store would open,
+// stood in for; nothing for a launch on no connection.
+const injection = vi.hoisted(() => ({
+  forSpawn: vi.fn<
+    (
+      kind: string | null,
+      options: { connectionId?: string; model?: string }
+    ) => Promise<Record<string, unknown>>
+  >(async () => ({}))
+}))
+vi.mock('./provider-injection-spawn', () => ({ providerInjectionForSpawn: injection.forSpawn }))
 vi.mock('./session-history/codex', () => ({
   codexRoot: () => '/codex/sessions',
   findCodexThreadForSession: () => null,
@@ -288,6 +299,44 @@ describe('a Pi chat spawn (lane D, PRDCT-4427)', () => {
     expect(after(command, '--provider')).toBe('anthropic')
     expect(after(command, '--thinking')).toBe('low')
     expect(spawnOptions().model).toBe('sonnet')
+  })
+})
+
+describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => {
+  const STAND_IN_KEY = 'stand-in-key-not-a-secret'
+  it("opens the connection: its variables on Pi's environment, its provider on the command line, its name on the record", async () => {
+    injection.forSpawn.mockResolvedValueOnce({
+      providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
+      piProvider: 'stand-in-provider'
+    })
+    await openPiChat({
+      connectionId: 'conn-1',
+      connectionLabel: 'Stand-in',
+      model: 'stand-in-model',
+      piProvider: 'anthropic'
+    })
+    expect(injection.forSpawn).toHaveBeenCalledWith('pi', {
+      connectionId: 'conn-1',
+      model: 'stand-in-model'
+    })
+    expect(mocks.buildSpawnEnv).toHaveBeenLastCalledWith(mocks.loginEnv, {
+      providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' }
+    })
+    const { command } = configured()
+    // The connection's provider wins over a remembered one, as on the terminal.
+    expect(after(command, '--provider')).toBe('stand-in-provider')
+    expect(after(command, '--model')).toBe('stand-in-model')
+    expect(command).not.toContain(STAND_IN_KEY)
+    const record = writtenRecord()
+    expect(record).toMatchObject({ connectionId: 'conn-1', connectionLabel: 'Stand-in' })
+    expect(JSON.stringify(record)).not.toContain(STAND_IN_KEY)
+  })
+  it('opens nothing for a chat on no connection, the remembered provider kept', async () => {
+    await openPiChat({ piProvider: 'anthropic' })
+    expect(injection.forSpawn).not.toHaveBeenCalled()
+    expect(after(configured().command, '--provider')).toBe('anthropic')
+    expect(mocks.buildSpawnEnv).toHaveBeenLastCalledWith(mocks.loginEnv, {})
+    expect(writtenRecord().connectionId).toBeUndefined()
   })
 })
 

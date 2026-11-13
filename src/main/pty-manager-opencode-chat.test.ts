@@ -79,6 +79,17 @@ vi.mock('./sessions/adapters/pty-backend', () => ({
   codexHomeForSpawn: () => undefined,
   getLoginShellEnv: () => ({ PATH: '/login/bin', LOGIN_SHELL: 'yes' })
 }))
+// The stored connection's half (PRDCT-4496): what the store would open,
+// stood in for; nothing for a launch on no connection.
+const injection = vi.hoisted(() => ({
+  forSpawn: vi.fn<
+    (
+      kind: string | null,
+      options: { connectionId?: string; model?: string }
+    ) => Promise<Record<string, unknown>>
+  >(async () => ({}))
+}))
+vi.mock('./provider-injection-spawn', () => ({ providerInjectionForSpawn: injection.forSpawn }))
 vi.mock('./session-history/codex', () => ({
   codexRoot: () => '/codex/sessions',
   findCodexThreadForSession: () => null,
@@ -382,5 +393,64 @@ describe('an OpenCode chat to its terminal (lane D, PRDCT-4427)', () => {
     expect(
       ptyManager.restartSpawn(session.id, { onlyIfStopped: true })?.options.resumeSessionId
     ).toBe(OPENCODE_SESSION)
+  })
+})
+
+describe('an OpenCode chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => {
+  const STAND_IN_CONFIG = '{"model":"stand-in/one"}'
+  const STAND_IN_KEY = 'stand-in-key-not-a-secret'
+  it("opens the connection for the ACP agent's environment, and records its name alone", async () => {
+    injection.forSpawn.mockResolvedValueOnce({
+      providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY, OPENCODE_CONFIG_CONTENT: STAND_IN_CONFIG }
+    })
+    await openOpencodeChat({
+      connectionId: 'conn-1',
+      connectionLabel: 'Stand-in',
+      model: 'stand-in/one'
+    })
+    expect(injection.forSpawn).toHaveBeenCalledWith('opencode', {
+      connectionId: 'conn-1',
+      model: 'stand-in/one'
+    })
+    expect(mocks.buildSpawnEnv).toHaveBeenLastCalledWith(
+      { PATH: '/login/bin', LOGIN_SHELL: 'yes' },
+      { providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY, OPENCODE_CONFIG_CONTENT: STAND_IN_CONFIG } }
+    )
+    // The protocol's command line is unchanged: `--standalone` is the TUI's.
+    expect(
+      (mocks.opencode.configure.mock.calls.at(-1)?.[1] as { command: string[] }).command
+    ).toEqual(['opencode', 'acp'])
+    const record = writtenRecord()
+    expect(record).toMatchObject({ connectionId: 'conn-1', connectionLabel: 'Stand-in' })
+    expect(JSON.stringify(record)).not.toContain(STAND_IN_KEY)
+    expect(JSON.stringify(record)).not.toContain('providerEnv')
+  })
+  it('opens nothing for a chat on no connection', async () => {
+    await openOpencodeChat({ model: 'stand-in/one' })
+    expect(injection.forSpawn).not.toHaveBeenCalled()
+    expect(writtenRecord().connectionId).toBeUndefined()
+  })
+  it('refuses the spawn when the connection is gone, before any adapter starts', async () => {
+    injection.forSpawn.mockRejectedValueOnce(
+      new Error('The selected connection is no longer available.')
+    )
+    await expect(openOpencodeChat({ connectionId: 'gone' })).rejects.toThrow(
+      'The selected connection is no longer available.'
+    )
+    expect(mocks.opencode.configure).not.toHaveBeenCalled()
+    expect(mocks.opencode.spawn).not.toHaveBeenCalled()
+  })
+  it('a move to the terminal keeps the connection on the plan', async () => {
+    injection.forSpawn.mockResolvedValueOnce({ providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY } })
+    const session = await openOpencodeChat({ connectionId: 'conn-1', connectionLabel: 'Stand-in' })
+    mocks.backend.getSessionRecord.mockImplementation(((key: string) =>
+      key === session.id ? { id: session.id, adapterId: 'opencode-chat' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { adapterId: 'pty' })
+    expect(plan?.options).toMatchObject({
+      opencodeMode: true,
+      connectionId: 'conn-1',
+      connectionLabel: 'Stand-in'
+    })
+    expect(JSON.stringify(plan?.options)).not.toContain(STAND_IN_KEY)
   })
 })
