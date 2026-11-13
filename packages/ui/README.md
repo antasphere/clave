@@ -200,8 +200,9 @@ tabular-nums`.
 
 ## Motion
 
-Color/background transitions are 150ms; press feedback is the shared 3% scale dip
-on `--ease-out-expo` (buttons only, never rows). Overlays enter with
+Color/background transitions are 150ms. A press never moves or resizes a control:
+a menu or popover is anchored to its trigger's edge, so a press dip carried the
+open surface with it as the button grew back. Overlays enter with
 `.menu-pop` / `.menu-pop-mount` (140ms) or `.modal-pop` (160ms). Content
 appearing/disappearing inside a box: Framer Motion, ~140–160ms, easeOut. Scrolling
 a terminal programmatically glides (ease-out, duration scaled to distance, capped

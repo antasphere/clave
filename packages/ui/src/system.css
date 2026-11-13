@@ -318,8 +318,7 @@ body,
     transform 150ms var(--ease-out-expo),
     opacity 150ms,
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo); /* the icon button's press dip keeps its easing */
+    background-color 150ms;
 }
 /* Shown, it still cancels the row's gap: the 20px box already carries 3px of
    air around its 14px glyph, and the status glyph before it its own, so with
@@ -535,10 +534,6 @@ body,
   color: var(--text-primary);
   outline: none;
 }
-.sidebar-tab-view:active {
-  transform: scale(1.15);
-  transition-duration: 120ms;
-}
 /* Appearance → Agent mark: the row's status slot is a mark pack's canvas
    (the orbs pack draws `thinking-orbs`' 20px preset), fitted to the slot
    here. Its own motion says working. Rest and work swap with a short fade;
@@ -565,8 +560,7 @@ canvas[data-orb-state] {
     transition:
       opacity 150ms,
       color 150ms,
-      background-color 150ms,
-      scale 120ms var(--ease-out-expo);
+      background-color 150ms;
   }
 }
 
@@ -644,8 +638,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .launcher-btn:hover {
   color: var(--text-primary);
@@ -680,8 +673,7 @@ canvas[data-orb-state] {
   color: var(--text-tertiary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .launcher-caret:hover,
 .launcher-caret[data-state='open'] {
@@ -704,8 +696,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .launcher-icon-btn:hover,
 .launcher-icon-btn[data-active='true'] {
@@ -918,8 +909,7 @@ canvas[data-orb-state] {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .group-switcher-chip:hover,
 .panel-tab:hover {
@@ -1147,9 +1137,9 @@ canvas[data-orb-state] {
    Same size and the same hover fill as the launcher's trailing buttons, so the
    two panels answer to the same touch. */
 /* The panel's icon buttons — the settings gear, the chat door. The same box,
-   radius, press dip and disabled state as .panel-icon-btn, because that is
-   exactly what they are: an icon button inside a --radius-xl panel. Only the
-   hover fill differs, and it differs on purpose (see .sidebar-footer). */
+   radius and disabled state as .panel-icon-btn, because that is exactly what
+   they are: an icon button inside a --radius-xl panel. Only the hover fill
+   differs, and it differs on purpose (see .sidebar-footer). */
 .sidebar-footer-btn {
   display: inline-flex;
   align-items: center;
@@ -1162,8 +1152,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .sidebar-footer-btn:hover {
   color: var(--text-primary);
@@ -1192,9 +1181,7 @@ canvas[data-orb-state] {
   height: var(--control-h-md);
   padding: 0 0.375rem;
   border-radius: var(--radius-control);
-  transition:
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: background-color 150ms;
 }
 .sidebar-footer-line:hover {
   background-color: var(--field-fill);
@@ -1204,13 +1191,11 @@ canvas[data-orb-state] {
 }
 
 /* The avatar's own target. No fill of its own — the tile IS the picture, and a
-   wash over it would be a second field — so it says "live" with the press dip
-   the rest of the family uses. */
+   wash over it would be a second field. */
 .sidebar-footer-avatar {
   position: relative;
   flex-shrink: 0;
   border-radius: var(--radius-lg);
-  transition: scale 120ms var(--ease-out-expo);
 }
 
 /* The name. Its own hover target — clicking it opens settings — but no fill of
@@ -1271,8 +1256,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .panel-icon-btn:hover {
   color: var(--text-primary);
@@ -1891,9 +1875,7 @@ canvas[data-orb-state] {
   font-weight: var(--font-weight-medium);
   color: var(--color-action-foreground);
   background-color: var(--color-action);
-  transition:
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: background-color 150ms;
 }
 .btn-primary:hover {
   background-color: var(--color-action-hover);
@@ -1928,8 +1910,7 @@ canvas[data-orb-state] {
   background-color: var(--key-wash);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 /* Hover and an open select deepen the same wash a step: the key stays the same
    shape under the pointer, only more present. */
@@ -1990,8 +1971,7 @@ canvas[data-orb-state] {
   color: var(--text-tertiary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .btn-icon:hover {
   color: var(--text-primary);
@@ -2014,28 +1994,6 @@ canvas[data-orb-state] {
 .btn-icon-md {
   width: var(--control-h-md);
   height: var(--control-h-md);
-}
-
-/* Press feedback for the button family — a 3% dip the frame the pointer goes
-   down, released on the shared curve. Buttons only, never list rows: a row of
-   text shrinking under the cursor is noise, a button acknowledging the press
-   is feedback. */
-.btn-primary:active:not(:disabled),
-.btn-secondary:active:not(:disabled),
-.btn-icon:active,
-.btn-add:active,
-.launcher-btn:active:not(:disabled),
-.launcher-caret:active,
-.launcher-icon-btn:active:not(:disabled),
-.group-switcher-chip:active,
-.panel-tab:active,
-.panel-icon-btn:active:not(:disabled),
-.sidebar-footer-btn:active:not(:disabled),
-.sidebar-footer-line:active,
-.sidebar-footer-avatar:active,
-.segmented-item:active,
-.idle-group-start:active {
-  scale: 0.97;
 }
 
 /* Appearance → Agent mark: the nine orbs to pick from, each drawn live at the
@@ -2110,8 +2068,7 @@ canvas[data-orb-state] {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .segmented-item:hover {
   color: var(--text-primary);
@@ -2194,9 +2151,7 @@ canvas[data-orb-state] {
   border: var(--frame-border) solid var(--border-color);
   background-color: var(--surface-0);
   box-shadow: var(--overlay-shadow);
-  transition:
-    border-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: border-color 150ms;
 }
 .range-field::-moz-range-thumb {
   width: var(--range-thumb);
@@ -2205,9 +2160,7 @@ canvas[data-orb-state] {
   border: var(--frame-border) solid var(--border-color);
   background-color: var(--surface-0);
   box-shadow: var(--overlay-shadow);
-  transition:
-    border-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: border-color 150ms;
 }
 .range-field:hover::-webkit-slider-thumb,
 .range-field:focus-visible::-webkit-slider-thumb {
@@ -2216,9 +2169,6 @@ canvas[data-orb-state] {
 .range-field:hover::-moz-range-thumb,
 .range-field:focus-visible::-moz-range-thumb {
   border-color: var(--color-accent);
-}
-.range-field:active::-webkit-slider-thumb {
-  scale: 0.94;
 }
 .range-field:focus-visible {
   outline: 2px solid var(--color-ring);
@@ -2298,8 +2248,7 @@ canvas[data-orb-state] {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .btn-add:hover {
   color: var(--text-secondary);
@@ -2908,15 +2857,11 @@ canvas[data-orb-state] {
   color: var(--text-primary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .select-trigger:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-.select-trigger:active:not(:disabled) {
-  scale: 0.97;
 }
 .select-trigger-label {
   flex: 1;
@@ -3439,15 +3384,11 @@ button.extension-card:hover {
   animation: chat-rise var(--default-transition-duration) var(--ease-out-expo);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    background-color var(--default-transition-duration);
 }
 .chat-jump-end:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
-}
-.chat-jump-end:active {
-  scale: 0.97;
 }
 @keyframes chat-rise {
   from {
@@ -3704,15 +3645,11 @@ button.chat-turn-from:focus-visible {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    background-color var(--default-transition-duration);
 }
 .chat-turn-copy:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
-}
-.chat-turn-copy:active:not(:disabled) {
-  scale: 0.97;
 }
 .chat-turn-copy svg {
   width: var(--chat-glyph);
@@ -4401,15 +4338,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   color: var(--text-primary);
   white-space: nowrap;
-  transition:
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  transition: background-color var(--default-transition-duration);
 }
 .chat-prompt-btn:hover {
   background-color: var(--surface-100);
-}
-.chat-prompt-btn:active {
-  scale: 0.97;
 }
 /* The prompt's answer (Allow, Submit) is the verb of the card: the ink. */
 .chat-prompt-btn[data-primary='true'] {
@@ -4424,7 +4356,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  scale: none;
 }
 .chat-prompt-key {
   display: inline-flex;
@@ -5070,14 +5001,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
   transition:
     background-color var(--default-transition-duration),
-    opacity calc(var(--default-transition-duration) * 2),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    opacity calc(var(--default-transition-duration) * 2);
 }
 .chat-ask-btn:hover:not(:disabled) {
   background-color: var(--key-wash-strong);
-}
-.chat-ask-btn:active:not(:disabled) {
-  scale: 0.97;
 }
 .chat-ask-btn[data-primary='true'] {
   background-color: var(--color-action);
@@ -5090,7 +5017,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-ask-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  scale: none;
 }
 .chat-ask-btn svg,
 .chat-prompt-btn svg {
@@ -5230,15 +5156,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-primary);
   font-size: var(--text-xs);
   white-space: nowrap;
-  transition:
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  transition: background-color var(--default-transition-duration);
 }
 .chat-waiting:hover {
   background-color: var(--surface-100);
-}
-.chat-waiting:active {
-  scale: 0.97;
 }
 .chat-waiting svg {
   width: var(--chat-glyph);
@@ -5598,8 +5519,7 @@ details[open] > .chat-approval-items {
   transition:
     background-color var(--default-transition-duration),
     color var(--default-transition-duration),
-    opacity var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    opacity var(--default-transition-duration);
 }
 .chat-send svg {
   grid-area: 1 / 1;
@@ -5621,9 +5541,6 @@ details[open] > .chat-approval-items {
 /* Send and stop are both verbs, so both wear the ink; only the glyph turns. */
 .chat-send:hover {
   background-color: var(--color-action-hover);
-}
-.chat-send:active:not(:disabled) {
-  scale: 0.97;
 }
 /* An empty composer has nothing to send: a grey disc, not a faded ink one.
    The ink at 0.4 over a dark ground is a mid grey anyway, just a muddier one,
@@ -6095,11 +6012,7 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
-}
-.chat-composer-tool:active:not(:disabled) {
-  scale: 0.97;
+    background-color var(--default-transition-duration);
 }
 .chat-composer-tool:hover {
   color: var(--text-primary);
@@ -6196,11 +6109,7 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
-}
-.chat-model-trigger:active:not(:disabled) {
-  scale: 0.97;
+    background-color var(--default-transition-duration);
 }
 .chat-model-trigger:hover,
 .chat-model-trigger[data-state='open'] {
@@ -7925,11 +7834,6 @@ button.exchange-part-who:hover {
 }
 .term-mode[data-mode='bypassPermissions'] .chat-model-trigger::before {
   content: '▸▸▸';
-}
-/* The bar's chips hold still under the finger: a press that shrinks the
-   trigger moves the edge its menu is anchored to as the menu opens. */
-.term-status .chat-model-trigger:active:not(:disabled) {
-  scale: none;
 }
 .term-status .chat-model-trigger:hover,
 .term-status .chat-model-trigger[data-state='open'] {
