@@ -7,10 +7,11 @@ import {
   providerCompany,
   type ProviderCompanyId
 } from '@clave/contract/settings/provider-catalogue'
-import { PROVIDER_ROAD_BY_ID } from './models-catalog-overlay'
+import { PROVIDER_ROAD_BY_ID, piProviderOf } from './models-catalog-overlay'
 import { lazySettingsPorts } from './ports/registry'
 import { providerInjection, type ConnectionForSpawn } from './provider-injection'
-import { syncPiConnectionDir } from './provider-injection-pi-dir'
+import { readPiOwnDefault, syncPiConnectionDir } from './provider-injection-pi-dir'
+import { piStartModel, type PiOwnDefault, type PiStartModel } from '../shared/pi-start-model'
 import { getLoginShellEnv } from './sessions/adapters/pty-backend'
 
 /**
@@ -66,12 +67,62 @@ export interface ProviderInjectionSpawnDeps {
   root?: () => string
   loginEnv?: () => Record<string, string | undefined>
   homedir?: () => string
+  /** Reads the person's Pi default from their agent directory. */
+  ownDefault?: (homeAgentDir: string) => PiOwnDefault | null
 }
 
 export interface ProviderSpawnFields {
   providerEnv?: Record<string, string>
   piProvider?: string
   opencodeStandalone?: boolean
+  /** The model a Pi tab on a connection starts on when none was picked
+   *  (`piStartModel`): set only then, so a picked model is never replaced. */
+  model?: string
+}
+
+/** The person's own Pi agent directory, as their Pi finds it: the login
+ *  shell's `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. */
+export function piHomeAgentDir(
+  deps: Pick<ProviderInjectionSpawnDeps, 'loginEnv' | 'homedir'> = {}
+): string {
+  const loginEnv = (deps.loginEnv ?? getLoginShellEnv)()
+  return (
+    loginEnv.PI_CODING_AGENT_DIR?.trim() ||
+    path.join((deps.homedir ?? os.homedir)(), '.pi', 'agent')
+  )
+}
+
+/** The person's own Pi default, read where their Pi keeps it. */
+export function piOwnDefault(
+  deps: Pick<ProviderInjectionSpawnDeps, 'loginEnv' | 'homedir' | 'ownDefault'> = {}
+): PiOwnDefault | null {
+  return (deps.ownDefault ?? readPiOwnDefault)(piHomeAgentDir(deps))
+}
+
+/** The model a Pi tab on this connection starts on when the open names none
+ *  (`piStartModel`): the person's default when it is the connection's
+ *  provider's, else the first catalogue model the launcher lists for it. */
+export async function piConnectionStartModel(
+  connection: { label: string; company: ProviderCompanyId },
+  deps: Pick<ProviderInjectionSpawnDeps, 'catalog' | 'loginEnv' | 'homedir' | 'ownDefault'> = {}
+): Promise<PiStartModel> {
+  const catalogId = PROVIDER_ROAD_BY_ID[connection.company]?.catalog
+  let listed: string[] = []
+  if (catalogId) {
+    try {
+      listed = (await (deps.catalog ?? ((id) => modelsCatalog.modelsOf(id)))(catalogId)).map(
+        (m) => m.id
+      )
+    } catch {
+      listed = []
+    }
+  }
+  return piStartModel({
+    provider: piProviderOf(connection.company),
+    ownDefault: piOwnDefault(deps),
+    listed,
+    label: connection.label
+  })
 }
 
 /** The environment Pi's session files are looked up in for a tab on this
@@ -111,6 +162,17 @@ export async function providerInjectionForSpawn(
     if (connection.value === null && providerCompany(connection.company).needsKey)
       throw new Error('The connection has no key yet.')
   }
+  // Pi refuses `--provider` without `--model` and exits before it speaks
+  // (Pi 1.5.2): a Pi tab on a connection that names no model starts on the
+  // one `piStartModel` picks, the same for both forms and every road, or is
+  // refused in its one sentence before any process starts.
+  let model = options.model
+  let startModel: string | undefined
+  if (kind === 'pi' && connection && !model) {
+    const start = await piConnectionStartModel(connection, deps)
+    if (!start.ok) throw new Error(start.reason)
+    model = startModel = start.model
+  }
   // Catalogue models matter only for a provider Clave declares in full.
   const road = connection ? PROVIDER_ROAD_BY_ID[connection.company] : undefined
   const catalogModels =
@@ -120,15 +182,12 @@ export async function providerInjectionForSpawn(
   const injection = providerInjection({
     harness: kind,
     connection,
-    model: options.model,
+    model,
     catalogModels
   })
   const providerEnv: Record<string, string> = { ...injection.env }
   if (kind === 'pi' && connection && injection.piEntry) {
-    const loginEnv = (deps.loginEnv ?? getLoginShellEnv)()
-    const homeAgentDir =
-      loginEnv.PI_CODING_AGENT_DIR?.trim() ||
-      path.join((deps.homedir ?? os.homedir)(), '.pi', 'agent')
+    const homeAgentDir = piHomeAgentDir(deps)
     const root = (deps.root ?? (() => lazySettingsPorts.storage.pathOf(PI_CONNECTIONS_DIR)))()
     providerEnv.PI_CODING_AGENT_DIR = (deps.sync ?? syncPiConnectionDir)({
       root,
@@ -141,5 +200,6 @@ export async function providerInjectionForSpawn(
   if (Object.keys(providerEnv).length > 0) out.providerEnv = providerEnv
   if (injection.piProvider) out.piProvider = injection.piProvider
   if (injection.opencodeStandalone) out.opencodeStandalone = true
+  if (startModel) out.model = startModel
   return out
 }

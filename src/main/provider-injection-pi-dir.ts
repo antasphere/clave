@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { PiProviderEntry } from './provider-injection'
+import { parsePiOwnDefault, type PiOwnDefault } from '../shared/pi-start-model'
 
 /**
  * A Pi agent directory for one connection (PRDCT-4496), used as the tab's
@@ -40,6 +41,19 @@ function readModels(file: string): ModelsDoc {
     // Absent or unreadable: the connection's entry alone.
   }
   return { providers: {} }
+}
+
+/** The person's own Pi default model (`defaultProvider` / `defaultModel` of
+ *  the `settings.json` in their agent directory), the one a Pi tab on a
+ *  connection starts on when it belongs to the connection's provider
+ *  (`piStartModel`). A settings file, never a credential: only those two
+ *  fields are taken. Null when there is none or it cannot be read. */
+export function readPiOwnDefault(homeAgentDir: string): PiOwnDefault | null {
+  try {
+    return parsePiOwnDefault(fs.readFileSync(path.join(homeAgentDir, SETTINGS_FILE), 'utf8'))
+  } catch {
+    return null
+  }
 }
 
 function lstatOrNull(file: string): fs.Stats | null {

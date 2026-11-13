@@ -25,6 +25,8 @@ import * as path from 'node:path'
 import type { ConnectionForSpawn } from './provider-injection'
 import { syncPiConnectionDir } from './provider-injection-pi-dir'
 import type { CatalogModel } from './models-catalog'
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import { piStartModels } from './mcp/provider-launch-listing'
 
 /**
  * The spawn's half of a connection (PRDCT-4496): opened for Pi and OpenCode
@@ -51,7 +53,8 @@ function deps(connections: Record<string, ConnectionForSpawn>) {
       catalog,
       root: () => '/made-up/pi-connections',
       loginEnv: () => ({}),
-      homedir: () => '/made-up/home'
+      homedir: () => '/made-up/home',
+      ownDefault: () => null
     }
   }
 }
@@ -122,12 +125,18 @@ describe('providerInjectionForSpawn', () => {
 
   it('a Pi connection with a road: its variable, its provider, its own directory', async () => {
     const d = deps({ 'conn-1': deepseek })
-    const out = await providerInjectionForSpawn('pi', { connectionId: 'conn-1' }, d.all)
+    const out = await providerInjectionForSpawn(
+      'pi',
+      { connectionId: 'conn-1', model: 'deepseek-chat' },
+      d.all
+    )
     expect(out.providerEnv).toEqual({
       DEEPSEEK_API_KEY: VALUE,
       PI_CODING_AGENT_DIR: '/made-up/pi-connections/conn-1'
     })
     expect(out.piProvider).toBe('deepseek')
+    // A picked model is the tab's own: none is chosen for it.
+    expect('model' in out).toBe(false)
     expect(d.sync).toHaveBeenCalledWith({
       root: '/made-up/pi-connections',
       homeAgentDir: '/made-up/home/.pi/agent',
@@ -184,6 +193,197 @@ describe('providerInjectionForSpawn', () => {
     const oc = await providerInjectionForSpawn('opencode', { model: 'deepseek/m' }, d.all)
     expect(oc.providerEnv).toEqual({ OPENCODE_CONFIG_CONTENT: '{"model":"deepseek/m"}' })
     expect(d.source).not.toHaveBeenCalled()
+  })
+})
+
+describe('a Pi tab on a connection with no model picked (PRDCT-4496)', () => {
+  // Pi 1.5.2 refuses `--provider` without `--model` and exits before it
+  // speaks, so the spawn always names one: the person's own Pi default when it
+  // belongs to the connection's provider, else the first model listed for it.
+  const kimi: ConnectionForSpawn = { ...deepseek, label: 'Kimi', company: 'moonshot' }
+  const ollama: ConnectionForSpawn = {
+    id: 'conn-1',
+    label: 'Local Ollama',
+    company: 'ollama',
+    endpoint: { wireFormat: 'openai-chat', baseUrl: 'http://localhost:11434/v1' },
+    value: null
+  }
+  const listing = vi.fn<(id: string) => Promise<CatalogModel[]>>(async (id) =>
+    id === 'kimi-code-plan-global'
+      ? [
+          { id: 'k-first', name: 'K First', reasoning: false, toolCall: true },
+          { id: 'k-second', name: 'K Second', reasoning: false, toolCall: true }
+        ]
+      : []
+  )
+
+  it("starts on the person's own default when it is the connection's provider's", async () => {
+    const d = deps({ 'conn-1': kimi })
+    const out = await providerInjectionForSpawn(
+      'pi',
+      { connectionId: 'conn-1' },
+      {
+        ...d.all,
+        catalog: listing,
+        ownDefault: () => ({ provider: 'kimi-coding', model: 'k-second' })
+      }
+    )
+    expect(out.model).toBe('k-second')
+    expect(out.piProvider).toBe('kimi-coding')
+  })
+
+  it('else on the first model the launcher lists for the connection', async () => {
+    const d = deps({ 'conn-1': kimi })
+    const out = await providerInjectionForSpawn(
+      'pi',
+      { connectionId: 'conn-1' },
+      {
+        ...d.all,
+        catalog: listing,
+        ownDefault: () => ({ provider: 'anthropic', model: 'made-up-claude' })
+      }
+    )
+    expect(out.model).toBe('k-first')
+  })
+
+  it("reads the person's default from the agent directory their Pi uses", async () => {
+    const d = deps({ 'conn-1': kimi })
+    const ownDefault = vi.fn(() => null)
+    await providerInjectionForSpawn(
+      'pi',
+      { connectionId: 'conn-1' },
+      {
+        ...d.all,
+        catalog: listing,
+        ownDefault,
+        loginEnv: () => ({ PI_CODING_AGENT_DIR: '/made-up/own-agent' })
+      }
+    )
+    expect(ownDefault).toHaveBeenCalledWith('/made-up/own-agent')
+  })
+
+  it('refuses in one sentence a connection with no model listed and no default of its own', async () => {
+    const d = deps({ 'conn-1': ollama })
+    await expect(
+      providerInjectionForSpawn(
+        'pi',
+        { connectionId: 'conn-1' },
+        {
+          ...d.all,
+          catalog: listing,
+          ownDefault: () => ({ provider: 'kimi-coding', model: 'k-second' })
+        }
+      )
+    ).rejects.toThrow(
+      'No model is listed for the connection "Local Ollama": name one to open Pi on it.'
+    )
+    // Refused before any directory is written.
+    expect(d.sync).not.toHaveBeenCalled()
+  })
+
+  it('never replaces a picked model, and never picks one for OpenCode', async () => {
+    const d = deps({ 'conn-1': kimi })
+    const all = {
+      ...d.all,
+      catalog: listing,
+      ownDefault: () => ({ provider: 'kimi-coding', model: 'k-second' })
+    }
+    const picked = await providerInjectionForSpawn(
+      'pi',
+      { connectionId: 'conn-1', model: 'k-first' },
+      all
+    )
+    expect('model' in picked).toBe(false)
+    const oc = await providerInjectionForSpawn('opencode', { connectionId: 'conn-1' }, all)
+    expect('model' in oc).toBe(false)
+    // OpenCode stays on the connection's provider, with no model named.
+    expect(JSON.parse(oc.providerEnv!.OPENCODE_CONFIG_CONTENT)).toEqual({
+      providers: { 'kimi-code-plan-global': { settings: { apiKey: '{env:KIMI_API_KEY}' } } },
+      enabled_providers: ['kimi-code-plan-global']
+    })
+  })
+
+  it('a provider Clave declares lists the start model among its models', async () => {
+    const d = deps({ 'conn-1': alibaba })
+    const out = await providerInjectionForSpawn('pi', { connectionId: 'conn-1' }, d.all)
+    expect(out.model).toBe('qwen-a')
+    expect(d.sync.mock.calls[0][0].entry.models).toEqual([{ id: 'qwen-a', name: 'Qwen A' }])
+  })
+})
+
+describe('clave_launch_options says what the open starts on (PRDCT-4496)', () => {
+  // One catalogue, read by the open as `modelsCatalog.modelsOf` answers it and
+  // by the listing as `modelsCatalog.view` does (the deprecated hidden by both).
+  const providers = [
+    {
+      id: 'kimi-code-plan-global',
+      name: 'Kimi',
+      models: [
+        {
+          id: 'k-old',
+          name: 'Old',
+          reasoning: false,
+          toolCall: true,
+          status: 'deprecated' as const
+        },
+        { id: 'k-first', name: 'K First', reasoning: false, toolCall: true },
+        { id: 'k-second', name: 'K Second', reasoning: false, toolCall: true }
+      ]
+    },
+    {
+      id: 'alibaba-coding-plan',
+      name: 'Alibaba',
+      models: [{ id: 'qwen-a', name: 'Qwen A', reasoning: false, toolCall: true }]
+    }
+  ]
+  const catalog = async (id: string): Promise<CatalogModel[]> =>
+    (providers.find((p) => p.id === id)?.models ?? []).filter((m) => m.status !== 'deprecated')
+  const view = async (ids: readonly string[]): Promise<ModelsCatalogView> => ({
+    fetchedAt: 1,
+    stale: false,
+    providers: providers.filter((p) => ids.includes(p.id))
+  })
+  const connections: ConnectionForSpawn[] = [
+    { ...deepseek, id: 'kimi', label: 'Kimi', company: 'moonshot' },
+    { ...alibaba, id: 'ali', label: 'Alibaba' },
+    {
+      id: 'ollama',
+      label: 'Local Ollama',
+      company: 'ollama',
+      endpoint: { wireFormat: 'openai-chat', baseUrl: 'http://localhost:11434/v1' },
+      value: null
+    }
+  ]
+
+  for (const ownDefault of [
+    null,
+    { provider: 'kimi-coding', model: 'k-second' },
+    { provider: 'clave-ollama', model: 'llama-made-up' }
+  ])
+    it(`names each connection's start model as the open picks it (own default ${JSON.stringify(ownDefault)})`, async () => {
+      const listed = await piStartModels(connections, {
+        catalog: view,
+        piOwnDefault: () => ownDefault
+      })
+      for (const connection of connections) {
+        const d = deps({ [connection.id]: connection })
+        const opened = await providerInjectionForSpawn(
+          'pi',
+          { connectionId: connection.id },
+          { ...d.all, catalog, ownDefault: () => ownDefault }
+        ).then(
+          (out) => ({ ok: true as const, model: out.model }),
+          (error: Error) => ({ ok: false as const, reason: error.message })
+        )
+        const said = listed.get(connection.id)
+        expect(said?.ok).toBe(opened.ok)
+        if (said?.ok && opened.ok) expect(said.model).toBe(opened.model)
+        if (said && !said.ok && !opened.ok) expect(said.reason).toBe(opened.reason)
+      }
+    })
+
+  it('says nothing where the road cannot read the person’s default', async () => {
+    expect((await piStartModels(connections, { catalog: view })).size).toBe(0)
   })
 })
 
