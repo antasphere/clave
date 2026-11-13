@@ -1,0 +1,112 @@
+import fs from 'fs'
+import path from 'path'
+import type { PiProviderEntry } from './provider-injection'
+
+/**
+ * A Pi agent directory for one connection (PRDCT-4496), used as the tab's
+ * `PI_CODING_AGENT_DIR`. Pi reads `models.json` from its agent directory
+ * alone and puts auth.json before it, so the connection's directory holds a
+ * symlink for every top-level entry of the person's own (sessions,
+ * extensions, settings stay shared) but no auth.json at all, and one real
+ * `models.json`: the person's providers with the connection's entry over
+ * them, its key a variable name. The person's directory is only ever read.
+ * The same shape as a Codex account's home (`syncCodexHome`).
+ */
+
+const MODELS_FILE = 'models.json'
+const AUTH_FILE = 'auth.json'
+const NOT_LINKED = new Set([MODELS_FILE, AUTH_FILE])
+
+type ModelsDoc = Record<string, unknown> & { providers: Record<string, unknown> }
+
+function readModels(file: string): ModelsDoc {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const doc = parsed as Record<string, unknown>
+      const providers =
+        doc.providers && typeof doc.providers === 'object' && !Array.isArray(doc.providers)
+          ? (doc.providers as Record<string, unknown>)
+          : {}
+      return { ...doc, providers: { ...providers } }
+    }
+  } catch {
+    // Absent or unreadable: the connection's entry alone.
+  }
+  return { providers: {} }
+}
+
+function lstatOrNull(file: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(file)
+  } catch {
+    return null
+  }
+}
+
+export function syncPiConnectionDir(input: {
+  root: string
+  homeAgentDir: string
+  connectionId: string
+  providerId: string
+  entry: Partial<PiProviderEntry> & { apiKey: string }
+}): string {
+  // The id names a directory: one path segment, never a way out of the root.
+  if (
+    !input.connectionId ||
+    input.connectionId === '.' ||
+    input.connectionId === '..' ||
+    /[/\\]/.test(input.connectionId)
+  )
+    throw new Error('The connection id cannot name a directory.')
+  const dir = path.join(input.root, input.connectionId)
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+
+  // No credential of Pi's own in this directory, whatever put one there (an
+  // earlier link, or Pi itself, which writes an empty one at its start or a
+  // login's): the connection's variable is the only key Pi finds.
+  const auth = path.join(dir, AUTH_FILE)
+  const authStat = lstatOrNull(auth)
+  if (authStat) {
+    if (authStat.isDirectory()) fs.rmSync(auth, { recursive: true, force: true })
+    else fs.unlinkSync(auth)
+  }
+
+  let entries: string[] = []
+  try {
+    entries = fs.readdirSync(input.homeAgentDir)
+  } catch {
+    // Pi never ran here: models.json alone.
+  }
+  for (const name of entries) {
+    if (NOT_LINKED.has(name)) continue
+    const source = path.join(input.homeAgentDir, name)
+    const target = path.join(dir, name)
+    const stat = lstatOrNull(target)
+    // A real file or directory is not ours to replace.
+    if (stat && !stat.isSymbolicLink()) continue
+    if (stat) {
+      if (fs.readlinkSync(target) === source) continue
+      fs.unlinkSync(target)
+    }
+    try {
+      fs.symlinkSync(source, target)
+    } catch {
+      // Best effort: an entry Pi creates and deletes in between is not worth
+      // failing a spawn over.
+    }
+  }
+
+  const models = readModels(path.join(input.homeAgentDir, MODELS_FILE))
+  const own = models.providers[input.providerId]
+  models.providers[input.providerId] = {
+    ...(own && typeof own === 'object' && !Array.isArray(own) ? own : {}),
+    ...input.entry
+  }
+  const file = path.join(dir, MODELS_FILE)
+  // A link left there would write through to the person's own file.
+  if (lstatOrNull(file)?.isSymbolicLink()) fs.unlinkSync(file)
+  fs.writeFileSync(file, JSON.stringify(models, null, 2) + '\n', { mode: 0o600 })
+  fs.chmodSync(file, 0o600)
+  return dir
+}

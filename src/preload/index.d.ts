@@ -517,6 +517,9 @@ export interface SessionRecord {
   claudeProfileLabel?: string
   codexAccountId?: string
   codexAccountLabel?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId?: string
+  connectionLabel?: string
   /** The thread a Codex chat tab resumes on relaunch. */
   codexThreadId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
@@ -1026,6 +1029,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       spawnedBy?: string
       /** The same tab, nested or not (PRDCT-4192) — persisted on the record. */
       openedBy?: string
+      // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+      connectionId?: string
+      connectionLabel?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void

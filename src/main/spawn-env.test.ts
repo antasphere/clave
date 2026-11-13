@@ -20,6 +20,7 @@ import {
   tmuxEnvironmentReconcileArgs,
   TMUX_SESSION_ENV_VARS
 } from './pty-manager'
+import { PROVIDER_KEY_ENV_VARS } from './models-catalog-overlay'
 
 /**
  * The boundary: a subscription token reaches a Claude session and nothing
@@ -112,15 +113,25 @@ describe('codexHomeForSpawn', () => {
  */
 describe('tmuxEnvironmentReconcileArgs', () => {
   it('appends every account variable a live server does not list yet', () => {
-    expect(tmuxEnvironmentReconcileArgs(['DISPLAY', 'SSH_AUTH_SOCK'])).toEqual([
+    expect(tmuxEnvironmentReconcileArgs(['DISPLAY', 'SSH_AUTH_SOCK']).slice(0, 3)).toEqual([
       ['set-option', '-ga', 'update-environment', 'CLAUDE_CONFIG_DIR'],
       ['set-option', '-ga', 'update-environment', 'CLAUDE_CODE_OAUTH_TOKEN'],
       ['set-option', '-ga', 'update-environment', 'CODEX_HOME']
     ])
   })
+  // A Pi or OpenCode connection travels the same way (PRDCT-4496): every key
+  // variable a harness reads, OpenCode's inline config, Pi's agent directory.
+  it("carries every provider connection's variable", () => {
+    const names = [...PROVIDER_KEY_ENV_VARS, 'OPENCODE_CONFIG_CONTENT', 'PI_CODING_AGENT_DIR']
+    expect(names.length).toBeGreaterThan(10)
+    for (const name of names) expect(TMUX_SESSION_ENV_VARS).toContain(name)
+    const lines = tmuxEnvironmentReconcileArgs(['DISPLAY']).map((args) => args[3])
+    for (const name of names) expect(lines).toContain(name)
+  })
   it('does nothing on a server that already lists them', () => {
     expect(tmuxEnvironmentReconcileArgs(['DISPLAY', ...TMUX_SESSION_ENV_VARS])).toEqual([])
-    expect(tmuxEnvironmentReconcileArgs(['CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_HOME'])).toEqual([
+    const others = TMUX_SESSION_ENV_VARS.filter((name) => name !== 'CLAUDE_CONFIG_DIR')
+    expect(tmuxEnvironmentReconcileArgs(others)).toEqual([
       ['set-option', '-ga', 'update-environment', 'CLAUDE_CONFIG_DIR']
     ])
   })
@@ -149,6 +160,21 @@ describe('buildSpawnEnv', () => {
       '/data/codex-homes/work'
     )
     expect(buildSpawnEnv({ ...base, CODEX_HOME: '/mine' }, {}).CODEX_HOME).toBe('/mine')
+  })
+
+  it("merges a Pi or OpenCode connection's variables last (PRDCT-4496)", () => {
+    const env = buildSpawnEnv(
+      { ...base, DEEPSEEK_API_KEY: 'made-up-shell-value' },
+      {
+        providerEnv: {
+          DEEPSEEK_API_KEY: 'made-up-connection-value',
+          OPENCODE_CONFIG_CONTENT: '{}'
+        }
+      }
+    )
+    expect(env.DEEPSEEK_API_KEY).toBe('made-up-connection-value')
+    expect(env.OPENCODE_CONFIG_CONTENT).toBe('{}')
+    expect(buildSpawnEnv(base, {})).not.toHaveProperty('OPENCODE_CONFIG_CONTENT')
   })
 
   it('keeps the terminal and strips the nesting marker', () => {

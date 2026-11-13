@@ -314,6 +314,24 @@ describe('agent argv', () => {
       'opencode',
       '--auto'
     ])
+    // A tab's connection and model ride in its environment, read only by a
+    // standalone TUI (PRDCT-4496): pushed once, never twice.
+    expect(buildAgentArgv({ kind: 'opencode', profile, opencodeStandalone: true })).toEqual([
+      'opencode',
+      '--standalone'
+    ])
+    const standalone = {
+      ...profile,
+      id: 'oc-standalone',
+      builtIn: false,
+      additionalArgs: ['--standalone']
+    }
+    expect(
+      buildAgentArgv({ kind: 'opencode', profile: standalone, opencodeStandalone: true })
+    ).toEqual(['opencode', '--standalone'])
+    expect(buildAgentArgv({ kind: 'opencode', profile, opencodeStandalone: false })).toEqual([
+      'opencode'
+    ])
     const managed = { ...profile, id: 'oc-bad', builtIn: false, additionalArgs: ['--prompt=x'] }
     expect(() => buildAgentArgv({ kind: 'opencode', profile: managed })).toThrow(
       'Clave-managed flag'

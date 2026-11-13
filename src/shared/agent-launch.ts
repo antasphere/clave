@@ -297,6 +297,9 @@ export function buildAgentArgv(input: {
   permissionMode?: string
   pluginDir?: string
   appendSystemPrompt?: string
+  /** OpenCode only (PRDCT-4496): run the TUI on its own server, so the
+   *  tab's environment (its connection, its model) is the one read. */
+  opencodeStandalone?: boolean
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -377,6 +380,10 @@ export function buildAgentArgv(input: {
     const tokens = [...input.profile.command, ...input.profile.additionalArgs]
     if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
     if (input.dangerousMode && !tokens.includes('--auto')) argv.push('--auto')
+    // The shared background service keeps the environment it started with
+    // (OpenCode 2.3.0): a tab's connection and model, carried in its own
+    // environment, are read only by a TUI running standalone (PRDCT-4496).
+    if (input.opencodeStandalone && !tokens.includes('--standalone')) argv.push('--standalone')
     if (input.initialPrompt) argv.push('--prompt', input.initialPrompt)
     return argv
   } else {

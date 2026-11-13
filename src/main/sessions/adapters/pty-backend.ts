@@ -19,6 +19,7 @@ import { claudeAccountsManager, DEFAULT_CLAUDE_ACCOUNT_ID } from '../../claude-a
 import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-accounts'
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
+import { PROVIDER_KEY_ENV_VARS } from '../../models-catalog-overlay'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
@@ -388,13 +389,18 @@ export function scrollTmuxSessionToText(
  * would otherwise reach only the very first session the server ever ran.
  * Passing them as shell assignments or `new-session -e` would put the token
  * in the process list for the session's whole life; this keeps it in the
- * environment alone.
+ * environment alone. A Pi or OpenCode tab's stored connection travels the
+ * same way (PRDCT-4496): every key variable a harness reads, the inline
+ * OpenCode config and the connection's Pi agent directory.
  */
-export const TMUX_SESSION_ENV_VARS = [
+export const TMUX_SESSION_ENV_VARS: readonly string[] = [
   'CLAUDE_CONFIG_DIR',
   'CLAUDE_CODE_OAUTH_TOKEN',
-  'CODEX_HOME'
-] as const
+  'CODEX_HOME',
+  ...PROVIDER_KEY_ENV_VARS,
+  'OPENCODE_CONFIG_CONTENT',
+  'PI_CODING_AGENT_DIR'
+]
 
 /** The `set-option` calls that bring a live server's `update-environment` up
  *  to TMUX_SESSION_ENV_VARS; none when it already lists them. Pure, for the
@@ -565,6 +571,10 @@ export interface SessionRecord {
    *  `CODEX_HOME` points at. Absent = the machine's own `~/.codex`. */
   codexAccountId?: string
   codexAccountLabel?: string
+  /** The stored connection a Pi or OpenCode tab runs on (PRDCT-4496), so a
+   *  Resume opens it again; never its value. */
+  connectionId?: string
+  connectionLabel?: string
   /** The thread a Codex chat tab resumes: the app-server's own id, from the
    *  tab's first `session_meta`. Absent until the thread is up, and for every
    *  other kind of session. */
@@ -910,6 +920,16 @@ export interface PtySpawnOptions {
    *  only for one; every other kind ignores it. */
   codexAccountId?: string
   codexAccountLabel?: string
+  /** The stored connection a Pi or OpenCode tab runs on (PRDCT-4496):
+   *  persisted on the record with its label, never its value. */
+  connectionId?: string
+  connectionLabel?: string
+  /** The connection's variables (its key, OpenCode's inline config, Pi's
+   *  agent directory), opened by the caller for the process, held until it
+   *  starts and never on the record. */
+  providerEnv?: Record<string, string>
+  /** OpenCode only: run the TUI standalone, so it reads the tab's environment. */
+  opencodeStandalone?: boolean
   /** Workspace to stamp on the session record. The pty:spawn handler defaults
    *  it to the active workspace; explicit values win (pin launches, MCP). */
   workspaceId?: string
@@ -980,6 +1000,8 @@ interface PendingSpawn {
   oauthToken?: string
   /** CODEX_HOME for a Codex account other than the Default. */
   codexHome?: string
+  /** A Pi or OpenCode connection's variables, held like the token. */
+  providerEnv?: Record<string, string>
 }
 
 /**
@@ -1042,11 +1064,17 @@ export function codexHomeForSpawn(
  * `CLAUDECODE` is stripped so a session started from inside another Claude
  * session does not think it is nested. The account fields are only set when
  * the account carries them: the Default account keeps whatever the user's own
- * shell exports.
+ * shell exports. A Pi or OpenCode tab's connection (`providerEnv`, PRDCT-4496)
+ * is merged last, so the key it names wins over one the shell exports.
  */
 export function buildSpawnEnv(
   base: Record<string, string>,
-  account: { configDir?: string; oauthToken?: string; codexHome?: string }
+  account: {
+    configDir?: string
+    oauthToken?: string
+    codexHome?: string
+    providerEnv?: Record<string, string>
+  }
 ): Record<string, string> {
   const env: Record<string, string> = {
     ...base,
@@ -1057,6 +1085,7 @@ export function buildSpawnEnv(
   if (account.configDir) env.CLAUDE_CONFIG_DIR = account.configDir
   if (account.oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = account.oauthToken
   if (account.codexHome) env.CODEX_HOME = account.codexHome
+  if (account.providerEnv) Object.assign(env, account.providerEnv)
   return env
 }
 
@@ -1279,7 +1308,8 @@ export class PtyBackend {
           effort: options?.effort,
           permissionMode: options?.permissionMode,
           pluginDir: options?.pluginDir,
-          appendSystemPrompt: options?.appendSystemPrompt
+          appendSystemPrompt: options?.appendSystemPrompt,
+          opencodeStandalone: options?.opencodeStandalone
         })
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
@@ -1345,6 +1375,9 @@ export class PtyBackend {
       claudeProfileLabel: options?.claudeProfileLabel,
       codexAccountId: options?.codexAccountId,
       codexAccountLabel: options?.codexAccountLabel,
+      // The connection's name only: providerEnv is never written.
+      connectionId: options?.connectionId,
+      connectionLabel: options?.connectionLabel,
       // A restart on another account resumes the conversation: it keeps the
       // start the conversation had. Everything else is a new start.
       startedAt:
@@ -1439,7 +1472,8 @@ export class PtyBackend {
         autoExecute: options?.autoExecute,
         configDir: options?.configDir,
         oauthToken,
-        codexHome
+        codexHome,
+        providerEnv: options?.providerEnv
       }
     }
     session.startedAt = recordBase.startedAt
@@ -1501,8 +1535,17 @@ export class PtyBackend {
       return
     }
     if (!session.pending) return
-    const { file, args, cwd, initialCommand, autoExecute, configDir, oauthToken, codexHome } =
-      session.pending
+    const {
+      file,
+      args,
+      cwd,
+      initialCommand,
+      autoExecute,
+      configDir,
+      oauthToken,
+      codexHome,
+      providerEnv
+    } = session.pending
     session.pending = undefined
 
     const ptyName = isWindows ? undefined : 'xterm-256color'
@@ -1519,7 +1562,7 @@ export class PtyBackend {
       cols: Math.max(1, cols),
       rows: Math.max(1, rows),
       cwd,
-      env: buildSpawnEnv(getLoginShellEnv(), { configDir, oauthToken, codexHome })
+      env: buildSpawnEnv(getLoginShellEnv(), { configDir, oauthToken, codexHome, providerEnv })
     })
 
     session.ptyProcess = ptyProcess

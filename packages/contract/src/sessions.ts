@@ -505,7 +505,10 @@ export const SpawnOptions = Schema.Struct({
   openedBy: Schema.optional(Schema.String),
   /** Bypass stays reachable to a Claude chat resumed in another mode when
    *  its launch had it (`--allow-dangerously-skip-permissions`), PRDCT-4191. */
-  allowDangerous: Schema.optional(Schema.Boolean)
+  allowDangerous: Schema.optional(Schema.Boolean),
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: Schema.optional(Schema.String),
+  connectionLabel: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -744,7 +747,10 @@ export const SessionRecord = Schema.Struct({
   /** The conversation came from another provider (PRDCT-4300). */
   continuedFrom: Schema.optional(ContinuedFrom),
   live: Schema.optional(Schema.Boolean),
-  running: Schema.optional(Schema.Boolean)
+  running: Schema.optional(Schema.Boolean),
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: Schema.optional(Schema.String),
+  connectionLabel: Schema.optional(Schema.String)
 })
 export type SessionRecord = typeof SessionRecord.Type
 

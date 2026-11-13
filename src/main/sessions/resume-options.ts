@@ -45,6 +45,9 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     workspaceId: record.workspaceId,
     link: record.link,
     spawnedBy: record.spawnedBy,
-    openedBy: record.openedBy
+    openedBy: record.openedBy,
+    // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+    connectionId: record.connectionId,
+    connectionLabel: record.connectionLabel
   }
 }

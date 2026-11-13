@@ -22,6 +22,7 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
+import { providerInjectionForSpawn } from './provider-injection-spawn'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -288,7 +289,13 @@ class PtyManager {
           oauthToken: await accountTokenForSpawn(
             options?.claudeAgentsMode ? 'claude-agents' : family === 'claude' ? 'claude' : null,
             options?.claudeProfileId
-          )
+          ),
+          // A Pi or OpenCode tab's stored connection, opened the same way and
+          // for those two alone (PRDCT-4496).
+          ...(await providerInjectionForSpawn(family, {
+            connectionId: options?.connectionId,
+            model: options?.model
+          }))
         })
     // A live tmux session this process takes BACK (an app relaunch, a move
     // from another window) is born with the word its hooks last wrote, not

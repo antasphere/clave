@@ -41,6 +41,9 @@ const full = {
   claudeProfileLabel: 'Work',
   codexAccountId: 'ca1',
   codexAccountLabel: 'Default',
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: 'conn-1',
+  connectionLabel: 'DeepSeek',
   codexThreadId: 'thr-1',
   startedAt: 123,
   workspaceId: 'ws1',

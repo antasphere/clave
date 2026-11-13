@@ -1436,6 +1436,9 @@ const electronAPI = {
           | { kind: 'group-terminal'; groupId: string; terminalId: string }
           | { kind: 'session-view'; ownerId: string }
           | { kind: 'toolbar'; key: string }
+        // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+        connectionId?: string
+        connectionLabel?: string
       }?
     ],
     SessionInfo

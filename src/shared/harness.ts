@@ -197,17 +197,19 @@ export const HARNESSES: readonly Harness[] = [
     wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   },
   {
-    // OpenCode 2's TUI takes no model on its command line (`opencode run`
-    // does, the TUI does not: the model is picked inside it or set in its
-    // config), and its permissions are config rules, not a CLI ladder; its
-    // one flag, `--auto`, is what `dangerousMode` passes.
+    // OpenCode 2's TUI has no model flag (`opencode run` has, the TUI not):
+    // the model it starts on reaches it through `OPENCODE_CONFIG_CONTENT`,
+    // set per tab, with `--standalone` so the TUI reads the tab's own
+    // environment rather than the shared service's (PRDCT-4496). Its
+    // permissions are config rules, not a CLI ladder; its one flag, `--auto`,
+    // is what `dangerousMode` passes.
     id: 'opencode',
     name: 'OpenCode',
     command: 'opencode',
     connectionPools: [],
     vendorOnly: false,
     chatAdapterId: null,
-    takesModel: false,
+    takesModel: true,
     permissionRungs: [],
     defaultRung: null,
     bypassRung: null,
