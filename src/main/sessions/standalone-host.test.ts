@@ -33,7 +33,11 @@ describe('the standalone server’s session host', () => {
     }
     const { standaloneSessionHost } = await import('./standalone-host')
     const { getSessionHost } = await import('./host')
-    const { host, agentTools } = standaloneSessionHost({ dataDir: dir, terminals })
+    const { host, agentTools } = standaloneSessionHost({
+      dataDir: dir,
+      terminals,
+      resourcesDir: '/app/resources'
+    })
     expect(host).toBe(getSessionHost())
     expect(typeof agentTools.resolve).toBe('function')
     // The end-to-end seam finds the host where it finds the app's.
@@ -47,5 +51,7 @@ describe('the standalone server’s session host', () => {
     expect(() => ports.mcpConfig.remove('session-1')).not.toThrow()
     // The terminal layer's documents live under the server's folder.
     expect(ports.storage.pathOf('terminal-journal.jsonl')).toContain(dir)
+    // The resources folder is the one the entry named (PRDCT-4496).
+    expect(ports.resourcesDir).toBe('/app/resources')
   })
 })

@@ -15,6 +15,8 @@ import {
 } from './connection'
 import { HARNESSES, HARNESS_BY_ID } from './harness'
 import { pickAccount, switchTargets, type AccountUsageSummary } from './account-pool'
+// ── Lane B (harness wave): provider connections ──
+import { PROVIDER_COMPANIES } from '@clave/contract/settings/provider-catalogue'
 
 /** A weekly cap the service calls critical: the pool's rule reads it as out. */
 const spent: AccountUsageSummary = {
@@ -28,10 +30,15 @@ const fresh: AccountUsageSummary = {
 
 describe('the pools', () => {
   it('registers the Claude and Codex pools, each billed by its company and reading usage', () => {
-    expect(CONNECTION_POOLS.map((pool) => pool.id)).toEqual(['claude', 'codex'])
+    expect(CONNECTION_POOLS.map((pool) => pool.id)).toEqual([
+      'claude',
+      'codex',
+      ...PROVIDER_COMPANIES.map((c) => c.id)
+    ])
     expect(CLAUDE_POOL.company).toEqual({ id: 'anthropic', name: 'Anthropic' })
     expect(CODEX_POOL.company).toEqual({ id: 'openai', name: 'OpenAI' })
-    expect(CONNECTION_POOLS.every((pool) => pool.reportsUsage)).toBe(true)
+    expect(CLAUDE_POOL.reportsUsage && CODEX_POOL.reportsUsage).toBe(true)
+    expect(CONNECTION_POOLS.slice(2).some((pool) => pool.reportsUsage)).toBe(false)
     expect(CONNECTION_POOL_BY_ID.claude).toBe(CLAUDE_POOL)
     expect(CONNECTION_POOL_BY_ID.codex).toBe(CODEX_POOL)
   })
@@ -45,10 +52,18 @@ describe('the pools', () => {
 })
 
 describe('the harness table names the pools each harness runs on', () => {
-  it('Claude Code on the Claude pool, Codex on the Codex pool, the three others on none yet', () => {
+  it('Claude Code on the Claude pool, Codex on the Codex pool, Pi and OpenCode on the ten provider pools, Antigravity on none', () => {
+    // The pools a stored key serves (PRDCT-4496).
+    const providers = PROVIDER_COMPANIES.map((c) => c.id)
     expect(
       Object.fromEntries(HARNESSES.map((harness) => [harness.id, [...harness.connectionPools]]))
-    ).toEqual({ claude: ['claude'], codex: ['codex'], antigravity: [], pi: [], opencode: [] })
+    ).toEqual({
+      claude: ['claude'],
+      codex: ['codex'],
+      antigravity: [],
+      pi: providers,
+      opencode: providers
+    })
   })
 
   it('names registered pools only', () => {
@@ -60,8 +75,8 @@ describe('the harness table names the pools each harness runs on', () => {
     expect(firstPoolOf(HARNESS_BY_ID.claude)).toBe('claude')
     expect(firstPoolOf(HARNESS_BY_ID.codex)).toBe('codex')
     expect(firstPoolOf(HARNESS_BY_ID.antigravity)).toBeNull()
-    expect(firstPoolOf(HARNESS_BY_ID.pi)).toBeNull()
-    expect(firstPoolOf(HARNESS_BY_ID.opencode)).toBeNull()
+    expect(firstPoolOf(HARNESS_BY_ID.pi)).toBe('moonshot')
+    expect(firstPoolOf(HARNESS_BY_ID.opencode)).toBe('moonshot')
     expect(firstPoolOf({ connectionPools: ['codex', 'claude'] })).toBe('codex')
   })
 })

@@ -17,7 +17,13 @@ import type {
   Unsubscribe,
   UsageRead,
   Workspace,
-  WorkspaceState
+  WorkspaceState,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnection,
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  ModelsCatalogView,
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  ProviderUsageLineView
 } from './port'
 import { unavailable } from './port'
 
@@ -80,6 +86,10 @@ export class FakeSettingsSource implements SettingsSourceService {
     appIcon?: boolean
     antasphere?: boolean
     integrations?: boolean
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog?: boolean
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage?: boolean
   } = {}
   /** The host's integrations as the fake holds them (PRDCT-4410): the key it
    *  was handed goes to `secrets`, never into this. */
@@ -478,6 +488,125 @@ export class FakeSettingsSource implements SettingsSourceService {
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
+    }
+  }
+  // ── Lane B (harness wave): provider connections ──
+  /** The host's provider connections as the fake holds them (PRDCT-4426). */
+  connections: ProviderConnection[] = []
+  /** How many keys `setKey` was handed: the fake keeps the count, never a key. */
+  providerKeysSet = 0
+  private connectionsChanged(): void {
+    this.emit({ _tag: 'accounts.providers_changed', connections: [...this.connections] })
+  }
+  readonly providerConnections: SettingsSourceService['providerConnections'] = {
+    list: () => {
+      this.record('providerConnections.list')
+      return this.connections
+    },
+    add: (input) => {
+      this.record('providerConnections.add', input)
+      const connection: ProviderConnection = {
+        id: `pc-${++this.n}`,
+        label: input.label?.trim() || input.company,
+        company: input.company,
+        kind: 'key',
+        pool: input.company,
+        endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://provider.example.test/v1' }],
+        needsKey: true,
+        hasKey: false,
+        keySetAt: null,
+        createdAt: 1
+      }
+      this.connections = [...this.connections, connection]
+      this.connectionsChanged()
+      return connection
+    },
+    rename: (id, label) => {
+      this.record('providerConnections.rename', id, label)
+      const known = this.connections.find((c) => c.id === id)
+      if (!known) throw new Error('No such connection.')
+      const renamed = { ...known, label }
+      this.connections = this.connections.map((c) => (c.id === id ? renamed : c))
+      this.connectionsChanged()
+      return renamed
+    },
+    remove: (id) => {
+      this.record('providerConnections.remove', id)
+      const existed = this.connections.some((c) => c.id === id)
+      this.connections = this.connections.filter((c) => c.id !== id)
+      if (existed) this.connectionsChanged()
+      return existed
+    },
+    setKey: (id, apiKey) => {
+      // The key itself is never recorded, stored or returned.
+      this.record('providerConnections.setKey', id)
+      const known = this.connections.find((c) => c.id === id)
+      if (!known) throw new Error('No such connection.')
+      if (!apiKey.trim()) throw new Error('Paste the key first.')
+      this.providerKeysSet++
+      const keyed = { ...known, hasKey: true, keySetAt: 2 }
+      this.connections = this.connections.map((c) => (c.id === id ? keyed : c))
+      this.connectionsChanged()
+      return keyed
+    }
+  }
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue as the
+  // fake holds it; `read` filters it to the ids asked for, in their order.
+  catalog: ModelsCatalogView = {
+    fetchedAt: 1,
+    stale: false,
+    providers: [
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: false, toolCall: true }]
+      },
+      {
+        id: 'openrouter',
+        name: 'OpenRouter',
+        models: [
+          {
+            id: 'old',
+            name: 'Old',
+            reasoning: false,
+            toolCall: false,
+            status: 'deprecated',
+            contextLimit: 8000
+          }
+        ]
+      }
+    ]
+  }
+  readonly modelsCatalog: SettingsSourceService['modelsCatalog'] = {
+    read: (input) => {
+      this.record('modelsCatalog.read', input)
+      if (this.refuse.modelsCatalog)
+        throw unavailable('modelsCatalog', 'This server has no models catalogue.')
+      const ids = input.providerIds
+      if (!ids) return this.catalog
+      return {
+        ...this.catalog,
+        providers: ids.flatMap((id) => this.catalog.providers.filter((p) => p.id === id))
+      }
+    }
+  }
+  // Lane C of the harness wave (PRDCT-4496): the usage lines as the fake holds
+  // them, by connection id; one it does not hold is the unknown line.
+  usageLines: Record<string, ProviderUsageLineView> = {
+    'conn-deepseek': { kind: 'balance', left: '12.50', currency: 'USD' },
+    'conn-minimax': { kind: 'plan' }
+  }
+  readonly providerUsage: SettingsSourceService['providerUsage'] = {
+    read: (input) => {
+      this.record('providerUsage.read', input)
+      if (this.refuse.providerUsage)
+        throw unavailable('providerUsage', 'This server has no provider usage.')
+      return (
+        this.usageLines[input.connectionId] ?? {
+          kind: 'unknown',
+          reason: 'The connection is not known here.'
+        }
+      )
     }
   }
 }

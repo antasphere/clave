@@ -1,5 +1,6 @@
 import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
-import { codexConnection } from '../../shared/connection'
+import { codexConnection, type ConnectionPoolId } from '../../shared/connection'
+import { HARNESS_BY_ID } from '../../shared/harness'
 import { asPoolRow } from '../routines/facts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -13,6 +14,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SessionHost } from '@clave/server'
 import type { Session, SessionRecord } from '@clave/contract/sessions'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { SidebarLayouts, memorySidebarStorage, noWindowsHost } from '@clave/server/sidebar-layouts'
 import { PendingRequests } from '../../../packages/server/src/requests/service'
@@ -1824,7 +1826,9 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(pi.connectionNote).toBe(
       'Clave holds no connection for Pi: it runs on the login inside the harness.'
     )
-    expect(opencode).toMatchObject({ installed: true, version: '2.0.1', models: [] })
+    // OpenCode lists its own default, and no catalogue model with no stored connection (PRDCT-4496).
+    expect(opencode).toMatchObject({ installed: true, version: '2.0.1' })
+    expect((opencode.models as Array<Record<string, unknown>>).map((m) => m.id)).toEqual([null])
   }, 15_000)
 
   it('clave_launch_options judges defaultModel on the profile an open with no model resolves, and the open lands on its suggested connection (verifier, round 2)', async () => {
@@ -1912,10 +1916,94 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(errorText(await open({ account: 'Nobody' }))).toContain(
       'Unknown Claude account "Nobody". Available: "Romain" (default), "Work" (work)'
     )
+    // Pi takes a stored connection (PRDCT-4496): this server stores none.
     expect(errorText(await open({ mode: 'pi', account: 'any' }))).toContain(
-      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'
+      'No stored connection serves Pi yet: add one in Settings → Connections.'
+    )
+    // Antigravity has no pool at all: still refused, in lane A's sentence.
+    expect(errorText(await open({ mode: 'antigravity', account: 'any' }))).toContain(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
     )
     expect(started).toHaveLength(5)
+  }, 15_000)
+
+  // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on the stored connections
+  it('opens Pi and OpenCode on the stored connection named by id, label or "any", refuses an unknown one with the list, and lists the tab on it', async () => {
+    const stored = (
+      id: string,
+      company: ProviderConnectionView['company'],
+      label: string,
+      hasKey = true
+    ): ProviderConnectionView => ({
+      id,
+      label,
+      company,
+      pool: company,
+      kind: 'key',
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+      needsKey: true,
+      hasKey,
+      keySetAt: null,
+      createdAt: 0
+    })
+    const views = [
+      stored('c-ds', 'deepseek', 'No key yet', false),
+      stored('c-kimi', 'moonshot', 'Kimi work')
+    ]
+    const state: LaunchState = {
+      interactionMode: 'terminal',
+      switchMode: 'automatic',
+      detectFails: null
+    }
+    const { client, started, directory } = await sessionFixture({
+      records: [
+        caller,
+        {
+          ...caller,
+          id: 'started-1',
+          claudeMode: false,
+          piMode: true,
+          claudeProfileId: undefined,
+          model: undefined,
+          launchProfileId: undefined,
+          connectionId: 'c-kimi',
+          connectionLabel: 'Kimi (old name)'
+        }
+      ],
+      options: {
+        launch: { ...launchFake(state), providerConnectionsFor: () => views }
+      }
+    })
+    const open = (args: Record<string, unknown>): ReturnType<typeof call> =>
+      call(client, 'clave_open_session', { cwd: directory, ...args })
+    payload(await open({ mode: 'pi', account: 'c-kimi' }))
+    expect(started[0].options).toMatchObject({
+      piMode: true,
+      connectionId: 'c-kimi',
+      connectionLabel: 'Kimi work'
+    })
+    payload(await open({ mode: 'opencode', account: 'kimi work' }))
+    expect(started[1].options).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    // "any": the first with a key, the unkeyed DeepSeek passed over.
+    payload(await open({ mode: 'pi', account: 'any' }))
+    expect(started[2].options).toMatchObject({ connectionId: 'c-kimi' })
+    // Named, a connection with no key is still the answer: the spawn says why.
+    payload(await open({ mode: 'pi', account: 'No key yet' }))
+    expect(started[3].options).toMatchObject({ connectionId: 'c-ds' })
+    // No account: the login inside the harness, no connection.
+    payload(await open({ mode: 'pi' }))
+    expect(started[4].options).not.toHaveProperty('connectionId')
+    expect(errorText(await open({ mode: 'pi', account: 'Nobody' }))).toContain(
+      'Unknown Pi connection "Nobody". Available: "Kimi work" (c-kimi), "No key yet" (c-ds)'
+    )
+    expect(started).toHaveLength(5)
+    const rows = payload(await call(client, 'clave_list', {})).sessions as Array<
+      Record<string, unknown>
+    >
+    expect(rows.find((r) => r.id === 'started-1')).toMatchObject({
+      mode: 'pi',
+      account: { id: 'c-kimi', label: 'Kimi work', exhausted: false }
+    })
   }, 15_000)
 
   it('opens on a profile named by name, and a built-in chat id on the harness’s configured chat default', async () => {
@@ -2206,5 +2294,54 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     const withLaunch = await sessionFixture()
     const all = (await withLaunch.client.listTools()).tools.map((t) => t.name)
     expect(all).toEqual(expect.arrayContaining(['clave_launch_options', 'clave_switch_account']))
+  }, 15_000)
+})
+
+// ── Lane B (harness wave): provider connections ──
+describe('clave_switch_account on a harness whose first pool is a provider pool (PRDCT-4426)', () => {
+  it('resolves no account and refuses with the sentence of a tab on no pool', async () => {
+    const claude = HARNESS_BY_ID.claude as { connectionPools: readonly ConnectionPoolId[] }
+    const pools = claude.connectionPools
+    claude.connectionPools = ['moonshot']
+    try {
+      const restarted: unknown[][] = []
+      const record: SessionRecord = {
+        id: 'caller',
+        cwd: '/srv/repo',
+        folderName: 'repo',
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false,
+        claudeProfileId: 'default'
+      }
+      const { client } = await sessionFixture({
+        records: [record],
+        launch: { switchMode: 'automatic' },
+        host: {
+          restart: async (...args) => {
+            restarted.push(args)
+            return { id: String(args[0]), alive: true, resumed: true } as never
+          }
+        }
+      })
+      for (const account of ['any', 'Work']) {
+        expect(
+          errorText(
+            await client.callTool({
+              name: 'clave_switch_account',
+              arguments: { sessionId: 'mine', account }
+            })
+          )
+        ).toBe(
+          'Only a tab on a harness with a connection pool (Claude Code, Codex) runs on a connection'
+        )
+      }
+      expect(restarted).toHaveLength(0)
+    } finally {
+      claude.connectionPools = pools
+    }
   }, 15_000)
 })

@@ -19,15 +19,31 @@ import { CLAUDE_MODELS } from '../../shared/claude-models'
 import {
   DEFAULT_INTERACTION_MODE,
   HARNESSES,
+  HARNESS_BY_ID,
   isInteractionMode,
   sanitizeHarnessSettings,
+  type Harness,
   type HarnessId,
   type HarnessSettingsById,
   type InteractionMode
 } from '../../shared/harness'
 import type { LaunchModel, LaunchOptionsInput } from '../../shared/launch-options'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { isAccountPoolId, type Connection, type ConnectionPoolId } from '../../shared/connection'
 import type { ModelOption } from '../../shared/session-model'
+import {
+  pinnedPiModels,
+  piStartModels,
+  providerHarnessModels,
+  providerPoolConnections,
+  type ProviderListingDeps
+} from './provider-launch-listing'
 import { usageSummaryForModel } from '../../shared/usage-summary'
+import {
+  harnessProviderConnections,
+  listedProviderConnection
+} from '../../shared/provider-connection-pick'
+import type { PiStartModel } from '../../shared/pi-start-model'
 import type { HarnessDetection } from '../agent-updates/standalone-detection'
 import { openProfileIdFor, type LaunchFacts } from '../routines/launch'
 import type { AccountProvider, AccountSwitchMode, ServedAccount } from './served-core'
@@ -46,10 +62,19 @@ export interface StandaloneLaunchFacts extends LaunchFacts {
   interactionMode(): InteractionMode
   /** The server's own account switch mode (it has no workspace of its own). */
   switchMode(): AccountSwitchMode
+  /** A provider pool's stored connections for `harness` (PRDCT-4496): that
+   *  company's serving a wire format the harness speaks, in the store's
+   *  order, as the one shape of a connection. */
+  providerPool?(pool: ConnectionPoolId, harness: Harness): readonly Connection[]
+  /** What each of this server's Pi connections starts on with no model
+   *  named, by id (`piStartModels`, the spawn's rule). */
+  piStartModels?(): Promise<Map<string, PiStartModel>>
   now(): number
 }
 
-export interface StandaloneLaunchDeps {
+/** `catalog` and `providerConnections` (`ProviderListingDeps`) feed Pi's
+ *  and OpenCode's model lists; absent, no catalogue model is listed. */
+export interface StandaloneLaunchDeps extends ProviderListingDeps {
   readonly facts: LaunchFacts
   readonly detection: HarnessDetection
   readonly identity: () => { id: string; name: string }
@@ -60,10 +85,11 @@ export interface StandaloneLaunchDeps {
   readonly homeDir: string
   /** `launchProfileManager.resolve(family)`: the family's default profile; may throw. */
   readonly defaultProfile: (family: HarnessId) => { id: string }
+  /** Every stored provider connection of this server, never a key
+   *  (`providerConnectionsManager.list`); absent, none. */
+  readonly providerConnectionViews?: () => readonly ProviderConnectionView[]
   readonly now?: () => number
 }
-
-const DEFAULT_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
 
 /** The launcher's `modelsFor` (`SessionLauncher.tsx`): Claude's own list. */
 const CLAUDE_LAUNCH_MODELS: readonly LaunchModel[] = CLAUDE_MODELS.map((model) => ({
@@ -92,6 +118,9 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
       : {}),
     preferences: () => facts.preferences(),
     ...(facts.launchModel ? { launchModel: facts.launchModel } : {}),
+    ...(facts.providerConnectionsFor
+      ? { providerConnectionsFor: (harness) => facts.providerConnectionsFor!(harness) }
+      : {}),
     machine: () => deps.identity(),
     harnesses: () => deps.detection.detect(),
     models: async (harness) => {
@@ -105,18 +134,13 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
           return 'unavailable'
         }
       }
-      if (harness === 'pi') {
-        // Pi runs whichever provider its own config names: its default, and
-        // the models its saved profiles pin.
-        const pinned = [
-          ...new Set(
-            profilesOf(facts, 'pi')
-              .map((profile) => profile.pi?.model)
-              .filter((model): model is string => !!model)
-          )
-        ]
-        return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
-      }
+      if (harness === 'pi' || harness === 'opencode')
+        // The launcher menu's list (PRDCT-4496), the Mac's served road's too.
+        return providerHarnessModels(
+          harness,
+          harness === 'pi' ? pinnedPiModels(profilesOf(facts, 'pi')) : [],
+          deps
+        )
       return []
     },
     defaultProfileId: (harness) => {
@@ -134,6 +158,13 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
     },
     // The Mac's shell `switchMode(workspaceId)` with no workspace: the global one, else propose.
     switchMode: () => switchModeOf(deps.preferences('accountSwitchMode')) ?? 'propose',
+    providerPool: (pool, harness) =>
+      providerPoolConnections(pool, deps.providerConnectionViews?.() ?? [], harness),
+    piStartModels: () =>
+      piStartModels(
+        harnessProviderConnections(HARNESS_BY_ID.pi, deps.providerConnectionViews?.() ?? []),
+        deps
+      ),
     now: deps.now ?? (() => Date.now())
   }
 }
@@ -150,7 +181,16 @@ export function poolOfRecord(record: SessionRecord): AccountProvider | null {
  *  about to stop for the tab's own model. Null for a tab with no pool. */
 export function accountOf(facts: LaunchFacts, record: SessionRecord): ServedAccount | null {
   const pool = poolOfRecord(record)
-  if (!pool) return null
+  if (!pool)
+    // A Pi or OpenCode tab on a stored connection (PRDCT-4496): its id and
+    // its label, the store's current one first; a key reports no usage.
+    return listedProviderConnection(
+      record,
+      (id) =>
+        facts
+          .providerConnectionsFor?.(record.opencodeMode ? 'opencode' : 'pi')
+          .find((c) => c.id === id)?.label
+    )
   const id = (pool === 'codex' ? record.codexAccountId : record.claudeProfileId) ?? 'default'
   const account = facts.accounts(pool).find((a) => a.id === id)
   const recorded = pool === 'codex' ? record.codexAccountLabel : record.claudeProfileLabel
@@ -167,7 +207,8 @@ export function accountOf(facts: LaunchFacts, record: SessionRecord): ServedAcco
 export function launchOptionsInput(
   facts: StandaloneLaunchFacts,
   statuses: ReadonlyArray<AgentUpdateStatus> | undefined,
-  models: Partial<Record<HarnessId, readonly LaunchModel[] | 'unavailable'>>
+  models: Partial<Record<HarnessId, readonly LaunchModel[] | 'unavailable'>>,
+  piStarts?: ReadonlyMap<string, PiStartModel>
 ): LaunchOptionsInput {
   return {
     machine: facts.machine(),
@@ -193,11 +234,24 @@ export function launchOptionsInput(
     models: (id) => models[id] ?? [],
     harnessSettings: facts.harnessSettings(),
     interactionMode: facts.interactionMode(),
-    connections: (pool) => facts.accounts(pool as AccountProvider),
-    selectedConnectionId: (pool) => facts.selectedAccountId(pool as AccountProvider),
+    // A provider pool lists the server's stored connections of that company
+    // (PRDCT-4496); an account pool its accounts.
+    connections: (pool, harness) =>
+      isAccountPoolId(pool) ? facts.accounts(pool) : (facts.providerPool?.(pool, harness) ?? []),
+    selectedConnectionId: (pool) =>
+      isAccountPoolId(pool) ? facts.selectedAccountId(pool) : undefined,
     preferRecommended: facts.useRecommendedAccount?.() ?? false,
     launchModel: (pool, profileId) =>
-      facts.launchModel?.(pool as AccountProvider, profileId, undefined),
+      isAccountPoolId(pool as ConnectionPoolId)
+        ? facts.launchModel?.(pool as AccountProvider, profileId, undefined)
+        : undefined,
+    // What a Pi connection starts on with no model named: the spawn's rule.
+    ...(piStarts
+      ? {
+          providerStartModel: (id, connectionId) =>
+            id === 'pi' ? piStarts.get(connectionId) : undefined
+        }
+      : {}),
     now: facts.now()
   }
 }

@@ -19,6 +19,7 @@ import { CLAUDE_MODELS } from '../../../shared/claude-models'
 import {
   HARNESSES,
   HARNESS_BY_ID,
+  type Harness,
   type HarnessId,
   type HarnessSettingsById,
   type InteractionMode
@@ -29,6 +30,14 @@ import type {
   LaunchOptionsInput,
   PooledConnection
 } from '../../../shared/launch-options'
+import { modelsForProviderConnections } from '../../../shared/launch-models'
+import { PROVIDER_LISTING_FACTS } from '../../../main/models-catalog-overlay'
+import { isAccountPoolId, isConnectionPoolId } from '../../../shared/connection'
+import { providerConnection } from '../../../shared/provider-connection'
+import { servesHarnessPool } from '../../../shared/provider-connection-pick'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import type { PiStartModel } from '../../../shared/pi-start-model'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import type { ServerSettings } from '../store/server-settings-state'
 import { localLaunchSource, serverLaunchSource, type LaunchSource } from './launch-source'
 import { localOpenProfileId } from './launch-model'
@@ -57,10 +66,12 @@ export interface WindowLaunchFacts {
 }
 
 /** The launcher's `modelsFor`, on a source: Claude's from the table, Codex's
- *  from the list read (unavailable when it failed or was empty), Pi's default
- *  and the models the machine's Pi profiles pin; none for the rest. */
+ *  from the list read (unavailable when it failed or was empty); Pi's and
+ *  OpenCode's the menu's own list (PRDCT-4496): the default, the catalogue
+ *  models of each stored connection's company, then, for Pi, the models the
+ *  machine's Pi profiles pin; none for the rest. */
 export function launchModelsOf(
-  source: Pick<LaunchSource, 'profilesFor'>,
+  source: Pick<LaunchSource, 'profilesFor' | 'catalog' | 'providerConnections'>,
   harness: HarnessId,
   codexModels: CodexModels
 ): readonly LaunchModel[] | 'unavailable' {
@@ -74,27 +85,56 @@ export function launchModelsOf(
     return codexModels === 'unavailable' || codexModels.length === 0
       ? 'unavailable'
       : codexModels.map((model) => ({ id: model.id, label: model.label, family: model.label }))
-  if (harness === 'pi') {
-    const pinned = [
-      ...new Set(
-        source
-          .profilesFor('pi')
-          .map((profile) => profile.pi?.model)
-          .filter((model): model is string => !!model)
-      )
-    ]
-    return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+  if (harness === 'pi' || harness === 'opencode') {
+    const pinned =
+      harness === 'pi'
+        ? [
+            ...new Set(
+              source
+                .profilesFor('pi')
+                .map((profile) => profile.pi?.model)
+                .filter((model): model is string => !!model)
+            )
+          ]
+        : []
+    const rows = modelsForProviderConnections(
+      source.catalog(),
+      source.providerConnections(harness),
+      PROVIDER_LISTING_FACTS,
+      pinned
+    )
+    // The listing is synchronous and must answer something: while the
+    // catalogue is still being read, the default and the pinned models.
+    if (rows === 'loading')
+      return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+    return rows.map((row) => ({ id: row.id ?? null, label: row.label, family: row.family }))
   }
   return []
 }
 
 /** One owner's pool as the shared function reads it: the pool's order, who
- *  can sign in, the API keys as fallback, each account's own usage. */
+ *  can sign in, the API keys as fallback, each account's own usage. A
+ *  provider pool (PRDCT-4496) is the owner's stored connections of that
+ *  company serving a wire format `harness` speaks (`servesHarnessPool`, the
+ *  open's own filter), as the one shape of a connection
+ *  (`providerConnection`), from lane B's store unless `providers` is given. */
 export function poolConnections(
   sources: AccountSources,
   owner: string,
-  pool: string
+  pool: string,
+  harness: Pick<Harness, 'wireFormats'>,
+  providers?: readonly ProviderConnectionView[]
 ): PooledConnection[] {
+  if (isConnectionPoolId(pool) && !isAccountPoolId(pool))
+    return (
+      providers ??
+      (useProviderConnectionsStore.getState().byMachine[owner]?.connections as
+        | readonly ProviderConnectionView[]
+        | undefined) ??
+      []
+    )
+      .filter((view) => servesHarnessPool(view, pool, harness))
+      .map(providerConnection)
   if (pool !== 'claude' && pool !== 'codex') return []
   const view = ownerViewFrom(sources, owner, pool as AccountProvider)
   return poolOf(view).map((a) => ({
@@ -107,6 +147,12 @@ export function poolConnections(
 }
 
 const isPool = (pool: string): pool is AccountProvider => pool === 'claude' || pool === 'codex'
+
+/** What a connected server's Pi connection row says in place of a start
+ *  model: that server's own Pi settings decide it. */
+export function serverPiStartNote(serverName: string): string {
+  return `${serverName} decides the model from its own Pi settings when the tab opens: pass a model to choose it.`
+}
 
 /** A connected server, from the settings this Mac read of it. The Mac never
  *  checks a server's harnesses: every one is listed, installed unknown, as
@@ -141,13 +187,16 @@ export function serverLaunchOptionsInput(
     models: (harness) => launchModelsOf(source, harness, facts.codexModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
-    connections: (pool) => poolConnections(sources, serverId, pool),
+    connections: (pool, harness) => poolConnections(sources, serverId, pool, harness),
     selectedConnectionId: (pool) =>
       isPool(pool) ? (source.selectedAccountId(pool) ?? undefined) : undefined,
     preferRecommended: false,
     // The Mac does not know a server's remembered chat model (it lives in
     // the server's own preferences): the open profile names no model here.
     launchModel: () => undefined,
+    // Nor the server's own Pi settings, which decide what a Pi connection
+    // starts on with no model named (PRDCT-4496): said, never guessed.
+    providerStartNote: (harness) => (harness === 'pi' ? serverPiStartNote(name) : undefined),
     now: facts.now
   }
 }
@@ -164,6 +213,9 @@ export function localLaunchOptionsInput(
     /** The model a launch naming none runs, per pool, on the profile its
      *  open resolves (`localOpenProfileId`). */
     readonly launchModels?: Partial<Record<AccountProvider, string | undefined>>
+    /** What each Pi connection starts on with no model named, by id, as
+     *  main computes it for the spawn (`providerPiStartModels`). */
+    readonly piStarts?: Readonly<Record<string, PiStartModel>>
   }
 ): LaunchOptionsInput {
   const source = localLaunchSource(null)
@@ -189,11 +241,17 @@ export function localLaunchOptionsInput(
     models: (harness) => launchModelsOf(source, harness, facts.codexModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
-    connections: (pool) => poolConnections(sources, LOCAL_SERVER_ID, pool),
+    connections: (pool, harness) => poolConnections(sources, LOCAL_SERVER_ID, pool, harness),
     selectedConnectionId: (pool) =>
       isPool(pool) ? (source.selectedAccountId(pool) ?? undefined) : undefined,
     preferRecommended: facts.preferRecommended,
     launchModel: (pool) => (isPool(pool) ? facts.launchModels?.[pool] : undefined),
+    ...(facts.piStarts
+      ? {
+          providerStartModel: (harness: HarnessId, connectionId: string) =>
+            harness === 'pi' ? facts.piStarts?.[connectionId] : undefined
+        }
+      : {}),
     now: facts.now
   }
 }

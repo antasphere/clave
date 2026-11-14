@@ -13,6 +13,10 @@ import {
 import { AntasphereAccountSection } from './AntasphereAccountSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { CodexAccountsSection } from './CodexAccountsSection'
+// ── Lane B (harness wave): provider connections (PRDCT-4426) ──
+import { ProviderConnectItems, ProviderConnectionsSections } from './ProviderConnectionsSection'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import type { ProviderCompanyId } from '../../../../preload/index.d'
 import {
   CONNECTION_COMPANIES,
   connectAnthropic,
@@ -152,10 +156,12 @@ function revealRow(selector: string): void {
  */
 function ConnectMenu({
   onPick,
-  onSecondary
+  onSecondary,
+  onProvider
 }: {
   onPick: (company: ConnectionCompany) => void
   onSecondary: (company: ConnectionCompany) => void
+  onProvider: (id: ProviderCompanyId) => void
 }): ReactElement {
   return (
     <DropdownMenuPrimitive.Root modal={false}>
@@ -202,6 +208,9 @@ function ConnectMenu({
               </DropdownMenuPrimitive.Item>
             </div>
           ))}
+          {/* ── Lane B (harness wave): the providers, connected with a key (PRDCT-4426) ── */}
+          <DropdownMenuPrimitive.Separator className="menu-sep" />
+          <ProviderConnectItems onPick={onProvider} />
         </DropdownMenuPrimitive.Content>
       </DropdownMenuPrimitive.Portal>
     </DropdownMenuPrimitive.Root>
@@ -221,6 +230,7 @@ export function AccountsSettings(): ReactElement {
   const setUseRecommendedAccount = useAccountPolicyStore((s) => s.setUseRecommendedAccount)
   const [pasteRequest, setPasteRequest] = useState(0)
   const [keyRequest, setKeyRequest] = useState(0)
+  const [addRequest, setAddRequest] = useState<ProviderCompanyId | null>(null)
   useEffect(() => {
     void loadAccountLogins()
   }, [])
@@ -247,11 +257,25 @@ export function AccountsSettings(): ReactElement {
       title="Connections"
       description="Your Antasphere account, which signs you into Clave itself, and who pays for what your harnesses run: the subscriptions Clave can run sessions on. Choose how new sessions pick a connection; a running tab is switched from its menu, its conversation resumed on the other connection."
       testId="accounts"
-      actions={<ConnectMenu onPick={(company) => void pick(company)} onSecondary={secondary} />}
+      actions={
+        <ConnectMenu
+          onPick={(company) => void pick(company)}
+          onSecondary={secondary}
+          onProvider={(id) => {
+            setAddRequest(id)
+            revealRow(`[data-provider-add-form="${id}"]`)
+          }}
+        />
+      }
     >
       <AntasphereAccountSection />
       <ClaudeAccountsSection pasteRequest={pasteRequest} />
       <CodexAccountsSection keyRequest={keyRequest} />
+      <ProviderConnectionsSections
+        machine={LOCAL_SERVER_ID}
+        addRequest={addRequest}
+        onAddDone={() => setAddRequest(null)}
+      />
       <SettingsSection title="New sessions">
         <SettingsCard>
           <ToggleRow

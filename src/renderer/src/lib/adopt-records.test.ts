@@ -753,3 +753,32 @@ describe('the restore spawn keeps the record’s live mode and effort', () => {
     expect(options).not.toHaveProperty('allowDangerous')
   })
 })
+
+// Lane D (PRDCT-4427): an OpenCode chat comes back on the OpenCode session its
+// record keeps, as a Codex chat does on its thread.
+describe('the restore spawn resumes an OpenCode chat’s session', () => {
+  const spawnOf = async (over: Partial<SessionRecord>): Promise<Record<string, unknown>> => {
+    const { attached } = placeRecords([{ ...record('r'), ...over } as SessionRecord], null)
+    await flush()
+    const options = spawnOptions.get('r') ?? {}
+    for (const answer of [...pending.values()]) answer(true)
+    await attached
+    return options
+  }
+
+  it('passes the record’s OpenCode session as the resume', async () => {
+    const options = await spawnOf({
+      transport: 'events',
+      claudeMode: false,
+      opencodeMode: true,
+      launchProfileId: 'opencode-chat',
+      opencodeSessionId: 'ses_0abc'
+    })
+    expect(options).toMatchObject({ opencodeMode: true, resumeSessionId: 'ses_0abc' })
+  })
+
+  it('resumes nothing for an OpenCode record with no session yet', async () => {
+    const options = await spawnOf({ claudeMode: false, opencodeMode: true })
+    expect(options).not.toHaveProperty('resumeSessionId')
+  })
+})

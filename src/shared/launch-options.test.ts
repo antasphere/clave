@@ -3,6 +3,7 @@ import {
   launchOptions,
   suggestedConnection,
   poolsOf,
+  accountPoolsOf,
   type HarnessOptions,
   type HarnessPresence,
   type LaunchOptions,
@@ -16,6 +17,33 @@ import { CLAUDE_MODELS } from './claude-models'
 import { usageSummaryOf } from './usage-summary'
 import type { PoolUsageWindow } from './account-pool'
 import { codexConnection, poolAccountOf, type Connection } from './connection'
+import { providerConnection } from './provider-connection'
+import { resolveProviderConnection } from './provider-connection-pick'
+import {
+  PROVIDER_COMPANY_IDS,
+  type ProviderCompanyId
+} from '@clave/contract/settings/provider-catalogue'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+
+/** A stored provider connection as lane B's store lists it. */
+const view = (
+  id: string,
+  company: ProviderCompanyId,
+  label: string,
+  needsKey = true,
+  hasKey = true
+): ProviderConnectionView => ({
+  id,
+  label,
+  company,
+  kind: 'key',
+  pool: company,
+  endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+  needsKey,
+  hasKey,
+  keySetAt: hasKey ? 1 : null,
+  createdAt: 1
+})
 
 /**
  * What an agent reads of the launcher (`clave_launch_options`). Silent when
@@ -145,6 +173,8 @@ function input(over: Partial<LaunchOptionsInput> = {}): LaunchOptionsInput {
           { id: 'kimi-k2', label: 'kimi-k2', family: 'kimi-k2' }
         ]
       }
+      // OpenCode gets the Default row from both listing roads, as Pi does (PRDCT-4496).
+      if (id === 'opencode') return [{ id: null, label: 'Default', family: 'Default' }]
       return []
     },
     harnessSettings: { claude: { preferredModel: FABLE } },
@@ -294,15 +324,70 @@ describe('the models and the default one', () => {
     expect(harness(options, 'pi').models.every((m) => m.served)).toBe(true)
     expect(harness(options, 'pi').defaultModel).toBeNull()
     expect(harness(options, 'codex').models).toEqual([
-      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+      {
+        id: null,
+        label: 'Default',
+        family: 'Default',
+        served: true,
+        reason: null,
+        note: 'Pass no model and Codex starts on its own default.'
+      }
     ])
   })
-  it('offers no model to a harness that takes none', () => {
+  it('says what the row with no id means, and on Pi with stored connections that the row of the connection names it', () => {
+    const plain = harness(launchOptions(input()), 'pi').models[0]
+    expect(plain).toMatchObject({
+      id: null,
+      note: 'Pass no model and Pi starts on its own default.'
+    })
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const onConnections = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude' ? [fableOut, open()] : pool === 'moonshot' ? [kimi] : []
+      })
+    )
+    expect(harness(onConnections, 'pi').models[0].note).toBe(
+      "Pass no model and Pi starts on its own default. On a stored connection, it starts on the model that connection's row names (startModel)."
+    )
+    // OpenCode picks its own on a connection too.
+    expect(harness(onConnections, 'opencode').models[0].note).toBe(
+      'Pass no model and OpenCode starts on its own default.'
+    )
+    // A row with an id carries no note.
+    expect(harness(onConnections, 'pi').models[1]).not.toHaveProperty('note')
+  })
+  it('says a start model decided elsewhere in a sentence, never a model', () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const options = launchOptions(
+      input({
+        connections: (pool) => (pool === 'moonshot' ? [kimi] : []),
+        providerStartNote: (id) => (id === 'pi' ? 'Decided there.' : undefined)
+      })
+    )
+    expect(harness(options, 'pi').connections[0]).toMatchObject({
+      startModelNote: 'Decided there.'
+    })
+    expect(harness(options, 'pi').connections[0]).not.toHaveProperty('startModel')
+    expect(harness(options, 'opencode').connections[0]).not.toHaveProperty('startModelNote')
+  })
+  it('offers OpenCode the models its listing gives, now that it takes one', () => {
     const opencode = harness(launchOptions(input()), 'opencode')
-    expect(opencode.takesModel).toBe(false)
-    expect(opencode.models).toEqual([])
+    // OpenCode takes a model through its config since PRDCT-4496, so its listed rows reach the launcher.
+    expect(opencode.takesModel).toBe(true)
+    expect(opencode.models).toEqual([
+      {
+        id: null,
+        label: 'Default',
+        family: 'Default',
+        served: true,
+        reason: null,
+        note: 'Pass no model and OpenCode starts on its own default.'
+      }
+    ])
     expect(opencode.defaultModel).toBeNull()
-    expect(opencode.chatView).toBe(false)
+    // OpenCode has a chat view since PRDCT-4427.
+    expect(opencode.chatView).toBe(true)
     expect(harness(launchOptions(input()), 'claude').chatView).toBe(true)
   })
 })
@@ -377,8 +462,134 @@ describe('the connections that pay', () => {
     expect(pi.connectionNote).toBe(
       'Clave holds no connection for Pi: it runs on the login inside the harness.'
     )
-    expect(poolsOf(HARNESS_BY_ID.pi)).toEqual([])
+    const antigravity = launchOptions(input({ presence: () => undefined })).harnesses.find(
+      (h) => h.id === 'antigravity'
+    )!
+    expect(antigravity.connectionNote).toBe(
+      'Clave holds no connection for Antigravity: it runs on the login inside the harness.'
+    )
+    expect(poolsOf(HARNESS_BY_ID.antigravity)).toEqual([])
     expect(poolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
+  })
+  it("lists Pi's and OpenCode's stored connections under their provider pools (PRDCT-4496)", () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const ollama = providerConnection(view('c-ollama', 'ollama', 'Local', false))
+    const unkeyed = providerConnection(view('c-ds', 'deepseek', 'No key yet', true, false))
+    const options = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude'
+            ? [fableOut, open()]
+            : [kimi, ollama, unkeyed].filter((c) => c.pool === pool)
+      })
+    )
+    for (const id of ['pi', 'opencode'] as const) {
+      const h = harness(options, id)
+      expect(h.connections.map((c) => [c.pool, c.id, c.label, c.usable])).toEqual([
+        ['moonshot', 'c-kimi', 'Kimi work', true],
+        ['deepseek', 'c-ds', 'No key yet', false],
+        ['ollama', 'c-ollama', 'Local', true]
+      ])
+      // How an agent names one, in the voice of the note for a harness with none.
+      expect(h.connectionNote).toBe(
+        `Clave holds stored connections for ${HARNESS_BY_ID[id].name}: name one as account (a label, an id, or "any" for the suggested one, the first with a key); with no account, it runs on the login inside the harness.`
+      )
+      // The harness's own login still runs a launch that names none: no
+      // remembered model, every model served.
+      expect(h.defaultModel).toBeNull()
+      expect(h.models.every((m) => m.served)).toBe(true)
+    }
+    expect(poolsOf(HARNESS_BY_ID.pi)).toEqual([...PROVIDER_COMPANY_IDS])
+    expect(accountPoolsOf(HARNESS_BY_ID.pi)).toEqual([])
+    expect(accountPoolsOf(HARNESS_BY_ID.claude)).toEqual(['claude'])
+  })
+  it("says what a Pi tab on each stored connection opens on with no model named, the open's own rule (PRDCT-4496)", () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const ollama = providerConnection(view('c-ollama', 'ollama', 'Local', false))
+    const refusal = 'No model is listed for the connection "Local": name one to open Pi on it.'
+    const asked: string[] = []
+    const options = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude' ? [fableOut, open()] : [kimi, ollama].filter((c) => c.pool === pool),
+        providerStartModel: (id, connectionId) => {
+          asked.push(`${id}:${connectionId}`)
+          if (id !== 'pi') return undefined
+          return connectionId === 'c-kimi'
+            ? { ok: true, model: 'k-second', from: 'own-default' }
+            : { ok: false, reason: refusal }
+        }
+      })
+    )
+    const pi = harness(options, 'pi').connections
+    expect(pi.find((c) => c.id === 'c-kimi')).toMatchObject({ startModel: 'k-second' })
+    expect(pi.find((c) => c.id === 'c-kimi')).not.toHaveProperty('startRefusal')
+    expect(pi.find((c) => c.id === 'c-ollama')).toMatchObject({
+      startModel: null,
+      startRefusal: refusal
+    })
+    // OpenCode's rows say nothing of it; an account pool is never asked.
+    for (const c of harness(options, 'opencode').connections)
+      expect(c).not.toHaveProperty('startModel')
+    for (const c of harness(options, 'claude').connections)
+      expect(c).not.toHaveProperty('startModel')
+    expect(asked.some((a) => a.startsWith('claude:'))).toBe(false)
+    // A road that cannot know it says nothing.
+    const silent = launchOptions(
+      input({ connections: (pool) => (pool === 'moonshot' ? [kimi] : []) })
+    )
+    expect(harness(silent, 'pi').connections[0]).not.toHaveProperty('startModel')
+  })
+  it('suggests, across the provider pools, the first stored connection with a key, an account pool still its own (PRDCT-4496)', () => {
+    const unkeyed = providerConnection(view('c-kimi-unkeyed', 'moonshot', 'Kimi', true, false))
+    const work = providerConnection(view('c-kimi-work', 'moonshot', 'Kimi work'))
+    const home = providerConnection(view('c-kimi-home', 'moonshot', 'Kimi home'))
+    const ollama = providerConnection(view('c-ollama', 'ollama', 'Local', false))
+    const options = launchOptions(
+      input({
+        connections: (pool) =>
+          pool === 'claude'
+            ? [fableOut, open()]
+            : pool === 'moonshot'
+              ? [unkeyed, work, home]
+              : pool === 'ollama'
+                ? [ollama]
+                : []
+      })
+    )
+    expect(harness(options, 'pi').connections.map((c) => [c.id, c.suggested])).toEqual([
+      ['c-kimi-unkeyed', false],
+      ['c-kimi-work', true],
+      ['c-kimi-home', false],
+      ['c-ollama', false]
+    ])
+    expect(harness(options, 'claude').connections.filter((c) => c.suggested)).toHaveLength(1)
+    // None usable: none suggested.
+    const none = launchOptions(
+      input({ connections: (pool) => (pool === 'moonshot' ? [unkeyed] : []) })
+    )
+    expect(harness(none, 'pi').connections.map((c) => [c.id, c.suggested])).toEqual([
+      ['c-kimi-unkeyed', false]
+    ])
+  })
+  it('marks suggested the very connection an open\'s "any" picks from the same rows (PRDCT-4496)', () => {
+    const views = [
+      view('c-ollama', 'ollama', 'Local', false),
+      view('c-ds', 'deepseek', 'No key yet', true, false),
+      view('c-kimi', 'moonshot', 'Kimi work'),
+      view('c-zai', 'zai', 'GLM')
+    ]
+    const rows = views.map(providerConnection)
+    const options = launchOptions(
+      input({ connections: (pool) => rows.filter((c) => c.pool === pool) })
+    )
+    for (const id of ['pi', 'opencode'] as const) {
+      const listed = harness(options, id).connections.filter((c) => c.suggested)
+      const opened = resolveProviderConnection(HARNESS_BY_ID[id], views, 'any')
+      expect(listed).toHaveLength(1)
+      expect(opened.ok && opened.connection.id).toBe(listed[0].id)
+      expect(listed[0].id).toBe('c-kimi')
+    }
   })
   it('follows the recommendation when the person opted in', () => {
     // Work renews later than Romain's week: the recommendation is Romain's on Opus.

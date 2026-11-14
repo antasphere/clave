@@ -90,13 +90,15 @@ const THINKING_VALUES = new Set<PiThinkingLevel>([
 ])
 const TOKEN_MAX_LENGTH = 4_096
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-const CHAT_PROFILE_ID_RE = /^chat:(claude|codex):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
+// Lane D (PRDCT-4427): OpenCode's and Pi's saved profiles have a chat form too.
+const CHAT_PROFILE_ID_RE = /^chat:(claude|codex|opencode|pi):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
+type ChatProfileFamily = 'claude' | 'codex' | 'opencode' | 'pi'
 
 export function chatProfileSource(
   id?: string | null
-): { family: 'claude' | 'codex'; id: string } | undefined {
+): { family: ChatProfileFamily; id: string } | undefined {
   const match = id ? CHAT_PROFILE_ID_RE.exec(id) : null
-  return match ? { family: match[1] as 'claude' | 'codex', id: match[2] } : undefined
+  return match ? { family: match[1] as ChatProfileFamily, id: match[2] } : undefined
 }
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/
@@ -297,6 +299,9 @@ export function buildAgentArgv(input: {
   permissionMode?: string
   pluginDir?: string
   appendSystemPrompt?: string
+  /** OpenCode only (PRDCT-4496): run the TUI on its own server, so the
+   *  tab's environment (its connection, its model) is the one read. */
+  opencodeStandalone?: boolean
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -377,6 +382,10 @@ export function buildAgentArgv(input: {
     const tokens = [...input.profile.command, ...input.profile.additionalArgs]
     if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
     if (input.dangerousMode && !tokens.includes('--auto')) argv.push('--auto')
+    // The shared background service keeps the environment it started with
+    // (OpenCode 2.3.0): a tab's connection and model, carried in its own
+    // environment, are read only by a TUI running standalone (PRDCT-4496).
+    if (input.opencodeStandalone && !tokens.includes('--standalone')) argv.push('--standalone')
     if (input.initialPrompt) argv.push('--prompt', input.initialPrompt)
     return argv
   } else {

@@ -3,6 +3,7 @@ import {
   BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
+  chatProfileSource,
   codexProfilePolicy,
   codexRungPolicy,
   resolveLaunchProfile,
@@ -62,6 +63,38 @@ describe('a carried launch profile', () => {
     }
     expect(sanitizeCarriedLaunchProfile(codex)).toEqual(codex)
     expect(sanitizeCarriedLaunchProfile({ ...codex, id: 'chat:claude:x' })).toBeNull()
+  })
+
+  // Lane D (PRDCT-4427): OpenCode's saved profiles have a chat form too.
+  it('accepts the chat form of a saved OpenCode profile, for its own family only', () => {
+    const opencode = {
+      id: 'chat:opencode:x',
+      name: 'X (chat)',
+      family: 'opencode',
+      command: ['opencode'],
+      additionalArgs: [],
+      sourceProfileId: 'x'
+    }
+    expect(sanitizeCarriedLaunchProfile(opencode)).toEqual(opencode)
+    expect(sanitizeCarriedLaunchProfile({ ...opencode, family: 'codex' })).toBeNull()
+    expect(chatProfileSource('chat:opencode:x')).toEqual({ family: 'opencode', id: 'x' })
+    expect(chatProfileSource('chat:antigravity:x')).toBeUndefined()
+  })
+
+  // Lane D (PRDCT-4427): Pi's saved profiles have a chat form too.
+  it('accepts the chat form of a saved Pi profile, its Pi settings kept, for its own family only', () => {
+    const pi = {
+      id: 'chat:pi:x',
+      name: 'X (chat)',
+      family: 'pi',
+      command: ['pi'],
+      additionalArgs: [],
+      sourceProfileId: 'x',
+      pi: { provider: 'anthropic', model: 'sonnet', thinking: 'high' }
+    }
+    expect(sanitizeCarriedLaunchProfile(pi)).toEqual(pi)
+    expect(sanitizeCarriedLaunchProfile({ ...pi, family: 'opencode' })).toBeNull()
+    expect(chatProfileSource('chat:pi:x')).toEqual({ family: 'pi', id: 'x' })
   })
 
   it.each([
@@ -313,6 +346,24 @@ describe('agent argv', () => {
     expect(buildAgentArgv({ kind: 'opencode', profile: auto, dangerousMode: true })).toEqual([
       'opencode',
       '--auto'
+    ])
+    // A tab's connection and model ride in its environment, read only by a
+    // standalone TUI (PRDCT-4496): pushed once, never twice.
+    expect(buildAgentArgv({ kind: 'opencode', profile, opencodeStandalone: true })).toEqual([
+      'opencode',
+      '--standalone'
+    ])
+    const standalone = {
+      ...profile,
+      id: 'oc-standalone',
+      builtIn: false,
+      additionalArgs: ['--standalone']
+    }
+    expect(
+      buildAgentArgv({ kind: 'opencode', profile: standalone, opencodeStandalone: true })
+    ).toEqual(['opencode', '--standalone'])
+    expect(buildAgentArgv({ kind: 'opencode', profile, opencodeStandalone: false })).toEqual([
+      'opencode'
     ])
     const managed = { ...profile, id: 'oc-bad', builtIn: false, additionalArgs: ['--prompt=x'] }
     expect(() => buildAgentArgv({ kind: 'opencode', profile: managed })).toThrow(

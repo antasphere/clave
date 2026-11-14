@@ -1,15 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
 import { launchOptions } from '../../../shared/launch-options'
-import { HARNESSES } from '../../../shared/harness'
+import { HARNESSES, HARNESS_BY_ID } from '../../../shared/harness'
+import { resolveProviderConnection } from '../../../shared/provider-connection-pick'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { ServerSettings } from '../store/server-settings-state'
 import type { AccountUsageSummary } from '../store/usage-store'
 import type { ClaudeAccount } from '../../../preload/index.d'
 import type { AccountSources } from './session-accounts'
+import type { ProviderLaunchConnection } from './launch-source'
+import type {
+  CatalogModelView,
+  ModelsCatalogView
+} from '@clave/contract/settings/models-catalog-view'
 import {
   launchModelsOf,
   localLaunchOptionsInput,
+  poolConnections,
   serverLaunchOptionsInput
 } from './launch-options-input'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import type { ProviderCompanyId } from '@clave/contract/settings/provider-catalogue'
+import type { ProviderConnection } from '../../../preload/index.d'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 
 // The session store reads localStorage at import; nothing here touches it.
 vi.mock('../store/session-store', () => ({ useSessionStore: {} }))
@@ -30,7 +42,9 @@ vi.mock('./launch-source', async (importOriginal) => {
       accounts: () => [],
       selectedAccountId: (family: string) => (family === 'claude' ? local.selected : null),
       chatProfileId: () => undefined,
-      connections: () => []
+      connections: () => [],
+      providerConnections: () => [],
+      catalog: () => null
     })
   }
 })
@@ -125,15 +139,17 @@ describe('serverLaunchOptionsInput', () => {
   })
 
   it("builds each pool from the server's accounts and usage, the first listed selected", () => {
-    expect(input.connections('claude').map((c) => [c.id, c.label, c.usable])).toEqual([
+    expect(
+      input.connections('claude', HARNESS_BY_ID.claude).map((c) => [c.id, c.label, c.usable])
+    ).toEqual([
       ['default', 'Default', true],
       ['srv-2', 'Team', true]
     ])
-    expect(input.connections('codex')).toEqual([
+    expect(input.connections('codex', HARNESS_BY_ID.codex)).toEqual([
       { id: 'k1', label: 'Key', usable: true, fallback: true, usage: undefined }
     ])
     expect(input.selectedConnectionId('claude')).toBe('default')
-    expect(input.connections('nope' as never)).toEqual([])
+    expect(input.connections('nope' as never, HARNESS_BY_ID.claude)).toEqual([])
     const claude = answer.harnesses.find((h) => h.id === 'claude')!
     expect(claude.connections.map((c) => [c.id, c.exhausted, c.suggested])).toEqual([
       ['default', true, false],
@@ -185,6 +201,179 @@ describe('serverLaunchOptionsInput', () => {
   })
 })
 
+describe("Pi's and OpenCode's provider pools (PRDCT-4496)", () => {
+  const view = (
+    id: string,
+    company: ProviderCompanyId,
+    over: Partial<ProviderConnection> = {}
+  ): ProviderConnection => ({
+    id,
+    label: `${id} label`,
+    company,
+    kind: 'key',
+    pool: company,
+    endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+    needsKey: true,
+    hasKey: true,
+    keySetAt: 1,
+    createdAt: 1,
+    ...over
+  })
+
+  it("lists each machine's stored connections under their company's pool, from lane B's store", () => {
+    useProviderConnectionsStore.setState({
+      byMachine: {
+        [LOCAL_SERVER_ID]: {
+          connections: [
+            view('mac-kimi', 'moonshot'),
+            view('mac-ds', 'deepseek', { hasKey: false, keySetAt: null })
+          ],
+          loading: false,
+          error: null
+        },
+        srv: {
+          connections: [view('srv-ollama', 'ollama', { needsKey: false, hasKey: false })],
+          loading: false,
+          error: null
+        }
+      }
+    })
+    const before = local.sources
+    try {
+      local.sources = {
+        claude: [],
+        codex: [],
+        claudeUsage: {},
+        codexUsage: {},
+        servers: {}
+      } satisfies AccountSources
+      const mac = launchOptions(
+        localLaunchOptionsInput({ ...facts, agents: [], preferRecommended: false })
+      )
+      for (const id of ['pi', 'opencode']) {
+        const h = mac.harnesses.find((x) => x.id === id)!
+        expect(h.connections.map((c) => [c.pool, c.id, c.usable])).toEqual([
+          ['moonshot', 'mac-kimi', true],
+          ['deepseek', 'mac-ds', false]
+        ])
+        // The first with a key is the one `account: "any"` lands on (PRDCT-4496).
+        expect(h.connections.map((c) => [c.id, c.suggested])).toEqual([
+          ['mac-kimi', true],
+          ['mac-ds', false]
+        ])
+        expect(h.connectionNote).toMatch(/^Clave holds stored connections for /)
+      }
+      const server = launchOptions(serverLaunchOptionsInput('srv', 'Studio box', settings, facts))
+      expect(
+        server.harnesses.find((x) => x.id === 'pi')!.connections.map((c) => [c.pool, c.id])
+      ).toEqual([['ollama', 'srv-ollama']])
+      // The pool answers through the one shape of a connection.
+      expect(
+        poolConnections(local.sources as AccountSources, 'srv', 'ollama', HARNESS_BY_ID.pi)
+      ).toEqual([
+        {
+          id: 'srv-ollama',
+          label: 'srv-ollama label',
+          pool: 'ollama',
+          company: 'ollama',
+          kind: 'key',
+          usable: true,
+          reportsUsage: false,
+          usage: undefined
+        }
+      ])
+      expect(
+        poolConnections(local.sources as AccountSources, 'srv', 'moonshot', HARNESS_BY_ID.pi)
+      ).toEqual([])
+    } finally {
+      local.sources = before
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+
+  it("says a connected server's Pi decides the start model, never naming one the Mac cannot know", () => {
+    useProviderConnectionsStore.setState({
+      byMachine: {
+        srv: { connections: [view('srv-kimi', 'moonshot')], loading: false, error: null }
+      }
+    })
+    try {
+      const server = launchOptions(serverLaunchOptionsInput('srv', 'Studio box', settings, facts))
+      const [row] = server.harnesses.find((x) => x.id === 'pi')!.connections
+      expect(row).not.toHaveProperty('startModel')
+      expect(row.startModelNote).toBe(
+        'Studio box decides the model from its own Pi settings when the tab opens: pass a model to choose it.'
+      )
+      // OpenCode needs no start model: its rows say nothing of it.
+      for (const c of server.harnesses.find((x) => x.id === 'opencode')!.connections)
+        expect(c).not.toHaveProperty('startModelNote')
+    } finally {
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+
+  it("names this Mac's Pi start model from main's answer, and no note", () => {
+    useProviderConnectionsStore.setState({
+      byMachine: {
+        [LOCAL_SERVER_ID]: {
+          connections: [view('mac-kimi', 'moonshot')],
+          loading: false,
+          error: null
+        }
+      }
+    })
+    const before = local.sources
+    try {
+      local.sources = { claude: [], codex: [], claudeUsage: {}, codexUsage: {}, servers: {} }
+      const mac = launchOptions(
+        localLaunchOptionsInput({
+          ...facts,
+          agents: [],
+          preferRecommended: false,
+          piStarts: { 'mac-kimi': { ok: true, model: 'k-second', from: 'own-default' } }
+        })
+      )
+      const [row] = mac.harnesses.find((x) => x.id === 'pi')!.connections
+      expect(row.startModel).toBe('k-second')
+      expect(row).not.toHaveProperty('startModelNote')
+    } finally {
+      local.sources = before
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+
+  it('lists a stored connection under no pool of a harness that speaks none of its wire formats, as the open never lands on it', () => {
+    const views = [
+      view('chat-only', 'moonshot'),
+      view('messages', 'moonshot', {
+        endpoints: [{ wireFormat: 'anthropic-messages', baseUrl: 'https://made-up.invalid/v1' }]
+      })
+    ]
+    useProviderConnectionsStore.setState({
+      byMachine: { srv: { connections: views, loading: false, error: null } }
+    })
+    try {
+      // A Pi row speaking Anthropic's messages only.
+      const narrow = { ...HARNESS_BY_ID.pi, wireFormats: ['anthropic-messages'] as const }
+      const sources = { claude: [], codex: [], claudeUsage: {}, codexUsage: {}, servers: {} }
+      expect(poolConnections(sources, 'srv', 'moonshot', narrow).map((c) => c.id)).toEqual([
+        'messages'
+      ])
+      const input = serverLaunchOptionsInput('srv', 'Studio box', settings, facts)
+      const pi = launchOptions({ ...input, harnesses: [narrow] }).harnesses[0]!
+      expect(pi.connections.map((c) => [c.id, c.suggested])).toEqual([['messages', true]])
+      const picked = resolveProviderConnection(
+        narrow,
+        views as unknown as ProviderConnectionView[],
+        'any'
+      )
+      expect(picked.ok && picked.connection.id).toBe('messages')
+    } finally {
+      useProviderConnectionsStore.setState({ byMachine: {} })
+    }
+  })
+})
+
 describe('localLaunchOptionsInput', () => {
   const weekAt = (used: number, resetsAt: number): AccountUsageSummary => {
     const w = {
@@ -230,7 +419,8 @@ describe('localLaunchOptionsInput', () => {
     // its chat form the built-in chat.
     const chat = localLaunchOptionsInput({ ...facts, agents: [], preferRecommended: false })
     expect(chat.openProfileId('claude')).toBe('claude-chat')
-    expect(chat.openProfileId('pi')).toBe('builtin-pi')
+    // Pi has a chat view since PRDCT-4427: Antigravity is the harness left without one.
+    expect(chat.openProfileId('antigravity')).toBe('builtin-antigravity')
     const terminal = localLaunchOptionsInput({
       ...facts,
       interactionMode: 'terminal',
@@ -242,7 +432,75 @@ describe('localLaunchOptionsInput', () => {
 })
 
 describe('launchModelsOf', () => {
-  const none = { profilesFor: () => [] }
+  const none = { profilesFor: () => [], catalog: () => null, providerConnections: () => [] }
+  // A machine with two stored connections and one saved Pi profile; the
+  // catalogue lists both companies' models (a deprecated one hidden).
+  const catalogModel = (id: string, deprecated = false): CatalogModelView => ({
+    id,
+    name: `${id} name`,
+    reasoning: true,
+    toolCall: true,
+    ...(deprecated ? { status: 'deprecated' as const } : {})
+  })
+  const VIEW: ModelsCatalogView = {
+    fetchedAt: 1,
+    stale: false,
+    providers: [
+      { id: 'deepseek', name: 'DeepSeek', models: [catalogModel('deepseek-chat')] },
+      {
+        id: 'mistral',
+        name: 'Mistral',
+        models: [catalogModel('devstral'), catalogModel('old', true)]
+      }
+    ]
+  }
+  const stored = (
+    view: ModelsCatalogView | 'loading' | null,
+    connections: readonly ProviderLaunchConnection[] = [
+      { id: 'c-mi', label: 'Mistral work', company: 'mistral' },
+      { id: 'c-ds', label: 'DeepSeek', company: 'deepseek' }
+    ]
+  ): Parameters<typeof launchModelsOf>[0] => ({
+    profilesFor: (family) =>
+      family === 'pi'
+        ? ([{ id: 'pi-glm', family: 'pi', pi: { model: 'glm-5' } }] as ReturnType<
+            Parameters<typeof launchModelsOf>[0]['profilesFor']
+          >)
+        : [],
+    catalog: () => view,
+    providerConnections: () => connections
+  })
+  const DEFAULT = { id: null, label: 'Default', family: 'Default' }
+
+  it("lists Pi's default, the catalogue models of each connection's company in order, then the pinned", () => {
+    expect(launchModelsOf(stored(VIEW), 'pi', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+      { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' },
+      { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+    ])
+  })
+  it("lists OpenCode's default and the catalogue models, no pinned model", () => {
+    expect(launchModelsOf(stored(VIEW), 'opencode', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+      { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' }
+    ])
+  })
+  it('answers the default and the pinned while the catalogue is read', () => {
+    expect(launchModelsOf(stored('loading'), 'pi', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+    ])
+    expect(launchModelsOf(stored('loading'), 'opencode', 'unavailable')).toEqual([DEFAULT])
+  })
+  it('answers the default and the pinned with no connection stored', () => {
+    expect(launchModelsOf(stored(VIEW, []), 'pi', 'unavailable')).toEqual([
+      DEFAULT,
+      { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+    ])
+    expect(launchModelsOf(stored(VIEW, []), 'opencode', 'unavailable')).toEqual([DEFAULT])
+  })
   it('reads a Codex list that failed or came back empty as unavailable', () => {
     expect(launchModelsOf(none, 'codex', 'unavailable')).toBe('unavailable')
     expect(launchModelsOf(none, 'codex', [])).toBe('unavailable')

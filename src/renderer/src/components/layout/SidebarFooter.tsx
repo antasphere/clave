@@ -41,6 +41,7 @@ import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
 import { UserIconDisplay } from '../ui/UserIconDisplay'
 import { BrandField } from '../ui/BrandField'
 import { fieldAccent } from '../../lib/brand-field'
+import { useSessionConnection } from '../../lib/session-connection'
 import { cn } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
@@ -302,6 +303,9 @@ export function SidebarFooter(): React.ReactElement {
       ? null
       : (s.sessions.find((session) => session.id === s.focusedSessionId) ?? null)
   )
+  // A Pi or OpenCode tab's stored connection, named where a Claude tab's
+  // account is (PRDCT-4427).
+  const connection = useSessionConnection(focusedSession)
   // Subscribed so the launcher's pick follows the reads as they land.
   useClaudeAccountsUsage((s) => s.byAccount)
   const selectedCodexId = useCodexAccountStore((s) => s.selectedAccountId)
@@ -385,6 +389,11 @@ export function SidebarFooter(): React.ReactElement {
   const piTotals = provider === 'pi' && pi.status !== 'error' ? pi.data : null
   const providerStatus = provider === 'pi' ? pi.status : quota.status
   const showProviderStatus = (quotaProvider !== null || provider === 'pi') && !usage && !piTotals
+  // A Pi or OpenCode tab's stored connection is a line of its own, never part
+  // of a usage line: Pi's figures are its local totals of the day on any
+  // connection or none, so `Moonshot · 10.4K tokens` would read as that
+  // connection's usage, and it is not (T1, PRDCT-4427).
+  const harnessName = focusedSession?.piMode ? 'Pi' : 'OpenCode'
   const showWork =
     !usage && !piTotals && !showProviderStatus && trackerEnabled && trackerMinutes > 0
   const showMetaRow =
@@ -454,6 +463,26 @@ export function SidebarFooter(): React.ReactElement {
           <Cog6ToothIcon className="w-4 h-4" />
         </button>
       </div>
+
+      {connection && (
+        <>
+          <div className="sidebar-footer-sep" />
+          <div className="sidebar-footer-row sidebar-footer-row--meta">
+            {/* A control like the usage lines: a click opens Settings where
+                the connection is managed (Connections). */}
+            <button
+              className="sidebar-footer-line"
+              data-connection-line={connection.id}
+              onClick={() => openSettings('accounts')}
+              title={`${harnessName} · Connection: ${connection.label}`}
+            >
+              <span className="text-[11px] text-text-secondary truncate">
+                {harnessName} · {connection.label}
+              </span>
+            </button>
+          </div>
+        </>
+      )}
 
       {showMetaRow && (
         <>

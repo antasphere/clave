@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
-import type { ClaudeAccount, CodexAccount } from '../../../../preload/index.d'
+import type { ClaudeAccount, CodexAccount, ProviderCompanyId } from '../../../../preload/index.d'
 import type { LauncherFamily } from '../../../../shared/agent-launch'
 import { useSettingsServer } from '../../store/settings-machine-store'
 import {
@@ -25,6 +25,8 @@ import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
 import { HelpersList } from './HelpersSettings'
 import { IntegrationsList } from './IntegrationsSettings'
 import { SettingsPage, SettingsSection, SettingsCard, SettingsCallout } from './primitives'
+// ── Lane B (harness wave): provider connections (PRDCT-4426) ──
+import { ProviderConnectMenu, ProviderConnectionsSections } from './ProviderConnectionsSection'
 
 /**
  * The pages of the Agents group when the machine picker names a saved
@@ -273,15 +275,20 @@ function CodexRow({
 export function ServerAccountsSettings({ serverId }: { serverId: string }): ReactElement {
   const page = useServerPage(serverId)
   const { settings, name } = page
+  // The provider connections are managed from here (PRDCT-4426): their keys
+  // are sealed on the server by its own secret port.
+  const [addRequest, setAddRequest] = useState<ProviderCompanyId | null>(null)
+  const live = page.connected && settings.status !== 'error'
   return (
     <SettingsPage
       title="Connections"
       description={`The Claude and Codex accounts signed in on ${name}. Sessions started there run on them, in this order.`}
       testId="accounts"
+      actions={live ? <ProviderConnectMenu onPick={setAddRequest} /> : undefined}
     >
       <div className="settings-page-sections" data-server-settings={serverId}>
         <ServerNotice serverId={serverId} {...page} />
-        {page.connected && settings.status !== 'error' && (
+        {live && (
           <>
             <SettingsCallout
               tone="accent"
@@ -340,6 +347,11 @@ export function ServerAccountsSettings({ serverId }: { serverId: string }): Reac
                 ))}
               </SettingsCard>
             </SettingsSection>
+            <ProviderConnectionsSections
+              machine={serverId}
+              addRequest={addRequest}
+              onAddDone={() => setAddRequest(null)}
+            />
           </>
         )}
       </div>

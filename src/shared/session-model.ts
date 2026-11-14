@@ -307,7 +307,15 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
    *  turn; null when the provider says the model runs at none or will not
    *  say. Sent at ready and after every switch of model or effort. */
   z.object({ type: z.literal('effort'), effort: z.string().nullable() }),
-  z.object({ type: z.literal('error'), message: z.string(), fatal: z.boolean() }),
+  /* `notice` names a notice that stands for the latest of its kind (an
+     OpenCode chat's rate-limit retry, PRDCT-4427): a view shows the new one
+     in place of the one before under the same name, never a pile. */
+  z.object({
+    type: z.literal('error'),
+    message: z.string(),
+    fatal: z.boolean(),
+    notice: z.string().optional()
+  }),
   /* The turn the reader's `interrupt` stopped ended there: the provider's word
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */

@@ -34,6 +34,10 @@ import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import { modelsCatalog } from '../models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import { providerUsageView } from '../provider-usage'
 
 export interface StandaloneSettings {
   settings: SettingsSourceService
@@ -75,11 +79,19 @@ export function standaloneSettingsSource(
     workspaces: workspaceManager,
     helpers: helperPreferences,
     integrations: elevenLabsIntegration,
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog,
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage: { view: providerUsageView },
     // Loaded on first use, as the shell's: the daemon's login reaches the
     // login shell's environment through the terminal backend, which the
     // source's own import graph must not reach (`boot-graph.test.ts`).
     logins: () => import('./daemon-logins').then((m) => m.daemonLogins()),
-    antasphere
+    antasphere,
+    // ── Lane B (harness wave): provider connections ──
+    // Loaded on first use, as the shell's (`source.ts` says why).
+    providerConnections: () =>
+      import('../provider-connections').then((m) => m.providerConnectionsManager)
   })
   // The accounts and their usage events belong to this process. Main's
   // clock is suppressed when it attaches, and a renderer only refreshes

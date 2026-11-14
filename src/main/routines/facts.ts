@@ -17,6 +17,7 @@ import {
 } from '../../shared/connection'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import type { LaunchFacts } from './launch'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 
 export interface FactsManagers {
   readonly claudeAccounts: {
@@ -32,6 +33,11 @@ export interface FactsManagers {
   readonly preference?: (key: string) => unknown
   /** The model a launch naming none will run (`rememberedSpawnModel`). */
   readonly launchModel?: LaunchFacts['launchModel']
+  /** The stored provider connections (`providerConnectionsManager`, PRDCT-4496);
+   *  absent, an account on Pi or OpenCode finds none. */
+  readonly providerConnections?: {
+    forHarness(harnessId: string): readonly ProviderConnectionView[]
+  }
 }
 
 const summaryOf = (read: unknown): ServedPoolAccount['usage'] =>
@@ -51,6 +57,9 @@ export function launchFactsFromManagers(m: FactsManagers): LaunchFacts {
   return {
     preferences: () => m.launchProfiles.getPreferences(),
     ...(m.launchModel ? { launchModel: m.launchModel } : {}),
+    ...(m.providerConnections
+      ? { providerConnectionsFor: (harness) => m.providerConnections!.forHarness(harness) }
+      : {}),
     // Each row is a Connection (pool, company, kind, reportsUsage, usage as
     // the pool states them) and the pool rule's view of it (usable, fallback
     // for a key), so the listing's rows carry both shapes unchanged.

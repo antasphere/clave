@@ -107,7 +107,7 @@ export type Entry =
       moved?: boolean
       at: number
     }
-  | { kind: 'error'; message: string; at: number }
+  | { kind: 'error'; message: string; at: number; notice?: string }
   /** The permission mode changed (PRDCT-4331): one line, said in the
    *  transcript, never for the first word on the mode nor for a repeat.
    *  `by` is known when this view asked for the switch. */
@@ -376,14 +376,26 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     }
   }
   if ('prepend' in action) {
-    if (!action.prepend.length) return state
-    const earlier = action.prepend.reduce(reduceConversation, emptyConversation)
+    // A notice the adapter keeps in the past AND said live (a Pi or OpenCode
+    // chat refused at start, PRDCT-4427) is shown once: the past's copy of a
+    // notice this pane already heard live is dropped.
+    const heard = new Set(state.entries.flatMap((e) => (e.kind === 'error' ? [e.message] : [])))
+    const items = heard.size
+      ? action.prepend.filter(
+          (item) => item.event.type !== 'error' || !heard.has(item.event.message)
+        )
+      : action.prepend
+    if (!items.length) return state
+    const earlier = items.reduce(reduceConversation, emptyConversation)
     const past = earlier.entries
     return {
       ...state,
       entries: [...past, ...state.entries],
       first: state.first - past.length,
-      explained: { ...earlier.explained, ...state.explained }
+      explained: { ...earlier.explained, ...state.explained },
+      // The past's word on the model stands until the live one says its own
+      // (PRDCT-4427): an OpenCode or Pi tab says it once.
+      model: state.model ?? earlier.model
     }
   }
   if ('answer' in action) {
@@ -631,18 +643,31 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     }
     case 'permission_explained':
       return { ...state, explained: { ...state.explained, [event.id]: event } }
-    case 'error':
-      entries.push({ kind: 'error', message: event.message, at })
+    case 'error': {
+      // A named notice stands for the latest of its kind (an OpenCode retry,
+      // PRDCT-4427): the one before under that name gives way to it.
+      const before = event.notice
+        ? entries.findLastIndex((e) => e.kind === 'error' && e.notice === event.notice)
+        : -1
+      if (before >= 0) entries.splice(before, 1)
+      entries.push({
+        kind: 'error',
+        message: event.message,
+        at,
+        ...(event.notice ? { notice: event.notice } : {})
+      })
       // A refused switch comes back as an error (the CLI's reason, or the
       // adapter's refusal of the write): the chip reads the model it is still
       // on. Any other error in that window reverts it the same way, and the
-      // switch's own confirmation, when it comes, names the model again.
+      // switch's own confirmation, when it comes, names the model again. A
+      // named notice refuses nothing: the pick stands.
       return {
         ...state,
         entries,
         state: event.fatal ? 'ended' : state.state,
-        pendingModel: null
+        pendingModel: event.notice ? state.pendingModel : null
       }
+    }
     case 'turn_interrupted': {
       // The message that started the turn is the last one the reader sent;
       // an answer still streaming when the stop landed is closed as it stands.

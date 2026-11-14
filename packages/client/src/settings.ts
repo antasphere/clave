@@ -74,6 +74,38 @@ export type PinsWriteResult = typeof S.UpdateWorkspacePins.success.Type
 export type AntasphereAccountStatus = typeof S.AntasphereAccountStatusView.Type
 export type AntasphereSignInResult = typeof S.SignInWithAntasphere.success.Type
 export type AntasphereHandoff = typeof S.AntasphereHandoffView.Type
+// ── Lane B (harness wave): provider connections ──
+export type ProviderConnection = typeof S.ProviderConnectionView.Type
+export type ProviderCompanyId = typeof S.ProviderCompanyId.Type
+export type ProviderWireFormat = typeof S.ProviderWireFormat.Type
+export interface ProviderConnectionAddInput {
+  readonly company: ProviderCompanyId
+  readonly label?: string
+  readonly baseUrl?: string
+  readonly wireFormat?: ProviderWireFormat
+}
+
+/** A server released before the provider connections (PRDCT-4426): the same
+ *  404, said as the update it needs. */
+export const PROVIDER_CONNECTIONS_NEED_UPDATE =
+  'This server needs an update to show its provider connections.'
+export class ProviderConnectionsMissing extends Error {
+  readonly _tag = 'ProviderConnectionsMissing'
+  constructor() {
+    super(PROVIDER_CONNECTIONS_NEED_UPDATE)
+    this.name = 'ProviderConnectionsMissing'
+  }
+}
+const providerConnectionsMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new ProviderConnectionsMissing()
+      : error
+  })
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+export type ModelsCatalogView = typeof S.ModelsCatalogView.Type
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+export type ProviderUsageLineView = typeof S.ProviderUsageLineView.Type
 
 export interface SettingsClient {
   readonly claudeAccounts: {
@@ -173,6 +205,34 @@ export interface SettingsClient {
       origin?: string
     ) => Promise<PinsWriteResult>
     readonly setLastActive: (workspaceId: string | null) => Promise<void>
+  }
+  // ── Lane B (harness wave): provider connections ──
+  /** The provider connections of that server (PRDCT-4426): the key goes out
+   *  in `setKey` alone and comes back in nothing; every answer says `hasKey`. */
+  readonly providerConnections: {
+    readonly list: () => Promise<ReadonlyArray<ProviderConnection>>
+    readonly add: (input: ProviderConnectionAddInput) => Promise<ProviderConnection>
+    readonly rename: (id: string, label: string) => Promise<ProviderConnection>
+    readonly remove: (id: string) => Promise<boolean>
+    readonly setKey: (id: string, apiKey: string) => Promise<ProviderConnection>
+  }
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** That server's models catalogue: the providers of those ids in their
+   *  order (all when none is named), fetched again first with `force`. */
+  readonly modelsCatalog: {
+    readonly read: (input?: {
+      readonly providerIds?: ReadonlyArray<string>
+      readonly force?: boolean
+    }) => Promise<ModelsCatalogView>
+  }
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** That server's usage line of that stored provider connection, read again
+   *  first with `force`; an unknown connection is the unknown line. */
+  readonly providerUsage: {
+    readonly read: (input: {
+      readonly connectionId: string
+      readonly force?: boolean
+    }) => Promise<ProviderUsageLineView>
   }
 }
 
@@ -300,6 +360,65 @@ export function settingsClient(callApi: Call): SettingsClient {
         call((g) => g.updateWorkspacePins({ payload: { scope, pins, ...origin(from) } })),
       setLastActive: (workspaceId) =>
         call((g) => g.setLastActiveWorkspace({ payload: { workspaceId } })).then(done)
+    },
+    // ── Lane B (harness wave): provider connections ──
+    providerConnections: {
+      list: () =>
+        providerConnectionsMissing(call((g) => g.listProviderConnections({ payload: {} }))),
+      add: (input) =>
+        providerConnectionsMissing(
+          call((g) =>
+            g.addProviderConnection({
+              payload: {
+                company: input.company,
+                ...(input.label !== undefined && { label: input.label }),
+                ...(input.baseUrl !== undefined && { baseUrl: input.baseUrl }),
+                ...(input.wireFormat !== undefined && { wireFormat: input.wireFormat })
+              }
+            })
+          )
+        ),
+      rename: (id, label) =>
+        providerConnectionsMissing(
+          call((g) => g.renameProviderConnection({ payload: { id, label } }))
+        ),
+      remove: (id) =>
+        providerConnectionsMissing(call((g) => g.removeProviderConnection({ payload: { id } }))),
+      setKey: (id, apiKey) =>
+        providerConnectionsMissing(
+          call((g) => g.setProviderConnectionKey({ payload: { id, apiKey } }))
+        )
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue. A GET's
+    // parameters: the ids comma-joined, the flag as a string, only what is set.
+    modelsCatalog: {
+      read: (input = {}) =>
+        call((g) =>
+          g.readModelsCatalog({
+            payload: {
+              ...(input.providerIds &&
+                input.providerIds.length > 0 && { providerIds: input.providerIds.join(',') }),
+              ...(input.force !== undefined && {
+                force: input.force ? ('true' as const) : ('false' as const)
+              })
+            }
+          })
+        )
+    },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line. A
+    // GET's parameters: the id, the flag as a string, only when set.
+    providerUsage: {
+      read: (input) =>
+        call((g) =>
+          g.readProviderUsage({
+            payload: {
+              connectionId: input.connectionId,
+              ...(input.force !== undefined && {
+                force: input.force ? ('true' as const) : ('false' as const)
+              })
+            }
+          })
+        )
     }
   }
 }

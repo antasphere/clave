@@ -246,6 +246,9 @@ function sessionFromRecord(
     claudeConfigDir: s.configDir,
     codexAccountId: s.codexAccountId,
     codexAccountLabel: s.codexAccountLabel,
+    // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+    connectionId: s.connectionId,
+    connectionLabel: s.connectionLabel,
     // Where the conversation came from (PRDCT-4300), for the first card.
     continuedFrom: s.continuedFrom,
     sessionType: 'local',
@@ -318,7 +321,10 @@ async function spawnFromRecord(
             ? { resumeSessionId: s.piSessionId }
             : s.codexMode && s.codexThreadId
               ? { resumeSessionId: s.codexThreadId }
-              : {}),
+              : // Lane D (PRDCT-4427): an OpenCode chat resumes its session.
+                s.opencodeMode && s.opencodeSessionId
+                ? { resumeSessionId: s.opencodeSessionId }
+                : {}),
       launchProfileId: s.launchProfileId,
       piProvider: s.piProvider,
       piThinking: s.piThinking,
@@ -327,6 +333,9 @@ async function spawnFromRecord(
       claudeProfileLabel: s.claudeProfileLabel,
       codexAccountId: s.codexAccountId,
       codexAccountLabel: s.codexAccountLabel,
+      // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+      connectionId: s.connectionId,
+      connectionLabel: s.connectionLabel,
       workspaceId,
       // Carry the ownership forward: an adoption rewrites the record, and a
       // hidden half that came back unstamped would be a tab at the NEXT boot.
@@ -507,6 +516,9 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     claudeConfigDir: s.configDir,
     codexAccountId: s.codexAccountId,
     codexAccountLabel: s.codexAccountLabel,
+    // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+    connectionId: s.connectionId,
+    connectionLabel: s.connectionLabel,
     // Where the conversation came from (PRDCT-4300), for the first card.
     continuedFrom: s.continuedFrom,
     sessionType: 'local',

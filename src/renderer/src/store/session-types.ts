@@ -387,6 +387,9 @@ export interface Session {
    *  the machine's own `~/.codex`. `codexAccountLabel` drives the badge. */
   codexAccountId?: string
   codexAccountLabel?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId?: string
+  connectionLabel?: string
   /** Bumped by a restart on another account: the pane remounts on it, so
    *  the terminal reconnects to the new process under the same id. */
   restartEpoch?: number

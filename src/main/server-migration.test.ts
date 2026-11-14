@@ -29,8 +29,13 @@ import {
   MIGRATION_MARKER,
   MIGRATION_VERSION,
   SESSION_RECORDS_DIR,
-  migrateAppDataToServer
+  migrateAppDataToServer,
+  // ── Lane B (harness wave): provider connections ──
+  PROVIDER_CONNECTIONS_CREDENTIALS_FILE,
+  PROVIDER_CONNECTIONS_FILE
 } from './server-migration'
+// ── Lane B (harness wave): provider connections ──
+import * as providerConnections from './provider-connections'
 
 const appSeal = (plain: string): string => `app:${Buffer.from(plain).toString('base64')}`
 const from = {
@@ -709,6 +714,94 @@ describe('the migration of the app data into the server directory', () => {
         })
         expect(report.records.copied).toBe(1)
         expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: MIGRATION_VERSION })
+      } finally {
+        clean()
+      }
+    })
+  })
+
+  // ── Lane B (harness wave): provider connections ──
+  describe('the provider connections (PRDCT-4426)', () => {
+    const KEY = 'sk-test-provider-0123456789'
+
+    it('names the two files as the manager does', () => {
+      expect(PROVIDER_CONNECTIONS_FILE).toBe(providerConnections.PROVIDER_CONNECTIONS_FILE)
+      expect(PROVIDER_CONNECTIONS_CREDENTIALS_FILE).toBe(
+        providerConnections.PROVIDER_CONNECTIONS_CREDENTIALS_FILE
+      )
+    })
+
+    it('copies the list byte for byte and re-seals each key for the server, setAt kept', async () => {
+      const { app, srv, clean } = dirs()
+      try {
+        const list = '{\n  "v": 1,\n  "connections": [{ "id": "pc-1", "label": "Work" }]\n}'
+        writeFileSync(path.join(app, PROVIDER_CONNECTIONS_FILE), list, { mode: 0o600 })
+        writeFileSync(
+          path.join(app, PROVIDER_CONNECTIONS_CREDENTIALS_FILE),
+          JSON.stringify({
+            'pc-1': { apiKey: appSeal(KEY), setAt: 7 },
+            'pc-2': { apiKey: 'kc:somebody-elses', setAt: 8 }
+          }),
+          { mode: 0o600 }
+        )
+        const { sealed, to } = server()
+        const report = await migrateAppDataToServer({ appDir: app, serverDir: srv, from, to })
+        expect(report.failed).toEqual([])
+        expect(report.copied).toEqual(
+          expect.arrayContaining([PROVIDER_CONNECTIONS_FILE, PROVIDER_CONNECTIONS_CREDENTIALS_FILE])
+        )
+        expect(readFileSync(path.join(srv, PROVIDER_CONNECTIONS_FILE), 'utf-8')).toBe(list)
+        expect(sealed).toEqual([KEY])
+        expect(json(path.join(srv, PROVIDER_CONNECTIONS_CREDENTIALS_FILE))).toEqual({
+          'pc-1': { apiKey: 'kc:1', setAt: 7 }
+        })
+        expect(report.unopened).toEqual(['provider:pc-2'])
+        expect(statSync(path.join(srv, PROVIDER_CONNECTIONS_CREDENTIALS_FILE)).mode & 0o777).toBe(
+          0o600
+        )
+        for (const name of [PROVIDER_CONNECTIONS_CREDENTIALS_FILE, MIGRATION_MARKER]) {
+          const text = readFileSync(path.join(srv, name), 'utf-8')
+          expect(text).not.toContain(KEY)
+          expect(text).not.toContain(appSeal(KEY))
+        }
+      } finally {
+        clean()
+      }
+    })
+
+    it('an app with either file alone is not "nothing"', async () => {
+      const { app, srv, clean } = dirs()
+      try {
+        writeFileSync(
+          path.join(app, PROVIDER_CONNECTIONS_CREDENTIALS_FILE),
+          JSON.stringify({ 'pc-1': { apiKey: appSeal(KEY), setAt: 7 } })
+        )
+        const report = await migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.outcome).toBe('migrated')
+        expect(report.copied).toEqual([PROVIDER_CONNECTIONS_CREDENTIALS_FILE])
+      } finally {
+        clean()
+      }
+    })
+
+    it('writes nothing of either when the app has neither', async () => {
+      const { app, srv, clean } = dirs()
+      try {
+        writeFileSync(path.join(app, 'preferences.json'), '{}')
+        const report = await migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.copied).toEqual(['preferences.json'])
+        expect(existsSync(path.join(srv, PROVIDER_CONNECTIONS_FILE))).toBe(false)
+        expect(existsSync(path.join(srv, PROVIDER_CONNECTIONS_CREDENTIALS_FILE))).toBe(false)
       } finally {
         clean()
       }

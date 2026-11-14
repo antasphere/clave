@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
+  buildAgentArgv,
   isCodexRung,
   profileSetsPermissions,
   sanitizeCarriedLaunchProfile,
@@ -22,6 +23,13 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
+import {
+  piSessionLookupEnv,
+  providerInjectionForSpawn,
+  type ProviderSpawnFields
+} from './provider-injection-spawn'
+import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
+import { connectionVariableNames } from './connection-handover'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -65,11 +73,20 @@ function permissionDefaultFor(family: LauncherFamily): string | undefined {
 }
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
-import { providerSwitchOptions } from './sessions/provider-switch'
+import {
+  familyOfOptions,
+  isTransportSwitch,
+  providerSwitchOptions,
+  transportSwitchOptions,
+  transportTarget
+} from './sessions/provider-switch'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
+import { findPiSession } from './session-history/pi'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
+import { AcpAdapter } from './sessions/adapters/acp-adapter'
+import { PiRpcAdapter } from './sessions/adapters/pi-rpc-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
@@ -100,6 +117,26 @@ sessionManager.registerAdapter(echoAdapter)
 sessionManager.registerAdapter(claudeAdapter)
 const codexAdapter = new CodexAdapter()
 sessionManager.registerAdapter(codexAdapter)
+// Lane D (PRDCT-4427): OpenCode in the chat view, over the Agent Client
+// Protocol its own binary speaks (`opencode acp`).
+const opencodeChatAdapter = new AcpAdapter({
+  id: 'opencode-chat',
+  provider: 'opencode',
+  label: 'OpenCode'
+})
+sessionManager.registerAdapter(opencodeChatAdapter)
+// Lane D (PRDCT-4427): Pi in the chat view, over Pi's own rpc mode
+// (`pi --mode rpc`).
+const piChatAdapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+sessionManager.registerAdapter(piChatAdapter)
+/** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
+type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat'
+const CHAT_RECORD_ADAPTERS = new Set<string>([
+  'claude-chat',
+  'codex-chat',
+  'opencode-chat',
+  'pi-chat'
+])
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -126,6 +163,30 @@ export interface RestartOverrides {
   resume?: string
   firstMessage?: string
   continuedFrom?: ContinuedFrom
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto its
+   *  family's chat adapter (`<pluginId>/<viewId>`); ignored on a move to the
+   *  terminal. */
+  viewId?: string
+}
+
+/** Whether Pi wrote the session `id` (it does at the first message), looked
+ *  for in the agent directory the tab's Pi runs in: what decides a Pi tab,
+ *  chat or terminal, resumes it (`--session`) or starts under its id
+ *  (`--session-id`). */
+export function piSessionWritten(
+  id: string,
+  cwd: string,
+  lookupEnv: Record<string, string | undefined>
+): boolean {
+  return findPiSession(id, cwd, lookupEnv) !== null
+}
+
+/** A connection's spawn fields a terminal's options take: the chat's own
+ *  `modelProvider` stays out of them. */
+function processFields(fields: ProviderSpawnFields): Omit<ProviderSpawnFields, 'modelProvider'> {
+  const rest = { ...fields }
+  delete rest.modelProvider
+  return rest
 }
 
 class PtyManager {
@@ -136,6 +197,12 @@ class PtyManager {
   private spawns = new Map<string, { cwd: string; options?: PtySpawnOptions }>()
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
+  /** An OpenCode chat session's id, from the ACP agent's own meta (lane D,
+   *  PRDCT-4427). */
+  private opencodeSessions = new Map<string, string>()
+  /** The provider a Pi or OpenCode chat on a connection names its models
+   *  under, so the model it reports reaches the record bare (PRDCT-4427). */
+  private chatModelProviders = new Map<string, string>()
   private limitListeners = new Set<(sessionId: string, report: LimitReport) => void>()
   /** The limit report still open on a session (ADR 0002, PRDCT-4302): the
    *  message the CLI's report rejected, whatever cap the CLI typed (its enum
@@ -252,11 +319,33 @@ class PtyManager {
         : ptyAdapter
     if (!adapter) throw new Error(`Adapter unavailable: ${events?.adapterId}`)
     const isEvents = !!events || echo
+    // A Pi terminal asked to resume a session Pi never wrote (it ended before
+    // its first message) starts fresh under the same id instead: `pi
+    // --session <id>` finds nothing, says "No session found matching" and
+    // exits, on every Resume. The chat's guard, below, is the same check.
+    if (
+      !isEvents &&
+      family === 'pi' &&
+      options?.resumeSessionId &&
+      UUID_RE.test(options.resumeSessionId) &&
+      !piSessionWritten(options.resumeSessionId, cwd, piSessionLookupEnv(options.connectionId))
+    )
+      options = { ...options, piSessionId: options.resumeSessionId, resumeSessionId: undefined }
     // A fresh chat that names no model starts on the one last picked in a
     // chat composer. A restored or resumed tab keeps its own, and a launch
     // that names a model (MCP, a .clave file) gets exactly that.
+    // A Pi or OpenCode chat on a stored connection is not: the connection
+    // decides what an open naming no model starts on, as its terminal does
+    // (`providerInjectionForSpawn`, PRDCT-4496), never a model last picked on
+    // another provider.
+    const onConnection =
+      !!options?.connectionId && (adapter.id === 'pi-chat' || adapter.id === 'opencode-chat')
     const remembered =
-      events && !options?.model && !options?.adoptSessionId && !options?.resumeSessionId
+      events &&
+      !onConnection &&
+      !options?.model &&
+      !options?.adoptSessionId &&
+      !options?.resumeSessionId
         ? rememberedChatModel(adapter.id)
         : undefined
     if (remembered) options = { ...options, model: remembered }
@@ -288,6 +377,16 @@ class PtyManager {
           oauthToken: await accountTokenForSpawn(
             options?.claudeAgentsMode ? 'claude-agents' : family === 'claude' ? 'claude' : null,
             options?.claudeProfileId
+          ),
+          // A Pi or OpenCode tab's stored connection, opened the same way and
+          // for those two alone (PRDCT-4496). A Pi tab on one that names no
+          // model (neither the open nor its profile) comes back with the model
+          // it starts on, which the spread puts on its command line and record.
+          ...processFields(
+            await providerInjectionForSpawn(family, {
+              connectionId: options?.connectionId,
+              model: options?.model ?? (family === 'pi' ? ownProfile?.pi?.model : undefined)
+            })
           )
         })
     // A live tmux session this process takes BACK (an app relaunch, a move
@@ -333,15 +432,55 @@ class PtyManager {
         options?.viewId ??
         (isEvents ? initialChatView(defaultViewFor(profileId)) : defaultViewFor(profileId))
     }
+    // A Pi or OpenCode chat on a stored connection opens it the way the
+    // terminal does (PRDCT-4496): its variables on the process alone, Pi's
+    // provider on its command line, never on the record. Read from the
+    // options at every spawn, so a key fixed in Settings reaches the next
+    // Resume; a refusal (gone, no key) ends the spawn here, before any
+    // process starts. A chat on no connection keeps the login shell's
+    // environment as it was.
+    const chatConnection: ProviderSpawnFields =
+      isEvents &&
+      options?.connectionId &&
+      (adapter.id === 'opencode-chat' || adapter.id === 'pi-chat')
+        ? await providerInjectionForSpawn(adapter.id === 'pi-chat' ? 'pi' : 'opencode', {
+            connectionId: options.connectionId,
+            model: options.model ?? (adapter.id === 'pi-chat' ? ownProfile?.pi?.model : undefined)
+          })
+        : {}
+    // The model a Pi chat on a connection starts on when none was picked, the
+    // terminal's by the same rule: on its command line, its record and its
+    // session, as a picked one is.
+    if (chatConnection.model) {
+      options = { ...options, model: chatConnection.model }
+      session.model = chatConnection.model
+    }
+    if (chatConnection.modelProvider)
+      this.chatModelProviders.set(session.id, chatConnection.modelProvider)
+    else this.chatModelProviders.delete(session.id)
+    const chatEnvAccount = chatConnection.providerEnv
+      ? { providerEnv: chatConnection.providerEnv }
+      : {}
+    // Pi keeps its sessions under the directory it runs in: the connection's,
+    // when the chat names one, so the guard below looks there.
+    const piHome = chatConnection.providerEnv?.PI_CODING_AGENT_DIR
+    const piLookupEnv = piHome
+      ? { ...getLoginShellEnv(), PI_CODING_AGENT_DIR: piHome }
+      : getLoginShellEnv()
     // A restored chat tab that never got a message has an id but no
     // transcript (Claude) or rollout (Codex), and resuming it fails: it
-    // relaunches fresh under the same id instead.
+    // relaunches fresh under the same id instead. An OpenCode chat's id is
+    // passed as given: the ACP adapter falls back to a new session, with a
+    // notice, when the agent refuses the load (lane D, PRDCT-4427).
     const resume =
       options?.resumeSessionId &&
       ((adapter.id === 'claude-chat' &&
         !findTranscript(options.resumeSessionId, cwd, options.configDir)) ||
         (adapter.id === 'codex-chat' &&
-          !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))))
+          !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))) ||
+        // Lane D (PRDCT-4427): a Pi session exists once Pi wrote its file
+        // (at the first message); until then the chat starts under its id.
+        (adapter.id === 'pi-chat' && !piSessionWritten(options.resumeSessionId, cwd, piLookupEnv)))
         ? undefined
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {
@@ -366,16 +505,78 @@ class PtyManager {
         options?.initialPrompt
       )
     }
+    // Lane D (PRDCT-4427): the binary and `acp` alone. A saved profile's
+    // `additionalArgs` (`--auto`, a `--session`) are the TUI's words, not the
+    // protocol's; the ACP agent asks its permissions over the protocol.
+    if (isEvents && adapter.id === 'opencode-chat') {
+      const opencodeProfile =
+        carried ?? launchProfileManager.resolve('opencode', options?.workspaceId, profileId)
+      opencodeChatAdapter.configure(session.id, {
+        command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
+        env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
+        initialPrompt: options?.initialPrompt,
+        // Carried past a login profile when started through the shell.
+        ...(chatConnection.providerEnv && options?.connectionId
+          ? { connectionVariables: connectionVariableNames(chatConnection.providerEnv) }
+          : {})
+      })
+    }
+    // Lane D (PRDCT-4427): Pi's chat runs Pi's own command line, built as the
+    // terminal's is (`buildAgentArgv`), in rpc mode. The session id is
+    // Clave's: resumed (`--session`) when Pi wrote its file, else started
+    // under it (`--session-id`), the id the terminal resumes later. The state
+    // extension is the terminal's, never the chat's.
+    if (isEvents && adapter.id === 'pi-chat') {
+      const piProfile =
+        carried ?? launchProfileManager.resolve('pi', options?.workspaceId, profileId)
+      session.piSessionId = options?.resumeSessionId ?? randomUUID()
+      const argv = buildAgentArgv({
+        kind: 'pi',
+        profile: piProfile,
+        sessionId: resume ? undefined : session.piSessionId,
+        resumeSessionId: resume,
+        model: options?.model,
+        provider: chatConnection.piProvider ?? options?.piProvider,
+        thinking: options?.piThinking
+      })
+      piChatAdapter.configure(session.id, {
+        command: [...argv, '--mode', 'rpc'],
+        env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
+        initialPrompt: options?.initialPrompt,
+        // The chat offers and runs the connection's provider's models alone,
+        // and its variables, named here, cross a login profile when Pi is
+        // started through the shell (PRDCT-4496).
+        ...(chatConnection.piProvider && chatConnection.providerEnv
+          ? {
+              connection: {
+                provider: chatConnection.piProvider,
+                variables: connectionVariableNames(chatConnection.providerEnv)
+              }
+            }
+          : {})
+      })
+    }
     const handle = isEvents
       ? await adapter.spawn({
           ...record,
           options: {
             resume,
-            model: options?.model,
+            // An OpenCode chat on a connection opens its session on the model
+            // its configuration names, in OpenCode's `provider/model`: that is
+            // the model the adapter expects, so it switches nothing and says
+            // nothing about a bare id OpenCode would not list.
+            model:
+              (adapter.id === 'opencode-chat'
+                ? opencodeConfiguredModel(chatConnection.providerEnv)
+                : undefined) ?? options?.model,
             effort,
-            // The echo fixture takes its launch prompt here; Claude's and
-            // Codex's come through their configure above.
+            // The echo fixture takes its launch prompt here; Claude's,
+            // Codex's, OpenCode's and Pi's come through their configure above.
             ...(echo && options?.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+            // Lane D (PRDCT-4427): the ACP agent asks its permissions over
+            // the protocol; a launch that skips them answers allow itself.
+            autoApprove:
+              adapter.id === 'opencode-chat' && options?.dangerousMode === true ? true : undefined,
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
@@ -420,8 +621,8 @@ class PtyManager {
     if (isEvents) this.eventSessions.set(session.id, session)
     if (isEvents) session.startedAt = Date.now()
     this.spawns.set(session.id, { cwd, options })
-    if (isEvents && (adapter.id === 'claude-chat' || adapter.id === 'codex-chat'))
-      this.writeChatRecord(adapter.id, session, profileId, options, resume)
+    if (isEvents && CHAT_RECORD_ADAPTERS.has(adapter.id))
+      this.writeChatRecord(adapter.id as ChatRecordAdapter, session, profileId, options, resume)
     // A fresh conversation is named by its first message (the terminal path
     // reads it off the transcript; a chat tab's crosses `sessions:write`). A
     // resumed one keeps the name it was saved under. The title runs the agent
@@ -445,13 +646,18 @@ class PtyManager {
    *  its first `session_meta` (attachListeners). Without a record the tab is
    *  simply gone at the next launch, which is what every Codex chat tab was. */
   private writeChatRecord(
-    adapterId: 'claude-chat' | 'codex-chat',
+    adapterId: ChatRecordAdapter,
     session: PtySession,
     profileId: string | undefined,
     options: PtySpawnOptions | undefined,
     resume: string | undefined
   ): void {
     const codex = adapterId === 'codex-chat'
+    // Lane D (PRDCT-4427): each family's own fields, the Claude account's for
+    // a Claude chat alone (an OpenCode chat has no account of either kind).
+    const claude = adapterId === 'claude-chat'
+    const opencode = adapterId === 'opencode-chat'
+    const pi = adapterId === 'pi-chat'
     // A restored tab rewrites the record it was restored from: the name lives
     // only there, so it must be carried over or the tab survives one restart
     // with its name and comes back as its folder at the next.
@@ -460,17 +666,27 @@ class PtyManager {
       adapterId,
       transport: 'events',
       id: session.id,
-      claudeSessionId: codex ? undefined : session.claudeSessionId,
+      claudeSessionId: claude ? session.claudeSessionId : undefined,
       codexThreadId: codex ? resume : undefined,
+      opencodeSessionId: opencode ? resume : undefined,
+      // Lane D (PRDCT-4427): a Pi chat's session, Clave's own id from the
+      // start, and the provider and thinking it was launched on.
+      piSessionId: pi ? session.piSessionId : undefined,
+      piProvider: pi ? options?.piProvider : undefined,
+      piThinking: pi ? options?.piThinking : undefined,
+      // The stored connection a Pi or OpenCode chat runs on (PRDCT-4496), so
+      // a restored tab opens it again; its name only, never its value.
+      connectionId: pi || opencode ? options?.connectionId : undefined,
+      connectionLabel: pi || opencode ? options?.connectionLabel : undefined,
       cwd: session.cwd,
       folderName: session.folderName,
       displayName: previous?.displayName,
       userRenamed: previous?.userRenamed,
-      claudeMode: !codex,
+      claudeMode: claude,
       antigravityMode: false,
       codexMode: codex,
-      piMode: false,
-      opencodeMode: false,
+      piMode: pi,
+      opencodeMode: opencode,
       claudeAgentsMode: false,
       // Whether bypass is available to the chat: launched skipping the
       // permissions, or resumed in another mode with bypass kept reachable.
@@ -478,9 +694,9 @@ class PtyManager {
       model: options?.model,
       launchProfileId: profileId,
       launchProfile: options?.launchProfile,
-      configDir: codex ? undefined : options?.configDir,
-      claudeProfileId: codex ? undefined : options?.claudeProfileId,
-      claudeProfileLabel: codex ? undefined : options?.claudeProfileLabel,
+      configDir: claude ? options?.configDir : undefined,
+      claudeProfileId: claude ? options?.claudeProfileId : undefined,
+      claudeProfileLabel: claude ? options?.claudeProfileLabel : undefined,
       codexAccountId: codex ? options?.codexAccountId : undefined,
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
@@ -521,14 +737,18 @@ class PtyManager {
         // nothing, so it never erases a model already known here.
         const session = this.eventSessions.get(id)
         if (session && stream.event.model) {
-          const changed = session.model !== stream.event.model
-          session.model = stream.event.model
+          // A Pi or OpenCode chat on a connection reports its own provider's
+          // model as `provider/model`; the tab names it bare, as the
+          // launcher, `clave_launch_options` and `clave_list` do (PRDCT-4427).
+          const model = recordedChatModel(this.chatModelProviders.get(id), stream.event.model)
+          const changed = session.model !== model
+          session.model = model
           // On the record too (PRDCT-4191): a Resume relaunches on it.
-          ptyBackend.setSessionRuntime(id, { model: stream.event.model })
+          ptyBackend.setSessionRuntime(id, { model })
           // And to the windows (PRDCT-4256): the sidebar's store used to keep
           // the launch model for the tab's whole life, so its foot judged the
           // caps by a model the chat had long left.
-          sessionModelChanged(id, stream.event.model)
+          sessionModelChanged(id, model)
           // A family's cap rejected a turn and the model changed (the policy's
           // model rung, or the person from the chip): the message the cap
           // rejected goes again on the new model, once, while the report is
@@ -539,6 +759,14 @@ class PtyManager {
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
           this.codexThreads.set(id, stream.event.providerSessionId)
           ptyBackend.setSessionCodexThreadId(id, stream.event.providerSessionId)
+        }
+        // Lane D (PRDCT-4427): the OpenCode session the ACP agent opened.
+        if (
+          sessionManager.get(id)?.adapterId === 'opencode-chat' &&
+          stream.event.providerSessionId
+        ) {
+          this.opencodeSessions.set(id, stream.event.providerSessionId)
+          ptyBackend.setSessionOpencodeSessionId(id, stream.event.providerSessionId)
         }
       }
       // The mode and the effort the chat runs at, as the provider says them
@@ -638,6 +866,8 @@ class PtyManager {
     if (killTmuxSession) {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
+      this.opencodeSessions.delete(id)
+      this.chatModelProviders.delete(id)
       this.rejected.delete(id)
       this.openReports.delete(id)
       if (!this.carriedReports.delete(id)) this.reported.delete(id)
@@ -667,6 +897,55 @@ class PtyManager {
     }
   }
 
+  /** The profile a move to the terminal lands on (lane D, PRDCT-4427): left
+   *  to the spawn (undefined) when the family's selected profile is a
+   *  terminal; its terminal form when the selection is a chat (a saved
+   *  profile's `chat:<family>:<id>` is `<id>`; the built-in chat or a
+   *  plugin's adapter is the family's built-in terminal), or the move would
+   *  land in a chat again. */
+  terminalProfileFor(family: LauncherFamily, workspaceId?: string): string | undefined {
+    let selected: string
+    try {
+      selected = launchProfileManager.resolve(family, workspaceId).id
+    } catch {
+      return `builtin-${family}`
+    }
+    const events = eventsProfile(selected)
+    if (!events) return undefined
+    return events.sourceProfileId ?? `builtin-${family}`
+  }
+
+  /** Whether the family's CLI has this conversation on disk (lane D,
+   *  PRDCT-4427): what decides a terminal resumes it or starts without it.
+   *  Claude's transcript, Pi's session file (written at the first message),
+   *  Codex's rollout; an OpenCode session is resumed by id from OpenCode's
+   *  own storage, with no file of ours to check. */
+  hasConversation(
+    family: LauncherFamily,
+    conversationId: string,
+    cwd: string,
+    configDir?: string,
+    connectionId?: string
+  ): boolean {
+    if (family === 'claude') return findTranscript(conversationId, cwd, configDir) !== null
+    // A Pi tab on a stored connection runs in the connection's directory, so
+    // its session file is looked for there (PRDCT-4496).
+    if (family === 'pi')
+      return piSessionWritten(conversationId, cwd, piSessionLookupEnv(connectionId))
+    if (family === 'codex') return hasCodexRollout(conversationId, codexRoot(getLoginShellEnv()))
+    return family === 'opencode'
+  }
+
+  /** Whether the person still has a saved profile `id` for the family (lane
+   *  D, PRDCT-4427, verifier round 2): a transport switch names a saved
+   *  profile, or its chat form, only while it exists. A read of the store,
+   *  never a resolve, which throws on a chat form that is gone. */
+  profileExists(family: LauncherFamily, id: string): boolean {
+    return launchProfileManager
+      .getPreferences()
+      .customProfiles.some((profile) => profile.id === id && profile.family === family)
+  }
+
   /** The conversation a session would resume: Claude's session id, a Codex
    *  chat's thread, or the rollout a Codex terminal wrote (found by its cwd
    *  and start). Null when the session has nothing to resume. */
@@ -674,9 +953,22 @@ class PtyManager {
     const session = this.getSession(id)
     if (!session) return null
     if (session.claudeSessionId) return session.claudeSessionId
+    // Lane D (PRDCT-4427): a Pi chat's or a Pi terminal's session, the same
+    // id either way.
+    if (session.piSessionId) return session.piSessionId
     const chatThread = this.codexThreads.get(id)
     if (chatThread) return chatThread
+    // Lane D (PRDCT-4427): an OpenCode chat's session.
+    const opencodeSession = this.opencodeSessions.get(id)
+    if (opencodeSession) return opencodeSession
     const spawn = this.spawns.get(id)
+    // Lane D (PRDCT-4427, verifier round 1 Major 1): an OpenCode terminal's
+    // session, the one it was started on (`--session <id>`), else the one its
+    // record kept; the chat's map entry went with the chat's kill.
+    if (spawn?.options?.opencodeMode)
+      return (
+        spawn.options.resumeSessionId ?? ptyBackend.getSessionRecord(id)?.opencodeSessionId ?? null
+      )
     if (spawn?.options?.codexMode && session.startedAt) {
       return findCodexThreadForSession(
         session.cwd,
@@ -697,7 +989,7 @@ class PtyManager {
   restartSpawn(
     id: string,
     overrides: RestartOverrides
-  ): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
+  ): { cwd: string; options: PtySpawnOptions; resumed: boolean; keepView: boolean } | null {
     const spawn = this.spawns.get(id)
     if (!spawn) return null
     // A restart closes the report: the resend, when one is owed, rides it.
@@ -716,6 +1008,7 @@ class PtyManager {
       resume,
       firstMessage,
       continuedFrom: continued,
+      viewId,
       ...requested
     } = overrides
     void _onlyIfStopped
@@ -760,6 +1053,44 @@ class PtyManager {
       ...(record?.continuedFrom ? { continuedFrom: record.continuedFrom } : {}),
       ...account
     }
+    // The same harness on its other transport (lane D, PRDCT-4427): chat to
+    // terminal or back, the conversation resumed the way its CLI resumes it.
+    // The chat view the tab was read in does not follow it into a terminal.
+    const from = record?.adapterId ?? sessionManager.get(id)?.adapterId
+    const family = familyOfOptions(previous)
+    if (switching && isTransportSwitch(from, adapterId, family)) {
+      const moved = transportSwitchOptions(
+        options,
+        transportTarget(
+          { adapterId, viewId, model },
+          resume ?? conversationId ?? undefined,
+          family,
+          (conversation) =>
+            !!family &&
+            this.hasConversation(
+              family,
+              conversation,
+              spawn.cwd,
+              options.configDir,
+              options.connectionId
+            )
+        ),
+        { profileExists: (owner, profileId) => this.profileExists(owner, profileId) }
+      )
+      return {
+        cwd: spawn.cwd,
+        // The terminal the chat's saved profile names (transportSwitchOptions),
+        // else the family's selected one in its terminal form.
+        options:
+          adapterId === 'pty' && family && moved.launchProfileId === undefined
+            ? { ...moved, launchProfileId: this.terminalProfileFor(family, moved.workspaceId) }
+            : moved,
+        // What the plan resumes: a terminal started fresh or under the id
+        // resumes nothing (verifier round 2, the Note).
+        resumed: moved.resumeSessionId !== undefined,
+        keepView: false
+      }
+    }
     if (switching) {
       return {
         cwd: spawn.cwd,
@@ -770,10 +1101,11 @@ class PtyManager {
           firstMessage,
           continuedFrom: continued
         }),
-        resumed: resume !== undefined
+        resumed: resume !== undefined,
+        keepView: true
       }
     }
-    return { cwd: spawn.cwd, options, resumed: conversationId !== null }
+    return { cwd: spawn.cwd, options, resumed: conversationId !== null, keepView: true }
   }
 
   /** `kill`, resolved once a tmux-backed process is really gone. */

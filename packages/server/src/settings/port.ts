@@ -9,9 +9,10 @@
  *
  * Every method may answer a value or a promise; a thrown or rejected
  * `CapabilityUnavailable` is the one declared failure, anything else is a
- * defect. A secret enters through exactly three methods (`setToken`, the
+ * defect. A secret enters through exactly four methods (`setToken`, the
  * token; `startApiKey`, the key; `integrations.setElevenLabsKey`, the
- * ElevenLabs key), as the plain string the payload carried redacted, and is
+ * ElevenLabs key; and `providerConnections.setKey`, a provider key, lane B
+ * of the harness wave), as the plain string the payload carried redacted, and is
  * held nowhere on this side of the port.
  */
 import { Context, Layer } from 'effect'
@@ -54,6 +55,20 @@ export type AntasphereAccountStatus = typeof Settings.AntasphereAccountStatusVie
 export type AntasphereSignInResult = typeof Settings.SignInWithAntasphere.success.Type
 export type AntasphereHandoff = typeof Settings.AntasphereHandoffView.Type
 export type SettingsEvent = Settings.SettingsEvent
+// ── Lane B (harness wave): provider connections ──
+export type ProviderConnection = typeof Settings.ProviderConnectionView.Type
+export type ProviderCompanyId = typeof Settings.ProviderCompanyId.Type
+export type ProviderWireFormat = typeof Settings.ProviderWireFormat.Type
+export interface ProviderConnectionAddInput {
+  readonly company: ProviderCompanyId
+  readonly label?: string
+  readonly baseUrl?: string
+  readonly wireFormat?: ProviderWireFormat
+}
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+export type ModelsCatalogView = typeof Settings.ModelsCatalogView.Type
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+export type ProviderUsageLineView = typeof Settings.ProviderUsageLineView.Type
 
 export interface SettingsSourceService {
   readonly claudeAccounts: {
@@ -167,6 +182,39 @@ export interface SettingsSourceService {
    *  command, the poller, a login job landing its token): the server
    *  publishes each one to every attached client (`events.ts`). */
   readonly subscribe: (listener: (event: SettingsEvent) => void) => Unsubscribe
+  // ── Lane B (harness wave): provider connections ──
+  /** The provider connections of this host (PRDCT-4426): a key enters
+   *  through `setKey` alone, sealed by the host's secret port; every answer
+   *  says `hasKey` and never carries the key. */
+  readonly providerConnections: {
+    readonly list: () => Awaitable<ReadonlyArray<ProviderConnection>>
+    readonly add: (input: ProviderConnectionAddInput) => Awaitable<ProviderConnection>
+    /** Refuses (a plain Error) when the connection is unknown. */
+    readonly rename: (id: string, label: string) => Awaitable<ProviderConnection>
+    readonly remove: (id: string) => Awaitable<boolean>
+    /** Stores the key sealed; the view returned says hasKey and never carries the key. */
+    readonly setKey: (id: string, apiKey: string) => Awaitable<ProviderConnection>
+  }
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of this host: models.dev read and cached a day, the
+   *  providers of those ids in their order (all when none is named), fetched
+   *  again first with `force`. A host with none answers `CapabilityUnavailable`. */
+  readonly modelsCatalog: {
+    readonly read: (input: {
+      readonly providerIds?: ReadonlyArray<string>
+      readonly force?: boolean
+    }) => Awaitable<ModelsCatalogView>
+  }
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage line of that stored provider connection on this host, read
+   *  again first with `force`; a connection it does not know is the unknown
+   *  line. A host with no connections answers `CapabilityUnavailable`. */
+  readonly providerUsage: {
+    readonly read: (input: {
+      readonly connectionId: string
+      readonly force?: boolean
+    }) => Awaitable<ProviderUsageLineView>
+  }
 }
 
 export class SettingsSource extends Context.Tag('@clave/server/SettingsSource')<
@@ -255,6 +303,18 @@ function noneSource(): SettingsSourceService {
       updatePins: refuse('workspaces'),
       setLastActive: refuse('workspaces')
     },
-    subscribe: () => () => {}
+    subscribe: () => () => {},
+    // ── Lane B (harness wave): provider connections ──
+    providerConnections: {
+      list: refuse('providerConnections'),
+      add: refuse('providerConnections'),
+      rename: refuse('providerConnections'),
+      remove: refuse('providerConnections'),
+      setKey: refuse('providerConnections')
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog: { read: refuse('modelsCatalog') },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage: { read: refuse('providerUsage') }
   }
 }

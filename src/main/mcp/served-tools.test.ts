@@ -20,6 +20,11 @@ import { accountForLaunch } from './served-accounts'
 import { HARNESSES } from '../../shared/harness'
 import type { LaunchProfile } from '../../shared/agent-launch'
 import { suggestedConnection, type LaunchOptions } from '../../shared/launch-options'
+import type {
+  CatalogModelView,
+  ModelsCatalogView
+} from '@clave/contract/settings/models-catalog-view'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 
 const group = (id: string, extra: Partial<SidebarGroup> = {}): SidebarGroup => ({
   ...{ id, name: id, sessionIds: [], collapsed: false, cwd: null, terminals: [] },
@@ -448,6 +453,35 @@ describe('serveCommand', () => {
       callerSessionId: 'caller'
     })
   })
+
+  it("names each tab's model and launch profile from its record, under the daemon's names (PRDCT-4496)", async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['pi', 'plain'] })])],
+      sessions: [session('pi'), session('plain')],
+      records: {
+        // On a connection the record keeps the model's plain id.
+        pi: record('pi', {
+          piMode: true,
+          model: 'k3',
+          launchProfileId: 'pi-default',
+          connectionId: 'c-kimi',
+          connectionLabel: 'Moonshot'
+        }),
+        plain: record('plain', {})
+      }
+    })
+    type Listing = { sessions: Record<string, unknown>[] }
+    const all = (await serveCommand('list', {}, h.ctx())) as Listing
+    expect(all.sessions.find((s) => s.id === 'pi')).toMatchObject({
+      mode: 'pi',
+      model: 'k3',
+      launchProfileId: 'pi-default'
+    })
+    expect(all.sessions.find((s) => s.id === 'plain')).toMatchObject({
+      model: null,
+      launchProfileId: null
+    })
+  })
 })
 
 describe('resolveGroupRef', () => {
@@ -670,7 +704,14 @@ describe('launchOptions, served: what this machine can launch', () => {
       ])
       const codex = answer.harnesses.find((x) => x.id === 'codex')!
       expect(codex.models).toEqual([
-        { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+        {
+          id: null,
+          label: 'Default',
+          family: 'Default',
+          served: true,
+          reason: null,
+          note: 'Pass no model and Codex starts on its own default.'
+        }
       ])
       expect(codex.connections).toEqual([
         expect.objectContaining({ id: 'key', fallback: true, suggested: true, exhausted: false })
@@ -762,9 +803,119 @@ describe('launchOptions, served: what this machine can launch', () => {
     expect(answer.harnesses.every((x) => x.installed === null)).toBe(true)
     expect(answer.notInstalled).toEqual([])
     expect(answer.harnesses.find((x) => x.id === 'claude')!.models).toEqual([
-      { id: null, label: 'Default', family: 'Default', served: true, reason: null }
+      {
+        id: null,
+        label: 'Default',
+        family: 'Default',
+        served: true,
+        reason: null,
+        note: 'Pass no model and Claude Code starts on its own default.'
+      }
     ])
     expect(answer.interactionMode).toBe('chat')
+  })
+
+  describe('Pi and OpenCode on stored connections, as the daemon lists them (PRDCT-4496)', () => {
+    const catalogModel = (id: string): CatalogModelView => ({
+      id,
+      name: `${id} name`,
+      reasoning: true,
+      toolCall: true
+    })
+    const VIEW: ModelsCatalogView = {
+      fetchedAt: 1,
+      stale: false,
+      providers: [
+        { id: 'mistral', name: 'Mistral', models: [catalogModel('devstral')] },
+        { id: 'deepseek', name: 'DeepSeek', models: [catalogModel('deepseek-chat')] }
+      ]
+    }
+    const listed = [
+      { id: 'c-mi', label: 'Mistral work', company: 'mistral' as const },
+      { id: 'c-ds', label: 'DeepSeek', company: 'deepseek' as const }
+    ]
+    const view = (
+      id: string,
+      company: ProviderConnectionView['company'],
+      hasKey = true
+    ): ProviderConnectionView => ({
+      id,
+      label: `${id} label`,
+      company,
+      kind: 'key',
+      pool: company,
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+      needsKey: company !== 'ollama',
+      hasKey,
+      keySetAt: hasKey ? 1 : null,
+      createdAt: 1
+    })
+    const row = (
+      id: string | null,
+      label: string,
+      family: string
+    ): LaunchOptions['harnesses'][number]['models'][number] => ({
+      id,
+      label,
+      family,
+      served: true,
+      reason: null
+    })
+    const defaultOf = (name: string): LaunchOptions['harnesses'][number]['models'][number] => ({
+      ...row(null, 'Default', 'Default'),
+      note: `Pass no model and ${name} starts on its own default.`
+    })
+    const asked: (readonly string[])[] = []
+    const stored: Partial<ServedShell> = {
+      catalog: async (ids) => {
+        asked.push(ids)
+        return VIEW
+      },
+      providerConnections: () => listed,
+      launchProfileRows: (family) =>
+        family === 'pi' ? [profile('pi-kimi', 'pi', { pi: { model: 'kimi-k2' } })] : []
+    }
+    const harnessOf = async (
+      h: Harness,
+      id: string,
+      over: Partial<ServedShell> = stored
+    ): Promise<LaunchOptions['harnesses'][number]> =>
+      ((await serveCommand('launchOptions', {}, full(h, over))) as LaunchOptions).harnesses.find(
+        (x) => x.id === id
+      )!
+
+    it("lists Pi's default, the catalogue models of each stored connection's company, then the pinned", async () => {
+      asked.length = 0
+      const pi = await harnessOf(setup(), 'pi')
+      expect(pi.models).toEqual([
+        defaultOf('Pi'),
+        row('devstral', 'devstral name', 'Mistral'),
+        row('deepseek-chat', 'deepseek-chat name', 'DeepSeek'),
+        row('kimi-k2', 'kimi-k2', 'kimi-k2')
+      ])
+      expect(asked).toContainEqual(['mistral', 'deepseek'])
+    })
+
+    it("lists OpenCode's default and the catalogue models, no pinned model", async () => {
+      const opencode = await harnessOf(setup(), 'opencode')
+      expect(opencode.models).toEqual([
+        defaultOf('OpenCode'),
+        row('devstral', 'devstral name', 'Mistral'),
+        row('deepseek-chat', 'deepseek-chat name', 'DeepSeek')
+      ])
+    })
+
+    it('lists under a provider pool the stored connections of that company, usable when keyed or keyless', async () => {
+      const views = [view('k1', 'moonshot'), view('k2', 'moonshot', false), view('o1', 'ollama')]
+      const pi = await harnessOf(setup(), 'pi', { providerConnectionViews: () => views })
+      expect(pi.connections.map((c) => [c.pool, c.id, c.usable])).toEqual([
+        ['moonshot', 'k1', true],
+        ['moonshot', 'k2', false],
+        ['ollama', 'o1', true]
+      ])
+      // Without a store, no provider connection at all.
+      expect((await harnessOf(setup(), 'pi', {})).connections).toEqual([])
+    })
   })
 
   it("a model list that throws reads as unavailable, never as the tool's error", async () => {

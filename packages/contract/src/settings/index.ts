@@ -15,6 +15,8 @@ import {
 } from './accounts'
 import { WorkspaceStateChanged } from './workspaces'
 import { AntasphereAccountChanged } from './antasphere'
+// ── Lane B (harness wave): provider connections ──
+import { ProviderConnectionsChanged } from './connections'
 
 export * from './accounts'
 export * from './antasphere'
@@ -24,7 +26,13 @@ export * from './integrations'
 export * from './launch-profiles'
 export * from './preferences'
 export * from './workspaces'
+// ── Lane B (harness wave): provider connections ──
+export * from './connections'
 export { settingsGroup } from './api'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+export * from './models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+export * from './provider-usage'
 
 /** Every event the settings domains push, as members for `ServerEvent`. */
 export const SettingsEvent = Schema.Union(
@@ -34,6 +42,8 @@ export const SettingsEvent = Schema.Union(
   ClaudeUsageRead,
   CodexUsageRead,
   WorkspaceStateChanged,
-  AntasphereAccountChanged
+  AntasphereAccountChanged,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnectionsChanged
 )
 export type SettingsEvent = typeof SettingsEvent.Type

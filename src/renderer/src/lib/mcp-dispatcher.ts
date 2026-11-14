@@ -4,8 +4,14 @@ import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
 import { resolveSessionTarget } from './mcp-session-target'
-import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
+import {
+  assertServerConnected,
+  machineProviderConnection,
+  openFleetSession,
+  readProviderConnections
+} from './mcp-fleet-session'
 import { ownerOf } from './fleet-identity'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
 import {
@@ -55,7 +61,7 @@ import {
   workToolAnswer
 } from '../../../shared/work-tools'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
-import { launchOptions } from '../../../shared/launch-options'
+import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
 import type { CodexModels } from './launch-options-input'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { useAgentUpdatesStore } from '../store/agent-updates-store'
@@ -221,7 +227,17 @@ function listedAccount(
   s: Session
 ): { id: string; label: string; removed: boolean; exhausted: boolean } | null {
   const provider = s.claudeMode || s.claudeAgentsMode ? 'claude' : s.codexMode ? 'codex' : null
-  if (!provider) return null
+  // A Pi or OpenCode tab on a stored connection (PRDCT-4496): its id and
+  // label, never exhausted (a provider key reports no usage).
+  if (!provider)
+    return (s.piMode || s.opencodeMode) && s.connectionId
+      ? {
+          id: s.connectionId,
+          label: s.connectionLabel ?? s.connectionId,
+          removed: false,
+          exhausted: false
+        }
+      : null
   const { id, label, removed } = sessionOwnAccount(s, provider)
   return { id, label, removed, exhausted: sessionAccountExhausted(s) }
 }
@@ -238,6 +254,10 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       name: s.name,
       cwd: s.cwd,
       mode: sessionMode(s),
+      // What the tab runs on, as its record keeps it (the store follows each
+      // model the agent reports), under the daemon's names (PRDCT-4496).
+      model: s.model ?? null,
+      launchProfileId: s.launchProfileId ?? null,
       alive: s.alive,
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
@@ -441,7 +461,7 @@ const messagingParentOf = (session: Session): string | undefined =>
 export async function openSessionProgrammatically(payload: {
   cwd: string
   server?: string
-  mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
+  mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'opencode' | 'terminal'
   groupId?: string
   name?: string
   dangerous?: boolean
@@ -449,7 +469,8 @@ export async function openSessionProgrammatically(payload: {
   profile?: string
   /** Open claude / codex in Clave's chat view instead of the terminal. */
   chat?: boolean
-  /** The Claude account (id or label) the tab runs on; claude mode only. */
+  /** The connection (id or label, or "any") the tab runs on: a Claude or
+   *  Codex account, or a stored connection of Pi's or OpenCode's. */
   account?: string
   provider?: string
   thinking?: PiThinkingLevel
@@ -562,14 +583,20 @@ export async function openSessionProgrammatically(payload: {
   const codexAccount = codexMode
     ? (resolveAccountRef('codex', payload.account, judgedModel) as CodexAccount)
     : null
-  if (payload.account && !claudeMode && !codexMode) {
-    throw new Error(
-      `The account argument applies to claude and codex modes only (got mode "${mode}")`
-    )
+  const providerHarness = piMode ? 'pi' : opencodeMode ? 'opencode' : null
+  if (payload.account && !claudeMode && !codexMode && !providerHarness) {
+    throw new Error(accountArgumentRefusal(mode))
   }
+  // Pi and OpenCode run on one of this Mac's stored connections when the
+  // account names one (PRDCT-4496); with none, on the login inside the harness.
+  const connection =
+    payload.account && providerHarness
+      ? await machineProviderConnection(LOCAL_SERVER_ID, providerHarness, payload.account)
+      : null
   const accountFields = {
     ...(claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}),
-    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
+    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {}),
+    ...(connection ?? {})
   }
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
@@ -630,6 +657,7 @@ export async function openSessionProgrammatically(payload: {
     claudeProfileLabel: claudeProfile?.label,
     codexAccountId: codexAccount?.id,
     codexAccountLabel: codexAccount?.label,
+    ...(connection ?? {}),
     // Persist so Duplicate re-primes the clone with the same prompt.
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
     sessionType: 'local',
@@ -1743,6 +1771,10 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
     : 'unavailable'
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
   const facts = { harnessSettings: harnesses, interactionMode, codexModels, now: Date.now() }
+  // The machine's stored connections, read first when the window holds none
+  // (PRDCT-4496), as its open reads them: the provider pools' rows and the
+  // one `account: "any"` lands on come from the same list.
+  await readProviderConnections(serverId).catch(() => undefined)
   if (serverId === LOCAL_SERVER_ID) {
     // Each pool's remembered model on the profile an open naming none
     // resolves (the chat default in a chat interaction mode), as the listing's
@@ -1762,12 +1794,22 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
         )
       )
     )
+    // What each Pi connection starts on with no model named (PRDCT-4496):
+    // main's answer, by the spawn's own rule, over the very connections this
+    // listing shows (with the server as a separate process they are that
+    // server's, and main's own store holds none of them); unsaid when it
+    // cannot be read.
+    const listed = useProviderConnectionsStore.getState().byMachine[LOCAL_SERVER_ID]?.connections
+    const piStarts = listed
+      ? await window.electronAPI?.providerPiStartModels?.([...listed]).catch(() => undefined)
+      : undefined
     return launchOptions(
       localLaunchOptionsInput({
         ...facts,
         agents: useAgentUpdatesStore.getState().agents,
         preferRecommended: useAccountPolicyStore.getState().useRecommendedAccount,
-        launchModels
+        launchModels,
+        ...(piStarts ? { piStarts } : {})
       })
     )
   }

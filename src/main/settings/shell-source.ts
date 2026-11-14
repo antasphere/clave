@@ -40,6 +40,10 @@ import { TEST_NO_ACTIVATE } from '../test-mode'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { setHelperConfigSource } from '../helpers/registry'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import { modelsCatalog } from '../models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import { providerUsageView } from '../provider-usage'
 
 /** What a helper asked of main says when a server runs them (PRDCT-4330). */
 export const HELPERS_RUN_ON_SERVER = "Helpers run on Clave's server."
@@ -76,12 +80,23 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   // The integrations, like the helpers, belong to whichever process is the
   // server (PRDCT-4410): main only while it runs in-process.
   ...(shellOwnsHelpers && { integrations: elevenLabsIntegration }),
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue, the
+  // server's like the integrations: main's only while it runs in-process.
+  ...(shellOwnsHelpers && { modelsCatalog }),
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line, the
+  // server's like the catalogue: main's only while it runs in-process.
+  ...(shellOwnsHelpers && { providerUsage: { view: providerUsageView } }),
   // Loaded on first use so this module's own import graph reaches no PTY
   // backend (a unit test loads it without one); the app's boot imports the
   // same login manager statically, so in the app nothing loads twice.
   logins: () => import('../account-login').then((m) => m.accountLoginManager),
   applyAppIcon,
-  ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount })
+  ...(shellAntasphereAccount && { antasphere: shellAntasphereAccount }),
+  // ── Lane B (harness wave): provider connections ──
+  // The machine's own, like its Claude accounts (PRDCT-4426): passed always,
+  // loaded on first use (the manager's graph reaches Effect, `source.ts`).
+  providerConnections: () =>
+    import('../provider-connections').then((m) => m.providerConnectionsManager)
 })
 
 // In-process, main is the server: every helper of this Mac runs here and

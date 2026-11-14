@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { installSettingsPorts, resetSettingsPorts } from '../../ports/registry'
-import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
+import {
+  installTerminalPorts,
+  resetTerminalPorts,
+  resourcesDirOfEntry
+} from '../../ports/terminals'
 import { fileStorage } from '../../ports/storage'
 import type { TerminalPort, TerminalProcess, TerminalSpawn } from '../../ports/terminal'
 import { electronTestPorts, tempDataDir } from '../../ports/testing'
@@ -176,6 +180,77 @@ describe('a plain terminal', () => {
     backend.kill(kept.id, false)
     expect(terminals.processes[1].killed).toBe(true)
     expect(fs.existsSync(recordFile(kept.id))).toBe(true)
+  })
+})
+
+describe('a Pi session (PRDCT-4496)', () => {
+  it("starts with an --extension that names Clave's Pi extension as it is on disk, from the server entry's folder", () => {
+    // The resources folder as the server names it when run from source
+    // (Bun, the harness, the trial): from server-entry.ts's own folder.
+    const entryDir = path.resolve(__dirname, '..', '..')
+    expect(fs.existsSync(path.join(entryDir, 'server-entry.ts'))).toBe(true)
+    installTerminalPorts({ resourcesDir: resourcesDirOfEntry(entryDir) })
+    const session = backend.spawn(cwd, { piMode: true, tmuxMode: false })
+    backend.start(session.id, 80, 24)
+    const command = terminals.processes[0].spec.args.join(' ')
+    const extension = /'--extension' '([^']+)'/.exec(command)?.[1]
+    expect(extension).toBeDefined()
+    expect(path.basename(extension!)).toBe('pi-clave-state.js')
+    expect(fs.existsSync(extension!)).toBe(true)
+  })
+
+  // A login profile runs before a terminal's command: one exporting the
+  // connection's own variable would replace the stored key (PRDCT-4496).
+  it('on a connection, its key crosses the profile under a private name, the command naming names only', () => {
+    installTerminalPorts({ resourcesDir: resourcesDirOfEntry(path.resolve(__dirname, '..', '..')) })
+    const providerEnv = {
+      KIMI_API_KEY: 'made-up-kimi',
+      PI_CODING_AGENT_DIR: path.join(dir, 'pi-c')
+    }
+    const session = backend.spawn(cwd, {
+      piMode: true,
+      tmuxMode: false,
+      model: 'k-first',
+      piProvider: 'kimi-coding',
+      providerEnv
+    })
+    backend.start(session.id, 80, 24)
+    const spec = terminals.processes[0].spec
+    const command = spec.args.join(' ')
+    // After the profile, before the program: the real name back, the private
+    // one gone.
+    expect(command).toContain(
+      'KIMI_API_KEY="$CLAVE_TAB_CREDENTIAL_1"; export KIMI_API_KEY; unset CLAVE_TAB_CREDENTIAL_1; CLAVE_SESSION_ID='
+    )
+    expect(command).not.toContain('made-up-kimi')
+    expect(spec.env?.CLAVE_TAB_CREDENTIAL_1).toBe('made-up-kimi')
+    expect(spec.env?.KIMI_API_KEY).toBe('made-up-kimi')
+    // The Pi directory is a path on the command line, not carried.
+    expect(spec.env?.CLAVE_TAB_CREDENTIAL_2).toBeUndefined()
+    // A tab on no connection: nothing carried.
+    const plain = backend.spawn(cwd, { piMode: true, tmuxMode: false })
+    backend.start(plain.id, 80, 24)
+    expect(terminals.processes[1].spec.args.join(' ')).not.toContain('CLAVE_TAB_CREDENTIAL')
+    expect(terminals.processes[1].spec.env?.CLAVE_TAB_CREDENTIAL_1).toBeUndefined()
+  })
+
+  it('an OpenCode terminal on a connection carries its key and its configuration the same way', () => {
+    const session = backend.spawn(cwd, {
+      opencodeMode: true,
+      tmuxMode: false,
+      providerEnv: { DEEPSEEK_API_KEY: 'made-up-ds', OPENCODE_CONFIG_CONTENT: '{"made":"up"}' }
+    })
+    backend.start(session.id, 80, 24)
+    const spec = terminals.processes[0].spec
+    const command = spec.args.join(' ')
+    expect(command).toContain(
+      'DEEPSEEK_API_KEY="$CLAVE_TAB_CREDENTIAL_1"; export DEEPSEEK_API_KEY; unset CLAVE_TAB_CREDENTIAL_1; '
+    )
+    expect(command).toContain(
+      'OPENCODE_CONFIG_CONTENT="$CLAVE_TAB_CREDENTIAL_2"; export OPENCODE_CONFIG_CONTENT; unset CLAVE_TAB_CREDENTIAL_2; '
+    )
+    expect(command).not.toContain('made-up-ds')
+    expect(spec.env?.CLAVE_TAB_CREDENTIAL_1).toBe('made-up-ds')
   })
 })
 
@@ -383,6 +458,16 @@ describe('the session records', () => {
       permissionMode: 'bypassPermissions',
       effort: 'high'
     })
+    // OpenCode's and Pi's word, `provider/model`, is kept as it is
+    // (PRDCT-4427): a Resume relaunches on it.
+    backend.setSessionRuntime(id, { model: 'kimi-coding/k3' })
+    expect(readRecord(id)).toMatchObject({ model: 'kimi-coding/k3' })
+    backend.setSessionRuntime(id, { model: 'kimi-code-plan-global/k3.1-pro' })
+    expect(readRecord(id)).toMatchObject({ model: 'kimi-code-plan-global/k3.1-pro' })
+    backend.setSessionRuntime(id, { model: 'a/../b' })
+    backend.setSessionRuntime(id, { model: '--model' })
+    expect(readRecord(id)).toMatchObject({ model: 'kimi-code-plan-global/k3.1-pro' })
+    backend.setSessionRuntime(id, { model: 'claude-sonnet-4-5[1m]' })
     // An effort of null: the model runs at none, the key goes.
     backend.setSessionRuntime(id, { effort: null })
     expect(readRecord(id)).not.toHaveProperty('effort')
@@ -396,6 +481,46 @@ describe('the session records', () => {
     // A session with no record: nothing written, nothing thrown.
     backend.setSessionRuntime('66666666-6666-4666-8666-666666666666', { model: 'opus' })
     expect(fs.existsSync(recordFile('66666666-6666-4666-8666-666666666666'))).toBe(false)
+  })
+
+  // Lane D (PRDCT-4427, verifier round 1 Major 1 and mutation 19).
+  it("keep the OpenCode session an OpenCode terminal resumed, for the terminal's next Resume", () => {
+    const resumed = backend.spawn(cwd, {
+      claudeMode: false,
+      opencodeMode: true,
+      tmuxMode: false,
+      resumeSessionId: 'ses_0123456789abcdef'
+    })
+    expect(readRecord(resumed.id)).toMatchObject({
+      adapterId: 'pty',
+      opencodeMode: true,
+      opencodeSessionId: 'ses_0123456789abcdef'
+    })
+    const fresh = backend.spawn(cwd, { claudeMode: false, opencodeMode: true, tmuxMode: false })
+    expect(readRecord(fresh.id)).not.toHaveProperty('opencodeSessionId')
+  })
+
+  it('take an OpenCode session id only in the shape its CLI takes on --session', () => {
+    const id = '77777777-7777-4777-8777-777777777777'
+    backend.writeEventSessionRecord({
+      id,
+      adapterId: 'opencode-chat',
+      transport: 'events',
+      cwd,
+      folderName: 'x',
+      claudeMode: false,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      opencodeMode: true,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    // A leading dash would read as a flag on the TUI's command line.
+    backend.setSessionOpencodeSessionId(id, '-bad')
+    expect(readRecord(id)).not.toHaveProperty('opencodeSessionId')
+    backend.setSessionOpencodeSessionId(id, 'ses_ok-1')
+    expect(readRecord(id).opencodeSessionId).toBe('ses_ok-1')
   })
 
   it('keep the tab that opened a session, nested or not, across an adoption (PRDCT-4192)', () => {

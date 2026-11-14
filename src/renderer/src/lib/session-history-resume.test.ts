@@ -285,4 +285,19 @@ describe('resumeHistoryEntry: a server’s row reopened on its server (PRDCT-432
     expect(await resume(withoutTranscript(ran('closed')))).toBeNull()
     expect(api.fleetStart).not.toHaveBeenCalled()
   })
+
+  it('reopens a Pi conversation on a clave-* provider on Pi’s own default, a harness provider kept (PRDCT-4534)', async () => {
+    const pi = (agentProvider: string): HistoryListEntry =>
+      entry({ provider: 'pi', mode: 'pi', model: 'qwen-max', agentProvider })
+    expect(await resume(pi('clave-alibaba'))).toBe('mac-tab')
+    const [, dropped] = api.spawnSession.mock.calls[0]
+    expect(dropped).toMatchObject({ piMode: true, resumeSessionId: 'c1' })
+    expect(dropped.piProvider).toBeUndefined()
+    expect(dropped.model).toBeUndefined()
+    await resume(pi('kimi-coding'))
+    expect(api.spawnSession.mock.calls[1][1]).toMatchObject({
+      piProvider: 'kimi-coding',
+      model: 'qwen-max'
+    })
+  })
 })

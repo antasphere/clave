@@ -35,7 +35,11 @@ const g = vi.hoisted(() => ({
   } as Record<string, { id: string; label: string; title: string; headroom: null }[]>,
   customProfiles: [] as { id: string; name: string; family: string; pi?: { model?: string } }[],
   /** Accounts out of credits for a model: `${account}:${model}`. */
-  spent: new Set<string>()
+  spent: new Set<string>(),
+  /** Stored provider connections of Pi and OpenCode (PRDCT-4496). */
+  providerConnections: [] as { id: string; label: string; company: string }[],
+  catalog: null as unknown,
+  usageLines: {} as Record<string, string>
 }))
 
 vi.mock('@clave/ui/components', () => {
@@ -172,7 +176,10 @@ vi.mock('../../lib/launch-source', () => {
       const pick = list.find((c) => c.usable)
       if (pick) pick.suggested = true
       return list
-    }
+    },
+    providerConnections: () => g.providerConnections,
+    catalog: () => g.catalog,
+    usageLine: (id: string) => g.usageLines[id] ?? null
   }
   return { localLaunchSource: () => source, serverLaunchSource: () => source }
 })
@@ -205,6 +212,9 @@ beforeEach(() => {
   g.harnesses = {}
   g.customProfiles = []
   g.spent = new Set()
+  g.providerConnections = []
+  g.catalog = null
+  g.usageLines = {}
   vi.stubGlobal('window', {})
 })
 
@@ -338,6 +348,60 @@ describe('hover: the models, then who pays', () => {
     item('data-harness-model', 'default').handlers.onSelect!()
     await Promise.resolve()
     expect(launched().setup).not.toHaveProperty('model')
+  })
+})
+
+describe('Pi and OpenCode on a stored provider connection (PRDCT-4496)', () => {
+  const catalog = {
+    fetchedAt: 1,
+    stale: false,
+    providers: [
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: false, toolCall: true }]
+      }
+    ]
+  }
+
+  it('without a connection, OpenCode offers its default alone and nothing else changes', () => {
+    const html = render()
+    expect(html).toContain('data-harness-row="opencode"')
+    expect(html).not.toContain('data-harness-connection="c1"')
+  })
+
+  it('lists the catalogue models of a connection, the connection under each with its usage line', async () => {
+    g.providerConnections = [{ id: 'c1', label: 'My DeepSeek', company: 'deepseek' }]
+    g.catalog = catalog
+    g.usageLines = { c1: 'Pay per use' }
+    const html = render()
+    // OpenCode is the last row: its submenu runs to the end of the markup.
+    const opencode = html.slice(html.indexOf('data-harness-row="opencode"'))
+    expect(opencode).toContain('data-harness-model="deepseek-chat"')
+    expect(opencode).toContain('DeepSeek Chat')
+    expect(opencode).toMatch(/data-harness-connection="c1"[^]*?My DeepSeek[^]*?Pay per use/)
+    expect(opencode).not.toContain('Suggested')
+    const rowsOf = g.items.filter((i) => i.attrs['data-harness-connection'] === 'c1')
+    // Pi and OpenCode, each under its default and its catalogue model.
+    expect(rowsOf).toHaveLength(4)
+    rowsOf.at(-1)!.handlers.onSelect!()
+    await Promise.resolve()
+    expect(launched().setup).toEqual({
+      kind: 'opencode',
+      dangerousMode: false,
+      model: 'deepseek-chat',
+      connectionId: 'c1',
+      connectionLabel: 'My DeepSeek'
+    })
+  })
+
+  it('says loading while the catalogue is read', () => {
+    g.providerConnections = [{ id: 'c1', label: 'My DeepSeek', company: 'deepseek' }]
+    g.catalog = 'loading'
+    render()
+    expect(
+      g.items.filter((i) => i.attrs['data-harness-model'] === 'loading').length
+    ).toBeGreaterThanOrEqual(2)
   })
 })
 

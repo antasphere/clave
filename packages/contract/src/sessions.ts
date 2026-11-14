@@ -340,7 +340,14 @@ export const SessionEvent = Schema.Union(
     providerSessionId: Schema.NullOr(Schema.String)
   }),
   Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
-  Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
+  /** `notice`: the latest of its kind replaces the one before under the same
+   *  name (an OpenCode chat's retry, PRDCT-4427). Mirrors `session-model.ts`. */
+  Schema.Struct({
+    type: Schema.Literal('error'),
+    message: Schema.String,
+    fatal: Schema.Boolean,
+    notice: Schema.optional(Schema.String)
+  }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
   Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
   /** A hosted form's answers changed under the card (PRDCT-4157): the agent
@@ -505,7 +512,10 @@ export const SpawnOptions = Schema.Struct({
   openedBy: Schema.optional(Schema.String),
   /** Bypass stays reachable to a Claude chat resumed in another mode when
    *  its launch had it (`--allow-dangerously-skip-permissions`), PRDCT-4191. */
-  allowDangerous: Schema.optional(Schema.Boolean)
+  allowDangerous: Schema.optional(Schema.Boolean),
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: Schema.optional(Schema.String),
+  connectionLabel: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -743,8 +753,14 @@ export const SessionRecord = Schema.Struct({
   work: Schema.optional(WorkAssignment),
   /** The conversation came from another provider (PRDCT-4300). */
   continuedFrom: Schema.optional(ContinuedFrom),
+  /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes (PRDCT-4427),
+   *  the id `opencode --session` takes in a terminal. */
+  opencodeSessionId: Schema.optional(Schema.String),
   live: Schema.optional(Schema.Boolean),
-  running: Schema.optional(Schema.Boolean)
+  running: Schema.optional(Schema.Boolean),
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: Schema.optional(Schema.String),
+  connectionLabel: Schema.optional(Schema.String)
 })
 export type SessionRecord = typeof SessionRecord.Type
 
@@ -912,7 +928,10 @@ export const ProviderOverride = Schema.Struct({
   model: Schema.optional(Schema.String),
   resume: Schema.optional(Schema.String),
   firstMessage: Schema.optional(Schema.String),
-  continuedFrom: Schema.optional(ContinuedFrom)
+  continuedFrom: Schema.optional(ContinuedFrom),
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId: Schema.optional(Schema.NonEmptyString)
 })
 export type ProviderOverride = typeof ProviderOverride.Type
 /** Correlates one caller's answer and event; never a spawn override. */

@@ -35,8 +35,12 @@ import {
   usageOf
 } from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
-import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
-import { poolsOf } from '../../shared/launch-options'
+import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
+import { accountArgumentRefusal, accountPoolsOf } from '../../shared/launch-options'
+import {
+  providerConnectionSpawnFields,
+  resolveProviderConnection
+} from '../../shared/provider-connection-pick'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
@@ -67,19 +71,11 @@ export const WINDOW_FACT_TIMEOUT_MS = 2_000
 
 // ── Wave 7, lane A: the pooled harnesses, named from the table (PRDCT-4485) ──
 
-/** The harnesses Clave holds connections for, by name: "Claude Code, Codex". */
-const POOLED_NAMES = HARNESSES.filter((h) => poolsOf(h).length > 0)
+/** The harnesses whose running tab moves to another connection, by name:
+ *  "Claude Code, Codex" (a Pi or OpenCode tab's move is lane D's restart road). */
+const POOLED_NAMES = HARNESSES.filter((h) => accountPoolsOf(h).length > 0)
   .map((h) => h.name)
   .join(', ')
-
-/** Why a mode takes no account: its harness signs in by itself, a terminal
- *  runs none. `gemini` is Antigravity's deprecated alias. */
-function noConnectionWhy(mode: string): string {
-  const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
-  return harness
-    ? `${harness.name} runs on the login inside the harness.`
-    : `a ${mode} runs no harness.`
-}
 
 /** The size a session with no pane starts at, as the hidden spawns do. */
 const HIDDEN_COLS = 120
@@ -463,10 +459,20 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   if (profileRef && family && !launchProfileId)
     throw new Error(`Unknown ${family} launch profile "${profileRef}"`)
   const accountRef = str(p.account)
-  if (accountRef && !claudeMode && !codexMode) {
-    throw new Error(
-      `The account argument applies to harnesses with a connection pool (${POOLED_NAMES}); ${noConnectionWhy(mode)}`
+  // Pi and OpenCode take one of this Mac's stored connections (PRDCT-4496).
+  const providerHarness = piMode ? HARNESS_BY_ID.pi : opencodeMode ? HARNESS_BY_ID.opencode : null
+  if (accountRef && !claudeMode && !codexMode && !providerHarness) {
+    throw new Error(accountArgumentRefusal(mode))
+  }
+  let connectionFields: { connectionId?: string; connectionLabel?: string } = {}
+  if (accountRef && providerHarness) {
+    const picked = resolveProviderConnection(
+      providerHarness,
+      ctx.shell.providerConnectionViews?.() ?? [],
+      accountRef
     )
+    if (!picked.ok) throw new Error(picked.reason)
+    connectionFields = providerConnectionSpawnFields(picked.connection)
   }
   // The account is judged for the model the tab will run: a Fable week
   // spent never costs a launch on Opus its account (PRDCT-4253). A launch
@@ -502,6 +508,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(model !== undefined ? { model } : {}),
         ...(launchProfileId !== undefined ? { launchProfileId } : {}),
         ...accountFields,
+        ...connectionFields,
         // A past conversation reopened (PRDCT-4236): the History's id, for
         // the spawn's --resume (Claude), resume (Codex) or --session (Pi).
         ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
