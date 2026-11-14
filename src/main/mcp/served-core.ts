@@ -21,7 +21,11 @@ import type {
 } from '../exchange-capture/types'
 import type { ServerEvent } from '@clave/contract/events'
 import type { AccountUsageSummary } from '../../shared/account-pool'
-import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
+import {
+  capturesExchange,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../shared/agent-launch'
 import type { LaunchModel } from '../../shared/launch-options'
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-view'
@@ -366,7 +370,8 @@ export function endpointOf(
 ): EndpointIdentity | null {
   const record = ctx.shell.record(session.id)
   const mode = modeOf(record, session.provider)
-  if (mode === 'pi' || mode === 'opencode') return null
+  // The harness table decides what is captured (PRDCT-4507).
+  if (mode !== 'terminal' && !capturesExchange(mode)) return null
   const group = groupOfSession(layouts, session.id)
   return {
     sessionId: session.id,

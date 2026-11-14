@@ -36,6 +36,7 @@ import {
 } from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
+import { capturesExchange, exchangeCaptureRefusal } from '../../shared/agent-launch'
 import { accountArgumentRefusal, accountPoolsOf } from '../../shared/launch-options'
 import {
   providerConnectionSpawnFields,
@@ -254,10 +255,9 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
       // A self-addressed send: logged into the transport record, delivered
       // nowhere, typed nowhere (the solo lane's checkpoint).
       checkpoint: (self, name, message) => {
-        if (modeOfSession(ctx, self) === 'pi')
-          throw new Error('Pi exchange capture is not supported yet')
-        if (modeOfSession(ctx, self) === 'opencode')
-          throw new Error('OpenCode exchange capture is not supported yet')
+        const selfMode = modeOfSession(ctx, self)
+        if (selfMode !== 'terminal' && !capturesExchange(selfMode))
+          throw new Error(exchangeCaptureRefusal(selfMode))
         const endpoint = endpointOf(ctx, self, layouts)
         if (!endpoint) throw new Error('Exchange capture is not supported yet for this harness')
         const { text, provenance } = checkpointCapture(self, name, message)
@@ -563,8 +563,9 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     await ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS).catch(() => undefined)
   }
   // An agent's delegation is a transport event (PRDCT-1568), recorded with
-  // its launch prompt; a terminal, a Pi and an OpenCode tab are not captured.
-  if (ctx.callerSessionId && mode !== 'terminal' && mode !== 'pi' && mode !== 'opencode') {
+  // its launch prompt, when the harness table says it is captured; a capture
+  // never fails an open whose tab exists (PRDCT-4507).
+  if (ctx.callerSessionId && mode !== 'terminal' && capturesExchange(mode)) {
     try {
       const layouts = await allLayouts(ctx, key)
       const [spawner, spawned] = await Promise.all([

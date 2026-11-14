@@ -532,3 +532,26 @@ export const AGENT_CAPABILITIES = {
     blockedState: 'unsupported'
   }
 } as const
+
+/** A mode as the harness table keys it: `claude-agents` is Claude's,
+ *  `gemini` Antigravity's alias. */
+const harnessKeyOfMode = (mode: string): string =>
+  mode === 'claude-agents' ? 'claude' : mode === 'gemini' ? 'antigravity' : mode
+
+/** Whether a tab of this mode has its exchanges captured, from the table
+ *  above alone (`claude-agents` is Claude's; a terminal or an unknown mode,
+ *  never). Every capture road asks this, never a list of modes. */
+export function capturesExchange(mode: string): boolean {
+  const key = harnessKeyOfMode(mode)
+  return (
+    key in AGENT_CAPABILITIES &&
+    AGENT_CAPABILITIES[key as keyof typeof AGENT_CAPABILITIES].exchangeCapture === 'supported'
+  )
+}
+
+/** "OpenCode exchange capture is not supported yet": the refusal of a
+ *  capture a harness does not have, by its name in the harness table. */
+export function exchangeCaptureRefusal(mode: string): string {
+  const harness = HARNESS_BY_ID[harnessKeyOfMode(mode) as never] as { name: string } | undefined
+  return `${harness?.name ?? 'This harness'} exchange capture is not supported yet`
+}

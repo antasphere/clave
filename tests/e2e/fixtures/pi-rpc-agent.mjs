@@ -32,7 +32,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { callClaveTools } from './clave-tools-call.mjs'
+import { callClaveTool, callClaveTools } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -61,8 +61,12 @@ for (let i = 0; i < argv.length; i++) {
 // as Pi loads it, against a stand-in `pi` that takes its registration, and the
 // server it registered is called with what it carries. Only with
 // `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
+/** The server the extension registered: a prompt `clave-open {…}` calls
+ *  `clave_open_session` on it as the model would (PRDCT-4507). */
+let resolveClaveServer = () => undefined
+const claveServerReady = new Promise((resolve) => (resolveClaveServer = resolve))
 async function piClaveTools(form) {
-  if (!process.env.CLAVE_TOOLS_STAND_IN_LOG) return
+  if (!process.env.CLAVE_TOOLS_STAND_IN_LOG) return resolveClaveServer(null)
   const extension = flags['--extension']
   let server = null
   try {
@@ -84,6 +88,7 @@ async function piClaveTools(form) {
   } catch {
     server = null
   }
+  resolveClaveServer(server)
   await callClaveTools(server, {
     harness: 'pi',
     form,
@@ -451,6 +456,29 @@ async function startRun(text) {
       run.current = assistant([], 'pending')
       await emit({ type: 'message_start', message: run.current })
       const message = assistant([], 'error', { errorMessage: 'Provider refused: stand-in' })
+      await endMessage(message)
+      await emit({ type: 'turn_end', message, toolResults: [] })
+      await emit({ type: 'agent_end', messages: run.messages, willRetry: false })
+      await emit({ type: 'agent_settled', aborted: false })
+      return
+    }
+    // `clave-open {…}`: the model calls clave_open_session once with those
+    // arguments (PRDCT-4507), says what came back, and ends its turn.
+    if (text.startsWith('clave-open ')) {
+      let args = null
+      try {
+        args = JSON.parse(text.slice('clave-open '.length))
+      } catch {
+        args = null
+      }
+      const opened = args
+        ? await callClaveTool(await claveServerReady, 'clave_open_session', args)
+        : { ok: false, error: 'bad arguments' }
+      await textMessage([`clave_open_session: ${JSON.stringify(opened)}`])
+      const message = assistant(
+        [{ type: 'text', text: `clave_open_session: ${JSON.stringify(opened)}` }],
+        'stop'
+      )
       await endMessage(message)
       await emit({ type: 'turn_end', message, toolResults: [] })
       await emit({ type: 'agent_end', messages: run.messages, willRetry: false })

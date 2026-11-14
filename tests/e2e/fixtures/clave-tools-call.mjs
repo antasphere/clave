@@ -112,6 +112,46 @@ export async function callClaveTools(server, facts) {
   }
 }
 
+/** Call one of Clave's tools as the tab, as a model would on a turn
+ *  (PRDCT-4507: `clave-open {…}` typed into a stand-in chat): every call
+ *  appended to the log as `{ kind: 'tool', name, ok, payload | error }`.
+ *  Answers the same object. */
+export async function callClaveTool(server, name, args) {
+  let out
+  try {
+    if (!server?.url) throw new Error('No Clave server was handed over')
+    const mcp = client(server.url, server.headers)
+    await mcp.init()
+    const answer = await mcp.request('tools/call', { name, arguments: args })
+    const result = answer?.result
+    const text = result?.content?.find((c) => c.type === 'text')?.text ?? 'null'
+    let payload
+    try {
+      payload = result?.structuredContent ?? JSON.parse(text)
+    } catch {
+      payload = text
+    }
+    out = result?.isError
+      ? { ok: false, error: typeof payload === 'string' ? payload : JSON.stringify(payload) }
+      : { ok: true, payload }
+  } catch (error) {
+    out = { ok: false, error: String(error?.message ?? error) }
+  }
+  if (LOG)
+    appendFileSync(
+      LOG,
+      JSON.stringify({
+        kind: 'tool',
+        name,
+        args,
+        envSessionId: process.env.CLAVE_SESSION_ID ?? null,
+        at: Date.now(),
+        ...out
+      }) + '\n'
+    )
+  return out
+}
+
 /** Resolve OpenCode's `{env:NAME}` references in a string, as 2.3.0 does
  *  (an unset variable becomes empty). */
 export function opencodeSubstitute(value) {

@@ -30,7 +30,7 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { callClaveTools, opencodeSubstitute } from './clave-tools-call.mjs'
+import { callClaveTool, callClaveTools, opencodeSubstitute } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -156,6 +156,9 @@ const update = (sessionId, body) =>
 // server handed in `mcpServers` over the protocol. Only with
 // `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
 let claveToolsCalled = false
+/** The server found at the session's start: a prompt `clave-open {…}` calls
+ *  `clave_open_session` on it as the model would (PRDCT-4507). */
+let claveServer = null
 function opencodeClaveTools(params) {
   if (claveToolsCalled || !process.env.CLAVE_TOOLS_STAND_IN_LOG) return
   claveToolsCalled = true
@@ -179,6 +182,7 @@ function opencodeClaveTools(params) {
       url: handed.url,
       headers: Object.fromEntries((handed.headers ?? []).map((h) => [h.name, h.value]))
     }
+  claveServer = server
   void callClaveTools(server, {
     harness: 'opencode',
     form: 'acp',
@@ -313,6 +317,22 @@ async function prompt(id, params) {
     const outcome = result?.outcome
     say(`permission: ${outcome?.outcome === 'selected' ? String(outcome.optionId) : 'cancelled'}`)
     if (turn.cancelled) return finish('cancelled')
+  }
+  // `clave-open {…}`: the model calls clave_open_session once with those
+  // arguments (PRDCT-4507), and says what came back.
+  if (text.startsWith('clave-open ')) {
+    let args = null
+    try {
+      args = JSON.parse(text.slice('clave-open '.length))
+    } catch {
+      args = null
+    }
+    const answer = args
+      ? await callClaveTool(claveServer, 'clave_open_session', args)
+      : { ok: false, error: 'bad arguments' }
+    say(`clave_open_session: ${JSON.stringify(answer)}`)
+    record(sessionId, { kind: 'agent', text: agentText })
+    return finish(turn.cancelled ? 'cancelled' : 'end_turn')
   }
   say('You said: ')
   // Another session's text in the middle of this prompt, as a subagent's

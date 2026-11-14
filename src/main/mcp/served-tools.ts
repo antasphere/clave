@@ -343,6 +343,9 @@ const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
   return items.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)))
 }
 
+const parentIdOf = (parentId: string | null | undefined): { parentId?: string } =>
+  parentId ? { parentId } : {}
+
 async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   const activeWorkspaceId = ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null
   const scope = str(p.workspace) ?? 'all'
@@ -369,6 +372,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
     .filter(({ record }) => inScope(record?.workspaceId))
     .map(({ s, record }) => ({
       id: s.id,
+      // The tab that opened it, as the daemon's road says (PRDCT-4507):
+      // main's lineage, else the opener the record keeps.
+      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy),
       name: s.title,
       cwd: s.cwd,
       mode: modeOf(record, s.provider),

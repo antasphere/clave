@@ -325,6 +325,54 @@ it('launches the legacy caller pinned group when pinned names match across works
   unsubscribe()
 })
 
+// PRDCT-4507: an open from ANY tab to ANY harness succeeds whole on the
+// window road. The capture is the harness table's (`exchangeCapture`): a Pi
+// or OpenCode end is not captured, and never fails an open whose tab exists.
+describe('an open between harnesses the capture does not cover (PRDCT-4507)', () => {
+  const callerOf = (fields: Record<string, unknown>): void =>
+    useSessionStore.setState({
+      sessions: [{ id: 'caller', cwd: '/repo', sessionType: 'local', ...fields } as never],
+      groups: []
+    })
+  const listed = async (): Promise<Array<{ id: string; parentId?: string }>> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ result?: unknown; ok: boolean }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'list', command: 'list', payload: {} })
+    const answer = (await response) as { result: { sessions: Array<{ id: string }> } }
+    unsubscribe()
+    return answer.result.sessions
+  }
+  for (const [caller, fields] of [
+    ['an OpenCode chat', { opencodeMode: true }],
+    ['a Pi chat', { piMode: true }],
+    ['a Claude tab', { claudeMode: true }]
+  ] as const)
+    for (const mode of ['opencode', 'pi', 'claude'] as const)
+      it(`${caller} opens a ${mode} tab: answered its id, its parent listed, captured only when both ends are`, async () => {
+        callerOf(fields)
+        const opened = (await openSessionProgrammatically({
+          cwd: '/repo',
+          mode,
+          callerSessionId: 'caller'
+        })) as { sessionId: string }
+        expect(opened.sessionId).toBe('tab-1')
+        expect(spawnSession).toHaveBeenCalledTimes(1)
+        expect(spawned()).toMatchObject({ openedBy: 'caller' })
+        const captured = mode === 'claude' && 'claudeMode' in fields
+        expect(globals.window.electronAPI.captureTabSpawn).toHaveBeenCalledTimes(captured ? 1 : 0)
+        expect((await listed()).find((s) => s.id === 'tab-1')).toMatchObject({
+          parentId: 'caller'
+        })
+      })
+})
+
 /* The work tools on the window road (PRDCT-4123): a call the server does not
    serve reads its arguments as the server's road does, keeps this store's
    reach rule, and sends the change through the preload. The served road is
