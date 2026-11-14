@@ -105,6 +105,7 @@ import {
   AddGroupTerminal,
   CreateGroup,
   DeleteGroup,
+  GetSidebarOverview,
   GetWindowLayout,
   ListWindowLayouts,
   MoveGroupToWindow,
@@ -174,6 +175,7 @@ export const SidebarLive = HttpApiBuilder.group(ClaveApi, 'sidebar', (handlers) 
   handlers
     .handle('getLayout', HttpCqrs.query(GetWindowLayout))
     .handle('listLayouts', HttpCqrs.query(ListWindowLayouts))
+    .handle('getOverview', HttpCqrs.query(GetSidebarOverview))
     .handle('saveLayout', HttpCqrs.command(SaveWindowLayout))
     .handle('createGroup', HttpCqrs.command(CreateGroup))
     .handle('renameGroup', HttpCqrs.command(RenameGroup))

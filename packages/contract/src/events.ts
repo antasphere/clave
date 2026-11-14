@@ -14,7 +14,7 @@ import { FilesDirsChanged } from './files'
 import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
 import { WorkAssignment } from './work'
 import { SettingsEvent } from './settings'
-import { SidebarEvent } from './sidebar/layout'
+import { OverviewChanged, SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
 // ── Wave wcs1023, lane C: the git domain ──
 import { GitEvent } from './git'
@@ -74,6 +74,8 @@ export const ServerEvent = Schema.Union(
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──
   ...SidebarEvent.members,
+  // ── The phone's notice that the sidebar overview may have changed, with no payload ──
+  OverviewChanged,
   // ── Wave 3, lane A: the workspace files (a watched file changed, a review needed) ──
   ...WorkspaceFilesEvent.members,
   // ── Wave 4, lane D: what the served agent tools did to a session, for the windows ──

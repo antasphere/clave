@@ -10,6 +10,12 @@
  * shared sidebar. It forbids --parent and never prints its token. See
  * docs/server-daemon.md. Without it the app-child protocol below is retained.
  *
+ * `--shell-data-dir <dir>` names the app's own data folder, for a child the
+ * app started: the windows' sidebars stay in the app's process, and this
+ * server reads their files there (never writes them) for the overview a
+ * paired phone reads (`GET /sidebar/overview`). A daemon owns its sidebar
+ * and ignores it.
+ *
  * `--app-version <semver>` is the version this server reports (issue #266):
  * the release's own, since a beta's package.json carries the stable version
  * it was cut from; without it, the checkout's package.json. A daemon that
@@ -58,6 +64,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
 import { standaloneSidebar } from './server/standalone-sidebar'
+import { shellFilesOverviewSource } from '@clave/server/sidebar-layouts'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import { runningIn, serverConversations } from './session-history/server-conversations'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
@@ -301,6 +308,10 @@ async function main(): Promise<void> {
   // and, wave 4, the agent tokens the server resolves for the attached shell.
   const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
+  // The phone's overview of the sidebar: a daemon's own layouts, else the
+  // app's layout files when the app named its folder, else nothing to show.
+  const shellDataDir = config.daemon ? undefined : arg('shell-data-dir')
+  const sidebarOverview = shellDataDir ? shellFilesOverviewSource(shellDataDir) : undefined
   // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
   // kept after a tab is deleted and served to every connected client.
   const conversations = sidebar
@@ -447,6 +458,7 @@ async function main(): Promise<void> {
       }),
       terminals,
       ...(sidebar && { sidebar }),
+      ...(sidebarOverview && { sidebarOverview }),
       settings: standalone.settings,
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
