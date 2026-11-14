@@ -184,6 +184,11 @@ class FakeMachineServer(private val token: String) : Closeable {
                 statusOf(asked)
             }
             "POST /sessions/write" -> write(body)
+            // A start answers the echo chat itself: the phone then opens it and sends the composer's text in it.
+            "POST /sessions/start" -> json(
+                200,
+                """{"id":"$SESSION_ID","cwd":"/tmp/scratch","folderName":"scratch","alive":true,"claudeSessionId":null,"piSessionId":null}""",
+            )
             "GET /sidebar/overview" -> json(200, OVERVIEW)
             "GET /accounts/claude" -> json(200, CLAUDE_ACCOUNTS)
             "GET /accounts/codex" -> json(200, "[]")
@@ -347,6 +352,7 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /sessions/timeline",
             "GET /sessions/writes",
             "POST /sessions/write",
+            "POST /sessions/start",
             "GET /requests/pending",
             "POST /requests/resolve",
             // The shell's reads (docs/mobile-server-reads.md): the desktop's groups, the accounts, their usage, the version.
