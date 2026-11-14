@@ -9,7 +9,9 @@
 // the chat on the same session, its past shown (the stand-in wrote the
 // session's file where Pi keeps it, so the chat resumes); and the Pi chat
 // comes back after a relaunch on the same user-data folder, its history
-// shown. Pi's home is `PI_CODING_AGENT_DIR` under the fixture root, and the
+// shown. Messages written while Pi works wait above the composer until Pi
+// takes them, each answered under itself (PRDCT-4566, chat-waiting.mjs).
+// Pi's home is `PI_CODING_AGENT_DIR` under the fixture root, and the
 // stand-in keeps its sessions in that home's folder for the root, the one
 // Pi itself would use. Pinned to the in-process server like
 // chat-terminal-switch: the stub is found on the PATH the app was launched
@@ -27,6 +29,7 @@ import {
   userDataDir,
   fixturePath
 } from './harness.mjs'
+import { waitingMessages } from './chat-waiting.mjs'
 
 const DIR = userDataDir('pi-chat')
 const ROOT = fixturePath('pi-chat-root')
@@ -62,7 +65,8 @@ function writeFixtures() {
 case " $* " in
   *" --mode rpc "*)
     PI_STAND_IN_STATE=${quote(STATE)}
-    export PI_STAND_IN_STATE
+    PI_STAND_IN_LONG_TURN_MS=3000
+    export PI_STAND_IN_STATE PI_STAND_IN_LONG_TURN_MS
     exec ${quote(process.execPath)} ${quote(AGENT)} "$@"
     ;;
 esac
@@ -321,6 +325,26 @@ export async function run(t) {
       backRecord?.piSessionId === conversation && backRecord?.piMode === true,
       records(id)
     )
+
+    // ── 5b. Written while Pi works: each message waits above the composer
+    // until Pi takes it at its next step, and is answered under itself
+    // (PRDCT-4566). Before the relaunch, whose restore dialog would hold the
+    // focus ──
+    await waitingMessages(t, {
+      app,
+      win,
+      chat,
+      pane,
+      say,
+      mode: 'pi',
+      agent: 'Pi',
+      when: 'Pi takes it at its next step',
+      cwd: ROOT,
+      handed: () =>
+        lines(FRAMES)
+          .filter((f) => f.frame?.type === 'prompt' || f.frame?.type === 'steer')
+          .map((f) => String(f.frame.message ?? ''))
+    })
 
     // ── 6. The Pi chat comes back after a relaunch, its history shown ──
     await app.close()
