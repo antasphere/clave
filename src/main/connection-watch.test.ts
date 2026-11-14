@@ -179,6 +179,28 @@ describe("Clave's Pi extension watches each request of a tab on a connection", (
     expect(terminal.report()).toBe('unchecked conn\n')
   })
 
+  it('a key variable named but empty or absent is no check: unchecked, ended in a chat', async () => {
+    for (const value of ['', undefined]) {
+      const env: Record<string, string | undefined> = { ...envFor(), CONN_KEY: value }
+      const chat = watched(env)
+      expect(await chat.request('rpc', 'conn', 'made-up-login-key')).toBe(true)
+      expect(chat.report()).toBe('unchecked conn\n')
+      const terminal = watched({ ...env })
+      expect(await terminal.request('tui', 'conn', 'made-up-login-key')).toBe(false)
+      expect(terminal.report()).toBe('unchecked conn\n')
+    }
+  })
+
+  it('a connection with no key (no variable named) is watched by its provider alone', async () => {
+    const env: Record<string, string | undefined> = { ...envFor() }
+    delete env.CLAVE_CONNECTION_KEY_VAR
+    const tab = watched(env)
+    expect(await tab.request('rpc', 'conn', undefined)).toBe(false)
+    expect(tab.report()).toBe('on\n')
+    expect(await tab.request('rpc', 'other', undefined)).toBe(true)
+    expect(tab.report()).toBe('off other\n')
+  })
+
   it('writes when the answer changes, back to on when a request goes on it again', async () => {
     const env = envFor()
     const tab = watched(env)

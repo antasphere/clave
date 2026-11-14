@@ -84,13 +84,17 @@ const PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
  *  - `credential`: to the connection's provider with another credential (a
  *    `/login` in the tab, an OAuth sign-in);
  *  - `unchecked`: Pi gave no way to tell which credential (no
- *    `getProviderAuth`, or it threw): not taken as the connection's.
+ *    `getProviderAuth`, or it threw), or the variable named holds no key
+ *    in this process: not taken as the connection's.
  *  Compared in memory, never written, logged or sent. */
 export async function requestOnConnection(ctx, provider, keyVar, env) {
   if (!ctx || !ctx.model || ctx.model.provider !== provider) return 'provider'
+  // A connection with no key (a local model) names no variable: there is no
+  // credential to compare, so it is watched by its provider alone.
   if (!keyVar) return 'on'
   const expected = env[keyVar]
-  if (!expected) return 'on'
+  // A variable named but empty or absent leaves nothing to compare with.
+  if (!expected) return 'unchecked'
   let resolved
   try {
     if (!ctx.modelRegistry || typeof ctx.modelRegistry.getProviderAuth !== 'function')
