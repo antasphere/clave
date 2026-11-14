@@ -65,4 +65,6 @@ export const SettingsLive = HttpApiBuilder.group(ClaveApi, 'settings', (handlers
     .handle('readModelsCatalog', HttpCqrs.query(S.ReadModelsCatalog))
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line
     .handle('readProviderUsage', HttpCqrs.query(S.ReadProviderUsage))
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+    .handle('readHarnessUsage', HttpCqrs.query(S.ReadHarnessUsage))
 )

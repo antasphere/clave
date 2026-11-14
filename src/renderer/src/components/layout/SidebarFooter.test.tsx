@@ -63,9 +63,7 @@ const g = vi.hoisted(() => {
       severity: 'critical'
     }
   ]
-  /** Pi's local totals of the day, when a test sets them. */
-  const pi = { data: null as null | { totalTokens: number; cost: number } }
-  return { modelChanged, windows, pi }
+  return { modelChanged, windows }
 })
 
 vi.mock('../../store/usage-store', async (original) => {
@@ -74,15 +72,13 @@ vi.mock('../../store/usage-store', async (original) => {
   return {
     ...real,
     claudeUsageStore: () => () => read,
-    codexUsageStore: () => () => read,
-    piUsageStores: {
-      today: () => ({
-        status: g.pi.data ? 'ready' : 'idle',
-        data: g.pi.data,
-        load: async () => {}
-      })
-    }
+    codexUsageStore: () => () => read
   }
+})
+// The usage per connection (PRDCT-4551), read live as the session store is.
+vi.mock('../../store/harness-usage-store', async (original) => {
+  const real = await original<typeof import('../../store/harness-usage-store')>()
+  return { ...real, useHarnessUsage: real.harnessUsageFor }
 })
 // A server render reads a zustand store's INITIAL state (its server
 // snapshot), so the hook reads the live one instead; getState and setState
@@ -104,6 +100,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { useSessionStore } from '../../store/session-store'
 import { initServedToolsEvents } from '../../lib/served-events'
 import { SidebarFooter } from './SidebarFooter'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { useHarnessUsageStore } from '../../store/harness-usage-store'
 
 const capShown = (): string | null =>
   /data-usage-cap="([^"]*)"/.exec(renderToStaticMarkup(<SidebarFooter />))?.[1] ?? null
@@ -162,12 +160,58 @@ it('an OpenCode tab’s connection line is a control like the usage lines, not p
   expect(html).toContain('>OpenCode · DeepSeek</span></button>')
 })
 
-// T1 of the tester's fourth pass: a Pi tab on a connection read
-// `Moonshot · 10.4K tokens · $0.01 today` and opened Usage › Pi. Pi's figures
-// are its local totals of the day on any connection or none: the connection
-// and the usage are two lines and two controls.
-it('a Pi tab on a connection: its connection line as an OpenCode tab’s, and Pi’s usage line as it was', () => {
-  g.pi.data = { totalTokens: 10_400, cost: 0.01 }
+// PRDCT-4551: the foot shows the focused tab's own figure, never Pi's total
+// of every session: a tab on a connection, that connection's today; a tab on
+// none, its harness's own sign-in's. The connection line stays the separate
+// control it is.
+it('a Pi tab on a connection shows that connection’s today, an OpenCode tab on none its sign-in’s', () => {
+  const row = (over: Record<string, unknown>): Record<string, unknown> => ({
+    harness: 'pi',
+    connectionId: null,
+    label: 'x',
+    billing: 'plan',
+    removed: false,
+    requests: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: 0,
+    sessions: 0,
+    ...over
+  })
+  useHarnessUsageStore.setState({
+    byKey: {
+      [`${LOCAL_SERVER_ID}\u0000today`]: {
+        status: 'ready',
+        readAt: Date.now(),
+        view: {
+          range: 'today',
+          rows: [
+            row({ connectionId: 'conn-moon', label: 'Moonshot', requests: 3, totalTokens: 1200 }),
+            row({
+              connectionId: 'conn-moon-2',
+              label: 'Moonshot 2',
+              requests: 9,
+              totalTokens: 9999
+            }),
+            row({ label: 'Pi sign-in', billing: 'signIn', requests: 5, totalTokens: 77777 }),
+            row({
+              harness: 'opencode',
+              label: 'OpenCode sign-in',
+              // Every record of the day on a provider billed per use.
+              billing: 'payPerUse',
+              requests: 2,
+              totalTokens: 10_400,
+              cost: 0.0137
+            })
+          ],
+          unavailable: []
+        } as never
+      }
+    }
+  })
   try {
     useSessionStore.setState({
       sessions: [
@@ -186,19 +230,36 @@ it('a Pi tab on a connection: its connection line as an OpenCode tab’s, and Pi
     const html = renderToStaticMarkup(<SidebarFooter />)
     const line = /<(\w+)[^>]*data-connection-line="conn-moon"[^>]*>/.exec(html)
     expect(line?.[1]).toBe('button')
-    expect(line?.[0]).toContain('class="sidebar-footer-line"')
     expect(line?.[0]).toContain('title="Pi · Connection: Moonshot"')
     expect(html).toContain('>Pi · Moonshot</span></button>')
-    // The usage line: its own text and title, the connection nowhere in it.
+    // The usage line: that connection's own, on a plan with no cost.
     const usage = /<button[^>]*data-usage-provider="pi"[^>]*>.*?<\/button>/.exec(html)?.[0]
-    expect(usage).toBeDefined()
-    expect(usage).toContain(
-      'title="Pi · 10.4K tokens · $0.01 today · Local totals, not account quota"'
-    )
-    expect(usage).not.toContain('Moonshot')
+    expect(usage).toContain('data-connection-usage="conn-moon"')
+    expect(usage).toContain('>3 requests · 1.2K tokens today</span>')
+    expect(usage).not.toContain('$')
+    expect(html).not.toContain('9999')
+    expect(html).not.toContain('Local totals')
     // The connection line is not the usage line (two controls).
     expect(line?.[0]).not.toContain('data-usage-provider')
+
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'oc',
+          cwd: '/repo',
+          sessionType: 'local',
+          claudeMode: false,
+          opencodeMode: true
+        } as never
+      ],
+      focusedSessionId: 'oc'
+    })
+    const oc = renderToStaticMarkup(<SidebarFooter />)
+    const ocUsage = /<button[^>]*data-usage-provider="opencode"[^>]*>.*?<\/button>/.exec(oc)?.[0]
+    expect(ocUsage).toContain('data-connection-usage="sign-in"')
+    // Named, as a connection's line is (PRDCT-4551): whose figure it is.
+    expect(ocUsage).toContain('>OpenCode sign-in · 10.4K tokens · $0.01 today</span>')
   } finally {
-    g.pi.data = null
+    useHarnessUsageStore.setState({ byKey: {} })
   }
 })

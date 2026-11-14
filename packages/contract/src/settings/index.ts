@@ -33,6 +33,8 @@ export { settingsGroup } from './api'
 export * from './models-catalog'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 export * from './provider-usage'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+export * from './harness-usage'
 
 /** Every event the settings domains push, as members for `ServerEvent`. */
 export const SettingsEvent = Schema.Union(

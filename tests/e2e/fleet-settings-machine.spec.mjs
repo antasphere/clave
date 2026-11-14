@@ -217,8 +217,11 @@ export async function run(t) {
       (await accountsPage
         .locator('[data-claude-add-account], [data-codex-add-account]')
         .count()) === 0 &&
+        // A card's models fold (PRDCT-4552) is reading, not an action on the account.
         (await accountsPage
-          .locator('[data-server-claude-accounts] button, [data-server-codex-accounts] button')
+          .locator(
+            '[data-server-claude-accounts] button:not([data-connection-models-toggle]), [data-server-codex-accounts] button:not([data-connection-models-toggle])'
+          )
           .count()) === 0
     )
     t.check(
@@ -233,9 +236,9 @@ export async function run(t) {
     )
     t.check(
       'the Codex account reads as signed in, the key nowhere',
-      !(
+      (
         await accountsPage.locator(`[data-server-codex-account="${billing.id}"]`).innerText()
-      ).includes('Needs login') && !(await accountsPage.innerText()).includes(API_KEY)
+      ).includes('Key stored') && !(await accountsPage.innerText()).includes(API_KEY)
     )
 
     // ── Usage, read on the server ──

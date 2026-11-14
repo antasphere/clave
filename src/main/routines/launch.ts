@@ -27,6 +27,7 @@ import {
   resolveProviderConnection
 } from '../../shared/provider-connection-pick'
 import {
+  AGENT_CAPABILITIES,
   BUILT_IN_LAUNCH_PROFILES,
   type LaunchProfilePreferences,
   type LauncherFamily,
@@ -98,11 +99,22 @@ export type ResolvedLaunch =
     }
   | { ok: false; reason: string }
 
-/** The agents whose session can call Clave's MCP tools, and so report. */
+/** The agents a routine's report reaches: their session calls Clave's MCP
+ *  tools and is handed the routine's report contract. */
 export const REPORTING_AGENTS: ReadonlySet<RoutineAgent> = new Set<RoutineAgent>([
   'claude',
   'codex'
 ])
+
+/** Why a routine on an agent outside REPORTING_AGENTS is refused, in plain
+ *  words. Pi has Clave's tools since PRDCT-4507; what it lacks is the
+ *  routine's report contract (PRDCT-4511). An agent with no tools says so. */
+export function cannotReportReason(agent: RoutineAgent): string {
+  const label = HARNESS_BY_ID[agent].name
+  return AGENT_CAPABILITIES[agent].claveTools === 'supported'
+    ? `this agent cannot report: ${label} has Clave's tools, but a routine does not hand its report to ${label} yet`
+    : `this agent cannot report: ${label} has no Clave tools`
+}
 
 /** What a launch is resolved from: a routine's declaration, or the daemon's
  *  `clave_open_session` arguments laid out the same way (any harness, every

@@ -150,7 +150,9 @@ const UNREADABLE_NO_PLACE = new Set([
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   'modelsCatalogRead',
   // Lane C of the harness wave (PRDCT-4496): a connection's usage line
-  'providerUsageRead'
+  'providerUsageRead',
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  'harnessUsageRead'
 ])
 const unreadable = (fn: unknown): boolean => {
   if (typeof fn !== 'function') return false

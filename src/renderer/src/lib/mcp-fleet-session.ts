@@ -6,6 +6,7 @@ import {
   type OpenSessionMode
 } from '../../../shared/open-session-modes'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
+import { afterSpawn, withWarnings } from '../../../shared/open-after-spawn'
 import { useSessionStore } from '../store/session-store'
 import { useFleetStore } from '../store/fleet-store'
 import { describeServerState } from './server-connection-text'
@@ -113,7 +114,7 @@ export async function openFleetSession(
     callerSessionId?: string
     attachToParent?: boolean
   }
-): Promise<{ sessionId: string; groupId: string | null; serverId: string }> {
+): Promise<{ sessionId: string; groupId: string | null; serverId: string; warnings?: string[] }> {
   assertServerConnected(serverId)
   const mode = payload.mode ?? 'claude'
   // A conversation a tab of this server still holds is answered by that tab
@@ -211,9 +212,19 @@ export async function openFleetSession(
       ? { spawnedBy: payload.callerSessionId }
       : {})
   })
-  if (payload.name) await window.electronAPI.setSessionDisplayName(info.id, payload.name, true)
-  await window.electronAPI.fleetSnapshot(serverId)
-  if (groupId) useSessionStore.getState().moveItems([info.id], groupId, 'inside')
-  await window.electronAPI.resizeSession(info.id, 120, 30)
-  return { sessionId: info.id, groupId: groupId ?? null, serverId }
+  // The tab exists from here on: every step after it is best effort, said in
+  // the answer beside the tab's id, never thrown (PRDCT-4507).
+  const warnings: string[] = []
+  if (payload.name)
+    await afterSpawn(warnings, 'name', () =>
+      window.electronAPI.setSessionDisplayName(info.id, payload.name!, true)
+    )
+  await afterSpawn(warnings, 'records', () => window.electronAPI.fleetSnapshot(serverId))
+  const placed = groupId
+    ? await afterSpawn(warnings, 'group', () =>
+        useSessionStore.getState().moveItems([info.id], groupId, 'inside')
+      )
+    : false
+  await afterSpawn(warnings, 'size', () => window.electronAPI.resizeSession(info.id, 120, 30))
+  return withWarnings({ sessionId: info.id, groupId: placed ? groupId! : null, serverId }, warnings)
 }

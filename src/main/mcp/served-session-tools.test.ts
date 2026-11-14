@@ -248,6 +248,51 @@ describe('rename of a tab', () => {
       'No session with id "zz"'
     )
   })
+  it('"mine" renames the calling tab, and is refused in one sentence with no tab identity (PRDCT-4507)', async () => {
+    const h = setup({ sessions: [session('caller'), session('s1')] })
+    expect(await run(h, 'rename', { target: 'session', id: 'mine', name: 'Me' })).toEqual({
+      renamed: 'caller',
+      name: 'Me'
+    })
+    expect(h.argsOf('sessions.rename')).toEqual([['caller', 'Me']])
+    await expect(
+      run(h, 'rename', { target: 'session', id: 'mine', name: 'x' }, { callerSessionId: undefined })
+    ).rejects.toThrow('id "mine" needs a calling tab — this request has no tab identity')
+    expect(h.argsOf('sessions.rename')).toHaveLength(1)
+  })
+})
+
+describe('"mine" on every session tool of this road (PRDCT-4507)', () => {
+  it('reads the calling tab', async () => {
+    const h = setup({ sessions: [session('caller'), session('s1')] })
+    const out = (await run(h, 'readSession', { sessionId: 'mine' })) as { sessionId: string }
+    expect(out.sessionId).toBe('caller')
+  })
+  it('moves the calling tab', async () => {
+    const h = setup({
+      sessions: [session('caller')],
+      layouts: [layout('wA', [group('g1', { sessionIds: [] })])]
+    })
+    const out = (await run(h, 'moveSession', { sessionId: 'mine', groupId: 'root' })) as {
+      sessionId: string
+    }
+    expect(out.sessionId).toBe('caller')
+  })
+  it('refuses every one in the same sentence with no tab identity', async () => {
+    const h = setup({ sessions: [session('s1')] })
+    const none = { callerSessionId: undefined }
+    for (const [command, p] of [
+      ['readSession', { sessionId: 'mine' }],
+      ['moveSession', { sessionId: 'mine', groupId: 'root' }],
+      ['closeSession', { sessionId: 'mine' }],
+      ['setSessionView', { sessionId: 'mine', url: null }],
+      ['switchAccount', { sessionId: 'mine', account: 'any' }]
+    ] as const) {
+      await expect(run(h, command, p, none)).rejects.toThrow(
+        'sessionId "mine" needs a calling tab — this request has no tab identity'
+      )
+    }
+  })
 })
 
 describe('the page on a tab', () => {
@@ -274,7 +319,7 @@ describe('the page on a tab', () => {
     )
     await expect(
       run(h, 'setSessionView', { sessionId: 'mine', url: null }, { callerSessionId: undefined })
-    ).rejects.toThrow('sessionId "mine" needs a caller session — pass an explicit id')
+    ).rejects.toThrow('sessionId "mine" needs a calling tab — this request has no tab identity')
     await expect(run(h, 'setSessionView', { sessionId: 'zz', url: null })).rejects.toThrow(
       'No session with id "zz"'
     )
@@ -957,6 +1002,60 @@ describe('an account switch', () => {
     await expect(run(h, 'switchAccount', { sessionId: 's1', account: 'Second' })).rejects.toThrow(
       'This session cannot be restarted from here.'
     )
+  })
+})
+
+describe('an open whose tab exists never answers an error (PRDCT-4507)', () => {
+  const failing = (): never => {
+    throw new Error('made-up failure')
+  }
+  const open = (h: Harness, over: Partial<ServedContext> = {}): Promise<unknown> =>
+    run(h, 'openSession', { cwd: '/proj', mode: 'terminal', name: 'Lane', groupId: 'g1' }, over)
+  const world = (): Partial<World> => ({
+    layouts: [layout('wA', [group('g1', { name: 'Build', workspaceId: 'ws1' })])],
+    sessions: [session('caller')],
+    records: { caller: record('caller', { workspaceId: 'ws1' }) }
+  })
+  it.each([
+    ['records', 'The tab started but its record was not read again: made-up failure', 'g1'],
+    ['name', 'The tab started but was not renamed: made-up failure', 'g1'],
+    ['group', 'The tab started but was not placed in its group: made-up failure', null],
+    ['size', 'The tab started but its terminal could not be sized to start: made-up failure', 'g1']
+  ] as const)('a failed %s step: the id, and one sentence', async (step, sentence, groupId) => {
+    const h = setup({ ...world(), ...(step === 'size' ? { windows: [] } : {}) })
+    let over: Partial<ServedContext> = {}
+    if (step === 'records') over = { shell: { ...h.ctx().shell, syncRecords: failing } }
+    if (step === 'name') h.impl['sessions.rename'] = failing
+    if (step === 'group') h.impl['sidebar.placeSession'] = failing
+    if (step === 'size') h.impl['sessions.resize'] = failing
+    const answer = await open(h, over)
+    expect(answer).toEqual({ sessionId: 'new-1', groupId, warnings: [sentence] })
+    expect(h.argsOf('sessions.start')).toHaveLength(1)
+  })
+  it('a place in no group that fails names the sidebar', async () => {
+    const h = setup(world())
+    h.impl['sidebar.placeSession'] = failing
+    expect(await run(h, 'openSession', { cwd: '/proj', mode: 'terminal' })).toEqual({
+      sessionId: 'new-1',
+      groupId: null,
+      warnings: ['The tab started but was not placed in the sidebar: made-up failure']
+    })
+  })
+  it('every step failing: still the id, one sentence each', async () => {
+    const h = setup({ ...world(), windows: [] })
+    h.impl['sessions.rename'] = failing
+    h.impl['sidebar.placeSession'] = failing
+    h.impl['sessions.resize'] = failing
+    const answer = (await open(h, { shell: { ...h.ctx().shell, syncRecords: failing } })) as {
+      sessionId: string
+      warnings: string[]
+    }
+    expect(answer.sessionId).toBe('new-1')
+    expect(answer.warnings).toHaveLength(4)
+  })
+  it('an open where everything ran carries no warnings', async () => {
+    const h = setup(world())
+    expect(await open(h)).toEqual({ sessionId: 'new-1', groupId: 'g1' })
   })
 })
 

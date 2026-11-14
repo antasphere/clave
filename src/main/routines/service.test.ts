@@ -314,7 +314,10 @@ describe('an agent that cannot report (G5)', () => {
     const service = await build(file, host)
     const run = await service.runNow(key(file, 'Pi job'))
     expect(run.state).toBe('failed')
-    expect(run.reason).toContain('cannot report')
+    // Pi has Clave's tools (PRDCT-4507): what it lacks is the report's road.
+    expect(run.reason).toBe(
+      "this agent cannot report: Pi has Clave's tools, but a routine does not hand its report to Pi yet"
+    )
     expect(host.starts).toEqual([])
   })
 })
@@ -472,7 +475,7 @@ describe('the agents that can report (round 2, gap)', () => {
     const service = await build(file, host)
     const run = await service.runNow(key(file, 'Agy'))
     expect(run.state).toBe('failed')
-    expect(run.reason).toContain('cannot report')
+    expect(run.reason).toBe('this agent cannot report: Antigravity has no Clave tools')
     expect(host.starts).toEqual([])
   })
 })
@@ -1047,7 +1050,7 @@ describe('the routines a server creates in its own store (PRDCT-4242)', () => {
     await expect(service.create(digest({ cwd: 'gone' }))).rejects.toThrow(/is not on this machine/)
     await expect(service.create(digest({ schedule: 'daily' }))).rejects.toThrow(/does not parse/)
     await expect(service.create(digest({ launch: { agent: 'pi' } }))).rejects.toThrow(
-      /cannot report/
+      /cannot report: Pi has Clave's tools, but a routine does not hand its report to Pi yet/
     )
     await expect(service.create(digest({ name: '  ' }))).rejects.toThrow(/needs a name/)
     await service.create(digest())

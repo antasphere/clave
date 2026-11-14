@@ -5,41 +5,47 @@ import {
   usageLineTextFor,
   useUsageLineStore
 } from '../../store/models-catalog-store'
-import * as DropdownMenuPrimitive from '@clave/ui/primitives/dropdown-menu'
-import {
-  ArrowTopRightOnSquareIcon,
-  ClipboardDocumentIcon,
-  PencilSquareIcon,
-  PlusIcon,
-  TrashIcon
-} from '@heroicons/react/24/outline'
-import type {
-  ProviderCompanyId,
-  ProviderConnection,
-  ProviderWireFormat
-} from '../../../../preload/index.d'
-import {
-  startProviderConnectionsEvents,
-  useProviderConnectionsStore,
-  EMPTY_MACHINE_PROVIDER_CONNECTIONS,
-  type MachineProviderConnections
-} from '../../store/provider-connections-store'
+import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
+import type { ProviderConnection, ProviderWireFormat } from '../../../../preload/index.d'
+import { useProviderConnectionsStore } from '../../store/provider-connections-store'
+import { useProviderConnectionsOf } from './connection-actions'
 import {
   PROVIDER_COMPANIES,
   PROVIDER_WIRE_FORMAT_NAMES,
   providerCompany,
   type ProviderCompany
 } from '@clave/contract/settings/provider-catalogue'
-import { PROVIDER_CONNECT_ITEMS, nextProviderLabel } from './connection-companies'
-import { SettingsCallout, SettingsCard, SettingsSection, SettingsSelect } from './primitives'
+import { nextProviderLabel } from './connection-companies'
+import {
+  connectLabel,
+  ownUsageText,
+  providerCardFacts,
+  rowMenuEntries,
+  type CardCompany
+} from './connection-cards'
+import { useConnectionUsage, useHarnessUsage } from '../../store/harness-usage-store'
+import {
+  CardFold,
+  CardLabel,
+  ConnectionRow,
+  ProviderCard,
+  RemoveConfirm,
+  RowMenu,
+  RowNote,
+  UsageLine,
+  type CardModels
+} from './ConnectionCard'
+import { reveal } from './connection-actions'
+import { SettingsCallout, SettingsSelect } from './primitives'
 
 /**
  * The provider connections of one machine on Settings → Connections
- * (PRDCT-4426): a key stored once for a company's coding plan or API, a local
- * Ollama, or another provider's endpoint. One section per company that has a
- * connection, in catalogue order; the add form a Connect pick opens; the key
- * form a row opens. `machine` is `LOCAL_SERVER_ID` for this Mac or a saved
- * server's id: every read and write goes to that machine, and the key a
+ * (PRDCT-4426, as cards since PRDCT-4552): a key stored once for a company's
+ * coding plan or API, a local Ollama, or another provider's endpoint. One
+ * card per connection, in catalogue order; the key form a card opens in its
+ * place; the add form, opened from the provider's own card
+ * (`ConnectionOffers`). `machine` is `LOCAL_SERVER_ID` for this Mac or a
+ * saved server's id: every read and write goes to that machine, and the key a
  * person pastes passes through one call and is kept in no state here once the
  * form closes.
  */
@@ -54,11 +60,6 @@ function hostOf(url: string): string | null {
   } catch {
     return null
   }
-}
-
-function keyStateOf(connection: ProviderConnection): string {
-  if (!connection.needsKey) return 'No key needed'
-  return connection.hasKey ? 'Key stored' : 'No key yet'
 }
 
 /** Reads the usage line of every connection that can be read (its key
@@ -93,12 +94,6 @@ function useUsageLines(machine: string, connections: readonly ProviderConnection
   }, [machine, readable])
 }
 
-function useMachine(machine: string): MachineProviderConnections {
-  return useProviderConnectionsStore(
-    (s) => s.byMachine[machine] ?? EMPTY_MACHINE_PROVIDER_CONNECTIONS
-  )
-}
-
 /** The note line under a form: the store's sentence for that machine. */
 function FormNote({
   text,
@@ -115,7 +110,7 @@ function FormNote({
   )
 }
 
-/** The key form under a row: paste, save, and the input is gone with the form. */
+/** The key form in a card: paste, save, and the input is gone with the form. */
 function KeyForm({
   machine,
   connection,
@@ -193,117 +188,17 @@ function KeyForm({
   )
 }
 
-/** One connection: its label, its endpoint's host, whether its key is stored. */
-function ConnectionRow({
-  machine,
-  connection,
-  usage,
-  onKey
-}: {
-  machine: string
-  connection: ProviderConnection
-  /** Its usage line (PRDCT-4496), or null while it is not read. */
-  usage: string | null
-  onKey: () => void
-}): ReactElement {
-  const rename = useProviderConnectionsStore((s) => s.rename)
-  const remove = useProviderConnectionsStore((s) => s.remove)
-  const [draft, setDraft] = useState<string | null>(null)
-  const host = connection.endpoints[0] ? hostOf(connection.endpoints[0].baseUrl) : null
-  const commit = (): void => {
-    if (draft === null) return
-    const label = draft.trim()
-    setDraft(null)
-    if (label && label !== connection.label) void rename(machine, connection.id, label)
-  }
-  return (
-    <div className="settings-row" data-provider-connection-row={connection.id}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 min-w-0">
-          {draft === null ? (
-            <p
-              className="settings-row-title truncate"
-              data-provider-connection-label={connection.id}
-            >
-              {connection.label}
-            </p>
-          ) : (
-            <input
-              className="input-compact w-full max-w-56"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commit()
-                if (e.key === 'Escape') setDraft(null)
-              }}
-              aria-label="Connection name"
-              autoFocus
-              data-provider-rename-input
-            />
-          )}
-          <span
-            className="badge badge-muted flex-shrink-0"
-            data-provider-connection-key-state={connection.id}
-          >
-            {keyStateOf(connection)}
-          </span>
-        </div>
-        {usage && (
-          <p className="settings-row-description" data-provider-connection-usage={connection.id}>
-            {usage}
-          </p>
-        )}
-        {host && (
-          <div className="settings-row-tags">
-            <span className="badge badge-muted">{host}</span>
-          </div>
-        )}
-      </div>
-      <div className="settings-row-controls">
-        <button
-          type="button"
-          className="btn-icon btn-icon-sm"
-          onClick={() => setDraft(connection.label)}
-          title="Rename"
-          aria-label={`Rename ${connection.label}`}
-          data-provider-rename={connection.id}
-        >
-          <PencilSquareIcon className="w-3.5 h-3.5" />
-        </button>
-        {connection.needsKey && (
-          <button
-            type="button"
-            className="btn-icon btn-icon-sm"
-            onClick={onKey}
-            title={connection.hasKey ? 'Replace the key' : 'Paste a key'}
-            aria-label={
-              connection.hasKey
-                ? `Replace the key of ${connection.label}`
-                : `Paste a key for ${connection.label}`
-            }
-            data-provider-key={connection.id}
-          >
-            <ClipboardDocumentIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn-icon btn-icon-sm btn-icon--danger"
-          onClick={() => void remove(machine, connection.id)}
-          title="Remove"
-          aria-label={`Remove connection ${connection.label}`}
-          data-provider-remove={connection.id}
-        >
-          <TrashIcon className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
-  )
+/** The id of one field of the add form, per machine and per provider
+ *  (PRDCT-4552): `provider-add-label-local-moonshot`. A machine or company
+ *  id is kept to the characters an id selector reads plainly. */
+function addFormFieldId(machine: string, company: string): (field: string) => string {
+  const safe = (part: string): string => part.replace(/[^A-Za-z0-9_-]/g, '_')
+  return (field) => `provider-add-${field}-${safe(machine)}-${safe(company)}`
 }
 
-/** The add form: one form for a catalogue company, Ollama and another provider. */
-function AddForm({
+/** The add form: one form for a catalogue company, Ollama and another
+ *  provider, opened in the provider's card. */
+export function AddForm({
   machine,
   company,
   taken,
@@ -329,6 +224,9 @@ function AddForm({
   const missing =
     !label.trim() || (company.takesBaseUrl && !baseUrl.trim()) || (company.needsKey && !apiKey)
   const keyHost = company.keyUrl ? hostOf(company.keyUrl) : null
+  // One id per field, provider and machine: two cards' forms open at once
+  // (a company's "Connect another" and "Another provider") never share one.
+  const fieldId = addFormFieldId(machine, company.id)
   const submit = async (): Promise<void> => {
     if (busy || missing) return
     setBusy(true)
@@ -343,7 +241,7 @@ function AddForm({
     if (created) {
       setApiKey('')
       // A key refused after the connection was made: the form closes, the
-      // row says the key is missing and the sentence shows under the sections.
+      // card says the key is missing and the sentence shows on the page.
       onDone()
     }
   }
@@ -380,11 +278,11 @@ function AddForm({
       >
         <div className="flex flex-col gap-3 mt-2">
           <div>
-            <label className="field-label" htmlFor={`provider-add-label-${machine}`}>
+            <label className="field-label" htmlFor={fieldId('label')}>
               Label
             </label>
             <input
-              id={`provider-add-label-${machine}`}
+              id={fieldId('label')}
               className="input-compact w-full max-w-72"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
@@ -394,11 +292,11 @@ function AddForm({
           </div>
           {company.takesBaseUrl && (
             <div>
-              <label className="field-label" htmlFor={`provider-add-base-url-${machine}`}>
+              <label className="field-label" htmlFor={fieldId('base-url')}>
                 Base URL
               </label>
               <input
-                id={`provider-add-base-url-${machine}`}
+                id={fieldId('base-url')}
                 className="input-compact w-full max-w-md"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
@@ -421,11 +319,11 @@ function AddForm({
           )}
           {company.needsKey && (
             <div>
-              <label className="field-label" htmlFor={`provider-add-key-${machine}`}>
+              <label className="field-label" htmlFor={fieldId('key')}>
                 Key
               </label>
               <input
-                id={`provider-add-key-${machine}`}
+                id={fieldId('key')}
                 className="input-compact w-full max-w-md"
                 type="password"
                 value={apiKey}
@@ -459,173 +357,234 @@ function AddForm({
   )
 }
 
-/**
- * The provider connections of one machine, a section per company that has
- * one, then the add form while `addRequest` names a company.
- */
-export function ProviderConnectionsSections({
+/** One stored connection as a row of its provider's card: its label, its key
+ *  in a word, its usage (the provider's line and its own tabs', named
+ *  apart), the address it was given (Ollama, another provider). */
+function ProviderConnectionRow({
   machine,
-  addRequest,
-  onAddDone
+  machineWords,
+  connection,
+  usage,
+  keyFormOpen,
+  error,
+  onKey,
+  onKeyClose
 }: {
   machine: string
-  addRequest: ProviderCompanyId | null
-  onAddDone: () => void
-}): ReactElement | null {
-  const state = useMachine(machine)
-  const load = useProviderConnectionsStore((s) => s.load)
+  machineWords: string
+  connection: ProviderConnection
+  /** Its usage line (PRDCT-4496), or null while it is not read. */
+  usage: string | null
+  keyFormOpen: boolean
+  error: string | null
+  onKey: () => void
+  onKeyClose: () => void
+}): ReactElement {
+  const rename = useProviderConnectionsStore((s) => s.rename)
+  const remove = useProviderConnectionsStore((s) => s.remove)
+  const [draft, setDraft] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const facts = providerCardFacts(connection)
+  const ownAddress = connection.company === 'ollama' || connection.company === 'generic'
+  const host = connection.endpoints[0] ? hostOf(connection.endpoints[0].baseUrl) : null
+  // PRDCT-4551: what this connection's own Pi and OpenCode tabs used today,
+  // read on the machine whose page this is.
+  const used = useConnectionUsage(machine, connection.id)
+  const read = useHarnessUsage(machine, 'today')
+  const own = ownUsageText(read?.status, used)
+  return (
+    <ConnectionRow
+      data-provider-connection-row={connection.id}
+      heading={
+        <CardLabel
+          label={connection.label}
+          draft={draft}
+          onDraft={setDraft}
+          onCommit={(label) => void rename(machine, connection.id, label)}
+          labelProps={{ 'data-provider-connection-label': connection.id }}
+          inputProps={{ 'data-provider-rename-input': true }}
+        />
+      }
+      state={facts.state}
+      stateAttrs={{ 'data-provider-connection-key-state': connection.id }}
+      fix={
+        connection.needsKey &&
+        !connection.hasKey && (
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            onClick={onKey}
+            data-connection-fix={connection.id}
+          >
+            Paste the key
+          </button>
+        )
+      }
+      menu={
+        <RowMenu
+          id={connection.id}
+          label={connection.label}
+          entries={rowMenuEntries({
+            kind: connection.needsKey ? 'provider-key' : 'provider-local',
+            signedIn: connection.hasKey,
+            onRename: () => setDraft(connection.label),
+            onCredential: connection.needsKey ? onKey : undefined,
+            onRemove: () => setConfirming(true),
+            hooks: {
+              rename: { 'data-provider-rename': connection.id },
+              credential: { 'data-provider-key': connection.id },
+              remove: { 'data-provider-remove': connection.id }
+            }
+          })}
+        />
+      }
+      lines={
+        <>
+          <UsageLine
+            text={connection.hasKey || !connection.needsKey ? usage : 'Read once the key is stored'}
+            id={connection.id}
+            own={own}
+            data-provider-connection-usage={usage ? connection.id : undefined}
+          />
+          {ownAddress && host && <RowNote>{host}</RowNote>}
+        </>
+      }
+      fold={
+        <>
+          <CardFold open={keyFormOpen}>
+            <KeyForm machine={machine} connection={connection} error={error} onClose={onKeyClose} />
+          </CardFold>
+          <CardFold open={confirming}>
+            <RemoveConfirm
+              kind={connection.needsKey ? 'provider-key' : 'provider-local'}
+              label={connection.label}
+              machine={machineWords}
+              id={connection.id}
+              onCancel={() => setConfirming(false)}
+              onRemove={() => {
+                setConfirming(false)
+                void remove(machine, connection.id)
+              }}
+            />
+          </CardFold>
+        </>
+      }
+    />
+  )
+}
+
+/**
+ * The stored connections of one machine (PRDCT-4552): one card per provider
+ * that has any, in catalogue order, its connections as rows, its foot
+ * connecting another (the add form opening inside the card). `modelsOf`
+ * names what a company's catalogue serves.
+ */
+export function ProviderConnectionCards({
+  machine,
+  machineWords,
+  modelsOf,
+  addOpen
+}: {
+  machine: string
+  machineWords: string
+  modelsOf: (company: CardCompany) => CardModels
+  /** A form to connect a provider is open below: the store's sentence shows in it. */
+  addOpen: boolean
+}): ReactElement {
+  const state = useProviderConnectionsOf(machine)
   const clearError = useProviderConnectionsStore((s) => s.clearError)
-  // The open key form, for the machine it was opened on.
+  // The open key form and the open add form, for the machine they were
+  // opened on (switching the machine closes them, derived during render).
   const [keyForm, setKeyForm] = useState<{ machine: string; id: string } | null>(null)
   const keyFor = keyForm?.machine === machine ? keyForm.id : null
-  const setKeyFor = (id: string | null): void => setKeyForm(id ? { machine, id } : null)
-  useEffect(() => {
-    startProviderConnectionsEvents()
-  }, [])
-  useEffect(() => {
-    void load(machine)
-  }, [machine, load])
+  const [addForm, setAddForm] = useState<{ machine: string; company: string } | null>(null)
+  const addFor = addForm?.machine === machine ? addForm.company : null
   // Lane C of the harness wave (PRDCT-4496): each connection's usage line,
-  // read when the section shows it and again, forced, once its key is set.
+  // read when the page shows it and again, forced, once its key is set.
   useUsageLines(machine, state.connections)
-  // A new pick closes the key form (derived during render, the
-  // React-sanctioned shape) and clears the last sentence, which belonged to
-  // another form.
-  const [seenRequest, setSeenRequest] = useState(addRequest)
-  if (seenRequest !== addRequest) {
-    setSeenRequest(addRequest)
-    if (addRequest) setKeyFor(null)
-  }
-  useEffect(() => {
-    if (addRequest) clearError(machine)
-  }, [addRequest, machine, clearError])
-
   const companies = PROVIDER_COMPANIES.map((company) => ({
     company,
     connections: state.connections.filter((c) => c.company === company.id)
   })).filter((entry) => entry.connections.length > 0)
-  const adding = addRequest ? providerCompany(addRequest) : null
-  const formOpen = adding !== null || keyFor !== null
-
-  if (companies.length === 0 && !adding && !state.error) return null
   return (
     <>
-      {companies.map(({ company, connections }) => (
-        <div key={company.id} data-provider-company-section={company.id}>
-          <SettingsSection
-            title={
-              <span className="flex items-center gap-2">
-                {company.name}
-                {company.plan && <span className="badge badge-muted">{company.plan}</span>}
-              </span>
+      {companies.map(({ company, connections }) => {
+        const facts = providerCardFacts({
+          company: company.id,
+          needsKey: company.needsKey,
+          hasKey: false,
+          endpoints: connections[0].endpoints
+        })
+        return (
+          <ProviderCard
+            key={company.id}
+            company={company.id}
+            name={company.name}
+            what={facts.what}
+            harnesses={facts.harnesses}
+            models={modelsOf(company.id)}
+            modelsId={company.id}
+            data-provider-card={company.id}
+            data-provider-company-section={company.id}
+            rows={connections.map((connection) => (
+              <ProviderConnectionRow
+                key={connection.id}
+                machine={machine}
+                machineWords={machineWords}
+                connection={connection}
+                usage={
+                  connection.hasKey || !connection.needsKey
+                    ? usageLineTextFor(machine, connection.id)
+                    : null
+                }
+                keyFormOpen={keyFor === connection.id}
+                error={state.error}
+                onKey={() => {
+                  clearError(machine)
+                  setKeyForm({ machine, id: connection.id })
+                }}
+                onKeyClose={() => {
+                  clearError(machine)
+                  setKeyForm(null)
+                }}
+              />
+            ))}
+            form={
+              addFor === company.id ? (
+                <AddForm
+                  key={`${machine}:${company.id}`}
+                  machine={machine}
+                  company={company}
+                  taken={connections.map((c) => c.label)}
+                  error={state.error}
+                  onCancel={() => {
+                    clearError(machine)
+                    setAddForm(null)
+                  }}
+                  onDone={() => setAddForm(null)}
+                />
+              ) : null
             }
-          >
-            <SettingsCard>
-              {connections.map((connection) => (
-                <div key={connection.id}>
-                  <ConnectionRow
-                    machine={machine}
-                    connection={connection}
-                    usage={
-                      connection.hasKey || !connection.needsKey
-                        ? usageLineTextFor(machine, connection.id)
-                        : null
-                    }
-                    onKey={() => {
-                      clearError(machine)
-                      setKeyFor(connection.id)
-                    }}
-                  />
-                  {keyFor === connection.id && (
-                    <KeyForm
-                      machine={machine}
-                      connection={connection}
-                      error={state.error}
-                      onClose={() => {
-                        clearError(machine)
-                        setKeyFor(null)
-                      }}
-                    />
-                  )}
-                </div>
-              ))}
-            </SettingsCard>
-          </SettingsSection>
-        </div>
-      ))}
-      {adding && (
-        <SettingsCard>
-          <AddForm
-            key={`${machine}:${adding.id}`}
-            machine={machine}
-            company={adding}
-            taken={state.connections.filter((c) => c.company === adding.id).map((c) => c.label)}
-            error={state.error}
-            onCancel={() => {
-              clearError(machine)
-              onAddDone()
-            }}
-            onDone={onAddDone}
+            foot={
+              <button
+                type="button"
+                className="btn-secondary btn-compact"
+                onClick={() => {
+                  clearError(machine)
+                  setAddForm({ machine, company: company.id })
+                  reveal(`[data-provider-card="${company.id}"]`)
+                }}
+                data-connect-company={company.id}
+              >
+                {connectLabel(connections.length)}
+              </button>
+            }
           />
-        </SettingsCard>
-      )}
-      {state.error && !formOpen && (
+        )
+      })}
+      {state.error && !keyFor && !addFor && !addOpen && (
         <SettingsCallout tone="danger" role="alert" text={state.error} />
       )}
     </>
-  )
-}
-
-/** The provider entries of a Connect chooser: the name and the hint, no logo. */
-export function ProviderConnectItems({
-  onPick
-}: {
-  onPick: (id: ProviderCompanyId) => void
-}): ReactElement {
-  return (
-    <>
-      {PROVIDER_CONNECT_ITEMS.map((item) => (
-        <DropdownMenuPrimitive.Item
-          key={item.id}
-          className="menu-item select-option"
-          onSelect={() => onPick(item.id)}
-          data-connect-company={item.id}
-        >
-          <span className="min-w-0 flex-1">
-            <span className="block truncate">{item.name}</span>
-            <span className="block truncate text-[11px] text-text-tertiary">{item.hint}</span>
-          </span>
-        </DropdownMenuPrimitive.Item>
-      ))}
-    </>
-  )
-}
-
-/** A server page's Connect: the providers only, a server's subscriptions being
- *  signed in on the server itself. */
-export function ProviderConnectMenu({
-  onPick
-}: {
-  onPick: (id: ProviderCompanyId) => void
-}): ReactElement {
-  return (
-    <DropdownMenuPrimitive.Root modal={false}>
-      <DropdownMenuPrimitive.Trigger asChild>
-        <button type="button" className="btn-primary" data-connect-providers>
-          <PlusIcon className="w-3.5 h-3.5" />
-          Connect
-        </button>
-      </DropdownMenuPrimitive.Trigger>
-      <DropdownMenuPrimitive.Portal>
-        <DropdownMenuPrimitive.Content
-          align="end"
-          sideOffset={4}
-          className="menu-surface menu-pop select-menu z-50 p-1"
-          data-connect-chooser
-        >
-          <ProviderConnectItems onPick={onPick} />
-        </DropdownMenuPrimitive.Content>
-      </DropdownMenuPrimitive.Portal>
-    </DropdownMenuPrimitive.Root>
   )
 }

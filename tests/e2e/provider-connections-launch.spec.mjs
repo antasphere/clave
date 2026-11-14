@@ -176,6 +176,27 @@ function parsePrinted(raw) {
   return 'ARGS' in out ? out : null
 }
 
+/** PRDCT-4507: an OpenCode tab's configuration split in two: its own part
+ *  (the connection's, the model's), as JSON, and whether Clave's tools ride
+ *  beside it alone, the token by reference. */
+function opencodeConfigParts(cfg) {
+  let parsed = null
+  try {
+    parsed = typeof cfg === 'string' ? JSON.parse(cfg) : cfg
+  } catch {
+    return { own: null, clave: false }
+  }
+  const { mcp, ...own } = parsed ?? {}
+  const servers = Object.keys(mcp?.servers ?? {})
+  return {
+    own: JSON.stringify(own),
+    clave:
+      servers.length === 1 &&
+      servers[0] === 'clave' &&
+      mcp.servers.clave.headers?.Authorization === 'Bearer {env:CLAVE_TAB_MCP_TOKEN}'
+  }
+}
+
 function argTokens(printed) {
   return (printed?.ARGS ?? '').split(' ').filter(Boolean)
 }
@@ -732,9 +753,14 @@ export async function run(t) {
     } catch {
       // Checked below.
     }
+    t.check(
+      'and Clave’s own tools beside, the token by reference (PRDCT-4507)',
+      opencodeConfigParts(dsConfig).clave,
+      scrub(ds?.CFG)
+    )
     t.equal(
       'OpenCode is handed the provider by its variable and the model',
-      JSON.stringify(dsConfig),
+      opencodeConfigParts(dsConfig).own,
       JSON.stringify({
         providers: { deepseek: { settings: { apiKey: '{env:DEEPSEEK_API_KEY}' } } },
         enabled_providers: ['deepseek'],
@@ -757,8 +783,13 @@ export async function run(t) {
     t.check('OpenCode on no connection gets no key', ocModel?.DS === '', scrub(ocModel))
     t.equal(
       'OpenCode with a model is handed the model alone',
-      ocModel?.CFG,
+      opencodeConfigParts(ocModel?.CFG).own,
       JSON.stringify({ model: 'deepseek/deepseek-chat' })
+    )
+    t.check(
+      'and Clave’s own tools beside it (PRDCT-4507)',
+      opencodeConfigParts(ocModel?.CFG).clave,
+      scrub(ocModel?.CFG)
     )
     t.equal(
       'and runs --standalone, once',
@@ -766,17 +797,26 @@ export async function run(t) {
       1
     )
 
-    // ── OpenCode with neither: as today ──────────────────────────────────
+    // ── OpenCode with neither: Clave's own tools alone (PRDCT-4507) ──────
     const ocPlainId = await spawn(win, {
       opencodeMode: true,
       launchProfileId: 'e2e-opencode-print'
     })
     const ocPlain = await printedBy(win, ocPlainId)
-    t.equal('OpenCode with neither is handed no configuration', ocPlain?.CFG, '')
+    t.equal(
+      'OpenCode with neither is handed no configuration of a provider or a model',
+      opencodeConfigParts(ocPlain?.CFG).own,
+      '{}'
+    )
     t.check(
-      'and does not run --standalone',
-      !!ocPlain && !argTokens(ocPlain).includes('--standalone'),
-      ocPlain?.ARGS
+      'only Clave’s own tools, the token by reference (PRDCT-4507)',
+      opencodeConfigParts(ocPlain?.CFG).clave,
+      scrub(ocPlain?.CFG)
+    )
+    t.equal(
+      'and runs --standalone, once, as every OpenCode terminal (PRDCT-4507)',
+      argTokens(ocPlain).filter((a) => a === '--standalone').length,
+      1
     )
 
     // ── An agent names the connection: clave_open_session's account ───────
@@ -1099,8 +1139,13 @@ export async function run(t) {
     const oc = await printedBy(separate.win, ocId)
     t.equal(
       'on a separate server, OpenCode with a model is handed the model',
-      oc?.CFG,
+      opencodeConfigParts(oc?.CFG).own,
       JSON.stringify({ model: 'deepseek/deepseek-chat' })
+    )
+    t.check(
+      'on a separate server, and Clave’s own tools beside it (PRDCT-4507)',
+      opencodeConfigParts(oc?.CFG).clave,
+      scrub(oc?.CFG)
     )
     t.equal(
       'on a separate server, OpenCode runs --standalone once',

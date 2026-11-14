@@ -76,8 +76,12 @@ import {
   switchSessionAccount,
   type SwitchTarget
 } from '../../lib/switch-account'
-import { AccountMenuHeader, ConnectionMenuHeader } from './AccountMenuHeader'
-import { sessionConnection } from '../../lib/session-connection'
+import {
+  AccountMenuHeader,
+  ConnectionLeftMenuHeader,
+  ConnectionMenuHeader
+} from './AccountMenuHeader'
+import { sessionConnection, sessionConnectionLeft } from '../../lib/session-connection'
 import { useProviderConnectionsStore } from '../../store/provider-connections-store'
 import { AccountSwitchRow, AccountUsagePreview } from './AccountSwitchMenu'
 import { effectiveSwitchMode, loadAccountPolicy } from '../../store/account-policy-store'
@@ -1334,6 +1338,8 @@ export function Sidebar(): React.JSX.Element {
         session,
         useProviderConnectionsStore.getState().byMachine
       )
+      // PRDCT-4540: a process that left its connection says so instead.
+      const connectionLeft = sessionConnectionLeft(session)
       const header =
         session && accountProviderOf(session) ? (
           <AccountMenuHeader session={session} chart />
@@ -1343,6 +1349,8 @@ export function Sidebar(): React.JSX.Element {
             id={connection.id}
             pi={session?.piMode === true}
           />
+        ) : connectionLeft ? (
+          <ConnectionLeftMenuHeader sentence={connectionLeft} pi={session?.piMode === true} />
         ) : undefined
       // Every other account of the tab's provider, those with headroom first
       // and the one whose week renews soonest on top (Suggested), in one

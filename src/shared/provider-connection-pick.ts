@@ -137,13 +137,56 @@ export const providerConnectionSpawnFields = (connection: {
  *  one, else the one the record kept), never exhausted (a provider key
  *  reports no usage). Null for a tab on no stored connection. */
 export function listedProviderConnection(
-  record: Pick<SessionRecord, 'piMode' | 'opencodeMode' | 'connectionId' | 'connectionLabel'>,
+  record: Pick<
+    SessionRecord,
+    'piMode' | 'opencodeMode' | 'connectionId' | 'connectionLabel' | 'connectionLeftFor'
+  >,
   currentLabel: (id: string) => string | undefined
 ): { id: string; label: string; exhausted: false } | null {
   if (!(record.piMode || record.opencodeMode) || !record.connectionId) return null
+  // A tab whose process left the connection stops naming it (PRDCT-4540).
+  if (providerConnectionLeft(record)) return null
   return {
     id: record.connectionId,
     label: currentLabel(record.connectionId) ?? record.connectionLabel ?? 'Removed connection',
     exhausted: false
   }
+}
+
+/** The shape of a provider id a tab's report may name (Pi's `kimi-coding`,
+ *  Clave's `clave-deepseek`): anything else is not taken as one. */
+export const REPORTED_PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/** Why a tab's process is off its connection, read from its record's
+ *  `connectionLeftFor` (`<provider>`, `<provider> credential`, `<provider>
+ *  unchecked`); null for anything else. */
+export function connectionLeftReason(
+  left: string | undefined
+): { provider: string; why: 'provider' | 'credential' | 'unchecked' } | null {
+  const m = /^(\S+)(?: (credential|unchecked))?$/.exec(left ?? '')
+  if (!m || !REPORTED_PROVIDER_RE.test(m[1])) return null
+  return { provider: m[1], why: (m[2] as 'credential' | 'unchecked' | undefined) ?? 'provider' }
+}
+
+/**
+ * The one rule of PRDCT-4540: the connection a tab names is the credential
+ * its process uses, or the tab does not name it. A Pi tab whose own process
+ * reported a request that did not go on its connection (Clave's Pi
+ * extension, `connectionLeftFor`) names no connection, and says so in this
+ * sentence, on the window's road and in `clave_list` alike: another
+ * provider, the same provider with another credential, or a credential
+ * Clave could not check. Null while the tab is on its connection, or on none.
+ */
+export function providerConnectionLeft(
+  record: Pick<SessionRecord, 'piMode' | 'opencodeMode' | 'connectionId' | 'connectionLeftFor'>
+): string | null {
+  if (!(record.piMode || record.opencodeMode) || !record.connectionId) return null
+  const left = connectionLeftReason(record.connectionLeftFor)
+  if (!left) return null
+  const harness = record.piMode ? 'Pi' : 'OpenCode'
+  if (left.why === 'credential')
+    return `${harness} runs on ${left.provider} with another credential now, not with this tab's connection.`
+  if (left.why === 'unchecked')
+    return `Clave could not check which credential ${harness} uses now, so this tab no longer names its connection.`
+  return `${harness} runs on ${left.provider} now, not on this tab's connection.`
 }

@@ -14,7 +14,7 @@ import {
 import { useSessionStore } from '../../store/session-store'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import { useCodexAccountStore } from '../../store/codex-account-store'
-import { useSessionConnection } from '../../lib/session-connection'
+import { sessionConnectionLeft, useSessionConnection } from '../../lib/session-connection'
 import { cn } from '@clave/ui/components'
 import { safePort } from '../../lib/utils'
 import { ConfirmDialog } from '@clave/ui/components'
@@ -36,6 +36,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
   const multiProfile = useClaudeProfileStore((s) => s.profiles.length > 1)
   const multiCodex = useCodexAccountStore((s) => s.accounts.length > 1)
   const connection = useSessionConnection(session)
+  const connectionLeft = sessionConnectionLeft(session)
   const removeSession = useSessionStore((s) => s.removeSession)
   const setSessionServerStatus = useSessionStore((s) => s.setSessionServerStatus)
   const messageTrailEnabled = useSessionStore((s) => s.messageTrailEnabled)
@@ -117,6 +118,12 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               data-connection-badge={connection.id}
             >
               {connection.label}
+            </span>
+          )}
+          {/* PRDCT-4540: a process that left its connection says so instead. */}
+          {connectionLeft && (
+            <span className="badge flex-shrink-0" title={connectionLeft} data-connection-left="">
+              {connectionLeft}
             </span>
           )}
           <AccountProposal sessionId={sessionId} />

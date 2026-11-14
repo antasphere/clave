@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
-import type { ClaudeAccount, CodexAccount, ProviderCompanyId } from '../../../../preload/index.d'
 import type { LauncherFamily } from '../../../../shared/agent-launch'
 import { useSettingsServer } from '../../store/settings-machine-store'
 import {
@@ -15,18 +14,18 @@ import {
   type ServerSettings
 } from '../../store/server-settings-store'
 import { useSessionStore } from '../../store/session-store'
-import { describeClaudeProfileAuth, describeTokenLife } from '../../store/claude-profile-store'
+import { describeClaudeProfileAuth } from '../../store/claude-profile-store'
 import { describeCodexAccountAuth } from '../../store/codex-account-store'
-import { capStatusLine, formatAge, useUsageNavigation } from '../../store/usage-store'
+import { formatAge, useUsageNavigation } from '../../store/usage-store'
 import { useNow } from '../../lib/use-now'
-import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { QuotaOverview, ToolToggle, type QuotaProvider, type Tool } from '../usage/UsagePanel'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
 import { HelpersList } from './HelpersSettings'
 import { IntegrationsList } from './IntegrationsSettings'
-import { SettingsPage, SettingsSection, SettingsCard, SettingsCallout } from './primitives'
-// ── Lane B (harness wave): provider connections (PRDCT-4426) ──
-import { ProviderConnectMenu, ProviderConnectionsSections } from './ProviderConnectionsSection'
+import { SettingsPage, SettingsCallout } from './primitives'
+import { ConnectionsBoard } from './AccountsSettings'
+import { ServerClaudeCard } from './ClaudeAccountsSection'
+import { ServerCodexCard } from './CodexAccountsSection'
 
 /**
  * The pages of the Agents group when the machine picker names a saved
@@ -202,94 +201,51 @@ export function ServerIntegrationsSettings({ serverId }: { serverId: string }): 
 
 // ── Accounts ────────────────────────────────────────────────────────────────
 
-function ClaudeRow({
-  account,
-  migrated,
-  settings
-}: {
-  account: ClaudeAccount
-  migrated: boolean
-  settings: ServerSettings
-}): ReactElement {
-  const summary = settings.usage.claude[account.id]
-  const isDefault = account.id === 'default'
-  const description = [
-    isDefault
-      ? 'Machine login on the server · its own ~/.claude'
-      : describeClaudeProfileAuth(account),
-    describeTokenLife(account),
-    capStatusLine(summary)
-  ]
-    .filter(Boolean)
-    .join(' · ')
-  return (
-    <div className="settings-row" data-server-claude-account={account.id}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 min-w-0">
-          <p className="settings-row-title truncate">{account.label}</p>
-          {(migrated || (!isDefault && !account.hasToken)) && (
-            <span className="badge badge-muted flex-shrink-0">Needs login</span>
-          )}
-          {account.tokenInvalid && (
-            <span className="badge badge-muted flex-shrink-0">Token refused</span>
-          )}
-        </div>
-        <p className="settings-row-description truncate">{description}</p>
-      </div>
-    </div>
-  )
-}
-
-function CodexRow({
-  account,
-  settings
-}: {
-  account: CodexAccount
-  settings: ServerSettings
-}): ReactElement {
-  const summary = settings.usage.codex[account.id]
-  const isDefault = account.id === 'default'
-  const description = [
-    isDefault
-      ? `${describeCodexAccountAuth(account)} · the server's own ~/.codex`
-      : describeCodexAccountAuth(account),
-    account.kind === 'apiKey' ? 'fallback only' : capStatusLine(summary)
-  ]
-    .filter(Boolean)
-    .join(' · ')
-  return (
-    <div className="settings-row" data-server-codex-account={account.id}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 min-w-0">
-          <p className="settings-row-title truncate">{account.label}</p>
-          {!account.hasCredential && (
-            <span className="badge badge-muted flex-shrink-0">Needs login</span>
-          )}
-        </div>
-        <p className="settings-row-description truncate">{description}</p>
-      </div>
-    </div>
-  )
-}
-
+/**
+ * A server's Connections page (PRDCT-4552): the same page as this Mac's, for
+ * that server. Its Claude and Codex accounts are cards that only read (an
+ * account is signed in where its login runs, on the server); its provider
+ * connections are made, renamed, keyed and removed from here, their keys
+ * sealed on the server by its own secret port.
+ */
 export function ServerAccountsSettings({ serverId }: { serverId: string }): ReactElement {
   const page = useServerPage(serverId)
   const { settings, name } = page
-  // The provider connections are managed from here (PRDCT-4426): their keys
-  // are sealed on the server by its own secret port.
-  const [addRequest, setAddRequest] = useState<ProviderCompanyId | null>(null)
   const live = page.connected && settings.status !== 'error'
+  const claudeExtra = settings.claude.filter((a) => a.id !== 'default').length
+  const codexShown = settings.codex.filter((a) => a.id !== 'default' || a.hasCredential)
   return (
     <SettingsPage
       title="Connections"
-      description={`The Claude and Codex accounts signed in on ${name}. Sessions started there run on them, in this order.`}
+      description={`What sessions started on ${name} run on: the Claude and Codex accounts signed in there, in the order they are taken, and the keys stored there, each with the models it serves.`}
       testId="accounts"
-      actions={live ? <ProviderConnectMenu onPick={setAddRequest} /> : undefined}
     >
       <div className="settings-page-sections" data-server-settings={serverId}>
         <ServerNotice serverId={serverId} {...page} />
         {live && (
           <>
+            <ConnectionsBoard
+              machine={serverId}
+              machineName={name}
+              connectedCount={claudeExtra + codexShown.length}
+              codexReady={codexShown.some((a) => a.hasCredential)}
+              accounts={(modelsOf) => (
+                <>
+                  <ServerClaudeCard
+                    accounts={settings.claude}
+                    migrated={settings.migrated}
+                    usage={settings.usage.claude}
+                    machine={name}
+                  />
+                  <ServerCodexCard
+                    accounts={codexShown}
+                    usage={settings.usage.codex}
+                    models={modelsOf('openai')}
+                    machine={name}
+                  />
+                </>
+              )}
+            />
             <SettingsCallout
               tone="accent"
               title="Accounts are signed in on the server itself"
@@ -306,51 +262,6 @@ export function ServerAccountsSettings({ serverId }: { serverId: string }): Reac
                   key. This list follows the server.
                 </>
               }
-            />
-            <SettingsSection
-              title={
-                <span className="flex items-center gap-2">
-                  <ClaudeLogo className="w-4 h-4 text-text-tertiary" />
-                  Claude
-                </span>
-              }
-              description={`New Claude sessions on ${name} start on the first account and move along this list when it is about to hit its limit.`}
-            >
-              <SettingsCard data-server-claude-accounts>
-                {settings.claude.map((account) => (
-                  <ClaudeRow
-                    key={account.id}
-                    account={account}
-                    migrated={settings.migrated.includes(account.id)}
-                    settings={settings}
-                  />
-                ))}
-                {settings.status === 'loading' && settings.claude.length === 0 && (
-                  <div className="settings-row">
-                    <p className="settings-row-description">Reading…</p>
-                  </div>
-                )}
-              </SettingsCard>
-            </SettingsSection>
-            <SettingsSection
-              title={
-                <span className="flex items-center gap-2">
-                  <CodexLogo className="w-4 h-4 text-text-tertiary" />
-                  Codex
-                </span>
-              }
-              description={`New Codex sessions on ${name} start on the first account and move along this list when it is about to hit its limit.`}
-            >
-              <SettingsCard data-server-codex-accounts>
-                {settings.codex.map((account) => (
-                  <CodexRow key={account.id} account={account} settings={settings} />
-                ))}
-              </SettingsCard>
-            </SettingsSection>
-            <ProviderConnectionsSections
-              machine={serverId}
-              addRequest={addRequest}
-              onAddDone={() => setAddRequest(null)}
             />
           </>
         )}

@@ -13,7 +13,13 @@ import { findExecutable } from './shell-launch'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { terminalJournal } from './terminal-journal'
-import { lastHookState } from './agent-state-manager'
+import {
+  clearConnectionReport,
+  connectionReportPath,
+  lastConnectionReport,
+  lastHookState,
+  setConnectionReportListener
+} from './agent-state-manager'
 import {
   ptyBackend,
   accountTokenForSpawn,
@@ -28,8 +34,11 @@ import {
   providerInjectionForSpawn,
   type ProviderSpawnFields
 } from './provider-injection-spawn'
+// PRDCT-4551: the ledger of starts the usage per connection is counted by.
+import { recordHarnessStart } from './usage-ledger'
 import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
 import { connectionVariableNames } from './connection-handover'
+import { ledgerLineForReport } from './connection-watch'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -94,7 +103,7 @@ import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import * as exchangeDigest from './exchange-digest'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
-import { sessionModelChanged } from './server/session-events'
+import { sessionConnectionChanged, sessionModelChanged } from './server/session-events'
 import { initialChatView } from './sessions/chat-view-default'
 import {
   defaultViewFor,
@@ -122,13 +131,35 @@ sessionManager.registerAdapter(codexAdapter)
 const opencodeChatAdapter = new AcpAdapter({
   id: 'opencode-chat',
   provider: 'opencode',
-  label: 'OpenCode'
+  label: 'OpenCode',
+  // PRDCT-4507: Clave's own tools, in OpenCode's inline configuration.
+  claveTools: 'opencode'
 })
 sessionManager.registerAdapter(opencodeChatAdapter)
 // Lane D (PRDCT-4427): Pi in the chat view, over Pi's own rpc mode
 // (`pi --mode rpc`).
-const piChatAdapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+// PRDCT-4507: Clave's own tools, through Clave's Pi extension.
+const piChatAdapter = new PiRpcAdapter({
+  id: 'pi-chat',
+  provider: 'pi',
+  label: 'Pi',
+  claveTools: true
+})
 sessionManager.registerAdapter(piChatAdapter)
+// PRDCT-4540: a Pi tab's own report of its connection (Clave's Pi extension,
+// read by the state folder's watch on the Mac and on a Clave server) goes on
+// the tab's record, which `clave_list` reads, and to the windows.
+setConnectionReportListener((id, leftFor, at) => {
+  ptyBackend.setSessionConnectionLeft(id, leftFor)
+  sessionConnectionChanged(id, leftFor)
+  // Usage follows the report (PRDCT-4551): off the connection, the tab's Pi
+  // session goes on the ledger with none; back on it, with the connection.
+  // At the time the extension decided, when its line says: the request that
+  // made the change is then counted to the side it went to.
+  const line = ledgerLineForReport(ptyBackend.getSessionRecord(id), leftFor)
+  if (line) recordHarnessStart({ ...line, at })
+})
+
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
 type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat'
 const CHAT_RECORD_ADAPTERS = new Set<string>([
@@ -195,6 +226,10 @@ class PtyManager {
   /** What each live session was spawned with, so a restart on another
    *  account (ADR 0002) rebuilds the same spawn with the account changed. */
   private spawns = new Map<string, { cwd: string; options?: PtySpawnOptions }>()
+  /** PRDCT-4551: the connection an OpenCode chat was started on, set before
+   *  its process starts: its session id arrives from the protocol, possibly
+   *  before the spawn returns, and goes on the ledger with it. */
+  private opencodeChatConnections = new Map<string, { connectionId?: string; label?: string }>()
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
   /** An OpenCode chat session's id, from the ACP agent's own meta (lane D,
@@ -511,6 +546,10 @@ class PtyManager {
     if (isEvents && adapter.id === 'opencode-chat') {
       const opencodeProfile =
         carried ?? launchProfileManager.resolve('opencode', options?.workspaceId, profileId)
+      this.opencodeChatConnections.set(session.id, {
+        connectionId: options?.connectionId,
+        label: options?.connectionLabel
+      })
       opencodeChatAdapter.configure(session.id, {
         command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
         env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
@@ -530,6 +569,13 @@ class PtyManager {
       const piProfile =
         carried ?? launchProfileManager.resolve('pi', options?.workspaceId, profileId)
       session.piSessionId = options?.resumeSessionId ?? randomUUID()
+      // PRDCT-4551: the ledger of starts the usage is counted by.
+      recordHarnessStart({
+        harness: 'pi',
+        sessionId: session.piSessionId,
+        connectionId: options?.connectionId,
+        label: options?.connectionLabel
+      })
       const argv = buildAgentArgv({
         kind: 'pi',
         profile: piProfile,
@@ -551,7 +597,9 @@ class PtyManager {
               connection: {
                 provider: chatConnection.piProvider,
                 variables: connectionVariableNames(chatConnection.providerEnv)
-              }
+              },
+              // PRDCT-4540: where Clave's extension reports its requests.
+              connectionReportFile: connectionReportPath(session.id)
             }
           : {})
       })
@@ -617,6 +665,13 @@ class PtyManager {
     } catch (error) {
       await adapter.kill(handle)
       throw error
+    }
+    // PRDCT-4540: a Pi terminal taken back still running reports where its
+    // process last went (its adoption rewrote the record); a fresh one starts
+    // on its connection, its old report gone.
+    if (!isEvents && family === 'pi') {
+      if (reattached) lastConnectionReport(session.id)
+      else clearConnectionReport(session.id)
     }
     if (isEvents) this.eventSessions.set(session.id, session)
     if (isEvents) session.startedAt = Date.now()
@@ -767,6 +822,15 @@ class PtyManager {
         ) {
           this.opencodeSessions.set(id, stream.event.providerSessionId)
           ptyBackend.setSessionOpencodeSessionId(id, stream.event.providerSessionId)
+          // PRDCT-4551: an OpenCode chat's session is known here, from the
+          // protocol: its start goes on the ledger now, on its connection.
+          const spawned = this.opencodeChatConnections.get(id)
+          recordHarnessStart({
+            harness: 'opencode',
+            sessionId: stream.event.providerSessionId,
+            connectionId: spawned?.connectionId,
+            label: spawned?.label
+          })
         }
       }
       // The mode and the effort the chat runs at, as the provider says them

@@ -31,6 +31,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { callClaveTool, callClaveTools, claveCallOf } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -54,6 +56,174 @@ for (let i = 0; i < argv.length; i++) {
   if (VALUED.has(arg)) flags[arg] = argv[++i]
   else if (arg === '--no-session') noSession = true
   // Any other flag is ignored.
+}
+// Clave's own tools (PRDCT-4507): the extension on the command line is loaded
+// as Pi loads it, against a stand-in `pi` that takes its registration, and the
+// server it registered is called with what it carries. Only with
+// `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
+/** The server the extension registered: a prompt `clave-open {…}` calls
+ *  `clave_open_session` on it as the model would (PRDCT-4507). */
+let resolveClaveServer = () => undefined
+const claveServerReady = new Promise((resolve) => (resolveClaveServer = resolve))
+async function piClaveTools(form) {
+  if (!process.env.CLAVE_TOOLS_STAND_IN_LOG) return resolveClaveServer(null)
+  const extension = flags['--extension']
+  let server = null
+  try {
+    if (extension && process.env.CLAVE_MCP_CONFIG_FILE) {
+      const started = []
+      const pi = {
+        on: (event, handler) => {
+          if (event === 'session_start') started.push(handler)
+        },
+        getCommands: () => [{ name: 'mcp' }],
+        registerMcpServer: (name, config) => {
+          if (name === 'clave') server = config
+        }
+      }
+      const mod = await import(pathToFileURL(extension).href)
+      mod.default(pi)
+      for (const handler of started) await handler({ reason: 'startup' }, {})
+    }
+  } catch {
+    server = null
+  }
+  resolveClaveServer(server)
+  await callClaveTools(server, {
+    harness: 'pi',
+    form,
+    extension: !!extension,
+    exposure: server?.exposure ?? null,
+    // Pi declares the `direct` tools; a `deferred` server's others wait for
+    // `tool_search`.
+    declare:
+      server?.exposure === 'direct'
+        ? 'all'
+        : Object.entries(server?.toolExposure ?? {})
+            .filter(([, exposure]) => exposure === 'direct')
+            .map(([name]) => name)
+  })
+}
+// PRDCT-4540: a provider request as Pi makes one, through Clave's extension on
+// the command line: its `before_provider_headers` handlers are given what
+// Pi 1.5.2 gives them (`ctx.mode`, `ctx.model`, `ctx.modelRegistry.
+// getProviderAuth`, `ctx.abort`). The credential resolved is the variable
+// the tab names, or `PI_STAND_IN_LOGIN_KEY` (a `/login` in the tab).
+let watchHandlers = null
+async function connectionHandlers() {
+  if (watchHandlers) return watchHandlers
+  watchHandlers = []
+  const extension = flags['--extension']
+  if (!extension || !process.env.CLAVE_CONNECTION_REPORT_FILE) return watchHandlers
+  try {
+    const mod = await import(pathToFileURL(extension).href)
+    mod.default({
+      on: (event, handler) => {
+        if (event === 'before_provider_headers') watchHandlers.push(handler)
+      },
+      getCommands: () => [],
+      registerMcpServer: () => {}
+    })
+  } catch {
+    // No extension: no watch.
+  }
+  return watchHandlers
+}
+async function providerRequest(mode, provider, abort, how, api = 'stand-in') {
+  const keyVar = process.env.CLAVE_CONNECTION_KEY_VAR
+  const ctx = {
+    mode,
+    // `api` is `pi-virtual` for a virtual model, as Pi 1.5.2 shows one.
+    model: { provider, id: 'stand-in', api },
+    modelRegistry: {
+      // The provider ids extensions registered: Pi's own bundled one only.
+      getRegisteredProviderIds: () => ['llama.cpp'],
+      getProviderAuth: async () => {
+        // `unchecked`: the credential cannot be resolved (the call throws).
+        if (how === 'unchecked') throw new Error('stand-in: no credential resolution')
+        return {
+          auth: {
+            apiKey:
+              how === 'credential'
+                ? 'e2e-made-up-login-key'
+                : process.env.PI_STAND_IN_LOGIN_KEY || (keyVar ? process.env[keyVar] : undefined)
+          },
+          source: 'stand-in'
+        }
+      }
+    },
+    abort
+  }
+  for (const handler of await connectionHandlers())
+    await handler({ type: 'before_provider_headers', headers: {} }, ctx)
+}
+
+// The terminal form (`PI_STAND_IN_TERMINAL=1`, no `--mode`): Clave's tools
+// called once, a line printed, then it waits as a TUI would. With
+// `PI_STAND_IN_TERMINAL_CONTROL`, each new line written in that file is one
+// request: `<provider>` on that provider (the person's `/model` and a
+// prompt), `<provider> credential` with another credential (a `/login`),
+// `<provider> unchecked` with a credential that cannot be resolved (PRDCT-4540).
+// The terminal form's usage (PRDCT-4551 with PRDCT-4540): with
+// `PI_STAND_IN_TERMINAL_USAGE=1`, each request leaves one assistant message
+// with made-up usage in a Pi session file under `PI_STAND_IN_STATE`, its
+// header naming the tab's `--session-id`, written a moment after the request
+// and stamped with the time the request left, as Pi stamps a fast answer:
+// on the real Pi 1.5.2 that time is earlier than a watch of Clave's state
+// folder sees the extension's report (the verifier's finding 2).
+let terminalSessionFile = null
+async function terminalUsage(provider, sentAt) {
+  const dir = process.env.PI_STAND_IN_STATE
+  const id = flags['--session-id'] ?? flags['--session']
+  if (process.env.PI_STAND_IN_TERMINAL_USAGE !== '1' || !dir || !id) return
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  mkdirSync(dir, { recursive: true })
+  const at = new Date(sentAt).toISOString()
+  if (!terminalSessionFile) {
+    terminalSessionFile = path.join(dir, `${at.replace(/[:.]/g, '-')}_${id}.jsonl`)
+    appendFileSync(
+      terminalSessionFile,
+      `${JSON.stringify({ type: 'session', version: 3, id, timestamp: at, cwd: process.cwd() })}\n`
+    )
+  }
+  const message = {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'ok' }],
+    api: 'stand-in',
+    provider,
+    model: 'stand-in',
+    usage: {
+      input: 100,
+      output: 10,
+      cacheRead: 20,
+      cacheWrite: 0,
+      totalTokens: 130,
+      cost: { input: 0.0001, output: 0.00002, cacheRead: 0.00001, cacheWrite: 0, total: 0.00013 }
+    },
+    stopReason: 'stop',
+    timestamp: sentAt
+  }
+  appendFileSync(
+    terminalSessionFile,
+    `${JSON.stringify({ type: 'message', id: randomUUID().slice(0, 8), parentId: null, timestamp: at, message })}\n`
+  )
+}
+if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
+  await piClaveTools('terminal')
+  process.stdout.write('stub pi terminal\r\n')
+  const control = process.env.PI_STAND_IN_TERMINAL_CONTROL
+  let seen = ''
+  setInterval(() => {
+    if (!control || !existsSync(control)) return
+    const line = readFileSync(control, 'utf8').trim()
+    if (!line || line === seen) return
+    seen = line
+    const [provider, how] = line.split(' ')
+    void providerRequest('tui', provider, () => {}, how).then(() =>
+      terminalUsage(provider, Date.now())
+    )
+  }, 200)
+  await new Promise(() => {})
 }
 if (flags['--mode'] !== 'rpc') {
   process.stderr.write(
@@ -282,13 +452,16 @@ const emit = async (event) => {
   await sleep(delayMs)
   out(event)
 }
+// What a model call used, as Pi 1.5.2 writes it on each assistant message
+// (read off a real session on 14 November 2026, PRDCT-4551): made-up figures,
+// the same for every call, so a spec can count calls.
 const usage = () => ({
-  input: 0,
-  output: 0,
-  cacheRead: 0,
+  input: 100,
+  output: 10,
+  cacheRead: 20,
   cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+  totalTokens: 130,
+  cost: { input: 0.0001, output: 0.00002, cacheRead: 0.00001, cacheWrite: 0, total: 0.00013 }
 })
 const assistant = (content, stopReason, extra = {}) => ({
   role: 'assistant',
@@ -370,6 +543,19 @@ async function confirmDialog() {
 
 async function startRun(text) {
   run = { aborted: false, messages: [], current: undefined, wake: undefined }
+  // PRDCT-4540, the verifier's R3-1: an extension of the person's own that
+  // moves Pi to another provider before each run (`provider/model`).
+  const move = process.env.PI_STAND_IN_MOVE_BEFORE_RUN
+  if (move) {
+    const [provider, id] = move.split('/')
+    session.model = findModel(provider, id) ?? { ...modelObject(id), provider }
+  }
+  // PRDCT-4540, the verifier's finding 1: an extension of the person's own
+  // whose virtual model, listed under the session's provider (the
+  // connection's), is selected before each run (`<id>`).
+  const virtual = process.env.PI_STAND_IN_VIRTUAL_BEFORE_RUN
+  if (virtual && session.model)
+    session.model = { ...modelObject(virtual), provider: session.model.provider, api: 'pi-virtual' }
   try {
     await emit({ type: 'agent_start' })
     if (text.includes('retry')) {
@@ -384,6 +570,17 @@ async function startRun(text) {
     }
     await emit({ type: 'turn_start' })
     await userMessage(text)
+    // The provider request, through Clave's extension when it watches.
+    await providerRequest(
+      'rpc',
+      session.model?.provider,
+      () => {
+        run.aborted = true
+      },
+      undefined,
+      session.model?.api
+    )
+    if (run.aborted) throw new Aborted()
     if (text.includes('notify extension'))
       out({
         type: 'extension_ui_request',
@@ -396,6 +593,25 @@ async function startRun(text) {
       run.current = assistant([], 'pending')
       await emit({ type: 'message_start', message: run.current })
       const message = assistant([], 'error', { errorMessage: 'Provider refused: stand-in' })
+      await endMessage(message)
+      await emit({ type: 'turn_end', message, toolResults: [] })
+      await emit({ type: 'agent_end', messages: run.messages, willRetry: false })
+      await emit({ type: 'agent_settled', aborted: false })
+      return
+    }
+    // `clave-open {…}` / `clave-call <tool> {…}`: the model calls that tool
+    // once with those arguments (PRDCT-4507), says what came back, and ends
+    // its turn.
+    const call = claveCallOf(text)
+    if (call) {
+      const opened = call.args
+        ? await callClaveTool(await claveServerReady, call.name, call.args)
+        : { ok: false, error: 'bad arguments' }
+      await textMessage([`${call.name}: ${JSON.stringify(opened)}`])
+      const message = assistant(
+        [{ type: 'text', text: `${call.name}: ${JSON.stringify(opened)}` }],
+        'stop'
+      )
       await endMessage(message)
       await emit({ type: 'turn_end', message, toolResults: [] })
       await emit({ type: 'agent_end', messages: run.messages, willRetry: false })
@@ -688,3 +904,5 @@ process.stdin.on('data', (chunk) => {
 })
 process.stdin.on('end', () => process.exit(0))
 process.on('SIGTERM', () => process.exit(0))
+// PRDCT-4507: in the background, as Pi connects its servers at session start.
+void piClaveTools('rpc')

@@ -106,6 +106,9 @@ const providerConnectionsMissing = <T>(run: Promise<T>): Promise<T> =>
 export type ModelsCatalogView = typeof S.ModelsCatalogView.Type
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 export type ProviderUsageLineView = typeof S.ProviderUsageLineView.Type
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+export type HarnessUsageView = typeof S.HarnessUsageView.Type
+export type HarnessUsageRange = typeof S.HarnessUsageRange.Type
 
 export interface SettingsClient {
   readonly claudeAccounts: {
@@ -233,6 +236,15 @@ export interface SettingsClient {
       readonly connectionId: string
       readonly force?: boolean
     }) => Promise<ProviderUsageLineView>
+  }
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** That server's Pi and OpenCode usage per connection over the range,
+   *  read again first with `force`. */
+  readonly harnessUsage: {
+    readonly read: (input: {
+      readonly range: HarnessUsageRange
+      readonly force?: boolean
+    }) => Promise<HarnessUsageView>
   }
 }
 
@@ -413,6 +425,21 @@ export function settingsClient(callApi: Call): SettingsClient {
           g.readProviderUsage({
             payload: {
               connectionId: input.connectionId,
+              ...(input.force !== undefined && {
+                force: input.force ? ('true' as const) : ('false' as const)
+              })
+            }
+          })
+        )
+    },
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection. A GET's
+    // parameters: the range, the flag as a string, only when set.
+    harnessUsage: {
+      read: (input) =>
+        call((g) =>
+          g.readHarnessUsage({
+            payload: {
+              range: input.range,
               ...(input.force !== undefined && {
                 force: input.force ? ('true' as const) : ('false' as const)
               })

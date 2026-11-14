@@ -83,6 +83,9 @@ export function standaloneSettingsSource(
     modelsCatalog,
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line
     providerUsage: { view: providerUsageView },
+    // PRDCT-4551: what this server's Pi and OpenCode tabs used, per
+    // connection. Loaded on first use (its graph reaches the terminal backend).
+    harnessUsage: () => import('../harness-usage').then((m) => m.harnessUsage()),
     // Loaded on first use, as the shell's: the daemon's login reaches the
     // login shell's environment through the terminal backend, which the
     // source's own import graph must not reach (`boot-graph.test.ts`).

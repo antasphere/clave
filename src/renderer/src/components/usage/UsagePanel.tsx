@@ -1,10 +1,20 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
-import type { PiUsageTotals, UsageWindow, CodexAccount } from '../../../../preload/index.d'
+import type { UsageWindow, CodexAccount } from '../../../../preload/index.d'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import {
+  billsPerUse,
+  OTHER_SESSIONS_WORDS,
+  harnessUsageText,
+  type HarnessUsageBilling,
+  type HarnessUsageRange,
+  type UsageHarness
+} from '@clave/contract/settings/harness-usage-view'
+import { ensureHarnessUsage, useHarnessUsage } from '../../store/harness-usage-store'
 import {
   codexUsageStore,
   claudeUsageStore,
-  piUsageStores,
+  USAGE_PROVIDER_LABELS,
   useUsageNavigation,
   useClaudeAccountsUsage,
   useCodexAccountsUsage,
@@ -23,19 +33,21 @@ import {
   describeClaudeProfileAuth,
   type ClaudeProfile
 } from '../../store/claude-profile-store'
-import { ClaudeLogo, CodexLogo, AntigravityLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeLogo, CodexLogo, AntigravityLogo, PiLogo, OpenCodeLogo } from '../icons/cli-logos'
 import { useCodexAccountStore, describeCodexAccountAuth } from '../../store/codex-account-store'
 import { SettingsCallout, SettingsRow, SettingsSection } from '../settings/primitives'
 import { UsageColumn } from './UsageColumn'
 import { useNow } from '../../lib/use-now'
 
-export type Tool = 'claude' | 'codex' | 'antigravity' | 'pi'
+export type Tool = 'claude' | 'codex' | 'antigravity' | 'pi' | 'opencode'
 
 const TOOLS: { key: Tool; label: string; Logo: (p: { className?: string }) => ReactElement }[] = [
   { key: 'claude', label: 'Claude Code', Logo: ClaudeLogo },
   { key: 'codex', label: 'Codex', Logo: CodexLogo },
   { key: 'antigravity', label: 'Antigravity', Logo: AntigravityLogo },
-  { key: 'pi', label: 'Pi', Logo: PiLogo }
+  { key: 'pi', label: 'Pi', Logo: PiLogo },
+  // PRDCT-4551: OpenCode's usage, per connection, as Pi's.
+  { key: 'opencode', label: 'OpenCode', Logo: OpenCodeLogo }
 ]
 
 /** The provider switch: the side panel's tab bar, at page width. `tools`
@@ -117,7 +129,7 @@ function nextWeeklyReset(account: AccountRead): number {
 }
 
 /** The accounts in the order both charts draw them: the next weekly reset
- *  first, an account that could not be read last, the Accounts page's order
+ *  first, an account that could not be read last, the Connections page's order
  *  breaking ties. */
 function orderAccounts(accounts: AccountRead[]): AccountRead[] {
   return accounts
@@ -390,7 +402,7 @@ export function QuotaOverview({
   )
 }
 
-/** The Claude accounts, in the Accounts page's order. */
+/** The Claude accounts, in the Connections page's order. */
 function useClaudeAccountList(): { id: string; label: string; auth: string }[] {
   const profiles = useClaudeProfileStore((s) => s.profiles)
   return profiles.map((p: ClaudeProfile) => ({
@@ -479,13 +491,44 @@ function ComingSoon({ label }: { label: string }): ReactElement {
   )
 }
 
-function PiUsage(): ReactElement {
-  const [range, setRange] = useState<PiUsageTotals['range']>('today')
-  const { data: totals, status, error, load } = piUsageStores[range]()
+/** What a row's billing means, said under its name (PRDCT-4551). */
+const BILLING_WORDS: Record<HarnessUsageBilling, string> = {
+  plan: 'Coding plan: billed by the plan, not per token',
+  local: 'Local model: nothing billed',
+  payPerUse: 'Pay per use: the cost the harness computed',
+  signIn: 'No cost said: not known to be billed per use (a plan, another provider, or a mix)'
+}
+
+/** A row's description: the sign-in says it is the sign-in, then its billing. */
+function billingWords(row: {
+  connectionId: string | null
+  billing: HarnessUsageBilling
+  other?: boolean
+}): string {
+  // "Other sessions" (PRDCT-4551): what it is, in one plain sentence.
+  if (row.other) return OTHER_SESSIONS_WORDS
+  return row.connectionId === null
+    ? `The harness's own sign-in, on no stored connection. ${BILLING_WORDS[row.billing]}`
+    : BILLING_WORDS[row.billing]
+}
+
+/**
+ * Pi's or OpenCode's page (PRDCT-4551): each stored connection that serves
+ * it, the harness's own sign-in, then each removed connection with past
+ * usage under the label it had; each row its one line and its figures, over
+ * the range picked. Read from the harnesses' own records on the machine that
+ * runs the tabs.
+ */
+function HarnessUsagePage({ harness }: { harness: UsageHarness }): ReactElement {
+  const [range, setRange] = useState<HarnessUsageRange>('today')
+  const entry = useHarnessUsage(LOCAL_SERVER_ID, range)
   useEffect(() => {
-    void load()
-  }, [load])
+    void ensureHarnessUsage(LOCAL_SERVER_ID, range)
+  }, [range])
   const number = (value: number): string => new Intl.NumberFormat().format(value)
+  const rows = (entry?.view?.rows ?? []).filter((row) => row.harness === harness)
+  const unavailable = entry?.view?.unavailable.find((u) => u.harness === harness)
+  const name = USAGE_PROVIDER_LABELS[harness]
   return (
     <>
       <div className="settings-row">
@@ -509,37 +552,67 @@ function PiUsage(): ReactElement {
           ))}
         </div>
       </div>
-      {status === 'error' ? (
+      {unavailable && <SettingsCallout inset text={unavailable.reason} />}
+      {/* The host still reads this harness (OpenCode's first read): the rows
+          below are what it had, and they fill in. */}
+      {entry?.view?.reading?.includes(harness) && (
+        <SettingsRow label={`Reading ${name}'s records…`} />
+      )}
+      {entry?.status === 'error' && !entry.view ? (
         <SettingsCallout
           inset
           tone="danger"
-          text={error}
+          text={`${name} usage could not be read.`}
           actions={
-            <button className="btn-secondary" onClick={() => load({ force: true })}>
+            <button
+              className="btn-secondary"
+              onClick={() => void ensureHarnessUsage(LOCAL_SERVER_ID, range, { force: true })}
+            >
               Retry
             </button>
           }
         />
-      ) : !totals ? (
-        <SettingsRow label="Reading local Pi sessions…" />
+      ) : !entry?.view ? (
+        <SettingsRow label={`Reading ${name}'s records…`} />
       ) : (
-        <>
-          <SettingsRow label="Sessions" description="Local session totals, not account quota.">
-            <span className="settings-row-value">{number(totals.sessions)}</span>
-          </SettingsRow>
-          {[
-            ['Input', number(totals.input)],
-            ['Output', number(totals.output)],
-            ['Cache read', number(totals.cacheRead)],
-            ['Cache write', number(totals.cacheWrite)],
-            ['Total tokens', number(totals.totalTokens)],
-            ['Recorded cost', `$${totals.cost.toFixed(4)}`]
-          ].map(([label, value]) => (
-            <SettingsRow key={label} label={label}>
-              <span className="settings-row-value">{value}</span>
-            </SettingsRow>
-          ))}
-        </>
+        rows.map((row) => {
+          const figures: [string, string][] = [
+            ['Requests', number(row.requests)],
+            ['Sessions', number(row.sessions)],
+            ['Input', number(row.input)],
+            ['Output', number(row.output)],
+            ['Cache read', number(row.cacheRead)],
+            ['Cache write', number(row.cacheWrite)],
+            ['Total tokens', number(row.totalTokens)],
+            // A cost only where it is billed per use (`billsPerUse`).
+            ...(billsPerUse(row.billing)
+              ? ([['Cost', `$${row.cost.toFixed(4)}`]] as [string, string][])
+              : [])
+          ]
+          return (
+            <div
+              key={`${row.connectionId ?? (row.other ? 'other' : 'sign-in')}`}
+              data-harness-usage-row={row.connectionId ?? (row.other ? 'other' : 'sign-in')}
+              data-removed={row.removed ? 'true' : undefined}
+            >
+              <SettingsRow
+                label={row.removed ? `${row.label} (removed)` : row.label}
+                description={billingWords(row)}
+              >
+                <span className="settings-row-value" data-harness-usage-line>
+                  {harnessUsageText(row, row.billing, range)}
+                </span>
+              </SettingsRow>
+              <div className="px-3.5 pb-3 grid grid-cols-4 gap-x-4 gap-y-1">
+                {figures.map(([label, value]) => (
+                  <span key={label} className="text-xs text-text-tertiary tabular-nums">
+                    {label} <span className="text-text-secondary">{value}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )
+        })
       )}
     </>
   )
@@ -581,8 +654,8 @@ export function UsagePanel(): ReactElement {
         />
       ) : (
         <div className="settings-card">
-          {tool === 'pi' ? (
-            <PiUsage />
+          {tool === 'pi' || tool === 'opencode' ? (
+            <HarnessUsagePage key={tool} harness={tool} />
           ) : (
             <div className="px-3.5 py-3">
               {tool === 'antigravity' && <ComingSoon label="Antigravity" />}

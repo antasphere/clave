@@ -9,7 +9,7 @@ import {
   DEFAULT_TERMINAL_ROWS,
   INITIAL_COMMAND_DELAY_MS
 } from '../../constants'
-import { stateFilePath } from '../../agent-state-manager'
+import { connectionReportPath, stateFilePath } from '../../agent-state-manager'
 import { lazyTerminalPorts, unpackedPath } from '../../ports/terminals'
 import { readJson } from '../../ports/storage'
 import type { TerminalProcess } from '../../ports/terminal'
@@ -25,9 +25,19 @@ import {
   connectionHandover,
   connectionVariableNames
 } from '../../connection-handover'
+import {
+  CLAVE_MCP_CONFIG_FILE_ENV,
+  CLAVE_TAB_MCP_TOKEN_ENV,
+  readClaveMcpEndpoint,
+  withOpencodeClaveTools
+} from '../../clave-tools-launch'
+import { CLAVE_CONNECTION_REPORT_FILE_ENV, connectionWatchNames } from '../../connection-watch'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
+// PRDCT-4551: an OpenCode terminal's session named at its start, and the ledger.
+import { newOpencodeSessionId } from '../../opencode-session-id'
+import { recordHarnessStart } from '../../usage-ledger'
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
@@ -418,7 +428,9 @@ export const TMUX_SESSION_ENV_VARS: readonly string[] = [
   ...PROVIDER_KEY_ENV_VARS,
   'OPENCODE_CONFIG_CONTENT',
   'PI_CODING_AGENT_DIR',
-  ...CLAVE_TAB_CREDENTIAL_ENV_VARS
+  ...CLAVE_TAB_CREDENTIAL_ENV_VARS,
+  // PRDCT-4507: an OpenCode tab's token for Clave's own tools.
+  CLAVE_TAB_MCP_TOKEN_ENV
 ]
 
 /** The `set-option` calls that bring a live server's `update-environment` up
@@ -594,6 +606,10 @@ export interface SessionRecord {
    *  Resume opens it again; never its value. */
   connectionId?: string
   connectionLabel?: string
+  /** PRDCT-4540: the provider the process last went to off its connection,
+   *  as Clave's Pi extension reported it; absent while it is on it. Every
+   *  start writes the record afresh, so a restart begins on the connection. */
+  connectionLeftFor?: string
   /** The thread a Codex chat tab resumes: the app-server's own id, from the
    *  tab's first `session_meta`. Absent until the thread is up, and for every
    *  other kind of session. */
@@ -1168,6 +1184,7 @@ export class PtyBackend {
 
     let claudeSessionId: string | undefined
     let piSessionId: string | undefined
+    let opencodeSessionId: string | undefined
     const kind: AgentKind | null = usePiMode
       ? 'pi'
       : useOpencodeMode
@@ -1226,6 +1243,10 @@ export class PtyBackend {
     /** A connection's values under Clave's private names (`connectionHandover`). */
     let handoverEnv: Record<string, string> | undefined
     if (isWindows) {
+      // No connection handover here (`connection-handover.ts` is POSIX only):
+      // nothing stops a Windows login profile from replacing a stored key,
+      // and nothing of Pi or OpenCode on a connection has run on Windows
+      // (PRDCT-4540, decision 6: not built; both throw below).
       // Windows: cmd.exe with /c to exec the command directly (no echoed prompt).
       if (usePiMode) {
         throw new Error('Pi sessions are supported on macOS only')
@@ -1308,12 +1329,42 @@ export class PtyBackend {
               ? options.piSessionId
               : randomUUID())
         }
+        // PRDCT-4551: an OpenCode terminal's session is named by Clave at its
+        // start (`--session` creates the one it does not find, 2.3.0), and
+        // every Pi or OpenCode start goes on the ledger the usage is read by.
+        if (kind === 'opencode')
+          opencodeSessionId = options?.resumeSessionId ?? newOpencodeSessionId()
+        if (kind === 'pi' || kind === 'opencode')
+          recordHarnessStart({
+            harness: kind,
+            sessionId: kind === 'pi' ? piSessionId : opencodeSessionId,
+            connectionId: options?.connectionId,
+            label: options?.connectionLabel
+          })
         const mcpConfigPath = kind === 'claude' ? lazyTerminalPorts.mcpConfig.write(id) : null
+        // ── PRDCT-4507: Clave's own tools in a Pi or an OpenCode terminal ──
+        // The tab's credential is the same port's file: Pi's extension reads
+        // it by path; OpenCode gets the address in its inline configuration
+        // and the token under a variable of its own, on the key's road (the
+        // handover below, the tmux list). Every OpenCode terminal then runs
+        // standalone, the TUI that reads the tab's environment. No file (no
+        // tool server up) starts the tab without tools, never refuses it.
+        const claveToolsPath =
+          kind === 'pi' || kind === 'opencode' ? lazyTerminalPorts.mcpConfig.write(id) : null
+        if (kind === 'opencode') {
+          const providerEnv = withOpencodeClaveTools(
+            options?.providerEnv,
+            readClaveMcpEndpoint(claveToolsPath)
+          )
+          options = { ...options, providerEnv, opencodeStandalone: true }
+        }
+        // ── end PRDCT-4507 ──
         const piExtensionPath = kind === 'pi' ? piStateExtensionPath() : undefined
         const argv = buildAgentArgv({
           kind,
           profile,
-          sessionId: kind === 'pi' ? piSessionId : claudeSessionId,
+          sessionId:
+            kind === 'pi' ? piSessionId : kind === 'opencode' ? opencodeSessionId : claudeSessionId,
           resumeSessionId: options?.resumeSessionId,
           dangerousMode: options?.dangerousMode,
           model,
@@ -1334,6 +1385,21 @@ export class PtyBackend {
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
           assignments.push(`CLAVE_AGENT_STATE_FILE=${shellSingleQuote(stateFilePath(id))}`)
+        // PRDCT-4507: the PATH of the tab's MCP config file, never its token.
+        if (kind === 'pi' && claveToolsPath)
+          assignments.push(`${CLAVE_MCP_CONFIG_FILE_ENV}=${shellSingleQuote(claveToolsPath)}`)
+        // PRDCT-4540: a Pi tab on a connection tells Clave's extension two
+        // NAMES (the provider, the variable its key rides in) and where to
+        // report: names and a path on the command line, never a value.
+        if (kind === 'pi' && options?.connectionId && options.providerEnv) {
+          const watch = connectionWatchNames(piProvider, options.providerEnv)
+          if (watch)
+            for (const [name, value] of Object.entries({
+              ...watch,
+              [CLAVE_CONNECTION_REPORT_FILE_ENV]: connectionReportPath(id)
+            }))
+              assignments.push(`${name}=${shellSingleQuote(value)}`)
+        }
         // The account's home rides in the command, after the login profile
         // has run: a `CODEX_HOME` the user's own profile exports would
         // otherwise override the one in the environment.
@@ -1403,6 +1469,9 @@ export class PtyBackend {
       piMode: usePiMode,
       opencodeMode: useOpencodeMode,
       // Lane D (PRDCT-4427): the OpenCode session the terminal resumed, kept for its next Resume.
+      // A fresh terminal's Clave-named session (PRDCT-4551) is on its command
+      // line and the ledger alone: until it ran a turn it is no conversation
+      // a move into a chat or a Resume could take up.
       opencodeSessionId: options?.opencodeMode ? options.resumeSessionId : undefined,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
@@ -1840,6 +1909,22 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta || meta.opencodeSessionId === sessionId) return
     writeSessionRecord({ ...meta, opencodeSessionId: sessionId })
+  }
+
+  /** PRDCT-4540: what the tab's process reported of its connection, on its
+   *  record (`clave_list` reads the record): the provider it went to off
+   *  the connection, or null back on it. True when the record changed. */
+  setSessionConnectionLeft(id: string, provider: string | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta || !meta.connectionId) return false
+    if ((meta.connectionLeftFor ?? null) === provider) return false
+    const next: SessionRecord = { ...meta }
+    if (provider === null) delete next.connectionLeftFor
+    else next.connectionLeftFor = provider
+    writeSessionRecord(next)
+    return true
   }
 
   /** What the chat is running on now, as the provider last acknowledged it

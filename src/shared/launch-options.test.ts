@@ -357,6 +357,97 @@ describe('the models and the default one', () => {
     // A row with an id carries no note.
     expect(harness(onConnections, 'pi').models[1]).not.toHaveProperty('note')
   })
+  // PRDCT-4551: what an agent reads is what a person sees.
+  it('says what each connection and each sign-in used today, in the line a person reads', () => {
+    const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
+    const kimi2 = providerConnection(view('c-kimi-2', 'moonshot', 'Kimi home'))
+    const row = (over: Record<string, unknown>): Record<string, unknown> => ({
+      harness: 'pi',
+      connectionId: null,
+      label: 'x',
+      billing: 'plan',
+      removed: false,
+      requests: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: 0,
+      sessions: 0,
+      ...over
+    })
+    const options = launchOptions(
+      input({
+        connections: (pool) => (pool === 'moonshot' ? [kimi, kimi2] : []),
+        harnessUsage: {
+          rows: [
+            row({ connectionId: 'c-kimi', requests: 2, totalTokens: 1500, cost: 0.4 }),
+            row({ harness: 'opencode', connectionId: 'c-kimi', requests: 1, totalTokens: 500 }),
+            row({ connectionId: 'c-kimi-2', requests: 1, totalTokens: 7 }),
+            row({ billing: 'signIn', requests: 3, totalTokens: 10400, cost: 0.0137 })
+          ]
+        } as never
+      })
+    )
+    const pi = harness(options, 'pi')
+    // A connection's Pi and OpenCode tabs together; a plan says no cost.
+    expect(pi.connections.find((c) => c.id === 'c-kimi')?.usedToday).toEqual({
+      line: '3 requests · 2K tokens today',
+      requests: 3,
+      tokens: 2000,
+      cost: null
+    })
+    expect(pi.connections.find((c) => c.id === 'c-kimi-2')?.usedToday?.line).toBe(
+      '1 request · 7 tokens today'
+    )
+    // A sign-in not known to be billed per use: no cost (PRDCT-4551).
+    expect(pi.signInUsedToday).toEqual({
+      line: '3 requests · 10.4K tokens today',
+      requests: 3,
+      tokens: 10400,
+      cost: null
+    })
+    // OpenCode's sign-in is its own row; none was read, none is said.
+    expect(harness(options, 'opencode')).not.toHaveProperty('signInUsedToday')
+    expect(harness(options, 'claude')).not.toHaveProperty('signInUsedToday')
+    // A road that read nothing says nothing.
+    const silent = harness(
+      launchOptions(input({ connections: (pool) => (pool === 'moonshot' ? [kimi] : []) })),
+      'pi'
+    )
+    expect(silent.connections[0]).not.toHaveProperty('usedToday')
+  })
+  // The verifier's N1: "Other sessions" carries a null connectionId too; the
+  // sign-in's figure must not depend on the sign-in being listed first.
+  it('never says "Other sessions" as the sign-in, whichever row comes first (PRDCT-4551)', () => {
+    const row = (over: Record<string, unknown>): Record<string, unknown> => ({
+      harness: 'pi',
+      connectionId: null,
+      label: 'Pi sign-in',
+      billing: 'signIn',
+      removed: false,
+      requests: 1,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 7,
+      cost: 0,
+      sessions: 1,
+      ...over
+    })
+    const other = row({ label: 'Other sessions', other: true, requests: 9, totalTokens: 999 })
+    const pi = (rows: Record<string, unknown>[]): HarnessOptions =>
+      harness(launchOptions(input({ harnessUsage: { rows } as never })), 'pi')
+    expect(pi([other, row({})]).signInUsedToday).toEqual({
+      line: '1 request · 7 tokens today',
+      requests: 1,
+      tokens: 7,
+      cost: null
+    })
+    expect(pi([other])).not.toHaveProperty('signInUsedToday')
+  })
   it('says a start model decided elsewhere in a sentence, never a model', () => {
     const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
     const options = launchOptions(

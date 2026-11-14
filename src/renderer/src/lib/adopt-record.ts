@@ -249,6 +249,8 @@ function sessionFromRecord(
     // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
     connectionId: s.connectionId,
     connectionLabel: s.connectionLabel,
+    // PRDCT-4540: off its connection, as the process last reported.
+    ...(s.connectionLeftFor ? { connectionLeftFor: s.connectionLeftFor } : {}),
     // Where the conversation came from (PRDCT-4300), for the first card.
     continuedFrom: s.continuedFrom,
     sessionType: 'local',
@@ -519,6 +521,8 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
     connectionId: s.connectionId,
     connectionLabel: s.connectionLabel,
+    // PRDCT-4540: off its connection, as the process last reported.
+    ...(s.connectionLeftFor ? { connectionLeftFor: s.connectionLeftFor } : {}),
     // Where the conversation came from (PRDCT-4300), for the first card.
     continuedFrom: s.continuedFrom,
     sessionType: 'local',

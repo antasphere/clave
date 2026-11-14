@@ -16,6 +16,7 @@
  * sends it to the window as before.
  */
 import { noteRoad } from './roads'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import {
   AGENT_MODES,
   type Ctx,
@@ -47,7 +48,10 @@ import {
   HARNESS_BY_ID,
   type HarnessId
 } from '../../shared/harness'
-import { harnessProviderConnections } from '../../shared/provider-connection-pick'
+import {
+  harnessProviderConnections,
+  providerConnectionLeft
+} from '../../shared/provider-connection-pick'
 import type { PiStartModel } from '../../shared/pi-start-model'
 import {
   launchOptions as launchOptionsOf,
@@ -160,10 +164,8 @@ async function setGroupView(ctx: Ctx, key: string, p: Payload): Promise<unknown>
 }
 
 async function moveSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  // No "mine" here: the window's handler takes an id and nothing else, and
-  // the two roads of one tool must answer the same call the same way.
   const ref = str(p.sessionId) ?? ''
-  const id = ref
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   if (!id) throw new Error(`No session with id "${ref}"`)
   await getSession(ctx, id, ref)
 
@@ -291,10 +293,7 @@ async function addGroupTerminal(ctx: Ctx, key: string, p: Payload): Promise<unkn
 
 async function closeSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  if (!id) {
-    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
-  }
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   const session = await getSession(ctx, id, ref)
 
   // An agent-initiated close is recorded with the closing tab as `closer`
@@ -343,6 +342,9 @@ const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
   return items.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)))
 }
 
+const parentIdOf = (parentId: string | null | undefined): { parentId?: string } =>
+  parentId ? { parentId } : {}
+
 async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   const activeWorkspaceId = ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null
   const scope = str(p.workspace) ?? 'all'
@@ -369,6 +371,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
     .filter(({ record }) => inScope(record?.workspaceId))
     .map(({ s, record }) => ({
       id: s.id,
+      // The tab that opened it, as the daemon's road says (PRDCT-4507):
+      // main's lineage, else the opener the record keeps.
+      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy),
       name: s.title,
       cwd: s.cwd,
       mode: modeOf(record, s.provider),
@@ -382,6 +387,8 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       // word; an ended tab kept its last state or none): the same vocabulary.
       agentState: s.state === 'ended' ? null : s.state,
       account: record ? ctx.shell.accountOf(record) : null,
+      // PRDCT-4540: a tab whose process left its connection says so.
+      connectionLeft: record ? providerConnectionLeft(record) : null,
       groupId: groupOfSession(layouts, s.id)?.id ?? null,
       view: record?.view ? { url: record.view.url, title: record.view.title ?? null } : null,
       workspaceId: record?.workspaceId ?? null,
@@ -492,7 +499,10 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
       ...(shell.piOwnDefault ? { piOwnDefault: () => shell.piOwnDefault!() } : {})
     }
   ).catch(() => new Map<string, PiStartModel>())
+  // What each connection's tabs used today (PRDCT-4551), as a person reads it.
+  const harnessUsage = shell.harnessUsage ? await shell.harnessUsage().catch(() => null) : null
   return launchOptionsOf({
+    harnessUsage,
     machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
     harnesses: HARNESSES,
     presence: (id) => {

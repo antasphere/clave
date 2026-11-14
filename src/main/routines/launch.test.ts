@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
-import { type LaunchFacts, resolveLaunch } from './launch'
+import { type LaunchFacts, REPORTING_AGENTS, cannotReportReason, resolveLaunch } from './launch'
 import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
 import type { ConnectionPoolId } from '../../shared/connection'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
@@ -326,5 +326,17 @@ describe('resolveLaunch on a harness whose first pool is a provider pool (PRDCT-
     } finally {
       claude.connectionPools = pools
     }
+  })
+})
+
+describe('why a routine cannot report on an agent (PRDCT-4507)', () => {
+  it('says what Pi lacks, now that it has the tools, and what Antigravity lacks', () => {
+    expect(REPORTING_AGENTS.has('pi')).toBe(false)
+    expect(cannotReportReason('pi')).toBe(
+      "this agent cannot report: Pi has Clave's tools, but a routine does not hand its report to Pi yet"
+    )
+    expect(cannotReportReason('antigravity')).toBe(
+      'this agent cannot report: Antigravity has no Clave tools'
+    )
   })
 })

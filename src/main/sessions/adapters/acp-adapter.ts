@@ -28,6 +28,9 @@ import {
 } from './acp-client'
 import { lastWords, startRefusal } from './start-refusal'
 import { connectionHandover } from '../../connection-handover'
+import { lazyTerminalPorts } from '../../ports/terminals'
+import { readClaveMcpEndpoint, withOpencodeClaveTools } from '../../clave-tools-launch'
+import { OPENCODE_CONFIG_ENV } from '../../provider-injection'
 
 /**
  * A chat over the Agent Client Protocol (version 1): one agent process per
@@ -41,6 +44,9 @@ export interface AcpAgentSpec {
   id: string
   provider: string
   label: string
+  /** PRDCT-4507: hand every chat Clave's own tools in OpenCode's inline
+   *  configuration (`opencode`, the app's OpenCode chat); none otherwise. */
+  claveTools?: 'opencode'
 }
 export interface AcpLaunch {
   command: string[]
@@ -118,16 +124,32 @@ interface HandleState {
   textOpen: boolean
   /** Tool calls already shown, by `toolCallId`. */
   toolCalls: Set<string>
+  /** The input each shown call was shown with (its JSON), PRDCT-4507: OpenCode
+   *  2.3.0 opens a call with `rawInput: {}` and sends what it runs (its
+   *  `execute` script) in a later `tool_call_update`, so the card is told
+   *  again when the input arrives or changes. */
+  toolInputs: Map<string, { name: string; json: string }>
   permissions: Map<string, PendingPermission>
   initialPrompt?: string
   /** The exit code to report, when the adapter ended the session itself. */
   exitCode?: number
+  /** PRDCT-4507: the tab's credential for Clave's tools was issued at this
+   *  spawn, and is let go of when the process ends. */
+  claveTools?: boolean
   ended: boolean
   closing: boolean
 }
 
 /** The text of a list of ACP ToolContent items: content blocks' text, and a
  *  diff as its path, then the old text and the new. */
+/** A tool call's input that says something: a non-empty object, or a value
+ *  that is not one (an array, a string). `{}` and nothing say nothing. */
+function hasInput(input: unknown): boolean {
+  if (input === undefined || input === null) return false
+  if (typeof input === 'object' && !Array.isArray(input)) return Object.keys(input).length > 0
+  return true
+}
+
 function toolOutput(content: unknown): string {
   return array(content)
     .map((item) => {
@@ -285,10 +307,13 @@ export class AcpAdapter implements SessionAdapter {
   private handles = new Map<string, HandleState>()
   private launches = new Map<string, AcpLaunch>()
 
+  private readonly claveTools: 'opencode' | undefined
+
   constructor(spec: AcpAgentSpec) {
     this.id = spec.id
     this.provider = spec.provider
     this.label = spec.label
+    this.claveTools = spec.claveTools
   }
 
   /** The spawn's command and environment, handed by the manager before the
@@ -325,6 +350,7 @@ export class AcpAdapter implements SessionAdapter {
       turnRunning: false,
       textOpen: false,
       toolCalls: new Set(),
+      toolInputs: new Map(),
       permissions: new Map(),
       ended: false,
       closing: false
@@ -332,8 +358,12 @@ export class AcpAdapter implements SessionAdapter {
     state.initialPrompt = state.options.initialPrompt ?? launch.initialPrompt
     let child: ChildProcessWithoutNullStreams
     try {
-      child = spawnAgent(launch, spec.cwd)
+      // The launch as run, the token's variable included, is the one every
+      // mask of the agent's last words reads.
+      state.launch = this.withClaveTools(state, launch)
+      child = spawnAgent(state.launch, spec.cwd)
     } catch (error) {
+      this.letGoOfClaveTools(state)
       this.launches.set(spec.id, launch)
       throw error
     }
@@ -530,6 +560,7 @@ export class AcpAdapter implements SessionAdapter {
           this.closeLoadedText(state)
           state.loading = false
           state.toolCalls.clear()
+          state.toolInputs.clear()
         }
       }
       if (!opened) {
@@ -749,19 +780,19 @@ export class AcpAdapter implements SessionAdapter {
         if (!state.toolCalls.has(id)) {
           state.toolCalls.add(id)
           this.closeText(state)
-          this.emit(state, {
-            type: 'tool_call',
-            id,
-            name: text(update.title) || text(update.kind) || 'tool',
-            input: update.rawInput ?? {}
-          })
+          this.emitToolCall(state, id, update)
         }
         this.toolEnd(state, id, update)
         return
       }
-      case 'tool_call_update':
-        this.toolEnd(state, text(update.toolCallId), update)
+      case 'tool_call_update': {
+        const id = text(update.toolCallId)
+        // What the call runs, arrived after the call was shown (OpenCode
+        // 2.3.0's `execute` script comes with its `in_progress` update).
+        if (id && state.toolCalls.has(id)) this.toolInputArrived(state, id, update)
+        this.toolEnd(state, id, update)
         return
+      }
       case 'available_commands_update':
         this.storeCommands(state, update)
         return
@@ -815,18 +846,35 @@ export class AcpAdapter implements SessionAdapter {
     })
   }
 
+  /** A call shown with the input it carries, remembered for a later one. */
+  private emitToolCall(state: HandleState, id: string, update: Record<string, unknown>): void {
+    const input = update.rawInput ?? {}
+    const name = text(update.title) || text(update.kind) || 'tool'
+    state.toolInputs.set(id, { name, json: JSON.stringify(input) })
+    this.emit(state, { type: 'tool_call', id, name, input })
+  }
+
+  /** A shown call whose input arrived or changed since (PRDCT-4507): shown
+   *  again under the same id, the card taking the new input. An empty input
+   *  never replaces one already shown. */
+  private toolInputArrived(state: HandleState, id: string, update: Record<string, unknown>): void {
+    const input = update.rawInput
+    if (!hasInput(input)) return
+    const json = JSON.stringify(input)
+    const shown = state.toolInputs.get(id)
+    if (shown?.json === json) return
+    const name = text(update.title) || shown?.name || text(update.kind) || 'tool'
+    state.toolInputs.set(id, { name, json })
+    this.emit(state, { type: 'tool_call', id, name, input })
+  }
+
   /** A completed or failed call becomes its result. */
   private toolEnd(state: HandleState, id: string, update: Record<string, unknown>): void {
     const status = text(update.status)
     if (!id || (status !== 'completed' && status !== 'failed')) return
     if (!state.toolCalls.has(id)) {
       state.toolCalls.add(id)
-      this.emit(state, {
-        type: 'tool_call',
-        id,
-        name: text(update.title) || text(update.kind) || 'tool',
-        input: update.rawInput ?? {}
-      })
+      this.emitToolCall(state, id, update)
     }
     this.emit(state, {
       type: 'tool_result',
@@ -874,6 +922,14 @@ export class AcpAdapter implements SessionAdapter {
             input: update.rawInput ?? {}
           }
         })
+      }
+      // An input that arrives later (PRDCT-4507) is the call's input.
+      else if (hasInput(update.rawInput)) {
+        const shown = history.find(
+          (item) => item.event.type === 'tool_call' && item.event.id === id
+        )
+        if (shown?.event.type === 'tool_call')
+          shown.event = { ...shown.event, input: update.rawInput }
       }
       const status = text(update.status)
       if (status === 'completed' || status === 'failed')
@@ -930,8 +986,37 @@ export class AcpAdapter implements SessionAdapter {
     state.history.push({ event: { type: 'error', message, fatal: false }, at: Date.now() })
   }
 
+  /** PRDCT-4507: the launch with Clave's own tools: the tab's MCP config file
+   *  from the one issuer, its address as `mcp.servers.clave` in OpenCode's
+   *  inline configuration (`opencode acp` reads it, checked on 2.3.0) and
+   *  its token under a variable of its own, carried past a login profile
+   *  with the connection's. No file: the launch as it was. */
+  private withClaveTools(state: HandleState, launch: AcpLaunch): AcpLaunch {
+    if (this.claveTools !== 'opencode') return launch
+    const endpoint = readClaveMcpEndpoint(lazyTerminalPorts.mcpConfig.write(state.spec.id))
+    state.claveTools = true
+    if (!endpoint) return launch
+    const base: Record<string, string> = {}
+    if (launch.env[OPENCODE_CONFIG_ENV]) base[OPENCODE_CONFIG_ENV] = launch.env[OPENCODE_CONFIG_ENV]
+    const added = withOpencodeClaveTools(base, endpoint) ?? {}
+    return {
+      ...launch,
+      env: { ...launch.env, ...added },
+      connectionVariables: [
+        ...new Set([...(launch.connectionVariables ?? []), ...Object.keys(added)])
+      ]
+    }
+  }
+
+  private letGoOfClaveTools(state: HandleState): void {
+    if (!state.claveTools) return
+    state.claveTools = false
+    lazyTerminalPorts.mcpConfig.remove(state.spec.id)
+  }
+
   private exited(state: HandleState, code: number, stderrTail?: string): void {
     if (state.ended) return
+    this.letGoOfClaveTools(state)
     if (!state.sessionId && !state.closing && state.exitCode === undefined) {
       // The agent died before it opened a session: a refusal, said as one,
       // in its own last words and with its status (PRDCT-4427). Its pending

@@ -481,6 +481,36 @@ describe('serveCommand', () => {
       model: null,
       launchProfileId: null
     })
+    // PRDCT-4507: the tab's parent, as the daemon's road says it: main's
+    // lineage first, else the record's opener; none for a tab nobody opened.
+    const shell = {
+      ...h.ctx().shell,
+      parentOf: (id: string) => (id === 'pi' ? 'opener-lineage' : null)
+    }
+    const withParents = (await serveCommand('list', {}, h.ctx({ shell }))) as Listing
+    expect(withParents.sessions.find((s) => s.id === 'pi')?.parentId).toBe('opener-lineage')
+    expect(withParents.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('parentId')
+  })
+
+  it("names a tab's opener from its record after a restart, when the lineage in memory is gone (PRDCT-4507)", async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['opened', 'plain'] })])],
+      sessions: [session('opened'), session('plain')],
+      records: {
+        opened: record('opened', { openedBy: 'opener-on-record' }),
+        plain: record('plain', {})
+      }
+    })
+    // No parent in memory: the shell's lineage answers null for every tab.
+    const shell = { ...h.ctx().shell, parentOf: () => null }
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx({ shell }))) as Listing
+    expect(listed.sessions.find((s) => s.id === 'opened')?.parentId).toBe('opener-on-record')
+    expect(listed.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('parentId')
+    // The lineage in memory, when there is one, still wins over the record.
+    const both = { ...h.ctx().shell, parentOf: (id: string) => (id === 'opened' ? 'live' : null) }
+    const withLineage = (await serveCommand('list', {}, h.ctx({ shell: both }))) as Listing
+    expect(withLineage.sessions.find((s) => s.id === 'opened')?.parentId).toBe('live')
   })
 })
 
@@ -580,11 +610,11 @@ describe('resolveGroupRef', () => {
     expect(h.argsOf('awaitRehomed')).toEqual([])
   })
 
-  it('a move takes an id and nothing else, as the window does: "mine" is no session', async () => {
+  it('a move takes "mine" for the calling tab, as the window does (PRDCT-4507)', async () => {
     const h = setup({ sessions: [session('caller')] })
-    await expect(
-      serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
-    ).rejects.toThrow('No session with id "mine"')
+    expect(
+      await serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
+    ).toEqual({ sessionId: 'caller', groupId: null })
   })
 })
 
@@ -653,6 +683,45 @@ describe('launchOptions, served: what this machine can launch', () => {
     }
     return { ...base, shell }
   }
+
+  // The verifier's N1: main's own answer reads the sign-in from the rows its
+  // harness usage gives; "Other sessions" carries a null connectionId too.
+  it('never says "Other sessions" as the sign-in, whichever row comes first (PRDCT-4551)', async () => {
+    const usageRow = (over: Record<string, unknown>): Record<string, unknown> => ({
+      harness: 'pi',
+      connectionId: null,
+      label: 'Pi sign-in',
+      billing: 'signIn',
+      removed: false,
+      requests: 1,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 7,
+      cost: 0,
+      sessions: 1,
+      ...over
+    })
+    const other = usageRow({ label: 'Other sessions', other: true, requests: 9, totalTokens: 999 })
+    const piOf = async (rows: Record<string, unknown>[]): Promise<Record<string, unknown>> => {
+      const harnessUsage = async (): Promise<never> =>
+        ({ range: 'today', rows, unavailable: [] }) as never
+      const answer = (await serveCommand(
+        'launchOptions',
+        {},
+        full(setup(), { harnessUsage } as Partial<ServedShell>)
+      )) as LaunchOptions
+      return answer.harnesses.find((x) => x.id === 'pi') as unknown as Record<string, unknown>
+    }
+    expect((await piOf([other, usageRow({})])).signInUsedToday).toEqual({
+      line: '1 request · 7 tokens today',
+      requests: 1,
+      tokens: 7,
+      cost: null
+    })
+    expect(await piOf([other])).not.toHaveProperty('signInUsedToday')
+  })
 
   it('answers the machine, the harnesses in table order with their presence, and names the absent ones', async () => {
     vi.useFakeTimers({ now: NOW })

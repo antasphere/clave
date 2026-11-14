@@ -42,6 +42,16 @@ import { isChatProfileRef } from './open-session-modes'
 import { pickProviderConnection } from './provider-connection-pick'
 import type { PiStartModel } from './pi-start-model'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+import {
+  billsPerUse,
+  connectionUsageOf,
+  harnessUsageText,
+  signInUsageOf,
+  type HarnessUsageBilling,
+  type HarnessUsageFigures,
+  type HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 
 /** What agent-updates knows of a harness on the machine; undefined when this road never checks (the Mac's view of a server). */
 export interface HarnessPresence {
@@ -100,7 +110,30 @@ export interface LaunchOptionsInput {
    *  decides it (a connected server's Pi reads its own settings): the
    *  sentence its connection rows say instead of a model. */
   readonly providerStartNote?: (harness: HarnessId) => string | undefined
+  /** What this machine's Pi and OpenCode tabs used today, per connection
+   *  (PRDCT-4551), read ahead (the input is synchronous); absent where the
+   *  road could not read it. */
+  readonly harnessUsage?: Pick<HarnessUsageView, 'rows'> | null
   readonly now: number
+}
+
+/** What a connection, or a harness's own sign-in, used today (PRDCT-4551):
+ *  the one line a person reads, and its figures. No cost where the
+ *  connection is a plan or a local model: a plan bills nothing per token. */
+export interface UsedToday {
+  readonly line: string
+  readonly requests: number
+  readonly tokens: number
+  readonly cost: number | null
+}
+
+export function usedToday(figures: HarnessUsageFigures, billing: HarnessUsageBilling): UsedToday {
+  return {
+    line: harnessUsageText(figures, billing, 'today'),
+    requests: figures.requests,
+    tokens: figures.totalTokens,
+    cost: billsPerUse(billing) ? figures.cost : null
+  }
 }
 export interface ConnectionWindow {
   readonly name: string
@@ -125,6 +158,9 @@ export type ConnectionOption = PooledConnection & {
   /** In place of `startModel` where another machine decides it: the
    *  sentence saying so. */
   readonly startModelNote?: string
+  /** A stored connection (PRDCT-4551): what its Pi and OpenCode tabs used
+   *  today, as its row says it. */
+  readonly usedToday?: UsedToday
 }
 export interface ModelOption extends LaunchModel {
   readonly served: boolean
@@ -156,6 +192,9 @@ export interface HarnessOptions {
   readonly connections: readonly ConnectionOption[]
   readonly connectionNote: string | null
   readonly profiles: readonly ProfileOption[]
+  /** Pi and OpenCode (PRDCT-4551): what the tabs on no connection, on the
+   *  harness's own sign-in, used today. */
+  readonly signInUsedToday?: UsedToday
 }
 export interface LaunchOptions {
   readonly machine: { readonly id: string; readonly name: string }
@@ -299,9 +338,11 @@ function harnessOptions(
     return rows.map((c) => {
       const start = isAccountPoolId(pool) ? undefined : input.providerStartModel?.(id, c.id)
       const startNote = isAccountPoolId(pool) || start ? undefined : input.providerStartNote?.(id)
+      const used = isAccountPoolId(pool) ? undefined : connectionUsageOf(input.harnessUsage, c.id)
       return {
         ...c,
         pool,
+        ...(used ? { usedToday: usedToday(used.figures, used.billing) } : {}),
         ...(start
           ? start.ok
             ? { startModel: start.model }
@@ -363,8 +404,15 @@ function harnessOptions(
       name: p.name,
       form: isChatProfileRef(id, p.id) || chatProfileSource(p.id) ? 'chat' : 'terminal',
       default: p.id === defaultProfileId
-    }))
+    })),
+    ...signInOf(input, id)
   }
+}
+
+function signInOf(input: LaunchOptionsInput, id: HarnessId): { signInUsedToday?: UsedToday } {
+  if (id !== 'pi' && id !== 'opencode') return {}
+  const row = signInUsageOf(input.harnessUsage, id)
+  return row ? { signInUsedToday: usedToday(row, row.billing) } : {}
 }
 
 /** What the launcher offers on the machine the input describes. */

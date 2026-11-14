@@ -193,6 +193,8 @@ body,
 .radio:focus-visible,
 .theme-swatch:focus-visible,
 .settings-row-action:focus-visible,
+.connection-card-more:focus-visible,
+.connection-card-link:focus-visible,
 .git-tree-row:focus-visible,
 .git-sync-badge:focus-visible,
 .panel-path:focus-visible,
@@ -3045,6 +3047,419 @@ button.extension-card:hover {
 }
 .extension-card-muted {
   opacity: 0.55;
+}
+
+/* ── Connection cards ── */
+/* Settings → Connections (PRDCT-4552): one card for everything that pays for
+   a tab (a Claude account, a Codex account, a stored provider connection)
+   and one for each provider that can be connected. The paper of
+   .settings-card, standing as a tile: the provider's mark on its own small
+   ground heads it, then a few facts on a two-column ruler (a quiet word, the
+   fact), then the actions on a seam at the foot. A form, a sign-in or a
+   removal's question opens INSIDE the card, edge to edge like a row of a
+   settings card, and the card takes the whole row of the grid while it is
+   open. Two to a row on the settings column, one on a narrow window; the
+   cards to connect, smaller, three. */
+.connection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+  gap: 0.625rem;
+  align-items: stretch;
+}
+/* A card to connect that opens its form takes a row; the cards after it
+   fill the gap it leaves rather than a hole standing in the grid. The cards
+   of what is connected keep their order (the pool's) instead. */
+.connection-grid--offers {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14.5rem), 1fr));
+  grid-auto-flow: row dense;
+}
+/* A company's group of cards (a spec's hook) takes no room of its own. */
+.connection-grid-group {
+  display: contents;
+}
+.connection-grid-note {
+  grid-column: 1 / -1;
+}
+.connection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.875rem 1rem 0.625rem;
+  border-radius: var(--radius-xl);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+.connection-card[data-wide='true'] {
+  grid-column: 1 / -1;
+}
+/* A card that cannot run a tab as it stands (no key, no sign-in) carries the
+   warning ink on its edge, so it is found before it is read. */
+.connection-card[data-tone='attention'] {
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-warning) 55%, transparent);
+}
+.connection-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+}
+/* The mark on its tile: the one thing on the card that is not words. */
+.connection-card-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in srgb, var(--text-primary) 6%, var(--card-surface));
+  box-shadow: inset 0 0 0 0.5px var(--edge-color);
+  color: var(--text-primary);
+}
+.connection-card-mark > svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.connection-card-titles {
+  min-width: 0;
+  padding-top: 0.0625rem;
+}
+.connection-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  min-height: 1.25rem;
+}
+.connection-card-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--control-text);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.connection-card-rename {
+  width: 100%;
+  max-width: 14rem;
+}
+.connection-card-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.375rem;
+  margin-top: 0.125rem;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.connection-card-what {
+  color: var(--text-tertiary);
+}
+.connection-card-aside {
+  padding-top: 0.125rem;
+}
+/* The state in words, a dot in its tone before it. */
+.connection-card-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 11px;
+  line-height: 1.25rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.connection-card-state::before {
+  content: '';
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-color: var(--text-tertiary);
+}
+.connection-card-state[data-tone='ok']::before {
+  background-color: var(--color-success);
+}
+.connection-card-state[data-tone='attention'] {
+  color: var(--text-primary);
+}
+.connection-card-state[data-tone='attention']::before {
+  background-color: var(--color-warning);
+}
+.connection-card-count {
+  font-size: 11px;
+  line-height: 1.25rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.connection-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.connection-card-fact {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.connection-card-fact > dt {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-card-fact > dd {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.connection-card-quiet {
+  color: var(--text-tertiary);
+}
+.connection-card-harnesses {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.75rem;
+  row-gap: 0.125rem;
+}
+.connection-card-harness {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  color: var(--text-primary);
+}
+.connection-card-harness > svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.connection-card-model-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.connection-card-model-list--rest {
+  padding-top: 0.25rem;
+}
+.connection-card-model,
+.connection-card-more {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-xs);
+  padding: 0 0.4375rem;
+  border-radius: 9999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.connection-card-model {
+  background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+.connection-card-more {
+  box-shadow: inset 0 0 0 0.5px var(--edge-color);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.connection-card-more:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.connection-card-usage {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+/* A stored connection's two lines, one under the other and each named: the
+   provider's own figure, then what Clave counted of its own tabs today
+   (PRDCT-4551), so neither is read as the other. */
+.connection-card-usage--two {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.125rem;
+}
+.connection-card-usage-line {
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.375rem;
+}
+.connection-card-usage-line[hidden] {
+  display: none;
+}
+.connection-card-usage-source {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-card-own-usage {
+  font-variant-numeric: tabular-nums;
+}
+/* A fold inside the card runs edge to edge, like a row of a settings card. */
+.connection-card-fold {
+  margin-inline: -1rem;
+}
+/* With the foot stood down, the fold runs to the card's bottom edge too. */
+.connection-card-fold:last-child {
+  margin-bottom: -0.625rem;
+}
+.connection-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+}
+.connection-card-foot-start {
+  min-width: 0;
+}
+.connection-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.125rem;
+  margin-left: auto;
+}
+.connection-card-actions > .btn-compact {
+  margin-right: 0.25rem;
+}
+.connection-card-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--control-h-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.connection-card-pick:has([data-checked='true']) {
+  color: var(--text-primary);
+}
+.connection-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  min-height: var(--control-h-sm);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  transition: color 150ms;
+}
+.connection-card-link:hover {
+  color: var(--text-primary);
+}
+
+/* What is connected: one card per provider, one under the other across the
+   column, its connections as rows. The head says once what they share; each
+   row is a line of a settings card, edge to edge and seamed by the inset
+   hairline, its actions one needed button and one menu in words. */
+.connection-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.connection-rows {
+  margin-inline: -1rem;
+  border-top: 1px solid var(--border-subtle-color);
+}
+.connection-rows > * + * {
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: calc(100% - 2rem) 1px;
+  background-position: 1rem 0;
+  background-repeat: no-repeat;
+}
+.connection-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.625rem 1rem;
+}
+/* A connection that cannot run a tab as it stands is washed in the warning
+   ink, its one button beside its state. */
+.connection-row[data-tone='attention'] > .connection-row-main {
+  background-color: color-mix(in srgb, var(--color-warning) 7%, transparent);
+}
+.connection-row-pick {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-sm);
+}
+.connection-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.connection-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: var(--control-h-sm);
+}
+.connection-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  flex: 1;
+  min-width: 0;
+}
+.connection-row-tag {
+  font-size: 11px;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+.connection-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+.connection-row-menu > svg {
+  margin-left: 0.125rem;
+}
+/* A row's menu opens with the house's pop and leaves at once: Radix keeps a
+   closing menu mounted until its exit animation reports its end, and one that
+   never did kept its outside listener armed, so the next press on Manage
+   closed the menu it had just opened. */
+.menu-pop.connection-row-menu-entries[data-state='closed'] {
+  animation: none;
+}
+.connection-row-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin-top: 0.25rem;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.connection-row-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-row-empty {
+  padding: 0.75rem 1rem;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+/* The fold of a row (a form, a sign-in, the question) is already edge to
+   edge: the rows bleed to the card's sides. */
+.connection-row .connection-card-fold,
+.connection-row .connection-card-fold:last-child {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
+.connection-card--provider .connection-card-foot {
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 /* ── Pills ── */

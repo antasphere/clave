@@ -67,7 +67,7 @@ import {
   writeDeck,
   writeRootIndex
 } from './deck'
-import { type LaunchFacts, REPORTING_AGENTS, resolveLaunch } from './launch'
+import { type LaunchFacts, REPORTING_AGENTS, cannotReportReason, resolveLaunch } from './launch'
 import { PublishFailure, SHARE_NAME_PREFIX, type RoutinePublisher } from './publisher'
 import {
   type RegistryWorkspace,
@@ -443,11 +443,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
     const resolved = resolveLaunch(d, options.facts)
     if (!resolved.ok) return recordFailed(d, trigger, resolved.reason)
     if (!REPORTING_AGENTS.has(resolved.agent))
-      return recordFailed(
-        d,
-        trigger,
-        `this agent cannot report: ${resolved.agent} has no Clave tools`
-      )
+      return recordFailed(d, trigger, cannotReportReason(resolved.agent))
     const schema: SchemaCheck = compileSchemaFile(d.report.schema)
     if (!schema.ok) return recordFailed(d, trigger, schema.reason)
     const run: RoutineRun = {
@@ -714,8 +710,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       options.facts
     )
     if (!resolved.ok) throw new Error(resolved.reason)
-    if (!REPORTING_AGENTS.has(resolved.agent))
-      throw new Error(`this agent cannot report: ${resolved.agent} has no Clave tools`)
+    if (!REPORTING_AGENTS.has(resolved.agent)) throw new Error(cannotReportReason(resolved.agent))
   }
 
   /** Whether a routine of that name already lives in the workspace, on this

@@ -30,15 +30,17 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
+import {
+  callClaveTool,
+  callClaveTools,
+  claveCallOf,
+  opencodeSubstitute
+} from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
   process.stdout.write('stand-in 0.0.0\n')
   process.exit(0)
-}
-if (argv.some((arg) => arg !== 'acp')) {
-  process.stderr.write('usage: acp-agent.mjs acp | --version\n')
-  process.exit(2)
 }
 
 const stateDir = process.env.ACP_STAND_IN_STATE
@@ -48,6 +50,67 @@ if (!stateDir) {
 }
 const sessionsDir = path.join(stateDir, 'sessions')
 mkdirSync(sessionsDir, { recursive: true })
+
+// PRDCT-4551: OpenCode's two documented reads of what a session used, as
+// OpenCode 2.3.0 answers them (read off the real program on 14 November
+// 2026): `api --standalone GET /api/session?…` lists every session with its
+// `time.updated`; `session export --standalone <id>` gives its messages, an
+// assistant message carrying `model.providerID`, `tokens` and `cost`. Each
+// prompt below records the usage a real call would have.
+/** The script the stand-in model runs in code mode (`run code`, PRDCT-4507),
+ *  the one sent to the real 2.3.0. */
+const SCRIPT =
+  'const found = await search({ query: "list tabs" }); const r = await tools.clave.clave_list({}); return r'
+
+const readTurns = (id) => {
+  const file = path.join(sessionsDir, `${id}.jsonl`)
+  return existsSync(file)
+    ? readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line))
+    : []
+}
+if (argv[0] === 'api' && argv.includes('GET') && argv.some((a) => a.startsWith('/api/session'))) {
+  const data = readdirSync(sessionsDir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => {
+      const id = name.slice(0, -'.json'.length)
+      const meta = JSON.parse(readFileSync(path.join(sessionsDir, name), 'utf8'))
+      const updated =
+        Date.parse(meta.updatedAt ?? '') || statSync(path.join(sessionsDir, name)).mtimeMs
+      return { id, time: { created: updated, updated }, location: { directory: meta.cwd ?? '' } }
+    })
+    .sort((a, b) => b.time.updated - a.time.updated)
+  process.stdout.write(`${JSON.stringify({ data, cursor: {} })}\n`)
+  process.exit(0)
+}
+if (argv[0] === 'session' && argv[1] === 'export') {
+  const id = argv.filter((a) => !a.startsWith('--'))[2]
+  if (!id || !existsSync(path.join(sessionsDir, `${id}.json`))) {
+    process.stderr.write(`Session not found: ${id}\n`)
+    process.exit(1)
+  }
+  const messages = readTurns(id)
+    .filter((turn) => turn.kind === 'usage')
+    .map((turn, i) => ({
+      id: `msg_${i}`,
+      time: { created: turn.at - 5, completed: turn.at },
+      type: 'assistant',
+      agent: 'build',
+      model: { id: turn.modelID, providerID: turn.providerID },
+      content: [],
+      finish: 'stop',
+      cost: turn.cost,
+      tokens: turn.tokens
+    }))
+  process.stdout.write(`${JSON.stringify({ info: { id }, messages })}\n`)
+  process.exit(0)
+}
+if (argv.some((arg) => arg !== 'acp')) {
+  process.stderr.write('usage: acp-agent.mjs acp | api … | session export … | --version\n')
+  process.exit(2)
+}
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.ACP_STAND_IN_DELAY_MS ?? 0) || 0
 const refuse = process.env.ACP_STAND_IN_REFUSE
@@ -96,6 +159,52 @@ const answer = (id, result) => send({ id, result })
 const refuseFrame = (id, code, message) => send({ id, error: { code, message } })
 const update = (sessionId, body) =>
   send({ method: 'session/update', params: { sessionId, update: body } })
+
+// Clave's own tools (PRDCT-4507), once per process, as OpenCode 2.3.0 connects
+// its servers: `mcp.servers.clave` of the inline configuration, its
+// `{env:NAME}` references resolved from the environment, else a `clave` HTTP
+// server handed in `mcpServers` over the protocol. Only with
+// `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
+let claveToolsCalled = false
+/** The server found at the session's start: a prompt `clave-open {…}` calls
+ *  `clave_open_session` on it as the model would (PRDCT-4507). */
+let claveServer = null
+function opencodeClaveTools(params) {
+  if (claveToolsCalled || !process.env.CLAVE_TOOLS_STAND_IN_LOG) return
+  claveToolsCalled = true
+  const inline = envConfig?.mcp?.servers?.clave
+  const handed = (Array.isArray(params?.mcpServers) ? params.mcpServers : []).find(
+    (server) => server?.name === 'clave'
+  )
+  let server = null
+  if (inline?.type === 'remote' && typeof inline.url === 'string')
+    server = {
+      url: inline.url,
+      headers: Object.fromEntries(
+        Object.entries(inline.headers ?? {}).map(([name, value]) => [
+          name,
+          opencodeSubstitute(value)
+        ])
+      )
+    }
+  else if (handed?.url)
+    server = {
+      url: handed.url,
+      headers: Object.fromEntries((handed.headers ?? []).map((h) => [h.name, h.value]))
+    }
+  claveServer = server
+  void callClaveTools(server, {
+    harness: 'opencode',
+    form: 'acp',
+    source: inline ? 'inline' : handed ? 'protocol' : null,
+    codemode: inline?.codemode ?? null,
+    // OpenCode 2.3.0 declares a server's tools only with code mode off.
+    declare: inline?.codemode === false ? 'all' : [],
+    configHoldsToken: (process.env.OPENCODE_CONFIG_CONTENT ?? '').includes(
+      process.env.CLAVE_TAB_MCP_TOKEN || '\u0000'
+    )
+  })
+}
 
 const metaFile = (id) => path.join(sessionsDir, `${id}.json`)
 const turnsFile = (id) => path.join(sessionsDir, `${id}.jsonl`)
@@ -219,6 +328,17 @@ async function prompt(id, params) {
     say(`permission: ${outcome?.outcome === 'selected' ? String(outcome.optionId) : 'cancelled'}`)
     if (turn.cancelled) return finish('cancelled')
   }
+  // `clave-open {…}` / `clave-call <tool> {…}`: the model calls that tool
+  // once with those arguments (PRDCT-4507), and says what came back.
+  const call = claveCallOf(text)
+  if (call) {
+    const answer = call.args
+      ? await callClaveTool(claveServer, call.name, call.args)
+      : { ok: false, error: 'bad arguments' }
+    say(`${call.name}: ${JSON.stringify(answer)}`)
+    record(sessionId, { kind: 'agent', text: agentText })
+    return finish(turn.cancelled ? 'cancelled' : 'end_turn')
+  }
   say('You said: ')
   // Another session's text in the middle of this prompt, as a subagent's
   // child session streams beside its parent's.
@@ -230,6 +350,53 @@ async function prompt(id, params) {
   const half = Math.ceil(text.length / 2)
   say(text.slice(0, half))
   say(text.slice(half))
+  // `run code`: OpenCode 2.3.0's code mode, frame for frame as the real
+  // `opencode acp` sent them on 14 November 2026 (PRDCT-4507): the `execute`
+  // call opens with `rawInput: {}`, its script arrives with the `in_progress`
+  // update (twice), and the completion names the tools the script called.
+  if (text.includes('run code')) {
+    const scriptId = `call_${randomBytes(4).toString('hex')}`
+    const code = SCRIPT
+    update(sessionId, {
+      sessionUpdate: 'tool_call',
+      toolCallId: scriptId,
+      name: 'execute',
+      title: 'execute',
+      kind: 'other',
+      status: 'pending',
+      locations: [],
+      rawInput: {}
+    })
+    for (let i = 0; i < 2; i++)
+      update(sessionId, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: scriptId,
+        status: 'in_progress',
+        kind: 'other',
+        title: 'execute',
+        locations: [],
+        rawInput: { code }
+      })
+    update(sessionId, {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: scriptId,
+      status: 'completed',
+      locations: [],
+      content: [{ type: 'content', content: { type: 'text', text: 'stand-in answer' } }],
+      rawOutput: {
+        metadata: {
+          toolCalls: [
+            { tool: 'search', status: 'completed', input: { query: 'list tabs' } },
+            { tool: 'clave.clave_list', status: 'completed' }
+          ],
+          truncated: false
+        }
+      }
+    })
+    record(sessionId, { kind: 'agent', text: agentText })
+    record(sessionId, { kind: 'script', toolCallId: scriptId, code, output: 'stand-in answer' })
+    return finish(turn.cancelled ? 'cancelled' : 'end_turn')
+  }
   const toolCallId = `call_${randomBytes(4).toString('hex')}`
   update(sessionId, {
     sessionUpdate: 'tool_call',
@@ -246,6 +413,22 @@ async function prompt(id, params) {
     content: [{ type: 'content', content: { type: 'text', text: '# Stand-in' } }]
   })
   record(sessionId, { kind: 'agent', text: agentText })
+  // What the model call used, as OpenCode keeps it per message (PRDCT-4551):
+  // under the provider its model is named by, never replayed on a load.
+  const [providerID, ...modelParts] = String(readMeta(sessionId).model ?? 'stand-in/one').split('/')
+  record(sessionId, {
+    kind: 'usage',
+    at: Date.now(),
+    providerID,
+    modelID: modelParts.join('/'),
+    tokens: {
+      input: 100 + text.length,
+      output: agentText.length,
+      reasoning: 0,
+      cache: { read: 20, write: 0 }
+    },
+    cost: 0.001
+  })
   record(sessionId, {
     kind: 'tool',
     toolCallId,
@@ -277,7 +460,30 @@ function load(id, params) {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: turn.text }
       })
-    else if (turn.kind === 'tool') {
+    else if (turn.kind === 'script') {
+      // Replayed as it was sent: the script after the call (PRDCT-4507).
+      update(sessionId, {
+        sessionUpdate: 'tool_call',
+        toolCallId: turn.toolCallId,
+        title: 'execute',
+        kind: 'other',
+        status: 'pending',
+        rawInput: {}
+      })
+      update(sessionId, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: turn.toolCallId,
+        status: 'in_progress',
+        title: 'execute',
+        rawInput: { code: turn.code }
+      })
+      update(sessionId, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: turn.toolCallId,
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: turn.output } }]
+      })
+    } else if (turn.kind === 'tool') {
       update(sessionId, {
         sessionUpdate: 'tool_call',
         toolCallId: turn.toolCallId,
@@ -360,6 +566,7 @@ function handle(frame) {
       })
     case 'session/new': {
       if (refuse === 'auth') return refuseFrame(id, -32000, 'Not signed in')
+      opencodeClaveTools(params)
       const sessionId = `ses_${randomBytes(8).toString('hex')}`
       const model = configModel ?? MODELS[0]?.value
       writeMeta(sessionId, {
@@ -373,6 +580,7 @@ function handle(frame) {
       return
     }
     case 'session/load':
+      opencodeClaveTools(params)
       return load(id, params)
     case 'session/prompt':
       void prompt(id, params)

@@ -22,7 +22,7 @@ The code capability table in `src/shared/agent-launch.ts` is the runtime source 
 | -------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
 | Launch, resume, history, search, usage | Supported   | Pi exposes stable CLI flags and JSONL sessions.                                                                     |
 | Inbound `clave_send_to_session`        | Supported   | Clave can write to Pi's PTY.                                                                                        |
-| In-agent Clave tools                   | Unsupported | Pi has no built-in MCP client. A future extension may provide an equivalent tool bridge.                            |
+| In-agent Clave tools                   | Supported   | Since Pi 1.5 (PRDCT-4507): Clave's extension registers the tab's server for the session, from its own file.        |
 | Exchange capture                       | Unsupported | The current capture contract has no Pi identity or transcript adapter. Add a versioned contract before enabling it. |
 | Blocked state                          | Unsupported | Pi does not expose a reliable permission-blocked lifecycle event.                                                   |
 

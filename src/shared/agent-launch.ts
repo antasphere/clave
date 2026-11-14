@@ -381,6 +381,9 @@ export function buildAgentArgv(input: {
     // starts on a prompt. It takes no model: that is `opencode run`'s flag.
     const tokens = [...input.profile.command, ...input.profile.additionalArgs]
     if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
+    // PRDCT-4551: a fresh terminal on the id Clave named, which `--session`
+    // creates when it does not exist (2.3.0): its usage is known to be its own.
+    else if (input.sessionId) argv.push('--session', input.sessionId)
     if (input.dangerousMode && !tokens.includes('--auto')) argv.push('--auto')
     // The shared background service keeps the environment it started with
     // (OpenCode 2.3.0): a tab's connection and model, carried in its own
@@ -520,10 +523,35 @@ export const AGENT_CAPABILITIES = {
     blockedState: 'unsupported'
   },
   codex: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'unsupported' },
-  pi: { claveTools: 'unsupported', exchangeCapture: 'unsupported', blockedState: 'unsupported' },
+  // PRDCT-4507: Pi through Clave's extension, OpenCode through its inline
+  // configuration, in a terminal and in a chat.
+  pi: { claveTools: 'supported', exchangeCapture: 'unsupported', blockedState: 'unsupported' },
   opencode: {
-    claveTools: 'unsupported',
+    claveTools: 'supported',
     exchangeCapture: 'unsupported',
     blockedState: 'unsupported'
   }
 } as const
+
+/** A mode as the harness table keys it: `claude-agents` is Claude's,
+ *  `gemini` Antigravity's alias. */
+const harnessKeyOfMode = (mode: string): string =>
+  mode === 'claude-agents' ? 'claude' : mode === 'gemini' ? 'antigravity' : mode
+
+/** Whether a tab of this mode has its exchanges captured, from the table
+ *  above alone (`claude-agents` is Claude's; a terminal or an unknown mode,
+ *  never). Every capture road asks this, never a list of modes. */
+export function capturesExchange(mode: string): boolean {
+  const key = harnessKeyOfMode(mode)
+  return (
+    key in AGENT_CAPABILITIES &&
+    AGENT_CAPABILITIES[key as keyof typeof AGENT_CAPABILITIES].exchangeCapture === 'supported'
+  )
+}
+
+/** "OpenCode exchange capture is not supported yet": the refusal of a
+ *  capture a harness does not have, by its name in the harness table. */
+export function exchangeCaptureRefusal(mode: string): string {
+  const harness = HARNESS_BY_ID[harnessKeyOfMode(mode) as never] as { name: string } | undefined
+  return `${harness?.name ?? 'This harness'} exchange capture is not supported yet`
+}
