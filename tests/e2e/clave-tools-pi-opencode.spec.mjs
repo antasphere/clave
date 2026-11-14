@@ -184,26 +184,14 @@ export async function run(t) {
       assert.ok(record.tools.includes('clave_open_session'))
       assert.equal(record.tokenOnArgv, false)
     }
-    // Pi declares seven of them on every turn and finds the rest by search;
-    // the seven weigh about a third of the whole list (measured 14 Nov 2026:
-    // 40 tools, 62 KB, the seven about 19 KB in Pi's declarations).
-    const SEVEN = [
-      'clave_list',
-      'clave_launch_options',
-      'clave_open_session',
-      'clave_send_to_session',
-      'clave_read_session',
-      'clave_request_input',
-      'clave_input_result'
-    ]
+    // Pi declares none of them up front and finds every one with
+    // `tool_search`, the one way its own prompt describes (the tester's pass
+    // on a real model: a split of seven declared, the rest deferred, was
+    // searched and never called).
     for (const { record } of [piChat, piTerminal]) {
       assert.equal(record.extension, true)
       assert.equal(record.exposure, 'deferred')
-      assert.deepEqual([...record.declaredTools].sort(), [...SEVEN].sort())
-      assert.ok(
-        record.declaredBytes < record.toolsBytes / 2,
-        `${record.declaredBytes} of ${record.toolsBytes}`
-      )
+      assert.deepEqual(record.declaredTools, [])
       assert.deepEqual(record.tokenInEnv, [])
     }
     // OpenCode: its own default, code mode; none declared, all reached in it.

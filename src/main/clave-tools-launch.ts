@@ -85,8 +85,8 @@ export function opencodeClaveServer(url: string): Record<string, unknown> {
     // No `codemode` key: OpenCode's own default, code mode, as for every
     // server a person registers there. Declaring all forty tools would add
     // about 62 KB to every turn (code mode adds about 4 KB: the server named
-    // in a catalog, its tools found by search), and 2.3.0 sets this per
-    // server only, so Pi's seven (CLAVE_DIRECT_TOOLS) cannot be split out.
+    // in a catalog, its tools found by search), the way a Pi tab reaches
+    // them too (`deferred`, Clave's Pi extension).
   }
 }
 
