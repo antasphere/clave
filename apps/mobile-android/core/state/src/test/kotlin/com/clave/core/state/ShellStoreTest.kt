@@ -71,6 +71,13 @@ class ShellStoreTest {
         }
         val client = ClaveServerClient(Credential("http://127.0.0.1:${server.port}/", TOKEN), OkHttpPort(OkHttpClient()), BuildKind.Development)
         shell = ShellStore(scope, { client }, events) { reloaded += it }
+        // The store collects on its own coroutine; a SharedFlow drops what is emitted
+        // before anyone collects, so a test's first event waits for the store to listen.
+        val end = System.currentTimeMillis() + 10_000
+        while (events.subscriptionCount.value == 0) {
+            check(System.currentTimeMillis() < end) { "the store never listened" }
+            Thread.sleep(5)
+        }
     }
 
     @After
