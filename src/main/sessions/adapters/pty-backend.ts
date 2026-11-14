@@ -1911,14 +1911,6 @@ export class PtyBackend {
     writeSessionRecord({ ...meta, opencodeSessionId: sessionId })
   }
 
-  /** What the chat is running on now, as the provider last acknowledged it
-   *  (PRDCT-4191): the model of a `session_meta`, the mode of a
-   *  `permission_mode`, the effort of an `effort` event. Mirrors
-   *  setSessionCodexThreadId: the record is what a Resume reads, and until
-   *  now it held the launch's values only, so a chat moved to another mode
-   *  came back in the one it started in. A key set to null is dropped
-   *  (the provider says the model runs at no effort). Nothing is written
-   *  when nothing changes. */
   /** PRDCT-4540: what the tab's process reported of its connection, on its
    *  record (`clave_list` reads the record): the provider it went to off
    *  the connection, or null back on it. True when the record changed. */
@@ -1935,6 +1927,14 @@ export class PtyBackend {
     return true
   }
 
+  /** What the chat is running on now, as the provider last acknowledged it
+   *  (PRDCT-4191): the model of a `session_meta`, the mode of a
+   *  `permission_mode`, the effort of an `effort` event. Mirrors
+   *  setSessionCodexThreadId: the record is what a Resume reads, and until
+   *  now it held the launch's values only, so a chat moved to another mode
+   *  came back in the one it started in. A key set to null is dropped
+   *  (the provider says the model runs at no effort). Nothing is written
+   *  when nothing changes. */
   setSessionRuntime(
     id: string,
     patch: { model?: string; permissionMode?: string; effort?: string | null }
