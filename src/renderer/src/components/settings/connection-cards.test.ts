@@ -223,12 +223,29 @@ describe('removing asks first', () => {
       consequence:
         'Its token is deleted from this Mac. Tabs running on it keep going until they are restarted, then they need another connection.'
     })
-    expect(removalSentence('codex-chatgpt', 'Team', mac).consequence).toMatch(
-      /^Its sign-in is deleted from this Mac\. Tabs running on it keep going/
+    expect(removalSentence('provider-key', 'Kimi', mac).consequence).toMatch(
+      /Tabs running on it keep going until they are restarted/
     )
-    expect(removalSentence('codex-key', 'Billing', mac).consequence).toMatch(
-      /^Its key is deleted from this Mac\./
-    )
+  })
+
+  it('never promises a running Codex tab goes on: its folder is deleted under it', () => {
+    const mac = machineWords(null)
+    expect(removalSentence('codex-chatgpt', 'Team', mac)).toEqual({
+      question: 'Remove Team?',
+      consequence:
+        'Its sign-in and the folder its tabs run from are deleted from this Mac. A Codex tab running on it may fail at its next request, and cannot be restarted on it.'
+    })
+    expect(removalSentence('codex-key', 'Billing', mac)).toEqual({
+      question: 'Remove Billing?',
+      consequence:
+        'Its key and the folder its tabs run from are deleted from this Mac. A Codex tab running on it may fail at its next request, and cannot be restarted on it.'
+    })
+    for (const kind of ['codex-chatgpt', 'codex-key'] as const)
+      expect(removalSentence(kind, 'X', mac).consequence).not.toMatch(/keep going/)
+  })
+
+  it('says the same of every other kind as before', () => {
+    const mac = machineWords(null)
     expect(removalSentence('provider-key', 'Kimi', machineWords('Studio')).consequence).toMatch(
       /^Its key is deleted from Studio\./
     )
