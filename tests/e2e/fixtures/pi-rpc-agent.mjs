@@ -25,7 +25,8 @@
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
 // and starts nothing (else it starts a run). A prompt containing `slow` waits 20 s
 // before its first text delta (an abort cuts it short); `long turn` streams its
-// echo in three pieces a second apart (an abort cuts it short); `ask extension` asks a
+// echo in three pieces a second apart, or `PI_STAND_IN_LONG_TURN_MS` apart (an
+// abort cuts it short); `ask extension` asks a
 // confirm dialog first and echoes the answer; `notify extension` sends a
 // notify; `fail provider` ends its message with a provider error; `retry`
 // starts with an auto-retry. An abort drops the steering and follow-up queue.
@@ -248,6 +249,7 @@ if (!stateDir) {
 mkdirSync(stateDir, { recursive: true })
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.PI_STAND_IN_DELAY_MS ?? 0) || 0
+const longTurnMs = Number(process.env.PI_STAND_IN_LONG_TURN_MS ?? 1000) || 1000
 const noModel = process.env.PI_STAND_IN_NO_MODEL === '1'
 const anyProvider = process.env.PI_STAND_IN_ANY_PROVIDER === '1'
 let streamingOnce = process.env.PI_STAND_IN_STREAMING_ONCE === '1'
@@ -621,8 +623,9 @@ async function startRun(text) {
       await emit({ type: 'agent_settled', aborted: false })
       return
     }
-    // `long turn`: the echo streams in three pieces a second apart, as a
-    // model's long answer does while the person writes more (PRDCT-4566).
+    // `long turn`: the echo streams in three pieces a second apart (or
+    // `PI_STAND_IN_LONG_TURN_MS`), as a model's long answer does while the
+    // person writes more (PRDCT-4566).
     const long = text.includes('long turn')
     const half = Math.ceil(text.length / 2)
     const said = await textMessage(
@@ -632,7 +635,7 @@ async function startRun(text) {
         if (text.includes('slow')) await sleep(20_000)
         return lead
       },
-      long ? 1000 : 0
+      long ? longTurnMs : 0
     )
     const toolCall = {
       type: 'toolCall',

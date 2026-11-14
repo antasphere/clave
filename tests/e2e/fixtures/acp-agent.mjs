@@ -16,7 +16,8 @@
 // sends, during each prompt, one `agent_message_chunk` for the session
 // `ses_other` (another session's update). A prompt containing `slow` waits
 // 20 s (cancellable); one containing `long turn` streams its echo in three
-// pieces a second apart (cancellable); one containing `rate limited` says two retries first,
+// pieces a second apart, or `ACP_STAND_IN_LONG_TURN_MS` apart (cancellable);
+// one containing `rate limited` says two retries first,
 // as OpenCode does under a provider's 429; one containing `ask permission`
 // asks the client first and echoes the option. `OPENCODE_CONFIG_CONTENT`,
 // when set, chooses the models as OpenCode's own (below).
@@ -114,6 +115,7 @@ if (argv.some((arg) => arg !== 'acp')) {
 }
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.ACP_STAND_IN_DELAY_MS ?? 0) || 0
+const longTurnMs = Number(process.env.ACP_STAND_IN_LONG_TURN_MS ?? 1000) || 1000
 const refuse = process.env.ACP_STAND_IN_REFUSE
 
 // Named the way OpenCode 2.3.0 names them: `provider/Name`.
@@ -349,9 +351,10 @@ async function prompt(id, params) {
       content: { type: 'text', text: 'stray text of another session' }
     })
   const half = Math.ceil(text.length / 2)
-  // `long turn`: the answer streams in three pieces a second apart, as a
-  // model's long answer does while the person writes more (PRDCT-4566).
-  const pause = text.includes('long turn') ? 1000 : 0
+  // `long turn`: the answer streams in three pieces a second apart (or
+  // `ACP_STAND_IN_LONG_TURN_MS`), as a model's long answer does while the
+  // person writes more (PRDCT-4566).
+  const pause = text.includes('long turn') ? longTurnMs : 0
   if (pause) {
     await sleep(pause, turn)
     if (turn.cancelled) return finish('cancelled')
