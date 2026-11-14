@@ -19,7 +19,7 @@ import { claudeAccountsManager, DEFAULT_CLAUDE_ACCOUNT_ID } from '../../claude-a
 import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-accounts'
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
-import { PROVIDER_KEY_ENV_VARS } from '../../models-catalog-overlay'
+import { PROVIDER_KEY_ENV_VARS, piForeignCredentialVars } from '../../models-catalog-overlay'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
@@ -1081,7 +1081,11 @@ export function codexHomeForSpawn(
  * session does not think it is nested. The account fields are only set when
  * the account carries them: the Default account keeps whatever the user's own
  * shell exports. A Pi or OpenCode tab's connection (`providerEnv`, PRDCT-4496)
- * is merged last, so the key it names wins over one the shell exports.
+ * is merged last, so the key it names wins over one the shell exports. A Pi
+ * tab's connection (its `providerEnv` names the connection's Pi directory)
+ * also takes away every other provider credential Pi reads
+ * (`piForeignCredentialVars`): Pi lists, switches to and spends any provider
+ * it finds a key for, so the process keeps the connection's alone.
  */
 export function buildSpawnEnv(
   base: Record<string, string>,
@@ -1101,8 +1105,32 @@ export function buildSpawnEnv(
   if (account.configDir) env.CLAUDE_CONFIG_DIR = account.configDir
   if (account.oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = account.oauthToken
   if (account.codexHome) env.CODEX_HOME = account.codexHome
-  if (account.providerEnv) Object.assign(env, account.providerEnv)
+  if (account.providerEnv) {
+    if (isPiConnectionEnv(account.providerEnv))
+      for (const name of piForeignCredentialVars(account.providerEnv)) delete env[name]
+    Object.assign(env, account.providerEnv)
+  }
   return env
+}
+
+/** Whether a connection's variables are a Pi tab's: only a Pi connection
+ *  names a Pi agent directory (`providerInjectionForSpawn`). */
+export function isPiConnectionEnv(
+  providerEnv: Readonly<Record<string, string>> | undefined
+): boolean {
+  return !!providerEnv?.PI_CODING_AGENT_DIR
+}
+
+/** The `unset` a POSIX command line starts with for a Pi process on a
+ *  connection: a login profile runs before the command and may export a
+ *  provider's key again, so the names are unset after it (names only, never
+ *  a value). Empty for any other process. */
+export function piForeignCredentialUnset(
+  providerEnv: Readonly<Record<string, string>> | undefined
+): string {
+  if (!providerEnv || !isPiConnectionEnv(providerEnv)) return ''
+  const names = piForeignCredentialVars(providerEnv)
+  return names.length ? `unset ${names.join(' ')}; ` : ''
 }
 
 export interface PtySession {
@@ -1335,7 +1363,10 @@ export class PtyBackend {
           assignments.push(
             `PI_CODING_AGENT_DIR=${shellSingleQuote(options.providerEnv.PI_CODING_AGENT_DIR)}`
           )
-        const rendered = `${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
+        // A Pi tab on a connection runs without any other provider's
+        // credential, even one the login profile exported again (PRDCT-4496).
+        const unset = kind === 'pi' ? piForeignCredentialUnset(options?.providerEnv) : ''
+        const rendered = `${unset}${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
         const failure = `__clave_status=$?; if [ $__clave_status -ne 0 ]; then printf '\\r\\n[Clave] Agent command exited with status %d\\r\\nCommand: %s\\r\\n' $__clave_status ${shellSingleQuote(argv.map(shellSingleQuote).join(' '))}; fi; exit $__clave_status`
         posixAgentCommand = `${rendered}; ${failure}`
       }

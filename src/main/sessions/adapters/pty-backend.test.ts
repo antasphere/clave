@@ -198,6 +198,36 @@ describe('a Pi session (PRDCT-4496)', () => {
     expect(path.basename(extension!)).toBe('pi-clave-state.js')
     expect(fs.existsSync(extension!)).toBe(true)
   })
+
+  // The verifier's F5 (PRDCT-4496): a Pi terminal on a connection is open to
+  // Pi's own `/model` with any provider key in its environment, and the login
+  // profile the command runs after may export one again.
+  it('on a connection: no other provider credential in its environment, and unset after the profile', () => {
+    installTerminalPorts({ resourcesDir: resourcesDirOfEntry(path.resolve(__dirname, '..', '..')) })
+    const providerEnv = {
+      KIMI_API_KEY: 'made-up-kimi',
+      PI_CODING_AGENT_DIR: path.join(dir, 'pi-c')
+    }
+    const session = backend.spawn(cwd, {
+      piMode: true,
+      tmuxMode: false,
+      model: 'k-first',
+      piProvider: 'kimi-coding',
+      providerEnv
+    })
+    backend.start(session.id, 80, 24)
+    const spec = terminals.processes[0].spec
+    const command = spec.args.join(' ')
+    expect(command).toMatch(/unset [A-Z_ ]*ANTHROPIC_API_KEY[A-Z_ ]*; CLAVE_SESSION_ID=/)
+    expect(command).not.toMatch(/unset [A-Z_ ]*KIMI_API_KEY/)
+    expect(command).not.toContain('made-up-kimi')
+    expect(spec.env?.KIMI_API_KEY).toBe('made-up-kimi')
+    expect(spec.env).not.toHaveProperty('ANTHROPIC_API_KEY')
+    // A Pi terminal on no connection: its command unsets nothing.
+    const plain = backend.spawn(cwd, { piMode: true, tmuxMode: false })
+    backend.start(plain.id, 80, 24)
+    expect(terminals.processes[1].spec.args.join(' ')).not.toContain('unset ')
+  })
 })
 
 describe('a Claude session', () => {

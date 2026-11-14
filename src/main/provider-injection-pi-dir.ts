@@ -9,8 +9,9 @@ import { parsePiOwnDefault, type PiOwnDefault } from '../shared/pi-start-model'
  * alone and puts auth.json before it, so the connection's directory holds a
  * symlink for every top-level entry of the person's own (sessions and
  * extensions stay shared) but no auth.json at all, one real `models.json`:
- * the person's providers with the connection's entry over them, its key a
- * variable name, and a COPY of `settings.json` (a real file, mode 0o600, the
+ * Clave's entry for the connection's provider alone, its key a variable
+ * name, never the person's own (`models.json` is never linked nor merged),
+ * and a COPY of `settings.json` (a real file, mode 0o600, the
  * person's content as it is, made again at every sync; absent when the person
  * has none). Pi writes its default provider and model into settings.json, so
  * a link would carry a choice made in a connection tab into the person's own
@@ -24,24 +25,7 @@ const AUTH_FILE = 'auth.json'
 const SETTINGS_FILE = 'settings.json'
 const NOT_LINKED = new Set([MODELS_FILE, AUTH_FILE, SETTINGS_FILE])
 
-type ModelsDoc = Record<string, unknown> & { providers: Record<string, unknown> }
-
-function readModels(file: string): ModelsDoc {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'))
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const doc = parsed as Record<string, unknown>
-      const providers =
-        doc.providers && typeof doc.providers === 'object' && !Array.isArray(doc.providers)
-          ? (doc.providers as Record<string, unknown>)
-          : {}
-      return { ...doc, providers: { ...providers } }
-    }
-  } catch {
-    // Absent or unreadable: the connection's entry alone.
-  }
-  return { providers: {} }
-}
+type ModelsDoc = { providers: Record<string, unknown> }
 
 /** The person's own Pi default model (`defaultProvider` / `defaultModel` of
  *  the `settings.json` in their agent directory), the one a Pi tab on a
@@ -137,12 +121,12 @@ export function syncPiConnectionDir(input: {
     }
   }
 
-  const models = readModels(path.join(input.homeAgentDir, MODELS_FILE))
-  const own = models.providers[input.providerId]
-  models.providers[input.providerId] = {
-    ...(own && typeof own === 'object' && !Array.isArray(own) ? own : {}),
-    ...input.entry
-  }
+  // Clave's entry for the connection's provider, and nothing of the person's
+  // own models.json: real Pi lists, switches to and sends to every provider
+  // that file declares, and its entries may hold literal keys, which would
+  // land in Clave's data folder (PRDCT-4496). Rewritten at every start, so a
+  // directory written before is put right at the next one.
+  const models: ModelsDoc = { providers: { [input.providerId]: { ...input.entry } } }
   const file = path.join(dir, MODELS_FILE)
   // A link left there would write through to the person's own file.
   if (lstatOrNull(file)?.isSymbolicLink()) fs.unlinkSync(file)

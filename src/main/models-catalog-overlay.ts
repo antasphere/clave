@@ -130,3 +130,91 @@ export const PROVIDER_KEY_ENV_VARS: readonly string[] = [
     )
   ])
 ].sort()
+
+/**
+ * Every variable Pi 1.5.2 takes a provider's credential from, sorted and
+ * distinct (PRDCT-4496): the key table of Pi's `docs/providers.md` ("Use an
+ * API key from the environment"), Anthropic's tokens and identity
+ * federation, Azure OpenAI's key, and what makes Amazon Bedrock and Google
+ * Vertex AI list themselves (a profile, IAM keys, a bearer token, container
+ * or web-identity credentials; a key, or a credentials file with a project
+ * and a location), as Pi's own `env-api-keys.js` reads them. With one of
+ * these in its environment Pi lists that provider and switches to it, then
+ * spends that credential (checked on 1.5.2), and Pi has no setting or flag
+ * that keeps a process to one provider (`enabledModels`/`--models` only
+ * scope cycling; `set_model` takes any listed model). So a Pi process on a
+ * stored connection starts without every one of them but the connection's
+ * own (`piConnectionEnv`), and Clave's own variable is on the list too.
+ */
+export const PI_PROVIDER_CREDENTIAL_ENV_VARS: readonly string[] = [
+  ...new Set([
+    CLAVE_CONNECTION_KEY_ENV,
+    // The single-key providers of Pi's table.
+    'AI_GATEWAY_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'ANT_LING_API_KEY',
+    'BASETEN_API_KEY',
+    'CEREBRAS_API_KEY',
+    'COPILOT_GITHUB_TOKEN',
+    'DEEPSEEK_API_KEY',
+    'FIREWORKS_API_KEY',
+    'GEMINI_API_KEY',
+    'GROQ_API_KEY',
+    'HF_TOKEN',
+    'KIMI_API_KEY',
+    'META_API_KEY',
+    'MINIMAX_API_KEY',
+    'MINIMAX_CN_API_KEY',
+    'MISTRAL_API_KEY',
+    'MOONSHOT_API_KEY',
+    'NVIDIA_API_KEY',
+    'OPENAI_API_KEY',
+    'OPENCODE_API_KEY',
+    'OPENROUTER_API_KEY',
+    'QWEN_TOKEN_PLAN_API_KEY',
+    'QWEN_TOKEN_PLAN_CN_API_KEY',
+    'RADIUS_API_KEY',
+    'TOGETHER_API_KEY',
+    'TYPESAFE_API_KEY',
+    'XAI_API_KEY',
+    'XIAOMI_API_KEY',
+    'XIAOMI_TOKEN_PLAN_AMS_API_KEY',
+    'XIAOMI_TOKEN_PLAN_CN_API_KEY',
+    'XIAOMI_TOKEN_PLAN_SGP_API_KEY',
+    'ZAI_API_KEY',
+    'ZAI_CODING_CN_API_KEY',
+    // Anthropic's tokens and its workload identity federation.
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_OAUTH_TOKEN',
+    'ANTHROPIC_FEDERATION_RULE_ID',
+    'ANTHROPIC_IDENTITY_TOKEN_FILE',
+    // Azure OpenAI, Cloudflare (Workers AI and AI Gateway).
+    'AZURE_OPENAI_API_KEY',
+    'CLOUDFLARE_API_KEY',
+    // Amazon Bedrock: any one of these lists it.
+    'AWS_ACCESS_KEY_ID',
+    'AWS_BEARER_TOKEN_BEDROCK',
+    'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+    'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+    'AWS_PROFILE',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'AWS_WEB_IDENTITY_TOKEN_FILE',
+    // Google Vertex AI: its key, or a credentials file (the named one, or
+    // gcloud's default one in the home) with a project and a location.
+    'GCLOUD_PROJECT',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'GOOGLE_CLOUD_API_KEY',
+    'GOOGLE_CLOUD_LOCATION',
+    'GOOGLE_CLOUD_PROJECT'
+  ])
+].sort()
+
+/** The names of `PI_PROVIDER_CREDENTIAL_ENV_VARS` a Pi process on a stored
+ *  connection must not have: every one the connection itself does not set
+ *  (`own`, the connection's own variables). */
+export function piForeignCredentialVars(own: Readonly<Record<string, string>>): string[] {
+  return PI_PROVIDER_CREDENTIAL_ENV_VARS.filter(
+    (name) => !Object.prototype.hasOwnProperty.call(own, name)
+  )
+}

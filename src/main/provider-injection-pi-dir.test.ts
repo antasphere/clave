@@ -7,9 +7,9 @@ import { syncPiConnectionDir } from './provider-injection-pi-dir'
 /**
  * A Pi connection's agent directory (PRDCT-4496): the person's own entries
  * linked, settings.json copied rather than linked, no auth.json at all (Pi reads it before models.json, so one there
- * would be the credential instead of the connection), and a models.json whose
- * entry for the provider names the variable. The person's directory is read
- * only. All values here are made up.
+ * would be the credential instead of the connection), and a models.json
+ * holding Clave's entry for the provider alone, naming the variable. The
+ * person's directory is read only. All values here are made up.
  */
 
 let tmp: string
@@ -81,12 +81,37 @@ describe('syncPiConnectionDir', () => {
     const dir = sync()
     expect(fs.existsSync(path.join(dir, 'auth.json'))).toBe(false)
     const models = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'))
-    // The person's own entry kept under the connection's key; theirs untouched.
-    expect(models.providers.deepseek).toEqual({
-      baseUrl: 'https://made-up.invalid/v1',
-      apiKey: '$DEEPSEEK_API_KEY'
+    expect(models.providers.deepseek).toEqual({ apiKey: '$DEEPSEEK_API_KEY' })
+  })
+
+  // The verifier's F1, second road (PRDCT-4496): real Pi 1.5.2 lists, switches
+  // to and sends to every provider the directory's models.json declares.
+  it("holds Clave's entry for the connection's provider alone, nothing of the person's", () => {
+    const dir = sync()
+    const raw = fs.readFileSync(path.join(dir, 'models.json'), 'utf8')
+    expect(JSON.parse(raw)).toEqual({ providers: { deepseek: { apiKey: '$DEEPSEEK_API_KEY' } } })
+    // No key of the person's in Clave's data folder, literal or by name.
+    expect(raw).not.toContain('made-up-own-key')
+    expect(raw).not.toContain('$MINE')
+    expect(raw).not.toContain('made-up.invalid')
+  })
+
+  it("rewrites a directory written before with the person's providers in it", () => {
+    const dir = path.join(root, 'conn-1')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, 'models.json'),
+      JSON.stringify({
+        providers: {
+          deepseek: { apiKey: '$DEEPSEEK_API_KEY' },
+          mine: { baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'made-up-literal-key' }
+        }
+      })
+    )
+    sync()
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'))).toEqual({
+      providers: { deepseek: { apiKey: '$DEEPSEEK_API_KEY' } }
     })
-    expect(models.providers.mine).toEqual({ baseUrl: 'http://127.0.0.1:1/v1', apiKey: '$MINE' })
   })
 
   it('takes out an auth.json found in the directory (a link, or one Pi wrote)', () => {
