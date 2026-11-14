@@ -1420,9 +1420,10 @@ export class PtyBackend {
       piMode: usePiMode,
       opencodeMode: useOpencodeMode,
       // Lane D (PRDCT-4427): the OpenCode session the terminal resumed, kept for its next Resume.
-      // PRDCT-4551: or the one Clave named at a fresh start.
-      opencodeSessionId:
-        opencodeSessionId ?? (options?.opencodeMode ? options.resumeSessionId : undefined),
+      // A fresh terminal's Clave-named session (PRDCT-4551) is on its command
+      // line and the ledger alone: until it ran a turn it is no conversation
+      // a move into a chat or a Resume could take up.
+      opencodeSessionId: options?.opencodeMode ? options.resumeSessionId : undefined,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,

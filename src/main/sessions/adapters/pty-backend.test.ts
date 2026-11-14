@@ -497,10 +497,10 @@ describe('the session records', () => {
       opencodeMode: true,
       opencodeSessionId: 'ses_0123456789abcdef'
     })
-    // PRDCT-4551: a fresh one runs on a session Clave named, in OpenCode's
-    // own shape, and keeps it for its Resume the same way.
+    // A fresh one runs on a session Clave named (PRDCT-4551), kept off the
+    // record: it is no conversation yet.
     const fresh = backend.spawn(cwd, { claudeMode: false, opencodeMode: true, tmuxMode: false })
-    expect(readRecord(fresh.id).opencodeSessionId).toMatch(OPENCODE_MADE_ID_RE)
+    expect(readRecord(fresh.id)).not.toHaveProperty('opencodeSessionId')
   })
 
   // PRDCT-4551: the ledger of starts the usage per connection is counted by.
@@ -531,7 +531,8 @@ describe('the session records', () => {
       connectionLabel: 'Kimi made up'
     })
     await vi.waitFor(() => expect(ledger()).toHaveLength(3))
-    const ocId = readRecord(oc.id).opencodeSessionId
+    const ocId = ledger()[1]?.sessionId as string
+    expect(ocId).toMatch(OPENCODE_MADE_ID_RE)
     expect(ledger().map(({ at, ...rest }) => (expect(typeof at).toBe('number'), rest))).toEqual([
       {
         harness: 'pi',
