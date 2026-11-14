@@ -11,12 +11,14 @@
  */
 
 /** The private names a connection's values travel under, in order. A
- *  connection sets at most a key and OpenCode's inline configuration; one
- *  more is spare. Credential-named, so every mask by name hides them. */
+ *  connection sets at most a key and OpenCode's inline configuration, and an
+ *  OpenCode tab the token of Clave's own tools (PRDCT-4507); one more is
+ *  spare. Credential-named, so every mask by name hides them. */
 export const CLAVE_TAB_CREDENTIAL_ENV_VARS: readonly string[] = [
   'CLAVE_TAB_CREDENTIAL_1',
   'CLAVE_TAB_CREDENTIAL_2',
-  'CLAVE_TAB_CREDENTIAL_3'
+  'CLAVE_TAB_CREDENTIAL_3',
+  'CLAVE_TAB_CREDENTIAL_4'
 ]
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/

@@ -369,16 +369,18 @@ describe('agent argv', () => {
     expect(() => buildAgentArgv({ kind: 'opencode', profile: managed })).toThrow(
       'Clave-managed flag'
     )
+    // PRDCT-4507: OpenCode is handed Clave's tools; the rest stays explicit.
     expect(AGENT_CAPABILITIES.opencode).toEqual({
-      claveTools: 'unsupported',
+      claveTools: 'supported',
       exchangeCapture: 'unsupported',
       blockedState: 'unsupported'
     })
   })
 
-  it('keeps unsupported Pi capabilities explicit', () => {
+  it('keeps unsupported Pi capabilities explicit, Clave tools supported (PRDCT-4507)', () => {
+    expect(AGENT_CAPABILITIES.antigravity.claveTools).toBe('unsupported')
     expect(AGENT_CAPABILITIES.pi).toEqual({
-      claveTools: 'unsupported',
+      claveTools: 'supported',
       exchangeCapture: 'unsupported',
       blockedState: 'unsupported'
     })

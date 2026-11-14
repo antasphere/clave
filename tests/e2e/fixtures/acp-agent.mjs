@@ -30,6 +30,7 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
+import { callClaveTools, opencodeSubstitute } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -96,6 +97,46 @@ const answer = (id, result) => send({ id, result })
 const refuseFrame = (id, code, message) => send({ id, error: { code, message } })
 const update = (sessionId, body) =>
   send({ method: 'session/update', params: { sessionId, update: body } })
+
+// Clave's own tools (PRDCT-4507), once per process, as OpenCode 2.3.0 connects
+// its servers: `mcp.servers.clave` of the inline configuration, its
+// `{env:NAME}` references resolved from the environment, else a `clave` HTTP
+// server handed in `mcpServers` over the protocol. Only with
+// `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
+let claveToolsCalled = false
+function opencodeClaveTools(params) {
+  if (claveToolsCalled || !process.env.CLAVE_TOOLS_STAND_IN_LOG) return
+  claveToolsCalled = true
+  const inline = envConfig?.mcp?.servers?.clave
+  const handed = (Array.isArray(params?.mcpServers) ? params.mcpServers : []).find(
+    (server) => server?.name === 'clave'
+  )
+  let server = null
+  if (inline?.type === 'remote' && typeof inline.url === 'string')
+    server = {
+      url: inline.url,
+      headers: Object.fromEntries(
+        Object.entries(inline.headers ?? {}).map(([name, value]) => [
+          name,
+          opencodeSubstitute(value)
+        ])
+      )
+    }
+  else if (handed?.url)
+    server = {
+      url: handed.url,
+      headers: Object.fromEntries((handed.headers ?? []).map((h) => [h.name, h.value]))
+    }
+  void callClaveTools(server, {
+    harness: 'opencode',
+    form: 'acp',
+    source: inline ? 'inline' : handed ? 'protocol' : null,
+    codemode: inline?.codemode ?? null,
+    configHoldsToken: (process.env.OPENCODE_CONFIG_CONTENT ?? '').includes(
+      process.env.CLAVE_TAB_MCP_TOKEN || '\u0000'
+    )
+  })
+}
 
 const metaFile = (id) => path.join(sessionsDir, `${id}.json`)
 const turnsFile = (id) => path.join(sessionsDir, `${id}.jsonl`)
@@ -360,6 +401,7 @@ function handle(frame) {
       })
     case 'session/new': {
       if (refuse === 'auth') return refuseFrame(id, -32000, 'Not signed in')
+      opencodeClaveTools(params)
       const sessionId = `ses_${randomBytes(8).toString('hex')}`
       const model = configModel ?? MODELS[0]?.value
       writeMeta(sessionId, {
@@ -373,6 +415,7 @@ function handle(frame) {
       return
     }
     case 'session/load':
+      opencodeClaveTools(params)
       return load(id, params)
     case 'session/prompt':
       void prompt(id, params)

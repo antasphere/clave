@@ -225,7 +225,13 @@ const after = (argv: string[], flag: string): string | undefined => argv[argv.in
 
 describe('the Pi chat adapter is registered (lane D, PRDCT-4427)', () => {
   it('as a Pi rpc adapter named pi-chat, provider pi, in the registry', () => {
-    expect(mocks.piSpecs).toContainEqual({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+    // PRDCT-4507: handed Clave's own tools through Clave's Pi extension.
+    expect(mocks.piSpecs).toContainEqual({
+      id: 'pi-chat',
+      provider: 'pi',
+      label: 'Pi',
+      claveTools: true
+    })
     expect(registeredAtImport).toContain(mocks.pi)
   })
 })

@@ -31,6 +31,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { callClaveTools } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -54,6 +56,48 @@ for (let i = 0; i < argv.length; i++) {
   if (VALUED.has(arg)) flags[arg] = argv[++i]
   else if (arg === '--no-session') noSession = true
   // Any other flag is ignored.
+}
+// Clave's own tools (PRDCT-4507): the extension on the command line is loaded
+// as Pi loads it, against a stand-in `pi` that takes its registration, and the
+// server it registered is called with what it carries. Only with
+// `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
+async function piClaveTools(form) {
+  if (!process.env.CLAVE_TOOLS_STAND_IN_LOG) return
+  const extension = flags['--extension']
+  let server = null
+  try {
+    if (extension && process.env.CLAVE_MCP_CONFIG_FILE) {
+      const started = []
+      const pi = {
+        on: (event, handler) => {
+          if (event === 'session_start') started.push(handler)
+        },
+        getCommands: () => [{ name: 'mcp' }],
+        registerMcpServer: (name, config) => {
+          if (name === 'clave') server = config
+        }
+      }
+      const mod = await import(pathToFileURL(extension).href)
+      mod.default(pi)
+      for (const handler of started) await handler({ reason: 'startup' }, {})
+    }
+  } catch {
+    server = null
+  }
+  await callClaveTools(server, {
+    harness: 'pi',
+    form,
+    extension: !!extension,
+    exposure: server?.exposure ?? null
+  })
+}
+// The terminal form (`PI_STAND_IN_TERMINAL=1`, no `--mode`): Clave's tools
+// called once, a line printed, then it waits as a TUI would.
+if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
+  await piClaveTools('terminal')
+  process.stdout.write('stub pi terminal\r\n')
+  setInterval(() => {}, 60_000)
+  await new Promise(() => {})
 }
 if (flags['--mode'] !== 'rpc') {
   process.stderr.write(
@@ -688,3 +732,5 @@ process.stdin.on('data', (chunk) => {
 })
 process.stdin.on('end', () => process.exit(0))
 process.on('SIGTERM', () => process.exit(0))
+// PRDCT-4507: in the background, as Pi connects its servers at session start.
+void piClaveTools('rpc')

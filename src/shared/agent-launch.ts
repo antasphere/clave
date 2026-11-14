@@ -520,9 +520,11 @@ export const AGENT_CAPABILITIES = {
     blockedState: 'unsupported'
   },
   codex: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'unsupported' },
-  pi: { claveTools: 'unsupported', exchangeCapture: 'unsupported', blockedState: 'unsupported' },
+  // PRDCT-4507: Pi through Clave's extension, OpenCode through its inline
+  // configuration, in a terminal and in a chat.
+  pi: { claveTools: 'supported', exchangeCapture: 'unsupported', blockedState: 'unsupported' },
   opencode: {
-    claveTools: 'unsupported',
+    claveTools: 'supported',
     exchangeCapture: 'unsupported',
     blockedState: 'unsupported'
   }

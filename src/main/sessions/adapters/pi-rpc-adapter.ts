@@ -21,6 +21,8 @@ import type {
 import { PiRpcConnection, record, type PiRpcEvent } from './pi-rpc-client'
 import { startRefusal } from './start-refusal'
 import { connectionHandover } from '../../connection-handover'
+import { lazyTerminalPorts } from '../../ports/terminals'
+import { CLAVE_MCP_CONFIG_FILE_ENV, piClaveExtensionPath } from '../../clave-tools-launch'
 
 /**
  * A chat with Pi over its rpc mode (`pi --mode rpc`, Pi 1.5): one Pi process
@@ -37,6 +39,9 @@ export interface PiRpcAgentSpec {
   id: string
   provider: string
   label: string
+  /** PRDCT-4507: hand every chat Clave's own tools, through Clave's Pi
+   *  extension and the tab's own MCP config file (the app's Pi chat). */
+  claveTools?: boolean
 }
 export interface PiRpcLaunch {
   command: string[]
@@ -232,6 +237,9 @@ interface HandleState {
   initialPrompt?: string
   /** The exit code to report, when the adapter ended the session itself. */
   exitCode?: number
+  /** PRDCT-4507: the tab's credential for Clave's tools was issued at this
+   *  spawn, and is let go of when the process ends. */
+  claveTools?: boolean
   ended: boolean
   closing: boolean
 }
@@ -273,10 +281,13 @@ export class PiRpcAdapter implements SessionAdapter {
   private handles = new Map<string, HandleState>()
   private launches = new Map<string, PiRpcLaunch>()
 
+  private readonly claveTools: boolean
+
   constructor(spec: PiRpcAgentSpec) {
     this.id = spec.id
     this.provider = spec.provider
     this.label = spec.label
+    this.claveTools = spec.claveTools === true
   }
 
   /** The spawn's command and environment, handed by the manager before the
@@ -319,8 +330,10 @@ export class PiRpcAdapter implements SessionAdapter {
     }
     let child: ChildProcessWithoutNullStreams
     try {
-      child = spawnPi(launch, spec.cwd)
+      state.launch = this.withClaveTools(state, launch)
+      child = spawnPi(state.launch, spec.cwd)
     } catch (error) {
+      this.letGoOfClaveTools(state)
       this.launches.set(spec.id, launch)
       throw error
     }
@@ -986,8 +999,32 @@ export class PiRpcAdapter implements SessionAdapter {
     state.history.push({ event: { type: 'error', message, fatal: false }, at: Date.now() })
   }
 
+  /** PRDCT-4507: the launch with Clave's own tools: the tab's MCP config file
+   *  from the one issuer, its PATH in `CLAVE_MCP_CONFIG_FILE` and Clave's
+   *  extension on the command line, which registers the server at Pi's
+   *  session start. The token stays in the file. No file (no tool server
+   *  up): the launch as it was, a chat without tools. */
+  private withClaveTools(state: HandleState, launch: PiRpcLaunch): PiRpcLaunch {
+    if (!this.claveTools) return launch
+    const configPath = lazyTerminalPorts.mcpConfig.write(state.spec.id)
+    state.claveTools = true
+    if (!configPath) return launch
+    return {
+      ...launch,
+      command: [...launch.command, '--extension', piClaveExtensionPath()],
+      env: { ...launch.env, [CLAVE_MCP_CONFIG_FILE_ENV]: configPath }
+    }
+  }
+
+  private letGoOfClaveTools(state: HandleState): void {
+    if (!state.claveTools) return
+    state.claveTools = false
+    lazyTerminalPorts.mcpConfig.remove(state.spec.id)
+  }
+
   private exited(state: HandleState, code: number, stderrTail?: string): void {
     if (state.ended) return
+    this.letGoOfClaveTools(state)
     if (state.starting && !state.closing && state.exitCode === undefined) {
       // Pi died before it gave its state: a refusal, said as one, in Pi's
       // own last words and with its status (PRDCT-4427).
