@@ -461,6 +461,41 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     })
   })
 
+  // PRDCT-4427: Pi 1.5.2 keeps a name it does not have as a custom model id
+  // and get_state names it as asked: only its list tells.
+  it('a model name Pi keeps as a custom id: said once, kept in the past', async () => {
+    const s = await open(
+      { model: 'no-such-model-zz' },
+      {
+        env: { PI_STAND_IN_ANY_PROVIDER: '1' },
+        session: [
+          '--session-id',
+          randomUUID(),
+          '--provider',
+          'kimi-coding',
+          '--model',
+          'no-such-model-zz'
+        ]
+      }
+    )
+    const said =
+      'Pi does not know the model no-such-model-zz of kimi-coding: it sends that name to the provider as it is, and the provider may refuse it.'
+    await expect.poll(() => notices(s.events)).toEqual([said])
+    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([
+      { type: 'error', message: said, fatal: false }
+    ])
+    // A model Pi lists for that provider: nothing said.
+    const known = await open(
+      { model: 'k-first' },
+      {
+        env: { PI_STAND_IN_ANY_PROVIDER: '1' },
+        session: ['--session-id', randomUUID(), '--provider', 'kimi-coding', '--model', 'k-first']
+      }
+    )
+    await expect.poll(() => types(known.state)).toContain('get_available_models')
+    expect(notices(known.events)).toEqual([])
+  })
+
   it('resumes with --session: history has the past, and no prompt is sent', async () => {
     const state = tmp()
     const id = randomUUID()

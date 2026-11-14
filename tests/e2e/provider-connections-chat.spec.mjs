@@ -303,6 +303,64 @@ async function refusedAtStart(t, app, win, { account, where }) {
   }
 }
 
+/** An agent asks for a model OpenCode does not have (PRDCT-4427): OpenCode
+ *  opens the session on one of its own, silently, and the chat says so once,
+ *  naming both, though the pane is drawn after the handshake (a tab an agent
+ *  opened in the background is drawn when the person comes to it; on the
+ *  separate server the queue is let go before any pane subscribes). The
+ *  window's machine stores a DeepSeek connection first when it has none. */
+async function unknownModelSaid(t, app, win, { where }) {
+  const chat = (id) =>
+    win.locator(`.chat-host[data-session-id="${id}"]`).locator('[data-testid="chat-view"]').first()
+  const chatText = async (id) =>
+    chat(id)
+      .innerText()
+      .catch(() => '')
+  await win.evaluate(async (deepseek) => {
+    const api = window.electronAPI
+    const held = await api.fleetProviderConnections('local').catch(() => [])
+    if (held.some((c) => c.label === 'DeepSeek')) return
+    const created = await api.fleetProviderConnectionAdd('local', {
+      company: 'deepseek',
+      label: 'DeepSeek'
+    })
+    await api.fleetProviderConnectionSetKey('local', created.id, deepseek)
+  }, DEEPSEEK)
+  const newSessions = () =>
+    lines(ACP_FRAMES).filter((f) => f.frame?.method === 'session/new').length
+  const before = newSessions()
+  const opened = await callMcp(app, 'openSession', {
+    cwd: ROOT,
+    mode: 'opencode',
+    chat: true,
+    workspace: WS.id,
+    account: 'DeepSeek',
+    model: 'no-such-model-zz',
+    name: 'OpenCode asked for a model it does not have'
+  }).catch((e) => ({ error: String(e?.message ?? e) }))
+  const id = opened?.sessionId
+  t.check(`(${where}) the OpenCode chat asked for an unknown model opened`, !!id, scrub(opened))
+  if (!id) return
+  const MISMATCH =
+    'OpenCode does not have the model deepseek/no-such-model-zz: this chat runs on deepseek/stand-in-default.'
+  await until(() => (newSessions() > before ? true : null), { tries: 60 })
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  await callMcp(app, 'focus', { sessionId: id })
+  await chat(id)
+    .waitFor({ timeout: 20_000 })
+    .catch(() => undefined)
+  const said = await until(async () => ((await chatText(id)).includes(MISMATCH) ? true : null), {
+    tries: 40
+  })
+  const shown = await chatText(id)
+  t.check(
+    `(${where}) the chat says the model it runs on is not the one asked, naming both`,
+    !!said,
+    scrub(shown).slice(0, 600)
+  )
+  t.equal(`(${where}) once`, shown.split(MISMATCH).length - 1, 1)
+}
+
 export async function run(t) {
   writeFixtures()
   const env = {
@@ -489,6 +547,9 @@ export async function run(t) {
       !!footOk,
       await footLine.innerText().catch((e) => e.message)
     )
+
+    // ── 1a. An agent asks for a model OpenCode does not have (PRDCT-4427) ──
+    await unknownModelSaid(t, app, win, { where: 'in process' })
 
     // ── 1b. An OpenCode chat on DeepSeek with a picked model, the launcher's
     // call: the bare id `deepseek-chat`, as the launcher names it ──
@@ -784,6 +845,34 @@ export async function run(t) {
       scrub(resumedSeen)
     )
 
+    // ── 3b. A Pi chat asked for a model Pi does not have (PRDCT-4427) ──
+    // Pi 1.5.2 keeps the name as a custom model id, so only its list tells;
+    // the chat says what Pi does with it, once, the pane drawn after.
+    const piUnknown = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: true,
+      workspace: WS.id,
+      account: 'Kimi work',
+      model: 'no-such-model-zz',
+      name: 'Pi asked for a model it does not have'
+    })
+    const PI_UNKNOWN =
+      'Pi does not know the model no-such-model-zz of kimi-coding: it sends that name to the provider as it is, and the provider may refuse it.'
+    t.check('the Pi chat asked for an unknown model opened', !!piUnknown?.sessionId, piUnknown)
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await callMcp(app, 'focus', { sessionId: piUnknown.sessionId })
+    await chat(piUnknown.sessionId)
+      .waitFor({ timeout: 20_000 })
+      .catch(() => undefined)
+    const piSaid = await until(
+      async () => ((await chatText(piUnknown.sessionId)).includes(PI_UNKNOWN) ? true : null),
+      { tries: 40 }
+    )
+    const piShown = await chatText(piUnknown.sessionId)
+    t.check('the Pi chat says what Pi does with that name', !!piSaid, scrub(piShown).slice(0, 600))
+    t.equal('once (Pi)', piShown.split(PI_UNKNOWN).length - 1, 1)
+
     // ── 4. Refusals at start: one sentence, before any process ──
     const refuse = (options) =>
       win.evaluate(
@@ -954,6 +1043,7 @@ export async function run(t) {
       }
     })
     await refusedAtStart(t, separate.app, separate.win, { where: 'separate server' })
+    await unknownModelSaid(t, separate.app, separate.win, { where: 'separate server' })
   } finally {
     if (separate) await separate.app.close()
   }

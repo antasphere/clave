@@ -209,6 +209,12 @@ export const acpModelOptions = (configOptions: unknown): ModelOption[] =>
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+/** A chat that opened on another model than the one asked, in one sentence
+ *  naming both (PRDCT-4427). */
+export function modelMismatch(label: string, asked: string, current: string | undefined): string {
+  return `${label} does not have the model ${asked}: this chat runs on ${current || `the model ${label} picks`}.`
+}
+
 /** The name of the retry notice: the latest stands for the ones before. */
 const RETRY_NOTICE = 'retry'
 
@@ -534,8 +540,17 @@ export class AcpAdapter implements SessionAdapter {
       }
       state.configOptions = parseConfigOptions(opened.configOptions)
       this.emitMeta(state)
+      // The model asked for against the one the session opened on. OpenCode
+      // opens on a model of its own, silently, when its configuration names
+      // one it does not have (2.3.0): said once, and kept in the past, since
+      // a pane drawn after the handshake (a tab opened in the background, the
+      // separate server's queue let go first) reads only that.
       const wanted = state.options.model
-      if (wanted && wanted !== modelOption(state)?.currentValue) await this.setModel(state, wanted)
+      const option = modelOption(state)
+      if (wanted && wanted !== option?.currentValue) {
+        if (option?.values.includes(wanted)) await this.setModel(state, wanted)
+        else this.startNotice(state, modelMismatch(this.label, wanted, option?.currentValue))
+      }
     } catch (error) {
       if (state.ended || state.closing) return
       this.refuse(state, error)

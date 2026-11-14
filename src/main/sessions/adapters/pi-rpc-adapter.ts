@@ -73,6 +73,12 @@ function modelName(model: unknown): string | null {
   return provider ? `${provider}/${id}` : id
 }
 
+/** What Pi does with a model name it does not have (PRDCT-4427), in one
+ *  sentence: it sends the name to the provider as it is. */
+export function piUnknownModel(label: string, model: string, provider: string | undefined): string {
+  return `${label} does not know the model ${model}${provider ? ` of ${provider}` : ''}: it sends that name to the provider as it is, and the provider may refuse it.`
+}
+
 /** Pi's `get_available_models` answer as the chat's menu lists it: each
  *  model as `provider/id` (what the session reports and `set_model` splits)
  *  and by its name. Under a stored connection Pi lists the models it has a
@@ -425,6 +431,12 @@ export class PiRpcAdapter implements SessionAdapter {
       const wanted = state.options.model
       if (wanted && wanted !== state.model && wanted !== state.modelId)
         await this.setModel(state, wanted)
+      // A name Pi does not have for that provider: Pi 1.5.2 keeps it as a
+      // custom model id (a warning on its stderr alone) and `get_state`
+      // names it as asked, so the chat would read as fine until the
+      // provider refuses the first message. Said once, kept in the past
+      // for a pane drawn after the handshake (PRDCT-4427).
+      else if (wanted && state.model) await this.sayUnknownModel(state)
       if (state.ended || state.closing) return
       if (state.options.resume) {
         try {
@@ -465,6 +477,27 @@ export class PiRpcAdapter implements SessionAdapter {
     state.exitCode = 1
     if (state.connection && !state.connection.closed) void state.connection.close()
     else this.exited(state, 1)
+  }
+
+  /** The session's model is not among those Pi lists: one sentence. A list
+   *  Pi does not give, or gives empty, says nothing. */
+  private async sayUnknownModel(state: HandleState): Promise<void> {
+    const connection = state.connection
+    if (!connection || connection.closed) return
+    state.available ??= connection.command('get_available_models').then(piModelOptions)
+    let listed: ModelOption[]
+    try {
+      listed = await state.available
+    } catch {
+      state.available = undefined
+      return
+    }
+    if (state.ended || state.closing || listed.length === 0) return
+    if (listed.some((m) => m.id === state.model)) return
+    this.startNotice(
+      state,
+      piUnknownModel(this.label, state.modelId ?? state.model ?? '', state.modelProvider)
+    )
   }
 
   private takeModel(state: HandleState, model: unknown): void {

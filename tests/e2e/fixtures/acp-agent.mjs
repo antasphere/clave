@@ -69,7 +69,14 @@ const envConfig = (() => {
     return null
   }
 })()
-const configModel = typeof envConfig?.model === 'string' ? envConfig.model : null
+const configured = typeof envConfig?.model === 'string' ? envConfig.model : null
+// A model the provider does not have (`…/no-such-model…`): the real agent
+// opens its session on a model of its own choosing, silently (checked by
+// hand on 2.3.0: `kimi-code-plan-global/no-such-model-zz` opened on
+// `kimi-code-plan-global/k3.1-pro`, the asked one not listed). Here, that
+// provider's `stand-in-default`.
+const unknownConfigured = configured !== null && /\/no-such-model/.test(configured)
+const configModel = unknownConfigured ? `${configured.split('/')[0]}/stand-in-default` : configured
 const enabledProviders = Array.isArray(envConfig?.enabled_providers)
   ? envConfig.enabled_providers
   : null

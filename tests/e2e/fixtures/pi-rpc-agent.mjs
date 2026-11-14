@@ -92,6 +92,8 @@ const modelObject = (id) => ({
   maxTokens: 8192
 })
 const CATALOG = ['one', 'two', 'three'].map(modelObject)
+/** The model a connection's directory declares, listed beside the catalog. */
+const declared = []
 const findModel = (provider, id) => CATALOG.find((m) => m.provider === provider && m.id === id)
 const COMMANDS = [
   { name: 'init', description: 'Write an AGENTS.md for this folder' },
@@ -207,6 +209,16 @@ if (!noModel) {
       // A provider a connection's directory declares, as real Pi reads it
       // from that directory's models.json.
       (anyProvider && provider !== 'stand-in' ? { ...modelObject(id), provider } : undefined)
+    // A name that provider does not have (`no-such-model…`): Pi 1.5.2 keeps
+    // it as a custom model id, says so on stderr, and does not list it
+    // (checked by hand: `--provider kimi-coding --model no-such-model-zz`).
+    if (session.model && !findModel(provider, id)) {
+      if (/^no-such-model/.test(id))
+        process.stderr.write(
+          `Warning: Model "${id}" not found for provider "${provider}". Using custom model id.\n`
+        )
+      else declared.push(session.model)
+    }
     if (!session.model) {
       process.stderr.write(`Model not found: ${provider}/${id}\n`)
       process.exit(1)
@@ -517,7 +529,7 @@ function handle(frame) {
     case 'get_commands':
       return ok(id, type, { commands: COMMANDS })
     case 'get_available_models':
-      return ok(id, type, { models: CATALOG })
+      return ok(id, type, { models: [...declared, ...CATALOG] })
     case 'get_available_thinking_levels':
       return ok(id, type, { levels: LEVELS })
     case 'get_session_stats': {

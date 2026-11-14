@@ -423,12 +423,52 @@ describe('AcpAdapter against the stand-in agent', () => {
     expect(s.events.filter((e) => e.type === 'session_meta').map((e) => e.model)).toEqual([
       'stand-in/one'
     ])
-    expect(s.events).toContainEqual({
+    const said = {
       type: 'error',
-      message: expect.stringContaining('other/unknown'),
+      message: 'OpenCode does not have the model other/unknown: this chat runs on stand-in/one.',
       fatal: false
-    })
+    }
+    expect(s.events.filter((e) => e.type === 'error')).toEqual([said])
     expect(frames(s.state).some((f) => f.method === 'session/set_config_option')).toBe(false)
+  })
+
+  // PRDCT-4427: OpenCode 2.3.0 opens on a model of its own when its
+  // configuration names one it does not have, and says nothing.
+  it('a configured model the agent opened another in place of: said once, naming both, kept in the past', async () => {
+    const s = await open(
+      { model: 'deepseek/no-such-model-zz' },
+      {
+        env: {
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            enabled_providers: ['deepseek'],
+            model: 'deepseek/no-such-model-zz'
+          })
+        }
+      }
+    )
+    const said = {
+      type: 'error',
+      message:
+        'OpenCode does not have the model deepseek/no-such-model-zz: this chat runs on deepseek/stand-in-default.',
+      fatal: false
+    }
+    expect(s.events.filter((e) => e.type === 'error')).toEqual([said])
+    // A pane drawn after the handshake reads the past: it is there too.
+    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([said])
+    expect(frames(s.state).some((f) => f.method === 'session/set_config_option')).toBe(false)
+    // The model it was asked for, when it is the one it opened on: nothing said.
+    const asked = await open(
+      { model: 'deepseek/deepseek-chat' },
+      {
+        env: {
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            enabled_providers: ['deepseek'],
+            model: 'deepseek/deepseek-chat'
+          })
+        }
+      }
+    )
+    expect(asked.events.some((e) => e.type === 'error')).toBe(false)
   })
 
   it("says OpenCode's rate-limit retries as one notice, the latest in place of the one before", async () => {
