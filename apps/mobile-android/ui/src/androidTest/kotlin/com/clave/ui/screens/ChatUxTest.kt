@@ -138,4 +138,35 @@ class ChatUxTest {
         rule.onNodeWithText("Allow").performClick()
         rule.runOnIdle { assertEquals(listOf("p1" to "allow"), answers) }
     }
+
+    @Test
+    fun anOpenedToolPreviewsItsOutputAndShowsAllOnATap() {
+        val output = (1..20).joinToString("\n") { "line $it" }
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                com.clave.ui.chat.ToolRow(
+                    summary = "Ran npm test",
+                    hint = "Command run",
+                    status = com.clave.ui.chat.ToolStatus.Complete,
+                    expanded = true,
+                    onToggle = {},
+                    kind = "command",
+                    detailedSections = listOf(
+                        com.clave.ui.chat.ToolSectionView("Command", "npm test", "bash"),
+                        com.clave.ui.chat.ToolSectionView("Output", output),
+                        com.clave.ui.chat.ToolSectionView("a.kt", "- val x = 1\n+ val x = 2", "diff"),
+                    ),
+                    detail = "Exit 0",
+                )
+            }
+        }
+        rule.onNodeWithText("Exit 0").assertIsDisplayed()
+        rule.onNodeWithText("$ npm test").assertIsDisplayed()
+        rule.onNodeWithText("line 8").assertIsDisplayed()
+        rule.onNodeWithText("line 9").assertDoesNotExist()
+        rule.onNodeWithText("+ val x = 2").assertIsDisplayed()
+        rule.onNodeWithText("Show all").performClick()
+        rule.onNodeWithText("line 20").assertExists()
+        rule.onNodeWithText("Show less").assertExists()
+    }
 }

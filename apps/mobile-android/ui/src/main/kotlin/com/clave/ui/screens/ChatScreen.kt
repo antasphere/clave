@@ -45,7 +45,6 @@ import com.clave.core.chat.approvalRunSummary
 import com.clave.core.chat.blockKey
 import com.clave.core.chat.decisionWord
 import com.clave.core.chat.describeApproval
-import com.clave.core.chat.describeTool
 import com.clave.core.chat.describeToolHead
 import com.clave.core.chat.failureCount
 import com.clave.core.chat.groupHint
@@ -57,6 +56,8 @@ import com.clave.core.chat.questionKey
 import com.clave.core.chat.refused
 import com.clave.core.chat.toolGroupSummary
 import com.clave.core.chat.toolHint
+import com.clave.core.chat.toolLine
+import com.clave.core.chat.toolPanel
 import com.clave.core.contract.Attachment
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.SessionAttachment
@@ -73,6 +74,7 @@ import com.clave.ui.chat.PromptView
 import com.clave.ui.chat.PromptDock
 import com.clave.ui.chat.QuestionView
 import com.clave.ui.chat.ToolRow
+import com.clave.ui.chat.ToolSectionView
 import com.clave.ui.chat.ToolStatus
 import com.clave.ui.chat.UserTurn
 import com.clave.ui.components.EmptyState
@@ -159,12 +161,6 @@ internal fun attachmentLabel(a: Attachment): String = when (a) {
 /** The line above a message another tab sent: who sent it. Null for the person's own words. */
 internal fun deliveredCaption(text: String): String? =
     parseDelivery(text)?.let { "${it.sender?.name ?: "Another agent"} · delivered" }
-
-/** The summary line of one tool call: its label and what it was about. */
-internal fun toolSummary(tool: Entry.Tool): String {
-    val head = describeToolHead(tool)
-    return listOf(head.label, head.target).filter { it.isNotEmpty() }.joinToString(" ")
-}
 
 private fun toolStatusOf(tool: Entry.Tool): ToolStatus = when {
     !tool.complete -> ToolStatus.Running
@@ -502,14 +498,17 @@ private fun DeliveredOrOwnTurn(entry: Entry.User) {
 @Composable
 private fun SingleTool(tool: Entry.Tool, key: String, expanded: Set<String>, onToggle: (String) -> Unit) {
     val open = key in expanded
+    // Read only once opened: a closed row never turns an output into text.
+    val panel = if (open) toolPanel(tool) else null
     ToolRow(
-        summary = toolSummary(tool),
+        summary = toolLine(tool),
         hint = toolHint(tool),
         status = toolStatusOf(tool),
         expanded = open,
         onToggle = { onToggle(key) },
-        sections = if (open) describeTool(tool).sections.map { it.label to it.text } else emptyList(),
         kind = describeToolHead(tool).kind.wire,
+        detailedSections = panel?.sections?.map { ToolSectionView(it.label, it.text, it.language) },
+        detail = panel?.detail,
     )
 }
 

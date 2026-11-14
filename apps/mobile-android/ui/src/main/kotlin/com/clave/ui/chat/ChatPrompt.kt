@@ -2,6 +2,7 @@ package com.clave.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,10 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -32,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.clave.core.chat.toolPreview
 import com.clave.core.contract.RiskLevel
 import com.clave.ui.components.ButtonKind
 import com.clave.ui.components.ClaveButton
@@ -260,6 +267,40 @@ fun PermissionPrompt(view: PromptView, onAnswer: (optionId: String) -> Unit, mod
                     )
                 }
             }
+        }
+    }
+}
+
+/** One section of an opened tool: its label, its text, and how it reads ("bash", "diff", a file's extension). */
+@Immutable
+data class ToolSectionView(val label: String, val text: String, val language: String? = null)
+
+private val DIFF_LINE = Regex("^[-+] ", RegexOption.MULTILINE)
+
+/** A section handed over without a language: a change written as one reads as a diff. */
+internal fun guessLanguage(text: String): String? = if (DIFF_LINE.containsMatchIn(text)) "diff" else null
+
+/**
+ * A section's first lines (8 lines or 2000 characters, the desktop's preview), the rest one
+ * tap away: opening a call never pours a whole output into the column.
+ */
+@Composable
+fun ToolSection(section: ToolSectionView, modifier: Modifier = Modifier) {
+    val t = Clave.colors.theme
+    var full by rememberSaveable(section.text) { mutableStateOf(false) }
+    val preview = toolPreview(section.text)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
+        BasicText(section.label, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
+        CodeBlock(if (full) section.text else preview.text, section.language)
+        if (preview.truncated) {
+            BasicText(
+                if (full) "Show less" else "Show all",
+                modifier = Modifier
+                    .heightIn(min = Metrics.controlXsHeight)
+                    .clickable(role = Role.Button) { full = !full }
+                    .padding(vertical = Metrics.space(1)),
+                style = ClaveTypography.type(Metrics.textXs, FontWeight.Medium).copy(color = t.textSecondary),
+            )
         }
     }
 }

@@ -180,6 +180,10 @@ fun ToolRow(
     failures: Int = 0,
     sections: List<Pair<String, String>> = emptyList(),
     kind: String = "other",
+    /** The sections with their languages, read by the chat; wins over [sections]. */
+    detailedSections: List<ToolSectionView>? = null,
+    /** The call's few words beside its kind once opened: "Exit 1", "Lines 1–40". */
+    detail: String? = null,
 ) {
     val c = Clave.colors
     val t = c.theme
@@ -230,31 +234,17 @@ fun ToolRow(
                     .padding(horizontal = Metrics.space(2.5f), vertical = Metrics.space(2)),
                 verticalArrangement = Arrangement.spacedBy(Metrics.space(1.5f)),
             ) {
-                if (sections.isEmpty()) {
+                val shown = detailedSections ?: sections.map { (label, body) -> ToolSectionView(label, body, guessLanguage(body)) }
+                if (detail != null) {
+                    BasicText(detail, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
+                }
+                if (shown.isEmpty()) {
                     BasicText(
                         text = if (status == ToolStatus.Running) "Waiting for output…" else "No output returned.",
                         style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary),
                     )
                 }
-                sections.forEach { (label, body) ->
-                    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
-                        BasicText(label, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(Metrics.radiusMd))
-                                .background(t.surface100)
-                                .horizontalScroll(rememberScrollState())
-                                .padding(Metrics.space(2)),
-                        ) {
-                            BasicText(
-                                body,
-                                style = ClaveTypography.mono(Metrics.textXs).copy(color = t.textSecondary),
-                                softWrap = false,
-                            )
-                        }
-                    }
-                }
+                shown.forEach { ToolSection(it) }
             }
         }
     }
