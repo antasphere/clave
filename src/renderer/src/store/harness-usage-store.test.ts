@@ -41,6 +41,20 @@ const VIEW: HarnessUsageView = {
   unavailable: []
 }
 
+// The verifier's N1: the sidebar's foot reads the sign-in through
+// `signInUsage`; "Other sessions" carries a null connectionId too.
+describe('the sign-in the window reads is never "Other sessions" (PRDCT-4551)', () => {
+  const other = row({ label: 'Other sessions', other: true, requests: 9, totalTokens: 999 })
+  const signIn = row({ label: 'Pi sign-in', billing: 'signIn', requests: 1, totalTokens: 7 })
+  const entryOf = (rows: HarnessUsageView['rows']): Parameters<typeof signInUsage>[0] =>
+    ({ view: { range: 'today', rows, unavailable: [] } }) as never
+
+  it('answers the sign-in listed after "Other sessions", and nothing when only that row is there', () => {
+    expect(signInUsage(entryOf([other, signIn]), 'pi')?.line).toBe('1 request · 7 tokens today')
+    expect(signInUsage(entryOf([other]), 'pi')).toBeUndefined()
+  })
+})
+
 describe('the usage per connection the window keeps (PRDCT-4551)', () => {
   const read = vi.fn(
     async (_machine: string, range: string) => ({ ...VIEW, range }) as HarnessUsageView

@@ -418,6 +418,36 @@ describe('the models and the default one', () => {
     )
     expect(silent.connections[0]).not.toHaveProperty('usedToday')
   })
+  // The verifier's N1: "Other sessions" carries a null connectionId too; the
+  // sign-in's figure must not depend on the sign-in being listed first.
+  it('never says "Other sessions" as the sign-in, whichever row comes first (PRDCT-4551)', () => {
+    const row = (over: Record<string, unknown>): Record<string, unknown> => ({
+      harness: 'pi',
+      connectionId: null,
+      label: 'Pi sign-in',
+      billing: 'signIn',
+      removed: false,
+      requests: 1,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 7,
+      cost: 0,
+      sessions: 1,
+      ...over
+    })
+    const other = row({ label: 'Other sessions', other: true, requests: 9, totalTokens: 999 })
+    const pi = (rows: Record<string, unknown>[]): HarnessOptions =>
+      harness(launchOptions(input({ harnessUsage: { rows } as never })), 'pi')
+    expect(pi([other, row({})]).signInUsedToday).toEqual({
+      line: '1 request · 7 tokens today',
+      requests: 1,
+      tokens: 7,
+      cost: null
+    })
+    expect(pi([other])).not.toHaveProperty('signInUsedToday')
+  })
   it('says a start model decided elsewhere in a sentence, never a model', () => {
     const kimi = providerConnection(view('c-kimi', 'moonshot', 'Kimi work'))
     const options = launchOptions(

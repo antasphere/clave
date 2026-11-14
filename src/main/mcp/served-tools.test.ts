@@ -684,6 +684,45 @@ describe('launchOptions, served: what this machine can launch', () => {
     return { ...base, shell }
   }
 
+  // The verifier's N1: main's own answer reads the sign-in from the rows its
+  // harness usage gives; "Other sessions" carries a null connectionId too.
+  it('never says "Other sessions" as the sign-in, whichever row comes first (PRDCT-4551)', async () => {
+    const usageRow = (over: Record<string, unknown>): Record<string, unknown> => ({
+      harness: 'pi',
+      connectionId: null,
+      label: 'Pi sign-in',
+      billing: 'signIn',
+      removed: false,
+      requests: 1,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 7,
+      cost: 0,
+      sessions: 1,
+      ...over
+    })
+    const other = usageRow({ label: 'Other sessions', other: true, requests: 9, totalTokens: 999 })
+    const piOf = async (rows: Record<string, unknown>[]): Promise<Record<string, unknown>> => {
+      const harnessUsage = async (): Promise<never> =>
+        ({ range: 'today', rows, unavailable: [] }) as never
+      const answer = (await serveCommand(
+        'launchOptions',
+        {},
+        full(setup(), { harnessUsage } as Partial<ServedShell>)
+      )) as LaunchOptions
+      return answer.harnesses.find((x) => x.id === 'pi') as unknown as Record<string, unknown>
+    }
+    expect((await piOf([other, usageRow({})])).signInUsedToday).toEqual({
+      line: '1 request · 7 tokens today',
+      requests: 1,
+      tokens: 7,
+      cost: null
+    })
+    expect(await piOf([other])).not.toHaveProperty('signInUsedToday')
+  })
+
   it('answers the machine, the harnesses in table order with their presence, and names the absent ones', async () => {
     vi.useFakeTimers({ now: NOW })
     try {

@@ -69,6 +69,30 @@ describe('the one usage line of a connection (PRDCT-4551)', () => {
     expect(signInUsageOf(view, 'opencode')).toBeUndefined()
   })
 
+  // The verifier's N1: "Other sessions" also carries a null connectionId, and
+  // the sign-in's row was found only because it was listed first.
+  it('never answers "Other sessions" for the sign-in, whichever row comes first (PRDCT-4551)', () => {
+    const row = (over: Partial<HarnessUsageRow>): HarnessUsageRow => ({
+      harness: 'pi',
+      connectionId: null,
+      label: 'Pi sign-in',
+      billing: 'signIn',
+      removed: false,
+      requests: 1,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 7,
+      cost: 0,
+      sessions: 1,
+      ...over
+    })
+    const other = row({ label: 'Other sessions', other: true, requests: 9, totalTokens: 999 })
+    expect(signInUsageOf({ rows: [other, row({})] }, 'pi')?.totalTokens).toBe(7)
+    expect(signInUsageOf({ rows: [other] }, 'pi')).toBeUndefined()
+  })
+
   it('travels as the query answers it', () => {
     const success = ReadHarnessUsage.success as unknown as Schema.Schema<unknown, unknown>
     const view = {
