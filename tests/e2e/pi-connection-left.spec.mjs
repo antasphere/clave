@@ -11,7 +11,10 @@
 // naming it and say the provider in one sentence; back on it, the name comes
 // back. A Pi CHAT on the connection whose stand-in moves to another provider
 // before each run (the verifier's R3-1): nothing is sent, and the turn ends
-// with the sentence. No provider is called; every value is made up.
+// with the sentence. A Pi CHAT whose stand-in selects a virtual model listed
+// under the connection's provider (the verifier's finding 1): nothing is
+// sent, and the turn ends with the "could not check" sentence. No provider
+// is called; every value is made up.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -33,6 +36,7 @@ const ROOT = fixturePath('pi-connection-left-root')
 const PI_HOME = path.join(ROOT, 'pi-agent')
 const CONTROL = path.join(ROOT, 'terminal-control')
 const MOVE_MARK = path.join(ROOT, 'move-chat')
+const VIRTUAL_MARK = path.join(ROOT, 'virtual-chat')
 const PI_AGENT = path.join(REPO, 'tests/e2e/fixtures/pi-rpc-agent.mjs')
 const PI_CWD_FOLDER = `--${ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
 const WS = { id: 'left-ws', name: 'Left', rootDir: ROOT, profileFile: null, createdAt: 1 }
@@ -43,6 +47,8 @@ const UNCHECKED =
   'Clave could not check which credential Pi uses now, so this tab no longer names its connection.'
 const CHAT_LEFT =
   "Pi was about to send this turn to anthropic, not to this chat's connection (kimi-coding): nothing was sent, and the turn ended."
+const CHAT_UNCHECKED =
+  'Clave could not check which credential this turn would use: nothing was sent, and the turn ended.'
 
 const CATALOGUE = {
   fetchedAt: Date.now(),
@@ -83,6 +89,10 @@ case " $* " in
     if [ -f ${quote(MOVE_MARK)} ]; then
       PI_STAND_IN_MOVE_BEFORE_RUN=anthropic/claude-stand-in
       export PI_STAND_IN_MOVE_BEFORE_RUN
+    fi
+    if [ -f ${quote(VIRTUAL_MARK)} ]; then
+      PI_STAND_IN_VIRTUAL_BEFORE_RUN=auto
+      export PI_STAND_IN_VIRTUAL_BEFORE_RUN
     fi
     exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
     ;;
@@ -290,6 +300,46 @@ export async function run(t) {
     )
     t.check('and nothing was answered', !(await text()).includes('You said: hello moved'))
     t.check('and no "put it back" is said', !/put it back/.test(await text()))
+
+    // ── 3. A Pi chat whose Pi selects a virtual model listed under the
+    // connection's provider before each run (the verifier's finding 1): the
+    // router would send elsewhere, so nothing is sent ──
+    rmSync(MOVE_MARK, { force: true })
+    writeFileSync(VIRTUAL_MARK, '')
+    const vchat = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: true,
+      workspace: WS.id,
+      account: 'Kimi work',
+      name: 'Pi chat on Kimi, virtual'
+    })
+    const vchatId = vchat?.sessionId
+    t.check('the second Pi chat opened', !!vchatId, vchat)
+    opened.push(vchatId)
+    await callMcp(app, 'focus', { sessionId: vchatId })
+    const vview = win.locator(`.chat-host[data-session-id="${vchatId}"] [data-testid="chat-view"]`)
+    await vview.first().waitFor({ timeout: 20_000 })
+    await win.evaluate(
+      async ({ id }) =>
+        window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'hello virtual' }),
+      { id: vchatId }
+    )
+    const vtext = async () =>
+      vview
+        .first()
+        .innerText()
+        .catch(() => '')
+    const vended = await until(
+      async () => ((await vtext()).includes(CHAT_UNCHECKED) ? true : null),
+      { tries: 80 }
+    )
+    t.check(
+      'a virtual model under the connection: the turn ends with the "could not check" sentence',
+      !!vended,
+      (await vtext()).slice(-600)
+    )
+    t.check('and nothing was answered', !(await vtext()).includes('You said: hello virtual'))
   } finally {
     for (const id of opened) await callMcp(app, 'closeSession', { sessionId: id }).catch(() => {})
     await app?.close()

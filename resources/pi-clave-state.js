@@ -74,6 +74,22 @@ export function registerClaveTools(pi, configFile) {
 }
 
 const PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+/** The api id of Pi's virtual models (Pi 1.5.2 `VIRTUAL_MODEL_API`, the test
+ *  its own `isVirtualModel` makes). */
+const VIRTUAL_MODEL_API = 'pi-virtual'
+
+/** Whether the provider is Pi's own, as its catalog and `models.json` define
+ *  it, with no extension registration over it. False when an extension
+ *  registered that id, or when this Pi cannot say. */
+function providerIsPis(registry, provider) {
+  try {
+    if (!registry || typeof registry.getRegisteredProviderIds !== 'function') return false
+    const ids = registry.getRegisteredProviderIds()
+    return Array.isArray(ids) && !ids.includes(provider)
+  } catch {
+    return false
+  }
+}
 
 /** Where this provider request goes, against the tab's connection (Pi
  *  1.5.2's `before_provider_headers` sees no credential in its headers for an
@@ -85,10 +101,24 @@ const PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
  *    `/login` in the tab, an OAuth sign-in);
  *  - `unchecked`: Pi gave no way to tell which credential (no
  *    `getProviderAuth`, or it threw), or the variable named holds no key
- *    in this process: not taken as the connection's.
+ *    in this process, or the model selected does not say where the request
+ *    goes (below): not taken as the connection's.
  *  Compared in memory, never written, logged or sent. */
 export async function requestOnConnection(ctx, provider, keyVar, env) {
-  if (!ctx || !ctx.model || ctx.model.provider !== provider) return 'provider'
+  if (!ctx || !ctx.model) return 'provider'
+  // A virtual model (Pi's `pi-virtual` api, docs/virtual-models.md) is a
+  // SELECTION: listed under any provider id, the connection's included, it
+  // routes each request to a physical model of its router's choosing, which
+  // this hook is never shown (`ctx.model` stays the virtual one). Where the
+  // request goes is unknown, whatever provider it is listed under.
+  if (ctx.model.api === VIRTUAL_MODEL_API) return 'unchecked'
+  if (ctx.model.provider !== provider) return 'provider'
+  // The connection's provider registered again by an extension
+  // (`pi.registerProvider`: another endpoint, its own models, its own stream)
+  // sends wherever that registration says. Clave gives Pi its connections
+  // through the agent directory's `models.json`, never through an extension,
+  // so any registration under that id is someone else's.
+  if (!providerIsPis(ctx.modelRegistry, provider)) return 'unchecked'
   // A connection with no key (a local model) names no variable: there is no
   // credential to compare, so it is watched by its provider alone.
   if (!keyVar) return 'on'

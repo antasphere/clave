@@ -87,7 +87,8 @@ function watched(env: Record<string, string | undefined>): {
   request: (
     mode: 'rpc' | 'tui',
     provider: string,
-    apiKey: string | undefined | typeof THROWS | typeof MISSING
+    apiKey: string | undefined | typeof THROWS | typeof MISSING,
+    how?: { api?: string; registered?: string[] | typeof MISSING }
   ) => Promise<boolean>
   report: () => string | null
   watching: boolean
@@ -106,13 +107,16 @@ function watched(env: Record<string, string | undefined>): {
     get watching() {
       return watching
     },
-    request: async (mode, provider, apiKey) => {
+    request: async (mode, provider, apiKey, how = {}) => {
       await ready
       let aborted = false
       // `THROWS`: the call throws; `MISSING`: a Pi with no getProviderAuth.
+      // As Pi 1.5.2: a physical model's api, and the provider ids extensions
+      // registered (Pi's own bundled `llama.cpp` among them).
+      const registered = how.registered ?? ['llama.cpp']
       const ctx = {
         mode,
-        model: { provider, id: 'm' },
+        model: { provider, id: 'm', api: how.api ?? 'openai-completions' },
         modelRegistry:
           apiKey === MISSING
             ? {}
@@ -120,7 +124,10 @@ function watched(env: Record<string, string | undefined>): {
                 getProviderAuth: async () => {
                   if (apiKey === THROWS) throw new Error('made-up failure')
                   return { auth: { apiKey }, source: 'x' }
-                }
+                },
+                ...(registered === MISSING
+                  ? {}
+                  : { getRegisteredProviderIds: () => registered })
               },
         abort: () => {
           aborted = true
@@ -177,6 +184,51 @@ describe("Clave's Pi extension watches each request of a tab on a connection", (
     const terminal = watched(envFor())
     expect(await terminal.request('tui', 'conn', MISSING)).toBe(false)
     expect(terminal.report()).toBe('unchecked conn\n')
+  })
+
+  it("a virtual model under the connection's provider is not known to be on it: unchecked, ended in a chat, reported in a terminal", async () => {
+    // Pi 1.5.2: `ctx.model` is the SELECTED virtual model (api `pi-virtual`),
+    // listed under the connection's provider; its router sends elsewhere,
+    // and the credential Pi resolves for the listed provider is the
+    // connection's own.
+    const virtual = { api: 'pi-virtual' }
+    const chat = watched(envFor())
+    expect(await chat.request('rpc', 'conn', KEY, virtual)).toBe(true)
+    expect(chat.report()).toBe('unchecked conn\n')
+    const terminal = watched(envFor())
+    expect(await terminal.request('tui', 'conn', KEY, virtual)).toBe(false)
+    expect(terminal.report()).toBe('unchecked conn\n')
+    // Under another provider id too: where it goes is unknown, not that id.
+    const elsewhere = watched(envFor())
+    expect(await elsewhere.request('rpc', 'router', undefined, virtual)).toBe(true)
+    expect(elsewhere.report()).toBe('unchecked router\n')
+    // A keyless connection is no exception.
+    const keyless: Record<string, string | undefined> = { ...envFor() }
+    delete keyless.CLAVE_CONNECTION_KEY_VAR
+    const local = watched(keyless)
+    expect(await local.request('rpc', 'conn', undefined, virtual)).toBe(true)
+    expect(local.report()).toBe('unchecked conn\n')
+  })
+
+  it("the connection's provider registered again by an extension is not known to be on it", async () => {
+    const chat = watched(envFor())
+    expect(await chat.request('rpc', 'conn', KEY, { registered: ['llama.cpp', 'conn'] })).toBe(
+      true
+    )
+    expect(chat.report()).toBe('unchecked conn\n')
+    const terminal = watched(envFor())
+    expect(await terminal.request('tui', 'conn', KEY, { registered: ['conn'] })).toBe(false)
+    expect(terminal.report()).toBe('unchecked conn\n')
+    // A Pi that cannot say which ids extensions registered: not checked.
+    const older = watched(envFor())
+    expect(await older.request('rpc', 'conn', KEY, { registered: MISSING })).toBe(true)
+    expect(older.report()).toBe('unchecked conn\n')
+    // Another provider's registration changes nothing for the connection.
+    const fine = watched(envFor())
+    expect(await fine.request('rpc', 'conn', KEY, { registered: ['llama.cpp', 'other'] })).toBe(
+      false
+    )
+    expect(fine.report()).toBe('on\n')
   })
 
   it('a key variable named but empty or absent is no check: unchecked, ended in a chat', async () => {

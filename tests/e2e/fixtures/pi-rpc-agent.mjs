@@ -129,12 +129,15 @@ async function connectionHandlers() {
   }
   return watchHandlers
 }
-async function providerRequest(mode, provider, abort, how) {
+async function providerRequest(mode, provider, abort, how, api = 'stand-in') {
   const keyVar = process.env.CLAVE_CONNECTION_KEY_VAR
   const ctx = {
     mode,
-    model: { provider, id: 'stand-in' },
+    // `api` is `pi-virtual` for a virtual model, as Pi 1.5.2 shows one.
+    model: { provider, id: 'stand-in', api },
     modelRegistry: {
+      // The provider ids extensions registered: Pi's own bundled one only.
+      getRegisteredProviderIds: () => ['llama.cpp'],
       getProviderAuth: async () => {
         // `unchecked`: the credential cannot be resolved (the call throws).
         if (how === 'unchecked') throw new Error('stand-in: no credential resolution')
@@ -543,6 +546,12 @@ async function startRun(text) {
     const [provider, id] = move.split('/')
     session.model = findModel(provider, id) ?? { ...modelObject(id), provider }
   }
+  // PRDCT-4540, the verifier's finding 1: an extension of the person's own
+  // whose virtual model, listed under the session's provider (the
+  // connection's), is selected before each run (`<id>`).
+  const virtual = process.env.PI_STAND_IN_VIRTUAL_BEFORE_RUN
+  if (virtual && session.model)
+    session.model = { ...modelObject(virtual), provider: session.model.provider, api: 'pi-virtual' }
   try {
     await emit({ type: 'agent_start' })
     if (text.includes('retry')) {
@@ -558,9 +567,15 @@ async function startRun(text) {
     await emit({ type: 'turn_start' })
     await userMessage(text)
     // The provider request, through Clave's extension when it watches.
-    await providerRequest('rpc', session.model?.provider, () => {
-      run.aborted = true
-    })
+    await providerRequest(
+      'rpc',
+      session.model?.provider,
+      () => {
+        run.aborted = true
+      },
+      undefined,
+      session.model?.api
+    )
     if (run.aborted) throw new Aborted()
     if (text.includes('notify extension'))
       out({
