@@ -728,3 +728,141 @@ describe('AcpAdapter against the stand-in agent', () => {
     expect(frames(state).filter((f) => f.method === 'session/list')).toHaveLength(2)
   })
 })
+
+describe('a message written while a turn runs waits for its own turn (PRDCT-4566)', () => {
+  /** The conversation as it reads, in order: each message, then what answers it. */
+  const transcript = (events: SessionEvent[]): string[] =>
+    events.flatMap((e) =>
+      e.type === 'user_message'
+        ? [`> ${e.text}`]
+        : e.type === 'assistant_text' && e.delta
+          ? [e.delta]
+          : []
+    )
+  type Waiting = Extract<SessionEvent, { type: 'waiting_messages' }>
+  const lists = (events: SessionEvent[]): Waiting[] =>
+    events.flatMap((e) => (e.type === 'waiting_messages' ? [e] : []))
+  const texts = (list: Waiting | undefined): string[] => (list?.messages ?? []).map((m) => m.text)
+  const prompted = (state: string): string[] =>
+    frames(state)
+      .filter((f) => f.method === 'session/prompt')
+      .map((f) => (f.params?.prompt as { text: string }[])[0].text)
+  const dones = (events: SessionEvent[]): number =>
+    events.filter((e) => e.type === 'state_change' && e.state === 'done').length
+  const file = {
+    id: 'a1',
+    path: '/tmp/notes.md',
+    name: 'notes.md',
+    mimeType: 'text/markdown',
+    size: 3,
+    delivery: 'reference' as const
+  }
+
+  it('three messages written during one turn: each enters the conversation as its turn starts, its answer under it', async () => {
+    const s = await open({}, { env: { ACP_STAND_IN_DELAY_MS: '300' } })
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'one' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'three' })
+    // At once: the first is the conversation's; the two others wait outside it.
+    expect(transcript(s.events)).toEqual(['> one'])
+    expect(texts(lists(s.events).at(-1))).toEqual(['two', 'three'])
+    expect(lists(s.events).at(-1)?.takes).toBe('turn')
+    await expect.poll(() => dones(s.events), { timeout: 10_000 }).toBe(3)
+    expect(transcript(s.events)).toEqual([
+      '> one',
+      'You said: ',
+      'on',
+      'e',
+      '> two',
+      'You said: ',
+      'tw',
+      'o',
+      '> three',
+      'You said: ',
+      'thr',
+      'ee'
+    ])
+    // The list shrinks by one as each turn starts, the message drawn right after.
+    expect(lists(s.events).map(texts)).toEqual([['two'], ['two', 'three'], ['three'], []])
+    const takenTwo = s.events.findIndex((e) => e.type === 'waiting_messages' && !texts(e).length)
+    expect(s.events[takenTwo + 1]).toEqual({ type: 'user_message', text: 'three' })
+    expect(s.events[takenTwo + 2]).toEqual({ type: 'state_change', state: 'working' })
+    expect(prompted(s.state)).toEqual(['one', 'two', 'three'])
+  })
+
+  it('a withdrawn message leaves the list for the composer and is never sent', async () => {
+    const s = await open({}, { env: { ACP_STAND_IN_DELAY_MS: '300' } })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'one' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two', attachments: [file] })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'three' })
+    const two = lists(s.events).at(-1)!.messages[0]
+    expect(two).toEqual({ id: expect.any(String), text: 'two', attachments: [file] })
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: two.id })
+    expect(s.events).toEqual([
+      {
+        type: 'waiting_messages',
+        messages: [{ id: expect.any(String), text: 'three' }],
+        takes: 'turn',
+        returned: { why: 'withdrawn', messages: [two] }
+      }
+    ])
+    await expect.poll(() => dones(s.events), { timeout: 10_000 }).toBe(2)
+    expect(prompted(s.state)).toEqual(['one', 'three'])
+    expect(transcript(s.events)).not.toContain('> two')
+    // Taken or gone: nothing more to take back.
+    const before = s.events.length
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: two.id })
+    expect(s.events.length).toBe(before)
+  })
+
+  it('a stop with two messages waiting ends the turn and hands both back, none sent, nothing started', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => prompted(s.state)).toEqual(['be slow'])
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'three' })
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    await expect.poll(() => dones(s.events)).toBe(1)
+    expect(s.events[0]).toEqual({
+      type: 'waiting_messages',
+      messages: [],
+      takes: 'turn',
+      returned: {
+        why: 'stopped',
+        messages: [
+          { id: expect.any(String), text: 'two' },
+          { id: expect.any(String), text: 'three' }
+        ]
+      }
+    })
+    expect(s.events.slice(-2)).toEqual([
+      { type: 'turn_interrupted' },
+      { type: 'state_change', state: 'done' }
+    ])
+    await new Promise((r) => setTimeout(r, 500))
+    expect(prompted(s.state)).toEqual(['be slow'])
+    expect(transcript(s.events)).toEqual([])
+  })
+
+  it('a session that ends with a message waiting hands it back before it ends', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => prompted(s.state)).toEqual(['be slow'])
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two' })
+    process.kill(s.pid, 'SIGKILL')
+    await expect.poll(() => s.exits.length).toBe(1)
+    expect(s.events.slice(-3)).toEqual([
+      { type: 'error', message: expect.stringContaining('stopped during the turn'), fatal: false },
+      {
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'turn',
+        returned: { why: 'ended', messages: [{ id: expect.any(String), text: 'two' }] }
+      },
+      { type: 'state_change', state: 'ended' }
+    ])
+  })
+})

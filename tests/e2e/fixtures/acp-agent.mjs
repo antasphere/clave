@@ -15,7 +15,8 @@
 // session/list page, as OpenCode 2.3.0 does; `ACP_STAND_IN_STRAY_UPDATE=1`
 // sends, during each prompt, one `agent_message_chunk` for the session
 // `ses_other` (another session's update). A prompt containing `slow` waits
-// 20 s (cancellable); one containing `rate limited` says two retries first,
+// 20 s (cancellable); one containing `long turn` streams its echo in three
+// pieces a second apart (cancellable); one containing `rate limited` says two retries first,
 // as OpenCode does under a provider's 429; one containing `ask permission`
 // asks the client first and echoes the option. `OPENCODE_CONFIG_CONTENT`,
 // when set, chooses the models as OpenCode's own (below).
@@ -348,7 +349,18 @@ async function prompt(id, params) {
       content: { type: 'text', text: 'stray text of another session' }
     })
   const half = Math.ceil(text.length / 2)
+  // `long turn`: the answer streams in three pieces a second apart, as a
+  // model's long answer does while the person writes more (PRDCT-4566).
+  const pause = text.includes('long turn') ? 1000 : 0
+  if (pause) {
+    await sleep(pause, turn)
+    if (turn.cancelled) return finish('cancelled')
+  }
   say(text.slice(0, half))
+  if (pause) {
+    await sleep(pause, turn)
+    if (turn.cancelled) return finish('cancelled')
+  }
   say(text.slice(half))
   // `run code`: OpenCode 2.3.0's code mode, frame for frame as the real
   // `opencode acp` sent them on 14 November 2026 (PRDCT-4507): the `execute`
