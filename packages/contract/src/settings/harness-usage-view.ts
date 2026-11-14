@@ -60,10 +60,10 @@ export interface HarnessUsageView {
   range: HarnessUsageRange
   /** Per harness: every current connection that serves it (zeros included),
    *  its own sign-in, then each removed connection with usage in the range. */
-  rows: HarnessUsageRow[]
+  rows: readonly HarnessUsageRow[]
   /** A harness whose records could not be read, with why, in the person's
    *  words. */
-  unavailable: { harness: UsageHarness; reason: string }[]
+  unavailable: readonly { harness: UsageHarness; reason: string }[]
 }
 
 export const EMPTY_FIGURES: Readonly<HarnessUsageFigures> = Object.freeze({

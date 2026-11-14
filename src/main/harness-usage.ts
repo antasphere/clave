@@ -165,7 +165,7 @@ export class HarnessUsage {
 
   async read(range: HarnessUsageRange): Promise<HarnessUsageView> {
     const now = (this.deps.now ?? (() => new Date()))()
-    const unavailable: HarnessUsageView['unavailable'] = []
+    const unavailable: { harness: UsageHarness; reason: string }[] = []
     const records: UsageRecord[] = []
     let piRecords: PiSessionRecord[] = []
     try {
