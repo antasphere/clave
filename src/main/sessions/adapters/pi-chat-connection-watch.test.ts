@@ -98,13 +98,20 @@ const notices = (events: SessionEvent[]): string[] =>
   events.flatMap((e) => (e.type === 'error' ? [e.message] : []))
 const texts = (events: SessionEvent[]): string =>
   events.map((e) => (e.type === 'assistant_text' ? e.delta : '')).join('')
+/** The report's words; its line also carries the time the extension
+ *  decided (` at <ms>`, PRDCT-4551), checked here to be there. */
+const words = (report: string): string => {
+  const line = readFileSync(report, 'utf8')
+  expect(line).toMatch(/ at \d{13}\n$/)
+  return line.replace(/ at \d+\n$/, '\n')
+}
 
 describe('a Pi chat on a connection sends nothing off it (PRDCT-4540)', () => {
   it('a request on the connection goes, and the report says on', async () => {
     const chat = await open()
     await chat.say('hello on it')
     expect(texts(chat.events)).toContain('You said: hello on it')
-    expect(readFileSync(chat.report, 'utf8')).toBe('on\n')
+    expect(words(chat.report)).toBe('on\n')
     expect(notices(chat.events)).toEqual([])
   })
 
@@ -112,9 +119,20 @@ describe('a Pi chat on a connection sends nothing off it (PRDCT-4540)', () => {
     const chat = await open({ PI_STAND_IN_MOVE_BEFORE_RUN: 'anthropic/claude-stand-in' })
     await chat.say('hello moved')
     expect(texts(chat.events)).not.toContain('You said: hello moved')
-    expect(readFileSync(chat.report, 'utf8')).toBe('off anthropic\n')
+    expect(words(chat.report)).toBe('off anthropic\n')
     expect(notices(chat.events)).toContain(piRequestLeftConnection('Pi', 'anthropic', 'stand-in'))
     expect(notices(chat.events).join(' ')).not.toMatch(/put it back/)
+    expect(chat.events.some((e) => e.type === 'turn_interrupted')).toBe(true)
+  })
+
+  it("a virtual model listed under the connection's provider (the verifier's finding 1): nothing sent, could not check", async () => {
+    const chat = await open({ PI_STAND_IN_VIRTUAL_BEFORE_RUN: 'auto' })
+    await chat.say('hello virtual')
+    expect(texts(chat.events)).not.toContain('You said: hello virtual')
+    expect(words(chat.report)).toBe('unchecked stand-in\n')
+    expect(notices(chat.events)).toContain(
+      'Clave could not check which credential this turn would use: nothing was sent, and the turn ended.'
+    )
     expect(chat.events.some((e) => e.type === 'turn_interrupted')).toBe(true)
   })
 
@@ -122,7 +140,7 @@ describe('a Pi chat on a connection sends nothing off it (PRDCT-4540)', () => {
     const chat = await open({ PI_STAND_IN_LOGIN_KEY: 'made-up-login-key' })
     await chat.say('hello login')
     expect(texts(chat.events)).not.toContain('You said: hello login')
-    expect(readFileSync(chat.report, 'utf8')).toBe('off stand-in credential\n')
+    expect(words(chat.report)).toBe('off stand-in credential\n')
     expect(notices(chat.events)).toContain(
       "Pi was about to send this turn to stand-in with another credential than this chat's connection: nothing was sent, and the turn ended."
     )
@@ -141,7 +159,7 @@ describe('a Pi chat on a connection sends nothing off it (PRDCT-4540)', () => {
     await chat.say('back again')
     const after = chat.events.slice(from)
     expect(texts(after)).toContain('You said: back again')
-    expect(readFileSync(chat.report, 'utf8')).toBe('on\n')
+    expect(words(chat.report)).toBe('on\n')
     const back = after.findIndex((e) => e.type === 'error' && /put it back/.test(e.message))
     const said = after.findIndex((e) => e.type === 'assistant_text')
     expect(said).toBeGreaterThanOrEqual(0)
