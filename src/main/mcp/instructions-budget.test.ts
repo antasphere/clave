@@ -99,5 +99,10 @@ describe('MCP server instructions', () => {
     expect(src).toMatch(
       /Pass what you read to clave_open_session as mode, model, account and profile\."/
     )
+    // PRDCT-4551: what it answers per connection and per sign-in, on both roads.
+    const USAGE_WORDS =
+      'a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for their tabs on no connection)'
+    expect(src).toContain(USAGE_WORDS)
+    expect(readFileSync(join(__dirname, 'standalone-mcp.ts'), 'utf8')).toContain(USAGE_WORDS)
   })
 })

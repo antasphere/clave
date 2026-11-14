@@ -401,11 +401,12 @@ describe('the models and the default one', () => {
     expect(pi.connections.find((c) => c.id === 'c-kimi-2')?.usedToday?.line).toBe(
       '1 request · 7 tokens today'
     )
+    // A sign-in not known to be billed per use: no cost (PRDCT-4551).
     expect(pi.signInUsedToday).toEqual({
-      line: '10.4K tokens · $0.01 today',
+      line: '3 requests · 10.4K tokens today',
       requests: 3,
       tokens: 10400,
-      cost: 0.0137
+      cost: null
     })
     // OpenCode's sign-in is its own row; none was read, none is said.
     expect(harness(options, 'opencode')).not.toHaveProperty('signInUsedToday')

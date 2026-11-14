@@ -3,7 +3,14 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { harnessUsageText } from '@clave/contract/settings/harness-usage-view'
-import { HarnessUsage, billingOf, harnessUsageRows, piSessionRoots } from './harness-usage'
+import {
+  HarnessUsage,
+  billingOf,
+  companyOfProvider,
+  harnessUsageRows,
+  piSessionRoots,
+  signInBilling
+} from './harness-usage'
 import { scanPiSessionFile } from './pi-usage'
 import { parseSessionExport, parseSessionPage, OpencodeSessionRecords } from './opencode-usage'
 import type { LedgerLine, UsageRecord } from './usage-attribution'
@@ -12,13 +19,55 @@ const NOW = new Date(2026, 10, 14, 18, 0, 0)
 const AT = new Date(2026, 10, 14, 10, 0, 0).getTime()
 
 describe('the rows each place reads (PRDCT-4551)', () => {
-  it('bills a plan and a local model with no cost, everything else per use', () => {
+  it('bills a plan and a local model with no cost, what Clave knows to be per use with one, the unknown with none', () => {
     expect(billingOf('moonshot')).toBe('plan')
     expect(billingOf('zai')).toBe('plan')
     expect(billingOf('ollama')).toBe('local')
-    expect(billingOf('deepseek')).toBe('payPerUse')
+    // Pay per use, a balance, a limit, a spent amount.
     expect(billingOf('mistral')).toBe('payPerUse')
-    expect(billingOf(null)).toBe('payPerUse')
+    expect(billingOf('generic')).toBe('payPerUse')
+    expect(billingOf('deepseek')).toBe('payPerUse')
+    expect(billingOf('openrouter')).toBe('payPerUse')
+    expect(billingOf('vercel-ai-gateway')).toBe('payPerUse')
+    expect(billingOf(null)).toBe('signIn')
+    expect(billingOf('anthropic')).toBe('signIn')
+  })
+
+  // The coordinator's point 4: the sign-in's line as true as a connection's.
+  it("says a sign-in's cost only when every record of the range was on a provider billed per use", () => {
+    expect(signInBilling(['deepseek'], 'pi')).toBe('payPerUse')
+    expect(signInBilling(['deepseek', 'deepseek'], 'opencode')).toBe('payPerUse')
+    // A plan (Pi's own Kimi), an unknown provider, a mix, a record naming
+    // none, or nothing at all: no cost.
+    expect(signInBilling(['kimi-coding'], 'pi')).toBe('signIn')
+    expect(signInBilling(['anthropic'], 'pi')).toBe('signIn')
+    expect(signInBilling(['deepseek', 'kimi-coding'], 'pi')).toBe('signIn')
+    expect(signInBilling([null], 'pi')).toBe('signIn')
+    expect(signInBilling([], 'pi')).toBe('signIn')
+    expect(companyOfProvider('kimi-code-plan-global', 'opencode')).toBe('moonshot')
+    expect(companyOfProvider('kimi-coding', 'pi')).toBe('moonshot')
+    expect(companyOfProvider('stand-in', 'pi')).toBeUndefined()
+    // The rows use it for the sign-in, over the records of the range alone.
+    const rec = (provider: string, at: number): UsageRecord => ({
+      harness: 'pi',
+      sessionId: 'mine',
+      at,
+      provider,
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: 0.5
+    })
+    const signInOf = (records: UsageRecord[], range: 'today' | 'all'): string | undefined =>
+      harnessUsageRows({ range, now: NOW, ledger: [], records, connections: () => [] }).rows.find(
+        (r) => r.harness === 'pi' && r.connectionId === null
+      )?.billing
+    const longAgo = new Date(2026, 0, 1).getTime()
+    const records = [rec('deepseek', AT), rec('kimi-coding', longAgo)]
+    expect(signInOf(records, 'today')).toBe('payPerUse')
+    expect(signInOf(records, 'all')).toBe('signIn')
   })
 
   it('lists every current connection, the sign-in, and a removed connection under its recorded label', () => {
@@ -85,7 +134,8 @@ describe('the rows each place reads (PRDCT-4551)', () => {
     const [kimiA, , signIn, gone] = pi
     expect(harnessUsageText(kimiA, kimiA.billing, 'today')).toBe('1 request · 120 tokens today')
     expect(harnessUsageText(gone, gone.billing, 'today')).toBe('40 tokens · $0.02 today')
-    expect(harnessUsageText(signIn, signIn.billing, 'today')).toBe('7 tokens · $0.50 today')
+    // The sign-in's record was on a provider Clave does not know: no cost.
+    expect(harnessUsageText(signIn, signIn.billing, 'today')).toBe('1 request · 7 tokens today')
   })
 
   it('says OpenCode is unavailable when it is not here, and still counts Pi', async () => {
@@ -330,5 +380,117 @@ describe("OpenCode's records, as OpenCode 2.3.0 answers them", () => {
     const fresh = new OpencodeSessionRecords(run, 1)
     await fresh.read(1000)
     expect(calls.filter((c) => c[0] === 'session')).toHaveLength(3)
+  })
+
+  // PRDCT-4551, the coordinator's point 2: only the sessions a range can
+  // concern are exported; "all" alone walks everything; paging by cursor.
+  it('exports, for today, only the sessions updated today, across every page; all of them for all', async () => {
+    const NOW_MS = new Date(2026, 10, 14, 18).getTime()
+    const today = new Date(2026, 10, 14).getTime()
+    const day = 24 * 60 * 60 * 1000
+    // 450 sessions over three pages, newest first: 30 updated today.
+    const sessions = Array.from({ length: 450 }, (_, i) => ({
+      id: `ses_${String(i).padStart(4, '0')}`,
+      time: { updated: i < 30 ? NOW_MS - i * 60_000 : today - (i - 29) * day }
+    }))
+    const exported: string[] = []
+    const pages: string[] = []
+    const run = async (args: string[]): Promise<string> => {
+      if (args[0] === 'api') {
+        const url = args[3]
+        pages.push(url)
+        const cursor = Number(/cursor=(\d+)/.exec(url)?.[1] ?? 0)
+        const page = sessions.slice(cursor, cursor + 200)
+        const next = cursor + 200 < sessions.length ? String(cursor + 200) : undefined
+        return JSON.stringify({ data: page, cursor: next ? { next } : {} })
+      }
+      exported.push(args[3])
+      return JSON.stringify({ info: { id: args[3] }, messages: [] })
+    }
+    const usage = new HarnessUsage({
+      ledger: () => [],
+      piRoots: () => [],
+      opencode: () => {
+        const reader = new OpencodeSessionRecords(run, 4)
+        return (since) => reader.read(since)
+      },
+      connections: () => [],
+      now: () => new Date(NOW_MS)
+    })
+    await usage.read('today')
+    expect(pages).toHaveLength(3)
+    expect(pages[1]).toContain('cursor=200')
+    expect(exported.sort()).toEqual(sessions.slice(0, 30).map((s) => s.id))
+    exported.length = 0
+    await usage.read('7d')
+    expect(exported).toHaveLength(36)
+  })
+
+  // The coordinator's point 3: the answer never waits on OpenCode's long read.
+  it('answers within its budget with the records last read, says OpenCode is still read, and fills in after', async () => {
+    let release: () => void = () => undefined
+    let gated = false
+    const record = {
+      sessionId: 's',
+      at: new Date(2026, 10, 14, 10).getTime(),
+      provider: 'p',
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: 0
+    }
+    const usage = new HarnessUsage({
+      ledger: () => [],
+      piRoots: () => [],
+      opencode: () => async () => {
+        if (gated) await new Promise<void>((r) => (release = r))
+        return [record]
+      },
+      connections: () => [],
+      now: () => NOW,
+      opencodeWaitMs: 20
+    })
+    const signIn = (v: Awaited<ReturnType<typeof usage.read>>): number | undefined =>
+      v.rows.find((r) => r.harness === 'opencode' && r.connectionId === null)?.requests
+    const first = await usage.read('today')
+    expect(first.reading).toEqual([])
+    expect(signIn(first)).toBe(1)
+    gated = true
+    const started = Date.now()
+    const waiting = await usage.read('all')
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(waiting.reading).toEqual(['opencode'])
+    // What was read before, never nothing.
+    expect(signIn(waiting)).toBe(1)
+    release()
+    gated = false
+    await new Promise((r) => setTimeout(r, 5))
+    const done = await usage.read('all')
+    expect(done.reading).toEqual([])
+  })
+
+  it('a wider range asked while a narrower read runs gets the wider read, never the narrower one', async () => {
+    const calls: number[] = []
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    const usage = new HarnessUsage({
+      ledger: () => [],
+      piRoots: () => [],
+      opencode: () => async (since) => {
+        calls.push(since)
+        if (calls.length === 1) await gate
+        return []
+      },
+      connections: () => [],
+      now: () => NOW
+    })
+    const narrow = usage.read('today')
+    const sameNarrow = usage.read('today')
+    const wide = usage.read('all')
+    release()
+    await Promise.all([narrow, sameNarrow, wide])
+    expect(calls).toEqual([new Date(2026, 10, 14).getTime(), 0])
   })
 })

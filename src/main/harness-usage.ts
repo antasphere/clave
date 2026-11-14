@@ -40,6 +40,7 @@ import {
 } from './opencode-usage'
 import { PROVIDER_USAGE_ROADS } from './provider-usage'
 import { connectionModelProvider } from './provider-injection'
+import { PROVIDER_ROAD_BY_ID } from './models-catalog-overlay'
 
 /** A stored connection as the usage rows list it: no value. */
 export interface UsageConnection {
@@ -53,16 +54,50 @@ export const SIGN_IN_LABEL: Readonly<Record<UsageHarness, string>> = {
   opencode: 'OpenCode sign-in'
 }
 
-/** How a connection of this company is paid for, from its provider line
- *  (`PROVIDER_USAGE_ROADS`): a coding plan or a local model bills nothing
- *  per token; every other provider is paid per use. */
+/**
+ * THE one function that decides whether a line may say a cost (PRDCT-4551):
+ * how what was used on this company is paid for, from its provider line
+ * (`PROVIDER_USAGE_ROADS`). A coding plan (`plan`) or a local model
+ * (`local`) bills nothing per token; a company whose line is pay per use, a
+ * balance, a limit or a spent amount is paid per use (`payPerUse`, the only
+ * billing whose line says a cost); a company Clave does not know is
+ * `signIn`: nothing is known of how it bills, so no cost is said.
+ */
 export function billingOf(company: string | null | undefined): HarnessUsageBilling {
   const road = company ? PROVIDER_USAGE_ROADS[company as ProviderCompanyId] : undefined
-  if (road && 'kind' in road) {
+  if (!road) return 'signIn'
+  if ('kind' in road) {
     if (road.kind === 'plan') return 'plan'
     if (road.kind === 'local') return 'local'
+    if (road.kind === 'unknown') return 'signIn'
   }
   return 'payPerUse'
+}
+
+/** The company whose connections a harness names its models under this
+ *  provider id (Pi's `kimi-coding` is Moonshot's); undefined for one Clave
+ *  does not know (`anthropic` on a person's own Pi). */
+export function companyOfProvider(
+  provider: string | null,
+  harness: UsageHarness
+): string | undefined {
+  if (!provider) return undefined
+  return Object.keys(PROVIDER_ROAD_BY_ID).find(
+    (company) => providerOfCompany(company, harness) === provider
+  )
+}
+
+/** A harness's own sign-in's billing, by the same function over the
+ *  providers its records of the range were made under: pay per use only
+ *  when every one of them is a company billed per use; a plan, a local
+ *  model, a provider Clave does not know, a mix, or no record at all says
+ *  no cost. */
+export function signInBilling(
+  providers: Iterable<string | null>,
+  harness: UsageHarness
+): HarnessUsageBilling {
+  const billings = [...providers].map((p) => billingOf(companyOfProvider(p, harness)))
+  return billings.length > 0 && billings.every((b) => b === 'payPerUse') ? 'payPerUse' : 'signIn'
 }
 
 /** The provider a connection of this company gives a harness. */
@@ -120,7 +155,7 @@ export function harnessUsageRows(input: HarnessUsageInputs): HarnessUsageView {
       harness,
       connectionId: null,
       label: SIGN_IN_LABEL[harness],
-      billing: 'signIn',
+      billing: signInBilling(attributed.get(rowKey(harness, null))?.providers ?? [], harness),
       removed: false,
       ...figuresOf(null)
     })
@@ -152,6 +187,8 @@ export interface HarnessUsageDeps {
   opencode: (() => ((since: number) => Promise<OpencodeSessionRecord[]>) | null) | null
   connections: (harness: UsageHarness) => readonly UsageConnection[]
   now?: () => Date
+  /** How long an answer waits on OpenCode's read; 1.5 s when absent. */
+  opencodeWaitMs?: number
 }
 
 const OPENCODE_ABSENT = 'OpenCode is not installed here.'
@@ -159,9 +196,29 @@ const OPENCODE_FAILED = "OpenCode's records could not be read."
 
 export class HarnessUsage {
   private readonly pi = new PiSessionRecords()
-  private opencodeRead: Promise<OpencodeSessionRecord[]> | null = null
+  private opencodeRead: { since: number; read: Promise<OpencodeSessionRecord[]> } | null = null
+  /** The records of the last OpenCode read that finished. */
+  private lastOpencode: OpencodeSessionRecord[] = []
 
   constructor(private readonly deps: HarnessUsageDeps) {}
+
+  /** OpenCode's records since a moment. Reads that overlap share one when it
+   *  covers the range asked (the commands are a process each); a wider range
+   *  waits for the read in flight, then reads what that one skipped. */
+  private opencodeFor(
+    reader: (since: number) => Promise<OpencodeSessionRecord[]>,
+    since: number
+  ): Promise<OpencodeSessionRecord[]> {
+    const current = this.opencodeRead
+    if (current && current.since <= since) return current.read
+    const read = (current ? current.read.catch(() => []) : Promise.resolve([]))
+      .then(() => reader(since))
+      .finally(() => {
+        if (this.opencodeRead?.read === read) this.opencodeRead = null
+      })
+    this.opencodeRead = { since, read }
+    return read
+  }
 
   async read(range: HarnessUsageRange): Promise<HarnessUsageView> {
     const now = (this.deps.now ?? (() => new Date()))()
@@ -175,27 +232,48 @@ export class HarnessUsage {
     }
     for (const r of piRecords) records.push({ harness: 'pi', ...r })
     const reader = this.deps.opencode?.() ?? null
+    const reading: UsageHarness[] = []
     if (!reader) unavailable.push({ harness: 'opencode', reason: OPENCODE_ABSENT })
     else {
-      try {
-        // Reads that overlap share one: the commands are a process each.
-        if (!this.opencodeRead)
-          this.opencodeRead = reader(rangeStart(range, now)).finally(() => {
-            this.opencodeRead = null
-          })
-        for (const r of await this.opencodeRead) records.push({ harness: 'opencode', ...r })
-      } catch {
+      // A first read of many sessions is a process per session (150 took
+      // 21 s on 2.3.0): the answer never waits past the budget. It carries
+      // the records last read and says OpenCode is still being read; the
+      // read runs on, and the window asks again.
+      const since = rangeStart(range, now)
+      const read = this.opencodeFor(reader, since)
+      const TIMEOUT = Symbol('timeout')
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const waited = await Promise.race([
+        read.then(
+          (r) => r,
+          () => null
+        ),
+        new Promise<typeof TIMEOUT>((resolve) => {
+          timer = setTimeout(() => resolve(TIMEOUT), this.deps.opencodeWaitMs ?? 1500)
+        })
+      ])
+      clearTimeout(timer)
+      if (waited === TIMEOUT) {
+        reading.push('opencode')
+        for (const r of this.lastOpencode) records.push({ harness: 'opencode', ...r })
+      } else if (waited === null) {
         unavailable.push({ harness: 'opencode', reason: OPENCODE_FAILED })
+      } else {
+        this.lastOpencode = waited
+        for (const r of waited) records.push({ harness: 'opencode', ...r })
       }
     }
-    return harnessUsageRows({
-      range,
-      now,
-      ledger: this.deps.ledger(),
-      records,
-      connections: this.deps.connections,
-      unavailable
-    })
+    return {
+      ...harnessUsageRows({
+        range,
+        now,
+        ledger: this.deps.ledger(),
+        records,
+        connections: this.deps.connections,
+        unavailable
+      }),
+      reading
+    }
   }
 }
 

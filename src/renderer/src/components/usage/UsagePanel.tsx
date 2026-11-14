@@ -3,6 +3,7 @@ import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outl
 import type { UsageWindow, CodexAccount } from '../../../../preload/index.d'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
+  billsPerUse,
   harnessUsageText,
   type HarnessUsageBilling,
   type HarnessUsageRange,
@@ -494,7 +495,14 @@ const BILLING_WORDS: Record<HarnessUsageBilling, string> = {
   plan: 'Coding plan: billed by the plan, not per token',
   local: 'Local model: nothing billed',
   payPerUse: 'Pay per use: the cost the harness computed',
-  signIn: "The harness's own sign-in, on no stored connection"
+  signIn: 'No cost said: not known to be billed per use (a plan, another provider, or a mix)'
+}
+
+/** A row's description: the sign-in says it is the sign-in, then its billing. */
+function billingWords(row: { connectionId: string | null; billing: HarnessUsageBilling }): string {
+  return row.connectionId === null
+    ? `The harness's own sign-in, on no stored connection. ${BILLING_WORDS[row.billing]}`
+    : BILLING_WORDS[row.billing]
 }
 
 /**
@@ -538,6 +546,11 @@ function HarnessUsagePage({ harness }: { harness: UsageHarness }): ReactElement 
         </div>
       </div>
       {unavailable && <SettingsCallout inset text={unavailable.reason} />}
+      {/* The host still reads this harness (OpenCode's first read): the rows
+          below are what it had, and they fill in. */}
+      {entry?.view?.reading?.includes(harness) && (
+        <SettingsRow label={`Reading ${name}'s records…`} />
+      )}
       {entry?.status === 'error' && !entry.view ? (
         <SettingsCallout
           inset
@@ -564,10 +577,10 @@ function HarnessUsagePage({ harness }: { harness: UsageHarness }): ReactElement 
             ['Cache read', number(row.cacheRead)],
             ['Cache write', number(row.cacheWrite)],
             ['Total tokens', number(row.totalTokens)],
-            // A plan or a local model bills nothing per token: no cost.
-            ...(row.billing === 'plan' || row.billing === 'local'
-              ? []
-              : ([['Cost', `$${row.cost.toFixed(4)}`]] as [string, string][]))
+            // A cost only where it is billed per use (`billsPerUse`).
+            ...(billsPerUse(row.billing)
+              ? ([['Cost', `$${row.cost.toFixed(4)}`]] as [string, string][])
+              : [])
           ]
           return (
             <div
@@ -577,7 +590,7 @@ function HarnessUsagePage({ harness }: { harness: UsageHarness }): ReactElement 
             >
               <SettingsRow
                 label={row.removed ? `${row.label} (removed)` : row.label}
-                description={BILLING_WORDS[row.billing]}
+                description={billingWords(row)}
               >
                 <span className="settings-row-value" data-harness-usage-line>
                   {harnessUsageText(row, row.billing, range)}

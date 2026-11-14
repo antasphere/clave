@@ -3,6 +3,7 @@ import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-vi
 import {
   connectionUsage,
   connectionUsageLineFor,
+  HARNESS_USAGE_REREAD_MS,
   ensureHarnessUsage,
   harnessUsageFor,
   refreshHarnessUsage,
@@ -58,7 +59,7 @@ describe('the usage per connection the window keeps (PRDCT-4551)', () => {
     const entry = harnessUsageFor('local')
     expect(connectionUsage(entry, 'kimi')?.line).toBe('3 requests · 1.5K tokens today')
     expect(connectionUsage(entry, 'ds')?.line).toBe('50 tokens · $0.12 today')
-    expect(signInUsage(entry, 'pi')?.line).toBe('7 tokens · $0.00 today')
+    expect(signInUsage(entry, 'pi')?.line).toBe('1 request · 7 tokens today')
     expect(signInUsage(entry, 'opencode')).toBeUndefined()
     // A removed connection is Settings → Usage's alone.
     expect(connectionUsage(entry, 'gone')).toBeUndefined()
@@ -74,6 +75,36 @@ describe('the usage per connection the window keeps (PRDCT-4551)', () => {
     expect(read.mock.calls).toEqual([['server-1', '7d']])
     await refreshHarnessUsage()
     expect(read).toHaveBeenCalledTimes(3)
+  })
+
+  // The coordinator's point 3: a place draws at once and fills in.
+  it('says Reading… before the first answer and beside the figure while the host still reads, and asks again', async () => {
+    vi.useFakeTimers()
+    try {
+      let reading = true
+      read.mockImplementation(
+        async (_m: string, range: string) =>
+          ({ ...VIEW, range, reading: reading ? ['opencode'] : [] }) as HarnessUsageView
+      )
+      const pending = ensureHarnessUsage('local', 'today')
+      expect(connectionUsageLineFor('local', 'kimi')).toBe('Reading…')
+      await pending
+      expect(connectionUsageLineFor('local', 'kimi')).toBe(
+        '3 requests · 1.5K tokens today · Reading…'
+      )
+      reading = false
+      expect(read).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(HARNESS_USAGE_REREAD_MS)
+      expect(read).toHaveBeenCalledTimes(2)
+      expect(connectionUsageLineFor('local', 'kimi')).toBe('3 requests · 1.5K tokens today')
+      await vi.advanceTimersByTimeAsync(HARNESS_USAGE_REREAD_MS * 3)
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+      read.mockImplementation(
+        async (_machine: string, range: string) => ({ ...VIEW, range }) as HarnessUsageView
+      )
+    }
   })
 
   it('keeps the last answer through a failed read', async () => {

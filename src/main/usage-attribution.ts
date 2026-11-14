@@ -56,6 +56,9 @@ export interface AttributedRow {
   harness: UsageHarness
   connectionId: string | null
   figures: HarnessUsageFigures
+  /** The providers its records were made under (null: a record that named
+   *  none), which decide whether a sign-in's line may say a cost. */
+  providers: Set<string | null>
 }
 
 /** The first moment a range counts from. Today: since local midnight. */
@@ -128,9 +131,15 @@ export function attributeUsage(input: {
     const key = rowKey(record.harness, connectionId)
     let row = rows.get(key)
     if (!row) {
-      row = { harness: record.harness, connectionId, figures: { ...EMPTY_FIGURES } }
+      row = {
+        harness: record.harness,
+        connectionId,
+        figures: { ...EMPTY_FIGURES },
+        providers: new Set()
+      }
       rows.set(key, row)
     }
+    row.providers.add(record.provider)
     const f = row.figures
     f.requests += 1
     f.input += record.input

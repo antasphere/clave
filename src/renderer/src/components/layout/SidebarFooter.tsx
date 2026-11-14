@@ -35,6 +35,8 @@ import {
   ensureHarnessUsage,
   refreshHarnessUsage,
   signInUsage,
+  harnessUsageReading,
+  READING_WORDS,
   useHarnessUsage
 } from '../../store/harness-usage-store'
 import { windowExhausted } from '../../lib/account-pool'
@@ -424,7 +426,18 @@ export function SidebarFooter(): React.ReactElement {
           })()
         )
       : null
-  const tabLine = tabUsage?.line ?? null
+  // Drawn at once with what there is (PRDCT-4551): "Reading…" before the
+  // first answer, the figure so far while the host still reads that harness.
+  const tabReading = harnessTab ? harnessUsageReading(tabEntry, tabHarness) : false
+  const tabLine = harnessTab
+    ? tabUsage
+      ? tabReading
+        ? `${tabUsage.line} · ${READING_WORDS}`
+        : tabUsage.line
+      : tabReading
+        ? READING_WORDS
+        : null
+    : null
   const providerStatus = quota.status
   const showProviderStatus = quotaProvider !== null && !usage && !tabLine
   // A Pi or OpenCode tab's stored connection is a line of its own, the

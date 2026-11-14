@@ -57,6 +57,8 @@ let reader: HarnessUsageReader = defaultReader
 export function setHarnessUsageReader(next: HarnessUsageReader | null): void {
   reader = next ?? defaultReader
   inFlight.clear()
+  for (const timer of rereads.values()) clearTimeout(timer)
+  rereads.clear()
   useHarnessUsageStore.setState({ byKey: {} })
 }
 
@@ -64,6 +66,36 @@ export function setHarnessUsageReader(next: HarnessUsageReader | null): void {
 export const HARNESS_USAGE_FRESH_MS = 30_000
 
 const inFlight = new Map<string, Promise<void>>()
+
+/** How soon the window asks again while the host is still reading. */
+export const HARNESS_USAGE_REREAD_MS = 2_000
+const rereads = new Map<string, ReturnType<typeof setTimeout>>()
+
+function scheduleReread(machineId: string, range: HarnessUsageRange): void {
+  const k = key(machineId, range)
+  if (rereads.has(k)) return
+  rereads.set(
+    k,
+    setTimeout(() => {
+      rereads.delete(k)
+      void ensureHarnessUsage(machineId, range, { force: true })
+    }, HARNESS_USAGE_REREAD_MS)
+  )
+}
+
+/** Whether a harness's figures on a machine are still being read: nothing
+ *  read yet, or the host said it reads on. */
+export function harnessUsageReading(
+  entry: HarnessUsageEntry | undefined,
+  harness?: UsageHarness
+): boolean {
+  if (!entry?.view) return entry?.status !== 'error'
+  const reading = entry.view.reading ?? []
+  return harness ? reading.includes(harness) : reading.length > 0
+}
+
+/** The words a place shows while a figure is read. */
+export const READING_WORDS = 'Reading…'
 
 /** Read a machine's usage over a range unless it was read a moment ago
  *  (`force`: read it again whatever its age), never twice at once. */
@@ -93,6 +125,9 @@ export function ensureHarnessUsage(
     try {
       const view = await Promise.resolve().then(() => reader(machineId, range))
       set({ view, status: 'ready', readAt: Date.now() })
+      // The host is still reading a harness (OpenCode's first read): what it
+      // had is drawn now, and the window asks again until it is done.
+      if (view.reading && view.reading.length > 0) scheduleReread(machineId, range)
     } catch {
       set({ status: 'error', readAt: Date.now() })
     } finally {
@@ -178,5 +213,10 @@ export function useConnectionUsage(
 
 /** The launcher's row (`launch-source.ts`): the line, or null until read. */
 export function connectionUsageLineFor(machineId: string, connectionId: string): string | null {
-  return connectionUsage(harnessUsageFor(machineId), connectionId)?.line ?? null
+  const entry = harnessUsageFor(machineId)
+  const line = connectionUsage(entry, connectionId)?.line
+  // Drawn at once with what there is: "Reading…" before the first answer,
+  // the figure so far while OpenCode is still read; never a wait.
+  if (!line) return entry && harnessUsageReading(entry) ? READING_WORDS : null
+  return harnessUsageReading(entry) ? `${line} · ${READING_WORDS}` : line
 }

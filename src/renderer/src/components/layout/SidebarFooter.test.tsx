@@ -200,7 +200,8 @@ it('a Pi tab on a connection shows that connection’s today, an OpenCode tab on
             row({
               harness: 'opencode',
               label: 'OpenCode sign-in',
-              billing: 'signIn',
+              // Every record of the day on a provider billed per use.
+              billing: 'payPerUse',
               requests: 2,
               totalTokens: 10_400,
               cost: 0.0137

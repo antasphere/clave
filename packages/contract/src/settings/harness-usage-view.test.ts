@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
 import {
+  billsPerUse,
   connectionUsageOf,
   harnessUsageText,
   signInUsageOf,
@@ -19,11 +20,17 @@ describe('the one usage line of a connection (PRDCT-4551)', () => {
     expect(harnessUsageText(figures, 'plan', 'today')).not.toContain('$')
   })
 
-  it('says tokens and the cost the harness computed when paid per use, and for the sign-in', () => {
+  it('says tokens and the cost the harness computed when paid per use, and no cost on a sign-in not known to be', () => {
     expect(harnessUsageText(figures, 'payPerUse', 'today')).toBe('10.4K tokens · $0.01 today')
     expect(harnessUsageText(figures, 'signIn', '30d')).toBe(
-      '10.4K tokens · $0.01 in the last 30 days'
+      '12 requests · 10.4K tokens in the last 30 days'
     )
+    expect(billsPerUse('payPerUse')).toBe(true)
+    expect(['plan', 'local', 'signIn'].map((b) => billsPerUse(b as never))).toEqual([
+      false,
+      false,
+      false
+    ])
     expect(harnessUsageText({ requests: 0, totalTokens: 0, cost: 0 }, 'payPerUse', 'all')).toBe(
       '0 tokens · $0.00 in all'
     )
