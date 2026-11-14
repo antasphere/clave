@@ -15,6 +15,7 @@ import com.clave.core.chat.attachmentDraftKey
 import com.clave.core.chat.labelled
 import com.clave.core.chat.Entry
 import com.clave.core.chat.formAnswerText
+import com.clave.core.chat.openRequests
 import com.clave.core.contract.Attachment
 import com.clave.core.contract.FormAnswer
 import com.clave.core.contract.PermissionResponse
@@ -364,12 +365,29 @@ class ChatSession(
         }
     }
 
-    /** Answers a permission or a question shown in the transcript. */
+    /**
+     * Answers a permission or a question shown in the transcript. [requestId] is the request the
+     * person saw; one answer goes per request at a time, and an answer to a request that no
+     * longer waits is dropped (answerMayGo). The card holds still until the write returns.
+     */
     fun answer(requestId: String, optionId: String, answers: Map<String, String>?) {
+        if (!beginAnswer(requestId)) return
         scope.launch {
-            val outcome = store.answerInChat(machineId, sessionId, requestId, optionId, answers?.takeIf { it.isNotEmpty() })
-            if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+            try {
+                val outcome = store.answerInChat(machineId, sessionId, requestId, optionId, answers?.takeIf { it.isNotEmpty() })
+                if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+            } finally {
+                _controls.update { it.copy(answering = it.answering - requestId) }
+            }
         }
+    }
+
+    /** Marks [requestId]'s answer on its way, or says no when it may not go (answerMayGo). On the main thread. */
+    private fun beginAnswer(requestId: String): Boolean {
+        val conversation = store.state.value.conversations[conversationKey(machineId, sessionId)]?.conversation ?: return false
+        if (!answerMayGo(requestId, openRequests(conversation.entries).map { it.id }, _controls.value)) return false
+        _controls.update { it.copy(answering = it.answering + requestId) }
+        return true
     }
 
     /**
@@ -384,6 +402,7 @@ class ChatSession(
             return
         }
         val lines = answers.filterValues { it is FormAnswer.Text }.mapValues { (it.value as FormAnswer.Text).value }
+        if (!beginAnswer(requestId)) return
         scope.launch {
             try {
                 store.connect(machineId).client.sessions.write(sessionId, PermissionResponse(requestId, optionId, lines, lists))
@@ -392,6 +411,8 @@ class ChatSession(
                 throw e
             } catch (e: Exception) {
                 _state.update { it.copy(error = messageOf(e)) }
+            } finally {
+                _controls.update { it.copy(answering = it.answering - requestId) }
             }
         }
     }

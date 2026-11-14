@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -73,7 +74,11 @@ enum class ButtonKind {
     Destructive,
 }
 
-/** `.btn-*` at the control metrics: 36 tall, 10 sides, 6 gap, a 13 label, an 8 corner. */
+/**
+ * `.btn-*` at the control metrics: 36 tall, 10 sides, 6 gap, a 13 label, an 8 corner. A
+ * [busy] button is at work on its tap: a spinner takes its glyph's place and it takes no
+ * other tap until it is done.
+ */
 @Composable
 fun ClaveButton(
     label: String,
@@ -82,6 +87,7 @@ fun ClaveButton(
     kind: ButtonKind = ButtonKind.Secondary,
     icon: ClaveIcon? = null,
     enabled: Boolean = true,
+    busy: Boolean = false,
 ) {
     val c = Clave.colors
     val t = c.theme
@@ -111,7 +117,7 @@ fun ClaveButton(
             .clickable(
                 interactionSource = interaction,
                 indication = null,
-                enabled = enabled,
+                enabled = enabled && !busy,
                 role = Role.Button,
                 onClick = onClick,
             )
@@ -120,7 +126,11 @@ fun ClaveButton(
         horizontalArrangement = Arrangement.spacedBy(Metrics.controlGap, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (cue != null) Icon(cue, contentDescription = null, tint = cueTint, size = Metrics.controlIcon)
+        if (busy) {
+            CircularProgressIndicator(Modifier.size(Metrics.controlSmIcon), color = ink, strokeWidth = Metrics.focusRing)
+        } else if (cue != null) {
+            Icon(cue, contentDescription = null, tint = cueTint, size = Metrics.controlIcon)
+        }
         BasicText(
             text = label,
             style = ClaveTypography.type(Metrics.controlText).copy(color = ink),

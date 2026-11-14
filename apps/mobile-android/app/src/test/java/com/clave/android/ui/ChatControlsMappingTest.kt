@@ -112,6 +112,29 @@ class PromptViewMappingTest {
         assertNull(promptView("claude", Conversation(entries = listOf(permission("a", answer = "allow")))))
         assertNull(promptView("claude", Conversation(entries = listOf(permission("q", tool = "")))))
     }
+
+    @Test
+    fun aRequestWhoseAnswerIsOnItsWayHoldsTheCardStill() {
+        val conversation = Conversation(entries = listOf(permission("b"), permission("c")))
+        assertFalse(promptView("claude", conversation)!!.answering)
+        assertTrue(promptView("claude", conversation, answering = setOf("b"))!!.answering)
+        // The next request, once drawn, is not held by the previous one's answer.
+        assertFalse(promptView("claude", conversation, answering = setOf("a"))!!.answering)
+    }
+
+    @Test
+    fun anAnswerGoesOnlyToARequestStillWaitingAndOnlyOnce() {
+        val open = listOf("b", "c")
+        assertTrue(answerMayGo("b", open, ChatControlsState()))
+        // A second tap while the first answer is on its way.
+        assertFalse(answerMayGo("b", open, ChatControlsState(answering = setOf("b"))))
+        // A tap meant for a request that has left the card: dropped, never sent to the next one.
+        assertFalse(answerMayGo("a", open, ChatControlsState()))
+        // A form already answered with a list from this phone.
+        assertFalse(answerMayGo("c", open, ChatControlsState(answeredHere = setOf("c"))))
+        // Another request's answer in flight does not hold this one.
+        assertTrue(answerMayGo("c", open, ChatControlsState(answering = setOf("b"))))
+    }
 }
 
 class WorkCardsMappingTest {

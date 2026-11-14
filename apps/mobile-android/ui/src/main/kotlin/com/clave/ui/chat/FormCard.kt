@@ -87,6 +87,7 @@ private fun keyboardOf(kind: InputKind?): KeyboardOptions = when (kind) {
  * date, a path as a field with the matching keyboard; a link as Open and the button that says
  * the person is back), the agent's draft and its notes shown, and each answer checked by the
  * contract's rule before it goes. [options] are the request's: the refusals (Skip) sit left.
+ * While [answering], its answer is on its way: the send spins and no button takes a tap.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -100,6 +101,7 @@ fun FormCard(
     notes: Map<String, String> = emptyMap(),
     answered: String? = null,
     onLink: (String) -> Unit = {},
+    answering: Boolean = false,
 ) {
     val c = Clave.colors
     val t = c.theme
@@ -240,13 +242,17 @@ fun FormCard(
             horizontalArrangement = Arrangement.spacedBy(Metrics.controlGap),
         ) {
             denies.forEach { (id, label) ->
-                ClaveButton(label, onClick = { onAnswer(id, emptyMap()) }, modifier = Modifier.heightIn(min = ThumbHeight))
+                ClaveButton(label, onClick = { onAnswer(id, emptyMap()) }, enabled = !answering, modifier = Modifier.heightIn(min = ThumbHeight))
             }
             Spacer(Modifier.weight(1f))
-            if (step > 0) ClaveButton("Back", onClick = { step -= 1; problem = null }, kind = ButtonKind.Ghost, modifier = Modifier.heightIn(min = ThumbHeight))
+            if (step > 0) {
+                ClaveButton("Back", onClick = { step -= 1; problem = null }, kind = ButtonKind.Ghost, enabled = !answering, modifier = Modifier.heightIn(min = ThumbHeight))
+            }
             ClaveButton(
                 if (last) primary.second else "Next",
                 kind = ButtonKind.Primary,
+                // The answer is on its way: the send spins and takes no second tap.
+                busy = answering,
                 modifier = Modifier.heightIn(min = ThumbHeight),
                 onClick = {
                     val answers = questions.associate { each -> questionKey(each) to answerOf(each, fields[questionKey(each)] ?: FormField()) }

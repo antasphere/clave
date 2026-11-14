@@ -159,6 +159,8 @@ data class ChatScreenState(
     val slashCommands: List<SlashCommandView> = emptyList(),
     /** Forms answered from this phone whose answer the conversation has not echoed yet. */
     val answeredHere: Set<String> = emptySet(),
+    /** Requests whose answer is on its way to the machine: their card holds still until it lands. */
+    val answering: Set<String> = emptySet(),
     /** The composer chips' pictures, in their order (a content URI); null draws the file glyph. */
     val attachmentThumbnails: List<String?> = emptyList(),
 )
@@ -269,7 +271,7 @@ fun ChatScreen(
                 }
                 val prompt = state.prompt
                 if (prompt != null && !state.ended) {
-                    PermissionPrompt(prompt, onAnswer = { optionId -> onAnswer(prompt.id, optionId, emptyMap()) })
+                    PermissionPrompt(prompt, onAnswer = { requestId, optionId -> onAnswer(requestId, optionId, emptyMap()) })
                 } else {
                     PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
                 }
@@ -416,6 +418,7 @@ private fun Transcript(
             TranscriptBlock(
                 block, key, state.expanded, onAnswer, onToggle, onLink,
                 docked = state.prompt != null, now = state.now, answeredHere = state.answeredHere, onAnswerForm = onAnswerForm,
+                answering = state.answering,
             )
         }
         if (state.loadingOlder) {
@@ -507,6 +510,7 @@ private fun TranscriptBlock(
     now: Long = 0,
     answeredHere: Set<String> = emptySet(),
     onAnswerForm: ((String, String, Map<String, FormAnswer>) -> Unit)? = null,
+    answering: Set<String> = emptySet(),
 ) {
     val t = Clave.colors.theme
     when (block) {
@@ -563,6 +567,7 @@ private fun TranscriptBlock(
                 notes = block.notes.orEmpty(),
                 answered = approvalAnswered(block) ?: if (request.id in answeredHere) "Answered" else null,
                 onLink = onLink,
+                answering = request.id in answering,
             )
         }
         is Entry.Permission -> {

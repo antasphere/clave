@@ -1,5 +1,6 @@
 package com.clave.ui.chat
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +22,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -75,7 +78,33 @@ data class PromptView(
     val note: String? = null,
     val options: List<Pair<String, String>> = emptyList(),
     val count: Int = 1,
+    /** An answer to this request is on its way to the machine: the card holds still until it lands. */
+    val answering: Boolean = false,
 )
+
+/**
+ * How long a request just shown on the docked card ignores taps. The answered request leaves
+ * the card when the machine confirms, and the next one is drawn in its place, under the same
+ * thumb: a second tap meant for the first must never answer one the person has not read.
+ */
+const val PROMPT_SETTLE_MILLIS: Long = 600L
+
+/**
+ * Which taps on one shown request answer it: none in the [PROMPT_SETTLE_MILLIS] after it was
+ * shown at [shownAt], and none in the same span after a tap that went (a double tap is one
+ * answer). One guard lives per request id, so the next request starts its own settle.
+ */
+internal class AnswerGuard(private val shownAt: Long) {
+    private var lastTap: Long? = null
+
+    fun admit(now: Long): Boolean {
+        if (now - shownAt < PROMPT_SETTLE_MILLIS) return false
+        val last = lastTap
+        if (last != null && now - last < PROMPT_SETTLE_MILLIS) return false
+        lastTap = now
+        return true
+    }
+}
 
 /** An option id that refuses, the desktop's `isDeny`. */
 internal fun isDenyOption(id: String): Boolean =
@@ -203,11 +232,31 @@ fun PermissionReadingView(
  * The docked permission card: answered here, in the chat, with buttons a thumb finds. Two
  * options share one row, refusal left and the verb right; more stack, the provider's default
  * last, nearest the thumb.
+ *
+ * Every answer names the request the person saw ([onAnswer]'s first argument), and a tap is
+ * dropped when the card shows another one by then, when the card was drawn less than
+ * [PROMPT_SETTLE_MILLIS] ago, or when an answer is already on its way ([PromptView.answering]:
+ * the buttons are disabled and the one tapped spins). [clock] is the monotonic time in ms.
  */
 @Composable
-fun PermissionPrompt(view: PromptView, onAnswer: (optionId: String) -> Unit, modifier: Modifier = Modifier) {
+fun PermissionPrompt(
+    view: PromptView,
+    onAnswer: (requestId: String, optionId: String) -> Unit,
+    modifier: Modifier = Modifier,
+    clock: () -> Long = SystemClock::uptimeMillis,
+) {
     val t = Clave.colors.theme
     val shape = RoundedCornerShape(Metrics.radiusXl)
+    val guard = remember(view.id) { AnswerGuard(clock()) }
+    val shownId by rememberUpdatedState(view.id)
+    val answering by rememberUpdatedState(view.answering)
+    var tapped by remember(view.id) { mutableStateOf<String?>(null) }
+    val tap = { seenId: String, optionId: String ->
+        if (seenId == shownId && !answering && guard.admit(clock())) {
+            tapped = optionId
+            onAnswer(seenId, optionId)
+        }
+    }
     Column(
         modifier
             .fillMaxWidth()
@@ -245,27 +294,25 @@ fun PermissionPrompt(view: PromptView, onAnswer: (optionId: String) -> Unit, mod
         if (view.code != null) CodeBlock(view.code, view.language, maxHeight = 180.dp)
         val ordered = orderedOptions(view.options)
         val primary = view.options.firstOrNull { !isDenyOption(it.first) }?.first
+        // The option tapped spins; an answer sent before this card was drawn spins on the verb.
+        val spinning = if (view.answering) tapped ?: primary else null
+        val requestId = view.id
+        @Composable
+        fun OptionButton(id: String, label: String, sized: Modifier) = ClaveButton(
+            label,
+            onClick = { tap(requestId, id) },
+            kind = if (id == primary) ButtonKind.Primary else ButtonKind.Secondary,
+            enabled = !view.answering || id == spinning,
+            busy = id == spinning,
+            modifier = sized.heightIn(min = ThumbHeight),
+        )
         if (ordered.size <= 2) {
             Row(Modifier.fillMaxWidth().padding(top = Metrics.space(1)), horizontalArrangement = Arrangement.spacedBy(Metrics.controlGap)) {
-                ordered.forEach { (id, label) ->
-                    ClaveButton(
-                        label,
-                        onClick = { onAnswer(id) },
-                        kind = if (id == primary) ButtonKind.Primary else ButtonKind.Secondary,
-                        modifier = Modifier.weight(1f).heightIn(min = ThumbHeight),
-                    )
-                }
+                ordered.forEach { (id, label) -> OptionButton(id, label, Modifier.weight(1f)) }
             }
         } else {
             Column(Modifier.fillMaxWidth().padding(top = Metrics.space(1)), verticalArrangement = Arrangement.spacedBy(Metrics.controlGap)) {
-                ordered.forEach { (id, label) ->
-                    ClaveButton(
-                        label,
-                        onClick = { onAnswer(id) },
-                        kind = if (id == primary) ButtonKind.Primary else ButtonKind.Secondary,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = ThumbHeight),
-                    )
-                }
+                ordered.forEach { (id, label) -> OptionButton(id, label, Modifier.fillMaxWidth()) }
             }
         }
     }

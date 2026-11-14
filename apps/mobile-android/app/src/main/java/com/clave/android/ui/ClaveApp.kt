@@ -399,10 +399,11 @@ private fun ChatRoute(
     ChatScreen(
         state = screen.copy(
             controls = chatControlsView(screen.provider, conversation, controls),
-            prompt = promptView(screen.provider, conversation),
+            prompt = promptView(screen.provider, conversation, controls.answering),
             work = workCards(conversation),
             slashCommands = slashCommands(chatState.draft, controls.commands),
             answeredHere = controls.answeredHere,
+            answering = controls.answering,
             attachmentThumbnails = attachmentThumbnails(chatState.attachments, controls),
         ),
         actions = ChatActions(

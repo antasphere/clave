@@ -1,6 +1,10 @@
 package com.clave.ui.screens
 
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -144,8 +148,77 @@ class ChatUxTest {
         rule.onNodeWithText("Changes files of the project").assertIsDisplayed()
         rule.onNodeWithText("Changes one constant.").assertIsDisplayed()
         rule.onNodeWithText("+ val x = 2").assertIsDisplayed()
+        // A card just drawn ignores taps for a moment (the docked card's settle).
+        Thread.sleep(com.clave.ui.chat.PROMPT_SETTLE_MILLIS)
         rule.onNodeWithText("Allow").performClick()
         rule.runOnIdle { assertEquals(listOf("p1" to "allow"), answers) }
+    }
+
+    @Test
+    fun theDockedCardNeverAnswersARequestThePersonHasNotSeen() {
+        val settle = com.clave.ui.chat.PROMPT_SETTLE_MILLIS
+        var clock = 10_000L
+        val options = listOf("deny" to "Deny", "allow" to "Allow")
+        var view by androidx.compose.runtime.mutableStateOf(PromptView(id = "p1", title = "Run npm test?", options = options))
+        val answers = mutableListOf<Pair<String, String>>()
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                com.clave.ui.chat.PermissionPrompt(view, onAnswer = { id, option -> answers += id to option }, clock = { clock })
+            }
+        }
+        // Just drawn: a tap is ignored.
+        rule.onNodeWithText("Allow").performClick()
+        rule.runOnIdle { assertEquals(emptyList<Pair<String, String>>(), answers) }
+
+        // Settled: a double tap is one answer, naming the request shown.
+        clock += settle
+        rule.onNodeWithText("Allow").performClick()
+        rule.onNodeWithText("Allow").performClick()
+        rule.runOnIdle { assertEquals(listOf("p1" to "allow"), answers) }
+
+        // On its way: every button holds still and the one tapped spins.
+        rule.runOnIdle { view = view.copy(answering = true) }
+        rule.onNodeWithText("Deny").assertIsNotEnabled()
+        rule.onNodeWithText("Allow").assertIsNotEnabled()
+        rule.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate), useUnmergedTree = true).assertExists()
+        clock += settle
+        rule.onNodeWithText("Deny").performClick()
+        rule.runOnIdle { assertEquals(listOf("p1" to "allow"), answers) }
+
+        // The answer landed and the next request takes the card under the same thumb: its first taps are ignored.
+        rule.runOnIdle { view = PromptView(id = "p2", title = "Delete build/?", options = options) }
+        rule.onNodeWithText("Delete build/?").assertIsDisplayed()
+        rule.onNodeWithText("Allow").assertIsEnabled()
+        rule.onNodeWithText("Allow").performClick()
+        clock += settle - 1
+        rule.onNodeWithText("Allow").performClick()
+        rule.runOnIdle { assertEquals(listOf("p1" to "allow"), answers) }
+        clock += 1
+        rule.onNodeWithText("Allow").performClick()
+        rule.runOnIdle { assertEquals(listOf("p1" to "allow", "p2" to "allow"), answers) }
+    }
+
+    @Test
+    fun aFormWhoseAnswerIsOnItsWayHoldsStill() {
+        val sent = mutableListOf<String>()
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                com.clave.ui.chat.FormCard(
+                    title = "Pick a branch",
+                    questions = listOf(AgentQuestion(id = "b", question = "Which branch?", options = emptyList())),
+                    options = listOf("answer" to "Send", "deny" to "Skip"),
+                    onAnswer = { option, _ -> sent += option },
+                    draft = mapOf("b" to com.clave.core.contract.FormAnswer.Text("main")),
+                    answering = true,
+                )
+            }
+        }
+        rule.onNodeWithText("Send").assertIsNotEnabled()
+        rule.onNodeWithText("Skip").assertIsNotEnabled()
+        rule.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate), useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("Send").performClick()
+        rule.onNodeWithText("Skip").performClick()
+        rule.runOnIdle { assertEquals(emptyList<String>(), sent) }
     }
 
     @Test

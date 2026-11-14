@@ -45,6 +45,8 @@ data class ChatControlsState(
     val refusal: String? = null,
     /** Forms this chat answered with a list, until the conversation echoes the answer. */
     val answeredHere: Set<String> = emptySet(),
+    /** Requests whose answer is on its way to the machine; a second answer to one is dropped. */
+    val answering: Set<String> = emptySet(),
     /** The phone's own copy of each picture attached this session, by the attachment's id. */
     val thumbnails: Map<String, String> = emptyMap(),
 )
@@ -99,7 +101,7 @@ fun chatControlsView(provider: String, conversation: Conversation, controls: Cha
  * The first permission of the conversation still waiting, as the docked card draws it, and
  * how many wait in all. A question is answered in its own card in the transcript, never here.
  */
-fun promptView(provider: String, conversation: Conversation): PromptView? {
+fun promptView(provider: String, conversation: Conversation, answering: Set<String> = emptySet()): PromptView? {
     val open = openRequests(conversation.entries).filterNot(::isQuestion)
     val request = open.firstOrNull() ?: return null
     val described = describeRequest(request, if (provider.isEmpty()) "the agent" else providerLabel(provider))
@@ -118,8 +120,18 @@ fun promptView(provider: String, conversation: Conversation): PromptView? {
         note = reading?.note,
         options = request.options.map { it.id to it.label },
         count = open.size,
+        answering = request.id in answering,
     )
 }
+
+/**
+ * Whether an answer to [requestId] may go now: the request still waits in the conversation
+ * ([open], the ids of its open requests), no answer to it is on its way, and no list answer
+ * of this chat already went. Anything else is a tap meant for a card that has gone, dropped
+ * rather than sent to whatever request is shown by then.
+ */
+fun answerMayGo(requestId: String, open: Collection<String>, controls: ChatControlsState): Boolean =
+    requestId in open && requestId !in controls.answering && requestId !in controls.answeredHere
 
 /** The background work as cards: a command by its description (its command under it), a
  *  subagent by its task (the model it runs on under it). */
