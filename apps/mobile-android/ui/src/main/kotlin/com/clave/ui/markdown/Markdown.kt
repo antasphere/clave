@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import coil3.compose.SubcomposeAsyncImage
 import com.clave.ui.components.Rule
+import com.clave.ui.components.ClaveIconButton
 import com.clave.ui.theme.Clave
 import com.clave.ui.theme.ClaveColors
 import com.clave.ui.theme.ClaveIcon
@@ -290,20 +292,25 @@ private fun ListView(items: List<List<MdBlock>>, ink: Color, onLink: ((String) -
 @Composable
 fun CodeBlockView(code: String, language: String?, modifier: Modifier = Modifier) {
     val t = Clave.colors.theme
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Metrics.radiusLg))
-            .background(t.surface100)
-            .padding(Metrics.codePadding),
-        verticalArrangement = Arrangement.spacedBy(Metrics.space(1)),
-    ) {
-        if (!language.isNullOrBlank()) {
-            BasicText(language, style = ClaveTypography.type(Metrics.textMeta).copy(color = t.textTertiary))
+    val clipboard = LocalClipboardManager.current
+    Box(modifier.fillMaxWidth().clip(RoundedCornerShape(Metrics.radiusLg)).background(t.surface100)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(Metrics.codePadding),
+            verticalArrangement = Arrangement.spacedBy(Metrics.space(1)),
+        ) {
+            // The language's line leaves room for the copy button; without one the code does.
+            BasicText(language.orEmpty(), style = ClaveTypography.type(Metrics.textMeta).copy(color = t.textTertiary))
+            Box(Modifier.horizontalScroll(rememberScrollState())) {
+                BasicText(code, style = ClaveTypography.mono(Metrics.codeSize).copy(color = t.textPrimary), softWrap = false)
+            }
         }
-        Box(Modifier.horizontalScroll(rememberScrollState())) {
-            BasicText(code, style = ClaveTypography.mono(Metrics.codeSize).copy(color = t.textPrimary), softWrap = false)
-        }
+        ClaveIconButton(
+            icon = ClaveIcon.ClipboardDocument,
+            onClick = { clipboard.setText(AnnotatedString(code)) },
+            contentDescription = "Copy code",
+            size = Metrics.controlXsHeight,
+            modifier = Modifier.align(Alignment.TopEnd).padding(Metrics.space(1)),
+        )
     }
 }
 

@@ -173,6 +173,8 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /sessions" -> json(200, "[${session()}]")
             "GET /sessions/by-id" -> if (id == SESSION_ID) json(200, session()) else unknownSession()
             "GET /sessions/capabilities" -> if (id == SESSION_ID) json(200, """{"images":false}""") else unknownSession()
+            "GET /sessions/models" -> if (id == SESSION_ID) json(200, MODELS) else unknownSession()
+            "GET /sessions/commands" -> if (id == SESSION_ID) json(200, COMMANDS) else unknownSession()
             "GET /sessions/timeline" -> if (id == SESSION_ID) json(200, page(url?.queryParameter("before")?.toLongOrNull())) else unknownSession()
             "GET /sessions/writes" -> {
                 val asked = url?.queryParameter("clientMessageId")
@@ -184,6 +186,17 @@ class FakeMachineServer(private val token: String) : Closeable {
                 statusOf(asked)
             }
             "POST /sessions/write" -> write(body)
+            // A start answers the echo chat itself: the phone then opens it and sends the composer's text in it.
+            "POST /sessions/start" -> json(
+                200,
+                """{"id":"$SESSION_ID","cwd":"/tmp/scratch","folderName":"scratch","alive":true,"claudeSessionId":null,"piSessionId":null}""",
+            )
+            "GET /sidebar/overview" -> json(200, OVERVIEW)
+            "GET /accounts/claude" -> json(200, CLAUDE_ACCOUNTS)
+            "GET /accounts/codex" -> json(200, "[]")
+            "GET /usage/claude/snapshot" -> json(200, CLAUDE_USAGE)
+            "GET /usage/codex/snapshot" -> json(200, "{}")
+            "GET /server/info" -> json(200, """{"version":"0.0.0-stand-in","installRef":null,"upgrade":{"supported":false,"state":"idle"},"name":"stand-in"}""")
             "GET /requests/pending" -> json(200, synchronized(lock) { if (resolved) NO_REQUESTS else ONE_REQUEST })
             "POST /requests/resolve" -> {
                 if (JSONObject(body).optString("requestId") == REQUEST_ID) synchronized(lock) { resolved = true }
@@ -217,7 +230,11 @@ class FakeMachineServer(private val token: String) : Closeable {
      * A message the phone wrote: accepted, then the session's stream says it back at the next
      * position and answers "pong" at the one after, as an echo agent does.
      */
+    /** Scratch (reviewer): a latch every write waits on before answering. */
+    @Volatile var holdWrites: java.util.concurrent.CountDownLatch? = null
+
     private fun write(body: String): MockResponse {
+        holdWrites?.await(10, java.util.concurrent.TimeUnit.SECONDS)
         val input = JSONObject(body).optJSONObject("input")
         refuseWritesWith?.let { status -> return json(status, """{"message":"This device may not write to that session."}""") }
         if (failWrites) {
@@ -338,12 +355,47 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /sessions",
             "GET /sessions/by-id",
             "GET /sessions/capabilities",
+            // The chat's pickers: the models the session may switch to, the commands under "/".
+            "GET /sessions/models",
+            "GET /sessions/commands",
             "GET /sessions/timeline",
             "GET /sessions/writes",
             "POST /sessions/write",
+            "POST /sessions/start",
             "GET /requests/pending",
             "POST /requests/resolve",
+            // The shell's reads (docs/mobile-server-reads.md): the desktop's groups, the accounts, their usage, the version.
+            "GET /sidebar/overview",
+            "GET /accounts/claude",
+            "GET /accounts/codex",
+            "GET /usage/claude/snapshot",
+            "GET /usage/codex/snapshot",
+            "GET /server/info",
         )
+
+        /** Two models the echo chat may switch to, the first with its efforts, as `GET /sessions/models` answers them. */
+        private val MODELS =
+            """[{"id":"opus","label":"Opus","hint":"The most capable","resolved":"claude-opus-5-5","efforts":[""" +
+                """{"id":"low","label":"Low"},{"id":"medium","label":"Medium"},{"id":"high","label":"High"}],"defaultEffort":"medium"},""" +
+                """{"id":"sonnet","label":"Sonnet","hint":"Fast for everyday tasks","resolved":"claude-sonnet-5"}]"""
+
+        /** Two commands the composer offers under "/", as `GET /sessions/commands` answers them. */
+        private val COMMANDS =
+            """[{"name":"compact","description":"Summarize the conversation so far","insert":"/compact "},""" +
+                """{"name":"review","description":"Review the current changes","insert":"/review "}]"""
+
+        /** One desktop group, "Tests", holding the echo chat. */
+        private val OVERVIEW =
+            """{"windows":[{"windowKey":"server","displayOrder":["g-tests"],"groups":[{"id":"g-tests","name":"Tests",""" +
+                """"color":"teal","collapsed":false,"sessionIds":["$SESSION_ID"]}]}]}"""
+
+        private val CLAUDE_ACCOUNTS =
+            """[{"id":"acct-work","label":"Work","hasToken":true,"tokenSetAt":$AT,"tokenExpiresAt":null,"tokenInvalid":false}]"""
+
+        private val CLAUDE_USAGE =
+            """{"acct-work":{"windows":[{"key":"five_hour","label":"5-hour","kind":"session","scope":null,"usedPercentage":42,""" +
+                """"resetsAt":${AT + 7_800_000},"severity":"normal"},{"key":"seven_day","label":"Week, all models","kind":"weekly_all",""" +
+                """"scope":null,"usedPercentage":61,"resetsAt":${AT + 259_200_000},"severity":"normal"}],"fetchedAt":$AT}}"""
 
         private fun sessionJson(state: String) =
             """{"id":"$SESSION_ID","provider":"echo","transport":"events","cwd":"/tmp/scratch","windowKey":"server",""" +

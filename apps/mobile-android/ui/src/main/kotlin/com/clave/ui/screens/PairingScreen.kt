@@ -80,7 +80,7 @@ fun PairingScreen(
                 }
                 is PairingState.Approved -> {
                     BasicText("Paired with ${state.record.serverName}.", style = body)
-                    ClaveButton("Open workspaces", onClick = onDone, kind = ButtonKind.Primary)
+                    ClaveButton("Continue", onClick = onDone, kind = ButtonKind.Primary)
                 }
                 PairingState.Refused -> BasicText("$machineName refused this phone.", style = body)
                 PairingState.Expired -> BasicText("The request expired before it was approved.", style = body)

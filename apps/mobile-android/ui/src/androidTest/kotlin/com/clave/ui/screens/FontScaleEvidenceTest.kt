@@ -26,10 +26,13 @@ class FontScaleEvidenceTest {
 
     /** What a person comes to each screen to do. */
     private fun Screen.primaryAction(): SemanticsMatcher = when (this) {
+        Screen.Home -> hasContentDescription("Send")
         Screen.Machines -> hasText("Sign out")
+        Screen.Settings -> hasText("Sign out")
+        Screen.Accounts -> hasText("Work")
         Screen.Pairing -> hasText("Cancel")
         Screen.Workspaces -> hasText(Samples.workspaceList.first().name)
-        Screen.Sessions -> hasContentDescription("New session")
+        Screen.Sessions -> hasText("New chat")
         Screen.Launch -> hasText(Samples.profiles.first().name)
         Screen.Requests -> hasText("Allow")
         Screen.Chat -> hasContentDescription("Send message")

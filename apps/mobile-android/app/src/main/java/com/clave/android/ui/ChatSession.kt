@@ -13,7 +13,18 @@ import com.clave.core.chat.SendOutcome
 import com.clave.core.chat.admit
 import com.clave.core.chat.attachmentDraftKey
 import com.clave.core.chat.labelled
+import com.clave.core.chat.Entry
+import com.clave.core.chat.formAnswerText
+import com.clave.core.chat.openRequests
 import com.clave.core.contract.Attachment
+import com.clave.core.contract.FormAnswer
+import com.clave.core.contract.PermissionResponse
+import com.clave.core.contract.SessionWriteInput
+import com.clave.core.contract.SetEffort
+import com.clave.core.contract.SetModel
+import com.clave.core.contract.SetPermissionMode
+import com.clave.core.contract.StopTask
+import com.clave.core.state.conversationKey
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.FileDelivery
 import com.clave.core.transport.ServerError
@@ -61,6 +72,10 @@ class ChatSession(
     private val _state = MutableStateFlow(ChatSessionState(filesRoute = filesRouteOf(machineId)))
     val state: StateFlow<ChatSessionState> = _state.asStateFlow()
 
+    private val _controls = MutableStateFlow(ChatControlsState())
+    /** The pickers' choices, the model just picked, a refused switch. */
+    val controls: StateFlow<ChatControlsState> = _controls.asStateFlow()
+
     private val store get() = owner.store
     private val drafts get() = owner.services.drafts
     private val delivery get() = owner.services.delivery
@@ -73,6 +88,9 @@ class ChatSession(
     private var offSends: (() -> Unit)? = null
     private var draftWrite: Job? = null
     private val attaching = Mutex()
+
+    /** The text of the send under way: the draft store already holds it, and the send's end clears it. */
+    @Volatile private var inFlightText: String? = null
 
     /** Subscribes to the conversation and reads back the draft, the attachments, the mark and the unknown send. */
     fun open() {
@@ -101,6 +119,8 @@ class ChatSession(
             }
             if (closed) close() else closeChat = close
             readCapabilities()
+            readModels()
+            readCommands()
         }
     }
 
@@ -114,6 +134,10 @@ class ChatSession(
         closeChat = null
         val text = _state.value.draft
         draftWrite?.cancel()
+        // The text a send under way carries is already the stored draft, and the send's end clears
+        // it; writing it again here could land after that clear and bring a sent message back into
+        // the composer of the recreated screen (seen once in aQuickSendIsNotRepeatedByARecreation).
+        if (text == inFlightText) return
         scope.launch { drafts.set(machineId, sessionId, text) }
     }
 
@@ -125,6 +149,80 @@ class ChatSession(
             throw e
         } catch (_: Exception) {
             // Unknown capabilities: pictures go as files, which every provider reads.
+        }
+    }
+
+    /** The models the session may switch to; a server that cannot say leaves the list unread. */
+    private suspend fun readModels() {
+        _controls.update { it.copy(modelsLoading = true) }
+        try {
+            val models = store.connect(machineId).client.sessions.models(sessionId)
+            _controls.update { it.copy(models = models, modelsLoading = false) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            _controls.update { it.copy(modelsLoading = false) }
+        }
+    }
+
+    /** The commands the composer offers under "/"; unread stays empty. */
+    private suspend fun readCommands() {
+        try {
+            val commands = store.connect(machineId).client.sessions.commands(sessionId)
+            _controls.update { it.copy(commands = commands) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // No list: typing "/" offers nothing, and the text still goes as written.
+        }
+    }
+
+    /** A picker opened: the choices are read again, the provider may have changed them. */
+    fun refreshControls() {
+        if (_controls.value.modelsLoading) return
+        scope.launch { readModels() }
+    }
+
+    /**
+     * Puts the session on another model: shown at once, confirmed by the provider's next word
+     * on the model, reverted by its refusal. A refused write is said in the server's words.
+     */
+    fun pickModel(id: String) {
+        val conversation = store.state.value.conversations[conversationKey(machineId, sessionId)]?.conversation
+        _controls.update {
+            it.copy(
+                pendingModel = id,
+                pendingFrom = conversation?.model,
+                pendingErrors = conversation?.entries?.count { e -> e is Entry.Error } ?: 0,
+                refusal = null,
+            )
+        }
+        control(SetModel(id)) { _controls.update { it.copy(pendingModel = null) } }
+    }
+
+    fun pickEffort(id: String) = control(SetEffort(id))
+
+    fun pickMode(id: String) = control(SetPermissionMode(id))
+
+    /** Stops one background task, a subagent or a background shell. */
+    fun stopTask(taskId: String) = control(StopTask(taskId))
+
+    fun dismissRefusal() {
+        _controls.update { it.copy(refusal = null) }
+    }
+
+    /** One control write; the server's refusal is shown as it said it, never hidden. */
+    private fun control(input: SessionWriteInput, onRefused: () -> Unit = {}) {
+        scope.launch {
+            try {
+                store.connect(machineId).client.sessions.write(sessionId, input)
+                _controls.update { it.copy(refusal = null) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onRefused()
+                _controls.update { it.copy(refusal = messageOf(e)) }
+            }
         }
     }
 
@@ -192,6 +290,8 @@ class ChatSession(
         // A Send again answered with the first id as sent: that message had arrived, none went now.
         val unknownAtStart = current.unknownSend
         _state.update { it.copy(sending = true, error = null) }
+        // Set before the launch, so a close() right after Send sees it whatever the dispatcher.
+        inFlightText = current.draft
         scope.launch {
             val text = current.draft
             val attachments = current.attachments
@@ -221,6 +321,7 @@ class ChatSession(
             } catch (e: Exception) {
                 _state.update { it.copy(error = messageOf(e)) }
             } finally {
+                inFlightText = null
                 readDelivery()
                 _state.update { it.copy(sending = false) }
             }
@@ -274,11 +375,55 @@ class ChatSession(
         }
     }
 
-    /** Answers a permission or a question shown in the transcript. */
+    /**
+     * Answers a permission or a question shown in the transcript. [requestId] is the request the
+     * person saw; one answer goes per request at a time, and an answer to a request that no
+     * longer waits is dropped (answerMayGo). The card holds still until the write returns.
+     */
     fun answer(requestId: String, optionId: String, answers: Map<String, String>?) {
+        if (!beginAnswer(requestId)) return
         scope.launch {
-            val outcome = store.answerInChat(machineId, sessionId, requestId, optionId, answers?.takeIf { it.isNotEmpty() })
-            if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+            try {
+                val outcome = store.answerInChat(machineId, sessionId, requestId, optionId, answers?.takeIf { it.isNotEmpty() })
+                if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+            } finally {
+                _controls.update { it.copy(answering = it.answering - requestId) }
+            }
+        }
+    }
+
+    /** Marks [requestId]'s answer on its way, or says no when it may not go (answerMayGo). On the main thread. */
+    private fun beginAnswer(requestId: String): Boolean {
+        val conversation = store.state.value.conversations[conversationKey(machineId, sessionId)]?.conversation ?: return false
+        if (!answerMayGo(requestId, openRequests(conversation.entries).map { it.id }, _controls.value)) return false
+        _controls.update { it.copy(answering = it.answering + requestId) }
+        return true
+    }
+
+    /**
+     * Answers a question's card. One line per question goes the store's way, which marks the
+     * card answered at once; a hosted multi-select's labels go as a list, written here, and the
+     * card is marked answered by this chat until the conversation says so itself.
+     */
+    fun answerForm(requestId: String, optionId: String, answers: Map<String, FormAnswer>) {
+        val lists = answers.filterValues { it is FormAnswer.Choices }.mapValues { (it.value as FormAnswer.Choices).values }
+        if (lists.isEmpty()) {
+            answer(requestId, optionId, answers.mapValues { formAnswerText(it.value) })
+            return
+        }
+        val lines = answers.filterValues { it is FormAnswer.Text }.mapValues { (it.value as FormAnswer.Text).value }
+        if (!beginAnswer(requestId)) return
+        scope.launch {
+            try {
+                store.connect(machineId).client.sessions.write(sessionId, PermissionResponse(requestId, optionId, lines, lists))
+                _controls.update { it.copy(answeredHere = it.answeredHere + requestId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = messageOf(e)) }
+            } finally {
+                _controls.update { it.copy(answering = it.answering - requestId) }
+            }
         }
     }
 
@@ -337,6 +482,10 @@ class ChatSession(
         }
         val next = _state.value.attachments.let { it + labelled(record, it) }
         owner.kv.set(attachmentKey, AttachmentJson.encodeList(next))
+        // A picture's chip shows it, from the phone's own copy; the server's path is not readable here.
+        if (record.delivery == FileDelivery.Image || record.mimeType.startsWith("image/")) {
+            _controls.update { it.copy(thumbnails = it.thumbnails + (record.id to uri.toString())) }
+        }
         _state.update { it.copy(attachments = next) }
         return admitted.note
     }
