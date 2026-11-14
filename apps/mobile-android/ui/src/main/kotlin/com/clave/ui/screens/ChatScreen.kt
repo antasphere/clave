@@ -68,6 +68,8 @@ import com.clave.ui.chat.ChoiceSheet
 import com.clave.ui.chat.Composer
 import com.clave.ui.chat.ComposerStatusRow
 import com.clave.ui.chat.ControlSheet
+import com.clave.ui.chat.PermissionPrompt
+import com.clave.ui.chat.PromptView
 import com.clave.ui.chat.PromptDock
 import com.clave.ui.chat.QuestionView
 import com.clave.ui.chat.ToolRow
@@ -130,6 +132,8 @@ data class ChatScreenState(
     val now: Long,
     /** The composer's status: the model, its effort, the mode and the context meter. */
     val controls: ChatControlsView = ChatControlsView(),
+    /** The first permission of this conversation still waiting, docked above the composer. */
+    val prompt: PromptView? = null,
 )
 
 /**
@@ -238,7 +242,12 @@ fun ChatScreen(
                 if (state.ended) {
                     Notice("This session has ended" + (state.exitCode?.let { " (exit $it)" } ?: ""))
                 }
-                PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
+                val prompt = state.prompt
+                if (prompt != null && !state.ended) {
+                    PermissionPrompt(prompt, onAnswer = { optionId -> onAnswer(prompt.id, optionId, emptyMap()) })
+                } else {
+                    PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
+                }
                 Composer(
                     text = state.composer.text,
                     onTextChange = onTextChange,
@@ -359,7 +368,7 @@ private fun Transcript(
             key = { i, block -> blockKey(block) { blocks.size - 1 - i } },
         ) { i, block ->
             val key = blockKey(block) { blocks.size - 1 - i }
-            TranscriptBlock(block, key, state.expanded, onAnswer, onToggle, onLink)
+            TranscriptBlock(block, key, state.expanded, onAnswer, onToggle, onLink, docked = state.prompt != null)
         }
         if (state.loadingOlder) {
             item(key = "loading-older") {
@@ -388,6 +397,7 @@ private fun TranscriptBlock(
     onAnswer: (requestId: String, optionId: String, answers: Map<String, String>) -> Unit,
     onToggle: (blockKey: String) -> Unit,
     onLink: (String) -> Unit,
+    docked: Boolean = false,
 ) {
     val t = Clave.colors.theme
     when (block) {
@@ -415,6 +425,16 @@ private fun TranscriptBlock(
                         }
                     }
                 }
+            }
+        }
+        // The open permission is answered on the card docked above the composer: here, its place.
+        is Entry.Permission if docked && approvalAnswered(block) == null && !isQuestion(block.request) -> {
+            Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space(2)), verticalAlignment = Alignment.CenterVertically) {
+                Icon(ClaveIcon.ShieldCheck, contentDescription = null, tint = t.textTertiary, size = Metrics.chatGlyph)
+                BasicText(
+                    "Waiting for your approval below",
+                    style = ClaveTypography.type(Metrics.codeSize).copy(color = t.textTertiary),
+                )
             }
         }
         is Entry.Permission -> {

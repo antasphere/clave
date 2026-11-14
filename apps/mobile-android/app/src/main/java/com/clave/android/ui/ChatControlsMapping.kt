@@ -6,15 +6,21 @@ import com.clave.core.chat.claudeContextWindow
 import com.clave.core.chat.contextMeterLabel
 import com.clave.core.chat.contextRatio
 import com.clave.core.chat.currentModelOption
+import com.clave.core.chat.describeRequest
 import com.clave.core.chat.effortChoice
 import com.clave.core.chat.effortWord
+import com.clave.core.chat.isQuestion
 import com.clave.core.chat.modelChipLabel
+import com.clave.core.chat.openRequests
 import com.clave.core.chat.permissionModeLabel
+import com.clave.core.chat.providerLabel
+import com.clave.core.chat.readingOf
 import com.clave.core.chat.sameModelId
 import com.clave.core.contract.CommandOption
 import com.clave.core.contract.ModelOption
 import com.clave.ui.chat.ChatChoice
 import com.clave.ui.chat.ChatControlsView
+import com.clave.ui.chat.PromptView
 
 /**
  * What one open chat holds beyond its composer: the session's models and commands as the
@@ -77,5 +83,31 @@ fun chatControlsView(provider: String, conversation: Conversation, controls: Cha
         contextLabel = if (usage == null && window == null) null else contextMeterLabel(usage?.used, window),
         contextRatio = contextRatio(usage?.used, window),
         refusal = controls.refusal,
+    )
+}
+
+/**
+ * The first permission of the conversation still waiting, as the docked card draws it, and
+ * how many wait in all. A question is answered in its own card in the transcript, never here.
+ */
+fun promptView(provider: String, conversation: Conversation): PromptView? {
+    val open = openRequests(conversation.entries).filterNot(::isQuestion)
+    val request = open.firstOrNull() ?: return null
+    val described = describeRequest(request, if (provider.isEmpty()) "the agent" else providerLabel(provider))
+    val reading = readingOf(request, conversation.explained[request.id], open = true)
+    return PromptView(
+        id = request.id,
+        title = described.title,
+        target = described.target.ifEmpty { null },
+        detail = request.detail,
+        code = described.code,
+        language = described.language,
+        level = reading?.level,
+        levelLabel = reading?.levelLabel,
+        sentence = reading?.sentence,
+        mismatch = reading?.mismatch == true,
+        note = reading?.note,
+        options = request.options.map { it.id to it.label },
+        count = open.size,
     )
 }

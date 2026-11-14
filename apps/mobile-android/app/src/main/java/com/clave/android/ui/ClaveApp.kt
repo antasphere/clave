@@ -412,7 +412,10 @@ private fun ChatRoute(
     val screen = chatState(store, machineId, sessionId, chatState, now, title)
     val conversation = store.conversations[conversationKey(machineId, sessionId)]?.conversation ?: emptyConversation
     ChatScreen(
-        state = screen.copy(controls = chatControlsView(screen.provider, conversation, controls)),
+        state = screen.copy(
+            controls = chatControlsView(screen.provider, conversation, controls),
+            prompt = promptView(screen.provider, conversation),
+        ),
         actions = ChatActions(
             onOpenControls = { chat?.refreshControls() },
             onPickModel = { chat?.pickModel(it) },

@@ -9,6 +9,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.clave.core.chat.Block
 import com.clave.ui.chat.ChatChoice
 import com.clave.ui.chat.ChatControlsView
+import com.clave.ui.chat.PromptView
+import com.clave.core.contract.RiskLevel
+import androidx.compose.ui.test.onNodeWithTag
 import com.clave.ui.theme.Appearance
 import com.clave.ui.theme.ClaveTheme
 import com.clave.ui.theme.Reachability
@@ -49,13 +52,17 @@ class ChatUxTest {
         controls = controls,
     )
 
-    private fun show(state: ChatScreenState, actions: ChatActions = ChatActions()) = rule.setContent {
+    private fun show(
+        state: ChatScreenState,
+        actions: ChatActions = ChatActions(),
+        onAnswer: (String, String, Map<String, String>) -> Unit = { _, _, _ -> },
+    ) = rule.setContent {
         ClaveTheme(Appearance.Dark) {
             ChatScreen(
                 state = state,
                 onBack = {}, onRequests = {}, onLoadOlder = {}, onTextChange = {},
                 onSend = {}, onStop = {}, onPickPhotos = {}, onTakePhoto = {}, onPickDocuments = {},
-                onRemoveAttachment = {}, onAnswer = { _, _, _ -> }, onToggle = {},
+                onRemoveAttachment = {}, onAnswer = onAnswer, onToggle = {},
                 onResend = {}, onDiscard = {}, onLink = {},
                 actions = actions,
             )
@@ -105,5 +112,30 @@ class ChatUxTest {
         rule.onNodeWithText("A phone may not do this.").assertIsDisplayed()
         rule.onNodeWithText("Dismiss").performClick()
         rule.runOnIdle { assertEquals(1, dismissed) }
+    }
+
+    @Test
+    fun theWaitingPermissionIsAnsweredOnTheDockedCard() {
+        val answers = mutableListOf<Pair<String, String>>()
+        val prompt = PromptView(
+            id = "p1",
+            title = "Allow Claude to edit a.kt?",
+            target = "/repo/a.kt",
+            code = "- val x = 1\n+ val x = 2",
+            language = "diff",
+            level = RiskLevel.Project,
+            levelLabel = "Changes files of the project",
+            sentence = "Changes one constant.",
+            options = listOf("deny" to "Deny", "allow" to "Allow"),
+            count = 3,
+        )
+        show(state().copy(prompt = prompt), onAnswer = { id, option, _ -> answers += id to option })
+        rule.onNodeWithTag("permission-prompt").assertIsDisplayed()
+        rule.onNodeWithText("1 of 3 waiting").assertIsDisplayed()
+        rule.onNodeWithText("Changes files of the project").assertIsDisplayed()
+        rule.onNodeWithText("Changes one constant.").assertIsDisplayed()
+        rule.onNodeWithText("+ val x = 2").assertIsDisplayed()
+        rule.onNodeWithText("Allow").performClick()
+        rule.runOnIdle { assertEquals(listOf("p1" to "allow"), answers) }
     }
 }

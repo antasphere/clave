@@ -70,3 +70,46 @@ class ChatControlsMappingTest {
         assertEquals("A phone may not do this.", view.refusal)
     }
 }
+
+class PromptViewMappingTest {
+    private fun permission(id: String, tool: String = "Bash", answer: String? = null) = Entry.Permission(
+        request = com.clave.core.contract.SessionEvent.PermissionRequest(
+            id = id,
+            description = "Run",
+            options = listOf(IdLabel("deny", "Deny"), IdLabel("allow", "Allow")),
+            toolName = tool,
+            input = kotlinx.serialization.json.Json.parseToJsonElement("""{"command":"npm test"}"""),
+        ),
+        answer = answer,
+        at = 1,
+    )
+
+    @Test
+    fun theFirstWaitingPermissionIsDockedWithItsReadingAndTheQueueCount() {
+        val conversation = Conversation(
+            entries = listOf(permission("a", answer = "allow"), permission("b"), permission("c")),
+            explained = mapOf(
+                "b" to com.clave.core.contract.SessionEvent.PermissionExplained(
+                    "b",
+                    level = com.clave.core.contract.RiskLevel.Project,
+                    sentence = "Runs the tests.",
+                ),
+            ),
+        )
+        val view = promptView("claude", conversation)!!
+        assertEquals("b", view.id)
+        assertEquals("Allow Claude to run a command?", view.title)
+        assertEquals("npm test", view.code)
+        assertEquals("bash", view.language)
+        assertEquals("Changes files of the project", view.levelLabel)
+        assertEquals("Runs the tests.", view.sentence)
+        assertEquals(2, view.count)
+        assertEquals(listOf("deny" to "Deny", "allow" to "Allow"), view.options)
+    }
+
+    @Test
+    fun nothingIsDockedWhenNothingWaitsOrOnlyAQuestionDoes() {
+        assertNull(promptView("claude", Conversation(entries = listOf(permission("a", answer = "allow")))))
+        assertNull(promptView("claude", Conversation(entries = listOf(permission("q", tool = "")))))
+    }
+}
