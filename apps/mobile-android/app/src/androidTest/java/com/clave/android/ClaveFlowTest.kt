@@ -4,6 +4,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -264,6 +265,64 @@ class ClaveFlowTest {
         waitForText("Forget this machine")
         rule.onNodeWithText("Forget this machine").performClick()
         rule.waitUntil(WAIT_MS) { rule.onAllNodesWithText(machineName).fetchSemanticsNodes().isEmpty() }
+        assertTrue("the stand-in saw no request it does not serve: ${server.unknownPaths}", server.unknownPaths.isEmpty())
+    }
+
+    /** Adds the stand-in from the debug build's developer card and opens its Home. */
+    private fun connectAndOpenHome() {
+        waitForText("Developer connection")
+        rule.onNodeWithText("Developer connection").performScrollTo().performClick()
+        waitForDescription("Server address")
+        rule.onNodeWithContentDescription("Server address").performTextInput(server.url)
+        rule.onNodeWithContentDescription("Server token").performTextInput(TOKEN)
+        rule.onNodeWithContentDescription("Name").performTextReplacement(machineName)
+        rule.onNodeWithText("Connect").performClick()
+        waitForText(machineName)
+        waitForText("Sign in with Antasphere")
+        rule.onNodeWithText(machineName).performClick()
+        waitForDescription("Workspace: Scratch")
+    }
+
+    /** From Home: Machines through Settings, and the stand-in forgotten so the next run starts clean. */
+    private fun forgetFromHome() {
+        rule.onNodeWithContentDescription("Settings").performClick()
+        rule.onNodeWithText("Machines").performClick()
+        waitForText("Sign in with Antasphere")
+        rule.onNodeWithContentDescription("More about $machineName").performScrollTo().performClick()
+        waitForText("Forget this machine")
+        rule.onNodeWithText("Forget this machine").performClick()
+        rule.waitUntil(WAIT_MS) { rule.onAllNodesWithText(machineName).fetchSemanticsNodes().isEmpty() }
+    }
+
+    /**
+     * A recreation of the activity (a configuration change; a restore after the process died
+     * goes the same way) keeps the open chat on screen: the launch's own navigation, which
+     * opens the last machine's Home, runs once per fresh launch, never over a restored stack.
+     */
+    @Test
+    fun aRecreatedActivityStaysOnTheOpenChat() {
+        connectAndOpenHome()
+        rule.onNodeWithText("All sessions").performClick()
+        waitForText("Echo chat")
+        rule.onNodeWithText("Echo chat").performClick()
+        waitForText("Hello back.")
+        waitForDescription("Message")
+
+        rule.activityRule.scenario.recreate()
+
+        waitForText("Hello back.")
+        waitForDescription("Message")
+        // Give a late navigation its chance before checking nothing was laid over the chat.
+        Thread.sleep(1_000)
+        rule.waitForIdle()
+        rule.onNodeWithText("Hello back.").assertIsDisplayed()
+        rule.onAllNodesWithContentDescription("Workspace: Scratch").assertCountEquals(0)
+
+        tapBack()
+        waitForText("echo · Scratch · scratch")
+        tapBack()
+        waitForDescription("Workspace: Scratch")
+        forgetFromHome()
         assertTrue("the stand-in saw no request it does not serve: ${server.unknownPaths}", server.unknownPaths.isEmpty())
     }
 

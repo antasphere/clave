@@ -114,16 +114,27 @@ fun ClaveApp(services: AppServices, launchUrl: String?, viewModel: ClaveViewMode
         val notice by viewModel.notice.collectAsStateWithLifecycle()
         val links = remember { Channel<DeepLink>(Channel.BUFFERED) }
         var started by remember { mutableStateOf(false) }
+        // The launch's routes are laid once per fresh launch. A recreation (a configuration
+        // change, a restore after the process died) finds the back stack the nav controller
+        // saved, and laying them again would put Home over the open chat.
+        var launched by rememberSaveable { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             val first = withTimeoutOrNull(RESTORE_WAIT_MS) { services.restoredOwner() } ?: services.owner.value
-            if (first != null) {
+            if (first != null && !launched) {
                 val initial = first.inbox.initialState(first.kv.get(LAST_MACHINE_KEY), launchUrl)
                 for (route in routesFor(initial).drop(1)) {
                     // A machine's Home is the root of its stack: back from it leaves the app, not to Machines.
                     nav.navigate(route) { if (route.startsWith("home/")) popUpTo(Routes.MACHINES) { inclusive = true } }
                 }
+            } else if (first != null) {
+                // Restored: only a notification's link left pending meanwhile opens, over the restored stack
+                // as a warm link does (with no link, the launch state is Machines alone, already beneath).
+                routesFor(first.inbox.initialState(null, null)).drop(1).lastOrNull()?.let { route ->
+                    nav.navigate(route) { launchSingleTop = true }
+                }
             }
+            launched = true
             started = true
         }
         LaunchedEffect(owner, started) {
