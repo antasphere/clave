@@ -88,7 +88,15 @@ async function piClaveTools(form) {
     harness: 'pi',
     form,
     extension: !!extension,
-    exposure: server?.exposure ?? null
+    exposure: server?.exposure ?? null,
+    // Pi declares the `direct` tools; a `deferred` server's others wait for
+    // `tool_search`.
+    declare:
+      server?.exposure === 'direct'
+        ? 'all'
+        : Object.entries(server?.toolExposure ?? {})
+            .filter(([, exposure]) => exposure === 'direct')
+            .map(([name]) => name)
   })
 }
 // The terminal form (`PI_STAND_IN_TERMINAL=1`, no `--mode`): Clave's tools

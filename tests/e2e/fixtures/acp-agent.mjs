@@ -132,6 +132,8 @@ function opencodeClaveTools(params) {
     form: 'acp',
     source: inline ? 'inline' : handed ? 'protocol' : null,
     codemode: inline?.codemode ?? null,
+    // OpenCode 2.3.0 declares a server's tools only with code mode off.
+    declare: inline?.codemode === false ? 'all' : [],
     configHoldsToken: (process.env.OPENCODE_CONFIG_CONTENT ?? '').includes(
       process.env.CLAVE_TAB_MCP_TOKEN || '\u0000'
     )

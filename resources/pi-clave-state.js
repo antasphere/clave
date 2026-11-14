@@ -11,6 +11,19 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+/** The tools declared to the model on every turn; every other Clave tool is
+ *  found through Pi's `tool_search` (`deferred`), as a Claude tab finds its
+ *  deferred tools. The whole list weighs about 62 KB per turn otherwise. */
+export const CLAVE_DIRECT_TOOLS = [
+  'clave_list',
+  'clave_launch_options',
+  'clave_open_session',
+  'clave_send_to_session',
+  'clave_read_session',
+  'clave_request_input',
+  'clave_input_result'
+]
+
 /** The `clave` entry of the tab's MCP config file, as Pi's registration
  *  takes it, or null when the file is missing or not the expected shape. */
 export function claveMcpServer(configFile) {
@@ -26,10 +39,11 @@ export function claveMcpServer(configFile) {
       type: 'http',
       url: entry.url,
       headers,
-      // Declared to the model like `read` and `bash`: the same tools a
-      // Claude tab is handed, reached the same way.
-      exposure: 'direct',
-      description: "Clave's own tools: tabs, questions to the person, secrets, routines"
+      // Seven declared like `read` and `bash`; the rest found by search.
+      exposure: 'deferred',
+      toolExposure: Object.fromEntries(CLAVE_DIRECT_TOOLS.map((name) => [name, 'direct'])),
+      description:
+        'Clave, the app this tab runs in: its tabs listed, opened, read and messaged; a question, a value, a secret or an approval asked of the person; routines. Tools not declared here are found with tool_search.'
     }
   } catch {
     return null

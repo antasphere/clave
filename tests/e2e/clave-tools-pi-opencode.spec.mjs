@@ -78,7 +78,7 @@ let config = null
 try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '') } catch {}
 const inline = config?.mcp?.servers?.clave
 const server = inline ? { url: inline.url, headers: Object.fromEntries(Object.entries(inline.headers ?? {}).map(([k, v]) => [k, opencodeSubstitute(v)])) } : null
-await callClaveTools(server, { harness: 'opencode', form: 'terminal', codemode: inline?.codemode ?? null, standalone: process.argv.includes('--standalone') })
+await callClaveTools(server, { harness: 'opencode', form: 'terminal', codemode: inline?.codemode ?? null, declare: inline?.codemode === false ? 'all' : [], standalone: process.argv.includes('--standalone') })
 process.stdout.write('stub opencode terminal\\r\\n')
 setInterval(() => {}, 60000)
 `
@@ -184,13 +184,32 @@ export async function run(t) {
       assert.ok(record.tools.includes('clave_open_session'))
       assert.equal(record.tokenOnArgv, false)
     }
+    // Pi declares seven of them on every turn and finds the rest by search;
+    // the seven weigh about a third of the whole list (measured 14 Nov 2026:
+    // 40 tools, 62 KB, the seven about 19 KB in Pi's declarations).
+    const SEVEN = [
+      'clave_list',
+      'clave_launch_options',
+      'clave_open_session',
+      'clave_send_to_session',
+      'clave_read_session',
+      'clave_request_input',
+      'clave_input_result'
+    ]
     for (const { record } of [piChat, piTerminal]) {
       assert.equal(record.extension, true)
-      assert.equal(record.exposure, 'direct')
+      assert.equal(record.exposure, 'deferred')
+      assert.deepEqual([...record.declaredTools].sort(), [...SEVEN].sort())
+      assert.ok(
+        record.declaredBytes < record.toolsBytes / 2,
+        `${record.declaredBytes} of ${record.toolsBytes}`
+      )
       assert.deepEqual(record.tokenInEnv, [])
     }
+    // OpenCode 2.3.0 has code mode per server only: all of them, declared.
     for (const { record } of [opencodeChat, opencodeTerminal]) {
       assert.equal(record.codemode, false)
+      assert.equal(record.declaredTools.length, record.tools.length)
       assert.deepEqual(record.tokenInEnv, ['CLAVE_TAB_MCP_TOKEN'])
     }
     assert.equal(opencodeChat.record.source, 'inline')
@@ -206,8 +225,10 @@ export async function run(t) {
         tools: [piChat, piTerminal, opencodeChat, opencodeTerminal].map(({ record }) => ({
           harness: record.harness,
           form: record.form,
-          count: record.tools.length,
-          bytes: record.toolsBytes
+          served: record.tools.length,
+          servedBytes: record.toolsBytes,
+          declared: record.declaredTools.length,
+          declaredBytes: record.declaredBytes
         }))
       })
     )

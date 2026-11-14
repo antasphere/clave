@@ -55,6 +55,14 @@ function client(url, headers) {
   }
 }
 
+function declared(tools, names) {
+  const kept = Array.isArray(names) ? tools.filter((tool) => names.includes(tool.name)) : tools
+  return {
+    declaredTools: kept.map((tool) => tool.name),
+    declaredBytes: JSON.stringify(kept).length
+  }
+}
+
 /** Call `tools/list` and `clave_list` on the server described by `server`
  *  (`{ url, headers }`), and append what happened to the log with `facts`. */
 export async function callClaveTools(server, facts) {
@@ -90,6 +98,9 @@ export async function callClaveTools(server, facts) {
         tools: (tools?.result?.tools ?? []).map((tool) => tool.name),
         // What the declarations weigh, as a harness would hand them on.
         toolsBytes: JSON.stringify(tools?.result?.tools ?? []).length,
+        // Those the harness declares to the model on every turn: the names
+        // given (`declare`), or all of them; the rest are found by search.
+        ...declared(tools?.result?.tools ?? [], facts.declare),
         callerSessionId: payload?.callerSessionId ?? null
       }) + '\n'
     )

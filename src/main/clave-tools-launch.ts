@@ -81,8 +81,10 @@ export function opencodeClaveServer(url: string): Record<string, unknown> {
     headers: { Authorization: `Bearer {env:${CLAVE_TAB_MCP_TOKEN_ENV}}` },
     // The header is the credential: no OAuth sign-in is ever started for it.
     oauth: false,
-    // Declared to the model like its built-in tools, as in a Claude tab,
-    // rather than reached through OpenCode's code mode.
+    // Declared to the model like its built-in tools, rather than reached
+    // through OpenCode's code mode. 2.3.0 sets this per server only, never
+    // per tool, so the seven Pi declares (CLAVE_DIRECT_TOOLS) cannot be
+    // split out here: all forty are declared (PRDCT-4507, a decision pending).
     codemode: false
   }
 }
@@ -111,6 +113,9 @@ export function withOpencodeClaveTools(
     config.mcp && typeof config.mcp === 'object' ? (config.mcp as Record<string, unknown>) : {}
   const servers =
     mcp.servers && typeof mcp.servers === 'object' ? (mcp.servers as Record<string, unknown>) : {}
+  // A server the person named `clave` in their own OpenCode configuration is
+  // replaced by this one in a Clave tab: the inline configuration outranks
+  // theirs, and the tab needs its own identity. Their other servers stay.
   const next = {
     ...config,
     mcp: { ...mcp, servers: { ...servers, clave: opencodeClaveServer(endpoint.url) } }
