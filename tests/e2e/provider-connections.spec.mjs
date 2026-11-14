@@ -90,8 +90,15 @@ async function menuPick(win, scope, id, hook) {
         () => false
       )
     ) {
-      await entry.click()
-      return
+      // The menu animates in, and a row redrawn by a push can close it: a
+      // click that does not land is tried again from a fresh open.
+      if (
+        await entry.click({ timeout: 3000 }).then(
+          () => true,
+          () => false
+        )
+      )
+        return
     }
     await win.keyboard.press('Escape')
   }
