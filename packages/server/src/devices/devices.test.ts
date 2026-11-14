@@ -28,6 +28,11 @@ import { OWNER_READ_ATTEMPTS, makeDeviceSessions } from './service'
 import type { ServerPorts } from '../ports'
 import { memoryWriteLedgerStorage, STOPPED_AFTER_DISPATCH } from '../sessions/writes'
 import { FakeSettingsSource } from '../settings/test-support'
+import type { ClaudeAccount, CodexAccount, UsageRead } from '../settings/port'
+import { SidebarLayouts } from '../sidebar/layouts'
+import { layoutsOverviewSource } from '../sidebar/overview'
+import { memorySidebarStorage, noWindowsHost } from '../sidebar/ports'
+import { ServerInfoPort } from '../server-info/port'
 import { PendingRequests } from '../requests/service'
 import { createServerFiles } from '../files/service'
 import { ensureFileHelper } from '../files/test-support'
@@ -386,15 +391,24 @@ describe('the device session’s reach', () => {
       ['GET', '/devices/relay'],
       ['POST', '/devices/relay', { url: '' }],
       ['GET', '/accounts/antasphere'],
-      ['GET', '/accounts/claude'],
+      ['GET', '/accounts/claude/migrated'],
+      ['GET', '/accounts/login'],
+      ['POST', '/accounts/claude', { label: 'x' }],
+      ['POST', '/accounts/claude/token', { id: 'default', token: 'sk-ant-x' }],
+      ['GET', '/usage/claude'],
+      ['GET', '/usage/codex?force=true'],
+      ['GET', '/usage/pi?range=today'],
       ['GET', '/clients'],
       ['POST', '/clients', { kind: 'other', name: 'phone' }],
       ['GET', '/plugins'],
-      ['GET', '/server/info'],
       ['POST', '/server/upgrade', {}],
+      ['POST', '/server/name', { name: 'x' }],
       ['POST', '/launch-profiles', {}],
       ['POST', '/workspaces/registry', {}],
       ['GET', '/sidebar/layout?windowKey=w1'],
+      ['GET', '/sidebar/layouts'],
+      ['POST', '/sidebar/groups', { windowKey: 'w1', group: { name: 'x' } }],
+      ['POST', '/sidebar/groups/collapsed', { windowKey: 'w1', groupId: 'g1', collapsed: true }],
       ['POST', '/sessions/rename', { id: 's1', name: 'x' }],
       ['POST', '/sessions/type', { id: 's1', text: 'x' }],
       ['GET', '/sessions/screen?id=s1'],
@@ -717,10 +731,350 @@ describe('the scope, as a table', () => {
     expect(deviceMayCall('GET', '/devices/me')).toBe(true)
     expect(deviceMayCall('POST', '/e2e/evaluate')).toBe(false)
     expect(deviceMayCall('DELETE', '/sessions')).toBe(false)
+    for (const path of [
+      '/sidebar/overview',
+      '/accounts/claude',
+      '/accounts/codex',
+      '/usage/claude/snapshot',
+      '/usage/codex/snapshot',
+      '/server/info'
+    ]) {
+      expect(deviceMayCall('GET', path), path).toBe(true)
+      expect(deviceMayCall('POST', path), path).toBe(false)
+    }
+    expect(deviceMayCall('GET', '/usage/claude')).toBe(false)
+    expect(deviceMayCall('GET', '/sidebar/layouts')).toBe(false)
     expect(deviceHearsEvent('session.title_changed')).toBe(true)
     expect(deviceHearsEvent('requests.changed')).toBe(true)
+    expect(deviceHearsEvent('usage.claude_read')).toBe(true)
+    expect(deviceHearsEvent('sidebar.overview_changed')).toBe(true)
     expect(deviceHearsEvent('accounts.claude_changed')).toBe(false)
+    expect(deviceHearsEvent('accounts.login_progressed')).toBe(false)
     expect(deviceHearsEvent('sidebar.layout_changed')).toBe(false)
+    expect(deviceHearsEvent('sidebar.layout_removed')).toBe(false)
+    expect(deviceHearsEvent('server.upgrade_changed')).toBe(false)
+  })
+})
+
+describe('the reads a phone’s list and settings show (UX round, 13 November 2026)', () => {
+  /** The settings as the Mac holds them, each view carrying a field it must
+   *  never send: the boundary encodes the contract's views, which name none. */
+  const phoneSettings = (): FakeSettingsSource => {
+    const settings = new FakeSettingsSource()
+    settings.claude = [
+      {
+        id: 'default',
+        label: 'Machine login',
+        hasToken: false,
+        tokenSetAt: null,
+        tokenExpiresAt: null,
+        tokenInvalid: false
+      },
+      {
+        id: 'c-work',
+        label: 'Work',
+        hasToken: true,
+        tokenSetAt: 1762000000000,
+        tokenExpiresAt: 1793536000000,
+        tokenInvalid: false,
+        token: 'sk-ant-oat01-NEVER-SENT'
+      } as ClaudeAccount
+    ]
+    settings.codex = [
+      { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+      {
+        id: 'x-key',
+        label: 'API key',
+        kind: 'apiKey',
+        hasCredential: true,
+        apiKey: 'sk-proj-NEVER-SENT'
+      } as CodexAccount
+    ]
+    const claudeRead = {
+      windows: [
+        {
+          key: 'five_hour',
+          label: 'Current session (5h)',
+          kind: 'session',
+          scope: null,
+          usedPercentage: 42,
+          resetsAt: 1763125200000,
+          severity: 'normal'
+        },
+        {
+          key: 'seven_day',
+          label: 'Weekly (all models)',
+          kind: 'weekly_all',
+          scope: null,
+          usedPercentage: 18,
+          resetsAt: 1763550000000,
+          severity: 'normal'
+        },
+        {
+          key: 'seven_day_oi',
+          label: 'Weekly (Fable)',
+          kind: 'weekly_scoped',
+          scope: 'Fable',
+          usedPercentage: 81,
+          resetsAt: 1763550000000,
+          severity: 'warning'
+        }
+      ],
+      fetchedAt: 1763110000000,
+      accessToken: 'NEVER-SENT-either'
+    } as UsageRead
+    Object.defineProperty(settings, 'usage', {
+      value: {
+        ...settings.usage,
+        claudeSnapshot: () => ({
+          default: claudeRead,
+          'c-work': { error: 'Claude refused the token.', reason: 'unauthorized' }
+        }),
+        codexSnapshot: () => ({
+          default: {
+            windows: [
+              {
+                key: 'primary-300',
+                label: '5h',
+                kind: 'session',
+                scope: null,
+                usedPercentage: 12,
+                resetsAt: 1763121000000,
+                severity: null
+              }
+            ],
+            fetchedAt: 1763110000000
+          }
+        })
+      }
+    })
+    return settings
+  }
+
+  it('reads the accounts and their last usage with no token or credential, and asks no provider', async () => {
+    const settings = phoneSettings()
+    const w = await start({ ports: { settings } })
+    const { token } = await w.device()
+    const claude = await w.json('GET', '/accounts/claude', { token })
+    expect(claude.status).toBe(200)
+    expect(claude.body).toEqual([
+      {
+        id: 'default',
+        label: 'Machine login',
+        hasToken: false,
+        tokenSetAt: null,
+        tokenExpiresAt: null,
+        tokenInvalid: false
+      },
+      {
+        id: 'c-work',
+        label: 'Work',
+        hasToken: true,
+        tokenSetAt: 1762000000000,
+        tokenExpiresAt: 1793536000000,
+        tokenInvalid: false
+      }
+    ])
+    const codex = await w.json('GET', '/accounts/codex', { token })
+    expect(codex.status).toBe(200)
+    expect(codex.body).toEqual([
+      { id: 'default', label: 'Default', kind: 'chatgpt', hasCredential: true },
+      { id: 'x-key', label: 'API key', kind: 'apiKey', hasCredential: true }
+    ])
+    const claudeUsage = await w.json('GET', '/usage/claude/snapshot', { token })
+    expect(claudeUsage.status).toBe(200)
+    expect(claudeUsage.body).toMatchObject({
+      default: {
+        fetchedAt: 1763110000000,
+        windows: [
+          { key: 'five_hour', kind: 'session', usedPercentage: 42 },
+          { key: 'seven_day', kind: 'weekly_all', usedPercentage: 18 },
+          { key: 'seven_day_oi', scope: 'Fable', usedPercentage: 81, severity: 'warning' }
+        ]
+      },
+      'c-work': { error: 'Claude refused the token.', reason: 'unauthorized' }
+    })
+    // `force` is not in the snapshot's payload: a phone that sends it still
+    // reads the cache, and no live read is asked of the provider.
+    const forced = await w.json('GET', '/usage/codex/snapshot?force=true&accountId=default', {
+      token
+    })
+    expect(forced.status).toBe(200)
+    expect(forced.body).toEqual({
+      default: {
+        windows: [
+          {
+            key: 'primary-300',
+            label: '5h',
+            kind: 'session',
+            scope: null,
+            usedPercentage: 12,
+            resetsAt: 1763121000000,
+            severity: null
+          }
+        ],
+        fetchedAt: 1763110000000
+      }
+    })
+    const everything = JSON.stringify([claude, codex, claudeUsage, forced].map((a) => a.body))
+    expect(everything).not.toContain('NEVER-SENT')
+    expect(everything).not.toContain('accessToken')
+    expect(settings.calls.map((c) => c.method)).not.toContain('usage.readClaude')
+    expect(settings.calls.map((c) => c.method)).not.toContain('usage.readCodex')
+    // The live read stays the owner's: it is the one that can ask the provider.
+    expect((await w.json('GET', '/usage/claude?force=true', { token })).status).toBe(403)
+    expect(settings.calls.map((c) => c.method)).not.toContain('usage.readClaude')
+  })
+
+  it('reads the Mac’s version and the desktop’s groups, without their terminals or prompts', async () => {
+    const storage = memorySidebarStorage()
+    storage.documents.set('w1', {
+      groups: [
+        {
+          id: 'g1',
+          name: 'Clave',
+          sessionIds: ['s1'],
+          collapsed: false,
+          color: 'purple',
+          cwd: '/Users/someone/clave',
+          prompt: 'NEVER-SENT prompt',
+          workspaceId: 'ws-antasphere',
+          terminals: [
+            {
+              id: 't1',
+              command: 'NEVER-SENT=1 npm run dev',
+              commandMode: 'auto',
+              color: 'blue',
+              sessionId: null
+            }
+          ]
+        }
+      ],
+      displayOrder: ['g1', 's2']
+    })
+    const sidebar = new SidebarLayouts(storage, noWindowsHost)
+    const w = await start({
+      ports: {
+        sidebar,
+        sidebarOverview: layoutsOverviewSource(sidebar, {
+          workspaceOf: (key) => (key === 'w1' ? 'ws-antasphere' : null)
+        }),
+        serverInfo: ServerInfoPort.appRun('3.0.0-beta.23', 'the-mac')
+      }
+    })
+    const { token } = await w.device()
+    const info = await w.json('GET', '/server/info', { token })
+    expect(info.status).toBe(200)
+    expect(info.body).toEqual({
+      version: '3.0.0-beta.23',
+      installRef: null,
+      upgrade: {
+        supported: false,
+        reason: expect.any(String),
+        state: 'idle'
+      },
+      name: 'the-mac'
+    })
+    const overview = await w.json('GET', '/sidebar/overview', { token })
+    expect(overview.status).toBe(200)
+    expect(overview.body).toEqual({
+      windows: [
+        {
+          windowKey: 'w1',
+          workspaceId: 'ws-antasphere',
+          displayOrder: ['g1', 's2'],
+          groups: [
+            {
+              id: 'g1',
+              name: 'Clave',
+              color: 'purple',
+              collapsed: false,
+              workspaceId: 'ws-antasphere',
+              sessionIds: ['s1']
+            }
+          ]
+        }
+      ]
+    })
+    expect(JSON.stringify(overview.body)).not.toContain('NEVER-SENT')
+    expect(JSON.stringify(overview.body)).not.toContain('/Users/')
+    // The layouts themselves, and every edit of them, stay the owner's.
+    expect((await w.json('GET', '/sidebar/layouts', { token })).status).toBe(403)
+    expect((await w.json('GET', '/sidebar/layout?windowKey=w1', { token })).status).toBe(403)
+    expect((await w.json('GET', '/sidebar/layouts')).status).toBe(200)
+    expect((await w.json('GET', '/sidebar/overview')).status).toBe(200)
+  })
+
+  it('tells a phone that the overview changed with no payload, and never sends it a layout', async () => {
+    const storage = memorySidebarStorage()
+    storage.documents.set('w1', {
+      groups: [{ id: 'g1', name: 'Api', sessionIds: ['s1'], prompt: 'NEVER-SENT' }],
+      displayOrder: ['g1']
+    })
+    const w = await start({ ports: { sidebar: new SidebarLayouts(storage, noWindowsHost) } })
+    const { token } = await w.device()
+    const phone = new Peer(w.pushUrl())
+    await phone.opened
+    phone.send({ _tag: 'hello', token })
+    expect((await phone.next())._tag).toBe('welcome')
+    const mac = new Peer(w.pushUrl())
+    await mac.opened
+    mac.send({ _tag: 'hello', token: w.server.token })
+    expect((await mac.next())._tag).toBe('welcome')
+    // The owner folds a group on the Mac: a command on the layout.
+    const folded = await w.json('POST', '/sidebar/groups/collapsed', {
+      body: { windowKey: 'w1', groupId: 'g1', collapsed: true }
+    })
+    expect(folded.status).toBe(200)
+    const heard = async (peer: Peer, until: string): Promise<unknown[]> => {
+      const events: unknown[] = []
+      for (let i = 0; i < 6; i++) {
+        const frame = await peer.next()
+        if (frame._tag !== 'event') continue
+        events.push(frame.event)
+        if (frame.event._tag === until) break
+      }
+      return events
+    }
+    const phoneHeard = await heard(phone, 'sidebar.overview_changed')
+    expect(phoneHeard).toContainEqual({ _tag: 'sidebar.overview_changed' })
+    while (!(await phone.silence(150))) phoneHeard.push(await phone.next())
+    const tags = phoneHeard.map((e) => (e as { _tag?: string })._tag ?? e)
+    expect(tags).not.toContain('sidebar.layout_changed')
+    expect(JSON.stringify(phoneHeard)).not.toContain('NEVER-SENT')
+    // The Mac hears the layout itself, as before.
+    const macHeard = await heard(mac, 'sidebar.layout_changed')
+    expect(macHeard.map((e) => (e as { _tag: string })._tag)).toContain('sidebar.layout_changed')
+    phone.ws.close()
+    mac.ws.close()
+    await Promise.all([phone.closed, mac.closed])
+  })
+
+  it('writes the chat’s model, effort, permission mode, task stop, form draft and interrupt from a phone', async () => {
+    const w = await start()
+    const { token } = await w.device()
+    const inputs = [
+      { type: 'set_model', model: 'claude-fable-5-1', remember: false },
+      { type: 'set_model', model: null },
+      { type: 'set_effort', effort: 'high' },
+      { type: 'set_permission_mode', mode: 'acceptEdits' },
+      { type: 'stop_task', taskId: 'task-1' },
+      { type: 'permission_draft', id: 'clave:form-1', answers: { name: 'Ada', tags: ['a', 'b'] } },
+      { type: 'interrupt' }
+    ]
+    for (const input of inputs) {
+      const answer = await w.json('POST', '/sessions/write', { token, body: { id: 's1', input } })
+      expect(answer.status, JSON.stringify(input)).toBe(200)
+      expect(answer.body).toMatchObject({ status: 'accepted', at: expect.any(Number) })
+    }
+    expect(w.source.writes).toEqual(inputs.map((input) => ({ id: 's1', input })))
+    // A level outside the provider's spelling is refused at the boundary, written nowhere.
+    const bad = await w.json('POST', '/sessions/write', {
+      token,
+      body: { id: 's1', input: { type: 'set_effort', effort: 'MAX!' } }
+    })
+    expect(bad.status).toBe(400)
+    expect(w.source.writes).toHaveLength(inputs.length)
   })
 })
 
@@ -1124,9 +1478,27 @@ describe('the paired phone mobile boundary', () => {
       '/sessions/records?ids=s1',
       '/sessions/records',
       '/devices',
-      '/accounts/claude',
-      '/server/info',
-      '/plugins'
+      '/plugins',
+      // The reads this round opened, each exactly: a near path stays the owner's.
+      '/accounts/claude/',
+      '/accounts/claude/x',
+      '/accounts/claude/migrated',
+      '/accounts/codex/x',
+      '/accounts/claudex',
+      '/accounts/login',
+      '/usage/claude',
+      '/usage/codex',
+      '/usage/claude/snapshot/',
+      '/usage/claude/snapshot/x',
+      '/usage/claude/snapshots',
+      '/usage/pi',
+      '/sidebar/layout',
+      '/sidebar/layout?windowKey=w1',
+      '/sidebar/layouts',
+      '/sidebar/overview/',
+      '/sidebar/overview/x',
+      '/server/info/',
+      '/server/info/x'
     ]) {
       const answer = await w.json('GET', path, { token })
       expect(answer.status, path).toBe(403)
@@ -1147,6 +1519,10 @@ describe('the paired phone mobile boundary', () => {
       '/workspaces/registry',
       '/launch-profiles',
       '/accounts/claude',
+      '/accounts/codex',
+      '/usage/claude/snapshot',
+      '/sidebar/overview',
+      '/server/info',
       '/preferences/app-icon',
       '/devices/revoke'
     ]) {
