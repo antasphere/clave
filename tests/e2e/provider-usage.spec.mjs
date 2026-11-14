@@ -11,7 +11,8 @@
 // directory, where no fixture in this process reaches. The attached-mode
 // fixture seam is wave 3's, beside the Node terminal process (the wave's
 // ruling of 6 October 2026).
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import {
   launchApp,
   seedWorkspaces,
@@ -25,9 +26,56 @@ import {
 const DIR = userDataDir('provider-usage')
 const ROOT = fixturePath('provider-usage-root')
 const WS = { id: 'usage-workspace', name: 'Usage', rootDir: ROOT, profileFile: null, createdAt: 1 }
+// Pi's own session records (PRDCT-4551): Clave reads Pi's usage from Pi's
+// session files, here only from this folder (`CLAVE_PI_ROOT`).
+const PI_SESSIONS = path.join(ROOT, 'pi-sessions')
+const DAY = 24 * 3600_000
+
+/** One Pi session file of model calls, as Pi 1.5.2 writes them: a header,
+ *  then an assistant message carrying its usage per call. Made-up values. */
+function writePiSession(folder, id, at, calls) {
+  const dir = path.join(PI_SESSIONS, folder)
+  mkdirSync(dir, { recursive: true })
+  const when = new Date(at).toISOString()
+  const lines = [
+    { type: 'session', version: 3, id, timestamp: when, cwd: '/elsewhere' },
+    ...calls.map((usage, i) => ({
+      type: 'message',
+      id: `m${i + 1}`,
+      parentId: i ? `m${i}` : null,
+      timestamp: when,
+      message: {
+        role: 'assistant',
+        content: [],
+        provider: 'stand-in',
+        model: 'one',
+        usage: { cacheWrite: 0, ...usage, cost: { total: usage.cost ?? 0 } },
+        stopReason: 'stop',
+        timestamp: at
+      }
+    }))
+  ]
+  writeFileSync(
+    path.join(dir, `${when.replace(/[:.]/g, '-')}_${id}.jsonl`),
+    lines.map((line) => JSON.stringify(line)).join('\n') + '\n'
+  )
+}
 
 export async function run(t) {
+  rmSync(ROOT, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
+  // Today: one call of 1,000 tokens and one call read wholly from Pi's cache
+  // (3,000 cached tokens). Three days ago: one call of 6,000 tokens, counted
+  // in the last 7 days and never today. No Clave tab made these sessions, so
+  // they are "Other sessions", never Pi's sign-in.
+  const now = Date.now()
+  writePiSession('--today--', '11111111-1111-4111-8111-111111111111', now - 1_000, [
+    { input: 800, output: 200, cacheRead: 0, totalTokens: 1000, cost: 0.125 },
+    { input: 0, output: 0, cacheRead: 3000, totalTokens: 3000 }
+  ])
+  writePiSession('--earlier--', '22222222-2222-4222-8222-222222222222', now - 3 * DAY, [
+    { input: 5000, output: 1000, cacheRead: 0, totalTokens: 6000 }
+  ])
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   // No machine-login read: a real read of this Mac's own login landing after
@@ -35,7 +83,8 @@ export async function run(t) {
   // 9 November 2026, three Claude checks red on one run and green the next).
   const { app, win } = await launchApp(DIR, {
     server: 'in-process',
-    args: ['--test-no-machine-usage']
+    args: ['--test-no-machine-usage'],
+    env: { CLAVE_PI_ROOT: PI_SESSIONS }
   })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
@@ -54,7 +103,7 @@ export async function run(t) {
         alive: true
       }))
       const state = (globalThis.__usageFixture = {
-        calls: { claude: 0, codex: 0, pi: 0 },
+        calls: { claude: 0, codex: 0 },
         used: 82,
         error: false,
         hold: false
@@ -83,19 +132,6 @@ export async function run(t) {
         return {
           windows: [window('Codex weekly', state.used), window('Codex 5-hour', 20, 'session')],
           fetchedAt: Date.now()
-        }
-      }
-      settings.usage.readPi = (range) => {
-        state.calls.pi++
-        return {
-          range,
-          sessions: 2,
-          input: 800,
-          output: 200,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: range === 'today' ? 1000 : 4000,
-          cost: 0.125
         }
       }
     })
@@ -192,27 +228,60 @@ export async function run(t) {
 
     await focus(claude.sessionId)
     t.check('switching back restores Claude without Codex data', await textIs('70% left'))
+    // Pi's usage is counted per connection (PRDCT-4551), from Pi's own
+    // session records. This tab runs on no connection and made no call, so
+    // its foot names Pi's own sign-in and says its figure; the sessions Clave
+    // did not start are "Other sessions", in Settings → Usage alone.
     const pi = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'pi', name: 'Pi usage' })
+    const SIGN_IN_TODAY = 'Pi sign-in · 0 requests · 0 tokens today'
     t.check(
-      'Pi footer shows today’s local tokens and recorded cost',
-      await textIs('1K tokens · $0.13 today')
+      'Pi footer names whose figure it is: Pi’s own sign-in, today',
+      await textIs(SIGN_IN_TODAY),
+      await footer().textContent()
     )
     t.equal('Pi does not invent quota headroom', await footer().locator('.usage-meter').count(), 0)
     await footer().click()
     await panel('pi').waitFor()
+    const otherRow = panel('pi').locator('[data-harness-usage-row="other"]')
+    const signInRow = panel('pi').locator('[data-harness-usage-row="sign-in"]')
+    const rowText = async (row) => (await row.innerText().catch(() => '')).replace(/\s+/g, ' ')
+    const otherToday = await until(async () => {
+      const text = await rowText(otherRow)
+      return text.includes('Total tokens 4,000') ? text : null
+    })
     t.check(
-      'Pi panel explains these are local totals',
-      (await panel('pi').textContent()).includes('Local session totals, not account quota')
+      'Pi panel counts today from Pi’s own records, under "Other sessions"',
+      !!otherToday && otherToday.includes('2 requests · 4K tokens today'),
+      otherToday ?? (await rowText(otherRow))
     )
-    t.equal(
-      'Pi panel shares today’s cached request',
-      await app.evaluate(() => globalThis.__usageFixture.calls.pi),
-      1
+    t.check(
+      'Pi panel says what each figure is',
+      (otherToday ?? '').includes('Sessions Clave did not start') &&
+        (await rowText(signInRow)).includes("The harness's own sign-in"),
+      { other: otherToday, signIn: await rowText(signInRow) }
+    )
+    t.check(
+      'Pi panel counts today’s cached request',
+      !!otherToday && otherToday.includes('Requests 2') && otherToday.includes('Cache read 3,000'),
+      otherToday
+    )
+    t.check(
+      'Pi panel says no cost where Pi’s use is not known to be billed per use',
+      !!otherToday && !otherToday.includes('$'),
+      otherToday
     )
     await panel('pi').getByRole('button', { name: '7d', exact: true }).click()
-    await panel('pi').getByText('4,000', { exact: true }).waitFor()
+    const otherWeek = await until(async () => {
+      const text = await rowText(otherRow)
+      return text.includes('Total tokens 10,000') ? text : null
+    })
+    t.check(
+      'Pi panel counts the last 7 days, the earlier session included',
+      !!otherWeek && otherWeek.includes('in the last 7 days'),
+      otherWeek ?? (await rowText(otherRow))
+    )
     await back()
-    t.check('Pi historical ranges never replace today’s footer totals', await textIs('1K tokens'))
+    t.check('Pi historical ranges never replace today’s footer totals', await textIs(SIGN_IN_TODAY))
 
     await focus(codex.sessionId)
     await footer().click()
