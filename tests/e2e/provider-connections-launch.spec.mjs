@@ -504,11 +504,13 @@ export async function run(t) {
       kimiModels?.providers?.['kimi-coding']?.apiKey,
       '$KIMI_API_KEY'
     )
+    // Real Pi lists, switches to and sends to every provider that file
+    // declares: the connection's directory holds Kimi's entry alone, nothing
+    // of the person's own models.json (the verifier's F1, PRDCT-4496).
     t.check(
-      "the person's own provider is kept intact",
-      JSON.stringify(kimiModels?.providers?.['my-own']) ===
-        JSON.stringify(JSON.parse(PI_FILES['models.json']).providers['my-own']),
-      scrub(kimiModels?.providers?.['my-own'])
+      "and nothing of the person's own providers",
+      JSON.stringify(Object.keys(kimiModels?.providers ?? {})) === '["kimi-coding"]',
+      scrub(Object.keys(kimiModels?.providers ?? {}))
     )
 
     // ── Resume: the restarted Kimi tab gets the value again ──────────────
