@@ -244,8 +244,10 @@ export async function run(t) {
 
     const LINE_A = '4 requests · 520 tokens today'
     const LINE_B = `1 request · ${opencodeTokens('hello b')} tokens today`
-    const LINE_PI_OWN = '260 tokens · $0.00 today'
-    const LINE_OC_OWN = `${opencodeTokens('own oc')} tokens · $0.00 today`
+    // The sign-ins ran on the stand-ins' own provider, which Clave does not
+    // know to bill per use: requests and tokens, no cost.
+    const LINE_PI_OWN = '2 requests · 260 tokens today'
+    const LINE_OC_OWN = `1 request · ${opencodeTokens('own oc')} tokens today`
 
     // ── The sidebar's foot, for the focused tab ──
     const foot = win.locator('.sidebar-footer-line[data-connection-usage]')

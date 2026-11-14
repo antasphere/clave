@@ -22,12 +22,20 @@ export type HarnessUsageRange = (typeof HARNESS_USAGE_RANGES)[number]
 /**
  * How what a row counted is paid for, which decides what its line says:
  * a coding plan (`plan`) or a local model (`local`) bills nothing per token,
- * so its line says requests and tokens and never a cost; a connection that
- * pays per use (`payPerUse`) says tokens and the cost the harness computed;
- * the harness's own sign-in (`signIn`) says the same, as its own figure.
+ * so its line says requests and tokens and never a cost; what is paid per
+ * use (`payPerUse`: a connection of such a provider, or a harness's own
+ * sign-in whose every record of the range was) says tokens and the cost the
+ * harness computed; anything not known to be billed per use (`signIn`: a
+ * harness's own sign-in on a plan, an unknown provider or a mix) says no
+ * cost either. The host decides it (`billingOf`, `src/main/harness-usage.ts`).
  */
 export const HARNESS_USAGE_BILLINGS = ['plan', 'local', 'payPerUse', 'signIn'] as const
 export type HarnessUsageBilling = (typeof HARNESS_USAGE_BILLINGS)[number]
+
+/** Whether a line of this billing says a cost: pay per use alone. */
+export function billsPerUse(billing: HarnessUsageBilling): boolean {
+  return billing === 'payPerUse'
+}
 
 export interface HarnessUsageFigures {
   /** One per usage record the harness wrote (a model call). */
@@ -146,10 +154,11 @@ export function formatCost(value: number): string {
 /**
  * The ONE line of a connection's (or a sign-in's) usage, as every place
  * says it: the launcher's row, the sidebar's foot, Settings → Usage, the
- * Connections card and `clave_launch_options`. A plan or a local model:
+ * Connections card and `clave_launch_options`. Not billed per use (a plan,
+ * a local model, a sign-in not known to be paid per use):
  * "12 requests · 10.4K tokens today", never a cost (a plan bills nothing per
- * token, so a dollar figure there would be false). Pay per use and the
- * harness's own sign-in: "10.4K tokens · $0.01 today".
+ * token, so a dollar figure there would be false). Pay per use:
+ * "10.4K tokens · $0.01 today".
  */
 export function harnessUsageText(
   figures: Pick<HarnessUsageFigures, 'requests' | 'totalTokens' | 'cost'>,
@@ -157,7 +166,7 @@ export function harnessUsageText(
   range: HarnessUsageRange
 ): string {
   const tokens = `${formatTokens(figures.totalTokens)} tokens`
-  if (billing === 'plan' || billing === 'local') {
+  if (!billsPerUse(billing)) {
     const requests = `${figures.requests} ${figures.requests === 1 ? 'request' : 'requests'}`
     return `${requests} · ${tokens} ${rangeWords(range)}`
   }

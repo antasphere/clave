@@ -44,6 +44,7 @@ import type { PiStartModel } from './pi-start-model'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
 // PRDCT-4551: what Pi and OpenCode tabs used, per connection
 import {
+  billsPerUse,
   connectionUsageOf,
   harnessUsageText,
   signInUsageOf,
@@ -131,7 +132,7 @@ export function usedToday(figures: HarnessUsageFigures, billing: HarnessUsageBil
     line: harnessUsageText(figures, billing, 'today'),
     requests: figures.requests,
     tokens: figures.totalTokens,
-    cost: billing === 'plan' || billing === 'local' ? null : figures.cost
+    cost: billsPerUse(billing) ? figures.cost : null
   }
 }
 export interface ConnectionWindow {

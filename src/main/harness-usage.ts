@@ -40,6 +40,7 @@ import {
 } from './opencode-usage'
 import { PROVIDER_USAGE_ROADS } from './provider-usage'
 import { connectionModelProvider } from './provider-injection'
+import { PROVIDER_ROAD_BY_ID } from './models-catalog-overlay'
 
 /** A stored connection as the usage rows list it: no value. */
 export interface UsageConnection {
@@ -53,16 +54,50 @@ export const SIGN_IN_LABEL: Readonly<Record<UsageHarness, string>> = {
   opencode: 'OpenCode sign-in'
 }
 
-/** How a connection of this company is paid for, from its provider line
- *  (`PROVIDER_USAGE_ROADS`): a coding plan or a local model bills nothing
- *  per token; every other provider is paid per use. */
+/**
+ * THE one function that decides whether a line may say a cost (PRDCT-4551):
+ * how what was used on this company is paid for, from its provider line
+ * (`PROVIDER_USAGE_ROADS`). A coding plan (`plan`) or a local model
+ * (`local`) bills nothing per token; a company whose line is pay per use, a
+ * balance, a limit or a spent amount is paid per use (`payPerUse`, the only
+ * billing whose line says a cost); a company Clave does not know is
+ * `signIn`: nothing is known of how it bills, so no cost is said.
+ */
 export function billingOf(company: string | null | undefined): HarnessUsageBilling {
   const road = company ? PROVIDER_USAGE_ROADS[company as ProviderCompanyId] : undefined
-  if (road && 'kind' in road) {
+  if (!road) return 'signIn'
+  if ('kind' in road) {
     if (road.kind === 'plan') return 'plan'
     if (road.kind === 'local') return 'local'
+    if (road.kind === 'unknown') return 'signIn'
   }
   return 'payPerUse'
+}
+
+/** The company whose connections a harness names its models under this
+ *  provider id (Pi's `kimi-coding` is Moonshot's); undefined for one Clave
+ *  does not know (`anthropic` on a person's own Pi). */
+export function companyOfProvider(
+  provider: string | null,
+  harness: UsageHarness
+): string | undefined {
+  if (!provider) return undefined
+  return Object.keys(PROVIDER_ROAD_BY_ID).find(
+    (company) => providerOfCompany(company, harness) === provider
+  )
+}
+
+/** A harness's own sign-in's billing, by the same function over the
+ *  providers its records of the range were made under: pay per use only
+ *  when every one of them is a company billed per use; a plan, a local
+ *  model, a provider Clave does not know, a mix, or no record at all says
+ *  no cost. */
+export function signInBilling(
+  providers: Iterable<string | null>,
+  harness: UsageHarness
+): HarnessUsageBilling {
+  const billings = [...providers].map((p) => billingOf(companyOfProvider(p, harness)))
+  return billings.length > 0 && billings.every((b) => b === 'payPerUse') ? 'payPerUse' : 'signIn'
 }
 
 /** The provider a connection of this company gives a harness. */
@@ -120,7 +155,7 @@ export function harnessUsageRows(input: HarnessUsageInputs): HarnessUsageView {
       harness,
       connectionId: null,
       label: SIGN_IN_LABEL[harness],
-      billing: 'signIn',
+      billing: signInBilling(attributed.get(rowKey(harness, null))?.providers ?? [], harness),
       removed: false,
       ...figuresOf(null)
     })

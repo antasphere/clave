@@ -59,7 +59,7 @@ describe('the usage per connection the window keeps (PRDCT-4551)', () => {
     const entry = harnessUsageFor('local')
     expect(connectionUsage(entry, 'kimi')?.line).toBe('3 requests · 1.5K tokens today')
     expect(connectionUsage(entry, 'ds')?.line).toBe('50 tokens · $0.12 today')
-    expect(signInUsage(entry, 'pi')?.line).toBe('7 tokens · $0.00 today')
+    expect(signInUsage(entry, 'pi')?.line).toBe('1 request · 7 tokens today')
     expect(signInUsage(entry, 'opencode')).toBeUndefined()
     // A removed connection is Settings → Usage's alone.
     expect(connectionUsage(entry, 'gone')).toBeUndefined()

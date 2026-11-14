@@ -3,7 +3,14 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { harnessUsageText } from '@clave/contract/settings/harness-usage-view'
-import { HarnessUsage, billingOf, harnessUsageRows, piSessionRoots } from './harness-usage'
+import {
+  HarnessUsage,
+  billingOf,
+  companyOfProvider,
+  harnessUsageRows,
+  piSessionRoots,
+  signInBilling
+} from './harness-usage'
 import { scanPiSessionFile } from './pi-usage'
 import { parseSessionExport, parseSessionPage, OpencodeSessionRecords } from './opencode-usage'
 import type { LedgerLine, UsageRecord } from './usage-attribution'
@@ -12,13 +19,55 @@ const NOW = new Date(2026, 10, 14, 18, 0, 0)
 const AT = new Date(2026, 10, 14, 10, 0, 0).getTime()
 
 describe('the rows each place reads (PRDCT-4551)', () => {
-  it('bills a plan and a local model with no cost, everything else per use', () => {
+  it('bills a plan and a local model with no cost, what Clave knows to be per use with one, the unknown with none', () => {
     expect(billingOf('moonshot')).toBe('plan')
     expect(billingOf('zai')).toBe('plan')
     expect(billingOf('ollama')).toBe('local')
-    expect(billingOf('deepseek')).toBe('payPerUse')
+    // Pay per use, a balance, a limit, a spent amount.
     expect(billingOf('mistral')).toBe('payPerUse')
-    expect(billingOf(null)).toBe('payPerUse')
+    expect(billingOf('generic')).toBe('payPerUse')
+    expect(billingOf('deepseek')).toBe('payPerUse')
+    expect(billingOf('openrouter')).toBe('payPerUse')
+    expect(billingOf('vercel-ai-gateway')).toBe('payPerUse')
+    expect(billingOf(null)).toBe('signIn')
+    expect(billingOf('anthropic')).toBe('signIn')
+  })
+
+  // The coordinator's point 4: the sign-in's line as true as a connection's.
+  it("says a sign-in's cost only when every record of the range was on a provider billed per use", () => {
+    expect(signInBilling(['deepseek'], 'pi')).toBe('payPerUse')
+    expect(signInBilling(['deepseek', 'deepseek'], 'opencode')).toBe('payPerUse')
+    // A plan (Pi's own Kimi), an unknown provider, a mix, a record naming
+    // none, or nothing at all: no cost.
+    expect(signInBilling(['kimi-coding'], 'pi')).toBe('signIn')
+    expect(signInBilling(['anthropic'], 'pi')).toBe('signIn')
+    expect(signInBilling(['deepseek', 'kimi-coding'], 'pi')).toBe('signIn')
+    expect(signInBilling([null], 'pi')).toBe('signIn')
+    expect(signInBilling([], 'pi')).toBe('signIn')
+    expect(companyOfProvider('kimi-code-plan-global', 'opencode')).toBe('moonshot')
+    expect(companyOfProvider('kimi-coding', 'pi')).toBe('moonshot')
+    expect(companyOfProvider('stand-in', 'pi')).toBeUndefined()
+    // The rows use it for the sign-in, over the records of the range alone.
+    const rec = (provider: string, at: number): UsageRecord => ({
+      harness: 'pi',
+      sessionId: 'mine',
+      at,
+      provider,
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: 0.5
+    })
+    const signInOf = (records: UsageRecord[], range: 'today' | 'all'): string | undefined =>
+      harnessUsageRows({ range, now: NOW, ledger: [], records, connections: () => [] }).rows.find(
+        (r) => r.harness === 'pi' && r.connectionId === null
+      )?.billing
+    const longAgo = new Date(2026, 0, 1).getTime()
+    const records = [rec('deepseek', AT), rec('kimi-coding', longAgo)]
+    expect(signInOf(records, 'today')).toBe('payPerUse')
+    expect(signInOf(records, 'all')).toBe('signIn')
   })
 
   it('lists every current connection, the sign-in, and a removed connection under its recorded label', () => {
@@ -85,7 +134,8 @@ describe('the rows each place reads (PRDCT-4551)', () => {
     const [kimiA, , signIn, gone] = pi
     expect(harnessUsageText(kimiA, kimiA.billing, 'today')).toBe('1 request · 120 tokens today')
     expect(harnessUsageText(gone, gone.billing, 'today')).toBe('40 tokens · $0.02 today')
-    expect(harnessUsageText(signIn, signIn.billing, 'today')).toBe('7 tokens · $0.50 today')
+    // The sign-in's record was on a provider Clave does not know: no cost.
+    expect(harnessUsageText(signIn, signIn.billing, 'today')).toBe('1 request · 7 tokens today')
   })
 
   it('says OpenCode is unavailable when it is not here, and still counts Pi', async () => {
