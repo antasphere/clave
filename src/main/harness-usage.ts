@@ -152,6 +152,8 @@ export interface HarnessUsageDeps {
   opencode: (() => ((since: number) => Promise<OpencodeSessionRecord[]>) | null) | null
   connections: (harness: UsageHarness) => readonly UsageConnection[]
   now?: () => Date
+  /** How long an answer waits on OpenCode's read; 1.5 s when absent. */
+  opencodeWaitMs?: number
 }
 
 const OPENCODE_ABSENT = 'OpenCode is not installed here.'
@@ -160,6 +162,8 @@ const OPENCODE_FAILED = "OpenCode's records could not be read."
 export class HarnessUsage {
   private readonly pi = new PiSessionRecords()
   private opencodeRead: { since: number; read: Promise<OpencodeSessionRecord[]> } | null = null
+  /** The records of the last OpenCode read that finished. */
+  private lastOpencode: OpencodeSessionRecord[] = []
 
   constructor(private readonly deps: HarnessUsageDeps) {}
 
@@ -193,23 +197,48 @@ export class HarnessUsage {
     }
     for (const r of piRecords) records.push({ harness: 'pi', ...r })
     const reader = this.deps.opencode?.() ?? null
+    const reading: UsageHarness[] = []
     if (!reader) unavailable.push({ harness: 'opencode', reason: OPENCODE_ABSENT })
     else {
-      try {
-        for (const r of await this.opencodeFor(reader, rangeStart(range, now)))
-          records.push({ harness: 'opencode', ...r })
-      } catch {
+      // A first read of many sessions is a process per session (150 took
+      // 21 s on 2.3.0): the answer never waits past the budget. It carries
+      // the records last read and says OpenCode is still being read; the
+      // read runs on, and the window asks again.
+      const since = rangeStart(range, now)
+      const read = this.opencodeFor(reader, since)
+      const TIMEOUT = Symbol('timeout')
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const waited = await Promise.race([
+        read.then(
+          (r) => r,
+          () => null
+        ),
+        new Promise<typeof TIMEOUT>((resolve) => {
+          timer = setTimeout(() => resolve(TIMEOUT), this.deps.opencodeWaitMs ?? 1500)
+        })
+      ])
+      clearTimeout(timer)
+      if (waited === TIMEOUT) {
+        reading.push('opencode')
+        for (const r of this.lastOpencode) records.push({ harness: 'opencode', ...r })
+      } else if (waited === null) {
         unavailable.push({ harness: 'opencode', reason: OPENCODE_FAILED })
+      } else {
+        this.lastOpencode = waited
+        for (const r of waited) records.push({ harness: 'opencode', ...r })
       }
     }
-    return harnessUsageRows({
-      range,
-      now,
-      ledger: this.deps.ledger(),
-      records,
-      connections: this.deps.connections,
-      unavailable
-    })
+    return {
+      ...harnessUsageRows({
+        range,
+        now,
+        ledger: this.deps.ledger(),
+        records,
+        connections: this.deps.connections,
+        unavailable
+      }),
+      reading
+    }
   }
 }
 

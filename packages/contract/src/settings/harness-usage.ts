@@ -43,7 +43,8 @@ export const HarnessUsageRowView = Schema.Struct({
 export const HarnessUsageView = Schema.Struct({
   range: HarnessUsageRange,
   rows: Schema.Array(HarnessUsageRowView),
-  unavailable: Schema.Array(Schema.Struct({ harness: UsageHarness, reason: Schema.String }))
+  unavailable: Schema.Array(Schema.Struct({ harness: UsageHarness, reason: Schema.String })),
+  reading: Schema.optional(Schema.Array(UsageHarness))
 })
 
 // ---------------------------------------------------------------------------

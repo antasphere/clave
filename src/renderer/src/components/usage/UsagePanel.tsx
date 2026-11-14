@@ -538,6 +538,11 @@ function HarnessUsagePage({ harness }: { harness: UsageHarness }): ReactElement 
         </div>
       </div>
       {unavailable && <SettingsCallout inset text={unavailable.reason} />}
+      {/* The host still reads this harness (OpenCode's first read): the rows
+          below are what it had, and they fill in. */}
+      {entry?.view?.reading?.includes(harness) && (
+        <SettingsRow label={`Reading ${name}'s records…`} />
+      )}
       {entry?.status === 'error' && !entry.view ? (
         <SettingsCallout
           inset

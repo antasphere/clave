@@ -376,6 +376,51 @@ describe("OpenCode's records, as OpenCode 2.3.0 answers them", () => {
     expect(exported).toHaveLength(36)
   })
 
+  // The coordinator's point 3: the answer never waits on OpenCode's long read.
+  it('answers within its budget with the records last read, says OpenCode is still read, and fills in after', async () => {
+    let release: () => void = () => undefined
+    let gated = false
+    const record = {
+      sessionId: 's',
+      at: new Date(2026, 10, 14, 10).getTime(),
+      provider: 'p',
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: 0
+    }
+    const usage = new HarnessUsage({
+      ledger: () => [],
+      piRoots: () => [],
+      opencode: () => async () => {
+        if (gated) await new Promise<void>((r) => (release = r))
+        return [record]
+      },
+      connections: () => [],
+      now: () => NOW,
+      opencodeWaitMs: 20
+    })
+    const signIn = (v: Awaited<ReturnType<typeof usage.read>>): number | undefined =>
+      v.rows.find((r) => r.harness === 'opencode' && r.connectionId === null)?.requests
+    const first = await usage.read('today')
+    expect(first.reading).toEqual([])
+    expect(signIn(first)).toBe(1)
+    gated = true
+    const started = Date.now()
+    const waiting = await usage.read('all')
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(waiting.reading).toEqual(['opencode'])
+    // What was read before, never nothing.
+    expect(signIn(waiting)).toBe(1)
+    release()
+    gated = false
+    await new Promise((r) => setTimeout(r, 5))
+    const done = await usage.read('all')
+    expect(done.reading).toEqual([])
+  })
+
   it('a wider range asked while a narrower read runs gets the wider read, never the narrower one', async () => {
     const calls: number[] = []
     let release: () => void = () => undefined

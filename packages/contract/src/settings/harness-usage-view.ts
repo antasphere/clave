@@ -64,6 +64,10 @@ export interface HarnessUsageView {
   /** A harness whose records could not be read, with why, in the person's
    *  words. */
   unavailable: readonly { harness: UsageHarness; reason: string }[]
+  /** A harness whose records are still being read (OpenCode's first read is
+   *  a process per session): its rows hold what was read before, and the
+   *  window asks again. */
+  reading?: readonly UsageHarness[]
 }
 
 export const EMPTY_FIGURES: Readonly<HarnessUsageFigures> = Object.freeze({
