@@ -78,9 +78,29 @@ async function connectPick(win, scope, company) {
   throw new Error(`the ${company} card never opened its form`)
 }
 
-/** Remove a connection from its card: the trash, then the question's Remove. */
-async function removeConnection(scope, id) {
-  await scope.locator(`[data-provider-remove="${id}"]`).click()
+/** Pick an entry of a connection row's menu (PRDCT-4552): the row's Manage,
+ *  then the entry, written out, in the window's portalled menu. */
+async function menuPick(win, scope, id, hook) {
+  const entry = win.locator(`[data-connection-menu-entries="${id}"] [${hook}="${id}"]`)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await scope.locator(`[data-connection-menu="${id}"]`).click()
+    if (
+      await entry.waitFor({ state: 'visible', timeout: 1500 }).then(
+        () => true,
+        () => false
+      )
+    ) {
+      await entry.click()
+      return
+    }
+    await win.keyboard.press('Escape')
+  }
+  throw new Error(`the menu of ${id} never offered ${hook}`)
+}
+
+/** Remove a connection from its row: Manage → Remove, then the question's Remove. */
+async function removeConnection(win, scope, id) {
+  await menuPick(win, scope, id, 'data-provider-remove')
   await scope.locator(`[data-connection-remove-confirm="${id}"]`).click()
 }
 
@@ -240,7 +260,8 @@ export async function run(t) {
     )
 
     // ── 7b. The key form on the Moonshot row: a cancelled key is gone, a saved one replaces ──
-    const keyButton = page.locator(`[data-provider-key="${moonId}"]`)
+    // The row's menu holds "Replace the key" (PRDCT-4552).
+    const keyButton = { click: () => menuPick(win, page, moonId, 'data-provider-key') }
     const keyInput = page.locator('[data-provider-key-input]')
     await keyButton.click()
     await keyInput.waitFor()
@@ -410,7 +431,7 @@ export async function run(t) {
     )
 
     // ── 14. Rename on the server page ──
-    await serverPage.locator(`[data-provider-rename="${zaiId}"]`).click()
+    await menuPick(win, serverPage, zaiId, 'data-provider-rename')
     const renameInput = serverPage.locator('[data-provider-rename-input]')
     await renameInput.waitFor()
     await renameInput.fill('Work plan')
@@ -432,7 +453,7 @@ export async function run(t) {
     )
 
     // ── 15. Remove on the server page ──
-    await removeConnection(serverPage, zaiId)
+    await removeConnection(win, serverPage, zaiId)
     const rowGone = await settled(async () => (await zaiRow.count()) === 0)
     const servedEmpty = await settled(
       async () => (await request(server, '/connections/providers')).length === 0
@@ -463,7 +484,7 @@ export async function run(t) {
       { shown: pushedShown, added: typeof pushed?.id === 'string' }
     )
     if (pushedShown) {
-      await removeConnection(serverPage, pushed.id)
+      await removeConnection(win, serverPage, pushed.id)
     } else if (typeof pushed?.id === 'string') {
       await request(server, '/connections/providers/remove', { id: pushed.id })
     }
@@ -477,9 +498,9 @@ export async function run(t) {
     // ── 16. Remove on this Mac ──
     await pickMachine(win, 'This Mac', 'local')
     await page.locator('[data-provider-card="anthropic"]').waitFor()
-    await page.locator(`[data-provider-remove="${moonId}"]`).waitFor()
+    await page.locator(`[data-connection-menu="${moonId}"]`).waitFor()
     // Removing asks first (PRDCT-4552): the question names what goes.
-    await page.locator(`[data-provider-remove="${moonId}"]`).click()
+    await menuPick(win, page, moonId, 'data-provider-remove')
     const moonQuestion = await page
       .locator(`[data-connection-remove-question="${moonId}"]`)
       .innerText()

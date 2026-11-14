@@ -1,22 +1,38 @@
-// Settings → Connections as a page of cards (PRDCT-4552), drawn for the
-// owner's eye: the empty page, then two Claude accounts and three stored
-// connections of two providers (two Moonshot, one without its key, and one
-// DeepSeek), in the light and the dark theme, at the usual width and at a
-// narrow one; a card's models unfolded, the connect form open in a card, a
-// removal's question, and a Clave server's page. Every key, token and figure
-// is made up; nothing reaches a provider or models.dev. The pictures go to
-// CLAVE_E2E_SHOTS (default /tmp/harness-next/cards/shots), each named by
-// what it shows; the checks are what the pictures cannot say.
+// Settings → Connections, one card per provider (PRDCT-4552), drawn for the
+// owner's eye. Three pages, in the light and the dark theme, at the usual
+// width and at a narrow one:
+//   - the empty page;
+//   - the owner's own shape: six Claude accounts with different usage (one
+//     out, one suggested) and one Moonshot connection with usage, nothing
+//     else; one row's menu open, one removal's question open;
+//   - the general case: two Claude accounts, one Codex, two Moonshot
+//     connections, DeepSeek and Ollama; a card's models unfolded, the connect
+//     form open in a card, a provider's and a Codex removal's question, the
+//     usage close up, and a Clave server's page.
+// Every key, token and figure is made up; nothing reaches a provider or
+// models.dev. The pictures go to CLAVE_E2E_SHOTS (default
+// /tmp/harness-next/cards/shots), each named by what it shows; the checks are
+// what the pictures cannot say.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { until } from './harness.mjs'
 import { connectMac, fleetWorld, openServersPage, request } from './fixtures/fleet-world.mjs'
 
 const SHOTS = process.env.CLAVE_E2E_SHOTS || '/tmp/harness-next/cards/shots'
-const WORK_TOKEN = 'sk-ant-oat01-work-token-for-the-cards-shots-0123456789abcdef'
-const PLAY_TOKEN = 'sk-ant-oat01-play-token-for-the-cards-shots-0123456789abcdef'
+const token = (name) => `sk-ant-oat01-${name}-token-for-the-cards-shots-0123456789abcdef`
+/** The six Claude accounts: label, token, and what their limits read. */
+const CLAUDE = [
+  { label: 'Work', token: token('work'), block: '0.2', week: '0.4', fable: true },
+  { label: 'Play', token: token('play'), block: '0.1', week: '0.1' },
+  { label: 'Studio', token: token('studio'), block: '0.3', week: '1.0', out: true },
+  { label: 'Client A', token: token('clienta'), block: '0.5', week: '0.6' },
+  { label: 'Client B', token: token('clientb'), block: '0.05', week: '0.25' },
+  { label: 'Spare', token: token('spare'), block: '0.0', week: '0.05' }
+]
 const KIMI_KEY = 'sk-test-cards-kimi-' + 'k'.repeat(32)
+const KIMI_SPARE_KEY = 'sk-test-cards-kimi-spare-' + 's'.repeat(32)
 const DEEPSEEK_KEY = 'sk-test-cards-deepseek-' + 'd'.repeat(32)
+const SECRETS = [...CLAUDE.map((c) => c.token), KIMI_KEY, KIMI_SPARE_KEY, DEEPSEEK_KEY]
 
 const model = (id, name) => ({ id, name, reasoning: true, toolCall: true })
 const CATALOGUE = {
@@ -86,8 +102,9 @@ const CATALOGUE = {
   ]
 }
 
-// Twenty-four pictures, each with the window resized under it.
-export const deadlineMs = 8 * 60_000
+// About fifty pictures, each with the window resized under it, and two waits
+// for the usage read to go stale.
+export const deadlineMs = 12 * 60_000
 
 const WIDE = { width: 1320, height: 900 }
 const NARROW = { width: 860, height: 900 }
@@ -114,6 +131,9 @@ async function setTheme(win, theme) {
 
 /** The whole page: the window made as tall as the page, then put back. */
 async function shootPage(app, win, name, size) {
+  // A menu closed with Escape hands the focus back to its trigger: the page
+  // is drawn at rest.
+  await win.evaluate(() => document.activeElement?.blur?.())
   const height = await win.evaluate(() => {
     const scroller = document.querySelector('.settings-scroller')
     return scroller ? scroller.scrollHeight + 120 : 1200
@@ -139,7 +159,7 @@ async function shootEach(app, win, label, shoot) {
   }
 }
 
-/** A card in the middle of the pane, clear of the page's sticky header. */
+/** An element in the middle of the pane, clear of the page's sticky header. */
 async function centre(locator) {
   await locator.evaluate((el) => el.scrollIntoView({ block: 'center' }))
 }
@@ -161,6 +181,35 @@ async function pickMachine(win, name, value) {
   throw new Error(`the machine picker never took ${String(name)}`)
 }
 
+/** Open a row's menu; its entries, portalled, are the window's. */
+async function openMenu(win, scope, id) {
+  const entries = win.locator(`[data-connection-menu-entries="${id}"]`)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await scope.locator(`[data-connection-menu="${id}"]`).click()
+    if (
+      await entries.waitFor({ state: 'visible', timeout: 1500 }).then(
+        () => true,
+        () => false
+      )
+    )
+      return entries
+    await win.keyboard.press('Escape')
+  }
+  throw new Error(`the menu of ${id} never opened`)
+}
+
+/** The page opened again once the usage read is stale (30 s): what a person
+ *  coming back reads. */
+async function reopenStale(win, page, waitFor) {
+  await win.waitForTimeout(31_000)
+  await win.locator('[data-settings-nav-row="servers"]').click()
+  await win.locator('[data-settings-page="servers"]').waitFor()
+  await win.locator('[data-settings-nav-row="accounts"]').click()
+  await page.locator(waitFor).waitFor()
+}
+
+const text = async (locator) => ((await locator.innerText()) ?? '').replace(/\s+/g, ' ').trim()
+
 export async function run(t) {
   mkdirSync(SHOTS, { recursive: true })
   const world = await fleetWorld('connections-cards-shots', { count: 1 })
@@ -171,13 +220,12 @@ export async function run(t) {
     const { app, win } = mac
     writeFileSync(path.join(mac.dir, 'models-catalog.json'), JSON.stringify(CATALOGUE))
     await app.evaluate(
-      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
-        // The machine login is never read here (as cap-words).
+      (_electron, { CLAUDE }) => {
         const settings = globalThis.__claveE2E?.settings
         if (settings) {
-          // What Pi and OpenCode tabs used today (PRDCT-4551), made up: the
-          // "Kimi work" plan connection ran 12 requests, DeepSeek (pay per
-          // use) 48.2K tokens for $0.37, every other connection nothing.
+          // What Pi and OpenCode tabs used today (PRDCT-4551), made up: "Kimi
+          // work" (a plan) 12 requests, DeepSeek (pay per use) 48.2K tokens for
+          // $0.37, every other connection nothing.
           const zero = {
             requests: 0,
             input: 0,
@@ -189,22 +237,14 @@ export async function run(t) {
             sessions: 0
           }
           const figuresOf = {
-            'Kimi work': {
-              ...zero,
-              requests: 12,
-              input: 9000,
-              output: 1400,
-              totalTokens: 10400,
-              sessions: 2
-            },
+            'Kimi work': { ...zero, requests: 12, input: 9000, output: 1400, totalTokens: 10400 },
             DeepSeek: {
               ...zero,
               requests: 31,
               input: 40000,
               output: 8200,
               totalTokens: 48200,
-              cost: 0.37,
-              sessions: 3
+              cost: 0.37
             }
           }
           settings.harnessUsage.read = async ({ range }) => {
@@ -220,6 +260,7 @@ export async function run(t) {
             }))
             return { range, rows, unavailable: [] }
           }
+          // The machine login is never read here (as cap-words).
           const readClaude = settings.usage.readClaude
           settings.usage.readClaude = async (accountId, force) =>
             accountId === undefined || accountId === 'default'
@@ -227,10 +268,7 @@ export async function run(t) {
               : readClaude(accountId, force)
         }
         const reset = (hours) => String(Math.floor(Date.now() / 1000) + hours * 3600)
-        const windows = {
-          [WORK_TOKEN]: { block: '0.2', week: '0.4', fable: true },
-          [PLAY_TOKEN]: { block: '0.1', week: '0.1', fable: false }
-        }
+        const byToken = Object.fromEntries(CLAUDE.map((c) => [c.token, c]))
         const original = globalThis.fetch
         globalThis.fetch = async (url, init) => {
           const target = String(url)
@@ -243,8 +281,8 @@ export async function run(t) {
               }),
               { status: 200, headers: { 'content-type': 'application/json' } }
             )
-          const token = (init?.headers?.Authorization ?? '').replace(/^Bearer /, '')
-          const w = windows[token]
+          const sent = (init?.headers?.Authorization ?? '').replace(/^Bearer /, '')
+          const w = byToken[sent]
           if (!w) return original(url, init)
           return new Response('{}', {
             status: 200,
@@ -254,8 +292,9 @@ export async function run(t) {
               'anthropic-ratelimit-unified-5h-reset': reset(3),
               'anthropic-ratelimit-unified-5h-status': 'allowed',
               'anthropic-ratelimit-unified-7d-utilization': w.week,
-              'anthropic-ratelimit-unified-7d-reset': reset(3 * 24 + 5),
-              'anthropic-ratelimit-unified-7d-status': 'allowed',
+              // Each account's week renews on a day of its own (one is the soonest).
+              'anthropic-ratelimit-unified-7d-reset': reset(24 * (1 + CLAUDE.indexOf(w)) + 5),
+              'anthropic-ratelimit-unified-7d-status': w.out ? 'rejected' : 'allowed',
               ...(w.fable
                 ? {
                     'anthropic-ratelimit-unified-7d_oi-utilization': '1.0',
@@ -267,7 +306,7 @@ export async function run(t) {
           })
         }
       },
-      { WORK_TOKEN, PLAY_TOKEN }
+      { CLAUDE }
     )
     await connectMac(mac, world.servers, { ui: false })
     const [owner] = mac.owners
@@ -277,150 +316,214 @@ export async function run(t) {
     const page = win.locator('[data-settings-page="accounts"]')
     await page.locator('[data-provider-card="moonshot"]').waitFor()
 
-    // ── The empty page ──
+    // ── 1. The empty page ──
     t.equal(
-      'the empty page lists every provider to connect: Anthropic, OpenAI and the ten',
+      'the empty page: the Anthropic card (the machine login) and eleven providers to connect',
       await page.locator('[data-provider-card]').count(),
       12
     )
     t.equal(
-      'and nothing connected beyond the machine login',
+      'nothing connected beyond the machine login',
       await page.locator('[data-connections-count]').getAttribute('data-connections-count'),
       '0'
     )
     await shootEach(app, win, '01-empty-page', (name, size) => shootPage(app, win, name, size))
 
-    // ── Two accounts, three connections of two providers ──
-    const seeded = await win.evaluate(
-      async ({ WORK_TOKEN, PLAY_TOKEN, KIMI_KEY, DEEPSEEK_KEY }) => {
+    // ── 2. The owner's shape: six Claude accounts, one Moonshot ──
+    const ids = await win.evaluate(
+      async ({ CLAUDE, KIMI_KEY }) => {
         const api = window.electronAPI
-        const work = await api.claudeAccountAdd({ label: 'Work' })
-        await api.claudeAccountSetToken(work.id, WORK_TOKEN)
-        const play = await api.claudeAccountAdd({ label: 'Play' })
-        await api.claudeAccountSetToken(play.id, PLAY_TOKEN)
+        const claude = {}
+        for (const c of CLAUDE) {
+          const made = await api.claudeAccountAdd({ label: c.label })
+          await api.claudeAccountSetToken(made.id, c.token)
+          claude[c.label] = made.id
+        }
         const kimi = await api.providerConnectionAdd({ company: 'moonshot', label: 'Kimi work' })
         await api.providerConnectionSetKey(kimi.id, KIMI_KEY)
-        const spare = await api.providerConnectionAdd({ company: 'moonshot', label: 'Kimi spare' })
-        const ds = await api.providerConnectionAdd({ company: 'deepseek', label: 'DeepSeek' })
-        await api.providerConnectionSetKey(ds.id, DEEPSEEK_KEY)
-        // A Codex subscription handed to Clave, not signed in yet (no Codex here).
-        const team = await api.codexAccountAdd({ label: 'Team', kind: 'chatgpt' })
-        await api.getUsageLimits(work.id, { force: true })
-        await api.getUsageLimits(play.id, { force: true })
-        return {
-          work: work.id,
-          play: play.id,
-          kimi: kimi.id,
-          spare: spare.id,
-          ds: ds.id,
-          team: team.id
-        }
+        for (const id of Object.values(claude)) await api.getUsageLimits(id, { force: true })
+        return { claude, kimi: kimi.id }
       },
-      { WORK_TOKEN, PLAY_TOKEN, KIMI_KEY, DEEPSEEK_KEY }
+      { CLAUDE, KIMI_KEY }
     )
-    // The window read today's usage as the cards appeared, while the seeding
-    // was still adding them, and keeps a read for 30 s: once it is stale, the
-    // page opened again reads it anew, as a person coming back would.
-    await win.waitForTimeout(31_000)
-    await win.locator('[data-settings-nav-row="servers"]').click()
-    await win.locator('[data-settings-page="servers"]').waitFor()
-    await win.locator('[data-settings-nav-row="accounts"]').click()
-    await page.locator(`[data-provider-connection-row="${seeded.kimi}"]`).waitFor()
-    const workCard = page.locator(`[data-claude-account-row="${seeded.work}"]`)
-    const kimiCard = page.locator(`[data-provider-connection-row="${seeded.kimi}"]`)
-    const dsCard = page.locator(`[data-provider-connection-row="${seeded.ds}"]`)
-    const read = await until(
-      async () =>
-        /Fable out/.test((await workCard.textContent()) ?? '') &&
-        /18\.40 USD left/.test((await dsCard.textContent()) ?? '') &&
-        (await kimiCard.locator('[data-connection-models]').count()) === 1,
-      { tries: 80, gapMs: 250 }
-    )
-    t.check('the cards read their usage and their models', !!read, {
-      work: (await workCard.textContent())?.slice(0, 200),
-      ds: (await dsCard.textContent())?.slice(0, 200)
-    })
-    // ── The connection's own usage today (PRDCT-4551), apart from the provider's ──
-    const ownOf = (id) => page.locator(`[data-connection-own-usage="${id}"]`)
-    const ownText = async (id) => ((await ownOf(id).textContent()) ?? '').trim()
-    await until(async () => (await ownText(seeded.ds)).includes('$0.37'), { tries: 80, gapMs: 250 })
+    await reopenStale(win, page, `[data-provider-connection-row="${ids.kimi}"]`)
+    const anthropic = page.locator('[data-provider-card="anthropic"]')
+    const row = (label) => page.locator(`[data-claude-account-row="${ids.claude[label]}"]`)
+    await until(async () => /out/.test(await text(row('Studio'))), { tries: 80, gapMs: 250 })
     t.equal(
-      'a plan connection: its tabs’ requests and tokens, no cost',
-      await ownText(seeded.kimi),
-      'Your tabs12 requests · 10.4K tokens today'
+      'one Anthropic card holds the seven connections as rows',
+      await anthropic.locator('[data-claude-account-row]').count(),
+      7
     )
     t.equal(
-      'a pay-per-use connection: tokens and cost',
-      await ownText(seeded.ds),
-      'Your tabs48.2K tokens · $0.37 today'
-    )
-    t.equal(
-      'a connection whose tabs ran nothing says so',
-      await ownText(seeded.spare),
-      'Your tabsNothing run today'
+      'the Claude models are named once, on the card',
+      await anthropic.locator('[data-connection-models]').count(),
+      1
     )
     t.check(
-      "the provider's own line stays on its own, named",
-      /Provider\s*18\.40 USD left/.test((await dsCard.innerText()) ?? '') &&
-        /Provider\s*Coding plan/.test((await kimiCard.innerText()) ?? ''),
-      await dsCard.innerText()
+      'the account that is out says so in its row',
+      /out/.test(await text(row('Studio'))) &&
+        /Limit reached/.test(await text(row('Studio'))) &&
+        (await row('Studio').getAttribute('data-account-exhausted')) === 'true',
+      await text(row('Studio'))
     )
     t.equal(
-      'a Claude account keeps its one line: no count of its own',
-      await workCard.locator('[data-connection-own-usage]').count(),
+      'one row is suggested',
+      await anthropic.locator('[data-connection-suggested]').count(),
+      1
+    )
+    t.equal(
+      'no row shows a row of icons: one Manage menu per row the person can change',
+      await anthropic.locator('.btn-icon').count(),
       0
     )
-    await shootEach(app, win, '07-usage-close-up', async (name) => {
-      await centre(dsCard)
-      await win.waitForTimeout(500)
-      await dsCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
-    })
     t.equal(
-      'six connections now',
-      await page.locator('[data-connections-count]').getAttribute('data-connections-count'),
-      '6'
+      'a connected provider is not offered again',
+      await page.locator('[data-connection-offers] [data-provider-card="moonshot"]').count(),
+      0
     )
     t.equal(
-      'the Moonshot card offers another connection',
-      (
-        await page.locator('[data-provider-card="moonshot"] [data-connect-company]').textContent()
-      )?.trim(),
+      'the Moonshot card connects another',
+      await text(page.locator('[data-provider-card="moonshot"] [data-connect-company="moonshot"]')),
       'Connect another'
     )
     t.equal(
-      'the spare Moonshot connection says it needs a key',
-      (
-        await page.locator(`[data-provider-connection-key-state="${seeded.spare}"]`).textContent()
-      )?.trim(),
-      'Needs a key'
+      "Moonshot's own tabs' usage, named apart from the provider's line",
+      await text(page.locator(`[data-connection-own-usage="${ids.kimi}"]`)),
+      'Your tabs 12 requests · 10.4K tokens today'
     )
     const pageText = await page.innerText()
-    t.check(
-      'no key or token reaches the page',
-      ![WORK_TOKEN, PLAY_TOKEN, KIMI_KEY, DEEPSEEK_KEY].some((v) => pageText.includes(v))
+    t.check('no key or token reaches the page', !SECRETS.some((v) => pageText.includes(v)))
+    await shootEach(app, win, '10-owner-page', (name, size) => shootPage(app, win, name, size))
+
+    // A row's menu, open: its entries in words.
+    const clientA = ids.claude['Client A']
+    const entries = await openMenu(win, page, clientA)
+    const words = (await entries.innerText())
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    t.equal(
+      "a Claude row's menu: every action in words, Remove apart and last",
+      words.join(' | '),
+      'Move up | Move down | Rename | Sign in again | Replace the token | Forget the sign-in | Remove'
     )
-    await shootEach(app, win, '02-whole-page', (name, size) => shootPage(app, win, name, size))
-    // The app's two other skins, at the usual width.
+    await win.keyboard.press('Escape')
+    await shootEach(app, win, '11-owner-row-menu', async (name) => {
+      await centre(row('Client A'))
+      await openMenu(win, page, clientA)
+      await win.waitForTimeout(300)
+      await win.screenshot({ path: path.join(SHOTS, `${name}.png`) })
+      await win.keyboard.press('Escape')
+      await win.waitForTimeout(200)
+    })
+
+    // A removal's question, open on the row.
+    await openMenu(win, page, clientA)
+    await win.locator(`[data-claude-account-remove="${clientA}"]`).click()
+    const question = row('Client A').locator(`[data-connection-remove-question="${clientA}"]`)
+    await question.waitFor()
+    t.check(
+      "the removal's question opens on the row, with its sentences",
+      /Remove Client A\?/.test(await question.innerText()) &&
+        /Its token is deleted from this Mac\. Tabs running on it keep going/.test(
+          await question.innerText()
+        ),
+      await question.innerText()
+    )
+    await shootEach(app, win, '12-owner-remove-question', async (name) => {
+      await centre(row('Client A'))
+      await win.waitForTimeout(500)
+      await win.screenshot({ path: path.join(SHOTS, `${name}.png`) })
+    })
+    await row('Client A').locator(`[data-connection-remove-cancel="${clientA}"]`).click()
+
+    // ── 3. The general case ──
+    const general = await win.evaluate(
+      async ({ remove, KIMI_SPARE_KEY, DEEPSEEK_KEY }) => {
+        const api = window.electronAPI
+        for (const id of remove) await api.claudeAccountRemove(id)
+        const spare = await api.providerConnectionAdd({ company: 'moonshot', label: 'Kimi spare' })
+        await api.providerConnectionSetKey(spare.id, KIMI_SPARE_KEY)
+        const ds = await api.providerConnectionAdd({ company: 'deepseek', label: 'DeepSeek' })
+        await api.providerConnectionSetKey(ds.id, DEEPSEEK_KEY)
+        const ollama = await api.providerConnectionAdd({
+          company: 'ollama',
+          label: 'Local Ollama',
+          baseUrl: 'http://localhost:11434/v1'
+        })
+        // A Codex subscription handed to Clave, not signed in yet (no Codex here).
+        const team = await api.codexAccountAdd({ label: 'Team', kind: 'chatgpt' })
+        return { spare: spare.id, ds: ds.id, ollama: ollama.id, team: team.id }
+      },
+      {
+        remove: ['Studio', 'Client A', 'Client B', 'Spare'].map((l) => ids.claude[l]),
+        KIMI_SPARE_KEY,
+        DEEPSEEK_KEY
+      }
+    )
+    await reopenStale(win, page, `[data-provider-connection-row="${general.ds}"]`)
+    const moonshot = page.locator('[data-provider-card="moonshot"]')
+    const dsRow = page.locator(`[data-provider-connection-row="${general.ds}"]`)
+    const teamRow = page.locator(`[data-codex-account-row="${general.team}"]`)
+    await until(async () => /\$0\.37/.test(await text(dsRow)), { tries: 80, gapMs: 250 })
+    t.equal(
+      'one card per connected provider: Anthropic, OpenAI, Moonshot, DeepSeek, Ollama',
+      await page
+        .locator(
+          '[data-connections-connected] [data-provider-group], [data-connections-connected] [data-provider-company-section]'
+        )
+        .count(),
+      5
+    )
+    t.equal(
+      'the Moonshot card holds its two connections',
+      await moonshot.locator('[data-provider-connection-row]').count(),
+      2
+    )
+    t.equal(
+      'a pay-per-use row: the provider line and its tabs, named apart',
+      await text(dsRow.locator('.connection-card-usage')),
+      'Provider 18.40 USD left Your tabs 48.2K tokens · $0.37 today'
+    )
+    t.equal(
+      'a row that needs a sign-in carries its one button',
+      await text(teamRow.locator(`[data-connection-fix="${general.team}"]`)),
+      'Sign in'
+    )
+    const dsWords = (await (await openMenu(win, page, general.ds)).innerText())
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    t.equal("a stored connection's menu", dsWords.join(' | '), 'Rename | Replace the key | Remove')
+    await win.keyboard.press('Escape')
+    const teamWords = (await (await openMenu(win, page, general.team)).innerText())
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    t.equal("a Codex row's menu", teamWords.join(' | '), 'Rename | Sign in | Remove')
+    await win.keyboard.press('Escape')
+    await shootEach(app, win, '20-general-page', (name, size) => shootPage(app, win, name, size))
     for (const skin of ['coffee', 'charcoal']) {
       await setTheme(win, skin)
-      await shootPage(app, win, `02-whole-page--${skin}-usual`, WIDE)
+      await shootPage(app, win, `20-general-page--${skin}-usual`, WIDE)
     }
 
-    // ── One card unfolded ──
-    await kimiCard.locator('[data-connection-models-toggle]').first().click()
-    await kimiCard.locator('[data-connection-models-rest]').waitFor()
+    // A provider card's models unfolded.
+    await moonshot.locator('[data-connection-models-toggle]').first().click()
+    await moonshot.locator('[data-connection-models-rest]').waitFor()
     t.check(
       'the unfolded card names every Kimi model',
-      (await kimiCard.innerText()).includes('Kimi Vision')
+      (await moonshot.innerText()).includes('Kimi Vision')
     )
-    await shootEach(app, win, '03-card-models-unfolded', async (name) => {
-      await centre(kimiCard)
+    await shootEach(app, win, '21-card-models-unfolded', async (name) => {
+      await centre(moonshot)
       await win.waitForTimeout(500)
-      await kimiCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
+      await moonshot.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
-    await kimiCard.locator('[data-connection-models-toggle]').first().click()
+    await moonshot.locator('[data-connection-models-toggle]').first().click()
 
-    // ── The connect form open in a card ──
+    // The connect form open in a card: one to connect, then another of a connected one.
     const routerCard = page.locator('[data-provider-card="openrouter"]')
     await routerCard.locator('[data-connect-company="openrouter"]').click()
     await routerCard.locator('[data-provider-add-form="openrouter"]').waitFor()
@@ -428,83 +531,87 @@ export async function run(t) {
       'Connect opens the form in the card, labelled with the provider',
       (await routerCard.locator('[data-provider-add-label]').inputValue()) === 'OpenRouter'
     )
-    await shootEach(app, win, '04-connect-form-in-card', async (name) => {
+    await shootEach(app, win, '22-connect-form-in-card', async (name) => {
       await centre(routerCard)
       await win.waitForTimeout(600)
       await win.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
     await routerCard.locator('[data-provider-add-cancel]').click()
-
-    // ── The removal's question ──
-    await dsCard.locator(`[data-provider-remove="${seeded.ds}"]`).click()
-    const question = dsCard.locator(`[data-connection-remove-question="${seeded.ds}"]`)
-    await question.waitFor()
+    await moonshot.locator('[data-connect-company="moonshot"]').click()
+    await moonshot.locator('[data-provider-add-form="moonshot"]').waitFor()
     t.check(
-      'removing asks first, naming what goes and what keeps running',
-      /Remove DeepSeek\?/.test(await question.innerText()) &&
-        /Tabs running on it keep going until they are restarted/.test(await question.innerText()),
-      await question.innerText()
+      'Connect another opens the form inside the connected card, a third label offered',
+      (await moonshot.locator('[data-provider-add-label]').inputValue()) === 'Moonshot'
     )
-    await shootEach(app, win, '05-remove-question', async (name) => {
-      await centre(dsCard)
+    await shootEach(app, win, '23-connect-another-in-card', async (name) => {
+      await centre(moonshot)
       await win.waitForTimeout(600)
-      await dsCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
+      await moonshot.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
-    await dsCard.locator(`[data-connection-remove-cancel="${seeded.ds}"]`).click()
-    t.check(
-      'Cancel keeps the connection',
-      !!(await until(async () => (await question.count()) === 0)) &&
-        (await win.evaluate(() => window.electronAPI.providerConnectionsList())).some(
-          (c) => c.company === 'deepseek'
-        )
-    )
+    await moonshot.locator('[data-provider-add-cancel]').click()
 
-    // ── The removal's question on a Codex card: its folder goes under a running tab ──
-    const teamCard = page.locator(`[data-codex-account-row="${seeded.team}"]`)
-    await teamCard.locator(`[data-codex-account-remove="${seeded.team}"]`).click()
-    const codexQuestion = teamCard.locator(`[data-connection-remove-question="${seeded.team}"]`)
+    // The removal's questions: a stored connection's, a Codex one's.
+    await openMenu(win, page, general.ds)
+    await win.locator(`[data-provider-remove="${general.ds}"]`).click()
+    const dsQuestion = dsRow.locator(`[data-connection-remove-question="${general.ds}"]`)
+    await dsQuestion.waitFor()
+    t.check(
+      "a stored connection's removal keeps its sentence",
+      /Remove DeepSeek\?/.test(await dsQuestion.innerText()) &&
+        /Tabs running on it keep going until they are restarted/.test(await dsQuestion.innerText())
+    )
+    await shootEach(app, win, '24-remove-question-provider', async (name) => {
+      await centre(dsRow)
+      await win.waitForTimeout(600)
+      await page
+        .locator('[data-provider-card="deepseek"]')
+        .screenshot({ path: path.join(SHOTS, `${name}.png`) })
+    })
+    await dsRow.locator(`[data-connection-remove-cancel="${general.ds}"]`).click()
+    await openMenu(win, page, general.team)
+    await win.locator(`[data-codex-account-remove="${general.team}"]`).click()
+    const codexQuestion = teamRow.locator(`[data-connection-remove-question="${general.team}"]`)
     await codexQuestion.waitFor()
-    const codexWords = await codexQuestion.innerText()
     t.check(
-      'a Codex removal says the folder goes and a running tab may fail, never that it keeps going',
-      /Remove Team\?/.test(codexWords) &&
-        /folder its tabs run from are deleted from this Mac/.test(codexWords) &&
-        /may fail at its next request/.test(codexWords) &&
-        !/keep going/.test(codexWords),
-      codexWords
+      "a Codex removal's sentence: the folder goes, a running tab may fail",
+      /folder its tabs run from are deleted from this Mac/.test(await codexQuestion.innerText()) &&
+        !/keep going/.test(await codexQuestion.innerText())
     )
-    await shootEach(app, win, '05-remove-question-codex', async (name) => {
-      await centre(teamCard)
+    await shootEach(app, win, '25-remove-question-codex', async (name) => {
+      await centre(teamRow)
       await win.waitForTimeout(600)
-      await teamCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
+      await page
+        .locator('[data-provider-card="openai"]')
+        .screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
-    await teamCard.locator(`[data-connection-remove-cancel="${seeded.team}"]`).click()
+    await teamRow.locator(`[data-connection-remove-cancel="${general.team}"]`).click()
+    t.check(
+      'Cancel keeps both',
+      (await win.evaluate(() => window.electronAPI.providerConnectionsList())).some(
+        (c) => c.company === 'deepseek'
+      )
+    )
 
-    // ── A Clave server's page ──
+    // ── 4. A Clave server's page ──
     await request(server, '/connections/providers', { company: 'zai', label: 'GLM plan' })
     await pickMachine(win, /^Personal VPS 1/, owner.id)
     const serverPage = page.locator(`[data-server-settings="${owner.id}"]`)
-    await serverPage.locator('[data-provider-card="zai"]').waitFor()
-    await until(
-      async () => (await serverPage.locator('[data-provider-connection-row]').count()) === 1
-    )
+    await serverPage.locator('[data-provider-card="zai"] [data-provider-connection-row]').waitFor()
     t.equal(
-      "the server's page offers the ten providers, its subscriptions being signed in there",
-      await serverPage.locator('[data-provider-card]').count(),
-      10
+      "the server's page offers the nine providers not connected there",
+      await serverPage.locator('[data-connection-offers] [data-provider-card]').count(),
+      9
     )
-    // The server's own count, read on the server: its connection has no key
-    // yet, so no tab ran on it there.
     const serverOwn = serverPage.locator('[data-connection-own-usage]')
     await until(
       async () => (await serverOwn.getAttribute('data-connection-own-usage-state')) === 'read'
     )
     t.equal(
       "the server's connection reads its own count, from the server",
-      ((await serverOwn.textContent()) ?? '').trim(),
-      'Your tabsNothing run today'
+      await text(serverOwn),
+      'Your tabs Nothing run today'
     )
-    await shootEach(app, win, '06-server-page', (name, size) => shootPage(app, win, name, size))
+    await shootEach(app, win, '26-server-page', (name, size) => shootPage(app, win, name, size))
 
     await pickMachine(win, 'This Mac', 'local')
     t.check('no page error', mac.errors.length === 0, mac.errors)

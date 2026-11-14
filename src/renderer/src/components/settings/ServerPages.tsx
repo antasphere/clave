@@ -24,8 +24,8 @@ import { HelpersList } from './HelpersSettings'
 import { IntegrationsList } from './IntegrationsSettings'
 import { SettingsPage, SettingsCallout } from './primitives'
 import { ConnectionsBoard } from './AccountsSettings'
-import { ClaudeAccountCard } from './ClaudeAccountsSection'
-import { CodexAccountCard } from './CodexAccountsSection'
+import { ServerClaudeCard } from './ClaudeAccountsSection'
+import { ServerCodexCard } from './CodexAccountsSection'
 
 /**
  * The pages of the Agents group when the machine picker names a saved
@@ -231,30 +231,18 @@ export function ServerAccountsSettings({ serverId }: { serverId: string }): Reac
               codexReady={codexShown.some((a) => a.hasCredential)}
               accounts={(modelsOf) => (
                 <>
-                  <div className="connection-grid-group" data-server-claude-accounts>
-                    {settings.claude.map((account) => (
-                      <ClaudeAccountCard
-                        key={account.id}
-                        account={account}
-                        summary={settings.usage.claude[account.id]}
-                        migrated={settings.migrated.includes(account.id)}
-                        machine={name}
-                        attrs={{ 'data-server-claude-account': account.id }}
-                      />
-                    ))}
-                  </div>
-                  <div className="connection-grid-group" data-server-codex-accounts>
-                    {codexShown.map((account) => (
-                      <CodexAccountCard
-                        key={account.id}
-                        account={account}
-                        summary={settings.usage.codex[account.id]}
-                        models={modelsOf('openai')}
-                        machine={name}
-                        attrs={{ 'data-server-codex-account': account.id }}
-                      />
-                    ))}
-                  </div>
+                  <ServerClaudeCard
+                    accounts={settings.claude}
+                    migrated={settings.migrated}
+                    usage={settings.usage.claude}
+                    machine={name}
+                  />
+                  <ServerCodexCard
+                    accounts={codexShown}
+                    usage={settings.usage.codex}
+                    models={modelsOf('openai')}
+                    machine={name}
+                  />
                 </>
               )}
             />

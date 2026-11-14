@@ -5,12 +5,7 @@ import {
   usageLineTextFor,
   useUsageLineStore
 } from '../../store/models-catalog-store'
-import {
-  ArrowTopRightOnSquareIcon,
-  ClipboardDocumentIcon,
-  PencilSquareIcon,
-  TrashIcon
-} from '@heroicons/react/24/outline'
+import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import type { ProviderConnection, ProviderWireFormat } from '../../../../preload/index.d'
 import { useProviderConnectionsStore } from '../../store/provider-connections-store'
 import { useProviderConnectionsOf } from './connection-actions'
@@ -21,24 +16,26 @@ import {
   type ProviderCompany
 } from '@clave/contract/settings/provider-catalogue'
 import { nextProviderLabel } from './connection-companies'
-import { ownUsageText, providerCardFacts, type CardCompany } from './connection-cards'
+import {
+  connectLabel,
+  ownUsageText,
+  providerCardFacts,
+  rowMenuEntries,
+  type CardCompany
+} from './connection-cards'
 import { useConnectionUsage, useHarnessUsage } from '../../store/harness-usage-store'
 import {
-  CardFact,
-  CardFacts,
   CardFold,
-  CardFoot,
-  CardHead,
   CardLabel,
-  CardStateText,
-  CompanyWhat,
-  ConnectionCard,
-  HarnessList,
-  ModelList,
+  ConnectionRow,
+  ProviderCard,
   RemoveConfirm,
+  RowMenu,
+  RowNote,
   UsageLine,
   type CardModels
 } from './ConnectionCard'
+import { reveal } from './connection-actions'
 import { SettingsCallout, SettingsSelect } from './primitives'
 
 /**
@@ -349,14 +346,14 @@ export function AddForm({
   )
 }
 
-/** One stored connection as a card: its label, its key in plain words, the
- *  harnesses its endpoints serve, its company's models, its usage line. */
-function ProviderConnectionCard({
+/** One stored connection as a row of its provider's card: its label, its key
+ *  in a word, its usage (the provider's line and its own tabs', named
+ *  apart), the address it was given (Ollama, another provider). */
+function ProviderConnectionRow({
   machine,
   machineWords,
   connection,
   usage,
-  models,
   keyFormOpen,
   error,
   onKey,
@@ -367,7 +364,6 @@ function ProviderConnectionCard({
   connection: ProviderConnection
   /** Its usage line (PRDCT-4496), or null while it is not read. */
   usage: string | null
-  models: CardModels
   keyFormOpen: boolean
   error: string | null
   onKey: () => void
@@ -386,67 +382,23 @@ function ProviderConnectionCard({
   const read = useHarnessUsage(machine, 'today')
   const own = ownUsageText(read?.status, used)
   return (
-    <ConnectionCard
-      tone={facts.state.tone}
-      wide={keyFormOpen}
+    <ConnectionRow
       data-provider-connection-row={connection.id}
-    >
-      <CardHead
-        company={facts.company}
-        title={
-          <CardLabel
-            label={connection.label}
-            draft={draft}
-            onDraft={setDraft}
-            onCommit={(label) => void rename(machine, connection.id, label)}
-            labelProps={{ 'data-provider-connection-label': connection.id }}
-            inputProps={{ 'data-provider-rename-input': true }}
-          />
-        }
-        subtitle={<CompanyWhat company={facts.companyName} what={facts.what} />}
-        aside={
-          <CardStateText state={facts.state} data-provider-connection-key-state={connection.id} />
-        }
-      />
-      <CardFacts>
-        <CardFact term="Harnesses">
-          <HarnessList harnesses={facts.harnesses} />
-        </CardFact>
-        <CardFact term="Models">
-          <ModelList models={models} id={connection.id} />
-        </CardFact>
-        {ownAddress && host && (
-          <CardFact term="Address">
-            <span className="connection-card-quiet">{host}</span>
-          </CardFact>
-        )}
-        <CardFact term="Usage">
-          <UsageLine
-            text={connection.hasKey || !connection.needsKey ? usage : 'Read once the key is stored'}
-            id={connection.id}
-            own={own}
-            data-provider-connection-usage={usage ? connection.id : undefined}
-          />
-        </CardFact>
-      </CardFacts>
-      <CardFold open={keyFormOpen}>
-        <KeyForm machine={machine} connection={connection} error={error} onClose={onKeyClose} />
-      </CardFold>
-      <CardFold open={confirming}>
-        <RemoveConfirm
-          kind={connection.needsKey ? 'provider-key' : 'provider-local'}
+      heading={
+        <CardLabel
           label={connection.label}
-          machine={machineWords}
-          id={connection.id}
-          onCancel={() => setConfirming(false)}
-          onRemove={() => {
-            setConfirming(false)
-            void remove(machine, connection.id)
-          }}
+          draft={draft}
+          onDraft={setDraft}
+          onCommit={(label) => void rename(machine, connection.id, label)}
+          labelProps={{ 'data-provider-connection-label': connection.id }}
+          inputProps={{ 'data-provider-rename-input': true }}
         />
-      </CardFold>
-      <CardFoot hidden={confirming || keyFormOpen}>
-        {connection.needsKey && !connection.hasKey && (
+      }
+      state={facts.state}
+      stateAttrs={{ 'data-provider-connection-key-state': connection.id }}
+      fix={
+        connection.needsKey &&
+        !connection.hasKey && (
           <button
             type="button"
             className="btn-secondary btn-compact"
@@ -455,53 +407,66 @@ function ProviderConnectionCard({
           >
             Paste the key
           </button>
-        )}
-        <button
-          type="button"
-          className="btn-icon btn-icon-sm"
-          onClick={() => setDraft(connection.label)}
-          title="Rename"
-          aria-label={`Rename ${connection.label}`}
-          data-provider-rename={connection.id}
-        >
-          <PencilSquareIcon className="w-3.5 h-3.5" />
-        </button>
-        {connection.needsKey && (
-          <button
-            type="button"
-            className="btn-icon btn-icon-sm"
-            onClick={onKey}
-            title={connection.hasKey ? 'Replace the key' : 'Paste a key'}
-            aria-label={
-              connection.hasKey
-                ? `Replace the key of ${connection.label}`
-                : `Paste a key for ${connection.label}`
+        )
+      }
+      menu={
+        <RowMenu
+          id={connection.id}
+          label={connection.label}
+          entries={rowMenuEntries({
+            kind: connection.needsKey ? 'provider-key' : 'provider-local',
+            signedIn: connection.hasKey,
+            onRename: () => setDraft(connection.label),
+            onCredential: connection.needsKey ? onKey : undefined,
+            onRemove: () => setConfirming(true),
+            hooks: {
+              rename: { 'data-provider-rename': connection.id },
+              credential: { 'data-provider-key': connection.id },
+              remove: { 'data-provider-remove': connection.id }
             }
-            data-provider-key={connection.id}
-          >
-            <ClipboardDocumentIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn-icon btn-icon-sm btn-icon--danger"
-          onClick={() => setConfirming(true)}
-          title="Remove"
-          aria-label={`Remove connection ${connection.label}`}
-          data-provider-remove={connection.id}
-        >
-          <TrashIcon className="w-3.5 h-3.5" />
-        </button>
-      </CardFoot>
-    </ConnectionCard>
+          })}
+        />
+      }
+      lines={
+        <>
+          <UsageLine
+            text={connection.hasKey || !connection.needsKey ? usage : 'Read once the key is stored'}
+            id={connection.id}
+            own={own}
+            data-provider-connection-usage={usage ? connection.id : undefined}
+          />
+          {ownAddress && host && <RowNote>{host}</RowNote>}
+        </>
+      }
+      fold={
+        <>
+          <CardFold open={keyFormOpen}>
+            <KeyForm machine={machine} connection={connection} error={error} onClose={onKeyClose} />
+          </CardFold>
+          <CardFold open={confirming}>
+            <RemoveConfirm
+              kind={connection.needsKey ? 'provider-key' : 'provider-local'}
+              label={connection.label}
+              machine={machineWords}
+              id={connection.id}
+              onCancel={() => setConfirming(false)}
+              onRemove={() => {
+                setConfirming(false)
+                void remove(machine, connection.id)
+              }}
+            />
+          </CardFold>
+        </>
+      }
+    />
   )
 }
 
 /**
- * The provider connections of one machine as cards, grouped by company in
- * catalogue order (each group a `data-provider-company-section` that takes no
- * room of its own in the grid). `modelsOf` names what a company's catalogue
- * serves.
+ * The stored connections of one machine (PRDCT-4552): one card per provider
+ * that has any, in catalogue order, its connections as rows, its foot
+ * connecting another (the add form opening inside the card). `modelsOf`
+ * names what a company's catalogue serves.
  */
 export function ProviderConnectionCards({
   machine,
@@ -512,14 +477,17 @@ export function ProviderConnectionCards({
   machine: string
   machineWords: string
   modelsOf: (company: CardCompany) => CardModels
-  /** An add form is open on the page: the store's sentence shows in it. */
+  /** A form to connect a provider is open below: the store's sentence shows in it. */
   addOpen: boolean
 }): ReactElement {
   const state = useProviderConnectionsOf(machine)
   const clearError = useProviderConnectionsStore((s) => s.clearError)
-  // The open key form, for the machine it was opened on.
+  // The open key form and the open add form, for the machine they were
+  // opened on (switching the machine closes them, derived during render).
   const [keyForm, setKeyForm] = useState<{ machine: string; id: string } | null>(null)
   const keyFor = keyForm?.machine === machine ? keyForm.id : null
+  const [addForm, setAddForm] = useState<{ machine: string; company: string } | null>(null)
+  const addFor = addForm?.machine === machine ? addForm.company : null
   // Lane C of the harness wave (PRDCT-4496): each connection's usage line,
   // read when the page shows it and again, forced, once its key is set.
   useUsageLines(machine, state.connections)
@@ -529,42 +497,82 @@ export function ProviderConnectionCards({
   })).filter((entry) => entry.connections.length > 0)
   return (
     <>
-      {companies.map(({ company, connections }) => (
-        <div
-          key={company.id}
-          className="connection-grid-group"
-          data-provider-company-section={company.id}
-        >
-          {connections.map((connection) => (
-            <ProviderConnectionCard
-              key={connection.id}
-              machine={machine}
-              machineWords={machineWords}
-              connection={connection}
-              usage={
-                connection.hasKey || !connection.needsKey
-                  ? usageLineTextFor(machine, connection.id)
-                  : null
-              }
-              models={modelsOf(company.id)}
-              keyFormOpen={keyFor === connection.id}
-              error={state.error}
-              onKey={() => {
-                clearError(machine)
-                setKeyForm({ machine, id: connection.id })
-              }}
-              onKeyClose={() => {
-                clearError(machine)
-                setKeyForm(null)
-              }}
-            />
-          ))}
-        </div>
-      ))}
-      {state.error && !keyFor && !addOpen && (
-        <div className="connection-grid-note">
-          <SettingsCallout tone="danger" role="alert" text={state.error} />
-        </div>
+      {companies.map(({ company, connections }) => {
+        const facts = providerCardFacts({
+          company: company.id,
+          needsKey: company.needsKey,
+          hasKey: false,
+          endpoints: connections[0].endpoints
+        })
+        return (
+          <ProviderCard
+            key={company.id}
+            company={company.id}
+            name={company.name}
+            what={facts.what}
+            harnesses={facts.harnesses}
+            models={modelsOf(company.id)}
+            modelsId={company.id}
+            data-provider-card={company.id}
+            data-provider-company-section={company.id}
+            rows={connections.map((connection) => (
+              <ProviderConnectionRow
+                key={connection.id}
+                machine={machine}
+                machineWords={machineWords}
+                connection={connection}
+                usage={
+                  connection.hasKey || !connection.needsKey
+                    ? usageLineTextFor(machine, connection.id)
+                    : null
+                }
+                keyFormOpen={keyFor === connection.id}
+                error={state.error}
+                onKey={() => {
+                  clearError(machine)
+                  setKeyForm({ machine, id: connection.id })
+                }}
+                onKeyClose={() => {
+                  clearError(machine)
+                  setKeyForm(null)
+                }}
+              />
+            ))}
+            form={
+              addFor === company.id ? (
+                <AddForm
+                  key={`${machine}:${company.id}`}
+                  machine={machine}
+                  company={company}
+                  taken={connections.map((c) => c.label)}
+                  error={state.error}
+                  onCancel={() => {
+                    clearError(machine)
+                    setAddForm(null)
+                  }}
+                  onDone={() => setAddForm(null)}
+                />
+              ) : null
+            }
+            foot={
+              <button
+                type="button"
+                className="btn-secondary btn-compact"
+                onClick={() => {
+                  clearError(machine)
+                  setAddForm({ machine, company: company.id })
+                  reveal(`[data-provider-card="${company.id}"]`)
+                }}
+                data-connect-company={company.id}
+              >
+                {connectLabel(connections.length)}
+              </button>
+            }
+          />
+        )
+      })}
+      {state.error && !keyFor && !addFor && !addOpen && (
+        <SettingsCallout tone="danger" role="alert" text={state.error} />
       )}
     </>
   )
