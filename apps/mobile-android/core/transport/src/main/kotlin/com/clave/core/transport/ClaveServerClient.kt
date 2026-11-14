@@ -1,5 +1,7 @@
 package com.clave.core.transport
 
+import com.clave.core.contract.ClaudeAccountView
+import com.clave.core.contract.CodexAccountView
 import com.clave.core.contract.Decode
 import com.clave.core.contract.DecodeError
 import com.clave.core.contract.Encode
@@ -15,12 +17,16 @@ import com.clave.core.contract.RequestSnapshot
 import com.clave.core.contract.ResolveOutcome
 import com.clave.core.contract.ResolveRequestInput
 import com.clave.core.contract.ServerFailure
+import com.clave.core.contract.ServerInfoView
 import com.clave.core.contract.Session
 import com.clave.core.contract.SessionCapabilities
 import com.clave.core.contract.SessionInfo
 import com.clave.core.contract.SessionWriteInput
+import com.clave.core.contract.ShellDecode
+import com.clave.core.contract.SidebarOverview
 import com.clave.core.contract.StartSessionInput
 import com.clave.core.contract.TimelinePage
+import com.clave.core.contract.UsageRead
 import com.clave.core.contract.WorkspaceStateView
 import com.clave.core.contract.WriteAnswer
 import com.clave.core.contract.WriteStatus
@@ -84,6 +90,10 @@ public class ClaveServerClient(
     public val requests: Requests = Requests()
     public val files: Files = Files()
     public val attachments: Attachments = Attachments()
+    public val sidebar: Sidebar = Sidebar()
+    public val accounts: Accounts = Accounts()
+    public val usage: Usage = Usage()
+    public val server: Server = Server()
 
     public inner class Sessions internal constructor() {
         public suspend fun list(): List<Session> = query("/sessions", emptyList()) { Decode.sessions(it) }
@@ -201,6 +211,32 @@ public class ClaveServerClient(
                 decode = ::decodeFileAttachment,
             )
         }
+    }
+
+    /** The desktop's sidebar groups, read-only and secret-free (`GET /sidebar/overview`). */
+    public inner class Sidebar internal constructor() {
+        public suspend fun overview(): SidebarOverview = query("/sidebar/overview", emptyList()) { ShellDecode.sidebarOverview(it) }
+    }
+
+    /** The agent accounts of the machine: labels and flags, never a token or a credential. */
+    public inner class Accounts internal constructor() {
+        public suspend fun claude(): List<ClaudeAccountView> = query("/accounts/claude", emptyList()) { ShellDecode.claudeAccounts(it) }
+
+        public suspend fun codex(): List<CodexAccountView> = query("/accounts/codex", emptyList()) { ShellDecode.codexAccounts(it) }
+    }
+
+    /** The last usage read of every account, as the Mac holds it: a cache read, never a live fetch. */
+    public inner class Usage internal constructor() {
+        public suspend fun claudeSnapshot(): Map<String, UsageRead> =
+            query("/usage/claude/snapshot", emptyList()) { ShellDecode.usageSnapshot(it) }
+
+        public suspend fun codexSnapshot(): Map<String, UsageRead> =
+            query("/usage/codex/snapshot", emptyList()) { ShellDecode.usageSnapshot(it) }
+    }
+
+    /** The server's own version and name. */
+    public inner class Server internal constructor() {
+        public suspend fun info(): ServerInfoView = query("/server/info", emptyList()) { ShellDecode.serverInfo(it) }
     }
 
     // ── the wire ──

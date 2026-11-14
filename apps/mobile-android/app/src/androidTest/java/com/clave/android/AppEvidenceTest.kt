@@ -164,12 +164,10 @@ class AppEvidenceTest {
         waitForText("Sign in with Antasphere")
     }
 
-    /** The machine added, then its workspace, the echo chat, the past read and the socket subscribed. */
+    /** The machine added, then its Home, the echo chat from the recent ones, the past read and the socket subscribed. */
     private fun openEchoChat() {
         addMachine()
         rule.onNodeWithText(machineName).performClick()
-        waitForText("Scratch")
-        rule.onNodeWithText("Scratch").performClick()
         waitForText("Echo chat")
         rule.onNodeWithText("Echo chat").performClick()
         waitForText("Hello from the test")
@@ -178,7 +176,7 @@ class AppEvidenceTest {
         rule.waitUntil(EVIDENCE_WAIT_MS) { server.subscribers > 0 }
     }
 
-    /** Back until Machines, the screen without a Back. */
+    /** Back until a screen without a Back (the machine's Home), then Machines from its Settings. */
     private fun backToMachines() {
         repeat(8) {
             rule.waitForIdle()
@@ -186,6 +184,11 @@ class AppEvidenceTest {
             tapBack()
         }
         rule.waitUntil(EVIDENCE_WAIT_MS) { rule.onAllNodesWithContentDescription("Back").fetchSemanticsNodes().isEmpty() }
+        if (rule.onAllNodesWithText("Sign in with Antasphere").fetchSemanticsNodes().isEmpty()) {
+            rule.onNodeWithContentDescription("Settings").performClick()
+            waitForText("Machines")
+            rule.onNodeWithText("Machines").performClick()
+        }
         waitForText("Sign in with Antasphere")
     }
 
@@ -250,6 +253,44 @@ class AppEvidenceTest {
         waitForDescription("Match the system")
         rule.onNodeWithContentDescription("Match the system").performScrollTo().performClick()
         waitForDescription("Match the system, selected")
+        tapBack()
+
+        forgetMachine()
+    }
+
+    /**
+     * The shell against the stand-in: Home (the composer, the request waiting, the limits, the
+     * recent chat), the session list grouped as on the desktop, Settings and Accounts & limits,
+     * each photographed with the keyboard put away.
+     */
+    @Test
+    fun theShellScreens() {
+        addMachine()
+        rule.onNodeWithText(machineName).performClick()
+        waitForText("1 request waiting")
+        waitForText("Echo chat")
+        waitForText("Work")
+        rule.runOnUiThread {
+            WindowCompat.getInsetsController(rule.activity.window, rule.activity.window.decorView).hide(WindowInsetsCompat.Type.ime())
+        }
+        rule.waitUntil(EVIDENCE_WAIT_MS) { imeBottom() == 0 }
+        SystemClock.sleep(300)
+        screenshot("shell-home.png")
+        assertTrue("Home reads the desktop's groups", requests("GET /sidebar/overview").isNotEmpty())
+        assertTrue("Home reads the usage of the accounts", requests("GET /usage/claude/snapshot").isNotEmpty())
+
+        rule.onNodeWithText("All sessions").performClick()
+        waitForDescription("Tests, 1")
+        screenshot("shell-sessions.png")
+        tapBack()
+
+        rule.waitUntil(EVIDENCE_WAIT_MS) { rule.onAllNodesWithContentDescription("Back").fetchSemanticsNodes().isEmpty() }
+        rule.onNodeWithContentDescription("Settings").performClick()
+        waitForText("0.0.0-stand-in")
+        screenshot("shell-settings.png")
+        rule.onNodeWithText("Accounts & limits").performClick()
+        waitForText("5-hour")
+        screenshot("shell-accounts.png")
         tapBack()
 
         forgetMachine()

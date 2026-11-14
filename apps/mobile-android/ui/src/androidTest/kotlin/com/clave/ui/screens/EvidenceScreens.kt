@@ -11,11 +11,12 @@ import com.clave.ui.theme.ClaveTheme
 import com.clave.ui.theme.ThemeName
 import java.io.File
 
-/** The eight screens the evidence paints, in the order a person meets them. */
-enum class Screen { Machines, Pairing, Workspaces, Sessions, Launch, Requests, Chat, Appearance }
+/** The screens the evidence paints, in the order a person meets them. */
+enum class Screen { Home, Machines, Pairing, Workspaces, Sessions, Launch, Requests, Chat, Appearance, Settings, Accounts }
 
 /** The title each screen's pane header carries with the samples. */
 fun Screen.title(): String = when (this) {
+    Screen.Home -> "Studio"
     Screen.Machines -> "Machines"
     Screen.Pairing -> "Pair with Studio"
     Screen.Workspaces -> "Studio"
@@ -24,6 +25,8 @@ fun Screen.title(): String = when (this) {
     Screen.Requests -> "Requests"
     Screen.Chat -> Samples.chat().title
     Screen.Appearance -> "Appearance"
+    Screen.Settings -> "Settings"
+    Screen.Accounts -> "Accounts & limits"
 }
 
 /**
@@ -55,6 +58,15 @@ fun appearanceOf(theme: ThemeName): Appearance = Appearance.entries.single { it.
 @Composable
 private fun Painted(which: Screen, theme: ThemeName, onLink: (String) -> Unit, chatReply: String) {
     when (which) {
+        Screen.Home -> HomeScreen(
+            Samples.home(), onTextChange = {}, onSend = {}, onPickWorkspace = {}, onPickProfile = {}, onMoreOptions = {},
+            onOpenSession = {}, onAllSessions = {}, onRequests = {}, onLimits = {}, onSettings = {}, onSwitchMachine = {}, onRefresh = {},
+        )
+        Screen.Settings -> SettingsScreen(
+            Samples.settings(), onMachines = {}, onAccounts = {}, onDefaultWorkspace = {}, onDefaultProfile = {},
+            onAppearance = {}, onNotificationSettings = {}, onSignOut = {}, onBack = {},
+        )
+        Screen.Accounts -> AccountsScreen(Samples.accounts(), onRefresh = {}, onBack = {})
         Screen.Machines -> MachinesScreen(
             state = Samples.machines(),
             onSignIn = {}, onSignOut = {}, onRelayUrlChange = {}, onConnectRelay = {}, onRefresh = {},
@@ -65,7 +77,11 @@ private fun Painted(which: Screen, theme: ThemeName, onLink: (String) -> Unit, c
             onCancel = {}, onRetry = {}, onDone = {}, onBack = {},
         )
         Screen.Workspaces -> WorkspacesScreen(Samples.workspaces(), onOpen = {}, onRequests = {}, onRefresh = {}, onBack = {})
-        Screen.Sessions -> SessionsScreen(Samples.sessions(), onOpen = {}, onLaunch = {}, onRefresh = {}, onBack = {})
+        Screen.Sessions -> SessionsScreen(
+            Samples.sessions(), onOpen = {}, onPickWorkspace = {}, onToggleGroup = { _, _ -> }, onRefresh = {}, onBack = {},
+            composer = Samples.composer(),
+            composerActions = QuickComposerActions({}, {}, {}, {}, {}),
+        )
         Screen.Launch -> LaunchScreen(Samples.launch(), onStart = {}, onBack = {})
         Screen.Requests -> RequestsScreen(Samples.requests(), onResolve = { _, _ -> }, onRefresh = {}, onBack = {})
         Screen.Chat -> ChatScreen(

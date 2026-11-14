@@ -4,23 +4,24 @@ import com.clave.core.auth.AuthPhase
 import com.clave.core.auth.AuthStatus
 import com.clave.core.chat.DeliveryMark
 import com.clave.core.chat.UnknownSend
-import com.clave.core.chat.WorkspaceRoot
 import com.clave.core.chat.attachmentKind
 import com.clave.core.chat.groupEntries
 import com.clave.core.chat.hasMore
 import com.clave.core.chat.markerOf
 import com.clave.core.chat.phoneSessionState
-import com.clave.core.chat.sessionsOfWorkspace
 import com.clave.core.chat.visibleEntries
 import com.clave.core.contract.AgentState
 import com.clave.core.contract.Attachment
 import com.clave.core.contract.FileAttachment
+import com.clave.core.contract.LaunchProfilePreferencesView
+import com.clave.core.contract.LaunchProfileView
 import com.clave.core.contract.RequestKind
 import com.clave.core.contract.SessionAttachment
 import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.InitialRoute
 import com.clave.core.state.ConversationState
 import com.clave.core.state.StoreState
+import com.clave.core.state.chatProfilesOf
 import com.clave.core.state.conversationKey
 import com.clave.core.state.orderProfiles
 import com.clave.ui.screens.AccountState
@@ -30,11 +31,9 @@ import com.clave.ui.screens.LaunchScreenState
 import com.clave.ui.screens.MachineRow
 import com.clave.ui.screens.MachinesScreenState
 import com.clave.ui.screens.RequestsScreenState
-import com.clave.ui.screens.SessionRow
-import com.clave.ui.screens.SessionsScreenState
 import com.clave.ui.screens.UnknownSendView
-import com.clave.ui.screens.WorkspacesScreenState
 import com.clave.ui.screens.basename
+import com.clave.ui.screens.isChatProfile
 import com.clave.ui.screens.toReachability
 import com.clave.ui.screens.toStatus
 import com.clave.ui.theme.Reachability
@@ -105,43 +104,10 @@ fun machinesState(
 )
 
 /** The pending requests of a machine, as its last snapshot listed them; none before one. */
-private fun pendingOf(store: StoreState, machineId: String) = store.requests[machineId]?.snapshot?.pending.orEmpty()
+internal fun pendingOf(store: StoreState, machineId: String) = store.requests[machineId]?.snapshot?.pending.orEmpty()
 
-private fun reachabilityOf(store: StoreState, machineId: String): Reachability =
+internal fun reachabilityOf(store: StoreState, machineId: String): Reachability =
     store.reachability[machineId]?.toReachability() ?: Reachability.Connecting
-
-/** One machine's workspaces; its reachability is Connecting until the push channel says otherwise. */
-fun workspacesState(store: StoreState, machineId: String): WorkspacesScreenState = WorkspacesScreenState(
-    machine = store.machines.firstOrNull { it.id == machineId },
-    machinesLoading = store.machinesLoading,
-    workspaces = store.workspaces[machineId],
-    error = store.workspacesError[machineId],
-    reachability = reachabilityOf(store, machineId),
-    pendingRequests = pendingOf(store, machineId).size,
-)
-
-/**
- * One workspace's sessions, chats first: a session stamped for another workspace is left
- * out, an unstamped one is listed in every workspace (the core's rule), and each row's
- * state is the server's with the conversation's last fatal error folded in as Error.
- */
-fun sessionsState(store: StoreState, machineId: String, workspaceId: String): SessionsScreenState {
-    val workspaces = store.workspaces[machineId].orEmpty()
-    return SessionsScreenState(
-        workspaceName = workspaces.firstOrNull { it.id == workspaceId }?.name,
-        machineName = store.machines.firstOrNull { it.id == machineId }?.name,
-        sessions = store.sessions[machineId]?.let { sessions ->
-            sessionsOfWorkspace(
-                sessions,
-                store.stamps[machineId].orEmpty(),
-                workspaces.map { WorkspaceRoot(it.id, it.rootDir) },
-                workspaceId,
-            ).map { s -> SessionRow(s, phoneSessionState(s.state, store.fatal[conversationKey(machineId, s.id)]).toStatus()) }
-        },
-        error = store.sessionsError[machineId],
-        reachability = reachabilityOf(store, machineId),
-    )
-}
 
 /** The machine whose saved profiles the launch form lists: the main one when it is listed, else the target. */
 fun launchSourceOf(store: StoreState, machineId: String): String {
@@ -150,8 +116,16 @@ fun launchSourceOf(store: StoreState, machineId: String): String {
 }
 
 /**
- * The launch form on [machineId]: the source machine's saved profiles, chats first then by
- * name; [starting] the profile being started, [refusal] the server's own sentence.
+ * Every profile the launch form offers: the chat profiles as the quick composer lists them
+ * (the built-ins, each saved profile's chat twin, the saved chats), then the saved terminal
+ * profiles by name.
+ */
+fun launchProfilesOf(prefs: LaunchProfilePreferencesView): List<LaunchProfileView> =
+    chatProfilesOf(prefs) + orderProfiles(prefs.customProfiles.filterNot(::isChatProfile))
+
+/**
+ * The launch form on [machineId]: the source machine's profiles (launchProfilesOf), chats
+ * first; [starting] the profile being started, [refusal] the server's own sentence.
  */
 fun launchState(
     store: StoreState,
@@ -165,7 +139,7 @@ fun launchState(
         workspaceName = store.workspaces[machineId]?.firstOrNull { it.id == workspaceId }?.name,
         targetName = store.machines.firstOrNull { it.id == machineId }?.name,
         sourceName = store.machines.firstOrNull { it.id == source }?.name,
-        profiles = store.profiles[source]?.let { orderProfiles(it.customProfiles) },
+        profiles = store.profiles[source]?.let { launchProfilesOf(it) },
         error = store.profilesError[source],
         starting = starting,
         refusal = refusal,
@@ -268,20 +242,21 @@ fun chatState(
 fun routeFor(link: DeepLink): String = when (link) {
     is DeepLink.Chat -> Routes.chat(link.machineId, link.sessionId, link.title)
     is DeepLink.Requests -> Routes.requests(link.machineId, link.requestId)
-    is DeepLink.Workspaces -> Routes.workspaces(link.machineId)
+    is DeepLink.Workspaces -> Routes.home(link.machineId)
     is DeepLink.Machines -> Routes.MACHINES
 }
 
 /**
- * The routes a cold launch opens, root first: Machines, then the Workspaces of the current
- * machine, then the conversation or the requests of a link. A route of a name this app does
- * not know, or missing its machine, is skipped rather than guessed.
+ * The routes a cold launch opens, root first: Machines, then the Home of the current machine
+ * (the core names it Workspaces, the screen it replaced), then the conversation or the
+ * requests of a link. A route of a name this app does not know, or missing its machine, is
+ * skipped rather than guessed. The app drops Machines under a Home, so back from Home leaves.
  */
 fun routesFor(initial: InitialRoute): List<String> = initial.routes.mapNotNull { route ->
     val machineId = route.params["machineId"]
     when (route.name) {
         "Machines" -> Routes.MACHINES
-        "Workspaces" -> machineId?.let(Routes::workspaces)
+        "Workspaces" -> machineId?.let(Routes::home)
         "Chat" -> {
             val sessionId = route.params["sessionId"]
             if (machineId != null && sessionId != null) Routes.chat(machineId, sessionId, route.params["title"]) else null

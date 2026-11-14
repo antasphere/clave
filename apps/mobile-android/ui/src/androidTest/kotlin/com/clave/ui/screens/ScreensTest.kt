@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -196,8 +197,15 @@ class ScreensTest {
         rule.setContent {
             ClaveTheme(Appearance.Dark) {
                 SessionsScreen(
-                    state = SessionsScreenState("clave", "Studio", chats + terminal, error = null, reachability = Reachability.Reachable),
-                    onOpen = { opened += it }, onLaunch = {}, onRefresh = {}, onBack = {},
+                    state = SessionsScreenState(
+                        machineName = "Studio",
+                        workspaces = listOf(WorkspaceChoice("w1", "clave")),
+                        workspaceId = "w1",
+                        sections = listOf(SessionSectionView(null, "Other sessions", null, false, chats + terminal)),
+                        error = null,
+                        reachability = Reachability.Reachable,
+                    ),
+                    onOpen = { opened += it }, onPickWorkspace = {}, onToggleGroup = { _, _ -> }, onRefresh = {}, onBack = {},
                 )
             }
         }
@@ -211,6 +219,136 @@ class ScreensTest {
         rule.onNodeWithText("Fix the parser").performClick()
         rule.runOnIdle { assertEquals(listOf(chats[0].session), opened) }
         rule.onAllNodesWithText("claude · clave", useUnmergedTree = true).assertCountEquals(4)
+    }
+
+    @Test
+    fun sessionsShowTheDesktopGroupsAndFoldOne() {
+        val toggled = mutableListOf<Pair<String, Boolean>>()
+        val picked = mutableListOf<String?>()
+        var collapsed by mutableStateOf(false)
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                SessionsScreen(
+                    state = SessionsScreenState(
+                        machineName = "Studio",
+                        workspaces = listOf(WorkspaceChoice("w1", "clave"), WorkspaceChoice("w2", "notes")),
+                        workspaceId = "w1",
+                        sections = listOf(
+                            SessionSectionView("g1", "Parser", "blue", collapsed, listOf(SessionRow(session("s1", "Fix the parser"), SessionStatus.Working))),
+                            SessionSectionView(null, "Other sessions", null, false, listOf(SessionRow(session("s2", "Loose"), SessionStatus.Idle))),
+                        ),
+                        error = null,
+                        reachability = Reachability.Reachable,
+                    ),
+                    onOpen = {},
+                    onPickWorkspace = { picked += it },
+                    onToggleGroup = { g, c -> toggled += g to c; collapsed = c },
+                    onRefresh = {},
+                    onBack = {},
+                )
+            }
+        }
+        rule.onNodeWithContentDescription("Parser, 1").assertIsDisplayed()
+        rule.onNodeWithText("Fix the parser").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Parser, 1").performClick()
+        rule.runOnIdle { assertEquals(listOf("g1" to true), toggled) }
+        rule.onAllNodesWithText("Fix the parser").assertCountEquals(0)
+        rule.onNodeWithText("Loose").assertIsDisplayed()
+        rule.onNodeWithText("All").performClick()
+        rule.onNodeWithText("notes").performClick()
+        rule.runOnIdle { assertEquals(listOf(null, "w2"), picked) }
+    }
+
+    @Test
+    fun homeSendsInOneTapAndOpensWhatItLists() {
+        val sent = mutableListOf<String>()
+        var text by mutableStateOf("")
+        val opened = mutableListOf<String>()
+        val went = mutableListOf<String>()
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                HomeScreen(
+                    state = Samples.home().copy(composer = Samples.composer(text)),
+                    onTextChange = { text = it },
+                    onSend = { sent += text },
+                    onPickWorkspace = {}, onPickProfile = {}, onMoreOptions = { went += "more" },
+                    onOpenSession = { opened += it.id },
+                    onAllSessions = { went += "all" },
+                    onRequests = { went += "requests" },
+                    onLimits = { went += "limits" },
+                    onSettings = { went += "settings" },
+                    onSwitchMachine = { went += "switch:$it" },
+                    onRefresh = {},
+                )
+            }
+        }
+        // Send waits for words.
+        rule.onNodeWithContentDescription("Send").performClick()
+        rule.runOnIdle { assertTrue(sent.isEmpty()) }
+        rule.onNodeWithTag(QUICK_COMPOSER_FIELD).performTextInput("Fix the flaky test")
+        rule.onNodeWithContentDescription("Send").performClick()
+        rule.runOnIdle { assertEquals(listOf("Fix the flaky test"), sent) }
+        rule.onNodeWithText("2 requests waiting").performClick()
+        rule.onNodeWithContentDescription("Personal: Exhausted · resets in 12 min").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Work: 58% left · resets in 2 h 10").performClick()
+        rule.onNodeWithText("Fix the parser").performClick()
+        rule.onNodeWithText("All sessions").performClick()
+        rule.onNodeWithContentDescription("Settings").performClick()
+        rule.onNodeWithContentDescription("Switch machine").performClick()
+        rule.onNodeWithText("Build box").performClick()
+        rule.runOnIdle {
+            assertEquals(listOf("s1"), opened)
+            assertEquals(listOf("requests", "limits", "all", "settings", "switch:build"), went)
+        }
+    }
+
+    @Test
+    fun homeHidesTheLimitsBehindALineOnAnOlderMac() {
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                HomeScreen(
+                    state = Samples.home().copy(limits = null, limitsNote = "Update Clave on your Mac to see its limits here.", machines = emptyList(), pendingRequests = 0),
+                    onTextChange = {}, onSend = {}, onPickWorkspace = {}, onPickProfile = {}, onMoreOptions = {},
+                    onOpenSession = {}, onAllSessions = {}, onRequests = {}, onLimits = {}, onSettings = {}, onSwitchMachine = {}, onRefresh = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Update Clave on your Mac to see its limits here.").assertIsDisplayed()
+        rule.onAllNodesWithText("requests waiting", substring = true).assertCountEquals(0)
+        rule.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Switch machine"))).assertCountEquals(0)
+    }
+
+    @Test
+    fun settingsPicksADefaultAndSignsOut() {
+        val workspaces = mutableListOf<String?>()
+        var signedOut = false
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                SettingsScreen(
+                    Samples.settings(),
+                    onMachines = {}, onAccounts = {}, onDefaultWorkspace = { workspaces += it }, onDefaultProfile = {},
+                    onAppearance = {}, onNotificationSettings = {}, onSignOut = { signedOut = true }, onBack = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Default workspace").performClick()
+        rule.onNodeWithText("notes").performClick()
+        rule.runOnIdle { assertEquals(listOf<String?>("w2"), workspaces) }
+        rule.onNodeWithText("1.42.0").assertExists()
+        rule.onNodeWithText("Sign out").performScrollTo().performClick()
+        rule.runOnIdle { assertTrue(signedOut) }
+    }
+
+    @Test
+    fun accountsShowTheBarsAndTheExhaustedBadge() {
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) { AccountsScreen(Samples.accounts(), onRefresh = {}, onBack = {}) }
+        }
+        rule.onNodeWithContentDescription("5-hour: 42% used · resets in 2 h 10").assertIsDisplayed()
+        rule.onNodeWithText("Exhausted").assertIsDisplayed()
+        rule.onNodeWithText("Fable: weekly cap reached, other models still run").assertIsDisplayed()
+        rule.onNodeWithText("updated 4 min ago").assertIsDisplayed()
+        rule.onNodeWithText("Not signed in").performScrollTo().assertIsDisplayed()
     }
 
     @Test

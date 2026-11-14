@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -17,6 +18,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.clave.android.fake.FakeMachineServer
 import com.clave.core.state.LAST_MACHINE_KEY
+import com.clave.ui.screens.QUICK_COMPOSER_FIELD
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -127,16 +129,16 @@ class ClaveFlowTest {
         assertTrue("adding the machine tries the token on GET /launch-profiles; the stand-in saw ${server.requests}", tried.isNotEmpty())
         assertEquals("Bearer $TOKEN", tried.first().authorization)
 
-        // 3. Workspaces of the machine, and its one pending request in the header.
+        // 3. The machine's Home: the request waiting, the echo chat among the recent, in its desktop group.
         rule.onNodeWithText(machineName).performClick()
-        waitForText("Scratch")
-        waitForDescription("Requests, 1 pending")
-        waitForText("1")
+        waitForText("1 request waiting")
+        waitForText("Scratch · Tests")
+        waitForText("Work")
 
-        // 4. The workspace's sessions: the echo chat, by provider and folder, idle.
-        rule.onNodeWithText("Scratch").performClick()
-        waitForText("Echo chat")
-        waitForText("echo · scratch")
+        // 4. All sessions, grouped as on the desktop: the echo chat under Tests, by provider, workspace and folder, idle.
+        rule.onNodeWithText("All sessions").performClick()
+        waitForDescription("Tests, 1")
+        waitForText("echo · Scratch · scratch")
         waitForText("Idle")
         rule.onNodeWithText("Echo chat").performClick()
 
@@ -180,15 +182,17 @@ class ClaveFlowTest {
         assertEquals("permission", resolve.getJSONObject("response").getString("type"))
         assertEquals("allow", resolve.getJSONObject("response").getString("optionId"))
 
-        // 8. Back to Machines, and the stand-in forgotten so the next run starts clean.
+        // 8. Back to Home, then Machines from Settings, and the stand-in forgotten so the next run starts clean.
         tapBack()
         waitForText("Echo chat")
         tapBack()
-        waitForText("echo · scratch")
-        tapBack()
-        waitForText("/tmp/scratch")
+        waitForText("echo · Scratch · scratch")
         tapBack()
         rule.waitUntil(WAIT_MS) { rule.onAllNodesWithContentDescription("Back").fetchSemanticsNodes().isEmpty() }
+        waitForText("All sessions")
+        rule.onNodeWithContentDescription("Settings").performClick()
+        waitForText("0.0.0-stand-in")
+        rule.onNodeWithText("Machines").performClick()
         waitForText("Sign in with Antasphere")
         rule.onNodeWithContentDescription("More about $machineName").performScrollTo().performClick()
         waitForText("Forget this machine")
@@ -202,6 +206,61 @@ class ClaveFlowTest {
         assertTrue("the push socket said hello", server.helloTokens.isNotEmpty())
         assertTrue("every hello carried the token typed", server.helloTokens.all { it == TOKEN })
         assertTrue("the push socket heard no frame it does not know: ${server.unknownFrames}", server.unknownFrames.isEmpty())
+    }
+
+    /**
+     * The quick composer: from the machine's Home, type and one tap on Send starts a chat in the
+     * workspace on the default agent and opens it with the text sent once, through the chat's
+     * own send path (one write, the phone's id), its answer streamed back.
+     */
+    @Test
+    fun aNewChatIsOneTapFromHome() {
+        waitForText("Developer connection")
+        rule.onNodeWithText("Developer connection").performScrollTo().performClick()
+        waitForDescription("Server address")
+        rule.onNodeWithContentDescription("Server address").performTextInput(server.url)
+        rule.onNodeWithContentDescription("Server token").performTextInput(TOKEN)
+        rule.onNodeWithContentDescription("Name").performTextReplacement(machineName)
+        rule.onNodeWithText("Connect").performClick()
+        waitForText(machineName)
+        // Back on Machines: the developer form, which also shows the name, has gone.
+        waitForText("Sign in with Antasphere")
+        rule.onNodeWithText(machineName).performClick()
+
+        // Home: the workspace chip names the stand-in's one workspace, the agent chip the built-in Claude chat.
+        waitForDescription("Workspace: Scratch")
+        waitForDescription("Agent: Claude (chat)")
+        rule.onNodeWithTag(QUICK_COMPOSER_FIELD).performTextInput("ping")
+        rule.onNodeWithContentDescription("Send").performClick()
+
+        waitForText("pong")
+        // The chat's own composer let go of the text once it was sent.
+        rule.waitUntil(WAIT_MS) { rule.onNodeWithContentDescription("Message").editableText() == "" }
+        rule.onAllNodesWithText("ping").assertCountEquals(1)
+        val starts = requests("POST /sessions/start")
+        assertEquals("one tap is one start: ${starts.map { it.body }}", 1, starts.size)
+        val start = JSONObject(starts.single().body)
+        assertEquals("/tmp/scratch", start.getString("cwd"))
+        assertEquals(FakeMachineServer.WORKSPACE_ID, start.getJSONObject("options").getString("workspaceId"))
+        assertEquals("claude-chat", start.getJSONObject("options").getString("launchProfileId"))
+        val writes = requests("POST /sessions/write")
+        assertEquals("the text is sent once: ${writes.map { it.body }}", 1, writes.size)
+        assertEquals("ping", JSONObject(writes.single().body).getJSONObject("input").getString("text"))
+
+        // Back from the new chat is Home, its composer empty again.
+        tapBack()
+        waitForDescription("Workspace: Scratch")
+        rule.waitUntil(WAIT_MS) { rule.onNodeWithTag(QUICK_COMPOSER_FIELD).editableText() == "" }
+        assertEquals(1, requests("POST /sessions/write").size)
+
+        rule.onNodeWithContentDescription("Settings").performClick()
+        rule.onNodeWithText("Machines").performClick()
+        waitForText("Sign in with Antasphere")
+        rule.onNodeWithContentDescription("More about $machineName").performScrollTo().performClick()
+        waitForText("Forget this machine")
+        rule.onNodeWithText("Forget this machine").performClick()
+        rule.waitUntil(WAIT_MS) { rule.onAllNodesWithText(machineName).fetchSemanticsNodes().isEmpty() }
+        assertTrue("the stand-in saw no request it does not serve: ${server.unknownPaths}", server.unknownPaths.isEmpty())
     }
 
     private companion object {
