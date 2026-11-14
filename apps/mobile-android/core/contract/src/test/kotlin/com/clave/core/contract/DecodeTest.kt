@@ -352,7 +352,9 @@ class DecodeTest {
         val bad = Samples.list("badSessions")
         assertEquals(5, bad.size)
         for (sample in bad) assertRefused(sample) { Decode.session(it) }
-        assertRefused(Samples.at("badEvent")) { Decode.sessionEvent(it) }
+        // A session event of a type this phone does not know is a newer server's, carried by
+        // its type: refusing it would fail a whole page of history (EventRobustnessTest).
+        assertEquals(SessionEvent.Unknown("no_such_event"), Decode.sessionEvent(Samples.at("badEvent")))
     }
 
     @Test fun anErrorNamesThePath() {

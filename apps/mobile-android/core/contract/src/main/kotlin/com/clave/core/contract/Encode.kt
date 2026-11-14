@@ -102,6 +102,7 @@ object Encode {
             opt("clientMessageId", input.clientMessageId)
             opt("attachments", input.attachments?.let { list -> JsonArray(list.map(::attachment)) })
             opt("parent", input.parent)
+            opt("form", input.form)
         }
         is PermissionResponse -> buildJsonObject {
             put("type", "permission_response")
@@ -110,6 +111,24 @@ object Encode {
             opt("answers", input.answers?.let(::answers))
         }
         Interrupt -> buildJsonObject { put("type", "interrupt") }
+        is SetModel -> buildJsonObject {
+            put("type", "set_model")
+            // Null is the contract's own value here (`Schema.NullOr`): the provider's default.
+            put("model", input.model?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
+            opt("remember", input.remember)
+        }
+        is SetEffort -> buildJsonObject {
+            put("type", "set_effort")
+            put("effort", input.effort)
+        }
+        is SetPermissionMode -> buildJsonObject {
+            put("type", "set_permission_mode")
+            put("mode", input.mode)
+        }
+        is StopTask -> buildJsonObject {
+            put("type", "stop_task")
+            put("taskId", input.taskId)
+        }
     }
 
     /** `POST /sessions/write`. */

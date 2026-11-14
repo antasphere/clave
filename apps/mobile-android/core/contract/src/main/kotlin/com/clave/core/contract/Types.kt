@@ -8,7 +8,9 @@
  * Two rules, the contract's own: a field the shape does not name is kept out of the typed
  * value (Effect's structs ignore excess properties, so does this), and a session event, a
  * server event or a push frame of a kind this file does not know is carried through by its
- * tag, since the reducer and the store ignore what they do not read.
+ * tag, since the reducer and the store ignore what they do not read. A session event is a
+ * closed union on the server, but a newer server adds members to it before the phone learns
+ * them; the phone carries those as [SessionEvent.Unknown] rather than refusing a whole page.
  *
  * Untyped payloads (a tool's input, a provider event) stay JsonElement; null means absent.
  */
@@ -81,13 +83,53 @@ data class IdLabel(val id: String, val label: String)
 
 data class AgentQuestionOption(val label: String, val description: String? = null)
 
+/** The kinds of value a hosted form may ask for (`input-kinds.ts`); absent on a provider's
+ *  own question, which is a choice among its options. */
+enum class InputKind(val wire: String) {
+    Text("text"), LongText("long-text"), Email("email"), Url("url"), GithubLogin("github-login"),
+    Number("number"), Date("date"), Choice("choice"), File("file"), Folder("folder"), Link("link");
+    companion object { fun of(wire: String): InputKind? = entries.firstOrNull { it.wire == wire } }
+}
+
 data class AgentQuestion(
     val id: String? = null,
     val question: String,
     val header: String? = null,
     val options: List<AgentQuestionOption>,
     val multiSelect: Boolean? = null,
+    /** A hosted choice closed to its options: no own words. */
+    val optionsOnly: Boolean? = null,
+    /** A hosted form's field: the kind of value asked for, and the field's own words. */
+    val kind: InputKind? = null,
+    val hint: String? = null,
+    val placeholder: String? = null,
+    val default: String? = null,
+    val optional: Boolean? = null,
+    /** A `link` question: the address to open, and the words on the button that says the reader is back. */
+    val url: String? = null,
+    val confirm: String? = null,
+    /** A `number` question's bounds. */
+    val min: Double? = null,
+    val max: Double? = null,
 )
+
+/** One answer of a form: a string, or the labels of a multi-select. */
+sealed interface FormAnswer {
+    data class Text(val value: String) : FormAnswer
+    data class Choices(val values: List<String>) : FormAnswer
+}
+
+/** How far a permission reaches, as the session's host read it (PRDCT-4331). */
+enum class RiskLevel(val wire: String) {
+    Reads("reads"), Project("project"), Outside("outside"), Irreversible("irreversible");
+    companion object { fun of(wire: String): RiskLevel? = entries.firstOrNull { it.wire == wire } }
+}
+
+/** Whether what a permission does matches what the person asked for. */
+enum class AskedMatch(val wire: String) {
+    Yes("yes"), No("no"), Unclear("unclear");
+    companion object { fun of(wire: String): AskedMatch? = entries.firstOrNull { it.wire == wire } }
+}
 
 enum class BackgroundTaskKind(val wire: String) {
     Shell("shell"), Agent("agent"), Other("other");
@@ -116,6 +158,8 @@ sealed interface SessionEvent {
         val text: String,
         val attachments: List<Attachment>? = null,
         val parent: String? = null,
+        /** The hosted form this message carries the answers of: its record row says it, no bubble. */
+        val form: String? = null,
     ) : SessionEvent, SessionWriteInput
 
     data class AssistantText(val delta: String, val final: Boolean, val parent: String? = null) : SessionEvent
@@ -146,6 +190,27 @@ sealed interface SessionEvent {
 
     data class PermissionWithdrawn(val id: String) : SessionEvent
 
+    /** A hosted form's answers changed under its card: the agent's fill, the approval's
+     *  answers ([sent]), or the person's own typing kept by the server ([typed]). */
+    data class PermissionUpdated(
+        val id: String,
+        val answers: Map<String, FormAnswer>,
+        val sent: Boolean? = null,
+        val typed: Boolean? = null,
+        /** The agent's word under a field it could not fill, by the question's key. */
+        val notes: Map<String, String>? = null,
+    ) : SessionEvent
+
+    /** What a permission request does, read where the session runs: the level, the plain
+     *  sentence, whether it matches the person's ask, or why no sentence came. */
+    data class PermissionExplained(
+        val id: String,
+        val level: RiskLevel? = null,
+        val sentence: String? = null,
+        val asked: AskedMatch? = null,
+        val failed: String? = null,
+    ) : SessionEvent
+
     data class ContextUsage(val used: Long, val window: Long?, val parent: String? = null) : SessionEvent
 
     data class SubagentModel(val parent: String, val model: String) : SessionEvent
@@ -155,11 +220,44 @@ sealed interface SessionEvent {
     data class BackgroundTasks(val tasks: List<BackgroundTask>) : SessionEvent
 
     data class ProviderEvent(val provider: String, val payload: JsonElement? = null) : SessionEvent
+
+    /** A member this phone does not know yet (a newer server's), or a known one this phone
+     *  could not read: carried by its type so a page and the live stream keep going, and so
+     *  its position still counts. Nothing reads it. */
+    data class Unknown(val type: String) : SessionEvent
 }
 
 data class PermissionResponse(val id: String, val optionId: String, val answers: Map<String, String>? = null) : SessionWriteInput
 
 data object Interrupt : SessionWriteInput
+
+/** Puts the session on another model; null hands it back to the provider's default.
+ *  [remember]: whether the pick becomes the next chat's default (absent means yes). */
+data class SetModel(val model: String?, val remember: Boolean? = null) : SessionWriteInput
+
+/** A reasoning level as the provider spells it: a short lowercase word. */
+data class SetEffort(val effort: String) : SessionWriteInput
+
+data class SetPermissionMode(val mode: String) : SessionWriteInput
+
+/** Stops one background task (a subagent, a background shell) by its id. */
+data class StopTask(val taskId: String) : SessionWriteInput
+
+// ── what a provider offers (GET /sessions/models, /sessions/commands) ──
+
+data class EffortOption(val id: String, val label: String, val hint: String? = null)
+
+data class ModelOption(
+    val id: String,
+    val label: String,
+    val hint: String? = null,
+    val resolved: String? = null,
+    val efforts: List<EffortOption>? = null,
+    val defaultEffort: String? = null,
+)
+
+/** A command the composer offers under "/": what it inserts. */
+data class CommandOption(val name: String, val description: String? = null, val insert: String)
 
 /** One frame of a session's stream as the wire carries it: terminal bytes stay base64 on
  *  the phone, which shows no terminal. */
