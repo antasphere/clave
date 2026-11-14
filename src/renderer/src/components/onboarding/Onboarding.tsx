@@ -655,7 +655,7 @@ export function Onboarding(): React.JSX.Element | null {
     title = opened ? `${opened.name} is ready` : 'You’re ready'
     description = opened?.agent
       ? `${opened.agent === 'codex' ? 'ChatGPT' : 'Claude'} is already reading your first message. Ask it anything, including what to do next.`
-      : 'Connect an assistant in Settings → Accounts whenever you like, then open a conversation from the sidebar.'
+      : 'Connect an assistant in Settings → Connections whenever you like, then open a conversation from the sidebar.'
     footer = (
       <button ref={primary} type="button" className="btn-primary" onClick={finish}>
         {opened?.agent ? 'Open the conversation' : 'Start using Clave'}

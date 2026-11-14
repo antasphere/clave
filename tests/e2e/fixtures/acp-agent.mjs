@@ -30,7 +30,12 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { callClaveTool, callClaveTools, opencodeSubstitute } from './clave-tools-call.mjs'
+import {
+  callClaveTool,
+  callClaveTools,
+  claveCallOf,
+  opencodeSubstitute
+} from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -323,19 +328,14 @@ async function prompt(id, params) {
     say(`permission: ${outcome?.outcome === 'selected' ? String(outcome.optionId) : 'cancelled'}`)
     if (turn.cancelled) return finish('cancelled')
   }
-  // `clave-open {…}`: the model calls clave_open_session once with those
-  // arguments (PRDCT-4507), and says what came back.
-  if (text.startsWith('clave-open ')) {
-    let args = null
-    try {
-      args = JSON.parse(text.slice('clave-open '.length))
-    } catch {
-      args = null
-    }
-    const answer = args
-      ? await callClaveTool(claveServer, 'clave_open_session', args)
+  // `clave-open {…}` / `clave-call <tool> {…}`: the model calls that tool
+  // once with those arguments (PRDCT-4507), and says what came back.
+  const call = claveCallOf(text)
+  if (call) {
+    const answer = call.args
+      ? await callClaveTool(claveServer, call.name, call.args)
       : { ok: false, error: 'bad arguments' }
-    say(`clave_open_session: ${JSON.stringify(answer)}`)
+    say(`${call.name}: ${JSON.stringify(answer)}`)
     record(sessionId, { kind: 'agent', text: agentText })
     return finish(turn.cancelled ? 'cancelled' : 'end_turn')
   }

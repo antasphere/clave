@@ -491,6 +491,27 @@ describe('serveCommand', () => {
     expect(withParents.sessions.find((s) => s.id === 'pi')?.parentId).toBe('opener-lineage')
     expect(withParents.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('parentId')
   })
+
+  it("names a tab's opener from its record after a restart, when the lineage in memory is gone (PRDCT-4507)", async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['opened', 'plain'] })])],
+      sessions: [session('opened'), session('plain')],
+      records: {
+        opened: record('opened', { openedBy: 'opener-on-record' }),
+        plain: record('plain', {})
+      }
+    })
+    // No parent in memory: the shell's lineage answers null for every tab.
+    const shell = { ...h.ctx().shell, parentOf: () => null }
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx({ shell }))) as Listing
+    expect(listed.sessions.find((s) => s.id === 'opened')?.parentId).toBe('opener-on-record')
+    expect(listed.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('parentId')
+    // The lineage in memory, when there is one, still wins over the record.
+    const both = { ...h.ctx().shell, parentOf: (id: string) => (id === 'opened' ? 'live' : null) }
+    const withLineage = (await serveCommand('list', {}, h.ctx({ shell: both }))) as Listing
+    expect(withLineage.sessions.find((s) => s.id === 'opened')?.parentId).toBe('live')
+  })
 })
 
 describe('resolveGroupRef', () => {
@@ -589,11 +610,11 @@ describe('resolveGroupRef', () => {
     expect(h.argsOf('awaitRehomed')).toEqual([])
   })
 
-  it('a move takes an id and nothing else, as the window does: "mine" is no session', async () => {
+  it('a move takes "mine" for the calling tab, as the window does (PRDCT-4507)', async () => {
     const h = setup({ sessions: [session('caller')] })
-    await expect(
-      serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
-    ).rejects.toThrow('No session with id "mine"')
+    expect(
+      await serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
+    ).toEqual({ sessionId: 'caller', groupId: null })
   })
 })
 

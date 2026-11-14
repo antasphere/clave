@@ -188,6 +188,14 @@ function KeyForm({
   )
 }
 
+/** The id of one field of the add form, per machine and per provider
+ *  (PRDCT-4552): `provider-add-label-local-moonshot`. A machine or company
+ *  id is kept to the characters an id selector reads plainly. */
+function addFormFieldId(machine: string, company: string): (field: string) => string {
+  const safe = (part: string): string => part.replace(/[^A-Za-z0-9_-]/g, '_')
+  return (field) => `provider-add-${field}-${safe(machine)}-${safe(company)}`
+}
+
 /** The add form: one form for a catalogue company, Ollama and another
  *  provider, opened in the provider's card. */
 export function AddForm({
@@ -216,6 +224,9 @@ export function AddForm({
   const missing =
     !label.trim() || (company.takesBaseUrl && !baseUrl.trim()) || (company.needsKey && !apiKey)
   const keyHost = company.keyUrl ? hostOf(company.keyUrl) : null
+  // One id per field, provider and machine: two cards' forms open at once
+  // (a company's "Connect another" and "Another provider") never share one.
+  const fieldId = addFormFieldId(machine, company.id)
   const submit = async (): Promise<void> => {
     if (busy || missing) return
     setBusy(true)
@@ -267,11 +278,11 @@ export function AddForm({
       >
         <div className="flex flex-col gap-3 mt-2">
           <div>
-            <label className="field-label" htmlFor={`provider-add-label-${machine}`}>
+            <label className="field-label" htmlFor={fieldId('label')}>
               Label
             </label>
             <input
-              id={`provider-add-label-${machine}`}
+              id={fieldId('label')}
               className="input-compact w-full max-w-72"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
@@ -281,11 +292,11 @@ export function AddForm({
           </div>
           {company.takesBaseUrl && (
             <div>
-              <label className="field-label" htmlFor={`provider-add-base-url-${machine}`}>
+              <label className="field-label" htmlFor={fieldId('base-url')}>
                 Base URL
               </label>
               <input
-                id={`provider-add-base-url-${machine}`}
+                id={fieldId('base-url')}
                 className="input-compact w-full max-w-md"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
@@ -308,11 +319,11 @@ export function AddForm({
           )}
           {company.needsKey && (
             <div>
-              <label className="field-label" htmlFor={`provider-add-key-${machine}`}>
+              <label className="field-label" htmlFor={fieldId('key')}>
                 Key
               </label>
               <input
-                id={`provider-add-key-${machine}`}
+                id={fieldId('key')}
                 className="input-compact w-full max-w-md"
                 type="password"
                 value={apiKey}

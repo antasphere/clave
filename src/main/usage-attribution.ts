@@ -96,14 +96,24 @@ export function lineInForce(
   return found
 }
 
-/** The connection a record is counted to, or null for the harness's own sign-in. */
+/** The row of the records no Clave tab is known to have made: a session the
+ *  ledger does not know at all, or a record from before that session's first
+ *  line (started outside Clave's tabs, or before Clave counted per
+ *  connection). Never the harness's own sign-in (PRDCT-4551). */
+export const OTHER_SESSIONS = '\u0000other-sessions'
+
+/** The connection a record is counted to, null for the harness's own sign-in
+ *  (the line in force names no connection, or the record is of another
+ *  provider than the connection's), or `OTHER_SESSIONS` when no line is in
+ *  force for it. */
 export function connectionOfRecord(
   index: Map<string, LedgerLine[]>,
   record: UsageRecord,
   providerOf: (company: string, harness: UsageHarness) => string | undefined
 ): string | null {
   const line = lineInForce(index, record)
-  if (!line || !line.connectionId || !line.company) return null
+  if (!line) return OTHER_SESSIONS
+  if (!line.connectionId || !line.company) return null
   const provider = providerOf(line.company, record.harness)
   return provider !== undefined && record.provider === provider ? line.connectionId : null
 }

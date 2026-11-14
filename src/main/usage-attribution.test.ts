@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   attributeUsage,
+  OTHER_SESSIONS,
   rangeStart,
   rowKey,
   type LedgerLine,
@@ -82,19 +83,30 @@ describe('the rule of attribution (PRDCT-4551)', () => {
     expect(tokensOf(rows, 'pi', null)).toBe(50)
   })
 
-  it('counts a session the ledger does not know, and a record from before its first line, to the sign-in', () => {
+  // The rule's three kinds (PRDCT-4551, the coordinator's correction): what
+  // no line covers is "other sessions", never the sign-in.
+  it('counts a session the ledger does not know, and a record from before its first line, to other sessions, never the sign-in', () => {
     const ledger = [
-      line({ sessionId: 's2', connectionId: 'kimi-a', company: 'moonshot', at: at(11) })
+      line({ sessionId: 's2', connectionId: 'kimi-a', company: 'moonshot', at: at(11) }),
+      line({ sessionId: 's3', connectionId: null, at: at(9) })
     ]
     const rows = run(
       [
         rec({ sessionId: 'unknown', totalTokens: 3 }),
-        rec({ sessionId: 's2', at: at(10), totalTokens: 4 })
+        rec({ sessionId: 's2', at: at(10), totalTokens: 4 }),
+        // A tab Clave started on no connection: its own sign-in.
+        rec({ sessionId: 's3', at: at(10), totalTokens: 20 }),
+        // Another provider while a tab named a connection: the sign-in too.
+        rec({ sessionId: 's2', at: at(12), provider: 'anthropic', totalTokens: 100 }),
+        // The connection's own.
+        rec({ sessionId: 's2', at: at(12), totalTokens: 1000 })
       ],
       ledger
     )
-    expect(tokensOf(rows, 'pi', null)).toBe(7)
-    expect(rows.has(rowKey('pi', 'kimi-a'))).toBe(false)
+    expect(tokensOf(rows, 'pi', OTHER_SESSIONS)).toBe(7)
+    expect(tokensOf(rows, 'pi', null)).toBe(120)
+    expect(tokensOf(rows, 'pi', 'kimi-a')).toBe(1000)
+    expect(rows.get(rowKey('pi', OTHER_SESSIONS))?.figures.sessions).toBe(2)
   })
 
   it('never shares a record between two connections of one provider', () => {
@@ -121,7 +133,8 @@ describe('the rule of attribution (PRDCT-4551)', () => {
       ledger
     )
     expect(tokensOf(rows, 'opencode', 'kimi-a')).toBe(9)
-    expect(tokensOf(rows, 'pi', null)).toBe(1)
+    // The Pi session of the same id is one the ledger does not know.
+    expect(tokensOf(rows, 'pi', OTHER_SESSIONS)).toBe(1)
   })
 
   it('a line on no connection puts the session back on the sign-in from then on', () => {

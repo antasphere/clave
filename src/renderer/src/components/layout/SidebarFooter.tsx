@@ -430,11 +430,18 @@ export function SidebarFooter(): React.ReactElement {
   // Drawn at once with what there is (PRDCT-4551): "Reading…" before the
   // first answer, the figure so far while the host still reads that harness.
   const tabReading = harnessTab ? harnessUsageReading(tabEntry, tabHarness) : false
+  // A tab on no connection says whose figure it is, as a connection's line
+  // is named above it: "Pi sign-in · 112 requests · 1.6M tokens today".
+  const tabFigure = tabUsage
+    ? connection
+      ? tabUsage.line
+      : `${tabHarness === 'pi' ? 'Pi' : 'OpenCode'} sign-in · ${tabUsage.line}`
+    : null
   const tabLine = harnessTab
-    ? tabUsage
+    ? tabFigure
       ? tabReading
-        ? `${tabUsage.line} · ${READING_WORDS}`
-        : tabUsage.line
+        ? `${tabFigure} · ${READING_WORDS}`
+        : tabFigure
       : tabReading
         ? READING_WORDS
         : null

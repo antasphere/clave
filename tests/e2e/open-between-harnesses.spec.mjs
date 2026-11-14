@@ -213,6 +213,40 @@ async function pass(t, server, saved) {
         callerId
       )
     }
+    // A tab names itself "mine" to clave_rename as to every other session
+    // tool (PRDCT-4507): the tester's Pi and OpenCode tabs were answered
+    // `No session with id "mine"` and had to list the tabs to learn their id.
+    for (const [callerName, callerId, name] of [
+      ['an OpenCode chat', ocCaller, 'OpenCode renamed itself'],
+      ['a Pi chat', piCaller, 'Pi renamed itself']
+    ]) {
+      const before = records().filter((r) => r.kind === 'tool').length
+      const args = { target: 'session', id: 'mine', name }
+      await win.evaluate(
+        ({ id, text }) => window.electronAPI.sessionsWrite(id, { type: 'user_message', text }),
+        { id: callerId, text: `clave-call clave_rename ${JSON.stringify(args)}` }
+      )
+      const answer = await until(
+        () =>
+          records()
+            .filter((r) => r.kind === 'tool')
+            .slice(before)
+            .find((r) => r.name === 'clave_rename' && r.args?.name === name) ?? null,
+        { tries: 80 }
+      )
+      t.check(
+        `${callerName} renames itself with "mine": answered its own id, no error`,
+        answer?.ok === true && answer?.payload?.renamed === callerId,
+        answer
+      )
+      const renamed = await until(
+        async () => ((await listed()).find((s) => s.id === callerId)?.name === name ? true : null),
+        { tries: 40 }
+      )
+      t.check(`${callerName} renames itself with "mine": its name changes`, renamed === true, {
+        listed: (await listed()).map((s) => [s.id, s.name])
+      })
+    }
     // The OpenCode chat's `execute` card shows what it ran (PRDCT-4507): the
     // stand-in sends the real 2.3.0's frames for a code-mode script.
     await callMcp(app, 'focus', { sessionId: ocCaller })

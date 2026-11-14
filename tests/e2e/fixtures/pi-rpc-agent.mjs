@@ -32,7 +32,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { callClaveTool, callClaveTools } from './clave-tools-call.mjs'
+import { callClaveTool, callClaveTools, claveCallOf } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -599,21 +599,17 @@ async function startRun(text) {
       await emit({ type: 'agent_settled', aborted: false })
       return
     }
-    // `clave-open {…}`: the model calls clave_open_session once with those
-    // arguments (PRDCT-4507), says what came back, and ends its turn.
-    if (text.startsWith('clave-open ')) {
-      let args = null
-      try {
-        args = JSON.parse(text.slice('clave-open '.length))
-      } catch {
-        args = null
-      }
-      const opened = args
-        ? await callClaveTool(await claveServerReady, 'clave_open_session', args)
+    // `clave-open {…}` / `clave-call <tool> {…}`: the model calls that tool
+    // once with those arguments (PRDCT-4507), says what came back, and ends
+    // its turn.
+    const call = claveCallOf(text)
+    if (call) {
+      const opened = call.args
+        ? await callClaveTool(await claveServerReady, call.name, call.args)
         : { ok: false, error: 'bad arguments' }
-      await textMessage([`clave_open_session: ${JSON.stringify(opened)}`])
+      await textMessage([`${call.name}: ${JSON.stringify(opened)}`])
       const message = assistant(
-        [{ type: 'text', text: `clave_open_session: ${JSON.stringify(opened)}` }],
+        [{ type: 'text', text: `${call.name}: ${JSON.stringify(opened)}` }],
         'stop'
       )
       await endMessage(message)

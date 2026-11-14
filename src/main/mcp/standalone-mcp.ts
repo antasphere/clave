@@ -30,6 +30,8 @@ import {
 } from '../../shared/open-session-modes'
 // ── Wave 7, lane A: the launcher's choices on this server (PRDCT-4485) ──
 import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import { ownSessionRef } from '../../shared/own-session-ref'
+import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
   EFFORT_PATTERN,
   SPAWN_PERMISSION_MODES,
@@ -210,7 +212,7 @@ const BUILT_IN_CHATS = Object.values(CHAT_PROFILE_IDS)
   .join(', ')
 
 export const LAUNCH_OPTIONS_DESCRIPTION =
-  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for their tabs on no connection); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
+  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for the tabs Clave started on no connection, never sessions started outside Clave); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
 export const LIST_DESCRIPTION =
   'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); parentId names the tab that opened it.'
 export const SWITCH_ACCOUNT_DESCRIPTION =
@@ -253,7 +255,8 @@ function buildServer(
   const { sessions, requests, sidebar } = options
   const profileFamily = options.profileFamily ?? builtInProfileFamily
   const chatDefault = options.chatDefault ?? ((): undefined => undefined)
-  const own = (id: string): string => (id === 'mine' ? sessionId : id)
+  // "mine" is the calling tab, the same resolver as every other road's.
+  const own = (id: string): string => ownSessionRef(id, sessionId)
   const known = (id: string): string => {
     const resolved = own(id)
     if (!sessions.get(resolved)) throw new Error(`Unknown session "${id}".`)
@@ -932,13 +935,8 @@ function buildServer(
       // The tab exists from here on: what follows is best effort, and the
       // answer always names the tab so the caller can find or close it.
       const warnings: string[] = []
-      if (args.name) {
-        try {
-          sessions.rename(info.id, args.name)
-        } catch (err) {
-          warnings.push(`The tab started but was not renamed: ${message(err)}`)
-        }
-      }
+      const name = args.name
+      if (name) await afterSpawn(warnings, 'name', () => sessions.rename(info.id, name))
       let placed: string | null = null
       if (groupId) {
         try {
@@ -950,20 +948,19 @@ function buildServer(
         else warnings.push(`Group "${groupId}" no longer exists; the tab is at the top level.`)
       }
       // A terminal starts its process at its first size; no window gives it one here.
-      if (sessions.get(info.id)?.transport === 'pty') {
-        try {
-          sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS)
-        } catch (err) {
-          warnings.push(`The terminal could not be sized to start: ${message(err)}`)
-        }
-      }
-      return text({
-        sessionId: info.id,
-        groupId: placed,
-        // Where the tab landed (PRDCT-4193): the caller's workspace, or none.
-        workspaceId: workspaceId ?? null,
-        ...(warnings.length > 0 ? { warnings } : {})
-      })
+      if (sessions.get(info.id)?.transport === 'pty')
+        await afterSpawn(warnings, 'size', () => sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS))
+      return text(
+        withWarnings(
+          {
+            sessionId: info.id,
+            groupId: placed,
+            // Where the tab landed (PRDCT-4193): the caller's workspace, or none.
+            workspaceId: workspaceId ?? null
+          },
+          warnings
+        )
+      )
     }
   )
   // ── PRDCT-4485: a tab moved to another connection, the Mac's rule with no window to ask ──
@@ -1049,7 +1046,8 @@ function buildServer(
   server.registerTool(
     'clave_rename',
     {
-      description: 'Rename a group or a session (tab) on this server.',
+      description:
+        'Rename a group or a session (tab) on this server. "mine" renames your own tab (target "session").',
       inputSchema: {
         target: z.enum(['group', 'session']),
         id: z.string().describe('Group id, or session id ("mine" for the calling tab)'),
@@ -1107,10 +1105,7 @@ function buildServer(
       }
     },
     async (args) => {
-      const target = await resolveTarget(
-        targetHost,
-        args.sessionId === 'mine' ? sessionId : args.sessionId
-      )
+      const target = await resolveTarget(targetHost, own(args.sessionId))
       requireCaller(targetHost, 'read')
       if (target.transport === 'pty') {
         const screen = await sessions.screen(target.id, args.lines)
@@ -1165,7 +1160,9 @@ function buildServer(
       description:
         'Resume a stopped tab on this server ("resume the tab", "bring the lane back"): the same tab, its agent started again under the same id with its conversation resumed where the provider can, on the model and in the permission mode it was last running. Any tab of this server can be resumed; a running tab is refused. Read a tab first with clave_read_session to learn what it is doing.',
       inputSchema: {
-        sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"')
+        sessionId: z
+          .string()
+          .describe('Target: a session id, an exact tab name, "parent", or "mine"')
       }
     },
     async (args) =>

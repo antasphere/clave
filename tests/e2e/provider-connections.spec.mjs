@@ -200,6 +200,40 @@ export async function run(t) {
       }
     )
 
+    // ── 5b. Two connect forms open at once share no id (PRDCT-4552) ──
+    // Moonshot's "Connect another" and the "Another provider" card's form
+    // both used `provider-add-label-local`, so a label could name the other
+    // form's field. Each label must name a field of its own form.
+    const anotherMoon = await connectPick(win, page, 'moonshot')
+    const anotherGeneric = await connectPick(win, page, 'generic')
+    const twoForms = await win.evaluate(() => {
+      const forms = [...document.querySelectorAll('[data-provider-add-form]')]
+      const ids = [...document.querySelectorAll('[id]')].map((el) => el.id)
+      const twice = ids.filter((id, i) => ids.indexOf(id) !== i)
+      const labels = forms.flatMap((form) =>
+        [...form.querySelectorAll('label[for]')].map((label) => {
+          const field = document.getElementById(label.htmlFor)
+          return {
+            form: form.getAttribute('data-provider-add-form'),
+            for: label.htmlFor,
+            inOwnForm: !!field && form.contains(field)
+          }
+        })
+      )
+      return { forms: forms.length, twice, labels }
+    })
+    t.check(
+      '5b. two connect forms open at once: no id twice, every label names a field of its own form',
+      twoForms.forms === 2 &&
+        twoForms.twice.length === 0 &&
+        twoForms.labels.length >= 4 &&
+        twoForms.labels.every((l) => l.inOwnForm),
+      twoForms
+    )
+    await anotherMoon.locator('[data-provider-add-cancel]').click()
+    await anotherGeneric.locator('[data-provider-add-cancel]').click()
+    await settled(async () => (await win.locator('[data-provider-add-form]').count()) === 0)
+
     // ── 6. Another provider: a base URL, the default wire format, a key ──
     const genericForm = await connectPick(win, page, 'generic')
     await genericForm.locator('[data-provider-add-label]').fill('Lab box')

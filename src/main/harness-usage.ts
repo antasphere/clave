@@ -26,6 +26,7 @@ import {
 import type { ProviderCompanyId } from '@clave/contract/settings/provider-catalogue'
 import {
   attributeUsage,
+  OTHER_SESSIONS,
   rangeStart,
   rowKey,
   type LedgerLine,
@@ -48,6 +49,9 @@ export interface UsageConnection {
   label: string
   company: string
 }
+
+/** The row of the sessions no Clave tab is known to have made (PRDCT-4551). */
+export const OTHER_SESSIONS_LABEL = 'Other sessions'
 
 export const SIGN_IN_LABEL: Readonly<Record<UsageHarness, string>> = {
   pi: 'Pi sign-in',
@@ -159,8 +163,23 @@ export function harnessUsageRows(input: HarnessUsageInputs): HarnessUsageView {
       removed: false,
       ...figuresOf(null)
     })
+    // What no Clave tab is known to have made (PRDCT-4551): Settings → Usage's
+    // alone, so the page adds up to what the program recorded; never a
+    // sign-in. Listed when it counted something.
+    const other = attributed.get(rowKey(harness, OTHER_SESSIONS))
+    if (other)
+      rows.push({
+        harness,
+        connectionId: null,
+        label: OTHER_SESSIONS_LABEL,
+        billing: signInBilling(other.providers, harness),
+        removed: false,
+        other: true,
+        ...other.figures
+      })
     for (const row of attributed.values()) {
-      if (row.harness !== harness || !row.connectionId) continue
+      if (row.harness !== harness || !row.connectionId || row.connectionId === OTHER_SESSIONS)
+        continue
       if (input.connections(harness).some((c) => c.id === row.connectionId)) continue
       const line = lastLine.get(row.connectionId)
       rows.push({

@@ -257,7 +257,8 @@ it('a Pi tab on a connection shows that connection’s today, an OpenCode tab on
     const oc = renderToStaticMarkup(<SidebarFooter />)
     const ocUsage = /<button[^>]*data-usage-provider="opencode"[^>]*>.*?<\/button>/.exec(oc)?.[0]
     expect(ocUsage).toContain('data-connection-usage="sign-in"')
-    expect(ocUsage).toContain('>10.4K tokens · $0.01 today</span>')
+    // Named, as a connection's line is (PRDCT-4551): whose figure it is.
+    expect(ocUsage).toContain('>OpenCode sign-in · 10.4K tokens · $0.01 today</span>')
   } finally {
     useHarnessUsageStore.setState({ byKey: {} })
   }

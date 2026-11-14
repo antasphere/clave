@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { harnessUsageText } from '@clave/contract/settings/harness-usage-view'
+import { harnessUsageText, signInUsageOf } from '@clave/contract/settings/harness-usage-view'
 import {
   HarnessUsage,
   billingOf,
@@ -61,8 +61,24 @@ describe('the rows each place reads (PRDCT-4551)', () => {
       cost: 0.5
     })
     const signInOf = (records: UsageRecord[], range: 'today' | 'all'): string | undefined =>
-      harnessUsageRows({ range, now: NOW, ledger: [], records, connections: () => [] }).rows.find(
-        (r) => r.harness === 'pi' && r.connectionId === null
+      signInUsageOf(
+        harnessUsageRows({
+          range,
+          now: NOW,
+          ledger: [
+            {
+              harness: 'pi',
+              sessionId: 'mine',
+              connectionId: null,
+              label: null,
+              company: null,
+              at: 0
+            }
+          ],
+          records,
+          connections: () => []
+        }),
+        'pi'
       )?.billing
     const longAgo = new Date(2026, 0, 1).getTime()
     const records = [rec('deepseek', AT), rec('kimi-coding', longAgo)]
@@ -87,6 +103,15 @@ describe('the rows each place reads (PRDCT-4551)', () => {
         label: 'Old DeepSeek',
         company: 'deepseek',
         at: AT - 1
+      },
+      // A tab Clave started on no connection.
+      {
+        harness: 'pi',
+        sessionId: 'mine',
+        connectionId: null,
+        label: null,
+        company: null,
+        at: AT - 1
       }
     ]
     const record = (over: Partial<UsageRecord>): UsageRecord => ({
@@ -109,7 +134,8 @@ describe('the rows each place reads (PRDCT-4551)', () => {
       records: [
         record({}),
         record({ sessionId: 'g', provider: 'deepseek', totalTokens: 40, cost: 0.02 }),
-        record({ sessionId: 'mine', provider: 'anthropic', totalTokens: 7 })
+        record({ sessionId: 'mine', provider: 'anthropic', totalTokens: 7 }),
+        record({ sessionId: 'outside', provider: 'anthropic', totalTokens: 5 })
       ],
       connections: (harness) =>
         harness === 'pi'
@@ -120,18 +146,23 @@ describe('the rows each place reads (PRDCT-4551)', () => {
           : [{ id: 'kimi-a', label: 'Kimi A', company: 'moonshot' }]
     })
     const pi = view.rows.filter((r) => r.harness === 'pi')
-    expect(pi.map((r) => [r.label, r.billing, r.removed, r.totalTokens])).toEqual([
-      ['Kimi A', 'plan', false, 120],
-      ['Kimi B', 'plan', false, 0],
-      ['Pi sign-in', 'signIn', false, 7],
-      ['Old DeepSeek', 'payPerUse', true, 40]
+    expect(pi.map((r) => [r.label, r.billing, r.removed, r.totalTokens, !!r.other])).toEqual([
+      ['Kimi A', 'plan', false, 120, false],
+      ['Kimi B', 'plan', false, 0, false],
+      ['Pi sign-in', 'signIn', false, 7, false],
+      // A session the ledger does not know (PRDCT-4551): its own row, never
+      // the sign-in, and never what the sign-in's line or a launcher reads.
+      ['Other sessions', 'signIn', false, 5, true],
+      ['Old DeepSeek', 'payPerUse', true, 40, false]
     ])
+    expect(signInUsageOf(view, 'pi')?.totalTokens).toBe(7)
     expect(view.rows.filter((r) => r.harness === 'opencode').map((r) => r.label)).toEqual([
       'Kimi A',
       'OpenCode sign-in'
     ])
     // What each kind of connection shows, by the one line.
-    const [kimiA, , signIn, gone] = pi
+    const [kimiA, , signIn, other, gone] = pi
+    expect(harnessUsageText(other, other.billing, 'today')).toBe('1 request · 5 tokens today')
     expect(harnessUsageText(kimiA, kimiA.billing, 'today')).toBe('1 request · 120 tokens today')
     expect(harnessUsageText(gone, gone.billing, 'today')).toBe('40 tokens · $0.02 today')
     // The sign-in's record was on a provider Clave does not know: no cost.
@@ -442,7 +473,17 @@ describe("OpenCode's records, as OpenCode 2.3.0 answers them", () => {
       cost: 0
     }
     const usage = new HarnessUsage({
-      ledger: () => [],
+      // A tab Clave started on no connection: its records are the sign-in's.
+      ledger: () => [
+        {
+          harness: 'opencode',
+          sessionId: 's',
+          connectionId: null,
+          label: null,
+          company: null,
+          at: 0
+        }
+      ],
       piRoots: () => [],
       opencode: () => async () => {
         if (gated) await new Promise<void>((r) => (release = r))

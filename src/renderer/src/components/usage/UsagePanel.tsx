@@ -4,6 +4,7 @@ import type { UsageWindow, CodexAccount } from '../../../../preload/index.d'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
   billsPerUse,
+  OTHER_SESSIONS_WORDS,
   harnessUsageText,
   type HarnessUsageBilling,
   type HarnessUsageRange,
@@ -128,7 +129,7 @@ function nextWeeklyReset(account: AccountRead): number {
 }
 
 /** The accounts in the order both charts draw them: the next weekly reset
- *  first, an account that could not be read last, the Accounts page's order
+ *  first, an account that could not be read last, the Connections page's order
  *  breaking ties. */
 function orderAccounts(accounts: AccountRead[]): AccountRead[] {
   return accounts
@@ -401,7 +402,7 @@ export function QuotaOverview({
   )
 }
 
-/** The Claude accounts, in the Accounts page's order. */
+/** The Claude accounts, in the Connections page's order. */
 function useClaudeAccountList(): { id: string; label: string; auth: string }[] {
   const profiles = useClaudeProfileStore((s) => s.profiles)
   return profiles.map((p: ClaudeProfile) => ({
@@ -499,7 +500,13 @@ const BILLING_WORDS: Record<HarnessUsageBilling, string> = {
 }
 
 /** A row's description: the sign-in says it is the sign-in, then its billing. */
-function billingWords(row: { connectionId: string | null; billing: HarnessUsageBilling }): string {
+function billingWords(row: {
+  connectionId: string | null
+  billing: HarnessUsageBilling
+  other?: boolean
+}): string {
+  // "Other sessions" (PRDCT-4551): what it is, in one plain sentence.
+  if (row.other) return OTHER_SESSIONS_WORDS
   return row.connectionId === null
     ? `The harness's own sign-in, on no stored connection. ${BILLING_WORDS[row.billing]}`
     : BILLING_WORDS[row.billing]
@@ -584,8 +591,8 @@ function HarnessUsagePage({ harness }: { harness: UsageHarness }): ReactElement 
           ]
           return (
             <div
-              key={`${row.connectionId ?? 'sign-in'}`}
-              data-harness-usage-row={row.connectionId ?? 'sign-in'}
+              key={`${row.connectionId ?? (row.other ? 'other' : 'sign-in')}`}
+              data-harness-usage-row={row.connectionId ?? (row.other ? 'other' : 'sign-in')}
               data-removed={row.removed ? 'true' : undefined}
             >
               <SettingsRow

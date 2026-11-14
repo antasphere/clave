@@ -1243,6 +1243,205 @@ describe('an agent switches the account of a server tab', () => {
   })
 })
 
+/* An open whose tab exists never answers an error (PRDCT-4507): on the window
+   road, a step after the spawn that fails (the tab entered in the store, its
+   name, its group; on a server, the name, the snapshot, the group, the size)
+   leaves the answer the tab's id and one sentence, never a thrown call. */
+describe('an open whose tab exists never answers an error on the window road (PRDCT-4507)', () => {
+  const failing = (): never => {
+    throw new Error('made-up failure')
+  }
+  const actions = (() => {
+    const s = useSessionStore.getState()
+    return { addSession: s.addSession, renameSession: s.renameSession, moveItems: s.moveItems }
+  })()
+  beforeEach(() => {
+    globals.window.electronAPI.setSessionDisplayName = vi.fn(async () => undefined)
+    useSessionStore.setState({
+      sessions: [],
+      groups: [
+        {
+          id: 'g1',
+          name: 'Build',
+          sessionIds: [],
+          terminals: [],
+          collapsed: false,
+          cwd: null
+        } as never
+      ]
+    })
+  })
+  afterEach(() => useSessionStore.setState(actions))
+
+  it.each([
+    ['addSession', 'The tab started but was not placed in the sidebar: made-up failure'],
+    ['renameSession', 'The tab started but was not renamed: made-up failure'],
+    ['moveItems', 'The tab started but was not placed in its group: made-up failure']
+  ] as const)('this Mac: a failed %s answers the id and one sentence', async (action, sentence) => {
+    useSessionStore.setState({ [action]: failing } as never)
+    const answer = (await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'terminal',
+      name: 'Lane',
+      groupId: 'g1'
+    })) as { sessionId: string; warnings?: string[] }
+    expect(answer.sessionId).toBe('tab-1')
+    expect(answer.warnings).toEqual([sentence])
+    expect(spawnSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('this Mac: an open where everything ran carries no warnings', async () => {
+    const answer = await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'terminal',
+      name: 'Lane',
+      groupId: 'g1'
+    })
+    expect(answer).toEqual({ sessionId: 'tab-1', groupId: 'g1' })
+  })
+
+  describe('on a saved server', () => {
+    const SERVER_TAB = resourceKey('session', 'srv', 'new-tab')
+    let fleetStart: ReturnType<typeof vi.fn>
+    beforeEach(() => {
+      useFleetStore.setState({
+        connections: [{ id: 'srv', name: 'Studio box', url: 'http://srv', enabled: true }] as never,
+        statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+      })
+      fleetStart = vi.fn(async () => ({ id: SERVER_TAB, cwd: '/srv', folderName: 'srv' }))
+      Object.assign(globals.window.electronAPI, {
+        fleetStart,
+        fleetSnapshot: vi.fn(async () => undefined),
+        resizeSession: vi.fn(async () => undefined),
+        setSessionDisplayName: vi.fn(async () => undefined)
+      })
+    })
+    afterEach(() => useFleetStore.setState({ connections: [], statuses: {} } as never))
+    const openOnServer = (): Promise<unknown> =>
+      openSessionProgrammatically({ cwd: '/srv', server: 'srv', mode: 'terminal', name: 'Lane' })
+
+    it.each([
+      ['setSessionDisplayName', 'The tab started but was not renamed: made-up failure'],
+      ['fleetSnapshot', 'The tab started but its record was not read again: made-up failure'],
+      [
+        'resizeSession',
+        'The tab started but its terminal could not be sized to start: made-up failure'
+      ]
+    ] as const)('a failed %s answers the id and one sentence', async (call, sentence) => {
+      globals.window.electronAPI[call] = vi.fn(async () => failing())
+      const answer = (await openOnServer()) as { sessionId: string; warnings?: string[] }
+      expect(answer.sessionId).toBe(SERVER_TAB)
+      expect(answer.warnings).toEqual([sentence])
+      expect(fleetStart).toHaveBeenCalledTimes(1)
+    })
+
+    it('a failed move into its group answers the id and one sentence', async () => {
+      useSessionStore.setState({
+        groups: [
+          {
+            id: resourceKey('group', 'srv', 'g-srv'),
+            name: 'Far',
+            sessionIds: [],
+            terminals: [],
+            collapsed: false,
+            cwd: null
+          } as never
+        ],
+        moveItems: failing
+      } as never)
+      const answer = (await openSessionProgrammatically({
+        cwd: '/srv',
+        server: 'srv',
+        mode: 'terminal',
+        groupId: resourceKey('group', 'srv', 'g-srv')
+      })) as { sessionId: string; groupId: string | null; warnings?: string[] }
+      expect(answer).toMatchObject({
+        sessionId: SERVER_TAB,
+        groupId: null,
+        warnings: ['The tab started but was not placed in its group: made-up failure']
+      })
+    })
+  })
+})
+
+/* "mine" is the calling tab on every session tool of the window road
+   (PRDCT-4507): a Pi and an OpenCode tab were told `No session with id
+   "mine"` by clave_rename, and listed the tabs to learn their own id. */
+describe('"mine" on the window road (PRDCT-4507)', () => {
+  const dispatch = async (
+    command: string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: command, command, payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  beforeEach(() => {
+    globals.window.electronAPI.setSessionDisplayName = vi.fn(async () => undefined)
+    useSessionStore.setState({
+      sessions: [
+        { id: 'caller', name: 'Pi tab', folderName: 'repo', sessionType: 'local' } as never,
+        { id: 'other', name: 'Other', folderName: 'repo', sessionType: 'local' } as never
+      ],
+      groups: []
+    })
+  })
+
+  it('renames the calling tab, and no other', async () => {
+    const answer = await dispatch('rename', {
+      target: 'session',
+      id: 'mine',
+      name: 'Renamed by itself',
+      callerSessionId: 'caller'
+    })
+    expect(answer).toEqual({
+      requestId: 'rename',
+      ok: true,
+      result: { renamed: 'caller', name: 'Renamed by itself' }
+    })
+    const names = useSessionStore.getState().sessions.map((s) => [s.id, s.name])
+    expect(names).toEqual([
+      ['caller', 'Renamed by itself'],
+      ['other', 'Other']
+    ])
+  })
+
+  it('refuses "mine" with no tab identity in one sentence, on every session tool', async () => {
+    const calls: [string, Record<string, unknown>, string][] = [
+      ['rename', { target: 'session', id: 'mine', name: 'x' }, 'id'],
+      ['focus', { sessionId: 'mine' }, 'sessionId'],
+      ['moveSession', { sessionId: 'mine', groupId: 'root' }, 'sessionId'],
+      ['closeSession', { sessionId: 'mine' }, 'sessionId'],
+      ['setSessionView', { sessionId: 'mine', url: null }, 'sessionId'],
+      ['readSession', { sessionId: 'mine' }, 'sessionId'],
+      ['resumeSession', { sessionId: 'mine' }, 'sessionId'],
+      ['sendToSession', { sessionId: 'mine', message: 'hi' }, 'sessionId'],
+      ['switchAccount', { sessionId: 'mine', account: 'any' }, 'sessionId']
+    ]
+    for (const [command, payload, field] of calls) {
+      const answer = await dispatch(command, payload)
+      expect({ command, ok: answer.ok, error: answer.error }).toEqual({
+        command,
+        ok: false,
+        error: `${field} "mine" needs a calling tab — this request has no tab identity`
+      })
+    }
+    expect(useSessionStore.getState().sessions.map((s) => s.name)).toEqual(['Pi tab', 'Other'])
+  })
+})
+
 describe('clave_launch_options on the window road (PRDCT-4485)', () => {
   /** This Mac as the input names it: one Claude connection, a remembered model. */
   const input: LaunchOptionsInput = {

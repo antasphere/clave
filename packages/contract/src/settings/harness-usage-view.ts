@@ -62,7 +62,16 @@ export interface HarnessUsageRow extends HarnessUsageFigures {
   /** A connection removed since: its past usage, shown in Settings → Usage
    *  alone. */
   removed: boolean
+  /** "Other sessions" (PRDCT-4551): the records no Clave tab is known to have
+   *  made (a session the ledger does not know, or a record from before its
+   *  first line). Its `connectionId` is null, and it is never a sign-in: shown
+   *  in Settings → Usage alone. */
+  other?: boolean
 }
+
+/** What Settings → Usage says under "Other sessions". */
+export const OTHER_SESSIONS_WORDS =
+  'Sessions Clave did not start, or that ran before Clave counted usage per connection.'
 
 export interface HarnessUsageView {
   range: HarnessUsageRange
@@ -122,7 +131,9 @@ export function signInUsageOf(
   view: Pick<HarnessUsageView, 'rows'> | null | undefined,
   harness: UsageHarness
 ): HarnessUsageRow | undefined {
-  return (view?.rows ?? []).find((row) => row.harness === harness && row.connectionId === null)
+  return (view?.rows ?? []).find(
+    (row) => row.harness === harness && row.connectionId === null && !row.other
+  )
 }
 
 /** "today", "in the last 7 days", … : the range as the end of a line. */

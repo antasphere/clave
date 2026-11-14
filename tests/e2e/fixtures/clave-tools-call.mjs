@@ -152,6 +152,21 @@ export async function callClaveTool(server, name, args) {
   return out
 }
 
+/** The tool call a stand-in's prompt asks for, or null: `clave-open {…}`
+ *  calls clave_open_session, `clave-call <tool> {…}` any other tool
+ *  (PRDCT-4507: a tab renames itself with "mine"). Bad JSON is `args: null`. */
+export function claveCallOf(text) {
+  const open = text.startsWith('clave-open ') ? ['clave_open_session', text.slice(11)] : null
+  const other = /^clave-call (clave_[a-z_]+) ([\s\S]*)$/.exec(text)
+  const [name, raw] = open ?? (other ? [other[1], other[2]] : [null, null])
+  if (!name) return null
+  try {
+    return { name, args: JSON.parse(raw) }
+  } catch {
+    return { name, args: null }
+  }
+}
+
 /** Resolve OpenCode's `{env:NAME}` references in a string, as 2.3.0 does
  *  (an unset variable becomes empty). */
 export function opencodeSubstitute(value) {
