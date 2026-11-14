@@ -266,7 +266,8 @@ function SlashMenu({
 // (`useTranscriptEnd`).
 const STICK_THRESHOLD = 80
 const stickSlack = (): number => STICK_THRESHOLD
-const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+// The agent's name, from the harness table for every harness (PRDCT-4507).
+import { agentNameOf } from '../../../src/shared/harness'
 /** The Terminal view's names for the permission modes where they differ
  *  from the provider's: bypass is YOLO here, short and unmistakable. */
 const terminalModeLabel = (option: PermissionModeOption): string =>
@@ -1043,7 +1044,7 @@ export function TerminalView({
                 value={{
                   answer,
                   busy: (id) => !ready || state === 'ended' || pending.includes(id),
-                  agent: AGENT_NAMES[session.provider] ?? 'the agent',
+                  agent: agentNameOf(session.provider),
                   remote: isRemoteKey(session.id),
                   live: (entry) => liveCards.has(entry),
                   drafts: questionDrafts,
@@ -1103,7 +1104,7 @@ export function TerminalView({
               aria-label="Scroll to the question"
             >
               <QuestionMarkCircleIcon />
-              {AGENT_NAMES[session.provider] ?? 'The agent'} asks a question
+              {agentNameOf(session.provider, 'The agent')} asks a question
               <ArrowDownIcon />
             </button>
           ) : (
@@ -1170,7 +1171,7 @@ export function TerminalView({
           // best, a tool to allow, in reach above the composer.
           requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
           remote={isRemoteKey(session.id)}
-          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+          agent={agentNameOf(session.provider)}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
         />

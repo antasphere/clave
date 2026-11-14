@@ -232,6 +232,18 @@ export const HARNESS_BY_ID: Readonly<Record<HarnessId, Harness>> = Object.fromEn
   HARNESSES.map((harness) => [harness.id, harness])
 ) as Record<HarnessId, Harness>
 
+/** The name a tab's agent goes by where Clave speaks of it ("Pi asks",
+ *  "Allow OpenCode to …"), from the table for every harness (PRDCT-4507): a
+ *  session's provider or mode, `claude-agents` being Claude Code's and
+ *  `gemini` Antigravity's; `fallback` for anything the table does not know. */
+export function agentNameOf(provider: string | null | undefined, fallback = 'the agent'): string {
+  const id =
+    provider === 'claude-agents' ? 'claude' : provider === 'gemini' ? 'antigravity' : provider
+  return id && Object.prototype.hasOwnProperty.call(HARNESS_BY_ID, id)
+    ? HARNESS_BY_ID[id as HarnessId].name
+    : fallback
+}
+
 /** A person's settings for one harness (Settings → Harnesses). Both absent
  *  means the harness's own defaults: no flag is passed. */
 export interface HarnessSettings {

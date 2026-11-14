@@ -19,9 +19,11 @@ import {
   captureEndpoint as captureEndpointOf,
   emitTabClosed,
   groupOfSession,
+  isCaptured,
   sessionMode,
   type SessionMode
 } from './exchange-capture'
+import { exchangeCaptureRefusal } from '../../../shared/agent-launch'
 import { useSessionStore, fileTabDedupKey, inActiveWorkspace } from '../store/session-store'
 import type {
   GroupTerminalConfig,
@@ -253,6 +255,9 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
     .filter((s) => s.sessionType === 'local' && inScope(s))
     .map((s) => ({
       id: s.id,
+      // The tab that opened it, as the served and the daemon's roads say
+      // (PRDCT-4507): the open's memory, main's lineage, the record's opener.
+      ...parentOf(s),
       name: s.name,
       cwd: s.cwd,
       mode: sessionMode(s),
@@ -461,6 +466,11 @@ const messagingParentOf = (session: Session): string | undefined =>
   persistedParents.get(session.id) ??
   session.openedBy ??
   session.spawnedBy
+/** `{ parentId }` for a tab some tab opened, nothing otherwise. */
+const parentOf = (session: Session): { parentId?: string } => {
+  const parentId = messagingParentOf(session)
+  return parentId ? { parentId } : {}
+}
 
 export async function openSessionProgrammatically(payload: {
   cwd: string
@@ -688,18 +698,24 @@ export async function openSessionProgrammatically(payload: {
   // with their launch prompt. UI-originated opens have no caller identity and
   // are the human's own act, not transport — never captured. Terminals are
   // not agents; not captured either.
-  if (payload.callerSessionId && mode !== 'terminal' && mode !== 'pi') {
+  // Whether each end is captured comes from the harness table (PRDCT-4507),
+  // and a capture is observability: it never fails an open whose tab exists.
+  if (payload.callerSessionId) {
     const current = useSessionStore.getState().sessions
     const spawner = current.find((s) => s.id === payload.callerSessionId)
     const spawned = current.find((s) => s.id === info.id)
-    if (spawner && spawned) {
-      window.electronAPI.captureTabSpawn({
-        ts: new Date().toISOString(),
-        spawner: captureEndpointOf(spawner, useSessionStore.getState().groups),
-        session: captureEndpointOf(spawned, useSessionStore.getState().groups),
-        prompt: payload.prompt || null,
-        model: model ?? null
-      })
+    if (spawner && spawned && isCaptured(spawner) && isCaptured(spawned)) {
+      try {
+        window.electronAPI.captureTabSpawn({
+          ts: new Date().toISOString(),
+          spawner: captureEndpointOf(spawner, useSessionStore.getState().groups),
+          session: captureEndpointOf(spawned, useSessionStore.getState().groups),
+          prompt: payload.prompt || null,
+          model: model ?? null
+        })
+      } catch {
+        // observability only
+      }
     }
   }
 
@@ -1310,9 +1326,7 @@ function handleSelfCheckpoint(sessionId: string, message: string): unknown {
   // the two paths cannot quietly diverge on what may enter the record.
   const self = state.sessions.find((s) => s.sessionType === 'local' && s.id === sessionId)
   if (!self) throw new Error('Calling session not found')
-  if (sessionMode(self) === 'pi') throw new Error('Pi exchange capture is not supported yet')
-  if (sessionMode(self) === 'opencode')
-    throw new Error('OpenCode exchange capture is not supported yet')
+  if (!isCaptured(self)) throw new Error(exchangeCaptureRefusal(sessionMode(self)))
   const text = sanitizeForPaste(message)
   const endpoint = captureEndpointOf(self, state.groups)
   window.electronAPI.captureExchangeMessage({
@@ -1532,8 +1546,7 @@ async function handleSendToSession(payload: {
   if (sender) {
     const recordDelivery = (): void => {
       if (!submitted) return
-      const uncaptured = (mode: string): boolean => mode === 'pi' || mode === 'opencode'
-      if (uncaptured(sessionMode(sender)) || uncaptured(sessionMode(target))) return
+      if (!isCaptured(sender) || !isCaptured(target)) return
       window.electronAPI.captureExchangeMessage({
         ts: new Date().toISOString(),
         sender: captureEndpointOf(sender, useSessionStore.getState().groups),

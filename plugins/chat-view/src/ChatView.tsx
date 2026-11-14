@@ -317,7 +317,8 @@ function SlashMenu({
 // (`useTranscriptEnd`).
 const STICK_THRESHOLD = 80
 const stickSlack = (): number => STICK_THRESHOLD
-const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+// The agent's name, from the harness table for every harness (PRDCT-4507).
+import { agentNameOf } from '../../../src/shared/harness'
 /** One turn of the transcript. Memoised on the entry itself, which the
  *  reducer replaces only when that entry changes: a streamed delta re-renders
  *  the answer it grows and nothing above it, and a keystroke in the composer
@@ -696,7 +697,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         const record = useViewSessionStore.getState().sessions.find((s) => s.id === session.id)
         return transcriptMarkdown(whole.entries, {
           title: record?.name ?? session.title,
-          agent: AGENT_NAMES[session.provider] ?? session.provider,
+          agent: agentNameOf(session.provider, session.provider),
           cwd: session.cwd,
           model: whole.model,
           exportedAt: new Date()
@@ -1194,7 +1195,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 value={{
                   answer,
                   busy: (id) => !ready || state === 'ended' || pending.includes(id),
-                  agent: AGENT_NAMES[session.provider] ?? 'the agent',
+                  agent: agentNameOf(session.provider),
                   remote: isRemoteKey(session.id),
                   live: (entry) => liveCards.has(entry),
                   drafts: questionDrafts,
@@ -1253,7 +1254,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               aria-label="Scroll to the question"
             >
               <QuestionMarkCircleIcon />
-              {AGENT_NAMES[session.provider] ?? 'The agent'} asks a question
+              {agentNameOf(session.provider, 'The agent')} asks a question
               <ArrowDownIcon />
             </button>
           ) : (
@@ -1320,7 +1321,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           // best, a tool to allow, in reach above the composer.
           requests={panel === 'resume' ? [] : waitingOn.filter((r) => !isQuestion(r))}
           remote={isRemoteKey(session.id)}
-          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+          agent={agentNameOf(session.provider)}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
         />

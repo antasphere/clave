@@ -481,6 +481,15 @@ describe('serveCommand', () => {
       model: null,
       launchProfileId: null
     })
+    // PRDCT-4507: the tab's parent, as the daemon's road says it: main's
+    // lineage first, else the record's opener; none for a tab nobody opened.
+    const shell = {
+      ...h.ctx().shell,
+      parentOf: (id: string) => (id === 'pi' ? 'opener-lineage' : null)
+    }
+    const withParents = (await serveCommand('list', {}, h.ctx({ shell }))) as Listing
+    expect(withParents.sessions.find((s) => s.id === 'pi')?.parentId).toBe('opener-lineage')
+    expect(withParents.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('parentId')
   })
 })
 

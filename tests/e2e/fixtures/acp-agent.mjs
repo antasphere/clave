@@ -30,7 +30,7 @@ import {
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { callClaveTools, opencodeSubstitute } from './clave-tools-call.mjs'
+import { callClaveTool, callClaveTools, opencodeSubstitute } from './clave-tools-call.mjs'
 
 const argv = process.argv.slice(2)
 if (argv.includes('--version')) {
@@ -52,6 +52,11 @@ mkdirSync(sessionsDir, { recursive: true })
 // `time.updated`; `session export --standalone <id>` gives its messages, an
 // assistant message carrying `model.providerID`, `tokens` and `cost`. Each
 // prompt below records the usage a real call would have.
+/** The script the stand-in model runs in code mode (`run code`, PRDCT-4507),
+ *  the one sent to the real 2.3.0. */
+const SCRIPT =
+  'const found = await search({ query: "list tabs" }); const r = await tools.clave.clave_list({}); return r'
+
 const readTurns = (id) => {
   const file = path.join(sessionsDir, `${id}.jsonl`)
   return existsSync(file)
@@ -156,6 +161,9 @@ const update = (sessionId, body) =>
 // server handed in `mcpServers` over the protocol. Only with
 // `CLAVE_TOOLS_STAND_IN_LOG` set (clave-tools-call.mjs).
 let claveToolsCalled = false
+/** The server found at the session's start: a prompt `clave-open {…}` calls
+ *  `clave_open_session` on it as the model would (PRDCT-4507). */
+let claveServer = null
 function opencodeClaveTools(params) {
   if (claveToolsCalled || !process.env.CLAVE_TOOLS_STAND_IN_LOG) return
   claveToolsCalled = true
@@ -179,6 +187,7 @@ function opencodeClaveTools(params) {
       url: handed.url,
       headers: Object.fromEntries((handed.headers ?? []).map((h) => [h.name, h.value]))
     }
+  claveServer = server
   void callClaveTools(server, {
     harness: 'opencode',
     form: 'acp',
@@ -314,6 +323,22 @@ async function prompt(id, params) {
     say(`permission: ${outcome?.outcome === 'selected' ? String(outcome.optionId) : 'cancelled'}`)
     if (turn.cancelled) return finish('cancelled')
   }
+  // `clave-open {…}`: the model calls clave_open_session once with those
+  // arguments (PRDCT-4507), and says what came back.
+  if (text.startsWith('clave-open ')) {
+    let args = null
+    try {
+      args = JSON.parse(text.slice('clave-open '.length))
+    } catch {
+      args = null
+    }
+    const answer = args
+      ? await callClaveTool(claveServer, 'clave_open_session', args)
+      : { ok: false, error: 'bad arguments' }
+    say(`clave_open_session: ${JSON.stringify(answer)}`)
+    record(sessionId, { kind: 'agent', text: agentText })
+    return finish(turn.cancelled ? 'cancelled' : 'end_turn')
+  }
   say('You said: ')
   // Another session's text in the middle of this prompt, as a subagent's
   // child session streams beside its parent's.
@@ -325,6 +350,53 @@ async function prompt(id, params) {
   const half = Math.ceil(text.length / 2)
   say(text.slice(0, half))
   say(text.slice(half))
+  // `run code`: OpenCode 2.3.0's code mode, frame for frame as the real
+  // `opencode acp` sent them on 14 November 2026 (PRDCT-4507): the `execute`
+  // call opens with `rawInput: {}`, its script arrives with the `in_progress`
+  // update (twice), and the completion names the tools the script called.
+  if (text.includes('run code')) {
+    const scriptId = `call_${randomBytes(4).toString('hex')}`
+    const code = SCRIPT
+    update(sessionId, {
+      sessionUpdate: 'tool_call',
+      toolCallId: scriptId,
+      name: 'execute',
+      title: 'execute',
+      kind: 'other',
+      status: 'pending',
+      locations: [],
+      rawInput: {}
+    })
+    for (let i = 0; i < 2; i++)
+      update(sessionId, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: scriptId,
+        status: 'in_progress',
+        kind: 'other',
+        title: 'execute',
+        locations: [],
+        rawInput: { code }
+      })
+    update(sessionId, {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: scriptId,
+      status: 'completed',
+      locations: [],
+      content: [{ type: 'content', content: { type: 'text', text: 'stand-in answer' } }],
+      rawOutput: {
+        metadata: {
+          toolCalls: [
+            { tool: 'search', status: 'completed', input: { query: 'list tabs' } },
+            { tool: 'clave.clave_list', status: 'completed' }
+          ],
+          truncated: false
+        }
+      }
+    })
+    record(sessionId, { kind: 'agent', text: agentText })
+    record(sessionId, { kind: 'script', toolCallId: scriptId, code, output: 'stand-in answer' })
+    return finish(turn.cancelled ? 'cancelled' : 'end_turn')
+  }
   const toolCallId = `call_${randomBytes(4).toString('hex')}`
   update(sessionId, {
     sessionUpdate: 'tool_call',
@@ -388,7 +460,30 @@ function load(id, params) {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: turn.text }
       })
-    else if (turn.kind === 'tool') {
+    else if (turn.kind === 'script') {
+      // Replayed as it was sent: the script after the call (PRDCT-4507).
+      update(sessionId, {
+        sessionUpdate: 'tool_call',
+        toolCallId: turn.toolCallId,
+        title: 'execute',
+        kind: 'other',
+        status: 'pending',
+        rawInput: {}
+      })
+      update(sessionId, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: turn.toolCallId,
+        status: 'in_progress',
+        title: 'execute',
+        rawInput: { code: turn.code }
+      })
+      update(sessionId, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: turn.toolCallId,
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: turn.output } }]
+      })
+    } else if (turn.kind === 'tool') {
       update(sessionId, {
         sessionUpdate: 'tool_call',
         toolCallId: turn.toolCallId,

@@ -3,6 +3,8 @@ import {
   BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
+  capturesExchange,
+  exchangeCaptureRefusal,
   chatProfileSource,
   codexProfilePolicy,
   codexRungPolicy,
@@ -612,5 +614,20 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     })
     expect(codexRungPolicy('never')).toBeUndefined()
     expect(codexRungPolicy(undefined)).toBeUndefined()
+  })
+})
+
+// PRDCT-4507: every capture road asks the table, never a list of modes.
+describe('capturesExchange', () => {
+  it('answers the harness table, aliases included, and never for a terminal or an unknown mode', () => {
+    for (const [mode, capability] of Object.entries(AGENT_CAPABILITIES))
+      expect(capturesExchange(mode), mode).toBe(capability.exchangeCapture === 'supported')
+    expect(capturesExchange('claude-agents')).toBe(capturesExchange('claude'))
+    expect(capturesExchange('gemini')).toBe(capturesExchange('antigravity'))
+    expect(capturesExchange('terminal')).toBe(false)
+    expect(capturesExchange('nope')).toBe(false)
+    expect(exchangeCaptureRefusal('opencode')).toBe(
+      'OpenCode exchange capture is not supported yet'
+    )
   })
 })
