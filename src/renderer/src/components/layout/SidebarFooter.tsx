@@ -389,24 +389,18 @@ export function SidebarFooter(): React.ReactElement {
   const piTotals = provider === 'pi' && pi.status !== 'error' ? pi.data : null
   const providerStatus = provider === 'pi' ? pi.status : quota.status
   const showProviderStatus = (quotaProvider !== null || provider === 'pi') && !usage && !piTotals
-  // The connection's line when nothing above says it: an OpenCode tab, which
-  // has no usage to read.
-  const showConnection =
-    connection !== null && !usage && !remoteUsage && !piTotals && !showProviderStatus
-  const connectionPart = connection ? `${connection.label} · ` : ''
+  // A Pi or OpenCode tab's stored connection is a line of its own, never part
+  // of a usage line: Pi's figures are its local totals of the day on any
+  // connection or none, so `Moonshot · 10.4K tokens` would read as that
+  // connection's usage, and it is not (T1, PRDCT-4427).
+  const harnessName = focusedSession?.piMode ? 'Pi' : 'OpenCode'
   const showWork =
-    !usage &&
-    !piTotals &&
-    !showProviderStatus &&
-    !showConnection &&
-    trackerEnabled &&
-    trackerMinutes > 0
+    !usage && !piTotals && !showProviderStatus && trackerEnabled && trackerMinutes > 0
   const showMetaRow =
     usage !== null ||
     remoteUsage !== null ||
     piTotals !== null ||
     showProviderStatus ||
-    showConnection ||
     showWork ||
     showFeedbackIcon
 
@@ -470,6 +464,26 @@ export function SidebarFooter(): React.ReactElement {
         </button>
       </div>
 
+      {connection && (
+        <>
+          <div className="sidebar-footer-sep" />
+          <div className="sidebar-footer-row sidebar-footer-row--meta">
+            {/* A control like the usage lines: a click opens Settings where
+                the connection is managed (Connections). */}
+            <button
+              className="sidebar-footer-line"
+              data-connection-line={connection.id}
+              onClick={() => openSettings('accounts')}
+              title={`${harnessName} · Connection: ${connection.label}`}
+            >
+              <span className="text-[11px] text-text-secondary truncate">
+                {harnessName} · {connection.label}
+              </span>
+            </button>
+          </div>
+        </>
+      )}
+
       {showMetaRow && (
         <>
           <div className="sidebar-footer-sep" />
@@ -487,11 +501,10 @@ export function SidebarFooter(): React.ReactElement {
                 className="sidebar-footer-line"
                 data-usage-provider="pi"
                 onClick={() => openUsage('pi')}
-                title={`Pi · ${connectionPart}${piTodaySummary(piTotals)} · Local totals, not account quota`}
+                title={`Pi · ${piTodaySummary(piTotals)} · Local totals, not account quota`}
               >
                 <PiLogo className="w-3.5 h-3.5 flex-shrink-0" />
                 <span className="text-[11px] text-text-secondary tabular-nums truncate">
-                  {connectionPart}
                   {piTodaySummary(piTotals)}
                 </span>
               </button>
@@ -503,25 +516,12 @@ export function SidebarFooter(): React.ReactElement {
                 title={`${USAGE_PROVIDER_LABELS[provider]} usage`}
               >
                 <span className="text-[11px] text-text-tertiary truncate">
-                  {USAGE_PROVIDER_LABELS[provider]} · {provider === 'pi' ? connectionPart : ''}
+                  {USAGE_PROVIDER_LABELS[provider]} ·{' '}
                   {providerStatus === 'idle' || providerStatus === 'loading'
                     ? 'Loading usage…'
                     : providerStatus === 'error'
                       ? 'Usage unavailable'
                       : 'No quota reported'}
-                </span>
-              </button>
-            ) : showConnection && connection ? (
-              // A control like the usage lines beside it: a click opens
-              // Settings where the connection is managed (Connections).
-              <button
-                className="sidebar-footer-line"
-                data-connection-line={connection.id}
-                onClick={() => openSettings('accounts')}
-                title={`${focusedSession?.piMode ? 'Pi' : 'OpenCode'} · Connection: ${connection.label}`}
-              >
-                <span className="text-[11px] text-text-secondary truncate">
-                  {focusedSession?.piMode ? 'Pi' : 'OpenCode'} · {connection.label}
                 </span>
               </button>
             ) : showWork ? (
