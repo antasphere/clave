@@ -34,7 +34,13 @@ import { PushHubService, pushRoute } from './push/route'
 import { fixtureRoute } from './fixtures/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, WorkspacesWelcomeLive, settingsHandlers } from './settings'
-import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
+import {
+  SidebarEventsLive,
+  SidebarLayoutsPort,
+  SidebarOverviewEventsLive,
+  SidebarOverviewPort,
+  sidebarHandlers
+} from './sidebar'
 import {
   ReviewDesk,
   WorkspaceFilesEventsLive,
@@ -96,6 +102,7 @@ export type ServerServices =
   | PushHubService
   | EventStore
   | SidebarLayoutsPort
+  | SidebarOverviewPort
   | WorkspaceFilesPort
   | ReviewDesk
   // ── Lane D (wave 3): the view requests ──
@@ -152,6 +159,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
   // ── Lane C: every change of the layouts told to the clients ──
   const sidebarEvents = SidebarEventsLive.pipe(Layer.provide(services))
+  // ── The phone's notice that the overview may have changed, no payload ──
+  const overviewEvents = SidebarOverviewEventsLive.pipe(Layer.provide(services))
   // ── Lane B: a terminals port over a wire is a readiness check ──
   const terminalsReady = TerminalsReadyLive.pipe(Layer.provide(services))
   // ── Wave 3, lane A: a watched `.clave` file's changes told to the clients ──
@@ -180,6 +189,7 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     hub,
     settingsEvents,
     sidebarEvents,
+    overviewEvents,
     terminalsReady,
     workspaceFilesEvents,
     views,

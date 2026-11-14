@@ -90,18 +90,82 @@ describe('the sidebar on the push channel', () => {
     expect(created.status).toBe(200)
     const body = (await created.json()) as { group: { id: string }; layout: { revision: number } }
     expect(body.layout.revision).toBe(1)
-    const frame = await peer.next()
-    expect(frame).toMatchObject({
-      _tag: 'event',
-      event: {
+    // The change, and the phone's payload-free notice beside it, in either order.
+    const events = [await peer.next(), await peer.next()].map((frame) =>
+      frame._tag === 'event' ? frame.event : frame
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
         _tag: 'sidebar.layout_changed',
         cause: 'command',
-        layout: { windowKey: 'w1', revision: 1, displayOrder: ['g1', body.group.id] }
-      }
-    })
-    // Told once: the layer that subscribes is built once, whoever provides it.
+        layout: expect.objectContaining({
+          windowKey: 'w1',
+          revision: 1,
+          displayOrder: ['g1', body.group.id]
+        })
+      })
+    )
+    expect(events).toContainEqual({ _tag: 'sidebar.overview_changed' })
+    // Told once each: the layers that subscribe are built once, whoever provides them.
     expect(await peer.silence()).toBe(true)
     peer.ws.close()
+  })
+})
+
+describe('the overview a phone reads', () => {
+  it('answers every window’s groups without their terminals, prompts, folders or views', async () => {
+    await post('/sidebar/groups/prompt', { windowKey: 'w1', groupId: 'g1', prompt: 'secret plan' })
+    await post('/sidebar/groups/color', { windowKey: 'w1', groupId: 'g1', color: 'green' })
+    await post('/sidebar/groups/terminals', {
+      windowKey: 'w1',
+      groupId: 'g1',
+      terminal: { command: 'TOKEN=abc npm run dev', commandMode: 'auto', color: 'blue' }
+    })
+    await post('/sidebar/groups', { windowKey: 'w2', group: { id: 'g2', name: 'Docs' } })
+    const response = await fetch(`${server.url}/sidebar/overview`, {
+      headers: headers(server.token)
+    })
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(JSON.parse(text)).toEqual({
+      windows: [
+        {
+          windowKey: 'w1',
+          displayOrder: ['g1'],
+          groups: [{ id: 'g1', name: 'Api', color: 'green', collapsed: false, sessionIds: ['s1'] }]
+        },
+        {
+          windowKey: 'w2',
+          displayOrder: ['g2'],
+          groups: [{ id: 'g2', name: 'Docs', collapsed: false, sessionIds: [] }]
+        }
+      ]
+    })
+    for (const leaked of ['secret plan', 'TOKEN', 'npm run dev', 'terminals', 'cwd', 'prompt'])
+      expect(text, leaked).not.toContain(leaked)
+  })
+  it('names an entry’s own source over the layouts when it is given one', async () => {
+    const other = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(),
+        sidebarOverview: {
+          read: () => ({
+            windows: [{ windowKey: 'kA', workspaceId: 'ws-a', displayOrder: [], groups: [] }]
+          }),
+          onChange: () => () => {}
+        }
+      }
+    })
+    try {
+      const response = await fetch(`${other.url}/sidebar/overview`, {
+        headers: headers(other.token)
+      })
+      expect(await response.json()).toEqual({
+        windows: [{ windowKey: 'kA', workspaceId: 'ws-a', displayOrder: [], groups: [] }]
+      })
+    } finally {
+      await other.stop()
+    }
   })
 })
 

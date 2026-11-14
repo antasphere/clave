@@ -14,6 +14,7 @@ import {
   AddGroupTerminal,
   CreateGroup,
   DeleteGroup,
+  GetSidebarOverview,
   GetWindowLayout,
   GroupNotFound,
   LayoutConflict,
@@ -37,7 +38,7 @@ import {
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import { ServerEvents } from '../events'
 import type { Result, SidebarFailure, SidebarLayouts } from './layouts'
-import { SidebarLayoutsPort } from './port'
+import { SidebarLayoutsPort, SidebarOverviewPort } from './port'
 
 /** The class's plain failure as the contract's error, the shape the bus
  *  and the HTTP bridge recognise as declared. */
@@ -90,6 +91,10 @@ const read = <T>(
 export const sidebarHandlers = [
   QueryHandler.make(GetWindowLayout, (p) => read((l) => l.get(p.windowKey))),
   QueryHandler.make(ListWindowLayouts, () => read((l) => l.list())),
+  // The phone's read: a projection of the layouts, read at the call.
+  QueryHandler.make(GetSidebarOverview, () =>
+    Effect.flatMap(SidebarOverviewPort, (overview) => Effect.sync(() => overview.read()))
+  ),
   CommandHandler.make(SaveWindowLayout, (p) =>
     run((l) =>
       l.save(p.windowKey, { groups: p.groups, displayOrder: p.displayOrder }, p.baseRevision)
@@ -158,3 +163,26 @@ export const SidebarEventsLive: Layer.Layer<never, never, SidebarLayoutsPort | S
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
     })
   )
+
+/**
+ * The phone's notice: every change of the overview's source told to every
+ * client as `sidebar.overview_changed`, with no payload. A phone hears it
+ * (`../devices/scope.ts`) and reads the overview again; it never hears
+ * `sidebar.layout_changed`, which carries the whole layout. A desktop hears
+ * both and needs only the second.
+ */
+export const SidebarOverviewEventsLive: Layer.Layer<
+  never,
+  never,
+  SidebarOverviewPort | ServerEvents
+> = Layer.scopedDiscard(
+  Effect.gen(function* () {
+    const overview = yield* SidebarOverviewPort
+    const events = yield* ServerEvents
+    const runtime = yield* Effect.runtime<never>()
+    const unsubscribe = overview.onChange(() => {
+      Runtime.runFork(runtime)(events.publish({ _tag: 'sidebar.overview_changed' }))
+    })
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
+  })
+)
