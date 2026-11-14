@@ -101,3 +101,23 @@ class ElapsedTest {
         assertEquals("1h 12m", elapsed(0, 72 * 60_000L))
     }
 }
+
+class SlashTest {
+    private val commands = listOf(
+        com.clave.core.contract.CommandOption("compact", "Compact the context", "/compact "),
+        com.clave.core.contract.CommandOption("review", insert = "/review "),
+        com.clave.core.contract.CommandOption("mcp:docs", insert = "/mcp:docs "),
+    )
+
+    @Test
+    fun `a slash at the start lists the commands, filtered as it is typed`() {
+        assertEquals(3, slashMatches("/", commands).size)
+        assertEquals(listOf("compact"), slashMatches("/com", commands).map { it.name })
+        assertEquals(listOf("mcp:docs"), slashMatches("/MCP:", commands).map { it.name })
+        assertEquals(emptyList<Any>(), slashMatches("/compact now", commands))
+        assertEquals(emptyList<Any>(), slashMatches("hello /com", commands))
+        assertEquals(emptyList<Any>(), slashMatches("/", null))
+        assertEquals("", slashQuery("/"))
+        assertEquals(null, slashQuery("/a\nb"))
+    }
+}

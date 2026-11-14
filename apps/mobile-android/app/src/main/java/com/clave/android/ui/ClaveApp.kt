@@ -416,6 +416,7 @@ private fun ChatRoute(
             controls = chatControlsView(screen.provider, conversation, controls),
             prompt = promptView(screen.provider, conversation),
             work = workCards(conversation),
+            slashCommands = slashCommands(chatState.draft, controls.commands),
         ),
         actions = ChatActions(
             onOpenControls = { chat?.refreshControls() },

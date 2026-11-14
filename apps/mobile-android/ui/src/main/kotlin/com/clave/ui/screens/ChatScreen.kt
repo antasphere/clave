@@ -80,6 +80,8 @@ import com.clave.ui.chat.Composer
 import com.clave.ui.chat.ComposerStatusRow
 import com.clave.ui.chat.ControlSheet
 import com.clave.ui.chat.PermissionPrompt
+import com.clave.ui.chat.SlashCommandView
+import com.clave.ui.chat.SlashMenu
 import com.clave.ui.chat.PromptView
 import com.clave.ui.chat.PromptDock
 import com.clave.ui.chat.QuestionView
@@ -150,6 +152,8 @@ data class ChatScreenState(
     val prompt: PromptView? = null,
     /** The background work running now (subagents, commands), as cards above the composer. */
     val work: List<WorkCardView> = emptyList(),
+    /** The commands matching the "/" being typed at the start of the composer. */
+    val slashCommands: List<SlashCommandView> = emptyList(),
 )
 
 /**
@@ -261,6 +265,7 @@ fun ChatScreen(
                     PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
                 }
                 if (!state.ended) WorkCards(state.work, onStop = actions.onStopTask)
+                if (!state.ended) SlashMenu(state.slashCommands, onPick = { onTextChange(it.insert) })
                 Composer(
                     text = state.composer.text,
                     onTextChange = onTextChange,

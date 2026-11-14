@@ -12,6 +12,9 @@ import com.clave.core.chat.groupEntries
 import com.clave.core.contract.AgentQuestion
 import com.clave.core.contract.SessionEvent
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.clave.ui.chat.ChatChoice
 import com.clave.ui.chat.ChatControlsView
 import com.clave.ui.chat.PromptView
@@ -237,5 +240,30 @@ class ChatUxTest {
         rule.onNodeWithText("$ npm run dev").assertIsDisplayed()
         rule.onNodeWithText("Stop").performClick()
         rule.runOnIdle { assertEquals(listOf("b1"), stopped) }
+    }
+
+    @Test
+    fun aSlashListsTheCommandsAndATapPutsOneInTheComposer() {
+        var text by androidx.compose.runtime.mutableStateOf("/co")
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                ChatScreen(
+                    state = state().copy(
+                        composer = ChatComposerState(text = text, attachments = emptyList(), sending = false, deliveryMark = null),
+                        slashCommands = if (text == "/co") listOf(com.clave.ui.chat.SlashCommandView("compact", "Compact the context", "/compact ")) else emptyList(),
+                    ),
+                    onBack = {}, onRequests = {}, onLoadOlder = {}, onTextChange = { text = it },
+                    onSend = {}, onStop = {}, onPickPhotos = {}, onTakePhoto = {}, onPickDocuments = {},
+                    onRemoveAttachment = {}, onAnswer = { _, _, _ -> }, onToggle = {},
+                    onResend = {}, onDiscard = {}, onLink = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Compact the context").assertIsDisplayed()
+        rule.onNodeWithText("/compact").performClick()
+        rule.runOnIdle { assertEquals("/compact ", text) }
+        rule.onNodeWithTag("slash-menu").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Message").performTextInput("now")
+        rule.runOnIdle { assertEquals("/compact now", text) }
     }
 }

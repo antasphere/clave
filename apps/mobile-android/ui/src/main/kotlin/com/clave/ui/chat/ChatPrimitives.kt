@@ -33,6 +33,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -519,9 +523,21 @@ fun Composer(
                     enabled = enabled && !sending,
                 )
                 val style = ClaveTypography.type(Metrics.textSm, lineHeight = Metrics.proseLineHeight).copy(color = t.textPrimary)
+                // The field keeps its own caret; a text set from outside (a command picked under
+                // "/", a draft restored) puts the caret at its end, where the next key belongs.
+                // Only a change of the text handed in counts, never the echo of a key not yet back.
+                var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+                var handedIn by remember { mutableStateOf(text) }
+                if (text != handedIn) {
+                    handedIn = text
+                    if (field.text != text) field = TextFieldValue(text, TextRange(text.length))
+                }
                 BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
+                    value = field,
+                    onValueChange = {
+                        field = it
+                        if (it.text != text) onTextChange(it.text)
+                    },
                     enabled = enabled && !sending,
                     textStyle = style,
                     minLines = Metrics.composerMinLines,

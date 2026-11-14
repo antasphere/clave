@@ -17,12 +17,14 @@ import com.clave.core.chat.permissionModeLabel
 import com.clave.core.chat.providerLabel
 import com.clave.core.chat.readingOf
 import com.clave.core.chat.sameModelId
+import com.clave.core.chat.slashMatches
 import com.clave.core.contract.BackgroundTaskKind
 import com.clave.core.contract.CommandOption
 import com.clave.core.contract.ModelOption
 import com.clave.ui.chat.ChatChoice
 import com.clave.ui.chat.ChatControlsView
 import com.clave.ui.chat.PromptView
+import com.clave.ui.chat.SlashCommandView
 import com.clave.ui.chat.WorkCardView
 
 /**
@@ -127,3 +129,7 @@ fun workCards(conversation: Conversation): List<WorkCardView> = conversation.bac
         detail = if (shell) task.command else task.model?.let { model -> claudeModelName(model)?.let { "On $it" } },
     )
 }
+
+/** The commands the composer lists for the "/" being typed; none at any other moment. */
+fun slashCommands(draft: String, commands: List<CommandOption>?): List<SlashCommandView> =
+    slashMatches(draft, commands).map { SlashCommandView(it.name, it.description, it.insert) }

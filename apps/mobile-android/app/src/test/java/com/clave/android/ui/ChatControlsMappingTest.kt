@@ -132,3 +132,13 @@ class WorkCardsMappingTest {
         assertEquals(5L, cards[0].startedAt)
     }
 }
+
+class SlashCommandsMappingTest {
+    @Test
+    fun theComposerListsTheMatchingCommandsOnlyWhileASlashIsTyped() {
+        val commands = listOf(com.clave.core.contract.CommandOption("compact", "Compact the context", "/compact "))
+        assertEquals(listOf("compact"), slashCommands("/co", commands).map { it.name })
+        assertEquals("/compact ", slashCommands("/", commands).single().insert)
+        assertTrue(slashCommands("hello", commands).isEmpty())
+    }
+}

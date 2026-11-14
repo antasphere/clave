@@ -1,6 +1,7 @@
 package com.clave.ui.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +45,7 @@ import com.clave.ui.theme.ClaveIcon
 import com.clave.ui.theme.ClaveTypography
 import com.clave.ui.theme.Icon
 import com.clave.ui.theme.Metrics
+import com.clave.ui.theme.shadow
 
 /** One row of a picker: a model, an effort level, a permission mode. */
 @Immutable
@@ -264,6 +266,56 @@ fun ChoiceSheet(
                         }
                     }
                     if (choice.selected) Icon(ClaveIcon.Check, contentDescription = "Current", tint = t.accent, size = Metrics.controlIcon)
+                }
+            }
+        }
+    }
+}
+
+/** One command the composer offers under "/": its name, its line, what it inserts. */
+@Immutable
+data class SlashCommandView(val name: String, val description: String? = null, val insert: String)
+
+/**
+ * The commands listed above the composer while a "/" is being typed, the desktop's slash menu:
+ * the name after its slash, the line under it; a tap puts the command in the composer.
+ */
+@Composable
+fun SlashMenu(commands: List<SlashCommandView>, onPick: (SlashCommandView) -> Unit, modifier: Modifier = Modifier) {
+    if (commands.isEmpty()) return
+    val t = Clave.colors.theme
+    val shape = RoundedCornerShape(Metrics.radiusXl)
+    Column(
+        modifier
+            .fillMaxWidth()
+            .heightIn(max = 240.dp)
+            .shadow(Clave.shadows.raised, shape)
+            .clip(shape)
+            .background(t.surfaceRaised)
+            .border(Metrics.hairline, t.borderSubtle, shape)
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = Metrics.space(1))
+            .testTag("slash-menu"),
+    ) {
+        commands.forEach { command ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = ThumbHeight)
+                    .clickable(role = Role.Button) { onPick(command) }
+                    .padding(horizontal = Metrics.space(3), vertical = Metrics.space(1.5f)),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Metrics.space(2)),
+            ) {
+                BasicText("/${command.name}", style = ClaveTypography.mono(Metrics.textControl).copy(color = t.textPrimary), maxLines = 1)
+                if (!command.description.isNullOrBlank()) {
+                    BasicText(
+                        command.description,
+                        modifier = Modifier.weight(1f),
+                        style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }

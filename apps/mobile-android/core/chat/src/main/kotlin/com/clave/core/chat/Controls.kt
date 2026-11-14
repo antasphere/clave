@@ -149,3 +149,15 @@ fun elapsed(since: Long, now: Long): String {
     val minutes = seconds / 60
     return if (minutes < 60) "${minutes}m ${seconds % 60}s" else "${minutes / 60}h ${minutes % 60}m"
 }
+
+private val SLASH_QUERY = Regex("^/([\\w:-]*)$")
+
+/** What follows the "/" while a command is being named: the draft is one line starting with
+ *  a slash and no space yet. Null at any other moment. */
+fun slashQuery(draft: String): String? = SLASH_QUERY.find(draft)?.groupValues?.get(1)
+
+/** The commands the composer lists under a "/": those whose name holds what follows it. */
+fun slashMatches(draft: String, commands: List<com.clave.core.contract.CommandOption>?): List<com.clave.core.contract.CommandOption> {
+    val query = slashQuery(draft)?.lowercase() ?: return emptyList()
+    return commands.orEmpty().filter { it.name.lowercase().contains(query) }
+}
