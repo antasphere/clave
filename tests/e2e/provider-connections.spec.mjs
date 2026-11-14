@@ -81,28 +81,8 @@ async function connectPick(win, scope, company) {
 /** Pick an entry of a connection row's menu (PRDCT-4552): the row's Manage,
  *  then the entry, written out, in the window's portalled menu. */
 async function menuPick(win, scope, id, hook) {
-  const entry = win.locator(`[data-connection-menu-entries="${id}"] [${hook}="${id}"]`)
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await scope.locator(`[data-connection-menu="${id}"]`).click()
-    if (
-      await entry.waitFor({ state: 'visible', timeout: 1500 }).then(
-        () => true,
-        () => false
-      )
-    ) {
-      // The menu animates in, and a row redrawn by a push can close it: a
-      // click that does not land is tried again from a fresh open.
-      if (
-        await entry.click({ timeout: 3000 }).then(
-          () => true,
-          () => false
-        )
-      )
-        return
-    }
-    await win.keyboard.press('Escape')
-  }
-  throw new Error(`the menu of ${id} never offered ${hook}`)
+  await scope.locator(`[data-connection-menu="${id}"]`).click()
+  await win.locator(`[data-connection-menu-entries="${id}"] [${hook}="${id}"]`).click()
 }
 
 /** Remove a connection from its row: Manage → Remove, then the question's Remove. */

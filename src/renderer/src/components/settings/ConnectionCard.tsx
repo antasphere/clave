@@ -485,7 +485,12 @@ export function RowMenu({
         <DropdownMenuPrimitive.Content
           align="end"
           sideOffset={4}
-          className="menu-surface menu-pop z-50 p-1"
+          // No exit animation (`connection-row-menu-entries`): a closed menu
+          // leaves at once. Kept on screen for its fade, a closed menu whose
+          // fade never reported its end stayed mounted with its outside
+          // listener armed, and the next press on Manage opened the menu and
+          // that stale listener closed it in the same breath (PRDCT-4552).
+          className="menu-surface menu-pop connection-row-menu-entries z-50 p-1"
           data-connection-menu-entries={id}
           onCloseAutoFocus={(e) => {
             // A field the entry opened keeps the focus it took.

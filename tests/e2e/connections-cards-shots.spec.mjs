@@ -184,18 +184,9 @@ async function pickMachine(win, name, value) {
 /** Open a row's menu; its entries, portalled, are the window's. */
 async function openMenu(win, scope, id) {
   const entries = win.locator(`[data-connection-menu-entries="${id}"]`)
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await scope.locator(`[data-connection-menu="${id}"]`).click()
-    if (
-      await entries.waitFor({ state: 'visible', timeout: 1500 }).then(
-        () => true,
-        () => false
-      )
-    )
-      return entries
-    await win.keyboard.press('Escape')
-  }
-  throw new Error(`the menu of ${id} never opened`)
+  await scope.locator(`[data-connection-menu="${id}"]`).click()
+  await entries.waitFor({ state: 'visible', timeout: 3000 })
+  return entries
 }
 
 /** The page opened again once the usage read is stale (30 s): what a person

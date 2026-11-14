@@ -3425,6 +3425,13 @@ button.extension-card:hover {
 .connection-row-menu > svg {
   margin-left: 0.125rem;
 }
+/* A row's menu opens with the house's pop and leaves at once: Radix keeps a
+   closing menu mounted until its exit animation reports its end, and one that
+   never did kept its outside listener armed, so the next press on Manage
+   closed the menu it had just opened. */
+.menu-pop.connection-row-menu-entries[data-state='closed'] {
+  animation: none;
+}
 .connection-row-lines {
   display: flex;
   flex-direction: column;
