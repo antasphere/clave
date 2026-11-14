@@ -1,5 +1,7 @@
 import { useState, type ReactElement, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import * as DropdownMenuPrimitive from '@clave/ui/primitives/dropdown-menu'
+import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 import { HARNESS_BY_ID, type HarnessId } from '../../../../shared/harness'
 import { AntigravityLogo, ClaudeLogo, CodexLogo, OpenCodeLogo, PiLogo } from '../icons/cli-logos'
@@ -11,7 +13,8 @@ import {
   removalSentence,
   type CardCompany,
   type CardState,
-  type RemovalKind
+  type RemovalKind,
+  type RowMenuEntry
 } from './connection-cards'
 import { SettingsCallout } from './primitives'
 
@@ -370,6 +373,193 @@ export function CardFoot({
       {children && <div className="connection-card-actions">{children}</div>}
     </footer>
   )
+}
+
+// ── A connected provider: one card, its connections as rows ────────────────
+
+/** A provider with at least one connection, as one card across the page
+ *  (PRDCT-4552): its head says once what every connection of it shares (the
+ *  mark, the name, what it is, the harnesses, the models), its connections
+ *  are rows under it in the pool's order, and its foot connects another,
+ *  the form opening inside the card. */
+export function ProviderCard({
+  company,
+  name,
+  what,
+  harnesses,
+  models,
+  modelsId,
+  rows,
+  foot,
+  form,
+  ...rest
+}: React.HTMLAttributes<HTMLElement> & {
+  company: CardCompany
+  name: string
+  what: string
+  harnesses: readonly HarnessId[]
+  models: CardModels
+  modelsId: string
+  rows: ReactNode
+  /** "Connect another" and its second road; absent where nothing is connected
+   *  from here (a server's own accounts). */
+  foot?: ReactNode
+  /** The add form, open inside the card. */
+  form?: ReactNode
+}): ReactElement {
+  return (
+    <motion.article
+      layout="position"
+      transition={FOLD}
+      className="connection-card connection-card--provider"
+      {...(rest as object)}
+    >
+      <header className="connection-card-head">
+        <ProviderMark company={company} />
+        <div className="connection-card-titles">
+          <div className="connection-card-title">
+            <span className="connection-card-label">{name}</span>
+          </div>
+          <p className="connection-card-subtitle">
+            <span className="connection-card-what">{what}</span>
+          </p>
+        </div>
+      </header>
+      <CardFacts>
+        <CardFact term="Harnesses">
+          <HarnessList harnesses={harnesses} />
+        </CardFact>
+        <CardFact term="Models">
+          <ModelList models={models} id={modelsId} />
+        </CardFact>
+      </CardFacts>
+      <div className="connection-rows">{rows}</div>
+      <CardFold open={!!form}>{form}</CardFold>
+      {foot && !form && <footer className="connection-card-foot">{foot}</footer>}
+    </motion.article>
+  )
+}
+
+/** The row's one menu: every action a row has but its one needed button,
+ *  each entry in words. The destructive one stands last, apart. */
+export function RowMenu({
+  id,
+  label,
+  entries
+}: {
+  id: string
+  label: string
+  entries: readonly RowMenuEntry[]
+}): ReactElement | null {
+  const [keepFocus, setKeepFocus] = useState(false)
+  if (entries.length === 0) return null
+  const plain = entries.filter((e) => !e.danger)
+  const danger = entries.filter((e) => e.danger)
+  const item = (entry: RowMenuEntry): ReactElement => (
+    <DropdownMenuPrimitive.Item
+      key={entry.label}
+      className={cn('menu-item', entry.danger && 'menu-item--danger')}
+      onSelect={() => {
+        setKeepFocus(!!entry.opensField)
+        entry.onSelect()
+      }}
+      {...entry.attrs}
+    >
+      {entry.label}
+    </DropdownMenuPrimitive.Item>
+  )
+  return (
+    <DropdownMenuPrimitive.Root modal={false}>
+      <DropdownMenuPrimitive.Trigger asChild>
+        <button
+          type="button"
+          className="btn-secondary btn-compact connection-row-menu"
+          aria-label={`Manage ${label}`}
+          data-connection-menu={id}
+        >
+          Manage
+          <ChevronDownIcon className="w-3 h-3" aria-hidden />
+        </button>
+      </DropdownMenuPrimitive.Trigger>
+      <DropdownMenuPrimitive.Portal>
+        <DropdownMenuPrimitive.Content
+          align="end"
+          sideOffset={4}
+          // No exit animation (`connection-row-menu-entries`): a closed menu
+          // leaves at once. Kept on screen for its fade, a closed menu whose
+          // fade never reported its end stayed mounted with its outside
+          // listener armed, and the next press on Manage opened the menu and
+          // that stale listener closed it in the same breath (PRDCT-4552).
+          className="menu-surface menu-pop connection-row-menu-entries z-50 p-1"
+          data-connection-menu-entries={id}
+          onCloseAutoFocus={(e) => {
+            // A field the entry opened keeps the focus it took.
+            if (keepFocus) e.preventDefault()
+            setKeepFocus(false)
+          }}
+        >
+          {plain.map(item)}
+          {danger.length > 0 && plain.length > 0 && (
+            <DropdownMenuPrimitive.Separator className="menu-sep" />
+          )}
+          {danger.map(item)}
+        </DropdownMenuPrimitive.Content>
+      </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPrimitive.Root>
+  )
+}
+
+/** One connection, a row of its provider's card: the choice of where new
+ *  sessions start (Claude and Codex), the label and its badges, the state in
+ *  a word, the one button it needs and its menu; under it, its usage and
+ *  its sign-in; then whatever opens on it (a form, a sign-in, the removal's
+ *  question). */
+export function ConnectionRow({
+  pick,
+  heading,
+  state,
+  stateAttrs,
+  fix,
+  menu,
+  lines,
+  fold,
+  ...rest
+}: Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> & {
+  pick?: ReactNode
+  heading: ReactNode
+  state: CardState
+  stateAttrs?: Record<string, string>
+  fix?: ReactNode
+  menu?: ReactNode
+  lines: ReactNode
+  fold?: ReactNode
+}): ReactElement {
+  return (
+    <div className="connection-row" data-tone={state.tone} {...rest}>
+      <div className="connection-row-main">
+        {pick && <span className="connection-row-pick">{pick}</span>}
+        <div className="connection-row-body">
+          <div className="connection-row-head">
+            <div className="connection-row-title">{heading}</div>
+            <CardStateText state={state} {...stateAttrs} />
+            {(fix || menu) && (
+              <div className="connection-row-actions">
+                {fix}
+                {menu}
+              </div>
+            )}
+          </div>
+          <div className="connection-row-lines">{lines}</div>
+        </div>
+      </div>
+      {fold}
+    </div>
+  )
+}
+
+/** A quiet line under a row's usage: its sign-in, where it lives. */
+export function RowNote({ children }: { children: ReactNode }): ReactElement {
+  return <span className="connection-row-note">{children}</span>
 }
 
 /** The question a removal asks before anything goes (PRDCT-4552): what is

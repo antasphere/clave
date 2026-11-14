@@ -9,12 +9,12 @@ import {
   ToggleRow
 } from './primitives'
 import { AntasphereAccountSection } from './AntasphereAccountSection'
-import { ClaudeAccountCards } from './ClaudeAccountsSection'
-import { CodexAccountCards } from './CodexAccountsSection'
+import { ClaudeAccountsCard } from './ClaudeAccountsSection'
+import { CodexAccountsCard } from './CodexAccountsSection'
 import { ProviderConnectionCards } from './ProviderConnectionsSection'
 import { codexAccountShown, useProviderMachine } from './connection-actions'
 import { ConnectionOffers } from './ConnectionOffers'
-import { ConnectionGrid, type CardModels } from './ConnectionCard'
+import type { CardModels } from './ConnectionCard'
 import { machineWords, type CardCompany } from './connection-cards'
 import { useCodexModels, useMachineCatalog } from './connection-models'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
@@ -212,7 +212,11 @@ export function ConnectionsBoard({
               : 'What new sessions can run on. Claude Code and Codex start on the connection marked and move along when it nears its limit; Pi and OpenCode tabs pick theirs in the launcher.'
         }
       >
-        <ConnectionGrid data-connections-connected={machine} data-connections-count={total}>
+        <div
+          className="connection-stack"
+          data-connections-connected={machine}
+          data-connections-count={total}
+        >
           {accounts(modelsOf)}
           <ProviderConnectionCards
             machine={machine}
@@ -220,7 +224,7 @@ export function ConnectionsBoard({
             modelsOf={modelsOf}
             addOpen={adding.machine === machine && adding.open}
           />
-        </ConnectionGrid>
+        </div>
       </SettingsSection>
       <SettingsSection
         title="Connect a provider"
@@ -244,9 +248,10 @@ export function ConnectionsBoard({
 /**
  * Settings → Connections (PRDCT-4424, as cards since PRDCT-4552): the page
  * answers "what can I run on, and with what" at a glance. What is connected
- * reads first, one card shape for a Claude account, a Codex account and a
- * stored provider connection; then every provider that can be connected, a
- * card each, connected from the card itself. Below them, as they were: the
+ * reads first, one card per provider with its connections as rows (a Claude
+ * account, a Codex account and a stored provider connection alike); then
+ * every provider not connected yet, a card each, connected from the card
+ * itself. Below them, as they were: the
  * Antasphere account this Clave is signed in with (PRDCT-3259, optional,
  * Clave only), how new sessions pick a connection, and the switch policy.
  */
@@ -273,8 +278,10 @@ export function AccountsSettings(): ReactElement {
         codexReady={codexReady}
         accounts={(modelsOf) => (
           <>
-            <ClaudeAccountCards machine={machineWords(null)} />
-            <CodexAccountCards machine={machineWords(null)} models={modelsOf('openai')} />
+            <ClaudeAccountsCard machine={machineWords(null)} />
+            {codexShown > 0 && (
+              <CodexAccountsCard machine={machineWords(null)} models={modelsOf('openai')} />
+            )}
           </>
         )}
       />

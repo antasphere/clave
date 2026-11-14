@@ -3358,6 +3358,110 @@ button.extension-card:hover {
   color: var(--text-primary);
 }
 
+/* What is connected: one card per provider, one under the other across the
+   column, its connections as rows. The head says once what they share; each
+   row is a line of a settings card, edge to edge and seamed by the inset
+   hairline, its actions one needed button and one menu in words. */
+.connection-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.connection-rows {
+  margin-inline: -1rem;
+  border-top: 1px solid var(--border-subtle-color);
+}
+.connection-rows > * + * {
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: calc(100% - 2rem) 1px;
+  background-position: 1rem 0;
+  background-repeat: no-repeat;
+}
+.connection-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.625rem 1rem;
+}
+/* A connection that cannot run a tab as it stands is washed in the warning
+   ink, its one button beside its state. */
+.connection-row[data-tone='attention'] > .connection-row-main {
+  background-color: color-mix(in srgb, var(--color-warning) 7%, transparent);
+}
+.connection-row-pick {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-sm);
+}
+.connection-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.connection-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: var(--control-h-sm);
+}
+.connection-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  flex: 1;
+  min-width: 0;
+}
+.connection-row-tag {
+  font-size: 11px;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+.connection-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+.connection-row-menu > svg {
+  margin-left: 0.125rem;
+}
+/* A row's menu opens with the house's pop and leaves at once: Radix keeps a
+   closing menu mounted until its exit animation reports its end, and one that
+   never did kept its outside listener armed, so the next press on Manage
+   closed the menu it had just opened. */
+.menu-pop.connection-row-menu-entries[data-state='closed'] {
+  animation: none;
+}
+.connection-row-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin-top: 0.25rem;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.connection-row-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-row-empty {
+  padding: 0.75rem 1rem;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+/* The fold of a row (a form, a sign-in, the question) is already edge to
+   edge: the rows bleed to the card's sides. */
+.connection-row .connection-card-fold,
+.connection-row .connection-card-fold:last-child {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
+.connection-card--provider .connection-card-foot {
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
 /* ── Pills ── */
 /* Small non-interactive chips used in session headers to surface live config
    (model, reasoning effort, context window). Share shape with .badge but with

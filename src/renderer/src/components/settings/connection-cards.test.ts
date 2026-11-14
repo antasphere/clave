@@ -21,6 +21,7 @@ import {
   ownUsageText,
   providerKeyState,
   removalSentence,
+  rowMenuEntries,
   USAGE_SOURCE
 } from './connection-cards'
 
@@ -72,6 +73,27 @@ describe('a Claude account card', () => {
       label: 'Sign-in expired',
       tone: 'attention'
     })
+  })
+
+  it('reads no usage before an account is signed in', () => {
+    expect(accountUsageText(null, false, false)).toBe('Read once it is signed in')
+    expect(accountUsageText('90% left · Overall', true, true)).toBe('90% left · Overall')
+  })
+
+  it('says an account whose limits are spent has reached them, with nothing to fix', () => {
+    expect(claude({ exhausted: true }).state).toEqual({ label: 'Limit reached', tone: 'quiet' })
+    expect(claude({ exhausted: true, hasToken: false, tokenLife: null }).state.label).toBe(
+      'Needs sign-in'
+    )
+    expect(
+      codexCardFacts({
+        id: 'c',
+        kind: 'chatgpt',
+        hasCredential: true,
+        isDefault: false,
+        exhausted: true
+      }).state
+    ).toEqual({ label: 'Limit reached', tone: 'quiet' })
   })
 
   it('names the machine login quietly', () => {
@@ -267,6 +289,94 @@ describe("a stored connection's own usage today", () => {
 
   it('names the two lines so neither is read as the other', () => {
     expect(USAGE_SOURCE).toEqual({ provider: 'Provider', tabs: 'Your tabs' })
+  })
+})
+
+describe("a row's menu", () => {
+  const noop = (): void => {}
+  const labels = (entries: { label: string }[]): string[] => entries.map((e) => e.label)
+  const all = {
+    onMove: noop,
+    onRename: noop,
+    onSignIn: noop,
+    onCredential: noop,
+    onForget: noop,
+    onRemove: noop
+  }
+
+  it('writes every action of a Claude row out, Remove last and apart', () => {
+    const entries = rowMenuEntries({ kind: 'claude', index: 3, count: 7, signedIn: true, ...all })
+    expect(labels(entries)).toEqual([
+      'Move up',
+      'Move down',
+      'Rename',
+      'Sign in again',
+      'Replace the token',
+      'Forget the sign-in',
+      'Remove'
+    ])
+    expect(entries.filter((e) => e.danger).map((e) => e.label)).toEqual(['Remove'])
+    expect(entries.filter((e) => e.opensField).map((e) => e.label)).toEqual([
+      'Rename',
+      'Replace the token'
+    ])
+  })
+
+  it('leaves out what cannot apply rather than greying it', () => {
+    expect(
+      labels(rowMenuEntries({ kind: 'claude', index: 1, count: 2, signedIn: false, ...all }))
+    ).toEqual(['Rename', 'Sign in', 'Paste a token', 'Remove'])
+  })
+
+  it('a Codex row: sign-in or key, and the machine login only signs in again', () => {
+    expect(
+      labels(rowMenuEntries({ kind: 'codex-chatgpt', index: 1, count: 3, signedIn: true, ...all }))
+    ).toEqual(['Move down', 'Rename', 'Sign in again', 'Forget the sign-in', 'Remove'])
+    expect(
+      labels(rowMenuEntries({ kind: 'codex-key', index: 2, count: 3, signedIn: true, ...all }))
+    ).toEqual(['Move up', 'Rename', 'Replace the key', 'Forget the key', 'Remove'])
+    expect(
+      labels(rowMenuEntries({ kind: 'codex-chatgpt', isDefault: true, signedIn: true, ...all }))
+    ).toEqual(['Sign in again'])
+    expect(
+      labels(rowMenuEntries({ kind: 'claude', isDefault: true, signedIn: false, ...all }))
+    ).toEqual([])
+  })
+
+  it('a stored connection: rename, its key, remove; a local one has no key', () => {
+    expect(labels(rowMenuEntries({ kind: 'provider-key', signedIn: false, ...all }))).toEqual([
+      'Rename',
+      'Paste the key',
+      'Remove'
+    ])
+    expect(labels(rowMenuEntries({ kind: 'provider-key', signedIn: true, ...all }))).toEqual([
+      'Rename',
+      'Replace the key',
+      'Remove'
+    ])
+    expect(
+      labels(
+        rowMenuEntries({ kind: 'provider-local', signedIn: false, ...all, onCredential: undefined })
+      )
+    ).toEqual(['Rename', 'Remove'])
+  })
+
+  it('carries the hooks the specs and the agents rely on', () => {
+    const entries = rowMenuEntries({
+      kind: 'provider-key',
+      signedIn: true,
+      ...all,
+      hooks: {
+        rename: { 'data-provider-rename': 'c1' },
+        credential: { 'data-provider-key': 'c1' },
+        remove: { 'data-provider-remove': 'c1' }
+      }
+    })
+    expect(entries.map((e) => e.attrs)).toEqual([
+      { 'data-provider-rename': 'c1' },
+      { 'data-provider-key': 'c1' },
+      { 'data-provider-remove': 'c1' }
+    ])
   })
 })
 

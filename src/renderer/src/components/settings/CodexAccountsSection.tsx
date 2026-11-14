@@ -1,13 +1,5 @@
 import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
-import {
-  TrashIcon,
-  KeyIcon,
-  XMarkIcon,
-  ArrowUpIcon,
-  ArrowDownIcon,
-  PencilSquareIcon,
-  SparklesIcon
-} from '@heroicons/react/24/outline'
+import { KeyIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import {
   useCodexAccountStore,
   DEFAULT_CODEX_ACCOUNT_ID,
@@ -18,21 +10,17 @@ import { useAccountLoginStore, loginKey } from '../../store/account-login-store'
 import { useCodexAccountsUsage, capStatusLine } from '../../store/usage-store'
 import { isExhausted, switchTargets } from '../../lib/account-pool'
 import type { AccountUsageSummary } from '../../../../shared/account-pool'
-import { accountUsageText, codexCardFacts } from './connection-cards'
-import { codexAccountShown, submitCodexKey } from './connection-actions'
+import { accountUsageText, codexCardFacts, connectLabel, rowMenuEntries } from './connection-cards'
+import { codexAccountShown, reveal, submitCodexKey } from './connection-actions'
+import { connectOpenAI } from './connection-companies'
 import {
-  CardFact,
-  CardFacts,
   CardFold,
-  CardFoot,
-  CardHead,
   CardLabel,
-  CardStateText,
-  CompanyWhat,
-  ConnectionCard,
-  HarnessList,
-  ModelList,
+  ConnectionRow,
+  ProviderCard,
   RemoveConfirm,
+  RowMenu,
+  RowNote,
   UsageLine,
   type CardModels
 } from './ConnectionCard'
@@ -126,8 +114,25 @@ export function ApiKeyForm({
   )
 }
 
-/** What a card on this Mac can do; a server's cards do none of it. */
-export interface CodexCardControls {
+/** The form to add a Codex connection with an API key (the pool's fallback). */
+export function NewCodexKeyForm({ onClose }: { onClose: () => void }): ReactElement {
+  const addAccount = useCodexAccountStore((s) => s.addAccount)
+  return (
+    <ApiKeyForm
+      title="Add a connection with an API key"
+      askName
+      onSubmit={async (label, apiKey) => {
+        const created = await addAccount(label, 'apiKey')
+        if (!created) return 'Could not add the connection.'
+        return submitCodexKey(created.id, apiKey)
+      }}
+      onCancel={onClose}
+    />
+  )
+}
+
+/** What a row on this Mac can do; a server's rows do none of it. */
+export interface CodexRowControls {
   index: number
   count: number
   selected: boolean
@@ -140,29 +145,27 @@ export interface CodexCardControls {
   onForget: () => void
   onRemove: () => void
   form: ReactNode
-  signingIn: boolean
 }
 
 /**
- * One Codex account as a card (PRDCT-4552): a ChatGPT subscription signed in
- * through the browser, or a key billed per use (the pool's fallback). On this
- * Mac it is picked, ordered, signed in again, renamed and removed from here;
- * a server's card (`controls` absent) only reads.
+ * One Codex account as a row of the OpenAI card (PRDCT-4552): a ChatGPT
+ * subscription signed in through the browser, or a key billed per use (the
+ * pool's fallback). On this Mac its one needed button stands out and
+ * everything else is in its menu; a server's row (`controls` absent) only
+ * reads.
  */
-export function CodexAccountCard({
+export function CodexAccountRow({
   account,
   summary,
-  models,
   machine,
   attrs,
   controls
 }: {
   account: CodexAccount
   summary: AccountUsageSummary | undefined
-  models: CardModels
   machine: string
   attrs: Record<string, string | undefined>
-  controls?: CodexCardControls
+  controls?: CodexRowControls
 }): ReactElement {
   const [draft, setDraft] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -172,192 +175,141 @@ export function CodexAccountCard({
     id: account.id,
     kind: account.kind,
     hasCredential: account.hasCredential,
-    isDefault
+    isDefault,
+    exhausted: !apiKey && isExhausted(summary)
   })
-  const formOpen = !!controls?.form
-  const signingIn = !!controls?.signingIn
   return (
-    <ConnectionCard
-      tone={facts.state.tone}
-      wide={formOpen || signingIn}
+    <ConnectionRow
       {...attrs}
       data-account-exhausted={!apiKey && isExhausted(summary) ? 'true' : undefined}
-    >
-      <CardHead
-        company="openai"
-        title={
-          <>
-            <CardLabel
-              label={account.label}
-              draft={draft}
-              onDraft={setDraft}
-              onCommit={(label) => controls?.onRename(label)}
-            />
-            {controls?.suggested && (
-              <span className="badge account-switch-suggested" data-connection-suggested>
-                <SparklesIcon aria-hidden />
-                Suggested
-              </span>
-            )}
-          </>
-        }
-        subtitle={<CompanyWhat company={facts.companyName} what={facts.what} />}
-        aside={<CardStateText state={facts.state} data-connection-state={account.id} />}
-      />
-      <CardFacts>
-        <CardFact term="Harnesses">
-          <HarnessList harnesses={facts.harnesses} />
-        </CardFact>
-        <CardFact term="Models">
-          <ModelList models={models} id={account.id} />
-        </CardFact>
-        <CardFact term="Usage">
+      pick={
+        controls && (
+          <Radio
+            checked={controls.selected}
+            onSelect={controls.onSelect}
+            title={
+              controls.selected ? 'Connection new sessions start on' : 'Start new sessions here'
+            }
+            ariaLabel={
+              controls.selected
+                ? 'Connection new sessions start on'
+                : `Start new sessions on ${account.label}`
+            }
+          />
+        )
+      }
+      heading={
+        <>
+          <CardLabel
+            label={account.label}
+            draft={draft}
+            onDraft={setDraft}
+            onCommit={(label) => controls?.onRename(label)}
+          />
+          {controls?.selected && (
+            <span className="connection-row-tag" data-connection-starts-here>
+              New sessions start here
+            </span>
+          )}
+          {controls?.suggested && (
+            <span className="badge account-switch-suggested" data-connection-suggested>
+              <SparklesIcon aria-hidden />
+              Suggested
+            </span>
+          )}
+        </>
+      }
+      state={facts.state}
+      stateAttrs={{ 'data-connection-state': account.id }}
+      fix={
+        controls &&
+        facts.state.tone === 'attention' && (
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            onClick={apiKey ? controls.onSetKey : controls.onLogin}
+            data-connection-fix={account.id}
+          >
+            {apiKey ? 'Paste the key' : 'Sign in'}
+          </button>
+        )
+      }
+      menu={
+        controls && (
+          <RowMenu
+            id={account.id}
+            label={account.label}
+            entries={rowMenuEntries({
+              kind: apiKey ? 'codex-key' : 'codex-chatgpt',
+              isDefault,
+              index: controls.index,
+              count: controls.count,
+              signedIn: account.hasCredential,
+              onMove: controls.onMove,
+              onRename: () => setDraft(account.label),
+              onSignIn: controls.onLogin,
+              onCredential: controls.onSetKey,
+              onForget: controls.onForget,
+              onRemove: () => setConfirming(true),
+              hooks: {
+                rename: { 'data-codex-account-rename': account.id },
+                signIn: { 'data-codex-account-login': account.id },
+                credential: { 'data-codex-account-login': account.id },
+                remove: { 'data-codex-account-remove': account.id }
+              }
+            })}
+          />
+        )
+      }
+      lines={
+        <>
           <UsageLine
-            text={apiKey ? 'Pay per use' : accountUsageText(capStatusLine(summary), !!summary)}
+            text={
+              apiKey
+                ? 'Pay per use'
+                : accountUsageText(capStatusLine(summary), !!summary, account.hasCredential)
+            }
             id={account.id}
           />
-        </CardFact>
-        {isDefault && (
-          <CardFact term="Sign-in">
-            <span className="connection-card-quiet">
-              {controls ? 'This Mac’s own, ~/.codex' : 'The server’s own ~/.codex'}
-            </span>
-          </CardFact>
-        )}
-      </CardFacts>
-      {controls && (
-        <>
-          <LoginFlow provider="codex" accountId={account.id} label={account.label} />
-          <CardFold open={formOpen}>{controls.form}</CardFold>
-          <CardFold open={confirming}>
-            <RemoveConfirm
-              kind={apiKey ? 'codex-key' : 'codex-chatgpt'}
-              label={account.label}
-              machine={machine}
-              id={account.id}
-              onCancel={() => setConfirming(false)}
-              onRemove={() => {
-                setConfirming(false)
-                controls.onRemove()
-              }}
-            />
-          </CardFold>
-          <CardFoot
-            hidden={confirming || formOpen}
-            start={
-              <label className="connection-card-pick">
-                <Radio
-                  checked={controls.selected}
-                  onSelect={controls.onSelect}
-                  title={
-                    controls.selected
-                      ? 'Connection new sessions start on'
-                      : 'Start new sessions here'
-                  }
-                  ariaLabel={
-                    controls.selected
-                      ? 'Connection new sessions start on'
-                      : `Start new sessions on ${account.label}`
-                  }
-                />
-                <span>
-                  {controls.selected ? 'New sessions start here' : 'Start new sessions here'}
-                </span>
-              </label>
-            }
-          >
-            {facts.state.tone === 'attention' && (
-              <button
-                type="button"
-                className="btn-secondary btn-compact"
-                onClick={apiKey ? controls.onSetKey : controls.onLogin}
-                data-connection-fix={account.id}
-              >
-                {apiKey ? 'Paste the key' : 'Sign in'}
-              </button>
-            )}
-            {!isDefault && (
-              <>
-                <button
-                  onClick={() => controls.onMove(-1)}
-                  disabled={controls.index <= 1}
-                  className="btn-icon btn-icon-sm"
-                  title="Earlier in the pool"
-                  aria-label={`Move ${account.label} up`}
-                >
-                  <ArrowUpIcon className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => controls.onMove(1)}
-                  disabled={controls.index >= controls.count - 1}
-                  className="btn-icon btn-icon-sm"
-                  title="Later in the pool"
-                  aria-label={`Move ${account.label} down`}
-                >
-                  <ArrowDownIcon className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setDraft(account.label)}
-                  className="btn-icon btn-icon-sm"
-                  title="Rename"
-                  aria-label={`Rename ${account.label}`}
-                  data-codex-account-rename={account.id}
-                >
-                  <PencilSquareIcon className="w-3.5 h-3.5" />
-                </button>
-              </>
-            )}
-            <button
-              onClick={apiKey ? controls.onSetKey : controls.onLogin}
-              className="btn-icon btn-icon-sm"
-              title={
-                apiKey
-                  ? account.hasCredential
-                    ? 'Replace the key'
-                    : 'Set the key'
-                  : account.hasCredential
-                    ? 'Sign in again'
-                    : 'Sign in'
-              }
-              aria-label={`Log in to ${account.label}`}
-              data-codex-account-login={account.id}
-            >
-              <KeyIcon className="w-3.5 h-3.5" />
-            </button>
-            {!isDefault && account.hasCredential && (
-              <button
-                onClick={controls.onForget}
-                className="btn-icon btn-icon-sm"
-                title="Forget credential"
-                aria-label={`Forget credential for ${account.label}`}
-              >
-                <XMarkIcon className="w-3.5 h-3.5" />
-              </button>
-            )}
-            {!isDefault && (
-              <button
-                onClick={() => setConfirming(true)}
-                className="btn-icon btn-icon-sm btn-icon--danger"
-                title="Remove connection"
-                aria-label={`Remove connection ${account.label}`}
-                data-codex-account-remove={account.id}
-              >
-                <TrashIcon className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </CardFoot>
+          {isDefault && (
+            <RowNote>
+              {controls ? 'This Mac’s own login, ~/.codex' : 'The server’s own login, ~/.codex'}
+            </RowNote>
+          )}
         </>
-      )}
-    </ConnectionCard>
+      }
+      fold={
+        controls && (
+          <>
+            <LoginFlow provider="codex" accountId={account.id} label={account.label} />
+            <CardFold open={!!controls.form}>{controls.form}</CardFold>
+            <CardFold open={confirming}>
+              <RemoveConfirm
+                kind={apiKey ? 'codex-key' : 'codex-chatgpt'}
+                label={account.label}
+                machine={machine}
+                id={account.id}
+                onCancel={() => setConfirming(false)}
+                onRemove={() => {
+                  setConfirming(false)
+                  controls.onRemove()
+                }}
+              />
+            </CardFold>
+          </>
+        )
+      }
+    />
   )
 }
 
 /**
- * The OpenAI connections of this Mac as cards: the machine's own `~/.codex`
- * once signed in, plus every subscription or key handed to Clave, each a
- * home of its own (ADR 0002), in the order the pool walks them.
+ * The OpenAI card of this Mac (PRDCT-4552), drawn once a Codex connection is
+ * there: Codex, its models, one row per connection in the pool's order (the
+ * machine's own `~/.codex` once it is signed in), and a foot that connects
+ * another through the browser or with an API key in the card.
  */
-export function CodexAccountCards({
+export function CodexAccountsCard({
   machine,
   models
 }: {
@@ -374,6 +326,7 @@ export function CodexAccountCards({
   const startLogin = useAccountLoginStore((s) => s.start)
   const jobs = useAccountLoginStore((s) => s.jobs)
   const [settingKey, setSettingKey] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
   const byAccount = useCodexAccountsUsage((s) => s.byAccount)
   const suggestedId = useMemo(() => {
     const pool = accounts.map((a) => ({
@@ -395,14 +348,21 @@ export function CodexAccountCards({
   }
 
   return (
-    <>
-      {accounts.map((account, index) =>
+    <ProviderCard
+      company="openai"
+      name="OpenAI"
+      what="ChatGPT subscription"
+      harnesses={['codex']}
+      models={models}
+      modelsId="openai"
+      data-provider-card="openai"
+      data-provider-group="openai"
+      rows={accounts.map((account, index) =>
         codexAccountShown(account) || jobs[loginKey('codex', account.id)] ? (
-          <CodexAccountCard
+          <CodexAccountRow
             key={account.id}
             account={account}
             summary={byAccount[account.id]}
-            models={models}
             machine={machine}
             attrs={{ 'data-codex-account-row': account.id }}
             controls={{
@@ -420,7 +380,6 @@ export function CodexAccountCards({
               onRename: (label) => updateAccount(account.id, { label }),
               onForget: () => void clearCredential(account.id),
               onRemove: () => removeAccount(account.id),
-              signingIn: !!jobs[loginKey('codex', account.id)],
               form:
                 settingKey === account.id ? (
                   <ApiKeyForm
@@ -434,6 +393,81 @@ export function CodexAccountCards({
           />
         ) : null
       )}
-    </>
+      form={adding ? <NewCodexKeyForm onClose={() => setAdding(false)} /> : null}
+      foot={
+        <>
+          <button
+            type="button"
+            className="connection-card-link"
+            onClick={() => {
+              setAdding(true)
+              reveal('[data-provider-card="openai"]')
+            }}
+            title="A connection billed per use: the pool's fallback"
+            data-connect-secondary="openai"
+            data-codex-api-key
+          >
+            <KeyIcon className="w-3.5 h-3.5" />
+            Use an API key
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            title="Sign in to OpenAI in the browser that opens"
+            onClick={() =>
+              void connectOpenAI().then((id) => {
+                if (id) reveal(`[data-codex-account-row="${id}"]`)
+              })
+            }
+            data-connect-company="openai"
+            data-codex-add-account
+          >
+            {connectLabel(1)}
+          </button>
+        </>
+      }
+    />
+  )
+}
+
+/** The OpenAI card of a Clave server: its Codex accounts, signed in there,
+ *  as rows that only read. */
+export function ServerCodexCard({
+  accounts,
+  usage,
+  models,
+  machine
+}: {
+  accounts: readonly CodexAccount[]
+  usage: Record<string, AccountUsageSummary | undefined>
+  models: CardModels
+  machine: string
+}): ReactElement {
+  return (
+    <ProviderCard
+      company="openai"
+      name="OpenAI"
+      what="ChatGPT subscription"
+      harnesses={['codex']}
+      models={models}
+      modelsId="server-openai"
+      data-provider-group="openai"
+      data-server-codex-accounts
+      rows={
+        accounts.length === 0 ? (
+          <p className="connection-row-empty">No Codex account is signed in on {machine} yet.</p>
+        ) : (
+          accounts.map((account) => (
+            <CodexAccountRow
+              key={account.id}
+              account={account}
+              summary={usage[account.id]}
+              machine={machine}
+              attrs={{ 'data-server-codex-account': account.id }}
+            />
+          ))
+        )
+      }
+    />
   )
 }

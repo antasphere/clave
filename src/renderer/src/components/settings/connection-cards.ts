@@ -81,6 +81,8 @@ export interface ClaudeCardInput {
   migrated: boolean
   /** The machine's own login (`~/.claude`), always there. */
   isDefault: boolean
+  /** Its limits are spent for now (`isExhausted`). */
+  exhausted?: boolean
 }
 
 export function claudeCardFacts(account: ClaudeCardInput): CardFacts {
@@ -98,8 +100,13 @@ function claudeState(account: ClaudeCardInput): CardState {
   if (account.tokenInvalid) return { label: 'Sign-in refused', tone: 'attention' }
   if (account.migrated || !account.hasToken) return { label: 'Needs sign-in', tone: 'attention' }
   if (account.tokenLife === 'expired') return { label: 'Sign-in expired', tone: 'attention' }
+  if (account.exhausted) return LIMIT_REACHED
   return { label: 'Signed in', tone: 'ok' }
 }
+
+/** A signed-in subscription whose limits are spent for now: nothing to fix,
+ *  so no warning; its usage line says when it comes back. */
+const LIMIT_REACHED: CardState = { label: 'Limit reached', tone: 'quiet' }
 
 /** The words that tell the two usage lines of a stored connection apart:
  *  the provider's own figure, and what Clave counted of its own tabs. */
@@ -129,7 +136,12 @@ export function ownUsageText(
 }
 
 /** A subscription's usage line: its headroom, or why there is none. */
-export function accountUsageText(line: string | null, read: boolean): string | null {
+export function accountUsageText(
+  line: string | null,
+  read: boolean,
+  signedIn = true
+): string | null {
+  if (!signedIn) return 'Read once it is signed in'
   if (line) return line
   return read ? 'No limits reported yet' : null
 }
@@ -145,6 +157,8 @@ export interface CodexCardInput {
   kind: 'chatgpt' | 'apiKey'
   hasCredential: boolean
   isDefault: boolean
+  /** Its limits are spent for now (`isExhausted`). */
+  exhausted?: boolean
 }
 
 export function codexCardFacts(account: CodexCardInput): CardFacts {
@@ -166,9 +180,8 @@ function codexState(account: CodexCardInput): CardState {
     return account.hasCredential
       ? { label: 'Machine login', tone: 'quiet' }
       : { label: 'Not signed in', tone: 'attention' }
-  return account.hasCredential
-    ? { label: 'Signed in', tone: 'ok' }
-    : { label: 'Needs sign-in', tone: 'attention' }
+  if (!account.hasCredential) return { label: 'Needs sign-in', tone: 'attention' }
+  return account.exhausted ? LIMIT_REACHED : { label: 'Signed in', tone: 'ok' }
 }
 
 export interface ProviderCardInput {
@@ -263,6 +276,110 @@ export function modelPreview<T>(models: readonly T[], shown = 3): { first: T[]; 
 /** The fold's control: "4 more", or "Fewer" once unfolded. */
 export function moreLabel(rest: number, open: boolean): string {
   return open ? 'Fewer' : `${rest} more`
+}
+
+// ── A row's menu ────────────────────────────────────────────────────────────
+
+/** One entry of a row's menu, written out. */
+export interface RowMenuEntry {
+  label: string
+  onSelect: () => void
+  danger?: boolean
+  /** The entry's hook for the specs and the agents' tools. */
+  attrs?: Record<string, string>
+  /** It opens a field or a form on the row: the menu gives the focus away. */
+  opensField?: boolean
+}
+
+type Hook = Record<string, string>
+
+/**
+ * The entries of a connection row's menu (PRDCT-4552), in words and in this
+ * order: Move up, Move down (a pool's connection, where it can move), Rename,
+ * the sign-in or the key, forgetting it, then Remove apart. An entry that
+ * cannot apply is left out rather than shown disabled.
+ */
+export function rowMenuEntries(input: {
+  kind: RemovalKind
+  /** The machine's own login (Claude or Codex): only signed in again. */
+  isDefault?: boolean
+  /** In a pool's order: the row's index (the machine login is 0) and the
+   *  pool's size. */
+  index?: number
+  count?: number
+  /** Its token, credential or key is there. */
+  signedIn: boolean
+  onMove?: (offset: -1 | 1) => void
+  onRename?: () => void
+  onSignIn?: () => void
+  onCredential?: () => void
+  onForget?: () => void
+  onRemove?: () => void
+  hooks?: { rename?: Hook; signIn?: Hook; credential?: Hook; remove?: Hook }
+}): RowMenuEntry[] {
+  const { kind, signedIn, hooks = {} } = input
+  const entries: RowMenuEntry[] = []
+  const add = (entry: RowMenuEntry | false | undefined): void => {
+    if (entry) entries.push(entry)
+  }
+  const signInEntry = input.onSignIn && {
+    label: signedIn ? 'Sign in again' : 'Sign in',
+    onSelect: input.onSignIn,
+    attrs: hooks.signIn
+  }
+  if (input.isDefault) {
+    if (kind === 'codex-chatgpt') add(signInEntry)
+    return entries
+  }
+  const pooled = kind === 'claude' || kind === 'codex-chatgpt' || kind === 'codex-key'
+  if (pooled && input.onMove && input.index !== undefined && input.count !== undefined) {
+    const move = input.onMove
+    add(input.index > 1 && { label: 'Move up', onSelect: () => move(-1) })
+    add(input.index < input.count - 1 && { label: 'Move down', onSelect: () => move(1) })
+  }
+  add(
+    input.onRename && {
+      label: 'Rename',
+      onSelect: input.onRename,
+      opensField: true,
+      attrs: hooks.rename
+    }
+  )
+  if (kind === 'claude' || kind === 'codex-chatgpt') add(signInEntry)
+  const keyed = kind === 'codex-key' || kind === 'provider-key'
+  if (kind === 'claude' || keyed)
+    add(
+      input.onCredential && {
+        label:
+          kind === 'claude'
+            ? signedIn
+              ? 'Replace the token'
+              : 'Paste a token'
+            : signedIn
+              ? 'Replace the key'
+              : 'Paste the key',
+        onSelect: input.onCredential,
+        opensField: true,
+        attrs: hooks.credential
+      }
+    )
+  if (kind !== 'provider-key' && kind !== 'provider-local')
+    add(
+      signedIn &&
+        input.onForget && {
+          label: kind === 'codex-key' ? 'Forget the key' : 'Forget the sign-in',
+          onSelect: input.onForget
+        }
+    )
+  add(
+    input.onRemove && {
+      label: 'Remove',
+      onSelect: input.onRemove,
+      danger: true,
+      attrs: hooks.remove
+    }
+  )
+  return entries
 }
 
 // ── Removing ────────────────────────────────────────────────────────────────
