@@ -258,9 +258,18 @@ export async function run(t) {
         const spare = await api.providerConnectionAdd({ company: 'moonshot', label: 'Kimi spare' })
         const ds = await api.providerConnectionAdd({ company: 'deepseek', label: 'DeepSeek' })
         await api.providerConnectionSetKey(ds.id, DEEPSEEK_KEY)
+        // A Codex subscription handed to Clave, not signed in yet (no Codex here).
+        const team = await api.codexAccountAdd({ label: 'Team', kind: 'chatgpt' })
         await api.getUsageLimits(work.id, { force: true })
         await api.getUsageLimits(play.id, { force: true })
-        return { work: work.id, play: play.id, kimi: kimi.id, spare: spare.id, ds: ds.id }
+        return {
+          work: work.id,
+          play: play.id,
+          kimi: kimi.id,
+          spare: spare.id,
+          ds: ds.id,
+          team: team.id
+        }
       },
       { WORK_TOKEN, PLAY_TOKEN, KIMI_KEY, DEEPSEEK_KEY }
     )
@@ -279,9 +288,9 @@ export async function run(t) {
       ds: (await dsCard.textContent())?.slice(0, 200)
     })
     t.equal(
-      'five connections now',
+      'six connections now',
       await page.locator('[data-connections-count]').getAttribute('data-connections-count'),
-      '5'
+      '6'
     )
     t.equal(
       'the Moonshot card offers another connection',
@@ -361,6 +370,27 @@ export async function run(t) {
           (c) => c.company === 'deepseek'
         )
     )
+
+    // ── The removal's question on a Codex card: its folder goes under a running tab ──
+    const teamCard = page.locator(`[data-codex-account-row="${seeded.team}"]`)
+    await teamCard.locator(`[data-codex-account-remove="${seeded.team}"]`).click()
+    const codexQuestion = teamCard.locator(`[data-connection-remove-question="${seeded.team}"]`)
+    await codexQuestion.waitFor()
+    const codexWords = await codexQuestion.innerText()
+    t.check(
+      'a Codex removal says the folder goes and a running tab may fail, never that it keeps going',
+      /Remove Team\?/.test(codexWords) &&
+        /folder its tabs run from are deleted from this Mac/.test(codexWords) &&
+        /may fail at its next request/.test(codexWords) &&
+        !/keep going/.test(codexWords),
+      codexWords
+    )
+    await shootEach(app, win, '05-remove-question-codex', async (name) => {
+      await centre(teamCard)
+      await win.waitForTimeout(600)
+      await teamCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
+    })
+    await teamCard.locator(`[data-connection-remove-cancel="${seeded.team}"]`).click()
 
     // ── A Clave server's page ──
     await request(server, '/connections/providers', { company: 'zai', label: 'GLM plan' })

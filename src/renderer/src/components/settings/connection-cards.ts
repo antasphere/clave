@@ -249,11 +249,16 @@ export type RemovalKind =
 
 /**
  * The confirmation a removal asks, in one question and one sentence of what
- * stops, as the code has it: the credential goes at once (a Claude token or a
- * provider key discarded from the machine's sealed store, a Codex connection's
- * own home deleted with its sign-in); a tab already running keeps the
- * credential its process started with and goes on, and its restart is refused
- * ("no longer available"), so it is moved to another connection first.
+ * stops, as the code has it. A Claude token or a provider key is discarded
+ * from the machine's sealed store; a tab already running keeps the value its
+ * process started with and goes on, and its restart is refused ("no longer
+ * available"). A Codex connection is a HOME (`codex-accounts.ts`): its
+ * `auth.json` and the links to `~/.codex` are deleted with the folder
+ * (`remove`, `rmSync`) while a tab's Codex still runs with that folder as
+ * `CODEX_HOME`. Codex renews a ChatGPT sign-in by rewriting `auth.json` there
+ * and writes its history and new files through it, so such a tab is not known
+ * to go on: it may fail at its next request, and its restart is refused. The
+ * machine's own `~/.codex` is never removed from here.
  */
 export function removalSentence(
   kind: RemovalKind,
@@ -263,12 +268,21 @@ export function removalSentence(
   const question = `Remove ${label}?`
   const tabs =
     'Tabs running on it keep going until they are restarted, then they need another connection.'
+  const codexTabs =
+    'A Codex tab running on it may fail at its next request, and cannot be restarted on it.'
   switch (kind) {
     case 'claude':
       return { question, consequence: `Its token is deleted from ${machine}. ${tabs}` }
     case 'codex-chatgpt':
-      return { question, consequence: `Its sign-in is deleted from ${machine}. ${tabs}` }
+      return {
+        question,
+        consequence: `Its sign-in and the folder its tabs run from are deleted from ${machine}. ${codexTabs}`
+      }
     case 'codex-key':
+      return {
+        question,
+        consequence: `Its key and the folder its tabs run from are deleted from ${machine}. ${codexTabs}`
+      }
     case 'provider-key':
       return { question, consequence: `Its key is deleted from ${machine}. ${tabs}` }
     case 'provider-local':

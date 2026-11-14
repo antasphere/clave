@@ -3293,7 +3293,8 @@ button.extension-card:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
   margin-top: auto;
   padding-top: 0.5rem;
   background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
@@ -3321,6 +3322,7 @@ button.extension-card:hover {
   min-height: var(--control-h-sm);
   font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
   cursor: pointer;
 }
 .connection-card-pick:has([data-checked='true']) {
@@ -3333,6 +3335,7 @@ button.extension-card:hover {
   min-height: var(--control-h-sm);
   font-size: 12px;
   color: var(--text-tertiary);
+  white-space: nowrap;
   transition: color 150ms;
 }
 .connection-card-link:hover {
