@@ -97,7 +97,8 @@ import { LAB_VIEW } from './meta'
    with the arrows, or from the contents. The page being written is followed
    until the reader turns away from it. A finished page can be read aloud. */
 
-const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+// The agent's name, from the harness table for every harness (PRDCT-4507).
+import { agentNameOf } from '../../../../src/shared/harness'
 const NOTES_SHOWN = 4
 
 const filesDrag = (dt: DataTransfer): boolean =>
@@ -1160,7 +1161,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
         )}
         <PromptDock
           requests={waitingOn}
-          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+          agent={agentNameOf(session.provider)}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
         />
