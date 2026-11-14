@@ -41,12 +41,19 @@ class ChatControlsMappingTest {
     }
 
     @Test
-    fun aChatWithoutAModelYetStillOffersThePickerAndNoMeter() {
+    fun aChatWithoutAModelOrChoicesShowsNoChipAndNoMeter() {
         val view = chatControlsView("codex", Conversation(), ChatControlsState())
-        assertEquals("…", view.model)
+        assertNull(view.model)
         assertNull(view.effort)
         assertNull(view.mode)
         assertNull(view.contextLabel)
+    }
+
+    @Test
+    fun aChatWithoutAModelYetNamesThePickerWhenThereAreModelsToPick() {
+        val view = chatControlsView("claude", Conversation(), ChatControlsState(models = models))
+        assertEquals("Model", view.model)
+        assertEquals(listOf(false, false), view.models.map { it.selected })
     }
 
     @Test

@@ -187,6 +187,8 @@ fun ComposerStatusRow(
     onOpen: (ControlSheet) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Nothing known to show: no row at all, rather than an empty strip under the composer.
+    if (controls.contextLabel == null && controls.mode == null && controls.model == null && controls.effort == null) return
     Row(
         modifier.fillMaxWidth().testTag("chat-status-row"),
         verticalAlignment = Alignment.CenterVertically,

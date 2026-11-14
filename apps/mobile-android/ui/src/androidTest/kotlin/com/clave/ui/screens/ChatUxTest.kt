@@ -105,6 +105,14 @@ class ChatUxTest {
     }
 
     @Test
+    fun nothingKnownLeavesNoStatusRowUnderTheComposer() {
+        show(state(controls = ChatControlsView(provider = "codex")))
+        rule.onNodeWithContentDescription("Message").assertIsDisplayed()
+        rule.onNodeWithTag("chat-status-row").assertDoesNotExist()
+        rule.onNodeWithText("…").assertDoesNotExist()
+    }
+
+    @Test
     fun tappingTheModelOpensThePickerAndAPickIsSent() {
         val picked = mutableListOf<String>()
         var opened = 0

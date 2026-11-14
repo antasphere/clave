@@ -60,6 +60,9 @@ fun pendingModelOf(conversation: Conversation, controls: ChatControlsState): Str
     return pending
 }
 
+/** The model chip's word before the provider names a model, when the server offered models. */
+const val MODEL_PICKER: String = "Model"
+
 /**
  * The composer's status row, the desktop's composer footer: the model chip names the option
  * (or the name the id reads as), the effort chip appears for a model that takes one, the mode
@@ -75,11 +78,16 @@ fun chatControlsView(provider: String, conversation: Conversation, controls: Cha
     val mode = conversation.permissionMode
     val usage = conversation.contextUsage
     val window = usage?.window ?: claudeContextWindow(conversation.model)
-    // A chat that has not heard a model yet still shows the chip, so the picker is reachable.
-    val showsModel = provider.isNotEmpty() || model != null
+    // A chat that has not heard a model yet names the picker on its chip when there are models
+    // to pick from, and shows no chip when there are none: a lone "…" says nothing.
+    val modelLabel = when {
+        model != null -> modelChipLabel(model, models)
+        !models.isNullOrEmpty() -> MODEL_PICKER
+        else -> null
+    }
     return ChatControlsView(
         provider = provider,
-        model = if (showsModel) modelChipLabel(model, models) else null,
+        model = modelLabel,
         modelPending = pending != null,
         models = models.orEmpty().map {
             ChatChoice(id = it.id, label = it.label, hint = it.hint, selected = it == current)
