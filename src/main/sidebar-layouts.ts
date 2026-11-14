@@ -1,5 +1,11 @@
 import { app, BrowserWindow } from 'electron'
-import { SidebarLayouts, fileSidebarStorage, type SidebarHost } from '@clave/server/sidebar-layouts'
+import {
+  SidebarLayouts,
+  fileSidebarStorage,
+  layoutsOverviewSource,
+  type SidebarHost,
+  type SidebarOverviewSource
+} from '@clave/server/sidebar-layouts'
 import type { MoveRefusal, MoveResult, WindowLayout } from '@clave/contract/sidebar'
 import type { ReleaseOutcome } from '@clave/contract/sessions'
 import { getClaveServerEndpoint } from './server/endpoint'
@@ -266,6 +272,14 @@ export function sidebarLayouts(): SidebarLayouts {
  *  server elsewhere. Null until the boot has decided; the preload asks
  *  again until it knows, and before that every call goes over IPC, which
  *  lands on the same instance either way. */
+/** The overview a phone reads, for the server in this process: the one
+ *  instance's layouts, each window with the workspace it shows. */
+export function shellSidebarOverview(): SidebarOverviewSource {
+  return layoutsOverviewSource(sidebarLayouts(), {
+    workspaceOf: (key) => windowState.list().find((w) => w.key === key)?.workspaceId
+  })
+}
+
 export function sidebarTransport(): SidebarTransport | null {
   return transport
 }

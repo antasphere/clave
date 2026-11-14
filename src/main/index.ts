@@ -43,6 +43,7 @@ import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
 import {
   sidebarLayouts,
+  shellSidebarOverview,
   setSidebarTransport,
   isAttachedServer,
   sessionIdsInWindow
@@ -220,6 +221,8 @@ async function bootServer(): Promise<void> {
             terminals: terminalPorts().terminals,
             // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
             sidebar: sidebarLayouts(),
+            // ── The phone's overview of it, each window with its workspace ──
+            sidebarOverview: shellSidebarOverview(),
             // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
             workspaceFiles: workspaceFiles(),
             // ── Wave 5, lane C: the plugins, the shell's own service (plugins/shell-plugins.ts) ──
@@ -301,7 +304,14 @@ async function bootServer(): Promise<void> {
             'plugins'
           ),
           appVersion: app.getVersion(),
-          flags: flagsForServerChild(process.argv),
+          // `--shell-data-dir`: where this app keeps its windows' sidebars,
+          // which the child reads (never writes) for the overview a phone
+          // reads, since the layouts stay in this process.
+          flags: [
+            ...flagsForServerChild(process.argv),
+            '--shell-data-dir',
+            app.getPath('userData')
+          ],
           log: (line) => console.error(`[server] ${line}`),
           onExit: (code) => {
             // Nothing runs in its place and the windows keep its address:
