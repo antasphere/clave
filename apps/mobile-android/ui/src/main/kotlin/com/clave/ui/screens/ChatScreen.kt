@@ -62,7 +62,12 @@ import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.SessionAttachment
 import com.clave.ui.chat.ApprovalCard
 import com.clave.ui.chat.AssistantProse
+import com.clave.ui.chat.ChatControlsView
+import com.clave.ui.chat.ChatHeader
+import com.clave.ui.chat.ChoiceSheet
 import com.clave.ui.chat.Composer
+import com.clave.ui.chat.ComposerStatusRow
+import com.clave.ui.chat.ControlSheet
 import com.clave.ui.chat.PromptDock
 import com.clave.ui.chat.QuestionView
 import com.clave.ui.chat.ToolRow
@@ -71,8 +76,8 @@ import com.clave.ui.chat.UserTurn
 import com.clave.ui.components.EmptyState
 import com.clave.ui.components.ListRow
 import com.clave.ui.components.Notice
+import com.clave.ui.components.NoticeAction
 import com.clave.ui.components.NoticeKind
-import com.clave.ui.components.PaneHeader
 import com.clave.ui.components.ScreenScaffold
 import com.clave.ui.theme.Clave
 import com.clave.ui.theme.ClaveIcon
@@ -123,6 +128,22 @@ data class ChatScreenState(
     val pendingLabel: String?,
     val expanded: Set<String>,
     val now: Long,
+    /** The composer's status: the model, its effort, the mode and the context meter. */
+    val controls: ChatControlsView = ChatControlsView(),
+)
+
+/**
+ * What the chat asks of its host beyond the transcript and the composer: the pickers under the
+ * composer. A separate holder so a screen that does not offer one keeps its call short.
+ */
+@Immutable
+data class ChatActions(
+    /** A picker opened: the host reads the choices again (the models may have changed). */
+    val onOpenControls: () -> Unit = {},
+    val onPickModel: (String) -> Unit = {},
+    val onPickEffort: (String) -> Unit = {},
+    val onPickMode: (String) -> Unit = {},
+    val onDismissRefusal: () -> Unit = {},
 )
 
 /** An attachment as a chip says it: its marker ("[Image #1]") or its kind, then its name. */
@@ -191,14 +212,17 @@ fun ChatScreen(
     onDiscard: () -> Unit,
     onLink: (String) -> Unit,
     modifier: Modifier = Modifier,
+    actions: ChatActions = ChatActions(),
 ) {
     var attaching by remember { mutableStateOf(false) }
+    var sheet by remember { mutableStateOf<ControlSheet?>(null) }
     ScreenScaffold(
         modifier = modifier,
         header = {
-            PaneHeader(
+            ChatHeader(
                 title = state.title,
                 subtitle = listOfNotNull(state.machineName, state.status.label).joinToString(" · "),
+                provider = state.provider,
                 onBack = onBack,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 actions = { RequestsAction(state.pendingRequests, onRequests) },
@@ -229,6 +253,18 @@ fun ChatScreen(
                     placeholder = if (state.ended) "This session has ended" else "Write a message…",
                     enabled = !state.ended,
                     sendBlocked = state.unknownSend != null,
+                )
+                val refusal = state.controls.refusal
+                if (refusal != null) {
+                    Notice(refusal, kind = NoticeKind.Warning, action = NoticeAction("Dismiss", actions.onDismissRefusal))
+                }
+                ComposerStatusRow(
+                    controls = state.controls,
+                    enabled = !state.ended,
+                    onOpen = {
+                        actions.onOpenControls()
+                        sheet = it
+                    },
                 )
             }
         },
@@ -261,6 +297,19 @@ fun ChatScreen(
                 }
             }
         }
+    }
+    when (sheet) {
+        ControlSheet.Model -> ChoiceSheet(
+            title = "Model",
+            choices = state.controls.models,
+            onPick = actions.onPickModel,
+            onDismiss = { sheet = null },
+            loading = state.controls.modelsLoading,
+            emptyText = "This agent offers no other model.",
+        )
+        ControlSheet.Effort -> ChoiceSheet("Effort", state.controls.efforts, actions.onPickEffort, { sheet = null })
+        ControlSheet.Mode -> ChoiceSheet("Permission mode", state.controls.modes, actions.onPickMode, { sheet = null })
+        null -> Unit
     }
     if (attaching) {
         AttachSheet(

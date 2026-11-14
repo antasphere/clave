@@ -60,6 +60,8 @@ class ClaveServerClientTest {
                 """{"items":[{"event":{"type":"user_message","text":"page before ${url.queryParameter("before")}"}}],"before":${if (url.queryParameter("before") == null) "200" else "null"}}""",
             )
             "GET /sessions/capabilities" -> ok("""{"images":true}""")
+            "GET /sessions/models" -> ok("""[{"id":"claude-opus-5-5","label":"Opus 5.5","efforts":[{"id":"high","label":"High"}]}]""")
+            "GET /sessions/commands" -> ok("""[{"name":"compact","insert":"/compact "}]""")
             "GET /sessions/writes" ->
                 if (url.queryParameter("clientMessageId") == "legacy") ok("""{"error":"no such route"}""", 404)
                 else ok("""{"status":"accepted","at":5}""")
@@ -158,6 +160,14 @@ class ClaveServerClientTest {
         for (id in listOf("empty", "malformed")) {
             assertEquals(ServerError.Kind.Protocol, serverErrorOf { client().sessions.write(id, input) }.kind)
         }
+    }
+
+    @Test
+    fun `the models and the commands of a session are read by its id`() = runBlocking {
+        val c = client()
+        assertEquals("Opus 5.5", c.sessions.models("s1").single().label)
+        assertEquals("/compact ", c.sessions.commands("s1").single().insert)
+        assertEquals(listOf("GET /sessions/models?id=s1", "GET /sessions/commands?id=s1"), seen.map { "${it.method} ${it.path}" })
     }
 
     @Test

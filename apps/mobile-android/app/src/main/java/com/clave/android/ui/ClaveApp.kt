@@ -40,12 +40,15 @@ import com.clave.android.AppServices
 import com.clave.android.BuildConfig
 import com.clave.android.Development
 import com.clave.core.chat.PickedKind
+import com.clave.core.chat.emptyConversation
 import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.parseDeepLink
 import com.clave.core.state.LAST_MACHINE_KEY
+import com.clave.core.state.conversationKey
 import com.clave.ui.components.Notice
 import com.clave.ui.components.NoticeAction
 import com.clave.ui.screens.AppearanceScreen
+import com.clave.ui.screens.ChatActions
 import com.clave.ui.screens.ChatScreen
 import com.clave.ui.screens.LaunchScreen
 import com.clave.ui.screens.MachinesScreen
@@ -366,6 +369,8 @@ private fun ChatRoute(
     val chat = remember(owner, machineId, sessionId) { viewModel.chat(machineId, sessionId) }
     val chatFlow = remember(chat) { chat?.state ?: MutableStateFlow(ChatSessionState()) }
     val chatState by chatFlow.collectAsStateWithLifecycle()
+    val controlsFlow = remember(chat) { chat?.controls ?: MutableStateFlow(ChatControlsState()) }
+    val controls by controlsFlow.collectAsStateWithLifecycle()
     val now = rememberNow(30_000)
     DisposableEffect(chat) {
         chat?.open()
@@ -404,8 +409,17 @@ private fun ChatRoute(
         for (uri in uris) chat?.attach(uri, null)
     }
 
+    val screen = chatState(store, machineId, sessionId, chatState, now, title)
+    val conversation = store.conversations[conversationKey(machineId, sessionId)]?.conversation ?: emptyConversation
     ChatScreen(
-        state = chatState(store, machineId, sessionId, chatState, now, title),
+        state = screen.copy(controls = chatControlsView(screen.provider, conversation, controls)),
+        actions = ChatActions(
+            onOpenControls = { chat?.refreshControls() },
+            onPickModel = { chat?.pickModel(it) },
+            onPickEffort = { chat?.pickEffort(it) },
+            onPickMode = { chat?.pickMode(it) },
+            onDismissRefusal = { chat?.dismissRefusal() },
+        ),
         onBack = { nav.popBackStack() },
         onRequests = { nav.navigate(Routes.requests(machineId)) },
         onLoadOlder = { chat?.loadOlder() },

@@ -13,7 +13,14 @@ import com.clave.core.chat.SendOutcome
 import com.clave.core.chat.admit
 import com.clave.core.chat.attachmentDraftKey
 import com.clave.core.chat.labelled
+import com.clave.core.chat.Entry
 import com.clave.core.contract.Attachment
+import com.clave.core.contract.SessionWriteInput
+import com.clave.core.contract.SetEffort
+import com.clave.core.contract.SetModel
+import com.clave.core.contract.SetPermissionMode
+import com.clave.core.contract.StopTask
+import com.clave.core.state.conversationKey
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.FileDelivery
 import com.clave.core.transport.ServerError
@@ -61,6 +68,10 @@ class ChatSession(
     private val _state = MutableStateFlow(ChatSessionState(filesRoute = filesRouteOf(machineId)))
     val state: StateFlow<ChatSessionState> = _state.asStateFlow()
 
+    private val _controls = MutableStateFlow(ChatControlsState())
+    /** The pickers' choices, the model just picked, a refused switch. */
+    val controls: StateFlow<ChatControlsState> = _controls.asStateFlow()
+
     private val store get() = owner.store
     private val drafts get() = owner.services.drafts
     private val delivery get() = owner.services.delivery
@@ -101,6 +112,8 @@ class ChatSession(
             }
             if (closed) close() else closeChat = close
             readCapabilities()
+            readModels()
+            readCommands()
         }
     }
 
@@ -125,6 +138,80 @@ class ChatSession(
             throw e
         } catch (_: Exception) {
             // Unknown capabilities: pictures go as files, which every provider reads.
+        }
+    }
+
+    /** The models the session may switch to; a server that cannot say leaves the list unread. */
+    private suspend fun readModels() {
+        _controls.update { it.copy(modelsLoading = true) }
+        try {
+            val models = store.connect(machineId).client.sessions.models(sessionId)
+            _controls.update { it.copy(models = models, modelsLoading = false) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            _controls.update { it.copy(modelsLoading = false) }
+        }
+    }
+
+    /** The commands the composer offers under "/"; unread stays empty. */
+    private suspend fun readCommands() {
+        try {
+            val commands = store.connect(machineId).client.sessions.commands(sessionId)
+            _controls.update { it.copy(commands = commands) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // No list: typing "/" offers nothing, and the text still goes as written.
+        }
+    }
+
+    /** A picker opened: the choices are read again, the provider may have changed them. */
+    fun refreshControls() {
+        if (_controls.value.modelsLoading) return
+        scope.launch { readModels() }
+    }
+
+    /**
+     * Puts the session on another model: shown at once, confirmed by the provider's next word
+     * on the model, reverted by its refusal. A refused write is said in the server's words.
+     */
+    fun pickModel(id: String) {
+        val conversation = store.state.value.conversations[conversationKey(machineId, sessionId)]?.conversation
+        _controls.update {
+            it.copy(
+                pendingModel = id,
+                pendingFrom = conversation?.model,
+                pendingErrors = conversation?.entries?.count { e -> e is Entry.Error } ?: 0,
+                refusal = null,
+            )
+        }
+        control(SetModel(id)) { _controls.update { it.copy(pendingModel = null) } }
+    }
+
+    fun pickEffort(id: String) = control(SetEffort(id))
+
+    fun pickMode(id: String) = control(SetPermissionMode(id))
+
+    /** Stops one background task, a subagent or a background shell. */
+    fun stopTask(taskId: String) = control(StopTask(taskId))
+
+    fun dismissRefusal() {
+        _controls.update { it.copy(refusal = null) }
+    }
+
+    /** One control write; the server's refusal is shown as it said it, never hidden. */
+    private fun control(input: SessionWriteInput, onRefused: () -> Unit = {}) {
+        scope.launch {
+            try {
+                store.connect(machineId).client.sessions.write(sessionId, input)
+                _controls.update { it.copy(refusal = null) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onRefused()
+                _controls.update { it.copy(refusal = messageOf(e)) }
+            }
         }
     }
 

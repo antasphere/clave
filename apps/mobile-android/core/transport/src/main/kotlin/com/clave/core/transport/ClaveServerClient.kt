@@ -5,9 +5,11 @@ import com.clave.core.contract.DecodeError
 import com.clave.core.contract.Encode
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.FileDelivery
+import com.clave.core.contract.CommandOption
 import com.clave.core.contract.FileText
 import com.clave.core.contract.HistoryPage
 import com.clave.core.contract.LaunchProfilePreferencesView
+import com.clave.core.contract.ModelOption
 import com.clave.core.contract.RequestResponse
 import com.clave.core.contract.RequestSnapshot
 import com.clave.core.contract.ResolveOutcome
@@ -108,6 +110,14 @@ public class ClaveServerClient(
                     put("account", JsonObject(emptyMap()))
                 },
             ) { Decode.sessionInfo(it) }
+
+        /** The models the session may switch to (`GetSessionModels`); empty when its provider offers none. */
+        public suspend fun models(id: String): List<ModelOption> =
+            query("/sessions/models", listOf("id" to id)) { Decode.modelOptions(it) }
+
+        /** The commands the composer offers under "/" (`GetSessionCommands`); empty when the provider has none. */
+        public suspend fun commands(id: String): List<CommandOption> =
+            query("/sessions/commands", listOf("id" to id)) { Decode.commandOptions(it) }
 
         public suspend fun capabilities(id: String): SessionCapabilities =
             query("/sessions/capabilities", listOf("id" to id)) { Decode.sessionCapabilities(it) }
