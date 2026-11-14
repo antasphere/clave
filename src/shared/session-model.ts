@@ -410,15 +410,16 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      `takes`: when the agent takes one, once the running turn has ended
      (`turn`, OpenCode) or at its next step (`step`, Pi). `returned`: the ones
      that just left the list unsent, for the composer to take back: the one
-     the person withdrew, or every one still waiting when the turn was
-     stopped or the session ended. Mirrors `packages/contract/src/sessions.ts`. */
+     the person withdrew, every one still waiting when the turn was stopped
+     or the session ended, or one the agent refused to queue (`refused`).
+     Mirrors `packages/contract/src/sessions.ts`. */
   z.object({
     type: z.literal('waiting_messages'),
     messages: z.array(WaitingMessageSchema),
     takes: z.enum(['turn', 'step']),
     returned: z
       .object({
-        why: z.enum(['withdrawn', 'stopped', 'ended']),
+        why: z.enum(['withdrawn', 'stopped', 'ended', 'refused']),
         messages: z.array(WaitingMessageSchema)
       })
       .optional()

@@ -220,6 +220,29 @@ describe('the stand-in Pi', () => {
     })
   })
 
+  it('long turn: the echo streams in three pieces a second apart, and an abort cuts it short (PRDCT-4566)', async () => {
+    const pi = standIn(stateDir())
+    const deltas = (): (string | undefined)[] =>
+      pi.events
+        .filter((e) => e.type === 'message_update')
+        .map((e) => e.assistantMessageEvent as { type: string; delta?: string })
+        .filter((u) => u.type === 'text_delta')
+        .map((u) => u.delta)
+    const started = Date.now()
+    await pi.connection.command('prompt', { message: 'a long turn' })
+    await expect.poll(() => deltas()).toEqual(['You said: '])
+    await new Promise((r) => setTimeout(r, 300))
+    expect(deltas()).toEqual(['You said: '])
+    await expect.poll(() => settled(pi), { timeout: 5000 }).toBe(true)
+    expect(deltas()).toEqual(['You said: ', 'a long', ' turn', 'Done.'])
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1900)
+    const from = pi.events.length
+    await pi.connection.command('prompt', { message: 'another long turn' })
+    await expect.poll(() => deltas().length).toBe(5)
+    await pi.connection.command('abort', undefined, { timeout: 5000 })
+    expect(pi.events.slice(from).at(-1)).toEqual({ type: 'agent_settled', aborted: true })
+  })
+
   it('ask extension: a confirm dialog, then the echo of the answer', async () => {
     const pi = standIn(stateDir())
     await pi.connection.command('prompt', { message: 'ask extension' })

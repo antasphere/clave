@@ -24,7 +24,8 @@
 // the first prompt with `Agent is streaming` and runs nothing;
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
 // and starts nothing (else it starts a run). A prompt containing `slow` waits 20 s
-// before its first text delta (an abort cuts it short); `ask extension` asks a
+// before its first text delta (an abort cuts it short); `long turn` streams its
+// echo in three pieces a second apart (an abort cuts it short); `ask extension` asks a
 // confirm dialog first and echoes the answer; `notify extension` sends a
 // notify; `fail provider` ends its message with a provider error; `retry`
 // starts with an auto-retry. An abort drops the steering and follow-up queue.
@@ -486,14 +487,16 @@ async function userMessage(text) {
 }
 
 /** One assistant message of text deltas; `before` runs once the message has
- *  started and may return more deltas to lead with. */
-async function textMessage(deltas, before) {
+ *  started and may return more deltas to lead with; `pauseMs` waits between
+ *  two deltas (an abort cuts it short). */
+async function textMessage(deltas, before, pauseMs = 0) {
   run.current = assistant([], 'pending')
   await emit({ type: 'message_start', message: run.current })
   const lead = before ? await before() : []
   await update(run.current, { type: 'text_start', contentIndex: 0 })
   let text = ''
-  for (const delta of [...lead, ...deltas]) {
+  for (const [index, delta] of [...lead, ...deltas].entries()) {
+    if (index > 0 && pauseMs) await sleep(pauseMs)
     text += delta
     run.current.content = [{ type: 'text', text }]
     await update(run.current, { type: 'text_delta', contentIndex: 0, delta })
@@ -618,11 +621,19 @@ async function startRun(text) {
       await emit({ type: 'agent_settled', aborted: false })
       return
     }
-    const said = await textMessage(['You said: ', text], async () => {
-      const lead = text.includes('ask extension') ? [`confirm: ${await confirmDialog()}. `] : []
-      if (text.includes('slow')) await sleep(20_000)
-      return lead
-    })
+    // `long turn`: the echo streams in three pieces a second apart, as a
+    // model's long answer does while the person writes more (PRDCT-4566).
+    const long = text.includes('long turn')
+    const half = Math.ceil(text.length / 2)
+    const said = await textMessage(
+      long ? ['You said: ', text.slice(0, half), text.slice(half)] : ['You said: ', text],
+      async () => {
+        const lead = text.includes('ask extension') ? [`confirm: ${await confirmDialog()}. `] : []
+        if (text.includes('slow')) await sleep(20_000)
+        return lead
+      },
+      long ? 1000 : 0
+    )
     const toolCall = {
       type: 'toolCall',
       id: 'tc_1',

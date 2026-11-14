@@ -705,6 +705,15 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       expect(notices(s.events)).toEqual([
         "Pi is on anthropic/claude-stand-in, which is not a model of its connection's provider stand-in, and could not be put back on one: nothing was sent."
       ])
+      // Nothing was sent: the message that waited goes back to the composer,
+      // and is never drawn as taken (PRDCT-4566).
+      expect(s.events).toContainEqual({
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'step',
+        returned: { why: 'refused', messages: [{ id: expect.any(String), text: 'second' }] }
+      })
+      expect(s.events.some((e) => e.type === 'user_message' && e.text === 'second')).toBe(false)
       // The run goes on to its end, and its done is the turn's only one.
       await expect
         .poll(() => s.events.some((e) => e.type === 'assistant_text' && e.delta === 'Done.'), {
@@ -965,6 +974,136 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     await expect(s.adapter.commands(s.handle)).resolves.toEqual([
       { name: 'init', description: expect.any(String), insert: '/init ' },
       { name: 'compact', description: expect.any(String), insert: '/compact ' }
+    ])
+  })
+})
+
+describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)', () => {
+  /** The conversation as it reads: each message with all that was said after
+   *  it until the next one. */
+  const readings = (events: SessionEvent[]): { message: string; said: string }[] => {
+    const out: { message: string; said: string }[] = []
+    for (const e of events) {
+      if (e.type === 'user_message') out.push({ message: e.text, said: '' })
+      else if (e.type === 'assistant_text' && out.length) out[out.length - 1].said += e.delta
+    }
+    return out
+  }
+  type Waiting = Extract<SessionEvent, { type: 'waiting_messages' }>
+  const lists = (events: SessionEvent[]): Waiting[] =>
+    events.flatMap((e) => (e.type === 'waiting_messages' ? [e] : []))
+  const texts = (list: Waiting | undefined): string[] => (list?.messages ?? []).map((m) => m.text)
+  const sent = (state: string): string[][] =>
+    frames(state)
+      .filter((f) => f.type === 'prompt' || f.type === 'steer')
+      .map((f) => [String(f.type), String(f.message)])
+  const steered = (state: string): number => types(state).filter((t) => t === 'steer').length
+
+  it('three messages written during one run: each enters the conversation as Pi takes it, its answer under it', async () => {
+    const s = await open()
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'third' })
+    // The run's text still streams: the two others wait outside the conversation.
+    expect(readings(s.events).map((r) => r.message)).toEqual(['a long turn'])
+    expect(texts(lists(s.events).at(-1))).toEqual(['second', 'third'])
+    expect(lists(s.events).at(-1)?.takes).toBe('step')
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    expect(readings(s.events)).toEqual([
+      { message: 'a long turn', said: 'You said: a long turn' },
+      { message: 'second', said: 'You said: second' },
+      { message: 'third', said: 'You said: thirdDone.' }
+    ])
+    expect(lists(s.events).map(texts)).toEqual([['second'], ['second', 'third'], ['third'], []])
+    expect(sent(s.state)).toEqual([
+      ['prompt', 'a long turn'],
+      ['steer', 'second'],
+      ['steer', 'third']
+    ])
+  })
+
+  it('a withdrawn steer leaves Pi’s queue, the rest steered again in order, and Pi never takes it', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'third' })
+    await expect.poll(() => steered(s.state)).toBe(2)
+    const second = lists(s.events).at(-1)!.messages[0]
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: second.id })
+    expect(s.events[0]).toEqual({
+      type: 'waiting_messages',
+      messages: [{ id: expect.any(String), text: 'third' }],
+      takes: 'step',
+      returned: { why: 'withdrawn', messages: [second] }
+    })
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    const after = types(s.state).slice(types(s.state).lastIndexOf('steer') - 2)
+    expect(after.slice(0, 3)).toEqual(['steer', 'clear_queue', 'steer'])
+    expect(sent(s.state).slice(-1)).toEqual([['steer', 'third']])
+    expect(readings(s.events).map((r) => r.message)).toEqual(['third'])
+    expect(readings(s.events)[0].said).toBe('You said: thirdDone.')
+  })
+
+  it('a stop with two messages waiting hands both back, Pi’s queue cleared before the abort', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => types(s.state).includes('prompt')).toBe(true)
+    await new Promise((r) => setTimeout(r, 100))
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'three' })
+    await expect.poll(() => steered(s.state)).toBe(2)
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    expect(s.events[0]).toEqual({
+      type: 'waiting_messages',
+      messages: [],
+      takes: 'step',
+      returned: {
+        why: 'stopped',
+        messages: [
+          { id: expect.any(String), text: 'two' },
+          { id: expect.any(String), text: 'three' }
+        ]
+      }
+    })
+    await expect.poll(() => done(s.events)).toBe(true)
+    const sentTypes = types(s.state)
+    const last = sentTypes.lastIndexOf('steer')
+    expect(sentTypes.slice(last + 1, last + 3)).toEqual(['clear_queue', 'abort'])
+    expect(sent(s.state)).toEqual([
+      ['prompt', 'be slow'],
+      ['steer', 'two'],
+      ['steer', 'three']
+    ])
+    const end = s.events.findIndex((e) => e.type === 'turn_interrupted')
+    expect(s.events.slice(end, end + 2)).toEqual([
+      { type: 'turn_interrupted' },
+      { type: 'state_change', state: 'done' }
+    ])
+    await new Promise((r) => setTimeout(r, 300))
+    expect(readings(s.events)).toEqual([])
+  })
+
+  it('a session that ends with a message waiting hands it back before it ends', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => types(s.state).includes('prompt')).toBe(true)
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two' })
+    process.kill(s.pid, 'SIGKILL')
+    await expect.poll(() => s.exits.length).toBe(1)
+    expect(s.events.slice(-3)).toEqual([
+      { type: 'error', message: expect.stringContaining('stopped during the turn'), fatal: false },
+      {
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'step',
+        returned: { why: 'ended', messages: [{ id: expect.any(String), text: 'two' }] }
+      },
+      { type: 'state_change', state: 'ended' }
     ])
   })
 })

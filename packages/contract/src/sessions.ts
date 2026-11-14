@@ -430,7 +430,7 @@ export const SessionEvent = Schema.Union(
     takes: Schema.Literal('turn', 'step'),
     returned: Schema.optional(
       Schema.Struct({
-        why: Schema.Literal('withdrawn', 'stopped', 'ended'),
+        why: Schema.Literal('withdrawn', 'stopped', 'ended', 'refused'),
         messages: Schema.Array(WaitingMessage)
       })
     )

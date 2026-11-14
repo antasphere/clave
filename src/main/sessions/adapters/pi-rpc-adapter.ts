@@ -7,7 +7,9 @@ import {
   type HistoryItem,
   type ModelOption,
   type SessionEvent,
-  type SessionInput
+  type SessionInput,
+  type UserMessage,
+  type WaitingMessage
 } from '../../../shared/session-model'
 import { isFileAttachment } from '../../../shared/attachments'
 import { connectionLeftReason } from '../../../shared/provider-connection-pick'
@@ -212,6 +214,31 @@ type Queued = {
   [K in keyof SessionAdapterEvents]: { event: K; value: SessionAdapterEvents[K] }
 }[keyof SessionAdapterEvents]
 
+/** A message written to the chat, on its way to Pi (PRDCT-4566). */
+interface Outgoing {
+  id: string
+  /** What Pi is sent: the text, then the files' paths. */
+  message: string
+  /** What the conversation draws once Pi takes it. */
+  event: UserMessage
+  /** Written while Pi worked: outside the conversation until Pi takes it.
+   *  False once drawn, or for a message drawn at once. */
+  waiting: boolean
+  /** Handed to Pi, so its user message can come. */
+  sent: boolean
+  /** Handed as a steer: Pi holds it in its queue until its next step. */
+  steered: boolean
+  /** Withdrawn, or handed back: never sent from here on. */
+  dropped: boolean
+}
+/** Why messages that waited leave unsent. */
+type Returned = 'withdrawn' | 'stopped' | 'ended' | 'refused'
+const waitingOf = (message: Outgoing): WaitingMessage => ({
+  id: message.id,
+  text: message.event.text,
+  ...(message.event.attachments?.length ? { attachments: message.event.attachments } : {})
+})
+
 interface HandleState {
   spec: SpawnSpec
   launch: PiRpcLaunch
@@ -238,6 +265,16 @@ interface HandleState {
   starting: boolean
   /** Sends one at a time, in the order the reader wrote them. */
   sends: Promise<void>
+  /** The messages written and not yet started by Pi as its user message, in
+   *  the order written: those drawn at once, and those that wait for Pi to
+   *  take them at its next step (PRDCT-4566). */
+  outgoing: Outgoing[]
+  /** Steers handed back to the composer that Pi may still hold until it has
+   *  answered the `clear_queue` sent for them: one Pi starts meanwhile is
+   *  drawn, as it is the conversation's then. */
+  letGo: Outgoing[]
+  /** The last id given to a written message. */
+  written: number
   /** A run Pi has started, or a prompt sent for one, not yet settled: the
    *  state shown, and what `kill` and `interrupt` go by. */
   turnRunning: boolean
@@ -347,6 +384,9 @@ export class PiRpcAdapter implements SessionAdapter {
       queue: [],
       starting: true,
       sends: Promise.resolve(),
+      outgoing: [],
+      letGo: [],
+      written: 0,
       turnRunning: false,
       runActive: false,
       runsStarted: 0,
@@ -405,21 +445,42 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error(`${this.label} session has ended`)
     switch (value.type) {
       case 'user_message': {
-        this.emit(state, userMessageEvent(value))
-        this.emit(state, { type: 'state_change', state: 'working' })
-        state.working = true
         // Pi takes images only, and this adapter sends none: a file goes as
         // its path, for the agent to read.
         const lines = (value.attachments ?? []).flatMap((file) =>
           isFileAttachment(file) ? [`Attached file: ${file.path}`] : []
         )
-        const message = [value.text, ...lines].join('\n')
+        const item: Outgoing = {
+          id: `waiting-${++state.written}`,
+          message: [value.text, ...lines].join('\n'),
+          event: userMessageEvent(value),
+          // Written while Pi works (or behind a message that still waits):
+          // Pi takes it at its next step, and until then it waits outside the
+          // conversation, so the text still streaming from the run is never
+          // drawn under it (PRDCT-4566).
+          waiting: state.turnRunning || state.outgoing.some((m) => m.waiting && !m.dropped),
+          sent: false,
+          steered: false,
+          dropped: false
+        }
+        state.outgoing.push(item)
+        if (item.waiting) this.emitWaiting(state)
+        else this.emit(state, item.event)
+        if (!item.waiting || !state.working)
+          this.emit(state, { type: 'state_change', state: 'working' })
+        state.working = true
         // Prompt or steer is decided at send time, from Pi's own events.
         state.turnRunning = true
-        state.sends = state.sends.then(() => this.send(state, message))
+        state.sends = state.sends.then(() => this.send(state, item))
         return
       }
+      case 'withdraw_message':
+        this.withdraw(state, value.id)
+        return
       case 'interrupt':
+        // A stop starts nothing by itself: what waited goes back to the
+        // composer, unsent (PRDCT-4566).
+        this.handBack(state, 'stopped')
         void this.interrupt(state)
         return
       case 'set_model':
@@ -747,14 +808,19 @@ export class PiRpcAdapter implements SessionAdapter {
    *  within 200 ms, goes once more as a prompt. */
   private async send(
     state: HandleState,
-    message: string,
+    item: Outgoing,
     retry?: 'prompt' | 'steer'
   ): Promise<void> {
     if (state.started) await state.started.catch(() => {})
     const connection = state.connection
+    if (item.dropped) return
     if (state.ended || state.closing || !connection || connection.closed) return
     const retried = retry !== undefined
     const steer = retried ? retry === 'steer' : state.runActive
+    // No run going: the prompt starts one with this message, so a message
+    // that waited is the conversation's from now, after the answer before it
+    // (PRDCT-4566).
+    if (!steer) this.take(state, item)
     // On a stored connection nothing goes to Pi, prompt, steer or either one
     // re-sent, while Pi is on another provider's model: Pi's model is read
     // first, and one of another provider's (something typed changed it, or
@@ -763,6 +829,7 @@ export class PiRpcAdapter implements SessionAdapter {
     // ends its turn itself.
     if (!(await this.confirmOnConnection(state, connection))) {
       if (state.ended || state.closing) return
+      this.settle(state, item, 'refused')
       if (!state.runActive) {
         state.turnRunning = false
         this.endTurn(state, false)
@@ -770,20 +837,33 @@ export class PiRpcAdapter implements SessionAdapter {
       return
     }
     if (state.ended || state.closing || connection.closed) return
+    // Withdrawn or handed back while Pi was asked its model: never sent.
+    if (item.dropped) return
     const runsBefore = state.runsStarted
+    item.sent = true
+    item.steered = steer
     let data: Record<string, unknown>
     try {
-      data = record(await connection.command(steer ? 'steer' : 'prompt', { message }))
+      data = record(await connection.command(steer ? 'steer' : 'prompt', { message: item.message }))
     } catch (error) {
       if (state.ended || state.closing) return
       if (!steer && !retried && /streaming/i.test(errorMessage(error)))
-        return this.send(state, message, 'steer')
+        return this.send(state, item, 'steer')
+      // Pi refused it: a steer it never queued goes back to the composer; a
+      // prompt's message is drawn already, the notice under it.
+      this.settle(state, item, 'refused')
       this.notice(state, `${this.label}: ${errorMessage(error)}`)
       if (!steer && !state.runActive) {
         state.turnRunning = false
         this.endTurn(state, false)
       }
       return
+    }
+    // An input handler of Pi's consumed it (an extension command): Pi took
+    // it, and no user message of its own will come.
+    if (data.disposition === 'handled') {
+      this.take(state, item)
+      this.settle(state, item)
     }
     // An extension command ran at once: no run, so no agent_settled.
     if (!steer && data.disposition === 'handled' && !state.runActive) {
@@ -795,8 +875,106 @@ export class PiRpcAdapter implements SessionAdapter {
       await new Promise((resolve) => setTimeout(resolve, STEER_SETTLE_MS))
       if (state.ended || state.closing) return
       if (!state.runActive && state.runsStarted === runsBefore)
-        return this.send(state, message, 'prompt')
+        return this.send(state, item, 'prompt')
     }
+  }
+
+  /** Pi takes a message: one that waited enters the conversation now, as the
+   *  message it is, after what was said before it (PRDCT-4566). */
+  private take(state: HandleState, item: Outgoing): void {
+    if (!item.waiting || item.dropped) return
+    item.waiting = false
+    this.emitWaiting(state)
+    this.emit(state, item.event)
+  }
+
+  /** The message is off Pi's way: started, consumed, or refused. One that
+   *  still waits was never taken, and goes back to the composer as `why`. */
+  private settle(state: HandleState, item: Outgoing, why?: Returned): void {
+    const index = state.outgoing.indexOf(item)
+    if (index < 0) return
+    state.outgoing.splice(index, 1)
+    if (!item.waiting || item.dropped || !why) return
+    item.dropped = true
+    this.emitWaiting(state, why, [item])
+  }
+
+  /** Pi started a user message (`message_start`): the one this chat sent with
+   *  that text, else the first sent (Pi takes them in the order sent, and a
+   *  command it expands changes the words). One the person had taken back
+   *  that Pi started before it answered the `clear_queue` is drawn: it is the
+   *  conversation's now (PRDCT-4566). */
+  private userMessageStarted(state: HandleState, text: string): void {
+    const sent = state.outgoing.filter((m) => m.sent)
+    const exact = sent.find((m) => m.message === text)
+    const late = exact ? undefined : state.letGo.find((m) => m.message === text)
+    if (late) {
+      state.letGo.splice(state.letGo.indexOf(late), 1)
+      this.emit(state, late.event)
+      return
+    }
+    const item = exact ?? sent[0]
+    if (!item) return
+    this.take(state, item)
+    this.settle(state, item)
+  }
+
+  /** The person takes back a message that still waits (PRDCT-4566): it leaves
+   *  the list for the composer and is never sent. Pi may hold it already, as
+   *  a steer: its queue is then cleared and what still waits steered again,
+   *  in order, behind the sends already on their way. */
+  private withdraw(state: HandleState, id: string): void {
+    const item = state.outgoing.find((m) => m.id === id && m.waiting && !m.dropped)
+    if (!item) return
+    item.dropped = true
+    state.outgoing.splice(state.outgoing.indexOf(item), 1)
+    this.emitWaiting(state, 'withdrawn', [item])
+    if (!item.steered) return
+    state.letGo.push(item)
+    state.sends = state.sends.then(() => this.requeue(state))
+  }
+
+  /** Pi's queue cleared of what the person took back, then every message that
+   *  still waits steered again, in the order written. */
+  private async requeue(state: HandleState): Promise<void> {
+    const connection = state.connection
+    if (state.ended || state.closing || !connection || connection.closed) return
+    try {
+      await connection.command('clear_queue')
+    } catch (error) {
+      if (state.ended || state.closing) return
+      this.notice(state, `${this.label} could not take the message back: ${errorMessage(error)}`)
+      return
+    }
+    state.letGo = []
+    for (const item of state.outgoing.filter((m) => m.waiting && m.steered && !m.dropped)) {
+      item.sent = false
+      item.steered = false
+      await this.send(state, item)
+    }
+  }
+
+  /** Every message that still waits leaves unsent, back to the composer: the
+   *  person stopped the run, or the session ended (PRDCT-4566). Those Pi
+   *  holds as steers are let go of by the `clear_queue` that follows a stop. */
+  private handBack(state: HandleState, why: 'stopped' | 'ended'): void {
+    const returned = state.outgoing.filter((m) => m.waiting && !m.dropped)
+    if (!returned.length) return
+    for (const item of returned) item.dropped = true
+    state.outgoing = state.outgoing.filter((m) => !returned.includes(m))
+    state.letGo.push(...returned.filter((m) => m.steered))
+    this.emitWaiting(state, why, returned)
+  }
+
+  /** What waits for Pi, whole (PRDCT-4566): Pi takes a message at its next
+   *  step, once the current one has run its tools. */
+  private emitWaiting(state: HandleState, why?: Returned, returned: Outgoing[] = []): void {
+    this.emit(state, {
+      type: 'waiting_messages',
+      messages: state.outgoing.filter((m) => m.waiting && !m.dropped).map(waitingOf),
+      takes: 'step',
+      ...(why ? { returned: { why, messages: returned.map(waitingOf) } } : {})
+    })
   }
 
   /** Pi's model as it says it now, kept on the connection's provider
@@ -828,6 +1006,8 @@ export class PiRpcAdapter implements SessionAdapter {
     state.userAborted = true
     try {
       await connection.command('clear_queue')
+      // Pi holds none of what was handed back any more (PRDCT-4566).
+      state.letGo = []
       await connection.command('abort', undefined, { timeout: ABORT_TIMEOUT_MS })
     } catch (error) {
       if (state.ended || state.closing) return
@@ -881,6 +1061,15 @@ export class PiRpcAdapter implements SessionAdapter {
       case 'message_update':
         this.messageUpdate(state, record(frame.assistantMessageEvent))
         return
+      case 'message_start': {
+        // Pi starts a user message: the run's own prompt, or a steer it
+        // takes at this step (Pi says so right after the `queue_update`
+        // that removes it from its queue): the moment that message enters
+        // the conversation (PRDCT-4566).
+        const message = record(frame.message)
+        if (message.role === 'user') this.userMessageStarted(state, blocksText(message.content))
+        return
+      }
       case 'message_end': {
         const message = record(frame.message)
         if (message.role !== 'assistant') return
@@ -916,6 +1105,10 @@ export class PiRpcAdapter implements SessionAdapter {
       case 'agent_settled':
         state.turnRunning = false
         state.runActive = false
+        // A message drawn at once whose user message the run never started
+        // (it stopped first) is off Pi's way: Pi settles only once nothing
+        // it was handed is left to run.
+        state.outgoing = state.outgoing.filter((m) => m.waiting || !m.sent)
         this.settledOnConnection(state, frame.aborted === true)
         this.endTurn(state, frame.aborted === true)
         void this.contextUsage(state)
@@ -935,7 +1128,8 @@ export class PiRpcAdapter implements SessionAdapter {
         if (frame.command === 'parse') state.parseFailures++
         return
       default:
-        // turn_start, turn_end, agent_end, message_start, queue_update,
+        // turn_start, turn_end, agent_end, queue_update (the user message
+        // Pi starts says what it took), the assistant's message_start,
         // entry_appended, session_info_changed, thinking_level_changed,
         // tool_execution_update, compaction_*, auto_retry_end,
         // summarization_*, extension_error and anything newer: nothing shown.
@@ -1125,6 +1319,9 @@ export class PiRpcAdapter implements SessionAdapter {
       state.exitCode = code || 1
     } else if (state.turnRunning && !state.closing)
       this.notice(state, `${this.label} stopped during the turn (exit code ${code})`)
+    // Nothing that waited is lost with the process: it goes back to the
+    // composer, unsent (PRDCT-4566).
+    this.handBack(state, 'ended')
     state.ended = true
     state.turnRunning = false
     this.emit(state, { type: 'state_change', state: 'ended' })

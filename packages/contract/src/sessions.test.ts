@@ -172,6 +172,12 @@ const events: unknown[] = [
     type: 'waiting_messages',
     messages: [],
     takes: 'step',
+    returned: { why: 'refused', messages: [{ id: 'waiting-3', text: '/not-a-steer' }] }
+  },
+  {
+    type: 'waiting_messages',
+    messages: [],
+    takes: 'step',
     returned: {
       why: 'stopped',
       messages: [
