@@ -52,6 +52,112 @@ no provider anything. Their payload is empty, so a `force` the phone sends is ig
 (`GET /usage/claude`, `GET /usage/codex`), which can ask the provider, stay the owner's. A read that
 failed is `{error, reason?}`; `reason: "unauthorized"` means the provider refused the credential.
 
+## Examples
+
+Each answer below is one a unit test reads (`packages/server/src/devices/devices.test.ts`).
+
+`GET /sidebar/overview`:
+
+```json
+{
+  "windows": [
+    {
+      "windowKey": "w1",
+      "workspaceId": "ws-antasphere",
+      "displayOrder": ["g1", "s2"],
+      "groups": [
+        {
+          "id": "g1",
+          "name": "Clave",
+          "color": "purple",
+          "collapsed": false,
+          "workspaceId": "ws-antasphere",
+          "sessionIds": ["s1"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+`GET /accounts/claude` and `GET /accounts/codex`:
+
+```json
+[
+  {
+    "id": "default",
+    "label": "Machine login",
+    "hasToken": false,
+    "tokenSetAt": null,
+    "tokenExpiresAt": null,
+    "tokenInvalid": false
+  },
+  {
+    "id": "c-work",
+    "label": "Work",
+    "hasToken": true,
+    "tokenSetAt": 1762000000000,
+    "tokenExpiresAt": 1793536000000,
+    "tokenInvalid": false
+  }
+]
+```
+
+```json
+[
+  { "id": "default", "label": "Default", "kind": "chatgpt", "hasCredential": true },
+  { "id": "x-key", "label": "API key", "kind": "apiKey", "hasCredential": true }
+]
+```
+
+`GET /usage/claude/snapshot` (`usedPercentage` is the share used; the desktop's sidebar foot shows
+the share left). An account with no read yet is absent; a server that has read nothing answers `{}`:
+
+```json
+{
+  "default": {
+    "windows": [
+      {
+        "key": "five_hour",
+        "label": "Current session (5h)",
+        "kind": "session",
+        "scope": null,
+        "usedPercentage": 42,
+        "resetsAt": 1763125200000,
+        "severity": "normal"
+      },
+      {
+        "key": "seven_day_oi",
+        "label": "Weekly (Fable)",
+        "kind": "weekly_scoped",
+        "scope": "Fable",
+        "usedPercentage": 81,
+        "resetsAt": 1763550000000,
+        "severity": "warning"
+      }
+    ],
+    "fetchedAt": 1763110000000
+  },
+  "c-work": { "error": "Claude refused the token.", "reason": "unauthorized" }
+}
+```
+
+`GET /server/info` from a server the app runs (a daemon may add `target`, `mode`, `failure` and
+`since` to `upgrade`):
+
+```json
+{
+  "version": "3.0.0-beta.23",
+  "installRef": null,
+  "upgrade": {
+    "supported": false,
+    "reason": "This server is run by the app; it updates with it",
+    "state": "idle"
+  },
+  "name": "the-mac"
+}
+```
+
 ## Events
 
 A phone hears `sidebar.overview_changed`, which carries nothing: it means "read the overview again".
