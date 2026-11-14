@@ -372,6 +372,11 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       name: s.title,
       cwd: s.cwd,
       mode: modeOf(record, s.provider),
+      // What the tab runs on, from its record, under the daemon's names
+      // (PRDCT-4496): on a connection the model's plain id, else what the
+      // agent reported.
+      model: record?.model ?? null,
+      launchProfileId: record?.launchProfileId ?? null,
       alive: s.state !== 'ended',
       // The window's listing never said 'ended' (its run state has no such
       // word; an ended tab kept its last state or none): the same vocabulary.

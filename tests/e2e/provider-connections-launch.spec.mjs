@@ -838,6 +838,31 @@ export async function run(t) {
         ocNoModel.printed?.DS === DEEPSEEK,
       ocNoModel.printed ? scrub(ocNoModel.printed) : scrub(ocNoModel.raw)
     )
+
+    // ── What the window's clave_list says each of those tabs runs on ──────
+    // The daemon's names (PRDCT-4496): mode, model, account, launchProfileId;
+    // on a connection the model is its plain id, as the tab was handed it.
+    const listedTabs = (await callMcp(app, 'list', {}))?.sessions ?? []
+    const rowOf = (id) => listedTabs.find((s) => s.id === id)
+    t.check(
+      "the window's clave_list names the Pi tab's harness, its model k-second and its connection",
+      rowOf(piByLabel.sessionId)?.mode === 'pi' &&
+        rowOf(piByLabel.sessionId)?.model === 'k-second' &&
+        rowOf(piByLabel.sessionId)?.account?.id === C.kimi &&
+        'launchProfileId' in (rowOf(piByLabel.sessionId) ?? {}),
+      rowOf(piByLabel.sessionId) ?? 'no row'
+    )
+    t.check(
+      'the OpenCode tab named deepseek-chat by its plain id, on the DeepSeek connection',
+      rowOf(ocByAgent.sessionId)?.model === 'deepseek-chat' &&
+        rowOf(ocByAgent.sessionId)?.account?.id === C.ds,
+      rowOf(ocByAgent.sessionId) ?? 'no row'
+    )
+    t.check(
+      'and the OpenCode tab that named none: model null',
+      !!rowOf(ocNoModel.sessionId) && rowOf(ocNoModel.sessionId).model === null,
+      rowOf(ocNoModel.sessionId) ?? 'no row'
+    )
     // Ended with the spec's own print tabs, so none holds the quit up.
     await win.evaluate(
       (ids) => {

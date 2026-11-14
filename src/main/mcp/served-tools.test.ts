@@ -453,6 +453,35 @@ describe('serveCommand', () => {
       callerSessionId: 'caller'
     })
   })
+
+  it("names each tab's model and launch profile from its record, under the daemon's names (PRDCT-4496)", async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['pi', 'plain'] })])],
+      sessions: [session('pi'), session('plain')],
+      records: {
+        // On a connection the record keeps the model's plain id.
+        pi: record('pi', {
+          piMode: true,
+          model: 'k3',
+          launchProfileId: 'pi-default',
+          connectionId: 'c-kimi',
+          connectionLabel: 'Moonshot'
+        }),
+        plain: record('plain', {})
+      }
+    })
+    type Listing = { sessions: Record<string, unknown>[] }
+    const all = (await serveCommand('list', {}, h.ctx())) as Listing
+    expect(all.sessions.find((s) => s.id === 'pi')).toMatchObject({
+      mode: 'pi',
+      model: 'k3',
+      launchProfileId: 'pi-default'
+    })
+    expect(all.sessions.find((s) => s.id === 'plain')).toMatchObject({
+      model: null,
+      launchProfileId: null
+    })
+  })
 })
 
 describe('resolveGroupRef', () => {

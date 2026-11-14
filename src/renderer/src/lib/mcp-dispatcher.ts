@@ -254,6 +254,10 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       name: s.name,
       cwd: s.cwd,
       mode: sessionMode(s),
+      // What the tab runs on, as its record keeps it (the store follows each
+      // model the agent reports), under the daemon's names (PRDCT-4496).
+      model: s.model ?? null,
+      launchProfileId: s.launchProfileId ?? null,
       alive: s.alive,
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
