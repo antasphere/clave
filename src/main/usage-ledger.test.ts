@@ -101,6 +101,32 @@ describe('the ledger of starts (PRDCT-4551)', () => {
     expect(ledger.read().map((l) => l.connectionId)).toEqual(['a', 'b', null])
   })
 
+  it('writes a move between two connections of one label and one company: the skip is on the connection', () => {
+    const storage = memoryStorage()
+    let now = 10
+    const ledger = new UsageLedger(
+      () => storage,
+      () => now
+    )
+    const start = (connectionId: string): ReturnType<UsageLedger['record']> =>
+      ledger.record({
+        harness: 'pi',
+        sessionId: 's',
+        connectionId,
+        label: 'Kimi',
+        company: 'moonshot'
+      })
+    expect(start('c1')).not.toBeNull()
+    now = 20
+    expect(start('c2')).not.toBeNull()
+    now = 30
+    expect(start('c2')).toBeNull()
+    expect(ledger.read().map((l) => [l.at, l.connectionId])).toEqual([
+      [10, 'c1'],
+      [20, 'c2']
+    ])
+  })
+
   it('refuses a session id that is not one, and never throws on a storage that fails', () => {
     const storage = memoryStorage()
     const ledger = new UsageLedger(() => storage)
