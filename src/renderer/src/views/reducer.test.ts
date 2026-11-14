@@ -57,6 +57,33 @@ describe('conversation stream', () => {
     expect(reduceConversation(state, { exit: 7 })).toMatchObject({ state: 'ended', exitCode: 7 })
     expect(run([{ type: 'error', message: 'fatal', fatal: true }]).state).toBe('ended')
   })
+  it('shows a named notice once: the latest of its name in place of the one before (PRDCT-4427)', () => {
+    const retry = (attempt: number): ChatEvent => ({
+      type: 'error',
+      message: `OpenCode retries in 3 s (attempt ${attempt}): stand-in: rate limited`,
+      fatal: false,
+      notice: 'retry'
+    })
+    const state = run([
+      { type: 'user_message', text: 'hello' },
+      retry(2),
+      { type: 'error', message: 'something else', fatal: false },
+      retry(3)
+    ])
+    const errors = state.entries.flatMap((e) => (e.kind === 'error' ? [e.message] : []))
+    expect(errors).toEqual([
+      'something else',
+      'OpenCode retries in 3 s (attempt 3): stand-in: rate limited'
+    ])
+    // Unnamed notices still each stand.
+    const plain = run([
+      { type: 'error', message: 'one', fatal: false },
+      { type: 'error', message: 'one', fatal: false }
+    ])
+    expect(plain.entries.filter((e) => e.kind === 'error')).toHaveLength(2)
+    // The schema carries the name.
+    expect(SessionEventSchema.parse(retry(2))).toMatchObject({ notice: 'retry' })
+  })
   it('keeps the effort the provider last reported, null until it says', () => {
     expect(emptyConversation.effort).toBeNull()
     expect(run([]).effort).toBeNull()

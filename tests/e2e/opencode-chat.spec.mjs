@@ -205,6 +205,30 @@ export async function run(t) {
     t.check('the chip follows the switch (OpenCode · Two)', !!followed, await chipText())
     await win.keyboard.press('Escape').catch(() => undefined)
 
+    // ── 2a. A provider's rate limit: OpenCode's retries are said, the latest
+    // standing for the one before (PRDCT-4427) ──
+    const RETRY_2 = 'OpenCode retries in 3 s (attempt 2): stand-in: rate limited'
+    const RETRY_3 = 'OpenCode retries in 3 s (attempt 3): stand-in: rate limited'
+    await say(id, 'rate limited please')
+    const firstRetry = await until(
+      async () => ((await chat(id).innerText()).includes(RETRY_2) ? true : null),
+      { tries: 40, gapMs: 100 }
+    )
+    t.check(
+      'while it waits, the chat says the retry: when, which attempt, the provider’s words',
+      !!firstRetry,
+      (await chat(id).innerText()).slice(-600)
+    )
+    await chat(id).getByText('You said: rate limited please').waitFor({ timeout: 15_000 })
+    const afterRetries = await chat(id).innerText()
+    t.check(
+      'the second retry replaced the first: one notice, the latest',
+      afterRetries.includes(RETRY_3) &&
+        !afterRetries.includes(RETRY_2) &&
+        afterRetries.split('OpenCode retries').length - 1 === 1,
+      afterRetries.slice(-600)
+    )
+
     // ── 2b. A subscriber that comes after the session said its model ──
     // A second window subscribes to the chat the way a pane does, on its own
     // connection to the server: the agent named its model once, at its

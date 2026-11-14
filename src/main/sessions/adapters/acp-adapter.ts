@@ -26,7 +26,7 @@ import {
   type RpcNotification,
   type RpcRequest
 } from './acp-client'
-import { startRefusal } from './start-refusal'
+import { lastWords, startRefusal } from './start-refusal'
 
 /**
  * A chat over the Agent Client Protocol (version 1): one agent process per
@@ -208,6 +208,35 @@ export const acpModelOptions = (configOptions: unknown): ModelOption[] =>
   modelChoices(findModelOption(parseConfigOptions(configOptions)))
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+/** The name of the retry notice: the latest stands for the ones before. */
+const RETRY_NOTICE = 'retry'
+
+/** OpenCode's retry (`_meta["opencode/retry"]` of a `session_info_update`,
+ *  opencode 2.3.0: `{ attempt, nextRetryAt, error: { message, retryAfterMs } }`)
+ *  in one sentence, in the Pi chat's words for its own: when, which attempt,
+ *  and the provider's words, any credential value of `env` masked in them
+ *  (`lastWords`). Null when the value names no retry (OpenCode sends null
+ *  once the retry went out). */
+export function retryNotice(
+  label: string,
+  value: unknown,
+  env?: Readonly<Record<string, string | undefined>>,
+  now = Date.now()
+): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const retry = value as Record<string, unknown>
+  const error = object(retry.error)
+  const attempt =
+    typeof retry.attempt === 'number' && Number.isFinite(retry.attempt) ? retry.attempt : null
+  const waitMs =
+    typeof error.retryAfterMs === 'number'
+      ? error.retryAfterMs
+      : Date.parse(text(retry.nextRetryAt)) - now
+  const seconds = Number.isFinite(waitMs) && waitMs >= 500 ? Math.round(waitMs / 1000) : null
+  const words = lastWords(text(error.message), env)
+  return `${label} retries${seconds !== null ? ` in ${seconds} s` : ''}${attempt !== null ? ` (attempt ${attempt})` : ''}${words ? `: ${words}` : ''}`
+}
 
 /** The child under the launch's environment: directly when its command is on
  *  the environment's PATH, through the login shell otherwise (as the Claude
@@ -729,10 +758,24 @@ export class AcpAdapter implements SessionAdapter {
         })
         return
       }
+      case 'session_info_update': {
+        // OpenCode's word that it retries a refused call (a rate limit, its
+        // `_meta["opencode/retry"]`), else the chat reads "working" as a
+        // hang. One notice, the latest standing for the ones before; null
+        // (the retry went out) changes nothing on screen.
+        const retry = retryNotice(
+          this.label,
+          object(update._meta)['opencode/retry'],
+          state.launch.env
+        )
+        if (retry) this.notice(state, retry, RETRY_NOTICE)
+        return
+      }
       default:
         // user_message_chunk (we emitted the message ourselves),
-        // agent_thought_chunk (the model has no thinking event), plan, modes
-        // and anything newer: nothing to show.
+        // agent_thought_chunk (the chat view shows no model's reasoning, a
+        // Claude's or a Codex's included: there is no thinking event to
+        // carry it), plan, modes and anything newer: nothing to show.
         return
     }
   }
@@ -848,9 +891,9 @@ export class AcpAdapter implements SessionAdapter {
 
   /** The adapter's word to the reader: the model's non-fatal error, as the
    *  Codex chat reports a resume it could not replay. */
-  private notice(state: HandleState, message: string): void {
+  private notice(state: HandleState, message: string, notice?: string): void {
     if (state.ended) return
-    this.emit(state, { type: 'error', message, fatal: false })
+    this.emit(state, { type: 'error', message, fatal: false, ...(notice ? { notice } : {}) })
   }
 
   /** Why the agent would not start (PRDCT-4427): said live, and kept in the

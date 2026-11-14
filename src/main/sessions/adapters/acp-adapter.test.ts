@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AcpAdapter, acpModelOptions, type AcpSpawnOptions } from './acp-adapter'
+import { AcpAdapter, acpModelOptions, retryNotice, type AcpSpawnOptions } from './acp-adapter'
 import type { SessionHandle } from '../adapter'
 import type { SessionEvent } from '../../../shared/session-model'
 
@@ -188,6 +188,46 @@ describe('acpModelOptions (PRDCT-4427)', () => {
       acpModelOptions([{ id: 'mode', category: 'mode', options: [{ value: 'build' }] }])
     ).toEqual([])
     expect(acpModelOptions(undefined)).toEqual([])
+  })
+})
+
+describe('retryNotice (PRDCT-4427)', () => {
+  // As `opencode acp` 2.3.0 sent it against a provider refusing with 429.
+  const real = {
+    attempt: 2,
+    nextRetryAt: '2026-11-13T23:45:15.028Z',
+    error: {
+      type: 'provider.rate-limit',
+      message: 'stand-in: rate limited',
+      status: 429,
+      response: { body: '{"error":{"message":"stand-in: rate limited"}}' },
+      retryAfterMs: 3000
+    }
+  }
+  it('says when, which attempt and the provider’s words', () => {
+    expect(retryNotice('OpenCode', real)).toBe(
+      'OpenCode retries in 3 s (attempt 2): stand-in: rate limited'
+    )
+  })
+  it('reads the wait off nextRetryAt when no retryAfterMs is given', () => {
+    const now = Date.parse('2026-11-13T23:45:10.028Z')
+    expect(
+      retryNotice('OpenCode', { ...real, error: { message: 'slow down' } }, undefined, now)
+    ).toBe('OpenCode retries in 5 s (attempt 2): slow down')
+  })
+  it('says nothing for null, the end of a retry, or a value that is no retry', () => {
+    expect(retryNotice('OpenCode', null)).toBeNull()
+    expect(retryNotice('OpenCode', 'retry')).toBeNull()
+    expect(retryNotice('OpenCode', [])).toBeNull()
+  })
+  it('never carries a credential value of the environment', () => {
+    const value = 'e2e-made-up-key-0001'
+    const said = retryNotice(
+      'OpenCode',
+      { attempt: 2, error: { message: `rate limited for ${value}` } },
+      { DEEPSEEK_API_KEY: value }
+    )
+    expect(said).toBe('OpenCode retries (attempt 2): rate limited for ‹hidden›')
   })
 })
 
@@ -389,6 +429,32 @@ describe('AcpAdapter against the stand-in agent', () => {
       fatal: false
     })
     expect(frames(s.state).some((f) => f.method === 'session/set_config_option')).toBe(false)
+  })
+
+  it("says OpenCode's rate-limit retries as one notice, the latest in place of the one before", async () => {
+    const s = await open()
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'rate limited please' })
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    const notices = s.events.filter((e) => e.type === 'error')
+    expect(notices).toEqual([
+      {
+        type: 'error',
+        message: 'OpenCode retries in 3 s (attempt 2): stand-in: rate limited',
+        fatal: false,
+        notice: 'retry'
+      },
+      {
+        type: 'error',
+        message: 'OpenCode retries in 3 s (attempt 3): stand-in: rate limited',
+        fatal: false,
+        notice: 'retry'
+      }
+    ])
+    // The answer still comes, after the notices.
+    expect(
+      s.events.findIndex((e) => e.type === 'assistant_text' && e.delta === 'You said: ')
+    ).toBeGreaterThan(s.events.indexOf(notices[1]))
   })
 
   it('resumes a known session through session/load, its past in history, with no session/new', async () => {

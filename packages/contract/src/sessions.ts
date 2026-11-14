@@ -340,7 +340,14 @@ export const SessionEvent = Schema.Union(
     providerSessionId: Schema.NullOr(Schema.String)
   }),
   Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
-  Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
+  /** `notice`: the latest of its kind replaces the one before under the same
+   *  name (an OpenCode chat's retry, PRDCT-4427). Mirrors `session-model.ts`. */
+  Schema.Struct({
+    type: Schema.Literal('error'),
+    message: Schema.String,
+    fatal: Schema.Boolean,
+    notice: Schema.optional(Schema.String)
+  }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
   Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
   /** A hosted form's answers changed under the card (PRDCT-4157): the agent

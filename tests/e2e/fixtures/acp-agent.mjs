@@ -15,9 +15,10 @@
 // session/list page, as OpenCode 2.3.0 does; `ACP_STAND_IN_STRAY_UPDATE=1`
 // sends, during each prompt, one `agent_message_chunk` for the session
 // `ses_other` (another session's update). A prompt containing `slow` waits
-// 20 s (cancellable); one containing `ask permission` asks the client first
-// and echoes the option. `OPENCODE_CONFIG_CONTENT`, when set, chooses the
-// models as OpenCode's own (below).
+// 20 s (cancellable); one containing `rate limited` says two retries first,
+// as OpenCode does under a provider's 429; one containing `ask permission`
+// asks the client first and echoes the option. `OPENCODE_CONFIG_CONTENT`,
+// when set, chooses the models as OpenCode's own (below).
 import {
   appendFileSync,
   existsSync,
@@ -155,6 +156,32 @@ async function prompt(id, params) {
   if (text.includes('slow')) {
     await sleep(20_000, turn)
     if (turn.cancelled) return finish('cancelled')
+  }
+  // A provider refusing with 429 twice before it answers: OpenCode 2.3.0
+  // says each retry as a `session_info_update` whose `_meta["opencode/retry"]`
+  // carries the attempt and the error, and null once the retry went out (the
+  // frames copied from the real agent against a stand-in provider).
+  if (text.includes('rate limited')) {
+    for (const attempt of [2, 3]) {
+      update(sessionId, {
+        sessionUpdate: 'session_info_update',
+        _meta: {
+          'opencode/retry': {
+            attempt,
+            nextRetryAt: new Date(Date.now() + 3000).toISOString(),
+            error: {
+              type: 'provider.rate-limit',
+              message: 'stand-in: rate limited',
+              status: 429,
+              retryAfterMs: 3000
+            }
+          }
+        }
+      })
+      await sleep(1500, turn)
+      if (turn.cancelled) return finish('cancelled')
+      update(sessionId, { sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': null } })
+    }
   }
   let agentText = ''
   const say = (chunk) => {
