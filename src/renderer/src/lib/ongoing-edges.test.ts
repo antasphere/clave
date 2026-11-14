@@ -33,7 +33,7 @@ import {
   returnToSidebar,
   WAIT_MS
 } from './ongoing-actions'
-import { conversationConfigDir, type OngoingEntry } from './ongoing'
+import { conversationConfigDir, launchOf, launchOfRecord, type OngoingEntry } from './ongoing'
 import { resourceKey } from '@clave/contract/fleet'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -163,6 +163,52 @@ describe('F7: a conversation with no transcript starts fresh under its own id', 
     expect(api.historyConversation).not.toHaveBeenCalled()
     const options = api.fleetStart.mock.calls[0][2] as Record<string, unknown>
     expect(options.resumeSessionId).toBe('conv-1')
+  })
+})
+
+// Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+describe('a Pi conversation comes back on the stored connection it ran on (PRDCT-4496)', () => {
+  it('carries the connection id and label into the spawn and into the new tab', async () => {
+    api.fleetStart.mockResolvedValueOnce({
+      id: 'tab-new',
+      cwd: '/work',
+      folderName: 'work',
+      alive: true,
+      piSessionId: 'pi-conv-1'
+    })
+    await keep(
+      entry({
+        provider: 'pi',
+        conversationId: 'pi-conv-1',
+        launch: { piProvider: 'deepseek', connectionId: 'conn-7', connectionLabel: 'Team DeepSeek' }
+      })
+    )
+    await openOngoing('e1')
+    const options = api.fleetStart.mock.calls[0][2] as Record<string, unknown>
+    expect(options).toMatchObject({ connectionId: 'conn-7', connectionLabel: 'Team DeepSeek' })
+    const added = useSessionStore.getState().sessions.find((s) => s.id === 'tab-new')
+    expect(added).toMatchObject({ connectionId: 'conn-7', connectionLabel: 'Team DeepSeek' })
+  })
+
+  it('takes the connection from the tab and from its record into the entry', () => {
+    expect(
+      launchOf({
+        id: 't',
+        name: 't',
+        cwd: '/w',
+        alive: true,
+        claudeMode: false,
+        piMode: true,
+        dangerousMode: false,
+        claudeSessionId: null,
+        sessionType: 'local',
+        connectionId: 'conn-7',
+        connectionLabel: 'Team DeepSeek'
+      })
+    ).toEqual({ connectionId: 'conn-7', connectionLabel: 'Team DeepSeek' })
+    expect(
+      launchOfRecord({ id: 'r', connectionId: 'conn-7', connectionLabel: 'Team DeepSeek' })
+    ).toEqual({ connectionId: 'conn-7', connectionLabel: 'Team DeepSeek' })
   })
 })
 

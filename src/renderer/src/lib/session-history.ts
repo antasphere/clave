@@ -6,6 +6,7 @@ import { useClaudeProfileStore } from '../store/claude-profile-store'
 import { useCodexAccountStore } from '../store/codex-account-store'
 import type { HistoryListEntry, HistoryLedgerRow } from '../../../preload/index.d'
 import { useFleetStore } from '../store/fleet-store'
+import { CLAVE_PROVIDER_PREFIX } from '../../../shared/provider-prefix'
 
 /**
  * The store glue of the session history (PRDCT-1738): the ledger's writer
@@ -98,12 +99,18 @@ export async function resumeHistoryEntry(
             window.electronAPI.fleetStart(owner, cwd, options)
     // What it was launched on (PRDCT-4236): bypass, mode, effort, account.
     const launch = historyResumeLaunch(entry, options.dangerousMode, knownAccountLabel)
+    // A `clave-*` provider lives only in its connection's directory, and History records no connection (PRDCT-4534): reopen on Pi's own default, its model with it.
+    const clavePiProvider =
+      entry.provider === 'pi' && !!entry.agentProvider?.startsWith(CLAVE_PROVIDER_PREFIX)
     const info = await start(entry.cwd, {
       claudeMode: entry.provider === 'claude',
       piMode: entry.provider === 'pi',
       ...launch,
-      model: entry.model ?? undefined,
-      piProvider: entry.provider === 'pi' ? (entry.agentProvider ?? undefined) : undefined,
+      model: clavePiProvider ? undefined : (entry.model ?? undefined),
+      piProvider:
+        entry.provider === 'pi' && !clavePiProvider
+          ? (entry.agentProvider ?? undefined)
+          : undefined,
       piThinking: entry.provider === 'pi' ? (entry.thinking ?? undefined) : undefined,
       resumeSessionId: entry.claudeSessionId,
       ...(options.launchProfileId ? { launchProfileId: options.launchProfileId } : {}),

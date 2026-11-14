@@ -936,6 +936,22 @@ describe('restart correlation at the preload boundary', () => {
     )
     expect(channels()).not.toContain('pty:restart')
   })
+  it('carries the view a move onto the chat opens in, on the served route (lane D, PRDCT-4427)', async () => {
+    answer(onServer)
+    mocks.sessions.restart = vi.fn(async () => ({ id: 's1', resumed: true }))
+    await api.restartSession('s1', { adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' })
+    expect(mocks.sessions.restart).toHaveBeenCalledExactlyOnceWith(
+      's1',
+      {},
+      false,
+      undefined,
+      false,
+      {
+        adapterId: 'claude-chat',
+        viewId: 'clave.chat-view/lab'
+      }
+    )
+  })
   it('carries the handoff the same way, on the IPC road too', async () => {
     answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: false } })
     await api.restartSession('s1', { adapterId: 'echo', model: 'echo-1', firstMessage: 'hand' })

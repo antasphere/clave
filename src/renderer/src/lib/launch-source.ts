@@ -29,6 +29,45 @@ import { describeClaudeProfileAuth, useClaudeProfileStore } from '../store/claud
 import { describeCodexAccountAuth, useCodexAccountStore } from '../store/codex-account-store'
 import { capStatusLine, useClaudeAccountsUsage, useCodexAccountsUsage } from '../store/usage-store'
 import { serverProfilesFor, type ServerSettings } from '../store/server-settings-store'
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import {
+  connectionServes,
+  type ProviderCompanyId
+} from '@clave/contract/settings/provider-catalogue'
+import { HARNESS_BY_ID } from '../../../shared/harness'
+import { modelsCatalogFor, usageLineTextFor } from '../store/models-catalog-store'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
+
+/** A stored provider connection a Pi or OpenCode launch can run on
+ *  (PRDCT-4496): its id, the name the person gave it, and its company. */
+export interface ProviderLaunchConnection {
+  id: string
+  label: string
+  company: ProviderCompanyId
+}
+
+/** A machine's stored provider connections a Pi or OpenCode launch can run
+ *  on (PRDCT-4496), from lane B's store (this Mac's under `LOCAL_SERVER_ID`,
+ *  a saved server's under its id): those whose endpoints speak a wire format
+ *  of the harness and that hold their key or need none, in the machine's
+ *  order. */
+export function machineProviderConnections(
+  machineId: string,
+  harness: 'pi' | 'opencode'
+): ProviderLaunchConnection[] {
+  const formats = HARNESS_BY_ID[harness].wireFormats
+  return (useProviderConnectionsStore.getState().byMachine[machineId]?.connections ?? [])
+    .filter((c) => connectionServes(c, formats) && (c.hasKey || !c.needsKey))
+    .map((c) => ({ id: c.id, label: c.label, company: c.company }))
+}
+
+/** A machine's catalogue as a source says it: `'loading'` before its first
+ *  read lands, null when none could be read. */
+function catalogOf(machineId: string): ModelsCatalogView | 'loading' | null {
+  const entry = modelsCatalogFor(machineId)
+  if (entry?.view) return entry.view
+  return entry?.status === 'failed' ? null : 'loading'
+}
 
 /** The families whose sessions run on an account of a pool. */
 export type PooledFamily = 'claude' | 'codex'
@@ -62,6 +101,15 @@ export interface LaunchSource {
   /** The connections a launch of `model` could run on, judged for that
    *  model, the suggested one marked (`connectionsForModel`). */
   connections(family: PooledFamily, model: string | undefined): ModelConnection[]
+  /** The stored provider connections a Pi or OpenCode launch can run on,
+   *  in the order the machine keeps them (PRDCT-4496). */
+  providerConnections(harness: 'pi' | 'opencode'): readonly ProviderLaunchConnection[]
+  /** The machine's models catalogue: `'loading'` until its first read lands
+   *  (the launcher asks for it when its menu opens), null when none could be
+   *  read. */
+  catalog(): ModelsCatalogView | 'loading' | null
+  /** A provider connection's usage line, or null while it is not read yet. */
+  usageLine(connectionId: string): string | null
 }
 
 /** This Mac, from the local stores; read at render so the caller's own
@@ -96,7 +144,10 @@ export function localLaunchSource(workspaceId: string | null): LaunchSource {
         ? useClaudeProfileStore.getState().selectedProfileId
         : useCodexAccountStore.getState().selectedAccountId,
     chatProfileId: (family) => selectedChatProfile(family, workspaceId) ?? CHAT_PROFILE_IDS[family],
-    connections: (family, model) => connectionsForModel(family, model)
+    connections: (family, model) => connectionsForModel(family, model),
+    providerConnections: (harness) => machineProviderConnections(LOCAL_SERVER_ID, harness),
+    catalog: () => catalogOf(LOCAL_SERVER_ID),
+    usageLine: (connectionId) => usageLineTextFor(LOCAL_SERVER_ID, connectionId)
   }
 }
 
@@ -128,6 +179,9 @@ export function serverLaunchSource(
     selectedAccountId: (family) => accounts(family)[0]?.id ?? null,
     chatProfileId: (family) =>
       chatDefaultFor(preferences, family, null) ?? CHAT_PROFILE_IDS[family],
-    connections: (family, model) => connectionsForModel(family, model, serverId)
+    connections: (family, model) => connectionsForModel(family, model, serverId),
+    providerConnections: (harness) => machineProviderConnections(serverId, harness),
+    catalog: () => catalogOf(serverId),
+    usageLine: (connectionId) => usageLineTextFor(serverId, connectionId)
   }
 }

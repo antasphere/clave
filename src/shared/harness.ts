@@ -14,6 +14,10 @@
  */
 import type { LauncherFamily } from './agent-launch'
 import type { ConnectionPoolId } from './connection'
+// ── Lane B (harness wave): provider connections ──
+import type { ProviderWireFormat } from '@clave/contract/settings/provider-catalogue'
+// Lane C of the harness wave (PRDCT-4496): the pools a stored key serves
+import { PROVIDER_COMPANY_IDS } from '@clave/contract/settings/provider-catalogue'
 
 export type HarnessId = LauncherFamily
 
@@ -44,7 +48,7 @@ export interface Harness {
   vendorOnly: boolean
   /** The chat adapter that drives this harness in Clave's chat views, or null
    *  for a harness that runs in a terminal only. */
-  chatAdapterId: 'claude-chat' | 'codex-chat' | null
+  chatAdapterId: 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat' | null
   /** Whether the CLI takes a model on its command line (`--model`, `-m`). */
   takesModel: boolean
   /** The harness's own permission ladder, empty for a harness that never asks
@@ -63,6 +67,11 @@ export interface Harness {
   install: string | null
   /** Where the person reads about the harness. */
   docsUrl: string
+  // ── Lane B (harness wave): provider connections ──
+  /** The wire formats this harness speaks (PRDCT-4426): a stored provider
+   *  connection serves it when one of its endpoints speaks one of them. Empty
+   *  for a vendor-only harness. */
+  wireFormats: readonly ProviderWireFormat[]
 }
 
 export const HARNESSES: readonly Harness[] = [
@@ -104,7 +113,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: 'bypassPermissions',
     install: 'curl -fsSL https://claude.ai/install.sh | bash',
-    docsUrl: 'https://code.claude.com/docs'
+    docsUrl: 'https://code.claude.com/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'codex',
@@ -134,7 +145,9 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: 'danger-full-access',
     install: null,
-    docsUrl: 'https://learn.chatgpt.com/docs/cli'
+    docsUrl: 'https://learn.chatgpt.com/docs/cli',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'antigravity',
@@ -165,39 +178,53 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: 'default',
     bypassRung: null,
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    docsUrl: 'https://antigravity.google/docs/cli'
+    docsUrl: 'https://antigravity.google/docs/cli',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'pi',
     name: 'Pi',
     command: 'pi',
-    connectionPools: [],
+    // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
+    connectionPools: [...PROVIDER_COMPANY_IDS],
     vendorOnly: false,
-    chatAdapterId: null,
+    // Lane D (PRDCT-4427): Pi's chat runs through `pi --mode rpc`, Pi's own
+    // interface.
+    chatAdapterId: 'pi-chat',
     takesModel: true,
     permissionRungs: [],
     defaultRung: null,
     bypassRung: null,
     install: 'npm install -g @earendil-works/pi-coding-agent',
-    docsUrl: 'https://pi.dev/docs'
+    docsUrl: 'https://pi.dev/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   },
   {
-    // OpenCode 2's TUI takes no model on its command line (`opencode run`
-    // does, the TUI does not: the model is picked inside it or set in its
-    // config), and its permissions are config rules, not a CLI ladder; its
-    // one flag, `--auto`, is what `dangerousMode` passes.
+    // OpenCode 2's TUI has no model flag (`opencode run` has, the TUI not):
+    // the model it starts on reaches it through `OPENCODE_CONFIG_CONTENT`,
+    // set per tab, with `--standalone` so the TUI reads the tab's own
+    // environment rather than the shared service's (PRDCT-4496). Its
+    // permissions are config rules, not a CLI ladder; its one flag, `--auto`,
+    // is what `dangerousMode` passes.
+    // Lane D (PRDCT-4427): OpenCode's chat runs through `opencode acp`, the
+    // protocol the TUI's binary speaks itself (the Agent Client Protocol).
     id: 'opencode',
     name: 'OpenCode',
     command: 'opencode',
-    connectionPools: [],
+    // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
+    connectionPools: [...PROVIDER_COMPANY_IDS],
     vendorOnly: false,
-    chatAdapterId: null,
-    takesModel: false,
+    chatAdapterId: 'opencode-chat',
+    takesModel: true,
     permissionRungs: [],
     defaultRung: null,
     bypassRung: null,
     install: 'curl -fsSL https://opencode.ai/v2/install | bash',
-    docsUrl: 'https://opencode.ai/docs'
+    docsUrl: 'https://opencode.ai/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   }
 ]
 

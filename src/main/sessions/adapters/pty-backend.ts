@@ -10,7 +10,7 @@ import {
   INITIAL_COMMAND_DELAY_MS
 } from '../../constants'
 import { stateFilePath } from '../../agent-state-manager'
-import { lazyTerminalPorts } from '../../ports/terminals'
+import { lazyTerminalPorts, unpackedPath } from '../../ports/terminals'
 import { readJson } from '../../ports/storage'
 import type { TerminalProcess } from '../../ports/terminal'
 import { workspaceManager } from '../../workspace-manager'
@@ -19,6 +19,12 @@ import { claudeAccountsManager, DEFAULT_CLAUDE_ACCOUNT_ID } from '../../claude-a
 import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-accounts'
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
+import { PROVIDER_KEY_ENV_VARS } from '../../models-catalog-overlay'
+import {
+  CLAVE_TAB_CREDENTIAL_ENV_VARS,
+  connectionHandover,
+  connectionVariableNames
+} from '../../connection-handover'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
@@ -56,6 +62,18 @@ function isValidPiOptionValue(value: string): boolean {
     // eslint-disable-next-line no-control-regex
     !/[\u0000-\u001f\u007f]/.test(value)
   )
+}
+
+/**
+ * Clave's Pi extension (`resources/pi-clave-state.js`), the `--extension` a
+ * Pi tab starts with: under the resources folder the entry named
+ * (`TerminalPorts.resourcesDir`), unpacked from the asar when packaged, since
+ * Pi cannot read inside it. Never from this module's own `__dirname`: built,
+ * this code sits in a bundle chunk, and a path relative to it named a folder
+ * that does not exist in any layout (PRDCT-4496).
+ */
+export function piStateExtensionPath(): string {
+  return unpackedPath(path.join(lazyTerminalPorts.resourcesDir, 'pi-clave-state.js'))
 }
 
 /**
@@ -388,13 +406,20 @@ export function scrollTmuxSessionToText(
  * would otherwise reach only the very first session the server ever ran.
  * Passing them as shell assignments or `new-session -e` would put the token
  * in the process list for the session's whole life; this keeps it in the
- * environment alone.
+ * environment alone. A Pi or OpenCode tab's stored connection travels the
+ * same way (PRDCT-4496): every key variable a harness reads, the inline
+ * OpenCode config and the connection's Pi agent directory, and the private
+ * names its values cross the login profile under (`connectionHandover`).
  */
-export const TMUX_SESSION_ENV_VARS = [
+export const TMUX_SESSION_ENV_VARS: readonly string[] = [
   'CLAUDE_CONFIG_DIR',
   'CLAUDE_CODE_OAUTH_TOKEN',
-  'CODEX_HOME'
-] as const
+  'CODEX_HOME',
+  ...PROVIDER_KEY_ENV_VARS,
+  'OPENCODE_CONFIG_CONTENT',
+  'PI_CODING_AGENT_DIR',
+  ...CLAVE_TAB_CREDENTIAL_ENV_VARS
+]
 
 /** The `set-option` calls that bring a live server's `update-environment` up
  *  to TMUX_SESSION_ENV_VARS; none when it already lists them. Pure, for the
@@ -565,10 +590,18 @@ export interface SessionRecord {
    *  `CODEX_HOME` points at. Absent = the machine's own `~/.codex`. */
   codexAccountId?: string
   codexAccountLabel?: string
+  /** The stored connection a Pi or OpenCode tab runs on (PRDCT-4496), so a
+   *  Resume opens it again; never its value. */
+  connectionId?: string
+  connectionLabel?: string
   /** The thread a Codex chat tab resumes: the app-server's own id, from the
    *  tab's first `session_meta`. Absent until the thread is up, and for every
    *  other kind of session. */
   codexThreadId?: string
+  /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes, the id
+   *  `opencode --session` takes in a terminal; from the tab's first
+   *  `session_meta`. */
+  opencodeSessionId?: string
   /** When the process was first started, carried across adoption: what a
    *  Codex terminal's thread is found by (the rollout it wrote after this). */
   startedAt?: number
@@ -910,6 +943,16 @@ export interface PtySpawnOptions {
    *  only for one; every other kind ignores it. */
   codexAccountId?: string
   codexAccountLabel?: string
+  /** The stored connection a Pi or OpenCode tab runs on (PRDCT-4496):
+   *  persisted on the record with its label, never its value. */
+  connectionId?: string
+  connectionLabel?: string
+  /** The connection's variables (its key, OpenCode's inline config, Pi's
+   *  agent directory), opened by the caller for the process, held until it
+   *  starts and never on the record. */
+  providerEnv?: Record<string, string>
+  /** OpenCode only: run the TUI standalone, so it reads the tab's environment. */
+  opencodeStandalone?: boolean
   /** Workspace to stamp on the session record. The pty:spawn handler defaults
    *  it to the active workspace; explicit values win (pin launches, MCP). */
   workspaceId?: string
@@ -980,6 +1023,8 @@ interface PendingSpawn {
   oauthToken?: string
   /** CODEX_HOME for a Codex account other than the Default. */
   codexHome?: string
+  /** A Pi or OpenCode connection's variables, held like the token. */
+  providerEnv?: Record<string, string>
 }
 
 /**
@@ -1042,11 +1087,17 @@ export function codexHomeForSpawn(
  * `CLAUDECODE` is stripped so a session started from inside another Claude
  * session does not think it is nested. The account fields are only set when
  * the account carries them: the Default account keeps whatever the user's own
- * shell exports.
+ * shell exports. A Pi or OpenCode tab's connection (`providerEnv`, PRDCT-4496)
+ * is merged last, so the key it names wins over one the shell exports.
  */
 export function buildSpawnEnv(
   base: Record<string, string>,
-  account: { configDir?: string; oauthToken?: string; codexHome?: string }
+  account: {
+    configDir?: string
+    oauthToken?: string
+    codexHome?: string
+    providerEnv?: Record<string, string>
+  }
 ): Record<string, string> {
   const env: Record<string, string> = {
     ...base,
@@ -1057,6 +1108,7 @@ export function buildSpawnEnv(
   if (account.configDir) env.CLAUDE_CONFIG_DIR = account.configDir
   if (account.oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = account.oauthToken
   if (account.codexHome) env.CODEX_HOME = account.codexHome
+  if (account.providerEnv) Object.assign(env, account.providerEnv)
   return env
 }
 
@@ -1171,6 +1223,8 @@ export class PtyBackend {
     // wrapper instead and lets resolvePosixShellLaunch pick file and args.
     let shellArgs: string[] = []
     let posixAgentCommand: string | undefined
+    /** A connection's values under Clave's private names (`connectionHandover`). */
+    let handoverEnv: Record<string, string> | undefined
     if (isWindows) {
       // Windows: cmd.exe with /c to exec the command directly (no echoed prompt).
       if (usePiMode) {
@@ -1255,12 +1309,7 @@ export class PtyBackend {
               : randomUUID())
         }
         const mcpConfigPath = kind === 'claude' ? lazyTerminalPorts.mcpConfig.write(id) : null
-        const piExtensionPath =
-          kind === 'pi'
-            ? path
-                .join(__dirname, '../../resources/pi-clave-state.js')
-                .replace('app.asar', 'app.asar.unpacked')
-            : undefined
+        const piExtensionPath = kind === 'pi' ? piStateExtensionPath() : undefined
         const argv = buildAgentArgv({
           kind,
           profile,
@@ -1279,7 +1328,8 @@ export class PtyBackend {
           effort: options?.effort,
           permissionMode: options?.permissionMode,
           pluginDir: options?.pluginDir,
-          appendSystemPrompt: options?.appendSystemPrompt
+          appendSystemPrompt: options?.appendSystemPrompt,
+          opencodeStandalone: options?.opencodeStandalone
         })
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
@@ -1288,7 +1338,26 @@ export class PtyBackend {
         // has run: a `CODEX_HOME` the user's own profile exports would
         // otherwise override the one in the environment.
         if (codexHome) assignments.push(`CODEX_HOME=${shellSingleQuote(codexHome)}`)
-        const rendered = `${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
+        // A login profile exporting PI_CODING_AGENT_DIR would otherwise point Pi at the
+        // person's own directory instead of the connection's; a directory path, never a key, rides here.
+        if (options?.providerEnv?.PI_CODING_AGENT_DIR)
+          assignments.push(
+            `PI_CODING_AGENT_DIR=${shellSingleQuote(options.providerEnv.PI_CODING_AGENT_DIR)}`
+          )
+        // A Pi or OpenCode tab's connection: its values cross the login
+        // profile under Clave's private names and get their real names back
+        // after it, so a profile exporting the same variable never replaces
+        // the stored key (PRDCT-4496). Names only on the command line.
+        let handover = ''
+        if (options?.providerEnv) {
+          const carried = connectionHandover(
+            connectionVariableNames(options.providerEnv),
+            options.providerEnv
+          )
+          handover = carried.command
+          handoverEnv = carried.env
+        }
+        const rendered = `${handover}${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
         const failure = `__clave_status=$?; if [ $__clave_status -ne 0 ]; then printf '\\r\\n[Clave] Agent command exited with status %d\\r\\nCommand: %s\\r\\n' $__clave_status ${shellSingleQuote(argv.map(shellSingleQuote).join(' '))}; fi; exit $__clave_status`
         posixAgentCommand = `${rendered}; ${failure}`
       }
@@ -1333,6 +1402,8 @@ export class PtyBackend {
       codexMode: useCodexMode,
       piMode: usePiMode,
       opencodeMode: useOpencodeMode,
+      // Lane D (PRDCT-4427): the OpenCode session the terminal resumed, kept for its next Resume.
+      opencodeSessionId: options?.opencodeMode ? options.resumeSessionId : undefined,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,
@@ -1345,6 +1416,9 @@ export class PtyBackend {
       claudeProfileLabel: options?.claudeProfileLabel,
       codexAccountId: options?.codexAccountId,
       codexAccountLabel: options?.codexAccountLabel,
+      // The connection's name only: providerEnv is never written.
+      connectionId: options?.connectionId,
+      connectionLabel: options?.connectionLabel,
       // A restart on another account resumes the conversation: it keeps the
       // start the conversation had. Everything else is a new start.
       startedAt:
@@ -1439,7 +1513,11 @@ export class PtyBackend {
         autoExecute: options?.autoExecute,
         configDir: options?.configDir,
         oauthToken,
-        codexHome
+        codexHome,
+        providerEnv:
+          options?.providerEnv && handoverEnv
+            ? { ...options.providerEnv, ...handoverEnv }
+            : options?.providerEnv
       }
     }
     session.startedAt = recordBase.startedAt
@@ -1501,8 +1579,17 @@ export class PtyBackend {
       return
     }
     if (!session.pending) return
-    const { file, args, cwd, initialCommand, autoExecute, configDir, oauthToken, codexHome } =
-      session.pending
+    const {
+      file,
+      args,
+      cwd,
+      initialCommand,
+      autoExecute,
+      configDir,
+      oauthToken,
+      codexHome,
+      providerEnv
+    } = session.pending
     session.pending = undefined
 
     const ptyName = isWindows ? undefined : 'xterm-256color'
@@ -1519,7 +1606,7 @@ export class PtyBackend {
       cols: Math.max(1, cols),
       rows: Math.max(1, rows),
       cwd,
-      env: buildSpawnEnv(getLoginShellEnv(), { configDir, oauthToken, codexHome })
+      env: buildSpawnEnv(getLoginShellEnv(), { configDir, oauthToken, codexHome, providerEnv })
     })
 
     session.ptyProcess = ptyProcess
@@ -1744,6 +1831,17 @@ export class PtyBackend {
     writeSessionRecord({ ...meta, codexThreadId: threadId })
   }
 
+  /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes,
+   *  from its `session_meta`. Mirrors setSessionCodexThreadId. */
+  setSessionOpencodeSessionId(id: string, sessionId: string): void {
+    if (!OPENCODE_SESSION_ID_RE.test(sessionId)) return
+    const key = this.recordKeyForSession(id)
+    if (!key) return
+    const meta = readSessionRecord(key)
+    if (!meta || meta.opencodeSessionId === sessionId) return
+    writeSessionRecord({ ...meta, opencodeSessionId: sessionId })
+  }
+
   /** What the chat is running on now, as the provider last acknowledged it
    *  (PRDCT-4191): the model of a `session_meta`, the mode of a
    *  `permission_mode`, the effort of an `effort` event. Mirrors
@@ -1761,8 +1859,9 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta) return
     const next: SessionRecord = { ...meta }
-    if (patch.model !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,127}$/.test(patch.model))
-      next.model = patch.model
+    // The shape a launch accepts (`isValidModelName`): OpenCode and Pi report
+    // `provider/model`, and a Resume relaunches on it (PRDCT-4427).
+    if (patch.model !== undefined && isValidModelName(patch.model)) next.model = patch.model
     if (patch.permissionMode !== undefined && /^[a-zA-Z]{1,32}$/.test(patch.permissionMode))
       next.permissionMode = patch.permissionMode
     if (patch.effort === null) delete next.effort

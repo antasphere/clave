@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CHAT_PROFILE_IDS,
   chatDefaultFor,
   chatOfInteractionMode,
+  isChatProfileRef,
   resolveSpawnModes,
   resolveProfileRef
 } from './open-session-modes'
@@ -15,7 +17,7 @@ describe('clave_open_session spawn modes', () => {
     expect(modes.dangerousMode).toBe(true)
     expect(modes.family).toBe('codex')
   })
-  it('opens OpenCode in its own mode, with --auto as its skip-approvals flag and no model', () => {
+  it('opens OpenCode in its own mode, with --auto as its skip-approvals flag and its model', () => {
     const modes = resolveSpawnModes({ mode: 'opencode', dangerous: true, model: 'x/y' })
     expect(modes).toMatchObject({
       opencodeMode: true,
@@ -24,7 +26,15 @@ describe('clave_open_session spawn modes', () => {
       dangerousMode: true,
       family: 'opencode'
     })
-    expect(modes.model).toBeUndefined()
+    // PRDCT-4496: the model reaches OpenCode's configuration, which every
+    // road builds from it (`providerInjection`); it used to be dropped here.
+    expect(modes.model).toBe('x/y')
+  })
+  it('drops a model only where there is nowhere to put it: Antigravity, a terminal', () => {
+    expect(resolveSpawnModes({ mode: 'antigravity', model: 'm' }).model).toBeUndefined()
+    expect(resolveSpawnModes({ mode: 'terminal', model: 'm' }).model).toBeUndefined()
+    for (const mode of ['claude', 'codex', 'pi', 'opencode'] as const)
+      expect(resolveSpawnModes({ mode, model: 'm' }).model).toBe('m')
   })
   it('keeps the flag for claude', () => {
     expect(resolveSpawnModes({ mode: 'claude', dangerous: true }).dangerousMode).toBe(true)
@@ -78,9 +88,16 @@ describe('clave_open_session chat view', () => {
     )
   })
   it('refuses chat where there is no chat view, rather than opening a terminal', () => {
-    for (const mode of ['pi', 'antigravity', 'gemini', 'terminal'] as const) {
+    // Pi has a chat view since lane D (PRDCT-4427).
+    for (const mode of ['antigravity', 'gemini', 'terminal'] as const) {
       expect(() => resolveProfileRef({ mode, chat: true })).toThrow(/no chat view/)
     }
+  })
+  // Lane D (PRDCT-4427): the refusal names the families from the table itself.
+  it('names every family with a chat view in its refusal', () => {
+    expect(() => resolveProfileRef({ mode: 'antigravity', chat: true })).toThrow(
+      'chat: true needs mode "claude", "codex", "opencode", "pi"; "antigravity" has no chat view'
+    )
   })
   it('refuses chat beside a different profile', () => {
     expect(() => resolveProfileRef({ chat: true, profile: 'builtin-claude' })).toThrow(
@@ -116,13 +133,12 @@ describe('clave_open_session without chat follows the interaction mode', () => {
       'codex-chat'
     )
   })
-  it('pi has no chat view: its terminal profile in every mode, chat: true still refused', () => {
-    expect(resolveProfileRef({ mode: 'pi' }, undefined, 'chat')).toBeUndefined()
+  // Lane D (PRDCT-4427): Pi has a chat view, over its own rpc mode.
+  it('pi: the same three cases', () => {
+    expect(resolveProfileRef({ mode: 'pi' }, undefined, 'chat')).toBe('pi-chat')
     expect(resolveProfileRef({ mode: 'pi' }, undefined, 'terminal')).toBeUndefined()
     expect(resolveProfileRef({ mode: 'pi', chat: false }, undefined, 'chat')).toBeUndefined()
-    expect(() => resolveProfileRef({ mode: 'pi', chat: true }, undefined, 'chat')).toThrow(
-      /no chat view/
-    )
+    expect(resolveProfileRef({ mode: 'pi', chat: true }, undefined, 'terminal')).toBe('pi-chat')
   })
   it('honours an explicit profile as is, whatever the mode', () => {
     expect(resolveProfileRef({ mode: 'codex', profile: 'mine' }, 'codex-chat', 'chat')).toBe('mine')
@@ -139,7 +155,8 @@ describe('clave_open_session without chat follows the interaction mode', () => {
     expect(chatOfInteractionMode({ mode: 'codex', chat: false }, 'chat')).toBe(false)
     expect(chatOfInteractionMode({ mode: 'codex', chat: true }, 'terminal')).toBe(true)
     expect(chatOfInteractionMode({ mode: 'codex', profile: 'mine' }, 'chat')).toBeUndefined()
-    expect(chatOfInteractionMode({ mode: 'pi' }, 'chat')).toBeUndefined()
+    // Pi has a chat view since lane D (PRDCT-4427); Antigravity has none.
+    expect(chatOfInteractionMode({ mode: 'gemini' }, 'chat')).toBeUndefined()
     expect(chatOfInteractionMode({ mode: 'terminal' }, 'chat')).toBeUndefined()
   })
 })
@@ -235,12 +252,96 @@ describe('clave_open_session chat default', () => {
     expect(
       chatDefaultFor(prefs({ globalDefaults: { claude: 'plugin-agent' } }), 'claude', null)
     ).toBe(undefined)
-    expect(chatDefaultFor(prefs({}), 'pi', null)).toBeUndefined()
+    // Pi has a chat view since lane D (PRDCT-4427).
     expect(chatDefaultFor(prefs({}), 'antigravity', null)).toBeUndefined()
   })
   it('survives a preferences object missing its default tables', () => {
     expect(
       chatDefaultFor({ customProfiles: [] } as unknown as LaunchProfilePreferences, 'codex', 'ws1')
     ).toBe('codex-chat')
+  })
+})
+
+// Lane D (PRDCT-4427): OpenCode opens in the chat view, over the ACP adapter.
+describe('OpenCode has a chat view (lane D, PRDCT-4427)', () => {
+  it('names its built-in chat profile, and the chat form of a saved profile', () => {
+    expect(CHAT_PROFILE_IDS.opencode).toBe('opencode-chat')
+    expect(isChatProfileRef('opencode', 'opencode-chat')).toBe(true)
+    expect(isChatProfileRef('opencode', 'chat:opencode:x')).toBe(true)
+    expect(isChatProfileRef('opencode', 'chat:codex:x')).toBe(false)
+    expect(isChatProfileRef('codex', 'chat:opencode:x')).toBe(false)
+  })
+  it('opens an OpenCode chat with chat: true, and follows the interaction mode without it', () => {
+    expect(resolveProfileRef({ mode: 'opencode', chat: true })).toBe('opencode-chat')
+    expect(resolveProfileRef({ mode: 'opencode', chat: true }, 'chat:opencode:mine')).toBe(
+      'chat:opencode:mine'
+    )
+    expect(resolveProfileRef({ mode: 'opencode' }, undefined, 'chat')).toBe('opencode-chat')
+    expect(resolveProfileRef({ mode: 'opencode' }, undefined, 'terminal')).toBeUndefined()
+    expect(chatOfInteractionMode({ mode: 'opencode' }, 'chat')).toBe(true)
+    expect(chatOfInteractionMode({ mode: 'opencode' }, 'terminal')).toBe(false)
+  })
+  it('answers the chat form of a saved OpenCode default, the built-in chat for the built-in', () => {
+    const p: LaunchProfilePreferences = {
+      version: 1,
+      customProfiles: [
+        {
+          id: 'mine',
+          name: 'Mine',
+          family: 'opencode',
+          command: ['opencode'],
+          additionalArgs: ['--auto']
+        },
+        {
+          id: 'chat:opencode:mine',
+          name: 'Mine (chat)',
+          family: 'opencode',
+          command: ['opencode'],
+          additionalArgs: ['--auto'],
+          sourceProfileId: 'mine'
+        }
+      ],
+      globalDefaults: { opencode: 'mine' },
+      workspaceOverrides: {}
+    }
+    expect(chatDefaultFor(p, 'opencode', null)).toBe('chat:opencode:mine')
+    expect(chatDefaultFor({ ...p, globalDefaults: {} }, 'opencode', null)).toBe('opencode-chat')
+  })
+})
+
+// Lane D (PRDCT-4427): Pi opens in the chat view, over its own rpc mode.
+describe('Pi has a chat view (lane D, PRDCT-4427)', () => {
+  it('names its built-in chat profile, and the chat form of a saved profile', () => {
+    expect(CHAT_PROFILE_IDS.pi).toBe('pi-chat')
+    expect(isChatProfileRef('pi', 'pi-chat')).toBe(true)
+    expect(isChatProfileRef('pi', 'chat:pi:x')).toBe(true)
+    expect(isChatProfileRef('pi', 'chat:opencode:x')).toBe(false)
+    expect(isChatProfileRef('opencode', 'chat:pi:x')).toBe(false)
+  })
+  it('opens a Pi chat with chat: true, and follows the interaction mode without it', () => {
+    expect(resolveProfileRef({ mode: 'pi', chat: true })).toBe('pi-chat')
+    expect(resolveProfileRef({ mode: 'pi', chat: true }, 'chat:pi:mine')).toBe('chat:pi:mine')
+    expect(chatOfInteractionMode({ mode: 'pi' }, 'chat')).toBe(true)
+    expect(chatOfInteractionMode({ mode: 'pi' }, 'terminal')).toBe(false)
+  })
+  it('answers the chat form of a saved Pi default, the built-in chat for the built-in', () => {
+    const p: LaunchProfilePreferences = {
+      version: 1,
+      customProfiles: [
+        { id: 'mine', name: 'Mine', family: 'pi', command: ['pi'], additionalArgs: [] },
+        {
+          id: 'chat:pi:mine',
+          name: 'Mine (chat)',
+          family: 'pi',
+          command: ['pi'],
+          additionalArgs: [],
+          sourceProfileId: 'mine'
+        }
+      ],
+      globalDefaults: { pi: 'mine' },
+      workspaceOverrides: {}
+    }
+    expect(chatDefaultFor(p, 'pi', null)).toBe('chat:pi:mine')
+    expect(chatDefaultFor({ ...p, globalDefaults: {} }, 'pi', null)).toBe('pi-chat')
   })
 })

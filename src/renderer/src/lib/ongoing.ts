@@ -29,6 +29,9 @@ export interface OngoingLaunch {
   claudeProfileId?: string
   claudeProfileLabel?: string
   claudeConfigDir?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+  connectionId?: string
+  connectionLabel?: string
 }
 
 export interface OngoingEntry {
@@ -75,6 +78,9 @@ export interface OngoingSessionLike {
   claudeProfileId?: string
   claudeProfileLabel?: string
   claudeConfigDir?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+  connectionId?: string
+  connectionLabel?: string
   agentState?: string
   promptWaiting?: string | null
   hasUnseenActivity?: boolean
@@ -119,6 +125,9 @@ export function launchOf(s: OngoingSessionLike): OngoingLaunch {
   if (s.claudeProfileId) launch.claudeProfileId = s.claudeProfileId
   if (s.claudeProfileLabel) launch.claudeProfileLabel = s.claudeProfileLabel
   if (s.claudeConfigDir) launch.claudeConfigDir = s.claudeConfigDir
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+  if (s.connectionId) launch.connectionId = s.connectionId
+  if (s.connectionLabel) launch.connectionLabel = s.connectionLabel
   return launch
 }
 
@@ -139,6 +148,9 @@ export interface OngoingRecordLike {
   claudeProfileId?: string
   claudeProfileLabel?: string
   configDir?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+  connectionId?: string
+  connectionLabel?: string
 }
 
 export function launchOfRecord(r: OngoingRecordLike): OngoingLaunch {
@@ -151,7 +163,10 @@ export function launchOfRecord(r: OngoingRecordLike): OngoingLaunch {
     piThinking: r.piThinking,
     claudeProfileId: r.claudeProfileId,
     claudeProfileLabel: r.claudeProfileLabel,
-    claudeConfigDir: r.configDir
+    claudeConfigDir: r.configDir,
+    // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+    connectionId: r.connectionId,
+    connectionLabel: r.connectionLabel
   } as OngoingSessionLike)
 }
 

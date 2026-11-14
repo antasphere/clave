@@ -7891,6 +7891,10 @@ button.exchange-part-who:hover {
   max-inline-size: calc(var(--spacing) * 64);
   color: var(--text-secondary);
 }
+/* A Pi or OpenCode tab's connection: the same chip, nothing to open. */
+.term-connection .chat-model-trigger:hover {
+  background-color: transparent;
+}
 .term-account-dot {
   flex-shrink: 0;
   inline-size: calc(var(--spacing) * 1.5);

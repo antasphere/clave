@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ClaveApiClient } from '@clave/client'
 import type { LayoutSnapshot, SidebarGroup } from '@clave/contract/sidebar'
 import type { Session } from '@clave/contract/sessions'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { SessionRecord } from '../sessions/adapters/pty-backend'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 import {
@@ -57,6 +58,8 @@ interface World {
   windows: string[]
   parents: Record<string, string>
   screen: string[] | null
+  /** This Mac's stored provider connections (PRDCT-4496). */
+  providerViews: ProviderConnectionView[]
 }
 
 interface Harness {
@@ -90,6 +93,7 @@ function setup(partial: Partial<World> = {}): Harness {
     windows: ['wA', 'wB'],
     parents: {},
     screen: ['$ ls', 'a  b'],
+    providerViews: [],
     ...partial
   }
   const calls: [string, unknown][] = []
@@ -175,6 +179,7 @@ function setup(partial: Partial<World> = {}): Harness {
     mintTerminalId: () => 'term-1',
     sleep: async () => undefined,
     accounts: (provider) => w.accounts[provider],
+    providerConnectionViews: () => w.providerViews,
     selectedAccountId: (provider) => w.selected[provider],
     useRecommendedAccount: () => w.useRecommendedAccount,
     switchMode: () => w.switchMode,
@@ -1167,10 +1172,16 @@ describe('opening a session', () => {
     await expect(
       run(h, 'openSession', { cwd: '/p', mode: 'terminal', account: 'x' })
     ).rejects.toThrow(
-      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); a terminal runs no harness.'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); a terminal runs no harness.'
     )
+    await expect(
+      run(h, 'openSession', { cwd: '/p', mode: 'antigravity', account: 'x' })
+    ).rejects.toThrow(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
+    )
+    // Pi takes a stored connection (PRDCT-4496): this Mac stores none.
     await expect(run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'x' })).rejects.toThrow(
-      'The account argument applies to harnesses with a connection pool (Claude Code, Codex); Pi runs on the login inside the harness.'
+      'No stored connection serves Pi yet: add one in Settings → Connections.'
     )
     await expect(run(h, 'openSession', { cwd: '/p', groupId: 'zz' })).rejects.toThrow(
       'No group with id or name "zz"'
@@ -1179,6 +1190,72 @@ describe('opening a session', () => {
       'Unknown Claude account "Third"'
     )
     expect(h.argsOf('sessions.start')).toEqual([])
+  })
+  // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on this Mac's stored connections
+  it('opens Pi and OpenCode on the stored connection named by id, label or "any", and refuses an unknown one or none with the list', async () => {
+    const stored = (
+      id: string,
+      company: ProviderConnectionView['company'],
+      label: string,
+      hasKey = true
+    ): ProviderConnectionView => ({
+      id,
+      label,
+      company,
+      pool: company,
+      kind: 'key',
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+      needsKey: true,
+      hasKey,
+      keySetAt: null,
+      createdAt: 0
+    })
+    const h = setup({
+      ...world(),
+      providerViews: [
+        stored('c-ds', 'deepseek', 'No key yet', false),
+        stored('c-kimi', 'moonshot', 'Kimi work')
+      ]
+    })
+    const opened = (n: number): Record<string, unknown> =>
+      (h.argsOf('sessions.start')[n] as { options: Record<string, unknown> }).options
+    await run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'c-kimi' })
+    expect(opened(0)).toMatchObject({
+      piMode: true,
+      connectionId: 'c-kimi',
+      connectionLabel: 'Kimi work'
+    })
+    await run(h, 'openSession', { cwd: '/p', mode: 'opencode', account: 'KIMI work' })
+    expect(opened(1)).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    await run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'any' })
+    expect(opened(2)).toMatchObject({ connectionId: 'c-kimi' })
+    await run(h, 'openSession', { cwd: '/p', mode: 'pi' })
+    expect(opened(3)).not.toHaveProperty('connectionId')
+    await expect(
+      run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'Nobody' })
+    ).rejects.toThrow(
+      'Unknown Pi connection "Nobody". Available: "Kimi work" (c-kimi), "No key yet" (c-ds)'
+    )
+    h.w.providerViews = [stored('c-ds', 'deepseek', 'No key yet', false)]
+    await expect(run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'any' })).rejects.toThrow(
+      'No stored connection of Pi has its key yet: set one in Settings → Connections.'
+    )
+    expect(h.argsOf('sessions.start')).toHaveLength(4)
+    // PRDCT-4496: an agent's model reaches an OpenCode tab on the Mac's
+    // served road too, as it is given (main puts a bare id under the
+    // connection's provider).
+    h.w.providerViews = [stored('c-kimi', 'moonshot', 'Kimi work')]
+    await run(h, 'openSession', {
+      cwd: '/p',
+      mode: 'opencode',
+      account: 'c-kimi',
+      model: 'k-first'
+    })
+    expect(opened(4)).toMatchObject({
+      opencodeMode: true,
+      connectionId: 'c-kimi',
+      model: 'k-first'
+    })
   })
   it('a past conversation reopened carries its id to the start, and only then (PRDCT-4236)', async () => {
     const h = setup(world())

@@ -37,6 +37,12 @@ import type {
   FleetRoutines,
   FleetWorkspaces
 } from './fleet-types'
+// ── Lane B (harness wave): provider connections ──
+import type { ProviderConnection } from './index.d'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 
 interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -211,6 +217,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           kind: 'codex-usage',
           accountId: event.accountId,
           result: event.result as UsageAnswer
+        }
+      // ── Lane B (harness wave): provider connections ──
+      case 'accounts.providers_changed':
+        return {
+          serverId,
+          kind: 'provider-connections',
+          connections: [...event.connections] as ProviderConnection[]
         }
       default:
         return null
@@ -1332,7 +1345,49 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
     fleetSetServerName: async (serverId, name) =>
       (await ports.invoke(FLEET_IPC.setServerName, serverId, name)) as ServerVersionStatus,
-    onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
+    onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop,
+    // ── Lane B (harness wave): provider connections ──
+    // PRDCT-4426: a server's keys are sealed on that server, this Mac's over
+    // its own route; neither lands on the other, and none comes back.
+    fleetProviderConnections: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerConnectionsList()
+      const { api } = await backing(serverId)
+      return [...(await api.settings.providerConnections.list())] as ProviderConnection[]
+    },
+    fleetProviderConnectionAdd: async (serverId, input) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerConnectionAdd(input)
+      const { api } = await backing(serverId)
+      return (await api.settings.providerConnections.add(input)) as ProviderConnection
+    },
+    fleetProviderConnectionRename: async (serverId, id, label) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerConnectionRename(id, label)
+      const { api } = await backing(serverId)
+      return (await api.settings.providerConnections.rename(id, label)) as ProviderConnection
+    },
+    fleetProviderConnectionRemove: async (serverId, id) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerConnectionRemove(id)
+      const { api } = await backing(serverId)
+      return api.settings.providerConnections.remove(id)
+    },
+    fleetProviderConnectionSetKey: async (serverId, id, apiKey) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerConnectionSetKey(id, apiKey)
+      const { api } = await backing(serverId)
+      return (await api.settings.providerConnections.setKey(id, apiKey)) as ProviderConnection
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue, read on
+    // the server that runs the tab; this Mac's over its own route.
+    fleetModelsCatalog: async (serverId, input) => {
+      if (serverId === LOCAL_SERVER_ID) return local.modelsCatalogRead(input)
+      const { api } = await backing(serverId)
+      return (await api.settings.modelsCatalog.read(input ?? {})) as ModelsCatalogView
+    },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line, read
+    // on the server that holds the connection; this Mac's over its own route.
+    fleetProviderUsage: async (serverId, input) => {
+      if (serverId === LOCAL_SERVER_ID) return local.providerUsageRead(input)
+      const { api } = await backing(serverId)
+      return (await api.settings.providerUsage.read(input)) as ProviderUsageLineView
+    }
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
   type UsageAnswer = Awaited<ReturnType<FleetDesktopAPI['fleetUsage']>>

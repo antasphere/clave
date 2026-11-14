@@ -74,6 +74,8 @@ export const effortChoice = (
 export const PROVIDER_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
+  // Lane D (PRDCT-4427): OpenCode's and Pi's chats name their agent too.
+  opencode: 'OpenCode',
   pi: 'Pi',
   echo: 'Echo'
 }

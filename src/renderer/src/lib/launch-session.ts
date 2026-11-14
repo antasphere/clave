@@ -18,6 +18,7 @@ import {
 import { serverProfilesFor, serverSettingsReady } from '../store/server-settings-state'
 import { permissionRungFor, useLaunchSettingsStore } from '../store/launch-settings-store'
 import { HARNESS_BY_ID } from '../../../shared/harness'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { CHAT_PROFILE_IDS, chatDefaultFor } from '../../../shared/open-session-modes'
 import {
   profilesFor,
@@ -116,6 +117,41 @@ type SpawnOptions = NonNullable<Parameters<Window['electronAPI']['spawnSession']
  *  Harnesses set as the harness's default. `claude agents` takes neither: it
  *  is a subcommand with no model or permission flag of its own. Cmd+Y keeps
  *  its bypass: a dangerous setup never carries a rung. */
+/** The stored provider connection a Pi or OpenCode setup names, as the
+ *  spawn options carry it (PRDCT-4496): its id and name, never its key; the
+ *  host resolves the key from the id. Nothing for another harness. */
+export function providerConnectionFields(
+  setup: AgentSetup | null
+): Pick<SpawnOptions, 'connectionId' | 'connectionLabel'> {
+  if (!setup?.connectionId || (setup.kind !== 'pi' && setup.kind !== 'opencode')) return {}
+  return {
+    connectionId: setup.connectionId,
+    ...(setup.connectionLabel ? { connectionLabel: setup.connectionLabel } : {})
+  }
+}
+
+/** A Pi or OpenCode setup whose remembered connection the machine no longer
+ *  stores, dropped with its model before the spawn (PRDCT-4496): the model
+ *  belongs to the connection, and the agent button never replays a deleted
+ *  one. The machine's list is read first when the window holds none yet; a
+ *  list that could not be read keeps the setup, and the spawn says why. */
+export async function withoutGoneConnection(
+  setup: AgentSetup | null,
+  machine: string
+): Promise<AgentSetup | null> {
+  if (!setup?.connectionId || (setup.kind !== 'pi' && setup.kind !== 'opencode')) return setup
+  const held = useProviderConnectionsStore.getState().byMachine[machine]
+  if (!held || held.loading) await useProviderConnectionsStore.getState().load(machine)
+  const entry = useProviderConnectionsStore.getState().byMachine[machine]
+  if (!entry || entry.error) return setup
+  if (entry.connections.some((c) => c.id === setup.connectionId)) return setup
+  const rest = { ...setup }
+  delete rest.connectionId
+  delete rest.connectionLabel
+  delete rest.model
+  return rest
+}
+
 export function setupSpawnFlags(
   setup: AgentSetup | null,
   launchProfileId?: string,
@@ -157,7 +193,8 @@ export function setupSpawnFlags(
  */
 export function transportProfileFor(
   setup: AgentSetup | null,
-  chatDefault: (family: 'claude' | 'codex') => string | undefined
+  // OpenCode has a chat view too (lane D, PRDCT-4427).
+  chatDefault: (family: 'claude' | 'codex' | 'opencode') => string | undefined
 ): string | undefined {
   if (!setup) return undefined
   if (setup.launchProfileId) return setup.launchProfileId
@@ -166,7 +203,7 @@ export function transportProfileFor(
   if (!harness.chatAdapterId) return undefined
   if (useLaunchSettingsStore.getState().interactionMode === 'terminal') return undefined
   if (setup.kind === 'claude' && window.electronAPI?.platform === 'win32') return undefined
-  return chatDefault(setup.kind as 'claude' | 'codex')
+  return chatDefault(setup.kind as 'claude' | 'codex' | 'opencode')
 }
 
 const NO_AGENT = {
@@ -284,6 +321,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
       ...(codexAccount
         ? { codexAccountId: codexAccount.id, codexAccountLabel: codexAccount.label }
         : {}),
+      ...providerConnectionFields(req.setup),
       ...(workspace ? { workspaceId: workspace.id } : {})
     })
     id = info.id
@@ -328,9 +366,10 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
   return id
 }
 
-async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
+async function launchSessionNow(input: LaunchRequest): Promise<string | null> {
   clearLaunchNotice()
-  const serverId = launchServer(req)
+  const serverId = launchServer(input)
+  const req = { ...input, setup: await withoutGoneConnection(input.setup, serverId) }
   if (serverId !== LOCAL_SERVER_ID) return launchOnServer(serverId, req)
   const folderPath = await resolveCwd(req.cwd)
   if (!folderPath) return null
@@ -391,6 +430,7 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
     ...(profile ? claudeProfileSpawnFields(profile) : {}),
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
   }
+  const connection = providerConnectionFields(req.setup)
 
   const previousIds = req.exactProfile
     ? new Set((await window.electronAPI.sessionsList()).map((session) => session.id))
@@ -404,7 +444,8 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
       launchProfileId,
       ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
-      ...profileFields
+      ...profileFields,
+      ...connection
     })
     if (req.exactProfile && sessionInfo.launchProfileId !== launchProfileId) {
       let cleanupSucceeded = false
@@ -460,6 +501,7 @@ async function launchSessionNow(req: LaunchRequest): Promise<string | null> {
         claudeProfileLabel: profile?.label,
         codexAccountId: codexAccount?.id,
         codexAccountLabel: codexAccount?.label,
+        ...connection,
         // Persisted so Duplicate re-primes the clone with the same prompt.
         initialPrompt,
         sessionType: 'local',

@@ -66,6 +66,10 @@ import type {
   HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -166,6 +170,9 @@ export interface RestartOverridesInput {
   /** The first message of the fresh conversation when nothing is resumed (the handoff). */
   firstMessage?: string
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId?: string
 }
 
 /** The server a History row's conversation ran on (PRDCT-4321): absent for
@@ -517,8 +524,14 @@ export interface SessionRecord {
   claudeProfileLabel?: string
   codexAccountId?: string
   codexAccountLabel?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId?: string
+  connectionLabel?: string
   /** The thread a Codex chat tab resumes on relaunch. */
   codexThreadId?: string
+  /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
+   *  on relaunch. */
+  opencodeSessionId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string
@@ -602,6 +615,45 @@ export interface ClaudeAccount {
   tokenExpiresAt: number | null
   /** The service refused the token on its last read. */
   tokenInvalid: boolean
+}
+
+// ── Lane B (harness wave): provider connections ──
+/** The wire format a provider endpoint speaks (`@clave/contract/settings`). */
+export type ProviderWireFormat = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
+/** The ten cards of the catalogue (`@clave/contract/settings`, `PROVIDER_COMPANIES`). */
+export type ProviderCompanyId =
+  | 'moonshot'
+  | 'zai'
+  | 'mistral'
+  | 'deepseek'
+  | 'minimax'
+  | 'alibaba'
+  | 'openrouter'
+  | 'vercel-ai-gateway'
+  | 'ollama'
+  | 'generic'
+/** A provider connection as the renderer sees it (PRDCT-4426), field by
+ *  field the contract's `ProviderConnectionView`: never the key. */
+export interface ProviderConnection {
+  id: string
+  label: string
+  company: ProviderCompanyId
+  kind: 'key'
+  /** The pool this connection belongs to: the company's id. */
+  pool: ProviderCompanyId
+  endpoints: { wireFormat: ProviderWireFormat; baseUrl: string }[]
+  /** False for Ollama, which takes no key. */
+  needsKey: boolean
+  hasKey: boolean
+  keySetAt: number | null
+  createdAt: number
+}
+/** A new card: a company of the catalogue, Ollama at a base URL, or a generic endpoint. */
+export interface ProviderConnectionAddInput {
+  company: ProviderCompanyId
+  label?: string
+  baseUrl?: string
+  wireFormat?: ProviderWireFormat
 }
 
 /** A Codex account as the renderer sees it (ADR 0002): a home per account,
@@ -987,6 +1039,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       spawnedBy?: string
       /** The same tab, nested or not (PRDCT-4192) — persisted on the record. */
       openedBy?: string
+      // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+      connectionId?: string
+      connectionLabel?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void
@@ -1648,6 +1703,48 @@ export interface ElectronAPI extends FleetDesktopAPI {
   // ── Lane C: settings behind ports ──
 
   // ── Lane F: the shell ──
+
+  // ── Lane B (harness wave): provider connections ──
+  /** This Mac's provider connections (PRDCT-4426); a server's are `fleetProviderConnections`. */
+  providerConnectionsList: () => Promise<ProviderConnection[]>
+  /** What each of this machine's Pi connections starts on when an open names
+   *  no model, by connection id (PRDCT-4496, `piStartModel`), over the
+   *  connections passed (the ones the window lists), else main's own. */
+  providerPiStartModels: (
+    connections?: readonly ProviderConnection[]
+  ) => Promise<Record<string, import('../shared/pi-start-model').PiStartModel>>
+  /** Refuses (the sentence in the error) an unknown company, a generic one
+   *  without its base URL and wire format, or a base URL that is not http(s). */
+  providerConnectionAdd: (input: ProviderConnectionAddInput) => Promise<ProviderConnection>
+  /** Refuses an unknown connection ("No such connection."). */
+  providerConnectionRename: (id: string, label: string) => Promise<ProviderConnection>
+  /** Removing a connection forgets its key with it. False for an unknown id. */
+  providerConnectionRemove: (id: string) => Promise<boolean>
+  /** The key goes in here and comes back in nothing: the answer says `hasKey`. */
+  providerConnectionSetKey: (id: string, apiKey: string) => Promise<ProviderConnection>
+  /** The whole list after any change, never a key. */
+  onProviderConnectionsChanged: (
+    callback: (connections: ProviderConnection[]) => void
+  ) => () => void
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of the window's server (this Mac's when it has
+   *  none): the providers of those ids in their order, every one when none is
+   *  named, fetched again first with `force`. A failed fetch is `stale` with
+   *  its `error`, never a rejection. A saved server's is `fleetModelsCatalog`. */
+  modelsCatalogRead: (input?: {
+    providerIds?: string[]
+    force?: boolean
+  }) => Promise<ModelsCatalogView>
+
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage line of that stored provider connection on the window's server
+   *  (this Mac's when it has none), read again first with `force`. A failed
+   *  read or an unknown connection is the unknown line with its reason, never
+   *  a rejection. A saved server's is `fleetProviderUsage`. */
+  providerUsageRead: (input: {
+    connectionId: string
+    force?: boolean
+  }) => Promise<ProviderUsageLineView>
 }
 
 declare global {

@@ -245,7 +245,10 @@ async function startE2eDaemon({ repo, dataDir, port, timeoutMs, env, args }) {
   child.stderr.on('data', (d) => {
     stderr = (stderr + d).slice(-16_384)
   })
-  child.stdout.resume()
+  let stdout = ''
+  child.stdout.on('data', (d) => {
+    stdout = (stdout + d).slice(-16_384)
+  })
   try {
     let spawnError = false
     child.once('error', () => {
@@ -269,7 +272,14 @@ async function startE2eDaemon({ repo, dataDir, port, timeoutMs, env, args }) {
       { tries: Math.ceil(timeoutMs / 100), gapMs: 100 }
     )
     if (!endpoint) throw new Error('Fleet daemon startup timed out')
-    return { ...endpoint, pid: child.pid, dataDir, stop, stderr: () => stderr }
+    return {
+      ...endpoint,
+      pid: child.pid,
+      dataDir,
+      stop,
+      stderr: () => stderr,
+      stdout: () => stdout
+    }
   } catch (error) {
     await stop()
     throw error

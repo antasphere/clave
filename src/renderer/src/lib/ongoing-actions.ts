@@ -104,6 +104,10 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
         ? { claudeSessionId: entry.conversationId }
         : { resumeSessionId: entry.conversationId }),
       ...(isPi ? {} : accountSpawnFields(entry.launch)),
+      // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+      ...(isPi && entry.launch.connectionId
+        ? { connectionId: entry.launch.connectionId, connectionLabel: entry.launch.connectionLabel }
+        : {}),
       workspaceId: entry.workspaceId ?? undefined
     })
     if (keepOngoing) {
@@ -138,6 +142,10 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
       piProvider: info.piProvider,
       piThinking: info.piThinking,
       ...(isPi ? {} : accountSessionFields(entry.launch)),
+      // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+      ...(isPi && entry.launch.connectionId
+        ? { connectionId: entry.launch.connectionId, connectionLabel: entry.launch.connectionLabel }
+        : {}),
       sessionType: 'local',
       detectedUrl: null,
       serverStatus: null,

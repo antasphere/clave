@@ -624,5 +624,43 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetServerVersions: routed,
   fleetUpgradeServer: routed,
   fleetSetServerName: routed,
-  onFleetServerVersions: routed
+  onFleetServerVersions: routed,
+  // ── Lane B (harness wave): provider connections ──
+  providerConnectionsList: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  // PRDCT-4496: what this Mac's Pi connections start on with no model named.
+  providerPiStartModels: localBecause(
+    "this Mac's Pi connections and Pi default; a server's own clave_launch_options says its"
+  ),
+  providerConnectionAdd: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionRename: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionRemove: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionSetKey: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  onProviderConnectionsChanged: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  fleetProviderConnections: routed,
+  fleetProviderConnectionAdd: routed,
+  fleetProviderConnectionRename: routed,
+  fleetProviderConnectionRemove: routed,
+  fleetProviderConnectionSetKey: routed,
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  modelsCatalogRead: localBecause(
+    "the window's own server's catalogue, this Mac's without one; a saved server's is fleetModelsCatalog"
+  ),
+  fleetModelsCatalog: routed,
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  providerUsageRead: localBecause(
+    "the window's own server's connection, this Mac's without one; a saved server's is fleetProviderUsage"
+  ),
+  fleetProviderUsage: routed
 }

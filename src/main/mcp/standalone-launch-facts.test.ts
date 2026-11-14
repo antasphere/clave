@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionRecord } from '@clave/contract/sessions'
+import type {
+  CatalogModelView,
+  ModelsCatalogView
+} from '@clave/contract/settings/models-catalog-view'
 import type { AgentUpdateStatus } from '../../shared/agent-updates'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import { usageSummaryOf } from '../../shared/usage-summary'
 import type { LaunchFacts } from '../routines/launch'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { providerConnection } from '../../shared/provider-connection'
+import { launchOptions } from '../../shared/launch-options'
+import { HARNESS_BY_ID } from '../../shared/harness'
+import { resolveProviderConnection } from '../../shared/provider-connection-pick'
 import {
   accountOf,
   launchOptionsInput,
@@ -136,6 +145,84 @@ describe('standaloneLaunchFacts', () => {
       { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
     ])
   })
+  describe('Pi and OpenCode on stored connections', () => {
+    const catalogModel = (id: string, deprecated = false): CatalogModelView => ({
+      id,
+      name: `${id} name`,
+      reasoning: true,
+      toolCall: true,
+      ...(deprecated ? { status: 'deprecated' as const } : {})
+    })
+    const VIEW: ModelsCatalogView = {
+      fetchedAt: 1,
+      stale: false,
+      providers: [
+        {
+          id: 'mistral',
+          name: 'Mistral',
+          models: [catalogModel('devstral'), catalogModel('old', true)]
+        },
+        { id: 'deepseek', name: 'DeepSeek', models: [catalogModel('deepseek-chat')] }
+      ]
+    }
+    const connections = [
+      { id: 'c-mi', label: 'Mistral work', company: 'mistral' as const },
+      { id: 'c-ol', label: 'Local', company: 'ollama' as const },
+      { id: 'c-ds', label: 'DeepSeek', company: 'deepseek' as const }
+    ]
+    const asked: (readonly string[])[] = []
+    const stubbed = (catalog: StandaloneLaunchDeps['catalog']): StandaloneLaunchDeps =>
+      deps({ catalog, providerConnections: () => connections })
+    const reads = async (ids: readonly string[]): Promise<ModelsCatalogView> => {
+      asked.push(ids)
+      return VIEW
+    }
+    const DEFAULT = { id: null, label: 'Default', family: 'Default' }
+
+    it('lists Pi’s default, each connection’s catalogue models in order, then the pinned', async () => {
+      asked.length = 0
+      expect(await standaloneLaunchFacts(stubbed(reads)).models('pi')).toEqual([
+        DEFAULT,
+        { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+        { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' },
+        { id: 'kimi-k2', label: 'kimi-k2', family: 'kimi-k2' },
+        { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+      ])
+      // Only the catalogue ids of the connections' companies are read.
+      expect(asked).toEqual([['mistral', 'deepseek']])
+    })
+    it('lists OpenCode’s default and the catalogue models, no pinned model', async () => {
+      expect(await standaloneLaunchFacts(stubbed(reads)).models('opencode')).toEqual([
+        DEFAULT,
+        { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+        { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' }
+      ])
+    })
+    it('answers the default and the pinned when the catalogue read fails or is empty', async () => {
+      const failing = standaloneLaunchFacts(
+        stubbed(async () => Promise.reject(new Error('offline')))
+      )
+      expect(await failing.models('pi')).toEqual([
+        DEFAULT,
+        { id: 'kimi-k2', label: 'kimi-k2', family: 'kimi-k2' },
+        { id: 'glm-5', label: 'glm-5', family: 'glm-5' }
+      ])
+      expect(await failing.models('opencode')).toEqual([DEFAULT])
+      const empty = standaloneLaunchFacts(
+        stubbed(async () => ({ fetchedAt: null, stale: true, providers: [] }))
+      )
+      expect(await empty.models('opencode')).toEqual([DEFAULT])
+    })
+    it('carries the rows into the shared function’s input', async () => {
+      const launch = standaloneLaunchFacts(stubbed(reads))
+      const input = launchOptionsInput(launch, undefined, await modelsOfHarnesses(launch))
+      expect(input.models('opencode')).toEqual([
+        DEFAULT,
+        { id: 'devstral', label: 'devstral name', family: 'Mistral' },
+        { id: 'deepseek-chat', label: 'deepseek-chat name', family: 'DeepSeek' }
+      ])
+    })
+  })
   it('reads the launch settings and the switch mode from the preferences, with their defaults', () => {
     const read = standaloneLaunchFacts(
       deps({
@@ -186,8 +273,79 @@ describe('launchOptionsInput', () => {
       'pi-glm'
     ])
     expect(input.defaultProfileId('codex')).toBe('builtin-codex')
-    expect(input.connections('codex')).toEqual([
+    expect(input.connections('codex', HARNESS_BY_ID.codex)).toEqual([
       { id: 'key', label: 'API key', usable: true, fallback: true }
     ])
+  })
+
+  it("answers a provider pool with the server's stored connections of that company (PRDCT-4496)", async () => {
+    const view = (
+      id: string,
+      company: ProviderConnectionView['company'],
+      hasKey = true
+    ): ProviderConnectionView => ({
+      id,
+      label: `${id} label`,
+      company,
+      kind: 'key',
+      pool: company,
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://made-up.invalid/v1' }],
+      needsKey: company !== 'ollama',
+      hasKey,
+      keySetAt: hasKey ? 1 : null,
+      createdAt: 1
+    })
+    const views = [view('k1', 'moonshot'), view('k2', 'moonshot', false), view('o1', 'ollama')]
+    const launch = standaloneLaunchFacts(deps({ providerConnectionViews: () => views }))
+    const input = launchOptionsInput(launch, undefined, await modelsOfHarnesses(launch))
+    const piRow = HARNESS_BY_ID.pi
+    expect(input.connections('moonshot', piRow)).toEqual([
+      providerConnection(views[0]),
+      providerConnection(views[1])
+    ])
+    expect(input.connections('moonshot', piRow).map((c) => c.usable)).toEqual([true, false])
+    expect(input.connections('ollama', piRow).map((c) => c.id)).toEqual(['o1'])
+    expect(input.connections('deepseek', piRow)).toEqual([])
+    expect(input.selectedConnectionId('moonshot')).toBeUndefined()
+    // The shared function lists them under Pi and OpenCode.
+    const pi = launchOptions(input).harnesses.find((h) => h.id === 'pi')!
+    expect(pi.connections.map((c) => [c.pool, c.id])).toEqual([
+      ['moonshot', 'k1'],
+      ['moonshot', 'k2'],
+      ['ollama', 'o1']
+    ])
+    // Without the store plugged in, no provider connection at all.
+    const bare = standaloneLaunchFacts(deps())
+    expect(launchOptionsInput(bare, undefined, {}).connections('moonshot', piRow)).toEqual([])
+  })
+
+  it('lists a stored connection under no pool of a harness that speaks none of its wire formats, as the open never lands on it (PRDCT-4496)', async () => {
+    const view = (
+      id: string,
+      wireFormat: 'openai-chat' | 'anthropic-messages'
+    ): ProviderConnectionView =>
+      ({
+        id,
+        label: `${id} label`,
+        company: 'moonshot',
+        kind: 'key',
+        pool: 'moonshot',
+        endpoints: [{ wireFormat, baseUrl: 'https://made-up.invalid/v1' }],
+        needsKey: true,
+        hasKey: true,
+        keySetAt: 1,
+        createdAt: 1
+      }) as ProviderConnectionView
+    const views = [view('chat-only', 'openai-chat'), view('messages', 'anthropic-messages')]
+    const launch = standaloneLaunchFacts(deps({ providerConnectionViews: () => views }))
+    const input = launchOptionsInput(launch, undefined, await modelsOfHarnesses(launch))
+    // A Pi row speaking Anthropic's messages only.
+    const narrow = { ...HARNESS_BY_ID.pi, wireFormats: ['anthropic-messages'] as const }
+    const pi = launchOptions({ ...input, harnesses: [narrow] }).harnesses[0]!
+    expect(pi.connections.map((c) => c.id)).toEqual(['messages'])
+    expect(pi.connections.find((c) => c.suggested)?.id).toBe('messages')
+    // The open's own pick over the same views agrees.
+    const picked = resolveProviderConnection(narrow, views, 'any')
+    expect(picked.ok && picked.connection.id).toBe('messages')
   })
 })

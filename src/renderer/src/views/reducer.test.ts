@@ -57,6 +57,33 @@ describe('conversation stream', () => {
     expect(reduceConversation(state, { exit: 7 })).toMatchObject({ state: 'ended', exitCode: 7 })
     expect(run([{ type: 'error', message: 'fatal', fatal: true }]).state).toBe('ended')
   })
+  it('shows a named notice once: the latest of its name in place of the one before (PRDCT-4427)', () => {
+    const retry = (attempt: number): ChatEvent => ({
+      type: 'error',
+      message: `OpenCode retries in 3 s (attempt ${attempt}): stand-in: rate limited`,
+      fatal: false,
+      notice: 'retry'
+    })
+    const state = run([
+      { type: 'user_message', text: 'hello' },
+      retry(2),
+      { type: 'error', message: 'something else', fatal: false },
+      retry(3)
+    ])
+    const errors = state.entries.flatMap((e) => (e.kind === 'error' ? [e.message] : []))
+    expect(errors).toEqual([
+      'something else',
+      'OpenCode retries in 3 s (attempt 3): stand-in: rate limited'
+    ])
+    // Unnamed notices still each stand.
+    const plain = run([
+      { type: 'error', message: 'one', fatal: false },
+      { type: 'error', message: 'one', fatal: false }
+    ])
+    expect(plain.entries.filter((e) => e.kind === 'error')).toHaveLength(2)
+    // The schema carries the name.
+    expect(SessionEventSchema.parse(retry(2))).toMatchObject({ notice: 'retry' })
+  })
   it('keeps the effort the provider last reported, null until it says', () => {
     expect(emptyConversation.effort).toBeNull()
     expect(run([]).effort).toBeNull()
@@ -262,6 +289,40 @@ describe('conversation stream', () => {
     expect(keyOf(merged, 'new question')).toBe(before)
     expect(merged.first).toBe(live.first - 3)
     expect(reduceConversation(merged, { prepend: [] })).toBe(merged)
+  })
+  it('shows once a start refusal the adapter said live and kept in the past (PRDCT-4427)', () => {
+    const refusal: ChatEvent = {
+      type: 'error',
+      message: 'Pi could not start: Error: --provider requires --model (exit status 1)',
+      fatal: false
+    }
+    const errors = (c: Conversation): number => c.entries.filter((e) => e.kind === 'error').length
+    // Heard live, then read in the past: once.
+    const heard = run([refusal])
+    expect(errors(reduceConversation(heard, { prepend: [{ event: refusal, at: 1 }] }))).toBe(1)
+    // Not heard live (a pane that subscribed after it was said): from the past.
+    const late = reduceConversation(emptyConversation, { prepend: [{ event: refusal, at: 1 }] })
+    expect(late.entries).toMatchObject([{ kind: 'error', message: refusal.message }])
+    // Another notice of the past still comes in.
+    const other: ChatEvent = { type: 'error', message: 'something else', fatal: false }
+    expect(errors(reduceConversation(heard, { prepend: [{ event: other, at: 1 }] }))).toBe(2)
+  })
+  it('keeps the past’s word on the model until the live one says its own (PRDCT-4427)', () => {
+    const meta = (model: string): ChatEvent => ({
+      type: 'session_meta',
+      model,
+      providerSessionId: 's'
+    })
+    const page = [
+      { event: meta('kimi-coding/k3'), at: 1 },
+      { event: { type: 'user_message', text: 'old' } as ChatEvent, at: 2 }
+    ]
+    const fresh = run([{ type: 'user_message', text: 'new' }])
+    expect(fresh.model).toBeNull()
+    expect(reduceConversation(fresh, { prepend: page }).model).toBe('kimi-coding/k3')
+    // The live word stands over the past's.
+    const live = run([meta('kimi-coding/k3.1-pro')])
+    expect(reduceConversation(live, { prepend: page }).model).toBe('kimi-coding/k3.1-pro')
   })
 })
 

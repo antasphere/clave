@@ -15,9 +15,29 @@ import { launchSession, type LaunchCwd } from '../../lib/launch-session'
 import { setWorkspaceLaunchProfile, useLaunchProfileStore } from '../../store/launch-profile-store'
 import { type LauncherFamily } from '../../../../shared/agent-launch'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
-import { localLaunchSource, serverLaunchSource, type LaunchSource } from '../../lib/launch-source'
+import {
+  localLaunchSource,
+  serverLaunchSource,
+  type LaunchSource,
+  type ProviderLaunchConnection
+} from '../../lib/launch-source'
+import {
+  ensureModelsCatalog,
+  ensureUsageLine,
+  useModelsCatalogStore,
+  useUsageLineStore
+} from '../../store/models-catalog-store'
+import { PROVIDER_LISTING_FACTS } from '../../../../main/models-catalog-overlay'
+import {
+  startProviderConnectionsEvents,
+  useProviderConnectionsStore
+} from '../../store/provider-connections-store'
+import {
+  connectionsServingModel,
+  modelsForProviderConnections
+} from '../../../../shared/launch-models'
 import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
-import { firstPoolOf } from '../../../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models'
 import { isChatProfileRef } from '../../../../shared/open-session-modes'
 import type { ModelOption } from '../../../../shared/session-model'
@@ -183,6 +203,16 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   void codexAccounts
   void selectedCodexAccountId
   void codexAccountsUsage
+  // The machines' models catalogues and the provider connections' usage
+  // lines a source reads at render (PRDCT-4496), subscribed the same way.
+  const modelsCatalogs = useModelsCatalogStore((s) => s.byMachine)
+  const usageLines = useUsageLineStore((s) => s.byConnection)
+  void modelsCatalogs
+  void usageLines
+  // Lane B's stored connections of each machine (PRDCT-4496), read at render
+  // by the sources' `providerConnections`.
+  const providerConnectionsByMachine = useProviderConnectionsStore((s) => s.byMachine)
+  void providerConnectionsByMachine
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const launchProfilePreferences = useLaunchProfileStore((s) => s.preferences)
   void launchProfilePreferences
@@ -273,6 +303,15 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     startServerSettingsEvents()
     for (const serverId of serversKey.split('\u0000')) void loadServerSettings(serverId)
   }, [serversKey])
+  // Lane C of the harness wave (PRDCT-4496): the stored provider connections
+  // of this Mac and of each server the menu draws, read once each and kept
+  // current by their pushes (`startProviderConnectionsEvents`).
+  useEffect(() => {
+    startProviderConnectionsEvents()
+    const store = useProviderConnectionsStore.getState()
+    for (const machine of [LOCAL_SERVER_ID, ...(serversKey ? serversKey.split('\u0000') : [])])
+      if (!store.byMachine[machine]) void store.load(machine)
+  }, [serversKey])
 
   const AgentLogo = AGENT_LOGOS[setup.kind]
   const setupFamily: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
@@ -280,19 +319,24 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   // else the pool's suggestion for the setup's model. Named only when the
   // pool has a choice to make.
   const setupPool = firstPoolOf(HARNESS_BY_ID[setupFamily])
+  // A Pi or OpenCode setup names its stored provider connection (PRDCT-4496).
   const connectionLabel =
-    setupPool && topSource.accounts(setupPool).length > 1
-      ? (() => {
-          const named = setupPool === 'claude' ? setup.claudeProfileId : setup.codexAccountId
-          const connections = topSource.connections(setupPool, setup.model)
-          return (
-            connections.find((c) => (named ? c.id === named : c.suggested)) ??
-            (named
-              ? undefined
-              : connections.find((c) => c.id === topSource.selectedAccountId(setupPool)))
-          )?.label
-        })()
-      : undefined
+    setup.kind === 'pi' || setup.kind === 'opencode'
+      ? setup.connectionId
+        ? setup.connectionLabel
+        : undefined
+      : isAccountPoolId(setupPool) && topSource.accounts(setupPool).length > 1
+        ? (() => {
+            const named = setupPool === 'claude' ? setup.claudeProfileId : setup.codexAccountId
+            const connections = topSource.connections(setupPool, setup.model)
+            return (
+              connections.find((c) => (named ? c.id === named : c.suggested)) ??
+              (named
+                ? undefined
+                : connections.find((c) => c.id === topSource.selectedAccountId(setupPool)))
+            )?.label
+          })()
+        : undefined
 
   /** Opening measures the agent button so the menu hangs off its left edge,
    *  not the caret's — see MENU_ICON_INSET. */
@@ -320,6 +364,60 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     },
     [serversKey, serverSettings, codexModels, activeWorkspaceId]
   )
+
+  // What the menu's Pi and OpenCode rows need of each machine it draws
+  // (PRDCT-4496): the catalogue of the companies its provider connections
+  // belong to, and each connection's usage line. Read when the menu opens,
+  // each at most as often as its store allows; a machine with no provider
+  // connection reads nothing.
+  const providerReads = [
+    topSource,
+    ...pairedServers.filter((s) => s.online).map((s) => sourceFor(s.serverId))
+  ]
+    .filter((source, i, all) => all.findIndex((s) => s.serverId === source.serverId) === i)
+    .map((source) => {
+      const connections = [
+        ...source.providerConnections('pi'),
+        ...source.providerConnections('opencode')
+      ]
+      const providerIds = [
+        ...new Set(
+          connections
+            .map((c) => PROVIDER_LISTING_FACTS[c.company]?.catalog)
+            .filter((id): id is string => !!id)
+        )
+      ]
+      return {
+        machineId: source.serverId,
+        connectionIds: [...new Set(connections.map((c) => c.id))],
+        providerIds
+      }
+    })
+    .filter((read) => read.connectionIds.length > 0)
+  const providerReadsKey = providerReads.length > 0 ? JSON.stringify(providerReads) : ''
+  useEffect(() => {
+    if (!menuOpen || !providerReadsKey) return
+    const reads = JSON.parse(providerReadsKey) as typeof providerReads
+    const api = window.electronAPI
+    for (const { machineId, connectionIds, providerIds } of reads) {
+      const local = machineId === LOCAL_SERVER_ID
+      if (providerIds.length > 0)
+        void ensureModelsCatalog(
+          machineId,
+          () =>
+            local
+              ? api.modelsCatalogRead({ providerIds })
+              : api.fleetModelsCatalog(machineId, { providerIds }),
+          providerIds.join('\u0000')
+        )
+      for (const connectionId of connectionIds)
+        void ensureUsageLine(machineId, connectionId, () =>
+          local
+            ? api.providerUsageRead({ connectionId })
+            : api.fleetProviderUsage(machineId, { connectionId })
+        )
+    }
+  }, [menuOpen, providerReadsKey])
 
   const run = useCallback(async (request: Parameters<typeof launchSession>[0]) => {
     setBusy(true)
@@ -370,18 +468,41 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       if (codexModels === 'failed' || codexModels.length === 0) return [DEFAULT_MODEL]
       return codexModels.map((model) => ({ id: model.id, label: model.label, family: model.label }))
     }
-    // Pi runs whichever provider its own config names: its default, and the
-    // models its saved profiles pin.
-    const pinned = [
-      ...new Set(
-        source
-          .profilesFor(harness.id)
-          .map((profile) => profile.pi?.model)
-          .filter((model): model is string => !!model)
-      )
-    ]
-    return [DEFAULT_MODEL, ...pinned.map((id) => ({ id, label: id, family: id }))]
+    if (harness.id !== 'pi' && harness.id !== 'opencode') return [DEFAULT_MODEL]
+    // Pi and OpenCode (PRDCT-4496): the default, the harness's own login;
+    // the catalogue models of each stored provider connection's company;
+    // then, for Pi, the models its saved profiles pin.
+    const pinned =
+      harness.id === 'pi'
+        ? source
+            .profilesFor(harness.id)
+            .map((profile) => profile.pi?.model)
+            .filter((model): model is string => !!model)
+        : []
+    return modelsForProviderConnections(
+      source.catalog(),
+      source.providerConnections(harness.id),
+      PROVIDER_LISTING_FACTS,
+      pinned
+    )
   }
+
+  /** The provider connections that serve a model of Pi or OpenCode
+   *  (PRDCT-4496): every one for the default row, else those whose company's
+   *  catalogue lists the model; none for another harness. */
+  const providerConnectionsFor = (
+    source: LaunchSource,
+    harness: Harness,
+    model: string | undefined
+  ): ProviderLaunchConnection[] =>
+    harness.id === 'pi' || harness.id === 'opencode'
+      ? connectionsServingModel(
+          source.catalog(),
+          source.providerConnections(harness.id),
+          PROVIDER_LISTING_FACTS,
+          model
+        )
+      : []
 
   /** The harness rows of ONE machine, from its source: the one function the
    *  top section and every "Run on <server>" section render with, so a
@@ -433,7 +554,14 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     const shortcut = options.shortcuts ? (HARNESS_SHORTCUTS[harness.id] ?? undefined) : undefined
     const preferredModel = harnessSettings[harness.id]?.preferredModel
     const pool = firstPoolOf(harness)
-    const go = (choice: { model?: string; accountId?: string; launchProfileId?: string }): void =>
+    const providerHarness = harness.id === 'pi' || harness.id === 'opencode'
+    const go = (choice: {
+      model?: string
+      accountId?: string
+      launchProfileId?: string
+      /** The provider connection's name, for a Pi or OpenCode row. */
+      connectionLabel?: string
+    }): void =>
       launch(
         {
           kind: harness.id,
@@ -444,7 +572,15 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           ...(choice.launchProfileId ? { launchProfileId: choice.launchProfileId } : {}),
           ...(choice.model ? { model: choice.model } : {}),
           ...(choice.accountId && pool === 'claude' ? { claudeProfileId: choice.accountId } : {}),
-          ...(choice.accountId && pool === 'codex' ? { codexAccountId: choice.accountId } : {})
+          ...(choice.accountId && pool === 'codex' ? { codexAccountId: choice.accountId } : {}),
+          // A stored provider connection (PRDCT-4496): Pi and OpenCode run
+          // on it rather than on their own login.
+          ...(choice.accountId && providerHarness
+            ? {
+                connectionId: choice.accountId,
+                ...(choice.connectionLabel ? { connectionLabel: choice.connectionLabel } : {})
+              }
+            : {})
         },
         { pinProfile: choice.launchProfileId !== undefined }
       )
@@ -471,10 +607,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       )
     }
 
-    const multiAccount = pool !== null && source.accounts(pool).length > 1
+    const multiAccount = isAccountPoolId(pool) && source.accounts(pool).length > 1
 
     const connectionRows = (model: string | undefined): React.JSX.Element[] =>
-      pool
+      isAccountPoolId(pool)
         ? source.connections(pool, model).map((connection) => (
             <DropdownMenuItem
               key={connection.id}
@@ -499,9 +635,34 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           ))
         : []
 
+    /** Under a model of Pi or OpenCode, the stored provider connections that
+     *  serve it (PRDCT-4496), each with its usage line; none suggested. */
+    const providerConnectionRows = (model: string | undefined): React.JSX.Element[] =>
+      providerConnectionsFor(source, harness, model).map((connection) => {
+        const usage = source.usageLine(connection.id)
+        return (
+          <DropdownMenuItem
+            key={connection.id}
+            data-harness-connection={connection.id}
+            onSelect={() =>
+              go({ model, accountId: connection.id, connectionLabel: connection.label })
+            }
+          >
+            <span className="flex-1 min-w-0 flex flex-col">
+              <span className="truncate">{connection.label}</span>
+              {usage && (
+                <span className="text-[11px] text-text-tertiary tabular-nums truncate">
+                  {usage}
+                </span>
+              )}
+            </span>
+          </DropdownMenuItem>
+        )
+      })
+
     const modelRow = (model: LauncherModel): React.JSX.Element => {
       const key = model.id ?? 'default'
-      const connections = pool ? source.connections(pool, model.id) : []
+      const connections = isAccountPoolId(pool) ? source.connections(pool, model.id) : []
       const unavailable =
         pool !== null && connections.length > 0 && !connections.some((c) => c.usable)
       const hint = unavailable ? `No connection with ${model.family} credits` : undefined
@@ -520,6 +681,31 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           {check}
         </>
       )
+      const providerRows = providerConnectionRows(model.id)
+      if (providerRows.length > 0) {
+        // A click answers with the default: the harness's own login for the
+        // default row, else the first connection serving the model.
+        const first = providerConnectionsFor(source, harness, model.id)[0]
+        return (
+          <DropdownMenuSub key={key}>
+            <DropdownMenuSubTrigger
+              data-harness-model={key}
+              onClick={() =>
+                model.id === undefined || !first
+                  ? go({ model: model.id })
+                  : go({ model: model.id, accountId: first.id, connectionLabel: first.label })
+              }
+            >
+              {body}
+              <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuLabel>Connection</DropdownMenuLabel>
+              {providerRows}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )
+      }
       if (multiAccount && !unavailable) {
         return (
           <DropdownMenuSub key={key}>

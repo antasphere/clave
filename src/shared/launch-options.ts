@@ -15,7 +15,14 @@
  * Pure: the clock is `input.now`, nothing is imported from main or the
  * renderer.
  */
-import type { Harness, HarnessId, HarnessSettingsById, InteractionMode } from './harness'
+import {
+  HARNESSES,
+  HARNESS_BY_ID,
+  type Harness,
+  type HarnessId,
+  type HarnessSettingsById,
+  type InteractionMode
+} from './harness'
 import { chatProfileSource, type LaunchProfile } from './agent-launch'
 import {
   isExhausted,
@@ -24,8 +31,16 @@ import {
   type PoolAccount
 } from './account-pool'
 import { usageSummaryForModel } from './usage-summary'
-import { poolAccountOf, type Connection, type ConnectionPoolId } from './connection'
+import {
+  isAccountPoolId,
+  poolAccountOf,
+  type AccountPoolId,
+  type Connection,
+  type ConnectionPoolId
+} from './connection'
 import { isChatProfileRef } from './open-session-modes'
+import { pickProviderConnection } from './provider-connection-pick'
+import type { PiStartModel } from './pi-start-model'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
 
 /** What agent-updates knows of a harness on the machine; undefined when this road never checks (the Mac's view of a server). */
@@ -65,11 +80,26 @@ export interface LaunchOptionsInput {
   readonly models: (harness: HarnessId) => readonly LaunchModel[] | 'unavailable'
   readonly harnessSettings: HarnessSettingsById
   readonly interactionMode: InteractionMode
-  readonly connections: (pool: ConnectionPoolId) => readonly PooledConnection[]
+  /** A pool's rows for `harness`: an account pool its accounts; a provider
+   *  pool (PRDCT-4496) the stored connections of that company serving a wire
+   *  format the harness speaks (`servesHarnessPool`), as its open reads them. */
+  readonly connections: (pool: ConnectionPoolId, harness: Harness) => readonly PooledConnection[]
   readonly selectedConnectionId: (pool: ConnectionPoolId) => string | undefined
   readonly preferRecommended: boolean
   /** The remembered chat model when none is named. */
   readonly launchModel: (pool: string, profileId: string | undefined) => string | undefined
+  /** What a tab on a stored provider connection starts on when the open
+   *  names no model (PRDCT-4496, `piStartModel`: Pi's rule, read by the spawn
+   *  too); undefined where this road cannot know it (Pi's own default lives
+   *  on the machine that runs it) or the harness needs none. */
+  readonly providerStartModel?: (
+    harness: HarnessId,
+    connectionId: string
+  ) => PiStartModel | undefined
+  /** Where `providerStartModel` cannot know it because another machine
+   *  decides it (a connected server's Pi reads its own settings): the
+   *  sentence its connection rows say instead of a model. */
+  readonly providerStartNote?: (harness: HarnessId) => string | undefined
   readonly now: number
 }
 export interface ConnectionWindow {
@@ -86,10 +116,22 @@ export type ConnectionOption = PooledConnection & {
   readonly exhausted: boolean
   readonly headroom: string | null
   readonly windows: readonly ConnectionWindow[]
+  /** A Pi connection (PRDCT-4496): the model a tab on it opens on when the
+   *  open names none, the very one the spawn picks; null when it opens on
+   *  none (`startRefusal` says why: name a model). Absent where the road
+   *  cannot know it. */
+  readonly startModel?: string | null
+  readonly startRefusal?: string
+  /** In place of `startModel` where another machine decides it: the
+   *  sentence saying so. */
+  readonly startModelNote?: string
 }
 export interface ModelOption extends LaunchModel {
   readonly served: boolean
   readonly reason: string | null
+  /** The row whose id is null (the harness's own default): what it means
+   *  and how to get it, in one sentence. */
+  readonly note?: string
 }
 export interface ProfileOption {
   readonly id: string
@@ -130,6 +172,33 @@ const DEFAULT_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Defaul
  *  listing, the routines and the daemon's tools read (`connectionPools`). */
 export function poolsOf(harness: Pick<Harness, 'connectionPools'>): readonly ConnectionPoolId[] {
   return harness.connectionPools
+}
+
+/** The pools of a harness backed by an account list (Claude, Codex): the
+ *  ones a launch naming no connection picks from, and a running tab moves
+ *  along. Pi's and OpenCode's provider pools are not: an `account` names one
+ *  of their stored connections (`provider-connection-pick.ts`, PRDCT-4496),
+ *  and naming none runs on the harness's own login. */
+export function accountPoolsOf(
+  harness: Pick<Harness, 'connectionPools'>
+): readonly AccountPoolId[] {
+  return harness.connectionPools.filter(isAccountPoolId)
+}
+
+/** The refusal of an `account` on an open whose mode has no pool, in the one
+ *  sentence every open road says (the Mac's served road, the window's local
+ *  and server opens; the daemon's and a routine's read the same words): the
+ *  harnesses that take one, then why this mode does not (its harness signs
+ *  in by itself, a terminal runs none). `gemini` is Antigravity's alias. */
+export function accountArgumentRefusal(mode: string): string {
+  const pooled = HARNESSES.filter((h) => poolsOf(h).length > 0)
+    .map((h) => h.name)
+    .join(', ')
+  const harness = HARNESS_BY_ID[(mode === 'gemini' ? 'antigravity' : mode) as HarnessId]
+  const why = harness
+    ? `${harness.name} runs on the login inside the harness.`
+    : `a ${mode} runs no harness.`
+  return `The account argument applies to harnesses with a connection pool (${pooled}); ${why}`
 }
 
 /** The connection a launch naming none would start on: the served road's
@@ -176,6 +245,16 @@ function windowsOf(usage: AccountUsageSummary | undefined, now: number): Connect
   }))
 }
 
+/** What the model row with no id means: no model passed, the harness's own
+ *  pick. A Pi tab on a stored connection always names one (Pi refuses a
+ *  provider without a model), so there it is the connection's startModel. */
+function defaultRowNote(harness: Harness, onConnections: boolean): string {
+  const own = `Pass no model and ${harness.name} starts on its own default.`
+  return harness.id === 'pi' && onConnections
+    ? `${own} On a stored connection, it starts on the model that connection's row names (startModel).`
+    : own
+}
+
 function harnessOptions(
   input: LaunchOptionsInput,
   harness: Harness,
@@ -184,43 +263,66 @@ function harnessOptions(
 ): HarnessOptions {
   const { id } = harness
   const pools = poolsOf(harness)
+  // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode list the stored
+  // provider connections of their pools, and still run on the login inside
+  // the harness when none is named: only an account pool remembers a model
+  // or holds every model up to its connections.
+  const accountPool = accountPoolsOf(harness)[0]
   const defaultProfileId = input.defaultProfileId(id)
   // What an open passing no model lands on: the remembered chat model of
   // the profile that open resolves (the chat default under a chat
   // interaction mode), else the harness's own default (null). The
   // launcher's row passes its preferred model instead (`launcherModel`).
   const defaultModel =
-    harness.takesModel && pools.length > 0
-      ? (input.launchModel(pools[0], input.openProfileId(id)) ?? null)
+    harness.takesModel && accountPool
+      ? (input.launchModel(accountPool, input.openProfileId(id)) ?? null)
       : null
   const launcherModel = input.harnessSettings[id]?.preferredModel ?? null
   const model = defaultModel ?? undefined
 
+  // The provider pools (PRDCT-4496) suggest ONE connection across them, the
+  // one an open naming `account: "any"` lands on (`pickProviderConnection`
+  // over the same rows in the same order); naming none still runs on the
+  // harness's own login.
+  const providerPick = pickProviderConnection(
+    pools
+      .filter((pool) => !isAccountPoolId(pool))
+      .flatMap((pool) => input.connections(pool, harness)),
+    undefined
+  )
+  const providerSuggested = providerPick.ok ? providerPick.connection.id : null
   const connections: ConnectionOption[] = pools.flatMap((pool) => {
-    const rows = input.connections(pool)
-    const suggested = suggestedConnection(
-      rows,
-      input.selectedConnectionId(pool),
-      input.preferRecommended,
-      model
-    )
-    return rows.map((c) => ({
-      ...c,
-      pool,
-      suggested: c.id === suggested,
-      exhausted: isExhausted(usageSummaryForModel(c.usage, model)),
-      // With no model named, the account view: its shared headroom and
-      // every family that is out ("72% left · Overall · Fable out · …").
-      headroom: c.usage
-        ? capStatusLine(model ? usageSummaryForModel(c.usage, model) : c.usage, {
-            now: input.now,
-            reset: 'in'
-          })
-        : null,
-      windows: windowsOf(c.usage, input.now)
-    }))
+    const rows = input.connections(pool, harness)
+    const suggested = isAccountPoolId(pool)
+      ? suggestedConnection(rows, input.selectedConnectionId(pool), input.preferRecommended, model)
+      : providerSuggested
+    return rows.map((c) => {
+      const start = isAccountPoolId(pool) ? undefined : input.providerStartModel?.(id, c.id)
+      const startNote = isAccountPoolId(pool) || start ? undefined : input.providerStartNote?.(id)
+      return {
+        ...c,
+        pool,
+        ...(start
+          ? start.ok
+            ? { startModel: start.model }
+            : { startModel: null, startRefusal: start.reason }
+          : {}),
+        ...(startNote ? { startModelNote: startNote } : {}),
+        suggested: c.id === suggested,
+        exhausted: isExhausted(usageSummaryForModel(c.usage, model)),
+        // With no model named, the account view: its shared headroom and
+        // every family that is out ("72% left · Overall · Fable out · …").
+        headroom: c.usage
+          ? capStatusLine(model ? usageSummaryForModel(c.usage, model) : c.usage, {
+              now: input.now,
+              reset: 'in'
+            })
+          : null,
+        windows: windowsOf(c.usage, input.now)
+      }
+    })
   })
-  const all = pools.flatMap((pool) => input.connections(pool))
+  const all = pools.flatMap((pool) => input.connections(pool, harness))
 
   const listedModels = harness.takesModel ? input.models(id) : []
   const models: ModelOption[] = (
@@ -228,10 +330,15 @@ function harnessOptions(
   ).map((m) => {
     const served =
       listedModels === 'unavailable' ||
-      pools.length === 0 ||
+      !accountPool ||
       all.length === 0 ||
       all.some((c) => c.usable && !isExhausted(usageSummaryForModel(c.usage, m.id ?? undefined)))
-    return { ...m, served, reason: served ? null : `No connection with ${m.family} credits` }
+    return {
+      ...m,
+      served,
+      reason: served ? null : `No connection with ${m.family} credits`,
+      ...(m.id === null ? { note: defaultRowNote(harness, connections.length > 0) } : {})
+    }
   })
 
   return {
@@ -246,9 +353,11 @@ function harnessOptions(
     models,
     connections,
     connectionNote:
-      pools.length === 0
+      pools.length === 0 || (!accountPool && all.length === 0)
         ? `Clave holds no connection for ${harness.name}: it runs on the login inside the harness.`
-        : null,
+        : !accountPool
+          ? `Clave holds stored connections for ${harness.name}: name one as account (a label, an id, or "any" for the suggested one, the first with a key); with no account, it runs on the login inside the harness.`
+          : null,
     profiles: profiles.map((p) => ({
       id: p.id,
       name: p.name,

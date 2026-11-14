@@ -61,9 +61,12 @@ export function resolveSpawnModes(payload: {
     mode === 'gemini' ? 'antigravity' : mode === 'terminal' ? null : mode
   const dangerousMode =
     family !== null && DANGEROUS_MODE_FAMILIES.has(family) && payload.dangerous === true
-  // model maps to claude --model / codex -m / pi --model; antigravity,
-  // opencode's TUI and terminals have no flag.
-  const model = (claudeMode || codexMode || piMode) && payload.model ? payload.model : undefined
+  // model maps to claude --model / codex -m / pi --model, and to OpenCode's
+  // configuration (`OPENCODE_CONFIG_CONTENT`, `providerInjection`), which its
+  // TUI and its chat read in its `provider/model` form (PRDCT-4496); antigravity
+  // and terminals have none.
+  const model =
+    (claudeMode || codexMode || piMode || opencodeMode) && payload.model ? payload.model : undefined
   return {
     claudeMode,
     antigravityMode,
@@ -80,13 +83,20 @@ export function resolveSpawnModes(payload: {
  *  (src/main/launch-profile-manager.ts, CHAT_PROFILES). */
 export const CHAT_PROFILE_IDS: Partial<Record<OpenSessionMode, string>> = {
   claude: 'claude-chat',
-  codex: 'codex-chat'
+  codex: 'codex-chat',
+  // Lane D (PRDCT-4427): OpenCode's chat, over the Agent Client Protocol.
+  opencode: 'opencode-chat',
+  // Lane D (PRDCT-4427): Pi's chat, over Pi's own rpc mode.
+  pi: 'pi-chat'
 }
 
-/** The families with a chat view, the ones `CHAT_PROFILE_IDS` names. */
-type ChatFamily = 'claude' | 'codex'
+/** The families with a chat view, the ones `CHAT_PROFILE_IDS` names: Claude,
+ *  Codex, OpenCode and Pi (lane D, PRDCT-4427). */
+type ChatFamily = 'claude' | 'codex' | 'opencode' | 'pi'
 const chatFamilyOf = (family: LauncherFamily): ChatFamily | undefined =>
-  family === 'claude' || family === 'codex' ? family : undefined
+  family === 'claude' || family === 'codex' || family === 'opencode' || family === 'pi'
+    ? family
+    : undefined
 
 /** Is this id a chat profile of the family: its built-in chat profile, or the
  *  chat form of one of its saved profiles (`chat:<family>:<id>`, the id the
@@ -195,7 +205,12 @@ export function resolveProfileRef(
   }
   if (!payload.chat) return payload.profile
   if (!chatProfile) {
-    throw new Error(`chat: true needs mode "claude" or "codex"; "${mode}" has no chat view`)
+    // The families named from the table itself (lane D, PRDCT-4427), so the
+    // sentence follows every chat view added to it.
+    const families = Object.keys(CHAT_PROFILE_IDS)
+      .map((family) => `"${family}"`)
+      .join(', ')
+    throw new Error(`chat: true needs mode ${families}; "${mode}" has no chat view`)
   }
   const family = mode as ChatFamily
   if (payload.profile) {

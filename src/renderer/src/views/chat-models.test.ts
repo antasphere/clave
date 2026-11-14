@@ -13,7 +13,8 @@ import {
   currentOption,
   effortChoice,
   foldModelOptions,
-  modelChipLabel
+  modelChipLabel,
+  providerChipLabel
 } from '../../../../plugins/chat-view/src/models'
 
 // The menu as the Claude adapter builds it (claudeModelOptions, PRDCT-4257):
@@ -183,4 +184,11 @@ it('offers the efforts of the model the session is on, marking the reported one'
   })
   // No model yet offers no effort either: the chip hides until the provider says.
   expect(effortChoice(null, 'low', withEfforts)).toBeNull()
+})
+
+// Lane D (PRDCT-4427): an OpenCode or a Pi chat's chip names its agent, never
+// its provider id in lowercase.
+it("reads OpenCode's and Pi's chips by their agent's name", () => {
+  expect(providerChipLabel('opencode', 'stand-in/one', null)).toBe('OpenCode · stand-in/one')
+  expect(providerChipLabel('pi', 'stand-in/one', null)).toBe('Pi · stand-in/one')
 })

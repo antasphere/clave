@@ -15,7 +15,11 @@
  * (by name or "any"), takes an unknown connection or a connection for a
  * terminal without saying why, or loses a profile named by its name;
  * clave_switch_account moves a tab while the server's switch mode is
- * propose, or does not move it once the mode is automatic.
+ * propose, or does not move it once the mode is automatic; a Pi stored
+ * connection on the daemon (PRDCT-4496) is not listed suggested under Pi, an
+ * open naming it (by label or "any") does not hand its key to the tab's
+ * process or lands elsewhere than the listing said, clave_list does not name
+ * it, or an unknown one is not refused with the list.
  */
 import { execFile } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -30,6 +34,27 @@ const CODEX_VERSION = '0.987.6'
 const STUB_ID = 'launch-options-stub'
 const STUB_NAME = 'Launch options stream stub'
 const SERVER_NAME = 'launch-options-server'
+/** Lane C of the harness wave (PRDCT-4496): a made-up Kimi key stored on the
+ *  daemon, and a Pi profile whose "pi" is a shell printing what the
+ *  connection set, so the check is what the tab's own process received. */
+const KIMI = 'e2e-made-up-kimi-launch-options-0001'
+const PI_PRINT_ID = 'launch-options-pi-print'
+const PI_PRINT = [
+  'sh',
+  '-c',
+  'printf "KIMI=%s\\nDIR=%s\\nARGS=%s\\n" "$KIMI_API_KEY" "$PI_CODING_AGENT_DIR" "$0 $*"; sleep 60'
+]
+/** An OpenCode profile printing the configuration its tab was handed. */
+const OPENCODE_PRINT_ID = 'launch-options-opencode-print'
+const OPENCODE_PRINT = [
+  'sh',
+  '-c',
+  // The model alone, a short line no pane wraps.
+  'printf "KIMI=%s\\nMODEL=%s\\nARGS=%s\\n" "$KIMI_API_KEY" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"model":"[^"]*"\')" "$0 $*"; sleep 60'
+]
+/** The person's own Pi directory on the daemon: its default is a Kimi model,
+ *  so a Pi tab on Kimi that names no model starts on it (PRDCT-4496). */
+const PI_OWN_MODEL = 'k-own-default'
 const PROPOSE_REFUSAL =
   'This server\'s switch mode is "propose", and a server has no window to propose to: move the tab from the Mac window, or set accountSwitchMode to "automatic" in the server\'s preferences.json, read when the server starts (a setting for it from the Mac\'s server pages is PRDCT-3318).'
 
@@ -122,6 +147,12 @@ const refreshUsage = (server) =>
 
 export async function run(t) {
   const agents = seedAgents(fixturePath(`launch-options-agents-${process.pid}`))
+  const piHome = fixturePath(`launch-options-pi-home-${process.pid}`)
+  mkdirSync(piHome, { recursive: true })
+  writeFileSync(
+    path.join(piHome, 'settings.json'),
+    JSON.stringify({ defaultProvider: 'kimi-coding', defaultModel: PI_OWN_MODEL }) + '\n'
+  )
   const world = await fleetWorld('launch-options', {
     count: 1,
     codexStub: true,
@@ -132,7 +163,9 @@ export async function run(t) {
       // And the daemon's own PATH starts there too (it replaces the fleet
       // world's stand-in directory), so a `codex login` the server runs
       // finds the same file detection read the version of.
-      PATH: `${agents}:${process.env.PATH ?? ''}`
+      PATH: `${agents}:${process.env.PATH ?? ''}`,
+      // The person's Pi directory is this spec's own: ~/.pi is never read.
+      PI_CODING_AGENT_DIR: piHome
     }
   })
   try {
@@ -296,6 +329,185 @@ export async function run(t) {
         errorText(onTerminal).includes('Codex'),
       errorText(onTerminal)
     )
+
+    // ── Pi on a stored connection, on the daemon's own road (PRDCT-4496) ──
+    // The connection is stored the way Settings stores it on a server (lane
+    // B's calls, `providerConnections.add` then `.setKey`, reached here
+    // through the daemon's own settings source rather than a Mac).
+    const kimi = await server.fixture.evaluate(async (key) => {
+      const settings = globalThis.__claveE2E?.settings
+      if (!settings?.providerConnections) throw new Error('the daemon has no settings hook')
+      const created = await settings.providerConnections.add({
+        company: 'moonshot',
+        label: 'Kimi work'
+      })
+      const view = await settings.providerConnections.setKey(created.id, key)
+      return { id: view.id, hasKey: view.hasKey }
+    }, KIMI)
+    t.check('the daemon stores the Kimi connection with its key', kimi?.hasKey === true, kimi)
+    await request(server, '/launch-profiles', {
+      profile: {
+        id: PI_PRINT_ID,
+        name: 'Pi print',
+        family: 'pi',
+        command: PI_PRINT,
+        additionalArgs: []
+      }
+    })
+    await request(server, '/launch-profiles', {
+      profile: {
+        id: OPENCODE_PRINT_ID,
+        name: 'OpenCode print',
+        family: 'opencode',
+        command: OPENCODE_PRINT,
+        additionalArgs: []
+      }
+    })
+    const piOptions = toolPayload(await mcp.call('clave_launch_options', {}))
+    const piRows = piOptions?.harnesses?.find((h) => h.id === 'pi')?.connections ?? []
+    t.check(
+      'clave_launch_options lists the Kimi connection under Pi, suggested',
+      piRows.some((c) => c.id === kimi?.id && c.label === 'Kimi work' && c.suggested === true),
+      piRows.map((c) => ({ id: c.id, label: c.label, suggested: c.suggested }))
+    )
+    // What a Pi tab on it opens on when the open names no model (PRDCT-4496):
+    // the person's own Pi default, Kimi's, the very model the opens below get.
+    const kimiRow = piRows.find((c) => c.id === kimi?.id)
+    t.equal(
+      "and says a Pi tab on it with no model opens on the person's own Pi default",
+      kimiRow?.startModel,
+      PI_OWN_MODEL
+    )
+    /** A Pi tab opened through the daemon's MCP, and what its shell printed,
+     *  read back through the same MCP's clave_read_session. */
+    const piOpen = async (account) => {
+      const opened = await mcp.call('clave_open_session', {
+        cwd: server.root,
+        mode: 'pi',
+        chat: false,
+        profile: PI_PRINT_ID,
+        account,
+        name: `Pi on ${account}`
+      })
+      const sessionId = toolPayload(opened)?.sessionId
+      if (!sessionId) return { opened, sessionId, printed: null }
+      const printed = await until(
+        async () => {
+          const text = toolPayload(
+            await mcp.call('clave_read_session', { sessionId, lines: 40 })
+          )?.text
+          const out = {}
+          for (const line of String(text ?? '')
+            .replace(/\r/g, '')
+            .split('\n')) {
+            const m = /^(KIMI|DIR|ARGS)=(.*)$/.exec(line.trim())
+            if (m && !(m[1] in out)) out[m[1]] = m[2]
+          }
+          return 'ARGS' in out ? out : null
+        },
+        { tries: 60, gapMs: 250 }
+      )
+      return { opened, sessionId, printed }
+    }
+    // The key is masked in every failure detail.
+    const masked = (printed) =>
+      printed && { ...printed, KIMI: printed.KIMI === KIMI ? '<the made-up key>' : printed.KIMI }
+    const byLabel = await piOpen('Kimi work')
+    t.check(
+      "account 'Kimi work': the Pi tab's process got the Kimi key, in a directory of its own",
+      !toolErrored(byLabel.opened) && byLabel.printed?.KIMI === KIMI && !!byLabel.printed?.DIR,
+      { open: errorText(byLabel.opened), printed: masked(byLabel.printed) }
+    )
+    const argPair = (printed, flag) => {
+      const tokens = String(printed?.ARGS ?? '')
+        .split(' ')
+        .filter(Boolean)
+      const at = tokens.indexOf(flag)
+      return at >= 0 ? tokens[at + 1] : undefined
+    }
+    t.check(
+      'it is told --provider kimi-coding and, naming no model, the model the listing said',
+      argPair(byLabel.printed, '--provider') === 'kimi-coding' &&
+        argPair(byLabel.printed, '--model') === kimiRow?.startModel &&
+        argPair(byLabel.printed, '--model') === PI_OWN_MODEL,
+      masked(byLabel.printed)
+    )
+    const byLabelRow = await rowOf(byLabel.sessionId)
+    t.check(
+      'clave_list names the connection the Pi tab runs on',
+      byLabelRow?.account?.id === kimi?.id && byLabelRow.account.label === 'Kimi work',
+      byLabelRow?.account
+    )
+    const byAny = await piOpen('any')
+    const byAnyRow = await rowOf(byAny.sessionId)
+    t.check(
+      "account 'any': the Pi tab lands on the connection the listing suggested",
+      !toolErrored(byAny.opened) &&
+        byAny.printed?.KIMI === KIMI &&
+        byAnyRow?.account?.id === piRows.find((c) => c.suggested)?.id,
+      { open: errorText(byAny.opened), printed: masked(byAny.printed), row: byAnyRow?.account }
+    )
+    const piNobody = await mcp.call('clave_open_session', {
+      cwd: server.root,
+      mode: 'pi',
+      chat: false,
+      profile: PI_PRINT_ID,
+      account: 'Nobody'
+    })
+    t.check(
+      'an unknown Pi connection is refused with the list of the stored ones',
+      toolErrored(piNobody) &&
+        errorText(piNobody).includes('Unknown Pi connection "Nobody"') &&
+        errorText(piNobody).includes(`"Kimi work" (${kimi?.id})`),
+      errorText(piNobody)
+    )
+    // ── An agent names an OpenCode tab's model, on the daemon (PRDCT-4496) ──
+    // The open used to drop it: it reaches the tab's configuration in
+    // OpenCode's provider/model form, never prefixed twice.
+    const ocOpen = async (model) => {
+      const opened = await mcp.call('clave_open_session', {
+        cwd: server.root,
+        mode: 'opencode',
+        chat: false,
+        profile: OPENCODE_PRINT_ID,
+        account: 'Kimi work',
+        model,
+        name: `OpenCode ${model}`
+      })
+      const sessionId = toolPayload(opened)?.sessionId
+      if (!sessionId) return { opened, sessionId, model: null }
+      const handed = await until(
+        async () => {
+          const text = toolPayload(
+            await mcp.call('clave_read_session', { sessionId, lines: 40 })
+          )?.text
+          const lines = String(text ?? '')
+            .replace(/\r/g, '')
+            .split('\n')
+            .map((l) => l.trim())
+          if (!lines.some((l) => l.startsWith('ARGS='))) return null
+          return lines.find((l) => l.startsWith('MODEL='))?.slice(6) ?? null
+        },
+        { tries: 60, gapMs: 250 }
+      )
+      return { opened, sessionId, model: handed }
+    }
+    const ocBare = await ocOpen('k-first')
+    t.check(
+      "an agent's OpenCode tab on Kimi with model k-first is handed kimi-code-plan-global/k-first",
+      ocBare.model === '"model":"kimi-code-plan-global/k-first"',
+      { model: ocBare.model, open: errorText(ocBare.opened) }
+    )
+    const ocRef = await ocOpen('kimi-code-plan-global/k-first')
+    t.check(
+      'one named kimi-code-plan-global/k-first is handed it as it is',
+      ocRef.model === '"model":"kimi-code-plan-global/k-first"',
+      { model: ocRef.model, open: errorText(ocRef.opened) }
+    )
+    for (const id of [byLabel.sessionId, byAny.sessionId, ocBare.sessionId, ocRef.sessionId].filter(
+      Boolean
+    ))
+      await mcp.call('clave_close_session', { sessionId: id }).catch(() => undefined)
 
     const before = processes().length
     const byName = await openOn({

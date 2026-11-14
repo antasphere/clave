@@ -38,5 +38,7 @@ export {
   resetTerminalPorts,
   terminalPorts,
   lazyTerminalPorts,
+  resourcesDirOfEntry,
+  unpackedPath,
   type TerminalPorts
 } from './terminals'

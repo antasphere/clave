@@ -14,7 +14,10 @@ import type {
   ClaudeAccount,
   CodexAccount,
   UsageLimits,
-  UsageError
+  UsageError,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnection,
+  ProviderConnectionAddInput
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
@@ -28,6 +31,10 @@ import type {
   RoutineView,
   RoutinesListing
 } from '@clave/contract/routines/model'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 
 export interface FleetSnapshot {
   serverId: string
@@ -57,6 +64,8 @@ export type FleetSettingsEvent = { serverId: string } & (
   | { kind: 'codex-accounts'; accounts: CodexAccount[] }
   | { kind: 'claude-usage'; accountId: string; result: UsageLimits | UsageError }
   | { kind: 'codex-usage'; accountId: string; result: UsageLimits | UsageError }
+  // ── Lane B (harness wave): provider connections ──
+  | { kind: 'provider-connections'; connections: ProviderConnection[] }
 )
 export interface FleetDesktopAPI {
   fleetList(): Promise<SavedServerConnection[]>
@@ -189,6 +198,41 @@ export interface FleetDesktopAPI {
   /** A server's routines at each connect and each `routines.changed`; a read
    *  that fails publishes nothing, so the last listing stands. */
   onFleetRoutines(callback: (update: FleetRoutines) => void): () => void
+  // ── Lane B (harness wave): provider connections ──
+  /** The provider connections of a server (PRDCT-4426), read and written on
+   *  that server: the key is sealed there, by its own secret port, and comes
+   *  back in no answer. Their changes arrive through `onFleetSettingsEvent`
+   *  as `kind: 'provider-connections'`. */
+  fleetProviderConnections(serverId: string): Promise<ProviderConnection[]>
+  fleetProviderConnectionAdd(
+    serverId: string,
+    input: ProviderConnectionAddInput
+  ): Promise<ProviderConnection>
+  fleetProviderConnectionRename(
+    serverId: string,
+    id: string,
+    label: string
+  ): Promise<ProviderConnection>
+  fleetProviderConnectionRemove(serverId: string, id: string): Promise<boolean>
+  fleetProviderConnectionSetKey(
+    serverId: string,
+    id: string,
+    apiKey: string
+  ): Promise<ProviderConnection>
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** A server's models catalogue, read on that server (this Mac's own for
+   *  the local id): what its launcher lists under Pi and OpenCode. */
+  fleetModelsCatalog(
+    serverId: string,
+    input?: { providerIds?: string[]; force?: boolean }
+  ): Promise<ModelsCatalogView>
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** A stored provider connection's usage line, read on the server that holds
+   *  it (this Mac's own for the local id), read again first with `force`. */
+  fleetProviderUsage(
+    serverId: string,
+    input: { connectionId: string; force?: boolean }
+  ): Promise<ProviderUsageLineView>
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

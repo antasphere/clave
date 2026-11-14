@@ -30,6 +30,10 @@ export interface StandaloneHostOptions {
   readonly dataDir: string
   /** Where a session's process comes from (the entry's terminals port). */
   readonly terminals: TerminalsService
+  /** The app's `resources` folder, from the entry's own folder
+   *  (`resourcesDirOfEntry(__dirname)` in `server-entry.ts`): where a Pi
+   *  session's Clave extension is read from (PRDCT-4496). */
+  readonly resourcesDir: string
 }
 
 export interface StandaloneSessionHost {
@@ -50,7 +54,8 @@ export function standaloneSessionHost(options: StandaloneHostOptions): Standalon
   installTerminalPorts({
     storage: fileStorage(options.dataDir),
     terminals: options.terminals,
-    mcpConfig: tokens.mcpConfig
+    mcpConfig: tokens.mcpConfig,
+    resourcesDir: options.resourcesDir
   })
   const host = getSessionHost()
   // The end-to-end seam, under the test flag only (`e2e-hooks.ts`): the

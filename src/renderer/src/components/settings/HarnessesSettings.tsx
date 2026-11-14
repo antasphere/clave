@@ -6,7 +6,7 @@ import {
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import { HARNESSES, type Harness, type HarnessId } from '../../../../shared/harness'
-import { firstPoolOf } from '../../../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS } from '../../../../shared/claude-models'
 import type { AgentUpdateStatus } from '../../../../shared/agent-updates'
 import type { InstallableAgentId, OnboardingInstallResult } from '../../../../shared/onboarding'
@@ -102,7 +102,8 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
   const value = useLaunchSettingsStore((s) => s.harnesses[harness.id]?.preferredModel ?? '')
   const setHarness = useLaunchSettingsStore((s) => s.setHarness)
   const pool = firstPoolOf(harness)
-  const connected = pool !== null && connectionsForModel(pool, undefined).some((c) => c.usable)
+  const connected =
+    isAccountPoolId(pool) && connectionsForModel(pool, undefined).some((c) => c.usable)
   const codex = useCodexModels(harness.id === 'codex' && connected)
   if (!harness.takesModel) return null
   const write = (model: string | null): void =>
@@ -110,11 +111,17 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
   const label = 'Default model'
   const description = `What a click on ${harness.name} in the launcher runs; hovering the row offers the others.`
 
-  if (pool === null) {
+  // Pi and OpenCode run on a provider's stored key only when the launcher
+  // names one (PRDCT-4496): their default is their own configuration's.
+  if (!isAccountPoolId(pool)) {
     return (
       <SettingsRow
         label={label}
-        description={`${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`}
+        description={
+          pool === null
+            ? `${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`
+            : `${harness.name} runs the model its own configuration names; a model of a stored connection is picked in the launcher.`
+        }
       />
     )
   }

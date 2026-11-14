@@ -293,13 +293,14 @@ export async function run(t) {
     )
     let wrongMode = null
     try {
-      await callMcp(app, 'openSession', { cwd: ROOT, mode: 'pi', account: 'Work' })
+      // Antigravity has no pool; Pi takes a stored connection since PRDCT-4496.
+      await callMcp(app, 'openSession', { cwd: ROOT, mode: 'antigravity', account: 'Work' })
     } catch (e) {
       wrongMode = e.message
     }
     t.check(
       'an account on an agent without a pool is refused',
-      wrongMode?.includes('claude and codex modes only'),
+      wrongMode?.includes('harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode)'),
       wrongMode
     )
     let wrongProvider = null

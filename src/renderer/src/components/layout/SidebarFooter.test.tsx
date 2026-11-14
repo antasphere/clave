@@ -63,7 +63,9 @@ const g = vi.hoisted(() => {
       severity: 'critical'
     }
   ]
-  return { modelChanged, windows }
+  /** Pi's local totals of the day, when a test sets them. */
+  const pi = { data: null as null | { totalTokens: number; cost: number } }
+  return { modelChanged, windows, pi }
 })
 
 vi.mock('../../store/usage-store', async (original) => {
@@ -73,7 +75,13 @@ vi.mock('../../store/usage-store', async (original) => {
     ...real,
     claudeUsageStore: () => () => read,
     codexUsageStore: () => () => read,
-    piUsageStores: { today: () => ({ status: 'idle', data: null, load: async () => {} }) }
+    piUsageStores: {
+      today: () => ({
+        status: g.pi.data ? 'ready' : 'idle',
+        data: g.pi.data,
+        load: async () => {}
+      })
+    }
   }
 })
 // A server render reads a zustand store's INITIAL state (its server
@@ -127,4 +135,70 @@ it('the foot follows the model main pushes after a chip switch', () => {
   // And back: the foot leaves the Fable cap when the tab leaves Fable.
   for (const cb of g.modelChanged) cb({ id: 'tab', model: 'claude-opus-5-5' })
   expect(capShown()).toBe('Overall')
+})
+
+it('an OpenCode tab’s connection line is a control like the usage lines, not plain text (PRDCT-4427)', () => {
+  useSessionStore.setState({
+    sessions: [
+      {
+        id: 'oc',
+        cwd: '/repo',
+        sessionType: 'local',
+        claudeMode: false,
+        opencodeMode: true,
+        connectionId: 'conn-ds',
+        connectionLabel: 'DeepSeek'
+      } as never
+    ],
+    focusedSessionId: 'oc'
+  })
+  const html = renderToStaticMarkup(<SidebarFooter />)
+  const line = /<(\w+)[^>]*data-connection-line="conn-ds"[^>]*>/.exec(html)
+  // A button (keyboard reach, a click that opens Settings on Connections),
+  // with the class the foot's other lines carry.
+  expect(line?.[1]).toBe('button')
+  expect(line?.[0]).toContain('class="sidebar-footer-line"')
+  expect(line?.[0]).toContain('title="OpenCode · Connection: DeepSeek"')
+  expect(html).toContain('>OpenCode · DeepSeek</span></button>')
+})
+
+// T1 of the tester's fourth pass: a Pi tab on a connection read
+// `Moonshot · 10.4K tokens · $0.01 today` and opened Usage › Pi. Pi's figures
+// are its local totals of the day on any connection or none: the connection
+// and the usage are two lines and two controls.
+it('a Pi tab on a connection: its connection line as an OpenCode tab’s, and Pi’s usage line as it was', () => {
+  g.pi.data = { totalTokens: 10_400, cost: 0.01 }
+  try {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'pi',
+          cwd: '/repo',
+          sessionType: 'local',
+          claudeMode: false,
+          piMode: true,
+          connectionId: 'conn-moon',
+          connectionLabel: 'Moonshot'
+        } as never
+      ],
+      focusedSessionId: 'pi'
+    })
+    const html = renderToStaticMarkup(<SidebarFooter />)
+    const line = /<(\w+)[^>]*data-connection-line="conn-moon"[^>]*>/.exec(html)
+    expect(line?.[1]).toBe('button')
+    expect(line?.[0]).toContain('class="sidebar-footer-line"')
+    expect(line?.[0]).toContain('title="Pi · Connection: Moonshot"')
+    expect(html).toContain('>Pi · Moonshot</span></button>')
+    // The usage line: its own text and title, the connection nowhere in it.
+    const usage = /<button[^>]*data-usage-provider="pi"[^>]*>.*?<\/button>/.exec(html)?.[0]
+    expect(usage).toBeDefined()
+    expect(usage).toContain(
+      'title="Pi · 10.4K tokens · $0.01 today · Local totals, not account quota"'
+    )
+    expect(usage).not.toContain('Moonshot')
+    // The connection line is not the usage line (two controls).
+    expect(line?.[0]).not.toContain('data-usage-provider')
+  } finally {
+    g.pi.data = null
+  }
 })

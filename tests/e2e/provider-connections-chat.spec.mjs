@@ -1,0 +1,1269 @@
+// A Pi or an OpenCode CHAT on a stored provider connection (PRDCT-4427 with
+// PRDCT-4496). The rule: the connection a tab names is the credential its
+// process uses. A chat's process is not a shell a spec can make print, so
+// `opencode` and `pi` on the PATH are shell scripts that write what their
+// process was handed (the connection's variables, the configuration, the
+// directory, the arguments) to a file of this spec's fixture root, then run
+// lane D's stand-ins (tests/e2e/fixtures/acp-agent.mjs, pi-rpc-agent.mjs),
+// which never call a provider.
+//
+// What it proves, each on the agent's road (`clave_open_session` with the
+// connection named by its label, `chat: true`):
+// - an OpenCode chat on DeepSeek runs `opencode acp` with the DeepSeek value
+//   under DEEPSEEK_API_KEY and a configuration naming the variable, the
+//   connection's provider alone and the model in OpenCode's own form; the
+//   session opens on that model (the stand-in reads the configuration the way
+//   OpenCode 2.3.0 does), so the adapter switches nothing and posts no notice
+//   about a model it could not set; the chat answers a message;
+// - a Pi chat on Kimi runs `pi --mode rpc` with the Kimi value under
+//   KIMI_API_KEY, in the connection's own directory, `--provider kimi-coding`;
+//   the person's Pi home has no `sessions` folder, so the session Pi writes
+//   lands in the connection's directory alone, and a Resume of the chat
+//   resumes it (`--session <id>`): the guard looked where Pi runs;
+// - Pi refuses `--provider` without `--model` (Pi 1.5.2, and the stand-in
+//   does the same): the agent's Pi chat on Kimi names no model, so it starts
+//   on the first model listed for Kimi, the person's default being another
+//   provider's (PRDCT-4496);
+// - a Pi or OpenCode chat whose agent prints a line and exits before it
+//   speaks shows that line and the status, once, in process and on the app's
+//   own separate server (PRDCT-4427);
+// - a spawn on a connection with no key, or one that is gone, is refused in
+//   that one sentence, on the chat road as on the terminal road; a Resume of
+//   a chat whose connection was removed fails on the same sentence;
+// - the values are in no file of the data folder, no record, no clave_list,
+//   no transcript a reader gets (clave_read_session), no process command line.
+//
+// Every value is made up and masked in failure details anyway. Pinned to the
+// in-process server, as lane D's chat specs are: the stubs are found on the
+// PATH the app was launched with. tmux is off for the run.
+import { execFileSync } from 'node:child_process'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import path from 'node:path'
+import {
+  REPO,
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  callMcp,
+  until,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
+
+const DIR = userDataDir('provider-connections-chat')
+const DIR_SEPARATE = userDataDir('provider-connections-chat-separate')
+const ROOT = fixturePath('provider-connections-chat-root')
+const PI_HOME = path.join(ROOT, 'pi-agent')
+const SEEN = path.join(ROOT, 'seen.jsonl')
+// While this file exists, both stand-ins print a line on stderr and exit 3
+// before they speak their protocol (defect 2 of the trial, PRDCT-4427).
+const REFUSE_MARK = path.join(ROOT, 'refuse-before-protocol')
+const ACP_STATE = path.join(ROOT, 'acp-state')
+const ACP_FRAMES = path.join(ACP_STATE, 'frames.jsonl')
+const ACP_AGENT = path.join(REPO, 'tests/e2e/fixtures/acp-agent.mjs')
+const PI_AGENT = path.join(REPO, 'tests/e2e/fixtures/pi-rpc-agent.mjs')
+const WS = {
+  id: 'chat-conn-ws',
+  name: 'Chat connections',
+  rootDir: ROOT,
+  profileFile: null,
+  createdAt: 1
+}
+// Pi's own folder for a working directory's sessions, under a home.
+const PI_CWD_FOLDER = `--${ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
+
+const KIMI = 'e2e-made-up-chat-kimi-0001'
+const DEEPSEEK = 'e2e-made-up-chat-deepseek-0001'
+const MADE_UP = { KIMI, DEEPSEEK }
+// Another provider's key in the person's own login environment (PRDCT-4496):
+// real Pi lists that provider and switches to it. It reaches every Pi tab, a
+// tab on a connection included; the chat on one keeps to its provider anyway.
+const OTHER = 'e2e-made-up-other-anthropic-0001'
+
+const CATALOGUE = {
+  fetchedAt: Date.now(),
+  providers: [
+    {
+      id: 'kimi-code-plan-global',
+      name: 'Kimi For Coding',
+      env: ['KIMI_API_KEY'],
+      models: [
+        {
+          id: 'k-retired',
+          name: 'Retired',
+          reasoning: false,
+          toolCall: true,
+          status: 'deprecated'
+        },
+        { id: 'k-first', name: 'Kimi First', reasoning: false, toolCall: true },
+        { id: 'k-second', name: 'Kimi Second', reasoning: false, toolCall: true }
+      ]
+    },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      env: ['DEEPSEEK_API_KEY'],
+      models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: false, toolCall: true }]
+    }
+  ]
+}
+
+const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
+
+function scrub(value) {
+  let text = typeof value === 'string' ? value : JSON.stringify(value)
+  if (text === undefined) return text
+  for (const [name, secret] of Object.entries({ ...MADE_UP, OTHER }))
+    text = text.split(secret).join(`‹${name.toLowerCase()}›`)
+  return text
+}
+const holdsValue = (text) => Object.values(MADE_UP).some((v) => text.includes(v))
+const IPC_PREFIX = /^Error invoking remote method '[^']+': (?:Error: )?/
+const sentence = (message) => (message == null ? message : String(message).replace(IPC_PREFIX, ''))
+
+function writeFixtures() {
+  rmSync(DIR, { recursive: true, force: true })
+  rmSync(ROOT, { recursive: true, force: true })
+  mkdirSync(`${ROOT}/bin`, { recursive: true })
+  // The person's Pi home: a settings file, and no `sessions` folder yet (a
+  // person whose first Pi runs on a connection).
+  mkdirSync(PI_HOME, { recursive: true })
+  // The person's own Pi default is on another provider than Kimi's: a Pi
+  // chat on Kimi that names no model starts on the first model the launcher
+  // lists for Kimi (PRDCT-4496).
+  writeFileSync(
+    path.join(PI_HOME, 'settings.json'),
+    JSON.stringify({ defaultProvider: 'anthropic', defaultModel: 'claude-made-up' }) + '\n'
+  )
+  seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+  // The catalogue's cache, fresh: models.dev is never asked, and the list the
+  // launcher shows for Kimi is this one.
+  writeFileSync(path.join(DIR, 'models-catalog.json'), JSON.stringify(CATALOGUE))
+  seedTrustedRoots(DIR, [ROOT])
+  // The second pass, on the app's own separate server (defect 2 was met there).
+  rmSync(DIR_SEPARATE, { recursive: true, force: true })
+  seedWorkspaces(DIR_SEPARATE, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+  seedTrustedRoots(DIR_SEPARATE, [ROOT])
+  writeFileSync(
+    `${ROOT}/bin/bash`,
+    '#!/bin/sh\nif [ "$1" = "-lic" ]; then env -0; else shift; exec /bin/bash --noprofile --norc "$@"; fi\n',
+    { mode: 0o755 }
+  )
+  // What a process was handed, one line per start. Test values only.
+  writeFileSync(
+    `${ROOT}/bin/seen.mjs`,
+    `import { appendFileSync } from 'node:fs'
+const [file, kind, ...argv] = process.argv.slice(2)
+const e = process.env
+appendFileSync(file, JSON.stringify({
+  kind, argv,
+  KIMI: e.KIMI_API_KEY ?? '', DS: e.DEEPSEEK_API_KEY ?? '', CLAVE: e.CLAVE_CONNECTION_API_KEY ?? '',
+  OTHER: e.ANTHROPIC_API_KEY ?? '',
+  PRIV: Object.keys(e).filter((n) => n.startsWith('CLAVE_TAB_CREDENTIAL_')).join(','),
+  DIR: e.PI_CODING_AGENT_DIR ?? '', CFG: e.OPENCODE_CONFIG_CONTENT ?? ''
+}) + '\\n')
+`
+  )
+  writeFileSync(
+    `${ROOT}/bin/opencode`,
+    `#!/bin/sh
+if [ "$1" = "acp" ]; then
+  ${quote(process.execPath)} ${quote(`${ROOT}/bin/seen.mjs`)} ${quote(SEEN)} opencode "$@"
+  if [ -f ${quote(REFUSE_MARK)} ]; then
+    echo "opencode stand-in: refused before speaking" >&2
+    exit 3
+  fi
+  ACP_STAND_IN_STATE=${quote(ACP_STATE)}
+  export ACP_STAND_IN_STATE
+  exec ${quote(process.execPath)} ${quote(ACP_AGENT)} acp
+fi
+if [ "$1" = "--version" ]; then echo "opencode 2.3.0"; exit 0; fi
+echo "stub opencode terminal"
+exec sleep 600
+`,
+    { mode: 0o755 }
+  )
+  // Pi keeps its sessions under the directory it runs in: the stand-in is
+  // pointed at that directory's folder for the root, as Pi itself would be.
+  writeFileSync(
+    `${ROOT}/bin/pi`,
+    `#!/bin/sh
+case " $* " in
+  *" --mode rpc "*)
+    ${quote(process.execPath)} ${quote(`${ROOT}/bin/seen.mjs`)} ${quote(SEEN)} pi "$@"
+    if [ -f ${quote(REFUSE_MARK)} ]; then
+      echo "pi stand-in: refused before speaking" >&2
+      exit 3
+    fi
+    PI_STAND_IN_STATE="\${PI_CODING_AGENT_DIR}/sessions/${PI_CWD_FOLDER}"
+    PI_STAND_IN_ANY_PROVIDER=1
+    PI_STAND_IN_ENV_PROVIDERS=1
+    export PI_STAND_IN_STATE PI_STAND_IN_ANY_PROVIDER PI_STAND_IN_ENV_PROVIDERS
+    exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
+    ;;
+esac
+if [ "$1" = "--version" ]; then echo "1.5.2"; exit 0; fi
+${quote(process.execPath)} ${quote(`${ROOT}/bin/seen.mjs`)} ${quote(SEEN)} pi-terminal "$@"
+echo "stub pi terminal"
+exec sleep 600
+`,
+    { mode: 0o755 }
+  )
+}
+
+const lines = (file) =>
+  existsSync(file)
+    ? readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+    : []
+const seen = (kind) => lines(SEEN).filter((s) => s.kind === kind)
+const after = (argv, flag) => (argv ?? [])[(argv ?? []).indexOf(flag) + 1]
+
+/** Every regular file under `dir`, links never followed. */
+function regularFiles(dir) {
+  const out = []
+  const walk = (d) => {
+    let names = []
+    try {
+      names = readdirSync(d)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const file = path.join(d, name)
+      let st
+      try {
+        st = lstatSync(file)
+      } catch {
+        continue
+      }
+      if (st.isSymbolicLink()) continue
+      if (st.isDirectory()) walk(file)
+      else if (st.isFile()) out.push({ file, size: st.size })
+    }
+  }
+  walk(dir)
+  return out
+}
+
+/** A Pi and an OpenCode chat whose agent prints a line on stderr and exits 3
+ *  before it speaks its protocol: the pane shows that line and the status,
+ *  once, and no connection value (PRDCT-4427). The stand-ins refuse while
+ *  `REFUSE_MARK` exists. */
+async function refusedAtStart(t, app, win, { account, where }) {
+  const chat = (id) =>
+    win.locator(`.chat-host[data-session-id="${id}"]`).locator('[data-testid="chat-view"]').first()
+  const chatText = async (id) =>
+    chat(id)
+      .innerText()
+      .catch(() => '')
+  writeFileSync(REFUSE_MARK, '')
+  try {
+    for (const [name, mode, words] of [
+      ['Pi', 'pi', 'pi stand-in: refused before speaking'],
+      ['OpenCode', 'opencode', 'opencode stand-in: refused before speaking']
+    ]) {
+      const opened = await callMcp(app, 'openSession', {
+        cwd: ROOT,
+        mode,
+        chat: true,
+        workspace: WS.id,
+        ...(account ? { account } : {}),
+        ...(mode === 'pi' && account ? { model: 'kimi-for-coding' } : {}),
+        name: `${name} refused`
+      }).catch((e) => ({ error: String(e?.message ?? e) }))
+      const id = opened?.sessionId
+      t.check(`(${where}) the ${name} chat whose agent refuses opened`, !!id, scrub(opened))
+      if (!id) continue
+      await callMcp(app, 'focus', { sessionId: id })
+      await chat(id)
+        .waitFor({ timeout: 20_000 })
+        .catch(() => undefined)
+      const said = await until(async () => ((await chatText(id)).includes(words) ? true : null), {
+        tries: 60
+      })
+      const shown = await chatText(id)
+      t.check(
+        `(${where}) the ${name} chat shows the agent's last words, not only "Session ended"`,
+        !!said,
+        scrub(shown).slice(0, 600)
+      )
+      t.check(
+        `(${where}) and its exit status`,
+        /exit status 3/.test(shown),
+        scrub(shown).slice(0, 600)
+      )
+      t.equal(`(${where}) once`, shown.split(words).length - 1, 1)
+      t.check(`(${where}) and no connection value`, !holdsValue(shown), shown.length)
+    }
+  } finally {
+    rmSync(REFUSE_MARK, { force: true })
+  }
+}
+
+/** An agent asks for a model OpenCode does not have (PRDCT-4427): OpenCode
+ *  opens the session on one of its own, silently, and the chat says so once,
+ *  naming both, though the pane is drawn after the handshake (a tab an agent
+ *  opened in the background is drawn when the person comes to it; on the
+ *  separate server the queue is let go before any pane subscribes). The
+ *  window's machine stores a DeepSeek connection first when it has none. */
+async function unknownModelSaid(t, app, win, { where }) {
+  const chat = (id) =>
+    win.locator(`.chat-host[data-session-id="${id}"]`).locator('[data-testid="chat-view"]').first()
+  const chatText = async (id) =>
+    chat(id)
+      .innerText()
+      .catch(() => '')
+  await win.evaluate(async (deepseek) => {
+    const api = window.electronAPI
+    const held = await api.fleetProviderConnections('local').catch(() => [])
+    if (held.some((c) => c.label === 'DeepSeek')) return
+    const created = await api.fleetProviderConnectionAdd('local', {
+      company: 'deepseek',
+      label: 'DeepSeek'
+    })
+    await api.fleetProviderConnectionSetKey('local', created.id, deepseek)
+  }, DEEPSEEK)
+  const newSessions = () =>
+    lines(ACP_FRAMES).filter((f) => f.frame?.method === 'session/new').length
+  const before = newSessions()
+  const opened = await callMcp(app, 'openSession', {
+    cwd: ROOT,
+    mode: 'opencode',
+    chat: true,
+    workspace: WS.id,
+    account: 'DeepSeek',
+    model: 'no-such-model-zz',
+    name: 'OpenCode asked for a model it does not have'
+  }).catch((e) => ({ error: String(e?.message ?? e) }))
+  const id = opened?.sessionId
+  t.check(`(${where}) the OpenCode chat asked for an unknown model opened`, !!id, scrub(opened))
+  if (!id) return
+  const MISMATCH =
+    'OpenCode does not have the model deepseek/no-such-model-zz: this chat runs on deepseek/stand-in-default.'
+  await until(() => (newSessions() > before ? true : null), { tries: 60 })
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  await callMcp(app, 'focus', { sessionId: id })
+  await chat(id)
+    .waitFor({ timeout: 20_000 })
+    .catch(() => undefined)
+  const said = await until(async () => ((await chatText(id)).includes(MISMATCH) ? true : null), {
+    tries: 40
+  })
+  const shown = await chatText(id)
+  t.check(
+    `(${where}) the chat says the model it runs on is not the one asked, naming both`,
+    !!said,
+    scrub(shown).slice(0, 600)
+  )
+  t.equal(`(${where}) once`, shown.split(MISMATCH).length - 1, 1)
+}
+
+export async function run(t) {
+  writeFixtures()
+  const env = {
+    SHELL: `${ROOT}/bin/bash`,
+    PATH: `${ROOT}/bin:${process.env.PATH}`,
+    PI_CODING_AGENT_DIR: PI_HOME,
+    ANTHROPIC_API_KEY: OTHER
+  }
+  let app = null
+  const errors = []
+  try {
+    const launched = await launchApp(DIR, {
+      server: 'in-process',
+      args: ['--test-no-machine-usage'],
+      env
+    })
+    app = launched.app
+    const win = launched.win
+    win.on('pageerror', (e) => errors.push(e.message))
+    await win.evaluate(() => window.electronAPI.preferencesSet('tmuxMode', false))
+    await until(async () => {
+      try {
+        return await callMcp(app, 'list', {})
+      } catch {
+        return false
+      }
+    })
+    const userData = await app.evaluate(({ app }) => app.getPath('userData'))
+    const pane = (id) => win.locator(`.chat-host[data-session-id="${id}"]`)
+    const chat = (id) => pane(id).locator('[data-testid="chat-view"]').first()
+    const chatText = async (id) =>
+      chat(id)
+        .innerText()
+        .catch(() => '')
+    const say = (id, text) =>
+      win.evaluate(
+        async ({ id, text }) =>
+          window.electronAPI.sessionsWrite(id, { type: 'user_message', text }),
+        { id, text }
+      )
+    const recordsIn = (folder) => {
+      const dir = path.join(folder, 'session-records')
+      return existsSync(dir)
+        ? readdirSync(dir)
+            .filter((f) => f.endsWith('.json'))
+            .map((f) => readFileSync(path.join(dir, f), 'utf8'))
+        : []
+    }
+    const allRecords = () => [...new Set([userData, DIR])].flatMap(recordsIn)
+    const recordOf = (id) =>
+      allRecords()
+        .map((r) => JSON.parse(r))
+        .find((r) => r.id === id)
+
+    // ── The connections, stored the way Settings stores them ──
+    const C = await win.evaluate(
+      async ({ kimi, deepseek }) => {
+        const api = window.electronAPI
+        const add = async (input, key) => {
+          const created = await api.providerConnectionAdd(input)
+          return (key ? await api.providerConnectionSetKey(created.id, key) : created).id
+        }
+        return {
+          kimi: await add({ company: 'moonshot', label: 'Kimi work' }, kimi),
+          ds: await add({ company: 'deepseek', label: 'DeepSeek' }, deepseek),
+          empty: await add({ company: 'moonshot', label: 'Kimi empty' }, null)
+        }
+      },
+      { kimi: KIMI, deepseek: DEEPSEEK }
+    )
+    t.check(
+      'three connections are stored',
+      Object.values(C).every((id) => typeof id === 'string' && id.length > 0),
+      C
+    )
+
+    // ── 1. An OpenCode chat on DeepSeek, opened by an agent (which names no
+    // model for OpenCode: the open drops it) ──
+    const oc = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'opencode',
+      chat: true,
+      workspace: WS.id,
+      account: 'DeepSeek',
+      name: 'OpenCode on DeepSeek'
+    })
+    const ocId = oc?.sessionId
+    t.check('the OpenCode chat opened', !!ocId, oc)
+    await callMcp(app, 'focus', { sessionId: ocId })
+    await chat(ocId).waitFor({ timeout: 20_000 })
+    const kernel = (await win.evaluate(() => window.electronAPI.sessionsList())).find(
+      (s) => s.id === ocId
+    )
+    t.check(
+      'it runs on the opencode-chat adapter, events transport',
+      kernel?.adapterId === 'opencode-chat' && kernel?.transport === 'events',
+      kernel
+    )
+    const ocSeen = await until(() => seen('opencode')[0] ?? null, { tries: 60 })
+    t.check('`opencode acp` started', JSON.stringify(ocSeen?.argv) === '["acp"]', scrub(ocSeen))
+    t.check(
+      'the DeepSeek value reached the ACP agent under DEEPSEEK_API_KEY',
+      ocSeen?.DS === DEEPSEEK,
+      scrub(ocSeen)
+    )
+    t.check('and no other connection’s', ocSeen?.KIMI === '' && ocSeen?.CLAVE === '', scrub(ocSeen))
+    let cfg = null
+    try {
+      cfg = JSON.parse(ocSeen?.CFG ?? '')
+    } catch {
+      // Checked below.
+    }
+    t.equal(
+      'its configuration names the variable and the connection’s provider alone',
+      JSON.stringify(cfg),
+      JSON.stringify({
+        providers: { deepseek: { settings: { apiKey: '{env:DEEPSEEK_API_KEY}' } } },
+        enabled_providers: ['deepseek']
+      })
+    )
+    const opened = await until(
+      () => (lines(ACP_FRAMES).some((f) => f.frame?.method === 'session/new') ? true : null),
+      { tries: 60 }
+    )
+    t.check('the agent opened a session', !!opened)
+    await say(ocId, 'hello on deepseek')
+    await chat(ocId)
+      .getByText('hello on deepseek')
+      .last()
+      .waitFor({ timeout: 15_000 })
+      .catch(() => undefined)
+    const answered = await until(
+      async () =>
+        /You said: hello on deepseek|hello on deepseek/.test(await chatText(ocId)) ? true : null,
+      { tries: 40 }
+    )
+    t.check('the chat answers a message', !!answered, (await chatText(ocId)).slice(0, 500))
+    t.check(
+      'no model switch was asked of the agent',
+      !lines(ACP_FRAMES).some((f) => f.frame?.method === 'session/set_config_option'),
+      lines(ACP_FRAMES).map((f) => f.frame?.method)
+    )
+    const ocText = await chatText(ocId)
+    t.check(
+      'no notice about a model the chat could not set',
+      !/does not offer the model|could not switch to/.test(ocText),
+      ocText.slice(0, 600)
+    )
+    const ocRecord = await until(async () => recordOf(ocId))
+    t.check(
+      'the OpenCode chat’s record names its connection',
+      ocRecord?.connectionId === C.ds && ocRecord?.connectionLabel === 'DeepSeek',
+      ocRecord ? { connectionId: ocRecord.connectionId, label: ocRecord.connectionLabel } : null
+    )
+    // Named where a Claude tab names its account (PRDCT-4427): a chip beside
+    // the model chip, and the sidebar's foot while the tab is focused.
+    const connectionChip = (id) => pane(id).locator(`[data-connection-chip]`).first()
+    const ocChip = await until(
+      async () =>
+        (await connectionChip(ocId)
+          .innerText()
+          .catch(() => '')) === 'DeepSeek'
+          ? true
+          : null,
+      { tries: 40 }
+    )
+    t.check(
+      'the OpenCode chat names its connection beside the model (DeepSeek)',
+      !!ocChip &&
+        (await connectionChip(ocId).getAttribute('data-connection-chip')) === C.ds &&
+        (await connectionChip(ocId).locator('[title]').first().getAttribute('title')) ===
+          'Connection: DeepSeek',
+      await connectionChip(ocId)
+        .innerText()
+        .catch((e) => e.message)
+    )
+    const footLine = win.locator('.sidebar-footer-line[data-connection-line]')
+    const footOk = await until(
+      async () =>
+        (await footLine.innerText().catch(() => '')) === 'OpenCode · DeepSeek' ? true : null,
+      { tries: 40 }
+    )
+    t.check(
+      'the sidebar’s foot names it while the tab is focused (OpenCode · DeepSeek)',
+      !!footOk,
+      await footLine.innerText().catch((e) => e.message)
+    )
+    // The verifier's F3: the line is a control, and a click opens Settings
+    // on Connections, where the connection is managed.
+    const viewBefore = await win.evaluate(
+      () => window.__claveSessionStoreForTests.getState().activeView
+    )
+    await footLine.click()
+    const settingsOpened = await until(
+      () =>
+        win.evaluate(() => {
+          const s = window.__claveSessionStoreForTests.getState()
+          return s.activeView === 'settings' && s.settingsSection === 'accounts' ? true : null
+        }),
+      { tries: 40 }
+    )
+    t.check(
+      'a click on it opens Settings on Connections',
+      !!settingsOpened,
+      await win.evaluate(() => {
+        const s = window.__claveSessionStoreForTests.getState()
+        return { activeView: s.activeView, settingsSection: s.settingsSection }
+      })
+    )
+    await win.evaluate(
+      (view) => window.__claveSessionStoreForTests.getState().setActiveView(view),
+      viewBefore
+    )
+
+    // ── 1a. An agent asks for a model OpenCode does not have (PRDCT-4427) ──
+    await unknownModelSaid(t, app, win, { where: 'in process' })
+
+    // ── 1b. An OpenCode chat on DeepSeek with a picked model, the launcher's
+    // call: the bare id `deepseek-chat`, as the launcher names it ──
+    const history = (id) =>
+      win.evaluate(async (id) => JSON.stringify(await window.electronAPI.sessionsHistory(id)), id)
+    const ocSeenBefore = seen('opencode').length
+    const ocModelId = await win.evaluate(
+      async ({ root, ds, workspaceId }) => {
+        const connection = { connectionId: ds, connectionLabel: 'DeepSeek' }
+        const info = await window.electronAPI.spawnSession(root, {
+          tmuxMode: false,
+          launchProfileId: 'opencode-chat',
+          claudeMode: false,
+          opencodeMode: true,
+          model: 'deepseek-chat',
+          workspaceId,
+          ...connection
+        })
+        // Placed in the sidebar the way the launcher places it.
+        window.__claveSessionStoreForTests.getState().addSession({
+          id: info.id,
+          cwd: info.cwd,
+          folderName: info.folderName,
+          name: 'OpenCode on DeepSeek, a model',
+          alive: info.alive,
+          activityStatus: 'idle',
+          promptWaiting: null,
+          claudeMode: false,
+          antigravityMode: false,
+          codexMode: false,
+          piMode: false,
+          opencodeMode: true,
+          claudeAgentsMode: false,
+          dangerousMode: false,
+          launchProfileId: info.launchProfileId,
+          model: info.model,
+          sessionType: 'local',
+          workspaceId,
+          ...connection
+        })
+        return info.id
+      },
+      { root: ROOT, ds: C.ds, workspaceId: WS.id }
+    )
+    t.check('the OpenCode chat with a model opened', !!ocModelId)
+    await callMcp(app, 'focus', { sessionId: ocModelId })
+    await chat(ocModelId).waitFor({ timeout: 20_000 })
+    const ocModelSeen = await until(() => seen('opencode')[ocSeenBefore] ?? null, { tries: 60 })
+    let modelCfg = null
+    try {
+      modelCfg = JSON.parse(ocModelSeen?.CFG ?? '')
+    } catch {
+      // Checked below.
+    }
+    t.equal(
+      'its configuration names the model in OpenCode’s own form, deepseek/deepseek-chat',
+      modelCfg?.model,
+      'deepseek/deepseek-chat'
+    )
+    t.check(
+      'and the value under DEEPSEEK_API_KEY',
+      ocModelSeen?.DS === DEEPSEEK,
+      scrub(ocModelSeen)
+    )
+    // The session the stand-in opened, and the model it runs on (its own
+    // record of it, `sessions/<id>.json`).
+    const standInModels = () =>
+      existsSync(path.join(ACP_STATE, 'sessions'))
+        ? readdirSync(path.join(ACP_STATE, 'sessions'))
+            .filter((n) => n.endsWith('.json'))
+            .map((n) => JSON.parse(readFileSync(path.join(ACP_STATE, 'sessions', n), 'utf8')).model)
+        : []
+    const agentModel = await until(
+      () => (standInModels().includes('deepseek/deepseek-chat') ? true : null),
+      { tries: 60 }
+    )
+    t.check('the agent’s session runs on deepseek/deepseek-chat', !!agentModel, standInModels())
+    const chipText = async () =>
+      chat(ocModelId).locator('.chat-model-trigger[aria-label="Model"]').first().innerText()
+    // By the name the agent lists it under, its provider prefix off.
+    const chipOk = await until(
+      async () => (await chipText().catch(() => '')) === 'OpenCode · deepseek-chat',
+      { tries: 40 }
+    )
+    t.check(
+      'the chat’s model chip names deepseek/deepseek-chat (OpenCode · deepseek-chat)',
+      !!chipOk,
+      await chipText().catch((e) => e.message)
+    )
+    // The menu lists the models of the connection's provider alone
+    // (`enabled_providers`), never the agent's own.
+    const ocModels = await win.evaluate((id) => window.electronAPI.sessionsModels(id), ocModelId)
+    t.equal(
+      'its menu lists the connection’s provider’s models alone',
+      JSON.stringify(ocModels),
+      JSON.stringify([{ id: 'deepseek/deepseek-chat', label: 'deepseek-chat' }])
+    )
+    await win.evaluate(
+      async (id) =>
+        window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'hello with a model' }),
+      ocModelId
+    )
+    const modelAnswered = await until(
+      async () => (/You said: hello with a model/.test(await chatText(ocModelId)) ? true : null),
+      { tries: 60 }
+    )
+    t.check('it answers a message', !!modelAnswered, scrub(await chatText(ocModelId)).slice(0, 400))
+    t.check(
+      'no model switch was asked of the agent, on either chat',
+      !lines(ACP_FRAMES).some((f) => f.frame?.method === 'session/set_config_option'),
+      lines(ACP_FRAMES).map((f) => f.frame?.method)
+    )
+    const modelShown = await chatText(ocModelId)
+    t.check(
+      'its pane shows no notice about a model it could not set',
+      !/does not offer the model|could not switch to/.test(modelShown),
+      scrub(modelShown).slice(0, 600)
+    )
+    // A Resume relaunches on the tab's model: on a connection the record
+    // keeps the plain id the agent reported under the connection's provider,
+    // and the configuration puts the provider back in front, never twice.
+    const ocResumeBefore = seen('opencode').length
+    const ocRestarted = await win.evaluate(
+      async (id) =>
+        window.electronAPI.restartSession(id, {}, undefined).then(
+          (r) => r,
+          (e) => ({ error: String(e?.message ?? e) })
+        ),
+      ocModelId
+    )
+    t.check(
+      'the OpenCode chat with a model restarts',
+      ocRestarted && !('error' in ocRestarted),
+      scrub(ocRestarted)
+    )
+    const ocResumedSeen = await until(() => seen('opencode')[ocResumeBefore] ?? null, { tries: 60 })
+    let resumedCfg = null
+    try {
+      resumedCfg = JSON.parse(ocResumedSeen?.CFG ?? '')
+    } catch {
+      // Checked below.
+    }
+    t.equal(
+      'the restarted chat is handed deepseek/deepseek-chat again, not deepseek/deepseek/deepseek-chat',
+      resumedCfg?.model,
+      'deepseek/deepseek-chat'
+    )
+    t.check('and the value again', ocResumedSeen?.DS === DEEPSEEK, scrub(ocResumedSeen))
+
+    // ── 2. A Pi chat on Kimi ──
+    const pi = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: true,
+      workspace: WS.id,
+      account: 'Kimi work',
+      name: 'Pi on Kimi'
+    })
+    const piId = pi?.sessionId
+    t.check('the Pi chat opened', !!piId, pi)
+    await callMcp(app, 'focus', { sessionId: piId })
+    await chat(piId).waitFor({ timeout: 20_000 })
+    const piSeen = await until(() => seen('pi')[0] ?? null, { tries: 60 })
+    const kimiDir = path.join(DIR, 'pi-connections', C.kimi)
+    t.check('`pi --mode rpc` started', after(piSeen?.argv, '--mode') === 'rpc', scrub(piSeen))
+    t.check('the Kimi value reached Pi under KIMI_API_KEY', piSeen?.KIMI === KIMI, scrub(piSeen))
+    t.check(
+      "Pi runs in the connection's own directory, not the person's",
+      piSeen?.DIR?.endsWith(path.join('pi-connections', C.kimi)) && piSeen?.DIR !== PI_HOME,
+      { printed: piSeen?.DIR, expected: kimiDir }
+    )
+    t.check(
+      'Pi is told --provider kimi-coding',
+      after(piSeen?.argv, '--provider') === 'kimi-coding',
+      scrub(piSeen?.argv)
+    )
+    // Pi refuses --provider without --model before it speaks (Pi 1.5.2; the
+    // stand-in does the same): the agent named no model, so the chat starts
+    // on the first model the launcher lists for Kimi, the person's own Pi
+    // default being another provider's (PRDCT-4496).
+    t.equal(
+      "and --model k-first, the first model listed for Kimi (the person's default is another provider's)",
+      after(piSeen?.argv, '--model'),
+      'k-first'
+    )
+    await say(piId, 'hello on kimi')
+    const piAnswered = await until(
+      async () => (/You said: hello on kimi/.test(await chatText(piId)) ? true : null),
+      { tries: 60 }
+    )
+    t.check('the Pi chat answers a message', !!piAnswered, (await chatText(piId)).slice(0, 500))
+    const piChip = await until(
+      async () =>
+        (await connectionChip(piId)
+          .innerText()
+          .catch(() => '')) === 'Kimi work'
+          ? true
+          : null,
+      { tries: 40 }
+    )
+    t.check(
+      'the Pi chat names its connection beside the model (Kimi work)',
+      !!piChip && (await connectionChip(piId).getAttribute('data-connection-chip')) === C.kimi,
+      await connectionChip(piId)
+        .innerText()
+        .catch((e) => e.message)
+    )
+
+    // ── 2a. The Pi chat on Kimi stays on Kimi (the verifier's F1, PRDCT-4496):
+    // the login environment holds another provider's key, and the stand-in
+    // lists that provider's model whenever the variable reaches it, as real
+    // Pi 1.5.2 does ──
+    // The person's environment reaches Pi whole, the other provider's key
+    // included: what keeps the chat on Kimi is Clave's own, below.
+    t.check(
+      'the Pi chat on Kimi is handed the Kimi value and the login environment’s other key',
+      piSeen?.OTHER === OTHER && piSeen?.KIMI === KIMI,
+      scrub(piSeen)
+    )
+    const piModels = await win.evaluate((id) => window.electronAPI.sessionsModels(id), piId)
+    t.check(
+      'its menu lists the connection’s provider’s models alone',
+      Array.isArray(piModels) &&
+        piModels.length > 0 &&
+        piModels.every((m) => m.id.startsWith('kimi-coding/')),
+      piModels
+    )
+    const piFrames = () =>
+      lines(path.join(piSeen?.DIR ?? kimiDir, 'sessions', PI_CWD_FOLDER, 'frames.jsonl')).map(
+        (f) => f.frame
+      )
+    await win.evaluate(
+      (id) =>
+        window.electronAPI.sessionsWrite(id, {
+          type: 'set_model',
+          model: 'anthropic/claude-stand-in'
+        }),
+      piId
+    )
+    const REFUSED =
+      'Pi stays on kimi-coding/k-first: this chat runs on its connection, whose provider is kimi-coding, and anthropic/claude-stand-in is not one of its models.'
+    const refusedSaid = await until(
+      async () => ((await chatText(piId)).includes(REFUSED) ? true : null),
+      { tries: 40 }
+    )
+    t.check(
+      'a pick of another provider’s model is refused in one sentence',
+      !!refusedSaid,
+      scrub(await chatText(piId)).slice(-600)
+    )
+    t.check(
+      'and Pi was never asked to switch to it',
+      !piFrames().some((f) => f?.type === 'set_model' && f?.provider !== 'kimi-coding'),
+      piFrames().map((f) => f?.type)
+    )
+    const pickRecord = await until(async () => recordOf(piId))
+    t.equal('the chat’s record keeps the model it runs on', pickRecord?.model, 'k-first')
+    // Pi moved to Anthropic's model during a run (as a command typed in the
+    // chat could move it): the next prompt puts it back first, and says so.
+    await say(piId, 'use anthropic now')
+    await until(
+      async () => (/You said: use anthropic now/.test(await chatText(piId)) ? true : null),
+      { tries: 60 }
+    )
+    await say(piId, 'and after that')
+    const BACK =
+      "Pi was on anthropic/claude-stand-in, which is not a model of its connection's provider kimi-coding: the chat put it back on kimi-coding/k-first."
+    const backSaid = await until(
+      async () => ((await chatText(piId)).includes(BACK) ? true : null),
+      { tries: 60 }
+    )
+    t.check(
+      'Pi found on another provider’s model is put back on Kimi’s before the next prompt, and said',
+      !!backSaid,
+      scrub(await chatText(piId)).slice(-600)
+    )
+    const sent = piFrames()
+    const lastPrompt = sent.map((f) => f?.type).lastIndexOf('prompt')
+    const lastSet = sent.map((f) => f?.type).lastIndexOf('set_model')
+    t.check(
+      'the set_model back on kimi-coding went before that prompt',
+      lastSet >= 0 &&
+        lastSet < lastPrompt &&
+        sent[lastSet]?.provider === 'kimi-coding' &&
+        sent[lastPrompt]?.message === 'and after that',
+      sent.map((f) => f?.type)
+    )
+    // The same while a run is going (the verifier's R2-1, PRDCT-4427): Pi
+    // moves to Anthropic's model as a slow run starts, and the message
+    // written meanwhile goes as a steer, put back on Kimi's first.
+    await say(piId, 'use anthropic now, be slow')
+    await until(
+      async () =>
+        piFrames().some((f) => f?.type === 'prompt' && f?.message === 'use anthropic now, be slow')
+          ? true
+          : null,
+      { tries: 60 }
+    )
+    // Pi's agent_start has come: the run is Pi's own now.
+    await new Promise((r) => setTimeout(r, 300))
+    await say(piId, 'steered meanwhile')
+    const steered = await until(
+      async () =>
+        piFrames().some((f) => f?.type === 'steer' && f?.message === 'steered meanwhile')
+          ? true
+          : null,
+      { tries: 60 }
+    )
+    const withSteer = piFrames()
+    const steerAt = withSteer.findIndex((f) => f?.type === 'steer')
+    const setBeforeSteer = withSteer.map((f) => f?.type).lastIndexOf('set_model', steerAt)
+    const slowPrompt = withSteer.findIndex((f) => f?.message === 'use anthropic now, be slow')
+    t.check(
+      'a message written during a run off Kimi goes as a steer only after a set_model back on kimi-coding',
+      !!steered &&
+        setBeforeSteer > slowPrompt &&
+        withSteer[setBeforeSteer]?.provider === 'kimi-coding',
+      withSteer.map((f) => f?.type)
+    )
+    const backTwice = await until(
+      async () => ((await chatText(piId)).split(BACK).length - 1 >= 2 ? true : null),
+      { tries: 40 }
+    )
+    t.check('and the chat says so again', !!backTwice, scrub(await chatText(piId)).slice(-600))
+    await win.evaluate((id) => window.electronAPI.sessionsWrite(id, { type: 'interrupt' }), piId)
+    await until(async () => (piFrames().some((f) => f?.type === 'abort') ? true : null), {
+      tries: 40
+    })
+
+    // ── 2b. Terminals: one on a connection names it in its header, one on
+    // none names nothing ──
+    const tile = (id) => win.locator(`[data-terminal-tile="${id}"]`)
+    const openTerminal = async (extra) =>
+      (
+        await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'opencode',
+          chat: false,
+          workspace: WS.id,
+          ...extra
+        })
+      )?.sessionId
+    const ocTermId = await openTerminal({
+      account: 'DeepSeek',
+      name: 'OpenCode terminal on DeepSeek'
+    })
+    t.check('an OpenCode terminal on DeepSeek opened', !!ocTermId)
+    await callMcp(app, 'focus', { sessionId: ocTermId })
+    const badge = tile(ocTermId).locator('[data-connection-badge]').first()
+    const badgeOk = await until(
+      async () => ((await badge.innerText().catch(() => '')) === 'DeepSeek' ? true : null),
+      { tries: 40 }
+    )
+    t.check(
+      'its header names the connection (DeepSeek)',
+      !!badgeOk && (await badge.getAttribute('title')) === 'Connection: DeepSeek',
+      await badge.innerText().catch((e) => e.message)
+    )
+    const plainTermId = await openTerminal({ name: 'OpenCode terminal on no connection' })
+    t.check('an OpenCode terminal on no connection opened', !!plainTermId)
+    await callMcp(app, 'focus', { sessionId: plainTermId })
+    await tile(plainTermId).waitFor({ timeout: 20_000 })
+    await win.waitForTimeout(500)
+    t.check(
+      'its header names none',
+      (await tile(plainTermId).locator('[data-connection-badge]').count()) === 0
+    )
+
+    // ── 2c. A Pi terminal on Kimi gets the Kimi value, under its own name
+    // alone; a Pi terminal on none gets none (PRDCT-4496) ──
+    const piTerminal = async (extra) => {
+      const before = seen('pi-terminal').length
+      const id = (
+        await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'pi',
+          chat: false,
+          workspace: WS.id,
+          ...extra
+        })
+      )?.sessionId
+      if (id) await callMcp(app, 'focus', { sessionId: id })
+      const started = await until(() => seen('pi-terminal')[before] ?? null, { tries: 60 })
+      return { id, started }
+    }
+    const piTermOn = await piTerminal({ account: 'Kimi work', name: 'Pi terminal on Kimi' })
+    t.check(
+      'a Pi terminal on Kimi got the Kimi value, in the connection’s directory',
+      piTermOn.started?.KIMI === KIMI && piTermOn.started?.DIR === piSeen?.DIR,
+      scrub(piTermOn.started)
+    )
+    t.check(
+      'and none of the private names its value crossed the login shell under',
+      piTermOn.started?.PRIV === '',
+      piTermOn.started?.PRIV
+    )
+    const piTermOff = await piTerminal({ name: 'Pi terminal on no connection' })
+    t.check(
+      'a Pi terminal on no connection gets no Kimi value',
+      piTermOff.started?.KIMI === '',
+      scrub(piTermOff.started)
+    )
+    // T2 of the tester's fourth pass: the stand-in terminal never writes a
+    // Pi session, as a Pi that ended before its first message; a Resume ran
+    // `pi --session <id>`, which real Pi 1.5.2 answers "No session found
+    // matching" and exits 1. It starts under the same id instead.
+    const termSession = after(piTermOff.started?.argv, '--session-id')
+    const termBefore = seen('pi-terminal').length
+    const termRestart = await win.evaluate(
+      async (id) =>
+        window.electronAPI.restartSession(id, {}, undefined).then(
+          (r) => r,
+          (e) => ({ error: String(e?.message ?? e) })
+        ),
+      piTermOff.id
+    )
+    t.check(
+      'the Pi terminal whose session Pi never wrote restarts',
+      termRestart && !('error' in termRestart),
+      scrub(termRestart)
+    )
+    await callMcp(app, 'focus', { sessionId: piTermOff.id })
+    const termResumed = await until(() => seen('pi-terminal')[termBefore] ?? null, { tries: 60 })
+    t.check(
+      'it starts under the same id (--session-id), never --session on a session that is not there',
+      !!termSession &&
+        after(termResumed?.argv, '--session-id') === termSession &&
+        !(termResumed?.argv ?? []).includes('--session'),
+      { before: piTermOff.started?.argv, after: termResumed?.argv }
+    )
+    await callMcp(app, 'focus', { sessionId: piId })
+    const piRecord = await until(async () => recordOf(piId)?.piSessionId && recordOf(piId))
+    const piSession = piRecord?.piSessionId
+    t.check(
+      'the Pi chat’s record names its connection and its Pi session',
+      piRecord?.connectionId === C.kimi &&
+        piRecord?.connectionLabel === 'Kimi work' &&
+        typeof piSession === 'string',
+      piRecord ? { connectionId: piRecord.connectionId, piSessionId: piSession } : null
+    )
+    t.equal('and the model it started on', piRecord?.model, 'k-first')
+    const connSessions = path.join(piSeen?.DIR ?? kimiDir, 'sessions', PI_CWD_FOLDER)
+    const written = await until(
+      () =>
+        existsSync(connSessions) &&
+        readdirSync(connSessions).some((n) => n.endsWith(`_${piSession}.jsonl`)),
+      { tries: 40 }
+    )
+    t.check("Pi's session file is in the connection's directory", !!written, connSessions)
+    t.check(
+      "and the person's home has none (no sessions folder to link)",
+      !existsSync(path.join(PI_HOME, 'sessions')),
+      readdirSync(PI_HOME)
+    )
+
+    // ── 3. A Resume of the Pi chat resumes that session ──
+    const before = seen('pi').length
+    const restarted = await win.evaluate(
+      async (id) =>
+        window.electronAPI.restartSession(id, {}, undefined).then(
+          (r) => r,
+          (e) => ({ error: String(e?.message ?? e) })
+        ),
+      piId
+    )
+    t.check('the Pi chat restarts', restarted && !('error' in restarted), scrub(restarted))
+    const resumedSeen = await until(() => seen('pi')[before] ?? null, { tries: 60 })
+    t.check(
+      'the restarted Pi resumes its session (--session <id>), found where it runs',
+      after(resumedSeen?.argv, '--session') === piSession &&
+        !(resumedSeen?.argv ?? []).includes('--session-id'),
+      scrub(resumedSeen?.argv)
+    )
+    t.check(
+      'and got the Kimi value again, in the connection’s directory',
+      resumedSeen?.KIMI === KIMI && resumedSeen?.DIR === piSeen?.DIR,
+      scrub(resumedSeen)
+    )
+
+    // ── 3b. A Pi chat asked for a model Pi does not have (PRDCT-4427) ──
+    // Pi 1.5.2 keeps the name as a custom model id, so only its list tells;
+    // the chat says what Pi does with it, once, the pane drawn after.
+    const piUnknown = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: true,
+      workspace: WS.id,
+      account: 'Kimi work',
+      model: 'no-such-model-zz',
+      name: 'Pi asked for a model it does not have'
+    })
+    const PI_UNKNOWN =
+      'Pi does not know the model no-such-model-zz of kimi-coding: it sends that name to the provider as it is, and the provider may refuse it.'
+    t.check('the Pi chat asked for an unknown model opened', !!piUnknown?.sessionId, piUnknown)
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await callMcp(app, 'focus', { sessionId: piUnknown.sessionId })
+    await chat(piUnknown.sessionId)
+      .waitFor({ timeout: 20_000 })
+      .catch(() => undefined)
+    const piSaid = await until(
+      async () => ((await chatText(piUnknown.sessionId)).includes(PI_UNKNOWN) ? true : null),
+      { tries: 40 }
+    )
+    const piShown = await chatText(piUnknown.sessionId)
+    t.check('the Pi chat says what Pi does with that name', !!piSaid, scrub(piShown).slice(0, 600))
+    t.equal('once (Pi)', piShown.split(PI_UNKNOWN).length - 1, 1)
+
+    // ── 4. Refusals at start: one sentence, before any process ──
+    const refuse = (options) =>
+      win.evaluate(
+        async ({ root, options }) =>
+          window.electronAPI.spawnSession(root, { tmuxMode: false, ...options }).then(
+            () => null,
+            (e) => String(e?.message ?? e)
+          ),
+        { root: ROOT, options }
+      )
+    const startsBefore = lines(SEEN).length
+    const noKeyPi = await refuse({
+      launchProfileId: 'pi-chat',
+      claudeMode: false,
+      piMode: true,
+      connectionId: C.empty,
+      connectionLabel: 'Kimi empty'
+    })
+    t.equal(
+      'a Pi chat on a connection with no key is refused in one sentence',
+      sentence(noKeyPi),
+      'The connection has no key yet.'
+    )
+    const noKeyOc = await refuse({
+      launchProfileId: 'opencode-chat',
+      claudeMode: false,
+      opencodeMode: true,
+      connectionId: C.empty,
+      connectionLabel: 'Kimi empty'
+    })
+    t.equal(
+      'an OpenCode chat on it, the same sentence',
+      sentence(noKeyOc),
+      'The connection has no key yet.'
+    )
+    const goneOc = await refuse({
+      launchProfileId: 'opencode-chat',
+      claudeMode: false,
+      opencodeMode: true,
+      connectionId: 'c-gone',
+      connectionLabel: 'Gone'
+    })
+    t.equal(
+      'an OpenCode chat on a connection that is gone is refused in one sentence',
+      sentence(goneOc),
+      'The selected connection is no longer available.'
+    )
+    const goneTerminal = await refuse({
+      piMode: true,
+      claudeMode: false,
+      connectionId: 'c-gone',
+      connectionLabel: 'Gone'
+    })
+    t.equal(
+      'the terminal road says the same sentence',
+      sentence(goneTerminal),
+      'The selected connection is no longer available.'
+    )
+    t.equal('no process was started by a refused spawn', lines(SEEN).length, startsBefore)
+
+    // ── 4b. An agent that ends before it speaks: its last words and its
+    // status in the pane, never only "Session ended" (PRDCT-4427) ──
+    await refusedAtStart(t, app, win, { account: 'Kimi work', where: 'in-process' })
+
+    // ── 5. The values are nowhere but the processes ──
+    const leaks = []
+    for (const { file, size } of regularFiles(DIR)) {
+      if (size > 64 * 1024 * 1024) continue
+      let text
+      try {
+        text = readFileSync(file, 'latin1')
+      } catch {
+        continue
+      }
+      if (holdsValue(text)) leaks.push(path.relative(DIR, file))
+    }
+    t.check('no file under the data folder holds a connection value', leaks.length === 0, leaks)
+    const records = allRecords()
+    t.check(
+      'no record holds a connection value',
+      records.length > 0 && !records.some(holdsValue),
+      records.length
+    )
+    t.check(
+      'clave_list holds no connection value',
+      !holdsValue(JSON.stringify(await callMcp(app, 'list', {})))
+    )
+    for (const [name, id] of [
+      ['OpenCode', ocId],
+      ['OpenCode (model)', ocModelId],
+      ['Pi', piId]
+    ]) {
+      const read = JSON.stringify(
+        await callMcp(app, 'readSession', { sessionId: id, lines: 200, callerSessionId: id })
+      )
+      t.check(
+        `the ${name} chat's clave_read_session answer holds no value`,
+        !holdsValue(read),
+        read.length
+      )
+      const events = await history(id)
+      t.check(`the ${name} chat's event history holds no value`, !holdsValue(events), events.length)
+      // The live events, as the pane renders them.
+      await callMcp(app, 'focus', { sessionId: id })
+      await chat(id)
+        .waitFor({ timeout: 20_000 })
+        .catch(() => undefined)
+      const shown = await chatText(id)
+      t.check(`the ${name} chat's pane holds no value`, !holdsValue(shown), shown.length)
+      t.check(
+        `and shows the conversation (the read above read something)`,
+        /hello (on|with)/.test(shown),
+        scrub(shown).slice(0, 300)
+      )
+    }
+    const table = execFileSync('ps', ['-axo', 'command'], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    })
+    t.check('the process table holds no connection value', !holdsValue(table))
+    t.check(
+      'the chats’ agents are in the process table (the read above is not empty)',
+      table.includes(ACP_AGENT) && table.includes(PI_AGENT),
+      table.length
+    )
+
+    // ── 6. A Resume of a chat whose connection was removed: the same sentence ──
+    const removed = await win.evaluate(
+      (id) => window.electronAPI.providerConnectionRemove(id),
+      C.ds
+    )
+    t.check('the DeepSeek connection is removed', removed === true, removed)
+    const resumeGone = await win.evaluate(
+      async (id) =>
+        window.electronAPI.restartSession(id, {}, undefined).then(
+          (r) => ('error' in r ? r.error : null),
+          (e) => String(e?.message ?? e)
+        ),
+      ocId
+    )
+    t.equal(
+      'a Resume of the OpenCode chat on it fails on that one sentence',
+      sentence(resumeGone),
+      'The selected connection is no longer available.'
+    )
+    t.check('no renderer error during the run', errors.length === 0, errors)
+  } finally {
+    if (app) await app.close()
+  }
+
+  // ── 7. The same refusals on the app's own separate server, where the trial
+  // met them: the queue there is let go before the pane subscribes, and the
+  // pane reads the chat's past (PRDCT-4427). No connection: the stand-ins
+  // refuse on the marker alone. ──
+  let separate = null
+  try {
+    separate = await launchApp(DIR_SEPARATE, {
+      server: 'separate',
+      args: ['--test-no-machine-usage'],
+      env
+    })
+    await separate.win.evaluate(() => window.electronAPI.preferencesSet('tmuxMode', false))
+    await until(async () => {
+      try {
+        return await callMcp(separate.app, 'list', {})
+      } catch {
+        return false
+      }
+    })
+    await refusedAtStart(t, separate.app, separate.win, { where: 'separate server' })
+    await unknownModelSaid(t, separate.app, separate.win, { where: 'separate server' })
+  } finally {
+    if (separate) await separate.app.close()
+  }
+}

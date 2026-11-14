@@ -18,9 +18,14 @@ import {
   type HarnessId,
   type InteractionMode
 } from '../../shared/harness'
-import { firstPoolOf } from '../../shared/connection'
+import { firstPoolOf, isAccountPoolId } from '../../shared/connection'
 import { poolsOf } from '../../shared/launch-options'
 import type { SpawnOptions } from '@clave/contract/sessions'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import {
+  providerConnectionSpawnFields,
+  resolveProviderConnection
+} from '../../shared/provider-connection-pick'
 import {
   BUILT_IN_LAUNCH_PROFILES,
   type LaunchProfilePreferences,
@@ -46,7 +51,8 @@ const namesOf = (pick: (h: (typeof HARNESSES)[number]) => boolean): string =>
   HARNESSES.filter(pick)
     .map((h) => h.name)
     .join(', ')
-/** The refusal of an account for a harness Clave holds no connection for. */
+/** The refusal of an account for a harness Clave holds no connection for
+ *  (Antigravity): Pi and OpenCode take one of their stored connections (PRDCT-4496). */
 export const accountRefusal = (agent: HarnessId): string =>
   `The account argument applies to harnesses with a connection pool (${namesOf((h) => poolsOf(h).length > 0)}); ${HARNESS_BY_ID[agent].name} runs on the login inside the harness.`
 /** The refusal of a model for a harness that takes none on its command line. */
@@ -74,6 +80,10 @@ export interface LaunchFacts extends AccountFacts {
     launchProfileId: string | undefined,
     workspaceId: string | undefined
   ): string | undefined
+  /** The stored provider connections serving a harness, never a key
+   *  (`providerConnectionsManager.forHarness`, PRDCT-4496): what an account
+   *  on a Pi or OpenCode launch names. Absent, the process holds none. */
+  providerConnectionsFor?(harness: HarnessId): readonly ProviderConnectionView[]
 }
 
 export type ResolvedLaunch =
@@ -214,6 +224,8 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
     return fail(`provider is for pi; ${agent} takes none`)
   const harness = HARNESS_BY_ID[agent as HarnessId]
   if (p.model !== undefined && !harness.takesModel) return fail(modelRefusal(harness.id))
+  // An account names a connection of the harness's pools: an account of
+  // Claude's or Codex's, a stored key of Pi's or OpenCode's (PRDCT-4496).
   if (p.account !== undefined && poolsOf(harness).length === 0)
     return fail(accountRefusal(harness.id))
 
@@ -266,7 +278,7 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
   let accountFields: SpawnOptions = {}
   let account: string | null = null
   const pool = firstPoolOf(harness)
-  if (pool !== null) {
+  if (isAccountPoolId(pool)) {
     try {
       // A routine naming no model runs the one main remembers for its chat:
       // the account is judged for that one, never on the shared caps alone.
@@ -278,6 +290,18 @@ export function resolveLaunch(routine: LaunchRequest, facts: LaunchFacts): Resol
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error))
     }
+  } else if (pool && p.account !== undefined) {
+    // A provider pool (PRDCT-4496): the stored connection the account names,
+    // by id, by label or `any` for the first with a key; with none named the
+    // harness runs on its own login, no connection.
+    const picked = resolveProviderConnection(
+      harness,
+      facts.providerConnectionsFor?.(harness.id) ?? [],
+      p.account
+    )
+    if (!picked.ok) return fail(picked.reason)
+    accountFields = providerConnectionSpawnFields(picked.connection)
+    account = picked.connection.label
   }
 
   return {
