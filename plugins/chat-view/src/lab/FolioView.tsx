@@ -47,6 +47,8 @@ import { serverDock, withServerPending } from '../server-requests'
 import { SenderChip } from '../Delivery'
 import { Attachments } from '../Attachments'
 import { useComposerAttachments } from '../composer-attachments'
+import { WaitingStack } from '../WaitingStack'
+import { startedTurn, useWaitingReturns } from '../waiting'
 import { useComposerFocus } from '../focus'
 import { useMessageHistory } from '../history'
 import { usePresentation } from '../presentation'
@@ -888,6 +890,8 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     clearSent,
     restore
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
+  // A message that waited and left unsent comes back here (PRDCT-4566).
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore)
   const filesBlocked =
     preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
   const hasDraft = !!draft.trim() || attachments.length > 0
@@ -961,7 +965,9 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   // message comes back to the composer, as in the Chat view.
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
-    const last = lastSent.current
+    // With messages waiting (PRDCT-4566), the one taken back is the one the
+    // turn started on; the last one sent waits, and comes back with them.
+    const last = conversation.waiting.length ? startedTurn(conversation.entries) : lastSent.current
     if (!answeredSince(conversation.entries)) {
       dispatch({ withdraw: true })
       if (last && !draft.trim() && !attachments.length) {
@@ -1164,6 +1170,12 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
           agent={agentNameOf(session.provider)}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+        />
+        <WaitingStack
+          messages={conversation.waiting}
+          takes={conversation.takes}
+          agent={agentNameOf(session.provider, 'The agent')}
+          onWithdraw={(id) => void write({ type: 'withdraw_message', id }).catch(report)}
         />
         <form
           className="chat-composer"

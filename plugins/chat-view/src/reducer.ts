@@ -2,7 +2,8 @@ import type {
   AgentState,
   HistoryItem,
   PermissionModeOption,
-  SessionEvent
+  SessionEvent,
+  WaitingMessage
 } from '../../../src/shared/session-model'
 import type { Attachment } from '../../../src/shared/attachments'
 import { inputRequestMeta } from '@clave/contract/input-kinds'
@@ -160,6 +161,16 @@ export interface Conversation {
    *  the request, is not lost. */
   explained: Record<string, PermissionReading>
   exitCode?: number
+  /** The messages written that the agent has not taken yet, as the adapter
+   *  last listed them (PRDCT-4566): drawn in the stack above the composer,
+   *  never in the transcript, until each enters it as the agent takes it. */
+  waiting: WaitingMessage[]
+  /** When the agent takes one: after the running turn, or at its next step;
+   *  null until an adapter has listed what waits. */
+  takes: Extract<SessionEvent, { type: 'waiting_messages' }>['takes'] | null
+  /** The messages that last left the list unsent, for the composer to take
+   *  back: a new value at each return, which the view takes once. */
+  returned: NonNullable<Extract<SessionEvent, { type: 'waiting_messages' }>['returned']> | null
 }
 export const emptyConversation: Conversation = {
   entries: [],
@@ -170,7 +181,10 @@ export const emptyConversation: Conversation = {
   pendingModel: null,
   effort: null,
   permissionMode: null,
-  explained: {}
+  explained: {},
+  waiting: [],
+  takes: null,
+  returned: null
 }
 export type Action =
   | { event: ChatEvent; at?: number }
@@ -286,7 +300,7 @@ function liveBefore(entries: Entry[], id: string): boolean {
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action)
-    return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null }
+    return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null, waiting: [] }
   if ('pickModel' in action) return { ...state, pendingModel: action.pickModel }
   if ('askMode' in action) return { ...state, askedMode: action.askMode }
   if ('reconnected' in action) return state.run === null ? state : { ...state, run: null }
@@ -467,8 +481,10 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       event.state === 'idle' || event.state === 'done' || event.state === 'ended'
         ? closeTurn(state.entries)
         : state.entries
+    // Nothing waits for a process that is gone (PRDCT-4566).
+    const waiting = event.state === 'ended' ? [] : state.waiting
     if (!closed.some(touches))
-      return { ...state, entries: closed, state: event.state, run, exitCode }
+      return { ...state, entries: closed, state: event.state, run, exitCode, waiting }
     return {
       ...state,
       entries: closed.map((e) =>
@@ -476,9 +492,20 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       ),
       state: event.state,
       run,
-      exitCode
+      exitCode,
+      waiting
     }
   }
+  if (event.type === 'waiting_messages')
+    // What waits for the agent is the stack's, never the transcript's: a
+    // message enters the conversation as its own `user_message`, the moment
+    // the agent takes it (PRDCT-4566).
+    return {
+      ...state,
+      waiting: event.messages,
+      takes: event.takes,
+      ...(event.returned ? { returned: { ...event.returned } } : {})
+    }
   if (event.type === 'permission_withdrawn') {
     // The adapter no longer waits on it: the card is settled for good, as the
     // server's request store settles its record on the same word, and no

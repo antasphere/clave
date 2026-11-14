@@ -109,6 +109,8 @@ import {
   type Attachment
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
+import { WaitingStack } from './WaitingStack'
+import { startedTurn, useWaitingReturns } from './waiting'
 import { DropDrawing } from './DropDrawing'
 import { DropRefusal } from './DropRefusal'
 import { serverNameOf } from '../../../src/renderer/src/lib/drop-refusal'
@@ -576,6 +578,8 @@ export function TerminalView({
     dismissRefusal,
     startDrop
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
+  // A message that waited and left unsent comes back here (PRDCT-4566).
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore)
   // The server a tab of another machine runs on, as the refusal card names it.
   const serverName = useFleetStore((s) => serverNameOf(s.connections, ownerOf(session.id)))
   // A message can go while files are still being prepared or one still
@@ -674,7 +678,9 @@ export function TerminalView({
      as it is. */
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
-    const last = lastSent.current
+    // With messages waiting (PRDCT-4566), the one taken back is the one the
+    // turn started on; the last one sent waits, and comes back with them.
+    const last = conversation.waiting.length ? startedTurn(conversation.entries) : lastSent.current
     if (!answeredSince(conversation.entries)) {
       dispatch({ withdraw: true })
       if (last && !draft.trim() && !attachments.length) {
@@ -1196,6 +1202,12 @@ export function TerminalView({
             />
           </div>
         )}
+        <WaitingStack
+          messages={conversation.waiting}
+          takes={conversation.takes}
+          agent={agentNameOf(session.provider, 'The agent')}
+          onWithdraw={(id) => void write({ type: 'withdraw_message', id }).catch(report)}
+        />
         {(attachments.length > 0 || preparations.length > 0) && (
           <div className="chat-composer-files term-files">
             <Attachments

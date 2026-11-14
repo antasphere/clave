@@ -4522,6 +4522,111 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   gap: var(--spacing);
 }
 
+/* The messages that wait for the agent (WaitingStack.tsx, PRDCT-4566): written
+   while it works and not taken yet, docked directly above the composer, where
+   the reader looks while waiting. One row per message, in the order written:
+   the delivery card's face on one line (the sending tab's name in its ink,
+   the first line clamped, the whole on hover or focus), when it goes in the
+   queue line's words, and the attachment chip's withdraw. The box is the
+   prompt dock's, quieter: the paper of an opened delivery card, no lift. A
+   row folds open as it arrives and shut as the agent takes it, the work
+   cards' fold; none under reduced motion. */
+.chat-waiting-stack {
+  margin-bottom: calc(var(--spacing) * 2);
+  padding: var(--spacing);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+  background-color: var(--surface-100);
+  font-size: var(--chat-code-size);
+}
+.chat-waiting-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-waiting-row {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.chat-waiting-row[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.chat-waiting-fold {
+  min-height: 0;
+  overflow: hidden;
+}
+.chat-waiting-face {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 1.5) var(--spacing) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+}
+.chat-waiting-text {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.chat-waiting-text:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+}
+.chat-waiting-from {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-term-model);
+}
+.chat-waiting-gist {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-ink, var(--text-primary));
+}
+.chat-waiting-when {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.chat-waiting-withdraw {
+  flex-shrink: 0;
+  align-self: center;
+}
+/* The whole message, on hover or focus: the tooltip's paper, wrapped. */
+.chat-waiting-whole {
+  max-width: min(32rem, 80vw);
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-waiting-row {
+    transition: none;
+  }
+}
+
 /* The prompt dock: what the agent waits on, a tool to allow or questions to
    answer, docked above the composer so it is always in the same place. It
    wears the composer's own raised white and keeps colour for what means
