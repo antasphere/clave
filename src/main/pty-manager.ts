@@ -122,12 +122,20 @@ sessionManager.registerAdapter(codexAdapter)
 const opencodeChatAdapter = new AcpAdapter({
   id: 'opencode-chat',
   provider: 'opencode',
-  label: 'OpenCode'
+  label: 'OpenCode',
+  // PRDCT-4507: Clave's own tools, in OpenCode's inline configuration.
+  claveTools: 'opencode'
 })
 sessionManager.registerAdapter(opencodeChatAdapter)
 // Lane D (PRDCT-4427): Pi in the chat view, over Pi's own rpc mode
 // (`pi --mode rpc`).
-const piChatAdapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+// PRDCT-4507: Clave's own tools, through Clave's Pi extension.
+const piChatAdapter = new PiRpcAdapter({
+  id: 'pi-chat',
+  provider: 'pi',
+  label: 'Pi',
+  claveTools: true
+})
 sessionManager.registerAdapter(piChatAdapter)
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
 type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat'

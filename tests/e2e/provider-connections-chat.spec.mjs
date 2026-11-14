@@ -481,13 +481,23 @@ export async function run(t) {
     } catch {
       // Checked below.
     }
+    // PRDCT-4507: Clave's own tools ride beside the connection, in `mcp`.
+    const { mcp: ocMcp, ...ocOwn } = cfg ?? {}
     t.equal(
       'its configuration names the variable and the connection’s provider alone',
-      JSON.stringify(cfg),
+      JSON.stringify(ocOwn),
       JSON.stringify({
         providers: { deepseek: { settings: { apiKey: '{env:DEEPSEEK_API_KEY}' } } },
         enabled_providers: ['deepseek']
       })
+    )
+    t.equal(
+      'and Clave’s own tools beside it, the token by reference (PRDCT-4507)',
+      JSON.stringify({
+        servers: Object.keys(ocMcp?.servers ?? {}),
+        auth: ocMcp?.servers?.clave?.headers?.Authorization
+      }),
+      JSON.stringify({ servers: ['clave'], auth: 'Bearer {env:CLAVE_TAB_MCP_TOKEN}' })
     )
     const opened = await until(
       () => (lines(ACP_FRAMES).some((f) => f.frame?.method === 'session/new') ? true : null),

@@ -25,6 +25,12 @@ import {
   connectionHandover,
   connectionVariableNames
 } from '../../connection-handover'
+import {
+  CLAVE_MCP_CONFIG_FILE_ENV,
+  CLAVE_TAB_MCP_TOKEN_ENV,
+  readClaveMcpEndpoint,
+  withOpencodeClaveTools
+} from '../../clave-tools-launch'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
@@ -418,7 +424,9 @@ export const TMUX_SESSION_ENV_VARS: readonly string[] = [
   ...PROVIDER_KEY_ENV_VARS,
   'OPENCODE_CONFIG_CONTENT',
   'PI_CODING_AGENT_DIR',
-  ...CLAVE_TAB_CREDENTIAL_ENV_VARS
+  ...CLAVE_TAB_CREDENTIAL_ENV_VARS,
+  // PRDCT-4507: an OpenCode tab's token for Clave's own tools.
+  CLAVE_TAB_MCP_TOKEN_ENV
 ]
 
 /** The `set-option` calls that bring a live server's `update-environment` up
@@ -1309,6 +1317,23 @@ export class PtyBackend {
               : randomUUID())
         }
         const mcpConfigPath = kind === 'claude' ? lazyTerminalPorts.mcpConfig.write(id) : null
+        // ── PRDCT-4507: Clave's own tools in a Pi or an OpenCode terminal ──
+        // The tab's credential is the same port's file: Pi's extension reads
+        // it by path; OpenCode gets the address in its inline configuration
+        // and the token under a variable of its own, on the key's road (the
+        // handover below, the tmux list). Every OpenCode terminal then runs
+        // standalone, the TUI that reads the tab's environment. No file (no
+        // tool server up) starts the tab without tools, never refuses it.
+        const claveToolsPath =
+          kind === 'pi' || kind === 'opencode' ? lazyTerminalPorts.mcpConfig.write(id) : null
+        if (kind === 'opencode') {
+          const providerEnv = withOpencodeClaveTools(
+            options?.providerEnv,
+            readClaveMcpEndpoint(claveToolsPath)
+          )
+          options = { ...options, providerEnv, opencodeStandalone: true }
+        }
+        // ── end PRDCT-4507 ──
         const piExtensionPath = kind === 'pi' ? piStateExtensionPath() : undefined
         const argv = buildAgentArgv({
           kind,
@@ -1334,6 +1359,9 @@ export class PtyBackend {
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
           assignments.push(`CLAVE_AGENT_STATE_FILE=${shellSingleQuote(stateFilePath(id))}`)
+        // PRDCT-4507: the PATH of the tab's MCP config file, never its token.
+        if (kind === 'pi' && claveToolsPath)
+          assignments.push(`${CLAVE_MCP_CONFIG_FILE_ENV}=${shellSingleQuote(claveToolsPath)}`)
         // The account's home rides in the command, after the login profile
         // has run: a `CODEX_HOME` the user's own profile exports would
         // otherwise override the one in the environment.

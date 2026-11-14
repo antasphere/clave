@@ -212,7 +212,9 @@ describe('the OpenCode chat adapter is registered (lane D, PRDCT-4427)', () => {
     expect(mocks.acpSpecs).toContainEqual({
       id: 'opencode-chat',
       provider: 'opencode',
-      label: 'OpenCode'
+      label: 'OpenCode',
+      // PRDCT-4507: handed Clave's own tools in its inline configuration.
+      claveTools: 'opencode'
     })
     expect(registeredAtImport).toContain(mocks.opencode)
   })
