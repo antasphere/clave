@@ -89,6 +89,9 @@ class ChatSession(
     private var draftWrite: Job? = null
     private val attaching = Mutex()
 
+    /** The text of the send under way: the draft store already holds it, and the send's end clears it. */
+    @Volatile private var inFlightText: String? = null
+
     /** Subscribes to the conversation and reads back the draft, the attachments, the mark and the unknown send. */
     fun open() {
         if (opened) return
@@ -131,6 +134,10 @@ class ChatSession(
         closeChat = null
         val text = _state.value.draft
         draftWrite?.cancel()
+        // The text a send under way carries is already the stored draft, and the send's end clears
+        // it; writing it again here could land after that clear and bring a sent message back into
+        // the composer of the recreated screen (seen once in aQuickSendIsNotRepeatedByARecreation).
+        if (text == inFlightText) return
         scope.launch { drafts.set(machineId, sessionId, text) }
     }
 
@@ -286,6 +293,7 @@ class ChatSession(
         scope.launch {
             val text = current.draft
             val attachments = current.attachments
+            inFlightText = text
             try {
                 // The store clears the draft only when the stored one is the text sent.
                 draftWrite?.cancel()
@@ -312,6 +320,7 @@ class ChatSession(
             } catch (e: Exception) {
                 _state.update { it.copy(error = messageOf(e)) }
             } finally {
+                inFlightText = null
                 readDelivery()
                 _state.update { it.copy(sending = false) }
             }
