@@ -47,7 +47,10 @@ import {
   HARNESS_BY_ID,
   type HarnessId
 } from '../../shared/harness'
-import { harnessProviderConnections } from '../../shared/provider-connection-pick'
+import {
+  harnessProviderConnections,
+  providerConnectionLeft
+} from '../../shared/provider-connection-pick'
 import type { PiStartModel } from '../../shared/pi-start-model'
 import {
   launchOptions as launchOptionsOf,
@@ -382,6 +385,8 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       // word; an ended tab kept its last state or none): the same vocabulary.
       agentState: s.state === 'ended' ? null : s.state,
       account: record ? ctx.shell.accountOf(record) : null,
+      // PRDCT-4540: a tab whose process left its connection says so.
+      connectionLeft: record ? providerConnectionLeft(record) : null,
       groupId: groupOfSession(layouts, s.id)?.id ?? null,
       view: record?.view ? { url: record.view.url, title: record.view.title ?? null } : null,
       workspaceId: record?.workspaceId ?? null,

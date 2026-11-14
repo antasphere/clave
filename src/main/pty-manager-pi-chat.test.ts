@@ -153,6 +153,13 @@ vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))
 vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
+// PRDCT-4540: the state folder's report path, without a storage port.
+vi.mock('./agent-state-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agent-state-manager')>()),
+  connectionReportPath: (id: string) => `/stand-in/agent-state/${id}.connection`,
+  clearConnectionReport: () => {},
+  lastConnectionReport: () => {}
+}))
 // PRDCT-4551: the ledger of starts, recorded.
 const ledger = vi.hoisted(() => ({ recordHarnessStart: vi.fn() }))
 vi.mock('./usage-ledger', () => ledger)
@@ -393,11 +400,14 @@ describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => 
       piProvider: 'kimi-coding'
     })
     await openPiChat({ connectionId: 'conn-1', connectionLabel: 'Kimi', model: 'k-first' })
-    const { connection } = configured() as {
+    const { connection, connectionReportFile } = configured() as {
       connection?: { provider: string; variables: string[] }
+      connectionReportFile?: string
     }
     expect(connection).toEqual({ provider: 'kimi-coding', variables: ['KIMI_API_KEY'] })
     expect(JSON.stringify(connection)).not.toContain(STAND_IN_KEY)
+    // PRDCT-4540: where the extension reports the chat's requests.
+    expect(connectionReportFile).toMatch(/\/agent-state\/.+\.connection$/)
   })
   // The verifier's F4: a model remembered from another chat is never what a
   // chat on a connection starts on, the connection decides it.

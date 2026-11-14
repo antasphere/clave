@@ -10,6 +10,7 @@ import {
   type SessionInput
 } from '../../../shared/session-model'
 import { isFileAttachment } from '../../../shared/attachments'
+import { connectionLeftReason } from '../../../shared/provider-connection-pick'
 import { findExecutable, resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import type {
   SessionAdapter,
@@ -23,6 +24,12 @@ import { startRefusal } from './start-refusal'
 import { connectionHandover } from '../../connection-handover'
 import { lazyTerminalPorts } from '../../ports/terminals'
 import { CLAVE_MCP_CONFIG_FILE_ENV, piClaveExtensionPath } from '../../clave-tools-launch'
+import {
+  CLAVE_CONNECTION_REPORT_FILE_ENV,
+  connectionWatchNames,
+  parseConnectionReport
+} from '../../connection-watch'
+import { readFileSync, rmSync } from 'node:fs'
 
 /**
  * A chat with Pi over its rpc mode (`pi --mode rpc`, Pi 1.5): one Pi process
@@ -53,6 +60,10 @@ export interface PiRpcLaunch {
    *  own variables in `env`, carried past a login profile when Pi is started
    *  through the shell (`connectionHandover`). */
   connection?: { provider: string; variables: readonly string[] }
+  /** PRDCT-4540: where Clave's Pi extension reports this chat's requests
+   *  (`on` / `off <provider>`), beside the state files; a chat on a
+   *  connection only. */
+  connectionReportFile?: string
 }
 export interface PiRpcSpawnOptions {
   resume?: string
@@ -127,6 +138,19 @@ export function piBackOnConnection(
   model: string
 ): string {
   return `${label} was on ${foreign}, which is not a model of its connection's provider ${provider}: the chat put it back on ${model}.`
+}
+
+/** A request of the chat was about to leave its connection (another provider,
+ *  or the same with another credential): Clave's extension ended it before it
+ *  left, and the turn ends (PRDCT-4540). */
+export function piRequestLeftConnection(label: string, left: string, provider: string): string {
+  const reason = connectionLeftReason(left)
+  if (reason?.why === 'unchecked')
+    return `Clave could not check which credential this turn would use: nothing was sent, and the turn ended.`
+  const went = reason?.provider ?? left
+  return reason?.why === 'credential' || went === provider
+    ? `${label} was about to send this turn to ${went} with another credential than this chat's connection: nothing was sent, and the turn ended.`
+    : `${label} was about to send this turn to ${went}, not to this chat's connection (${provider}): nothing was sent, and the turn ended.`
 }
 
 /** Pi reported a model of another provider than the connection's and could
@@ -240,6 +264,12 @@ interface HandleState {
   /** PRDCT-4507: the tab's credential for Clave's tools was issued at this
    *  spawn, and is let go of when the process ends. */
   claveTools?: boolean
+  /** PRDCT-4540: the person stopped the run (Esc): an aborted run is theirs,
+   *  not the extension's. Reset at each run's start. */
+  userAborted?: boolean
+  /** PRDCT-4540: "put it back", said only once a request has gone on the
+   *  connection again (the extension's report reads `on` at the run's end). */
+  pendingBack?: string
   ended: boolean
   closing: boolean
 }
@@ -632,7 +662,10 @@ export class PiRpcAdapter implements SessionAdapter {
       }
       if (this.offConnection(state)) continue
       const said = piBackOnConnection(this.label, foreign, provider, state.model ?? modelId)
-      if (when === 'start') this.startNotice(state, said)
+      // PRDCT-4540: with the extension watching, said once a request has in
+      // fact gone on the connection (the run's end reads its report).
+      if (state.launch.connectionReportFile) state.pendingBack = said
+      else if (when === 'start') this.startNotice(state, said)
       else this.notice(state, said)
       this.emitMeta(state)
       return true
@@ -792,6 +825,7 @@ export class PiRpcAdapter implements SessionAdapter {
   private async interrupt(state: HandleState): Promise<void> {
     const connection = state.connection
     if (!state.turnRunning || !connection || connection.closed) return
+    state.userAborted = true
     try {
       await connection.command('clear_queue')
       await connection.command('abort', undefined, { timeout: ABORT_TIMEOUT_MS })
@@ -838,6 +872,7 @@ export class PiRpcAdapter implements SessionAdapter {
         state.turnRunning = true
         state.runActive = true
         state.runsStarted++
+        state.userAborted = false
         if (!state.working) {
           state.working = true
           this.emit(state, { type: 'state_change', state: 'working' })
@@ -881,6 +916,7 @@ export class PiRpcAdapter implements SessionAdapter {
       case 'agent_settled':
         state.turnRunning = false
         state.runActive = false
+        this.settledOnConnection(state, frame.aborted === true)
         this.endTurn(state, frame.aborted === true)
         void this.contextUsage(state)
         return
@@ -1005,14 +1041,71 @@ export class PiRpcAdapter implements SessionAdapter {
    *  session start. The token stays in the file. No file (no tool server
    *  up): the launch as it was, a chat without tools. */
   private withClaveTools(state: HandleState, launch: PiRpcLaunch): PiRpcLaunch {
-    if (!this.claveTools) return launch
-    const configPath = lazyTerminalPorts.mcpConfig.write(state.spec.id)
-    state.claveTools = true
-    if (!configPath) return launch
+    const env: NodeJS.ProcessEnv = { ...launch.env }
+    if (this.claveTools) {
+      const configPath = lazyTerminalPorts.mcpConfig.write(state.spec.id)
+      state.claveTools = true
+      if (configPath) env[CLAVE_MCP_CONFIG_FILE_ENV] = configPath
+    }
+    // PRDCT-4540: a chat on a connection is watched at the source: the
+    // extension is told the provider and the NAME of the key's variable,
+    // checks every request, and ends one that would leave the connection.
+    const report = launch.connectionReportFile
+    const watch =
+      launch.connection && report
+        ? connectionWatchNames(
+            launch.connection.provider,
+            Object.fromEntries(launch.connection.variables.map((name) => [name, '']))
+          )
+        : null
+    if (watch && report) {
+      try {
+        rmSync(report, { force: true })
+      } catch {
+        // A stale report is read as such: the next request rewrites it.
+      }
+      Object.assign(env, watch, { [CLAVE_CONNECTION_REPORT_FILE_ENV]: report })
+    }
+    if (!env[CLAVE_MCP_CONFIG_FILE_ENV] && !watch) return launch
     return {
       ...launch,
       command: [...launch.command, '--extension', piClaveExtensionPath()],
-      env: { ...launch.env, [CLAVE_MCP_CONFIG_FILE_ENV]: configPath }
+      env
+    }
+  }
+
+  /** PRDCT-4540: a run's end on a connection, as the extension reported its
+   *  requests. A run it ended (aborted, the person did not stop it) because
+   *  a request would have left the connection: one sentence naming where Pi
+   *  was, and no "put it back". A run whose request went on the connection:
+   *  the "put it back" waiting since the adapter moved Pi, said now. */
+  private settledOnConnection(state: HandleState, aborted: boolean): void {
+    const report = this.connectionReport(state)
+    if (report === undefined) return
+    if (report !== null && aborted && !state.userAborted) {
+      state.pendingBack = undefined
+      this.notice(
+        state,
+        piRequestLeftConnection(this.label, report, state.launch.connection?.provider ?? '')
+      )
+      return
+    }
+    if (report === null && state.pendingBack) {
+      this.notice(state, state.pendingBack)
+      state.pendingBack = undefined
+    }
+  }
+
+  /** PRDCT-4540: what the extension last reported of this chat's requests:
+   *  null on the connection, the provider it went to off it, undefined when
+   *  there is no report. */
+  private connectionReport(state: HandleState): string | null | undefined {
+    const report = state.launch.connectionReportFile
+    if (!report || !state.launch.connection) return undefined
+    try {
+      return parseConnectionReport(readFileSync(report, 'utf8'))
+    } catch {
+      return undefined
     }
   }
 

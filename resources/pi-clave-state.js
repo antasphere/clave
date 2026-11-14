@@ -2,27 +2,17 @@
 // Clave's bundled Pi extension. Pi loads this file with --extension, in a
 // terminal tab and in a chat tab. Source contract: https://pi.dev/docs/extensions
 //
-// Two jobs, each switched on by a variable of the tab's own:
+// Three jobs, each switched on by a variable of the tab's own:
 // - CLAVE_AGENT_STATE_FILE (terminal only): report the agent's state words.
 // - CLAVE_MCP_CONFIG_FILE: register Clave's own tools for this session
 //   (PRDCT-4507), read from the tab's own config file (mode 0600). The token
 //   lives in that file alone: never in the environment, never on a command
 //   line. Registrations are not saved by Pi: nothing is written anywhere.
+// - CLAVE_CONNECTION_PROVIDER, CLAVE_CONNECTION_KEY_VAR (names) and
+//   CLAVE_CONNECTION_REPORT_FILE: watch every provider request of a tab on a
+//   stored connection (PRDCT-4540, `watchConnection`).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-
-/** The tools declared to the model on every turn; every other Clave tool is
- *  found through Pi's `tool_search` (`deferred`), as a Claude tab finds its
- *  deferred tools. The whole list weighs about 62 KB per turn otherwise. */
-export const CLAVE_DIRECT_TOOLS = [
-  'clave_list',
-  'clave_launch_options',
-  'clave_open_session',
-  'clave_send_to_session',
-  'clave_read_session',
-  'clave_request_input',
-  'clave_input_result'
-]
 
 /** The `clave` entry of the tab's MCP config file, as Pi's registration
  *  takes it, or null when the file is missing or not the expected shape. */
@@ -39,11 +29,15 @@ export function claveMcpServer(configFile) {
       type: 'http',
       url: entry.url,
       headers,
-      // Seven declared like `read` and `bash`; the rest found by search.
+      // Every Clave tool reached one way, the one Pi's own prompt describes:
+      // found with `tool_search`, then called. None is declared up front: a
+      // split (some declared, the rest deferred) left Pi's prompt saying the
+      // server's tools are not declared while some were, and the search never
+      // returned those (a real model searched and never called them). The
+      // whole list declared would weigh about 62 KB on every turn.
       exposure: 'deferred',
-      toolExposure: Object.fromEntries(CLAVE_DIRECT_TOOLS.map((name) => [name, 'direct'])),
       description:
-        'Clave, the app this tab runs in: its tabs listed, opened, read and messaged; a question, a value, a secret or an approval asked of the person; routines. Tools not declared here are found with tool_search.'
+        'Clave, the app this tab runs in: its tabs listed, opened, read and messaged; a question, a value, a secret or an approval asked of the person; routines.'
     }
   } catch {
     return null
@@ -79,7 +73,98 @@ export function registerClaveTools(pi, configFile) {
   }
 }
 
+const PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/** Where this provider request goes, against the tab's connection (Pi
+ *  1.5.2's `before_provider_headers` sees no credential in its headers for an
+ *  OpenAI-style provider, so the comparison is with what `getProviderAuth`
+ *  resolves for the request's provider):
+ *  - `on`: to the connection's provider, carrying the key of the variable named;
+ *  - `provider`: to another provider;
+ *  - `credential`: to the connection's provider with another credential (a
+ *    `/login` in the tab, an OAuth sign-in);
+ *  - `unchecked`: Pi gave no way to tell which credential (no
+ *    `getProviderAuth`, or it threw): not taken as the connection's.
+ *  Compared in memory, never written, logged or sent. */
+export async function requestOnConnection(ctx, provider, keyVar, env) {
+  if (!ctx || !ctx.model || ctx.model.provider !== provider) return 'provider'
+  if (!keyVar) return 'on'
+  const expected = env[keyVar]
+  if (!expected) return 'on'
+  let resolved
+  try {
+    if (!ctx.modelRegistry || typeof ctx.modelRegistry.getProviderAuth !== 'function')
+      return 'unchecked'
+    resolved = await ctx.modelRegistry.getProviderAuth(provider)
+  } catch {
+    return 'unchecked'
+  }
+  const key = resolved && resolved.auth && resolved.auth.apiKey
+  return typeof key === 'string' && key === expected ? 'on' : 'credential'
+}
+
+/** The report's line for an answer: an id and a word, never a value. */
+export function connectionReportLine(answer, went) {
+  const id = typeof went === 'string' && PROVIDER_RE.test(went) ? went : 'unknown'
+  if (answer === 'on') return 'on'
+  if (answer === 'credential') return `off ${id} credential`
+  if (answer === 'unchecked') return `unchecked ${id}`
+  return `off ${id}`
+}
+
+/**
+ * PRDCT-4540: a tab on a stored connection is told two NAMES (the provider,
+ * the variable its key rides in) and a report file. Before each provider
+ * request the extension answers "does this request go on the connection?",
+ * writes one line when the answer changes (`on`, `off <provider>`,
+ * `off <provider> credential` or `unchecked <provider>`: an id and a word,
+ * nothing else), and in a chat (`rpc`) ends a request that would leave the
+ * connection before it is sent. A terminal is the person's own interface:
+ * reported, never blocked. Never throws into Pi.
+ */
+export function watchConnection(pi, env) {
+  const provider = env.CLAVE_CONNECTION_PROVIDER
+  const reportFile = env.CLAVE_CONNECTION_REPORT_FILE
+  if (!provider || !reportFile) return false
+  const keyVar = env.CLAVE_CONNECTION_KEY_VAR
+  let last = null
+  const report = (line) => {
+    if (line === last) return
+    last = line
+    try {
+      mkdirSync(dirname(reportFile), { recursive: true })
+      writeFileSync(reportFile, `${line}\n`, 'utf8')
+    } catch {
+      // Reporting is best effort; the chat's request is ended regardless.
+    }
+  }
+  pi.on('before_provider_headers', async (_event, ctx) => {
+    let answer = 'unchecked'
+    try {
+      answer = await requestOnConnection(ctx, provider, keyVar, env)
+    } catch {
+      answer = 'unchecked'
+    }
+    const went = ctx && ctx.model && ctx.model.provider
+    report(connectionReportLine(answer, went))
+    if (answer === 'on') return
+    if (ctx && ctx.mode === 'rpc') {
+      try {
+        ctx.abort()
+      } catch {
+        // Nothing else to do: the adapter ends the turn on the report.
+      }
+    }
+  })
+  return true
+}
+
 export default function claveExtension(pi) {
+  try {
+    watchConnection(pi, process.env)
+  } catch {
+    // Never interrupt Pi.
+  }
   const configFile = process.env.CLAVE_MCP_CONFIG_FILE
   if (configFile) pi.on('session_start', () => registerClaveTools(pi, configFile))
 

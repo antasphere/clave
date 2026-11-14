@@ -154,6 +154,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onSessionTyped: routed,
   onSessionRestarting: routed,
   onSessionModelChanged: routed,
+  onSessionConnectionChanged: routed,
   onSessionRestarted: routed,
   onPinnedGroupLaunched: localBecause("this Mac's pinned groups"),
   onSessionData: routed,

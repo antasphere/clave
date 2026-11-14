@@ -13,7 +13,13 @@ import { findExecutable } from './shell-launch'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { terminalJournal } from './terminal-journal'
-import { lastHookState } from './agent-state-manager'
+import {
+  clearConnectionReport,
+  connectionReportPath,
+  lastConnectionReport,
+  lastHookState,
+  setConnectionReportListener
+} from './agent-state-manager'
 import {
   ptyBackend,
   accountTokenForSpawn,
@@ -32,6 +38,7 @@ import {
 import { recordHarnessStart } from './usage-ledger'
 import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
 import { connectionVariableNames } from './connection-handover'
+import { ledgerLineForReport } from './connection-watch'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -96,7 +103,7 @@ import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import * as exchangeDigest from './exchange-digest'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
-import { sessionModelChanged } from './server/session-events'
+import { sessionConnectionChanged, sessionModelChanged } from './server/session-events'
 import { initialChatView } from './sessions/chat-view-default'
 import {
   defaultViewFor,
@@ -139,6 +146,18 @@ const piChatAdapter = new PiRpcAdapter({
   claveTools: true
 })
 sessionManager.registerAdapter(piChatAdapter)
+// PRDCT-4540: a Pi tab's own report of its connection (Clave's Pi extension,
+// read by the state folder's watch on the Mac and on a Clave server) goes on
+// the tab's record, which `clave_list` reads, and to the windows.
+setConnectionReportListener((id, leftFor) => {
+  ptyBackend.setSessionConnectionLeft(id, leftFor)
+  sessionConnectionChanged(id, leftFor)
+  // Usage follows the report (PRDCT-4551): off the connection, the tab's Pi
+  // session goes on the ledger with none; back on it, with the connection.
+  const line = ledgerLineForReport(ptyBackend.getSessionRecord(id), leftFor)
+  if (line) recordHarnessStart(line)
+})
+
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
 type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat'
 const CHAT_RECORD_ADAPTERS = new Set<string>([
@@ -576,7 +595,9 @@ class PtyManager {
               connection: {
                 provider: chatConnection.piProvider,
                 variables: connectionVariableNames(chatConnection.providerEnv)
-              }
+              },
+              // PRDCT-4540: where Clave's extension reports its requests.
+              connectionReportFile: connectionReportPath(session.id)
             }
           : {})
       })
@@ -642,6 +663,13 @@ class PtyManager {
     } catch (error) {
       await adapter.kill(handle)
       throw error
+    }
+    // PRDCT-4540: a Pi terminal taken back still running reports where its
+    // process last went (its adoption rewrote the record); a fresh one starts
+    // on its connection, its old report gone.
+    if (!isEvents && family === 'pi') {
+      if (reattached) lastConnectionReport(session.id)
+      else clearConnectionReport(session.id)
     }
     if (isEvents) this.eventSessions.set(session.id, session)
     if (isEvents) session.startedAt = Date.now()

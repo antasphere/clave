@@ -1,4 +1,5 @@
 import { workspaceForPath } from '../../../shared/workspace-types'
+import { sessionConnectionLeft } from './session-connection'
 import { launchModeFields } from '../../../shared/runtime-choices'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
@@ -229,8 +230,9 @@ function listedAccount(
   const provider = s.claudeMode || s.claudeAgentsMode ? 'claude' : s.codexMode ? 'codex' : null
   // A Pi or OpenCode tab on a stored connection (PRDCT-4496): its id and
   // label, never exhausted (a provider key reports no usage).
+  // A tab whose process left it names it no more (PRDCT-4540, one rule).
   if (!provider)
-    return (s.piMode || s.opencodeMode) && s.connectionId
+    return (s.piMode || s.opencodeMode) && s.connectionId && !sessionConnectionLeft(s)
       ? {
           id: s.connectionId,
           label: s.connectionLabel ?? s.connectionId,
@@ -267,6 +269,8 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       // the tab predates accounts or was launched without naming one.
       // Whether that account is about to hit its limit, for an agent to act on.
       account: listedAccount(s),
+      // PRDCT-4540: a tab whose process left its connection says so.
+      connectionLeft: sessionConnectionLeft(s),
       groupId: groupOfSession(state.groups, s.id)?.id ?? null,
       view: s.view ? { url: s.view.url, title: s.view.title ?? null } : null,
       workspaceId: s.workspaceId ?? null,

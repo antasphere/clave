@@ -170,7 +170,7 @@ describe("a Pi chat is handed Clave's tools (PRDCT-4507)", () => {
       form: 'rpc',
       ok: true,
       exposure: 'deferred',
-      declaredTools: ['clave_list'],
+      declaredTools: [],
       callerSessionId: id,
       tools: ['clave_list'],
       tokenOnArgv: false,

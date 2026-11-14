@@ -882,47 +882,43 @@ export async function run(t) {
         sent[lastPrompt]?.message === 'and after that',
       sent.map((f) => f?.type)
     )
-    // The same while a run is going (the verifier's R2-1, PRDCT-4427): Pi
-    // moves to Anthropic's model as a slow run starts, and the message
-    // written meanwhile goes as a steer, put back on Kimi's first.
+    // The same as a run starts (the verifier's R2-1, PRDCT-4427): Pi moves
+    // to Anthropic's model with the run under way. Since PRDCT-4540 no run
+    // goes on off Kimi: Clave's extension ends its request before it leaves,
+    // and the turn ends in one sentence; the next message goes once Pi is
+    // back on Kimi's, and "put it back" is said once it went there.
+    const LEFT =
+      "Pi was about to send this turn to anthropic, not to this chat's connection (kimi-coding): nothing was sent, and the turn ended."
+    const leftBefore = (await chatText(piId)).split(LEFT).length - 1
     await say(piId, 'use anthropic now, be slow')
-    await until(
-      async () =>
-        piFrames().some((f) => f?.type === 'prompt' && f?.message === 'use anthropic now, be slow')
-          ? true
-          : null,
+    const ended = await until(
+      async () => ((await chatText(piId)).split(LEFT).length - 1 > leftBefore ? true : null),
       { tries: 60 }
     )
-    // Pi's agent_start has come: the run is Pi's own now.
-    await new Promise((r) => setTimeout(r, 300))
-    await say(piId, 'steered meanwhile')
-    const steered = await until(
-      async () =>
-        piFrames().some((f) => f?.type === 'steer' && f?.message === 'steered meanwhile')
-          ? true
-          : null,
-      { tries: 60 }
-    )
-    const withSteer = piFrames()
-    const steerAt = withSteer.findIndex((f) => f?.type === 'steer')
-    const setBeforeSteer = withSteer.map((f) => f?.type).lastIndexOf('set_model', steerAt)
-    const slowPrompt = withSteer.findIndex((f) => f?.message === 'use anthropic now, be slow')
     t.check(
-      'a message written during a run off Kimi goes as a steer only after a set_model back on kimi-coding',
-      !!steered &&
-        setBeforeSteer > slowPrompt &&
-        withSteer[setBeforeSteer]?.provider === 'kimi-coding',
-      withSteer.map((f) => f?.type)
+      'a run moved off Kimi sends nothing and ends in one sentence (PRDCT-4540)',
+      !!ended && !/You said: use anthropic now, be slow/.test(await chatText(piId)),
+      scrub(await chatText(piId)).slice(-600)
+    )
+    await say(piId, 'after the move')
+    const afterSaid = await until(
+      async () => (/You said: after the move/.test(await chatText(piId)) ? true : null),
+      { tries: 60 }
+    )
+    const frames = piFrames()
+    const nextAt = frames.findIndex((f) => f?.message === 'after the move')
+    const setBefore = frames.map((f) => f?.type).lastIndexOf('set_model', nextAt)
+    const slowPrompt = frames.findIndex((f) => f?.message === 'use anthropic now, be slow')
+    t.check(
+      'the next message goes only after a set_model back on kimi-coding',
+      !!afterSaid && setBefore > slowPrompt && frames[setBefore]?.provider === 'kimi-coding',
+      frames.map((f) => f?.type)
     )
     const backTwice = await until(
       async () => ((await chatText(piId)).split(BACK).length - 1 >= 2 ? true : null),
       { tries: 40 }
     )
     t.check('and the chat says so again', !!backTwice, scrub(await chatText(piId)).slice(-600))
-    await win.evaluate((id) => window.electronAPI.sessionsWrite(id, { type: 'interrupt' }), piId)
-    await until(async () => (piFrames().some((f) => f?.type === 'abort') ? true : null), {
-      tries: 40
-    })
 
     // ── 2b. Terminals: one on a connection names it in its header, one on
     // none names nothing ──

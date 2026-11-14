@@ -50,7 +50,7 @@ import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
 import { UserIconDisplay } from '../ui/UserIconDisplay'
 import { BrandField } from '../ui/BrandField'
 import { fieldAccent } from '../../lib/brand-field'
-import { useSessionConnection } from '../../lib/session-connection'
+import { sessionConnectionLeft, useSessionConnection } from '../../lib/session-connection'
 import { cn } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
@@ -330,6 +330,7 @@ export function SidebarFooter(): React.ReactElement {
   // A Pi or OpenCode tab's stored connection, named where a Claude tab's
   // account is (PRDCT-4427).
   const connection = useSessionConnection(focusedSession)
+  const connectionLeft = sessionConnectionLeft(focusedSession)
   // Subscribed so the launcher's pick follows the reads as they land.
   useClaudeAccountsUsage((s) => s.byAccount)
   const selectedCodexId = useCodexAccountStore((s) => s.selectedAccountId)
@@ -528,6 +529,21 @@ export function SidebarFooter(): React.ReactElement {
                 {harnessName} · {connection.label}
               </span>
             </button>
+          </div>
+        </>
+      )}
+      {/* PRDCT-4540: a process that left its connection says so instead. */}
+      {connectionLeft && (
+        <>
+          <div className="sidebar-footer-sep" />
+          <div className="sidebar-footer-row sidebar-footer-row--meta">
+            <span
+              className="sidebar-footer-line text-[11px] text-text-secondary truncate"
+              data-connection-left=""
+              title={connectionLeft}
+            >
+              {connectionLeft}
+            </span>
           </div>
         </>
       )}

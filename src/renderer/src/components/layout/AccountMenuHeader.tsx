@@ -32,6 +32,24 @@ export function ConnectionMenuHeader({
   )
 }
 
+/** PRDCT-4540: the row's menu of a tab whose process left its connection
+ *  says so, where it named the connection. */
+export function ConnectionLeftMenuHeader({
+  sentence,
+  pi = false
+}: {
+  sentence: string
+  pi?: boolean
+}): React.JSX.Element {
+  const Logo = pi ? PiLogo : OpenCodeLogo
+  return (
+    <div className="flex items-center gap-2 min-w-0" data-connection-left="">
+      <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+      <div className="text-xs text-text-primary min-w-0">{sentence}</div>
+    </div>
+  )
+}
+
 /**
  * The header of a Claude or Codex session's context menu: which account the
  * session runs on and that account's headroom. Live while the menu is open:

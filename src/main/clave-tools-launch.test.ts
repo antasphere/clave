@@ -154,7 +154,7 @@ describe("Clave's Pi extension", () => {
     vi.unstubAllEnvs()
   })
 
-  it("registers Clave's server at the session start, from a good file: seven tools declared, the rest found by search", async () => {
+  it("registers Clave's server at the session start, from a good file: every tool found by search, none declared up front", async () => {
     const mod = await extension()
     vi.stubEnv('CLAVE_MCP_CONFIG_FILE', issued())
     const { pi, handlers, registered } = madeUpPi()
@@ -164,45 +164,20 @@ describe("Clave's Pi extension", () => {
     expect(registered).toEqual([
       [
         'clave',
-        expect.objectContaining({
+        {
           type: 'http',
           url: URL,
           headers: { Authorization: `Bearer ${TOKEN}` },
           exposure: 'deferred',
-          toolExposure: {
-            clave_list: 'direct',
-            clave_launch_options: 'direct',
-            clave_open_session: 'direct',
-            clave_send_to_session: 'direct',
-            clave_read_session: 'direct',
-            clave_request_input: 'direct',
-            clave_input_result: 'direct'
-          }
-        })
+          description:
+            'Clave, the app this tab runs in: its tabs listed, opened, read and messaged; a question, a value, a secret or an approval asked of the person; routines.'
+        }
       ]
     ])
-    expect(registered[0][1].description).toMatch(/tool_search/)
-  })
-
-  it('declares seven tools the servers really serve, under these names (PRDCT-4507)', async () => {
-    const { CLAVE_DIRECT_TOOLS } = (await extension()) as unknown as {
-      CLAVE_DIRECT_TOOLS: string[]
-    }
-    expect(CLAVE_DIRECT_TOOLS).toEqual([
-      'clave_list',
-      'clave_launch_options',
-      'clave_open_session',
-      'clave_send_to_session',
-      'clave_read_session',
-      'clave_request_input',
-      'clave_input_result'
-    ])
-    // A rename on either server, the Mac's or a Clave server's, would leave
-    // the name declared to nothing.
-    for (const file of ['mcp-server.ts', 'standalone-mcp.ts']) {
-      const source = fs.readFileSync(path.join(__dirname, 'mcp', file), 'utf8')
-      for (const name of CLAVE_DIRECT_TOOLS) expect(source, file).toContain(`'${name}'`)
-    }
+    // One way for every tool: no per-tool exposure, and a description that
+    // never claims some are declared.
+    expect(registered[0][1]).not.toHaveProperty('toolExposure')
+    expect(String(registered[0][1].description)).not.toMatch(/declared/)
   })
 
   it('is silent on a missing or a malformed file, and with no variable at all', async () => {
