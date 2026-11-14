@@ -15,7 +15,11 @@
  *
  * `--standalone` on both: without it the command reaches (or starts) the
  * person's background service; a private server reads the same store and
- * leaves the service alone. A session is exported again only when its
+ * leaves the service alone. It starts none of the person's own MCP servers:
+ * checked on 2.3.0 with a made-up local server in the configuration that
+ * leaves a line each time it starts, eight reads left none, and one
+ * `opencode run` in the same home left one (MCP servers start with a turn,
+ * never with a read). A session is exported again only when its
  * `time.updated` changed, as `pi-usage.ts` reads a file again only when it
  * changed. The session's own `tokens` total also counts calls that are no
  * message (its title's): only messages are records, one request each.
