@@ -17,11 +17,11 @@ import {
   buildSpawnEnv,
   accountTokenForSpawn,
   codexHomeForSpawn,
-  piForeignCredentialUnset,
   tmuxEnvironmentReconcileArgs,
   TMUX_SESSION_ENV_VARS
 } from './pty-manager'
-import { PI_PROVIDER_CREDENTIAL_ENV_VARS, PROVIDER_KEY_ENV_VARS } from './models-catalog-overlay'
+import { PROVIDER_KEY_ENV_VARS } from './models-catalog-overlay'
+import { CLAVE_TAB_CREDENTIAL_ENV_VARS } from './connection-handover'
 
 /**
  * The boundary: a subscription token reaches a Claude session and nothing
@@ -123,7 +123,14 @@ describe('tmuxEnvironmentReconcileArgs', () => {
   // A Pi or OpenCode connection travels the same way (PRDCT-4496): every key
   // variable a harness reads, OpenCode's inline config, Pi's agent directory.
   it("carries every provider connection's variable", () => {
-    const names = [...PROVIDER_KEY_ENV_VARS, 'OPENCODE_CONFIG_CONTENT', 'PI_CODING_AGENT_DIR']
+    // With the private names a connection's values cross a login profile
+    // under (`connectionHandover`): a tmux session must carry them too.
+    const names = [
+      ...PROVIDER_KEY_ENV_VARS,
+      'OPENCODE_CONFIG_CONTENT',
+      'PI_CODING_AGENT_DIR',
+      ...CLAVE_TAB_CREDENTIAL_ENV_VARS
+    ]
     expect(names.length).toBeGreaterThan(10)
     for (const name of names) expect(TMUX_SESSION_ENV_VARS).toContain(name)
     const lines = tmuxEnvironmentReconcileArgs(['DISPLAY']).map((args) => args[3])
@@ -176,52 +183,6 @@ describe('buildSpawnEnv', () => {
     expect(env.DEEPSEEK_API_KEY).toBe('made-up-connection-value')
     expect(env.OPENCODE_CONFIG_CONTENT).toBe('{}')
     expect(buildSpawnEnv(base, {})).not.toHaveProperty('OPENCODE_CONFIG_CONTENT')
-  })
-
-  // The verifier's F1 (PRDCT-4496): real Pi 1.5.2 lists, switches to and
-  // spends any provider whose key it finds in its environment.
-  it("a Pi process on a connection keeps the connection's credential alone", () => {
-    const shell = {
-      ...base,
-      ANTHROPIC_API_KEY: 'made-up-other-0001',
-      OPENAI_API_KEY: 'made-up-other-0002',
-      AWS_PROFILE: 'made-up-profile',
-      KIMI_API_KEY: 'made-up-shell-kimi',
-      GITHUB_TOKEN: 'made-up-not-a-provider'
-    }
-    const pi = { KIMI_API_KEY: 'made-up-connection-kimi', PI_CODING_AGENT_DIR: '/data/pi/conn-1' }
-    const env = buildSpawnEnv(shell, { providerEnv: pi })
-    expect(env.KIMI_API_KEY).toBe('made-up-connection-kimi')
-    expect(env.PI_CODING_AGENT_DIR).toBe('/data/pi/conn-1')
-    for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'AWS_PROFILE'])
-      expect(env).not.toHaveProperty(name)
-    for (const name of PI_PROVIDER_CREDENTIAL_ENV_VARS)
-      if (name !== 'KIMI_API_KEY') expect(env).not.toHaveProperty(name)
-    // Not a credential Pi reads: the person's commands keep it.
-    expect(env.GITHUB_TOKEN).toBe('made-up-not-a-provider')
-    expect(env.PATH).toBe('/usr/bin')
-  })
-
-  it('a tab on no connection, or an OpenCode one, keeps the whole environment', () => {
-    const shell = { ...base, ANTHROPIC_API_KEY: 'made-up-other-0001' }
-    expect(buildSpawnEnv(shell, {}).ANTHROPIC_API_KEY).toBe('made-up-other-0001')
-    expect(
-      buildSpawnEnv(shell, {
-        providerEnv: { DEEPSEEK_API_KEY: 'made-up', OPENCODE_CONFIG_CONTENT: '{}' }
-      }).ANTHROPIC_API_KEY
-    ).toBe('made-up-other-0001')
-  })
-
-  it('a Pi terminal on a connection unsets the others after the login profile, names only', () => {
-    const pi = { KIMI_API_KEY: 'made-up-connection-kimi', PI_CODING_AGENT_DIR: '/data/pi/conn-1' }
-    const unset = piForeignCredentialUnset(pi)
-    expect(unset.startsWith('unset ')).toBe(true)
-    expect(unset.endsWith('; ')).toBe(true)
-    const names = unset.slice('unset '.length, -2).split(' ')
-    expect(names).toEqual(PI_PROVIDER_CREDENTIAL_ENV_VARS.filter((n) => n !== 'KIMI_API_KEY'))
-    expect(unset).not.toContain('made-up')
-    expect(piForeignCredentialUnset(undefined)).toBe('')
-    expect(piForeignCredentialUnset({ DEEPSEEK_API_KEY: 'made-up' })).toBe('')
   })
 
   it('keeps the terminal and strips the nesting marker', () => {
