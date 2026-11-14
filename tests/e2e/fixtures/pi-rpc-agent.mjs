@@ -282,13 +282,16 @@ const emit = async (event) => {
   await sleep(delayMs)
   out(event)
 }
+// What a model call used, as Pi 1.5.2 writes it on each assistant message
+// (read off a real session on 14 November 2026, PRDCT-4551): made-up figures,
+// the same for every call, so a spec can count calls.
 const usage = () => ({
-  input: 0,
-  output: 0,
-  cacheRead: 0,
+  input: 100,
+  output: 10,
+  cacheRead: 20,
   cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+  totalTokens: 130,
+  cost: { input: 0.0001, output: 0.00002, cacheRead: 0.00001, cacheWrite: 0, total: 0.00013 }
 })
 const assistant = (content, stopReason, extra = {}) => ({
   role: 'assistant',

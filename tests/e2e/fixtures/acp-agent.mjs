@@ -36,10 +36,6 @@ if (argv.includes('--version')) {
   process.stdout.write('stand-in 0.0.0\n')
   process.exit(0)
 }
-if (argv.some((arg) => arg !== 'acp')) {
-  process.stderr.write('usage: acp-agent.mjs acp | --version\n')
-  process.exit(2)
-}
 
 const stateDir = process.env.ACP_STAND_IN_STATE
 if (!stateDir) {
@@ -48,6 +44,62 @@ if (!stateDir) {
 }
 const sessionsDir = path.join(stateDir, 'sessions')
 mkdirSync(sessionsDir, { recursive: true })
+
+// PRDCT-4551: OpenCode's two documented reads of what a session used, as
+// OpenCode 2.3.0 answers them (read off the real program on 14 November
+// 2026): `api --standalone GET /api/session?…` lists every session with its
+// `time.updated`; `session export --standalone <id>` gives its messages, an
+// assistant message carrying `model.providerID`, `tokens` and `cost`. Each
+// prompt below records the usage a real call would have.
+const readTurns = (id) => {
+  const file = path.join(sessionsDir, `${id}.jsonl`)
+  return existsSync(file)
+    ? readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line))
+    : []
+}
+if (argv[0] === 'api' && argv.includes('GET') && argv.some((a) => a.startsWith('/api/session'))) {
+  const data = readdirSync(sessionsDir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => {
+      const id = name.slice(0, -'.json'.length)
+      const meta = JSON.parse(readFileSync(path.join(sessionsDir, name), 'utf8'))
+      const updated =
+        Date.parse(meta.updatedAt ?? '') || statSync(path.join(sessionsDir, name)).mtimeMs
+      return { id, time: { created: updated, updated }, location: { directory: meta.cwd ?? '' } }
+    })
+    .sort((a, b) => b.time.updated - a.time.updated)
+  process.stdout.write(`${JSON.stringify({ data, cursor: {} })}\n`)
+  process.exit(0)
+}
+if (argv[0] === 'session' && argv[1] === 'export') {
+  const id = argv.filter((a) => !a.startsWith('--'))[2]
+  if (!id || !existsSync(path.join(sessionsDir, `${id}.json`))) {
+    process.stderr.write(`Session not found: ${id}\n`)
+    process.exit(1)
+  }
+  const messages = readTurns(id)
+    .filter((turn) => turn.kind === 'usage')
+    .map((turn, i) => ({
+      id: `msg_${i}`,
+      time: { created: turn.at - 5, completed: turn.at },
+      type: 'assistant',
+      agent: 'build',
+      model: { id: turn.modelID, providerID: turn.providerID },
+      content: [],
+      finish: 'stop',
+      cost: turn.cost,
+      tokens: turn.tokens
+    }))
+  process.stdout.write(`${JSON.stringify({ info: { id }, messages })}\n`)
+  process.exit(0)
+}
+if (argv.some((arg) => arg !== 'acp')) {
+  process.stderr.write('usage: acp-agent.mjs acp | api … | session export … | --version\n')
+  process.exit(2)
+}
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.ACP_STAND_IN_DELAY_MS ?? 0) || 0
 const refuse = process.env.ACP_STAND_IN_REFUSE
@@ -246,6 +298,22 @@ async function prompt(id, params) {
     content: [{ type: 'content', content: { type: 'text', text: '# Stand-in' } }]
   })
   record(sessionId, { kind: 'agent', text: agentText })
+  // What the model call used, as OpenCode keeps it per message (PRDCT-4551):
+  // under the provider its model is named by, never replayed on a load.
+  const [providerID, ...modelParts] = String(readMeta(sessionId).model ?? 'stand-in/one').split('/')
+  record(sessionId, {
+    kind: 'usage',
+    at: Date.now(),
+    providerID,
+    modelID: modelParts.join('/'),
+    tokens: {
+      input: 100 + text.length,
+      output: agentText.length,
+      reasoning: 0,
+      cache: { read: 20, write: 0 }
+    },
+    cost: 0.001
+  })
   record(sessionId, {
     kind: 'tool',
     toolCallId,
