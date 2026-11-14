@@ -331,4 +331,71 @@ describe("OpenCode's records, as OpenCode 2.3.0 answers them", () => {
     await fresh.read(1000)
     expect(calls.filter((c) => c[0] === 'session')).toHaveLength(3)
   })
+
+  // PRDCT-4551, the coordinator's point 2: only the sessions a range can
+  // concern are exported; "all" alone walks everything; paging by cursor.
+  it('exports, for today, only the sessions updated today, across every page; all of them for all', async () => {
+    const NOW_MS = new Date(2026, 10, 14, 18).getTime()
+    const today = new Date(2026, 10, 14).getTime()
+    const day = 24 * 60 * 60 * 1000
+    // 450 sessions over three pages, newest first: 30 updated today.
+    const sessions = Array.from({ length: 450 }, (_, i) => ({
+      id: `ses_${String(i).padStart(4, '0')}`,
+      time: { updated: i < 30 ? NOW_MS - i * 60_000 : today - (i - 29) * day }
+    }))
+    const exported: string[] = []
+    const pages: string[] = []
+    const run = async (args: string[]): Promise<string> => {
+      if (args[0] === 'api') {
+        const url = args[3]
+        pages.push(url)
+        const cursor = Number(/cursor=(\d+)/.exec(url)?.[1] ?? 0)
+        const page = sessions.slice(cursor, cursor + 200)
+        const next = cursor + 200 < sessions.length ? String(cursor + 200) : undefined
+        return JSON.stringify({ data: page, cursor: next ? { next } : {} })
+      }
+      exported.push(args[3])
+      return JSON.stringify({ info: { id: args[3] }, messages: [] })
+    }
+    const usage = new HarnessUsage({
+      ledger: () => [],
+      piRoots: () => [],
+      opencode: () => {
+        const reader = new OpencodeSessionRecords(run, 4)
+        return (since) => reader.read(since)
+      },
+      connections: () => [],
+      now: () => new Date(NOW_MS)
+    })
+    await usage.read('today')
+    expect(pages).toHaveLength(3)
+    expect(pages[1]).toContain('cursor=200')
+    expect(exported.sort()).toEqual(sessions.slice(0, 30).map((s) => s.id))
+    exported.length = 0
+    await usage.read('7d')
+    expect(exported).toHaveLength(36)
+  })
+
+  it('a wider range asked while a narrower read runs gets the wider read, never the narrower one', async () => {
+    const calls: number[] = []
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    const usage = new HarnessUsage({
+      ledger: () => [],
+      piRoots: () => [],
+      opencode: () => async (since) => {
+        calls.push(since)
+        if (calls.length === 1) await gate
+        return []
+      },
+      connections: () => [],
+      now: () => NOW
+    })
+    const narrow = usage.read('today')
+    const sameNarrow = usage.read('today')
+    const wide = usage.read('all')
+    release()
+    await Promise.all([narrow, sameNarrow, wide])
+    expect(calls).toEqual([new Date(2026, 10, 14).getTime(), 0])
+  })
 })

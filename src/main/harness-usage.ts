@@ -159,9 +159,27 @@ const OPENCODE_FAILED = "OpenCode's records could not be read."
 
 export class HarnessUsage {
   private readonly pi = new PiSessionRecords()
-  private opencodeRead: Promise<OpencodeSessionRecord[]> | null = null
+  private opencodeRead: { since: number; read: Promise<OpencodeSessionRecord[]> } | null = null
 
   constructor(private readonly deps: HarnessUsageDeps) {}
+
+  /** OpenCode's records since a moment. Reads that overlap share one when it
+   *  covers the range asked (the commands are a process each); a wider range
+   *  waits for the read in flight, then reads what that one skipped. */
+  private opencodeFor(
+    reader: (since: number) => Promise<OpencodeSessionRecord[]>,
+    since: number
+  ): Promise<OpencodeSessionRecord[]> {
+    const current = this.opencodeRead
+    if (current && current.since <= since) return current.read
+    const read = (current ? current.read.catch(() => []) : Promise.resolve([]))
+      .then(() => reader(since))
+      .finally(() => {
+        if (this.opencodeRead?.read === read) this.opencodeRead = null
+      })
+    this.opencodeRead = { since, read }
+    return read
+  }
 
   async read(range: HarnessUsageRange): Promise<HarnessUsageView> {
     const now = (this.deps.now ?? (() => new Date()))()
@@ -178,12 +196,8 @@ export class HarnessUsage {
     if (!reader) unavailable.push({ harness: 'opencode', reason: OPENCODE_ABSENT })
     else {
       try {
-        // Reads that overlap share one: the commands are a process each.
-        if (!this.opencodeRead)
-          this.opencodeRead = reader(rangeStart(range, now)).finally(() => {
-            this.opencodeRead = null
-          })
-        for (const r of await this.opencodeRead) records.push({ harness: 'opencode', ...r })
+        for (const r of await this.opencodeFor(reader, rangeStart(range, now)))
+          records.push({ harness: 'opencode', ...r })
       } catch {
         unavailable.push({ harness: 'opencode', reason: OPENCODE_FAILED })
       }
