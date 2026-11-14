@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { constants } from 'node:os'
 import { NdjsonLines } from './ndjson'
+import { STDERR_TAIL_BYTES } from './start-refusal'
 
 /**
  * The Agent Client Protocol's transport (version 1): newline-delimited
@@ -45,7 +46,6 @@ export class AcpRpcError extends Error {
   }
 }
 
-const STDERR_TAIL_BYTES = 4096
 const KILL_GRACE_MS = 3000
 
 export function object(value: unknown): Record<string, unknown> {

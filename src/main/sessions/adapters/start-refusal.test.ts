@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lastWords, startRefusal } from './start-refusal'
+import { STDERR_TAIL_BYTES, lastWords, startRefusal } from './start-refusal'
 
 /**
  * What a Pi or OpenCode chat says when its agent ends before it spoke
@@ -46,6 +46,29 @@ describe('lastWords', () => {
       env
     )
     expect(words).toBe('refused ‹hidden› and ‹hidden›, ‹hidden› in /made-up/dir')
+  })
+
+  // The verifier's F2: a value cut by the 4 KB tail's edge is no longer the
+  // whole value the mask looks for. Made-up value only.
+  it('drops the first, partial line of a tail cut at its start', () => {
+    const key = 'madeup-kimi-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    const full = `using key ${key}\n${'\u001b[0m'.repeat(1008)}fatal: provider refused\n`
+    const tail = Buffer.from(full).subarray(-STDERR_TAIL_BYTES).toString('utf8')
+    expect(tail.includes(key)).toBe(false)
+    const notice = startRefusal('Pi', 1, tail, { KIMI_API_KEY: key })
+    expect(notice).toBe('Pi could not start: fatal: provider refused (exit status 1)')
+    expect(notice).not.toMatch(/[A-Z0-9]{10,}/)
+    // A tail cut inside its only line keeps nothing of it.
+    const one = Buffer.from(`${key}${'x'.repeat(5000)}`)
+      .subarray(-STDERR_TAIL_BYTES)
+      .toString()
+    expect(startRefusal('Pi', 1, one, { KIMI_API_KEY: key })).toBe(
+      'Pi could not start: it exited with status 1 and said nothing'
+    )
+    // A tail that was not cut keeps its first line.
+    expect(lastWords(`using key ${key}\nfatal\n`, { KIMI_API_KEY: key })).toBe(
+      'using key ‹hidden› fatal'
+    )
   })
 
   it('cuts a long tail to its end', () => {

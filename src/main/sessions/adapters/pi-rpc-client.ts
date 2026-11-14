@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { constants } from 'node:os'
 import { NdjsonLines } from './ndjson'
+import { STDERR_TAIL_BYTES } from './start-refusal'
 
 /**
  * Pi's rpc transport (`pi --mode rpc`, Pi 1.5): strict JSONL on the child's
@@ -38,7 +39,6 @@ export class PiRpcError extends Error {
   }
 }
 
-const STDERR_TAIL_BYTES = 4096
 const KILL_GRACE_MS = 3000
 
 export function record(value: unknown): Record<string, unknown> {

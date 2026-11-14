@@ -14,6 +14,10 @@
 const MAX_LINES = 3
 const MAX_CHARS = 500
 
+/** The stderr tail the Pi and ACP connections keep, in bytes: a tail this
+ *  long was cut at its start, possibly through a value. */
+export const STDERR_TAIL_BYTES = 4096
+
 /** A variable whose value is a credential, or carries one. */
 const SECRET_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|OPENCODE_CONFIG_CONTENT/i
 
@@ -29,7 +33,14 @@ export function lastWords(
   env?: Readonly<Record<string, string | undefined>>
 ): string {
   if (!stderrTail) return ''
-  let text = stderrTail.replace(ANSI, '').replace(/\r\n?/g, '\n').replace(CONTROL, '')
+  // A tail cut at its start begins inside a line, perhaps inside a value the
+  // mask below would no longer recognise whole: that partial line goes.
+  let tail = stderrTail
+  if (Buffer.byteLength(tail, 'utf8') >= STDERR_TAIL_BYTES) {
+    const end = tail.search(/[\r\n]/)
+    tail = end === -1 ? '' : tail.slice(end + 1)
+  }
+  let text = tail.replace(ANSI, '').replace(/\r\n?/g, '\n').replace(CONTROL, '')
   for (const [name, value] of Object.entries(env ?? {}))
     if (value && value.length >= 4 && SECRET_NAME.test(name))
       text = text.split(value).join('‹hidden›')
