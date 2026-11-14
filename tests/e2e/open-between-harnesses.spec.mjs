@@ -213,6 +213,29 @@ async function pass(t, server, saved) {
         callerId
       )
     }
+    // The OpenCode chat's `execute` card shows what it ran (PRDCT-4507): the
+    // stand-in sends the real 2.3.0's frames for a code-mode script.
+    await callMcp(app, 'focus', { sessionId: ocCaller })
+    await win.evaluate(
+      ({ id }) => window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'run code' }),
+      { id: ocCaller }
+    )
+    const pane = win.locator(`.chat-host[data-session-id="${ocCaller}"]`)
+    const line = await until(
+      async () => {
+        const text = await pane
+          .locator('.chat-tool-line')
+          .allInnerTexts()
+          .catch(() => [])
+        return text.find((l) => l.includes('Ran code')) ?? null
+      },
+      { tries: 60 }
+    )
+    t.check(
+      "the execute card's line says it ran code calling clave_list",
+      /Ran code\s*calling clave_list/.test(line ?? ''),
+      line
+    )
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
     await app?.close()

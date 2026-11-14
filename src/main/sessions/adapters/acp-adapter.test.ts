@@ -263,6 +263,46 @@ describe('AcpAdapter against the stand-in agent', () => {
     expect(prompt?.params?.prompt).toEqual([{ type: 'text', text: 'hello' }])
   })
 
+  // PRDCT-4507: OpenCode 2.3.0's code mode, as the real `opencode acp` sent it
+  // (the stand-in copies the frames): the `execute` call opens with
+  // `rawInput: {}` and its script arrives with the `in_progress` update.
+  it('shows an execute call again when its script arrives, once, live and replayed', async () => {
+    const SCRIPT =
+      'const found = await search({ query: "list tabs" }); const r = await tools.clave.clave_list({}); return r'
+    const state = tmp()
+    const s = await open({}, { state })
+    const sessionId = (
+      s.events.find((e) => e.type === 'session_meta') as { providerSessionId: string }
+    ).providerSessionId
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'run code' })
+    await expect.poll(() => done(s.events)).toBe(true)
+    const calls = s.events.filter((e) => e.type === 'tool_call') as {
+      id: string
+      name: string
+      input: unknown
+    }[]
+    expect(calls.map((c) => [c.name, c.input])).toEqual([
+      ['execute', {}],
+      // The two identical updates show it once.
+      ['execute', { code: SCRIPT }]
+    ])
+    expect(new Set(calls.map((c) => c.id)).size).toBe(1)
+    expect(s.events.find((e) => e.type === 'tool_result')).toMatchObject({
+      id: calls[0].id,
+      output: 'stand-in answer'
+    })
+    await s.adapter.kill(s.handle)
+    const resumed = await open({ resume: sessionId }, { state })
+    const replayed = resumed.adapter
+      .history(resumed.handle)
+      .map((item) => item.event)
+      .filter((e) => e.type === 'tool_call')
+    expect(replayed).toEqual([
+      { type: 'tool_call', id: expect.any(String), name: 'execute', input: { code: SCRIPT } }
+    ])
+  })
+
   it('sends a file attachment as a resource link', async () => {
     const s = await open()
     s.adapter.write(s.handle, {

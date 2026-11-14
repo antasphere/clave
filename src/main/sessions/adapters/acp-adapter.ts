@@ -124,6 +124,11 @@ interface HandleState {
   textOpen: boolean
   /** Tool calls already shown, by `toolCallId`. */
   toolCalls: Set<string>
+  /** The input each shown call was shown with (its JSON), PRDCT-4507: OpenCode
+   *  2.3.0 opens a call with `rawInput: {}` and sends what it runs (its
+   *  `execute` script) in a later `tool_call_update`, so the card is told
+   *  again when the input arrives or changes. */
+  toolInputs: Map<string, { name: string; json: string }>
   permissions: Map<string, PendingPermission>
   initialPrompt?: string
   /** The exit code to report, when the adapter ended the session itself. */
@@ -137,6 +142,14 @@ interface HandleState {
 
 /** The text of a list of ACP ToolContent items: content blocks' text, and a
  *  diff as its path, then the old text and the new. */
+/** A tool call's input that says something: a non-empty object, or a value
+ *  that is not one (an array, a string). `{}` and nothing say nothing. */
+function hasInput(input: unknown): boolean {
+  if (input === undefined || input === null) return false
+  if (typeof input === 'object' && !Array.isArray(input)) return Object.keys(input).length > 0
+  return true
+}
+
 function toolOutput(content: unknown): string {
   return array(content)
     .map((item) => {
@@ -337,6 +350,7 @@ export class AcpAdapter implements SessionAdapter {
       turnRunning: false,
       textOpen: false,
       toolCalls: new Set(),
+      toolInputs: new Map(),
       permissions: new Map(),
       ended: false,
       closing: false
@@ -546,6 +560,7 @@ export class AcpAdapter implements SessionAdapter {
           this.closeLoadedText(state)
           state.loading = false
           state.toolCalls.clear()
+          state.toolInputs.clear()
         }
       }
       if (!opened) {
@@ -765,19 +780,19 @@ export class AcpAdapter implements SessionAdapter {
         if (!state.toolCalls.has(id)) {
           state.toolCalls.add(id)
           this.closeText(state)
-          this.emit(state, {
-            type: 'tool_call',
-            id,
-            name: text(update.title) || text(update.kind) || 'tool',
-            input: update.rawInput ?? {}
-          })
+          this.emitToolCall(state, id, update)
         }
         this.toolEnd(state, id, update)
         return
       }
-      case 'tool_call_update':
-        this.toolEnd(state, text(update.toolCallId), update)
+      case 'tool_call_update': {
+        const id = text(update.toolCallId)
+        // What the call runs, arrived after the call was shown (OpenCode
+        // 2.3.0's `execute` script comes with its `in_progress` update).
+        if (id && state.toolCalls.has(id)) this.toolInputArrived(state, id, update)
+        this.toolEnd(state, id, update)
         return
+      }
       case 'available_commands_update':
         this.storeCommands(state, update)
         return
@@ -831,18 +846,35 @@ export class AcpAdapter implements SessionAdapter {
     })
   }
 
+  /** A call shown with the input it carries, remembered for a later one. */
+  private emitToolCall(state: HandleState, id: string, update: Record<string, unknown>): void {
+    const input = update.rawInput ?? {}
+    const name = text(update.title) || text(update.kind) || 'tool'
+    state.toolInputs.set(id, { name, json: JSON.stringify(input) })
+    this.emit(state, { type: 'tool_call', id, name, input })
+  }
+
+  /** A shown call whose input arrived or changed since (PRDCT-4507): shown
+   *  again under the same id, the card taking the new input. An empty input
+   *  never replaces one already shown. */
+  private toolInputArrived(state: HandleState, id: string, update: Record<string, unknown>): void {
+    const input = update.rawInput
+    if (!hasInput(input)) return
+    const json = JSON.stringify(input)
+    const shown = state.toolInputs.get(id)
+    if (shown?.json === json) return
+    const name = text(update.title) || shown?.name || text(update.kind) || 'tool'
+    state.toolInputs.set(id, { name, json })
+    this.emit(state, { type: 'tool_call', id, name, input })
+  }
+
   /** A completed or failed call becomes its result. */
   private toolEnd(state: HandleState, id: string, update: Record<string, unknown>): void {
     const status = text(update.status)
     if (!id || (status !== 'completed' && status !== 'failed')) return
     if (!state.toolCalls.has(id)) {
       state.toolCalls.add(id)
-      this.emit(state, {
-        type: 'tool_call',
-        id,
-        name: text(update.title) || text(update.kind) || 'tool',
-        input: update.rawInput ?? {}
-      })
+      this.emitToolCall(state, id, update)
     }
     this.emit(state, {
       type: 'tool_result',
@@ -890,6 +922,14 @@ export class AcpAdapter implements SessionAdapter {
             input: update.rawInput ?? {}
           }
         })
+      }
+      // An input that arrives later (PRDCT-4507) is the call's input.
+      else if (hasInput(update.rawInput)) {
+        const shown = history.find(
+          (item) => item.event.type === 'tool_call' && item.event.id === id
+        )
+        if (shown?.event.type === 'tool_call')
+          shown.event = { ...shown.event, input: update.rawInput }
       }
       const status = text(update.status)
       if (status === 'completed' || status === 'failed')
