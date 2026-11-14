@@ -57,7 +57,8 @@ async function open(
     env = {},
     initialPrompt,
     ready = true,
-    session
+    session,
+    connection
   }: {
     state?: string
     env?: Record<string, string>
@@ -65,6 +66,8 @@ async function open(
     ready?: boolean
     /** The command's session flag: a fresh id by default. */
     session?: string[]
+    /** The stored connection the chat runs on (PRDCT-4496). */
+    connection?: { provider: string; unset: string[] }
   } = {}
 ): Promise<Session> {
   const adapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
@@ -80,7 +83,8 @@ async function open(
       state
     ],
     env: { ...process.env, ...env },
-    ...(initialPrompt ? { initialPrompt } : {})
+    ...(initialPrompt ? { initialPrompt } : {}),
+    ...(connection ? { connection } : {})
   })
   const handle = await adapter.spawn({
     id,
@@ -494,6 +498,132 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     )
     await expect.poll(() => types(known.state)).toContain('get_available_models')
     expect(notices(known.events)).toEqual([])
+  })
+
+  // The verifier's F1 (PRDCT-4496): real Pi 1.5.2 lists every provider it
+  // finds a credential for and switches to any of them. A chat on a stored
+  // connection offers, accepts and runs on that connection's provider alone.
+  // The stand-in lists Anthropic's model while ANTHROPIC_API_KEY (made up) is
+  // in its environment, as Pi does; the connection's provider here is the
+  // stand-in's own.
+  describe('a chat on a stored connection stays on its provider (PRDCT-4496)', () => {
+    const OTHER = { PI_STAND_IN_ENV_PROVIDERS: '1', ANTHROPIC_API_KEY: 'made-up-other-0001' }
+    const ON_STAND_IN = { provider: 'stand-in', unset: [] }
+    const metaModels = (events: SessionEvent[]): (string | null)[] =>
+      events.flatMap((e) => (e.type === 'session_meta' ? [e.model] : []))
+
+    it('models() lists the connection’s provider alone; on no connection, all Pi offers', async () => {
+      const free = await open({}, { env: OTHER })
+      expect((await free.adapter.models(free.handle)).map((m) => m.id)).toEqual([
+        'stand-in/one',
+        'stand-in/two',
+        'stand-in/three',
+        'anthropic/claude-stand-in'
+      ])
+      const s = await open({}, { env: OTHER, connection: ON_STAND_IN })
+      expect((await s.adapter.models(s.handle)).map((m) => m.id)).toEqual([
+        'stand-in/one',
+        'stand-in/two',
+        'stand-in/three'
+      ])
+    })
+
+    it('a pick of another provider’s model is refused in one sentence, and Pi is never asked', async () => {
+      const s = await open({}, { env: OTHER, connection: ON_STAND_IN })
+      s.events.length = 0
+      s.adapter.write(s.handle, { type: 'set_model', model: 'anthropic/claude-stand-in' })
+      await expect
+        .poll(() => notices(s.events))
+        .toEqual([
+          'Pi stays on stand-in/one: this chat runs on its connection, whose provider is stand-in, and anthropic/claude-stand-in is not one of its models.'
+        ])
+      await expect.poll(() => metaModels(s.events)).toEqual(['stand-in/one'])
+      expect(frames(s.state).filter((f) => f.type === 'set_model')).toEqual([])
+      // A model of the connection's provider still switches.
+      s.adapter.write(s.handle, { type: 'set_model', model: 'two' })
+      await expect.poll(() => metaModels(s.events)).toContain('stand-in/two')
+    })
+
+    it('Pi on another provider’s model at start (a resume) is put back on the connection’s, and said', async () => {
+      const s = await open(
+        {},
+        {
+          env: OTHER,
+          connection: ON_STAND_IN,
+          session: ['--session-id', randomUUID(), '--model', 'anthropic/claude-stand-in']
+        }
+      )
+      const said =
+        "Pi was on anthropic/claude-stand-in, which is not a model of its connection's provider stand-in: the chat put it back on stand-in/one."
+      await expect.poll(() => notices(s.events)).toEqual([said])
+      expect(metaModels(s.events)).toEqual(['stand-in/one', 'stand-in/one'])
+      expect(frames(s.state).find((f) => f.type === 'set_model')).toMatchObject({
+        provider: 'stand-in',
+        modelId: 'one'
+      })
+    })
+
+    it('a model moved off the connection during a run is put back before the next prompt goes', async () => {
+      const s = await open({}, { env: OTHER, connection: ON_STAND_IN })
+      s.adapter.write(s.handle, { type: 'set_model', model: 'stand-in/two' })
+      await expect.poll(() => metaModels(s.events)).toContain('stand-in/two')
+      s.adapter.write(s.handle, { type: 'user_message', text: 'use anthropic now' })
+      await expect.poll(() => done(s.events)).toBe(true)
+      const from = s.events.length
+      s.adapter.write(s.handle, { type: 'user_message', text: 'and now?' })
+      await expect.poll(() => done(s.events, from)).toBe(true)
+      const sent = frames(s.state)
+      const last = sent.map((f) => f.type).lastIndexOf('prompt')
+      const asked = sent.map((f) => f.type).lastIndexOf('get_state')
+      const back = sent.map((f) => f.type).lastIndexOf('set_model')
+      // Pi's model read, then set_model back on the last connection model,
+      // then the prompt.
+      expect(sent[last]).toMatchObject({ type: 'prompt', message: 'and now?' })
+      expect(sent[back]).toMatchObject({ provider: 'stand-in', modelId: 'two' })
+      expect(asked).toBeLessThan(back)
+      expect(back).toBeLessThan(last)
+      expect(sent.slice(sent.map((f) => f.type).indexOf('prompt') + 1, asked)).not.toContainEqual(
+        expect.objectContaining({ type: 'set_model' })
+      )
+      expect(notices(s.events)).toContain(
+        "Pi was on anthropic/claude-stand-in, which is not a model of its connection's provider stand-in: the chat put it back on stand-in/two."
+      )
+      expect(metaModels(s.events)).not.toContain('anthropic/claude-stand-in')
+    })
+
+    it('Pi that cannot be put back: one sentence, and the turn ends with nothing sent', async () => {
+      const s = await open(
+        {},
+        {
+          env: OTHER,
+          // A provider the stand-in has no model of.
+          connection: { provider: 'kimi-coding', unset: [] },
+          session: ['--session-id', randomUUID(), '--model', 'anthropic/claude-stand-in']
+        }
+      )
+      const said =
+        "Pi is on anthropic/claude-stand-in, which is not a model of its connection's provider kimi-coding, and could not be put back on one: nothing was sent."
+      await expect.poll(() => notices(s.events)).toEqual([said])
+      // The chat never names the other provider's model as the one it runs on.
+      expect(metaModels(s.events)).toEqual([null])
+      const from = s.events.length
+      s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+      await expect.poll(() => done(s.events, from)).toBe(true)
+      expect(notices(s.events.slice(from))).toEqual([said])
+      expect(types(s.state)).not.toContain('prompt')
+    })
+
+    it('on no connection, a model Pi moves to is left alone and nothing is read before a prompt', async () => {
+      const s = await open({}, { env: OTHER })
+      s.adapter.write(s.handle, { type: 'user_message', text: 'use anthropic now' })
+      await expect.poll(() => done(s.events)).toBe(true)
+      const before = frames(s.state).length
+      const from = s.events.length
+      s.adapter.write(s.handle, { type: 'user_message', text: 'again' })
+      await expect.poll(() => done(s.events, from)).toBe(true)
+      expect(frames(s.state).slice(before)[0]).toMatchObject({ type: 'prompt' })
+      expect(notices(s.events)).toEqual([])
+    })
   })
 
   it('resumes with --session: history has the past, and no prompt is sent', async () => {

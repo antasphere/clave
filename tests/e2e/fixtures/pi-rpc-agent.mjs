@@ -16,7 +16,10 @@
 // Behaviour switches: `PI_STAND_IN_DELAY_MS` waits between the events of a
 // run; `PI_STAND_IN_ANY_PROVIDER=1` takes `--provider p --model m` for any
 // provider but its own, as Pi takes one its models.json declares;
-// `PI_STAND_IN_NO_MODEL=1` leaves the model out of `get_state` and fails
+// `PI_STAND_IN_ENV_PROVIDERS=1` lists Anthropic's model too while
+// `ANTHROPIC_API_KEY` is in the environment, as Pi lists every provider it
+// finds a key for (a prompt containing `use anthropic` then moves the model
+// there, as a command typed in the chat could); `PI_STAND_IN_NO_MODEL=1` leaves the model out of `get_state` and fails
 // every prompt with `No model selected`; `PI_STAND_IN_STREAMING_ONCE=1` refuses
 // the first prompt with `Agent is streaming` and runs nothing;
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
@@ -92,6 +95,12 @@ const modelObject = (id) => ({
   maxTokens: 8192
 })
 const CATALOG = ['one', 'two', 'three'].map(modelObject)
+// Real Pi lists every provider it finds a credential for (Pi 1.5.2, PRDCT-4496):
+// with `PI_STAND_IN_ENV_PROVIDERS=1`, an `ANTHROPIC_API_KEY` in the
+// environment lists Anthropic's model too, and `set_model` takes it.
+const envProviders = process.env.PI_STAND_IN_ENV_PROVIDERS === '1'
+if (envProviders && process.env.ANTHROPIC_API_KEY)
+  CATALOG.push({ ...modelObject('claude-stand-in'), provider: 'anthropic' })
 /** The model a connection's directory declares, listed beside the catalog. */
 const declared = []
 const findModel = (provider, id) => CATALOG.find((m) => m.provider === provider && m.id === id)
@@ -619,6 +628,15 @@ function handle(frame) {
         return fail(id, type, 'Agent is streaming')
       }
       if (noModel || !session.model) return fail(id, type, 'No model selected')
+      // `use anthropic`: the model moves to Anthropic's during the run, as an
+      // extension's command typed in the chat could move it (PRDCT-4496).
+      const other = text.includes('use anthropic')
+        ? CATALOG.find((m) => m.provider === 'anthropic')
+        : undefined
+      if (other) {
+        session.model = other
+        append({ type: 'model_change', provider: other.provider, modelId: other.id })
+      }
       ok(id, type, { disposition: 'started' })
       void startRun(text)
       return

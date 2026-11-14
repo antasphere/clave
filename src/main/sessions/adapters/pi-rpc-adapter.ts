@@ -42,6 +42,11 @@ export interface PiRpcLaunch {
   env: NodeJS.ProcessEnv
   cwd?: string
   initialPrompt?: string
+  /** The stored connection the chat runs on (PRDCT-4496): its Pi provider,
+   *  the only one the chat offers and lets Pi run on, and the credential
+   *  variables its process must not have (already out of `env`; unset again
+   *  after a login profile when Pi is started through the shell). */
+  connection?: { provider: string; unset: readonly string[] }
 }
 export interface PiRpcSpawnOptions {
   resume?: string
@@ -81,16 +86,47 @@ export function piUnknownModel(label: string, model: string, provider: string | 
 
 /** Pi's `get_available_models` answer as the chat's menu lists it: each
  *  model as `provider/id` (what the session reports and `set_model` splits)
- *  and by its name. Under a stored connection Pi lists the models it has a
- *  key for, that connection's provider's. */
-export function piModelOptions(data: unknown): ModelOption[] {
+ *  and by its name. Pi lists every provider it finds a credential for, the
+ *  connection's or not (checked on 1.5.2): a chat on a stored connection
+ *  passes its provider, and only that provider's models are listed
+ *  (PRDCT-4496). */
+export function piModelOptions(data: unknown, provider?: string): ModelOption[] {
   const seen = new Set<string>()
   return array(record(data).models).flatMap((raw) => {
     const id = modelName(raw)
     if (!id || seen.has(id)) return []
+    if (provider !== undefined && text(record(raw).provider) !== provider) return []
     seen.add(id)
     return [{ id, label: text(record(raw).name) || text(record(raw).id) }]
   })
+}
+
+/** A pick of another provider's model in a chat on a connection, refused in
+ *  one sentence (PRDCT-4496). */
+export function piForeignModelRefused(
+  label: string,
+  wanted: string,
+  provider: string,
+  current: string | null
+): string {
+  return `${label} stays on ${current ?? 'no model'}: this chat runs on its connection, whose provider is ${provider}, and ${wanted} is not one of its models.`
+}
+
+/** Pi reported a model of another provider than the connection's, and the
+ *  chat put it back on one of the connection's (PRDCT-4496). */
+export function piBackOnConnection(
+  label: string,
+  foreign: string,
+  provider: string,
+  model: string
+): string {
+  return `${label} was on ${foreign}, which is not a model of its connection's provider ${provider}: the chat put it back on ${model}.`
+}
+
+/** Pi reported a model of another provider than the connection's and could
+ *  not be put back: the turn ends unsent (PRDCT-4496). */
+export function piOffConnection(label: string, foreign: string, provider: string): string {
+  return `${label} is on ${foreign}, which is not a model of its connection's provider ${provider}, and could not be put back on one: nothing was sent.`
 }
 
 /** A resumed conversation's messages as the history a view pages through. */
@@ -159,6 +195,9 @@ interface HandleState {
   /** The bare id and the provider of that model. */
   modelId?: string
   modelProvider?: string
+  /** The last model Pi reported on the connection's provider, by its bare
+   *  id: where the chat puts Pi back (PRDCT-4496). */
+  connectionModelId?: string
   commands: CommandOption[]
   history: HistoryItem[]
   /** Events emitted before `ready`, when no consumer is bound yet. */
@@ -204,11 +243,14 @@ function spawnPi(launch: PiRpcLaunch, cwd: string): ChildProcessWithoutNullStrea
   if (!program) throw new Error('The Pi launch names no command')
   const env = launch.env
   const executable = findExecutable(program, env.PATH)
+  const unset = launch.connection?.unset.length
+    ? `unset ${launch.connection.unset.join(' ')}; `
+    : ''
   const file = executable
     ? { file: executable, args }
     : resolvePosixShellLaunch(
         env.SHELL || process.env.SHELL || '/bin/zsh',
-        `exec ${launch.command.map(shellSingleQuote).join(' ')}`
+        `${unset}exec ${launch.command.map(shellSingleQuote).join(' ')}`
       )
   return spawn(file.file, file.args, {
     cwd,
@@ -367,13 +409,22 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.started) await state.started.catch(() => {})
     const connection = state.connection
     if (!connection || connection.closed || state.ended) return []
-    state.available ??= connection.command('get_available_models').then(piModelOptions)
     try {
-      return await state.available
+      return await this.available(state, connection)
     } catch (error) {
       state.available = undefined
       throw error
     }
+  }
+
+  /** The models the chat offers, asked of Pi once: on a stored connection,
+   *  that connection's provider's alone (PRDCT-4496). */
+  private available(state: HandleState, connection: PiRpcConnection): Promise<ModelOption[]> {
+    const provider = state.launch.connection?.provider
+    state.available ??= connection
+      .command('get_available_models')
+      .then((data) => piModelOptions(data, provider))
+    return state.available
   }
 
   async kill(handle: SessionHandle): Promise<void> {
@@ -437,6 +488,9 @@ export class PiRpcAdapter implements SessionAdapter {
       // provider refuses the first message. Said once, kept in the past
       // for a pane drawn after the handshake (PRDCT-4427).
       else if (wanted && state.model) await this.sayUnknownModel(state)
+      // A chat on a connection never names it while Pi runs elsewhere (a
+      // resumed session on another provider's model, PRDCT-4496).
+      await this.keepOnConnection(state, 'start')
       if (state.ended || state.closing) return
       if (state.options.resume) {
         try {
@@ -484,10 +538,9 @@ export class PiRpcAdapter implements SessionAdapter {
   private async sayUnknownModel(state: HandleState): Promise<void> {
     const connection = state.connection
     if (!connection || connection.closed) return
-    state.available ??= connection.command('get_available_models').then(piModelOptions)
     let listed: ModelOption[]
     try {
-      listed = await state.available
+      listed = await this.available(state, connection)
     } catch {
       state.available = undefined
       return
@@ -505,16 +558,85 @@ export class PiRpcAdapter implements SessionAdapter {
     state.model = modelName(model)
     state.modelId = text(m.id) || undefined
     state.modelProvider = text(m.provider) || undefined
+    if (state.modelId && state.modelProvider === state.launch.connection?.provider)
+      state.connectionModelId = state.modelId
+  }
+
+  /** Whether Pi is on a model of another provider than the chat's
+   *  connection's; never on a chat on no connection. */
+  private offConnection(state: HandleState): boolean {
+    const provider = state.launch.connection?.provider
+    return !!provider && !!state.modelProvider && state.modelProvider !== provider
+  }
+
+  /** On a stored connection, Pi on another provider's model (by whatever
+   *  road: a resumed session, something typed) is put back on one of the
+   *  connection's: the last it ran, the one the chat started on, else the
+   *  first the connection's provider lists (PRDCT-4496). False when it could
+   *  not be: the caller sends nothing, and the reader is told. */
+  private async keepOnConnection(state: HandleState, when: 'start' | 'send'): Promise<boolean> {
+    const provider = state.launch.connection?.provider
+    const connection = state.connection
+    if (!provider || !this.offConnection(state)) return true
+    if (!connection || connection.closed) return false
+    const foreign = state.model ?? ''
+    const started = state.options.model
+    const startedId =
+      started && started.startsWith(`${provider}/`)
+        ? started.slice(provider.length + 1)
+        : started && !started.includes('/')
+          ? started
+          : undefined
+    let listed: ModelOption[] = []
+    try {
+      listed = await this.available(state, connection)
+    } catch {
+      state.available = undefined
+    }
+    const candidates = [
+      ...new Set(
+        [
+          state.connectionModelId,
+          startedId,
+          ...listed.map((m) => m.id.slice(provider.length + 1))
+        ].filter((id): id is string => !!id)
+      )
+    ]
+    for (const modelId of candidates) {
+      if (state.ended || state.closing || connection.closed) return false
+      try {
+        this.takeModel(state, await connection.command('set_model', { provider, modelId }))
+      } catch {
+        continue
+      }
+      if (this.offConnection(state)) continue
+      const said = piBackOnConnection(this.label, foreign, provider, state.model ?? modelId)
+      if (when === 'start') this.startNotice(state, said)
+      else this.notice(state, said)
+      this.emitMeta(state)
+      return true
+    }
+    const said = piOffConnection(this.label, foreign, provider)
+    if (when === 'start') this.startNotice(state, said)
+    else this.notice(state, said)
+    return false
   }
 
   /** `provider/id` split on its first slash; a bare id takes the session's
-   *  provider, else the first model Pi lists under that id. */
+   *  provider, else the first model Pi lists under that id. On a stored
+   *  connection a model of another provider is refused before Pi is asked
+   *  (PRDCT-4496). */
   private async setModel(state: HandleState, wanted: string): Promise<void> {
     const connection = state.connection
     if (!connection || connection.closed) return
     const slash = wanted.indexOf('/')
-    let provider = slash >= 0 ? wanted.slice(0, slash) : state.modelProvider
+    const confined = state.launch.connection?.provider
+    let provider = slash >= 0 ? wanted.slice(0, slash) : (confined ?? state.modelProvider)
     const modelId = slash >= 0 ? wanted.slice(slash + 1) : wanted
+    if (confined && provider !== confined) {
+      this.notice(state, piForeignModelRefused(this.label, wanted, confined, state.model))
+      return
+    }
     try {
       if (!provider) {
         const models = array(record(await connection.command('get_available_models')).models)
@@ -579,6 +701,17 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.ended || state.closing || !connection || connection.closed) return
     const retried = retry !== undefined
     const steer = retried ? retry === 'steer' : state.runActive
+    // A prompt on a stored connection starts a run only on the connection's
+    // provider: Pi's model is read first, and one of another provider's
+    // (something typed changed it) is put back, or the turn ends unsent
+    // (PRDCT-4496).
+    if (!steer && !retried && !(await this.confirmOnConnection(state, connection))) {
+      if (state.ended || state.closing) return
+      state.turnRunning = false
+      this.endTurn(state, false)
+      return
+    }
+    if (state.ended || state.closing || connection.closed) return
     const runsBefore = state.runsStarted
     let data: Record<string, unknown>
     try {
@@ -606,6 +739,27 @@ export class PiRpcAdapter implements SessionAdapter {
       if (!state.runActive && state.runsStarted === runsBefore)
         return this.send(state, message, 'prompt')
     }
+  }
+
+  /** Pi's model as it says it now, kept on the connection's provider
+   *  (`keepOnConnection`); always true on no connection. A state Pi does not
+   *  give is not taken as a model on the connection: nothing is sent. */
+  private async confirmOnConnection(
+    state: HandleState,
+    connection: PiRpcConnection
+  ): Promise<boolean> {
+    if (!state.launch.connection) return true
+    try {
+      const data = record(await connection.command('get_state'))
+      const before = state.model
+      this.takeModel(state, data.model)
+      if (state.model !== before && !this.offConnection(state)) this.emitMeta(state)
+    } catch (error) {
+      if (state.ended || state.closing) return false
+      this.notice(state, `${this.label}: ${errorMessage(error)}`)
+      return false
+    }
+    return this.keepOnConnection(state, 'send')
   }
 
   /** Esc: the queue cleared first (an abort leaves queued messages to run),
@@ -794,7 +948,9 @@ export class PiRpcAdapter implements SessionAdapter {
   private emitMeta(state: HandleState): void {
     this.emit(state, {
       type: 'session_meta',
-      model: state.model,
+      // A chat on a connection never names another provider's model as the
+      // one it runs on (it sends nothing on one, `keepOnConnection`).
+      model: this.offConnection(state) ? null : state.model,
       providerSessionId: state.sessionId ?? null
     })
   }
