@@ -290,10 +290,11 @@ class ChatSession(
         // A Send again answered with the first id as sent: that message had arrived, none went now.
         val unknownAtStart = current.unknownSend
         _state.update { it.copy(sending = true, error = null) }
+        // Set before the launch, so a close() right after Send sees it whatever the dispatcher.
+        inFlightText = current.draft
         scope.launch {
             val text = current.draft
             val attachments = current.attachments
-            inFlightText = text
             try {
                 // The store clears the draft only when the stored one is the text sent.
                 draftWrite?.cancel()
