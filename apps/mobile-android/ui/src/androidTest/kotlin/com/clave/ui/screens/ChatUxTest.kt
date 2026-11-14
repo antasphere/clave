@@ -13,6 +13,7 @@ import com.clave.core.contract.AgentQuestion
 import com.clave.core.contract.SessionEvent
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import com.clave.ui.chat.ChatChoice
@@ -265,5 +266,57 @@ class ChatUxTest {
         rule.onNodeWithTag("slash-menu").assertDoesNotExist()
         rule.onNodeWithContentDescription("Message").performTextInput("now")
         rule.runOnIdle { assertEquals("/compact now", text) }
+    }
+
+    @Test
+    fun aHostedFormAsksOneQuestionAtATimeChecksEachAndSendsAMultiSelectAsAList() {
+        val sent = mutableListOf<Pair<String, Map<String, com.clave.core.contract.FormAnswer>>>()
+        val questions = listOf(
+            AgentQuestion(id = "n", question = "How many reviewers?", options = emptyList(), kind = com.clave.core.contract.InputKind.Number, min = 1.0, max = 5.0, hint = "Between 1 and 5"),
+            AgentQuestion(
+                id = "teams",
+                question = "Which teams?",
+                options = listOf(com.clave.core.contract.AgentQuestionOption("core"), com.clave.core.contract.AgentQuestionOption("web")),
+                kind = com.clave.core.contract.InputKind.Choice,
+                multiSelect = true,
+                optionsOnly = true,
+            ),
+        )
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                com.clave.ui.chat.FormCard(
+                    title = "Set up the review",
+                    questions = questions,
+                    options = listOf("answer" to "Approve", "deny" to "Skip"),
+                    onAnswer = { option, answers -> sent += option to answers },
+                    notes = mapOf("n" to "Not said yet"),
+                )
+            }
+        }
+        rule.onNodeWithText("1 of 2").assertIsDisplayed()
+        rule.onNodeWithText("Between 1 and 5").assertIsDisplayed()
+        rule.onNodeWithText("Not said yet").assertIsDisplayed()
+        rule.onNodeWithText("Next").performClick()
+        rule.onNodeWithText("An answer is needed").assertIsDisplayed()
+        rule.onNodeWithText("Your answer").performTextInput("9")
+        rule.onNodeWithText("Next").performClick()
+        rule.onNodeWithText("At most 5").assertIsDisplayed()
+        rule.onNodeWithText("9").performTextReplacement("2")
+        rule.onNodeWithText("Next").performClick()
+        rule.onNodeWithText("2 of 2").assertIsDisplayed()
+        rule.onNodeWithText("core").performClick()
+        rule.onNodeWithText("web").performClick()
+        rule.onNodeWithText("Approve").performClick()
+        rule.runOnIdle {
+            assertEquals(
+                listOf(
+                    "answer" to mapOf(
+                        "n" to com.clave.core.contract.FormAnswer.Text("2"),
+                        "teams" to com.clave.core.contract.FormAnswer.Choices(listOf("core", "web")),
+                    ),
+                ),
+                sent,
+            )
+        }
     }
 }

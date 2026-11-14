@@ -62,6 +62,7 @@ import com.clave.core.chat.isQuestion
 import com.clave.core.chat.markerOf
 import com.clave.core.chat.parseDelivery
 import com.clave.core.chat.questionKey
+import com.clave.core.chat.formAnswerText
 import com.clave.core.chat.refused
 import com.clave.core.chat.relativeTime
 import com.clave.core.chat.toolGroupSummary
@@ -69,6 +70,7 @@ import com.clave.core.chat.toolHint
 import com.clave.core.chat.toolLine
 import com.clave.core.chat.toolPanel
 import com.clave.core.contract.Attachment
+import com.clave.core.contract.FormAnswer
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.SessionAttachment
 import com.clave.ui.chat.ApprovalCard
@@ -79,6 +81,7 @@ import com.clave.ui.chat.ChoiceSheet
 import com.clave.ui.chat.Composer
 import com.clave.ui.chat.ComposerStatusRow
 import com.clave.ui.chat.ControlSheet
+import com.clave.ui.chat.FormCard
 import com.clave.ui.chat.PermissionPrompt
 import com.clave.ui.chat.SlashCommandView
 import com.clave.ui.chat.SlashMenu
@@ -154,6 +157,8 @@ data class ChatScreenState(
     val work: List<WorkCardView> = emptyList(),
     /** The commands matching the "/" being typed at the start of the composer. */
     val slashCommands: List<SlashCommandView> = emptyList(),
+    /** Forms answered from this phone whose answer the conversation has not echoed yet. */
+    val answeredHere: Set<String> = emptySet(),
 )
 
 /**
@@ -170,6 +175,8 @@ data class ChatActions(
     val onDismissRefusal: () -> Unit = {},
     /** Stop one background task by its id. */
     val onStopTask: (String) -> Unit = {},
+    /** A question's answers as the form gives them, a multi-select as a list; null sends one line each through onAnswer. */
+    val onAnswerForm: ((requestId: String, optionId: String, answers: Map<String, FormAnswer>) -> Unit)? = null,
 )
 
 /** An attachment as a chip says it: its marker ("[Image #1]") or its kind, then its name. */
@@ -320,7 +327,7 @@ fun ChatScreen(
                         "Start a conversation",
                         text = "Ask a question or describe what you want to build.",
                     )
-                    else -> Transcript(state, onLoadOlder, onAnswer, onToggle, onLink)
+                    else -> Transcript(state, onLoadOlder, onAnswer, onToggle, onLink, actions.onAnswerForm)
                 }
             }
         }
@@ -359,6 +366,7 @@ private fun Transcript(
     onAnswer: (requestId: String, optionId: String, answers: Map<String, String>) -> Unit,
     onToggle: (blockKey: String) -> Unit,
     onLink: (String) -> Unit,
+    onAnswerForm: ((String, String, Map<String, FormAnswer>) -> Unit)? = null,
 ) {
     val blocks = state.blocks
     val newestFirst = blocks.asReversed()
@@ -376,7 +384,9 @@ private fun Transcript(
     }
     val scope = rememberCoroutineScope()
     // The newest question still open, by its place in the upside-down list.
-    val question = newestFirst.indexOfFirst { it is Entry.Permission && isQuestion(it.request) && approvalAnswered(it) == null }
+    val question = newestFirst.indexOfFirst {
+        it is Entry.Permission && isQuestion(it.request) && approvalAnswered(it) == null && it.request.id !in state.answeredHere
+    }
     // Null while the question is on screen (or none waits); else whether it sits above what
     // is read. Derived, so a layout pass that changes nothing recomposes nothing.
     val questionAbove by remember(list, question) {
@@ -400,7 +410,10 @@ private fun Transcript(
             key = { i, block -> blockKey(block) { blocks.size - 1 - i } },
         ) { i, block ->
             val key = blockKey(block) { blocks.size - 1 - i }
-            TranscriptBlock(block, key, state.expanded, onAnswer, onToggle, onLink, docked = state.prompt != null, now = state.now)
+            TranscriptBlock(
+                block, key, state.expanded, onAnswer, onToggle, onLink,
+                docked = state.prompt != null, now = state.now, answeredHere = state.answeredHere, onAnswerForm = onAnswerForm,
+            )
         }
         if (state.loadingOlder) {
             item(key = "loading-older") {
@@ -489,6 +502,8 @@ private fun TranscriptBlock(
     onLink: (String) -> Unit,
     docked: Boolean = false,
     now: Long = 0,
+    answeredHere: Set<String> = emptySet(),
+    onAnswerForm: ((String, String, Map<String, FormAnswer>) -> Unit)? = null,
 ) {
     val t = Clave.colors.theme
     when (block) {
@@ -527,6 +542,25 @@ private fun TranscriptBlock(
                     style = ClaveTypography.type(Metrics.codeSize).copy(color = t.textTertiary),
                 )
             }
+        }
+        is Entry.Permission if !block.request.questions.isNullOrEmpty() -> {
+            val request = block.request
+            FormCard(
+                title = request.description,
+                questions = request.questions.orEmpty(),
+                options = request.options.map { it.id to it.label },
+                onAnswer = { optionId, answers ->
+                    if (onAnswerForm != null) {
+                        onAnswerForm(request.id, optionId, answers)
+                    } else {
+                        onAnswer(request.id, optionId, answers.mapValues { formAnswerText(it.value) })
+                    }
+                },
+                draft = block.draft.orEmpty(),
+                notes = block.notes.orEmpty(),
+                answered = approvalAnswered(block) ?: if (request.id in answeredHere) "Answered" else null,
+                onLink = onLink,
+            )
         }
         is Entry.Permission -> {
             val request = block.request

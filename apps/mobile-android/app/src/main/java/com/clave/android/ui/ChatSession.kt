@@ -14,7 +14,10 @@ import com.clave.core.chat.admit
 import com.clave.core.chat.attachmentDraftKey
 import com.clave.core.chat.labelled
 import com.clave.core.chat.Entry
+import com.clave.core.chat.formAnswerText
 import com.clave.core.contract.Attachment
+import com.clave.core.contract.FormAnswer
+import com.clave.core.contract.PermissionResponse
 import com.clave.core.contract.SessionWriteInput
 import com.clave.core.contract.SetEffort
 import com.clave.core.contract.SetModel
@@ -366,6 +369,30 @@ class ChatSession(
         scope.launch {
             val outcome = store.answerInChat(machineId, sessionId, requestId, optionId, answers?.takeIf { it.isNotEmpty() })
             if (!outcome.ok) _state.update { it.copy(error = outcome.error) }
+        }
+    }
+
+    /**
+     * Answers a question's card. One line per question goes the store's way, which marks the
+     * card answered at once; a hosted multi-select's labels go as a list, written here, and the
+     * card is marked answered by this chat until the conversation says so itself.
+     */
+    fun answerForm(requestId: String, optionId: String, answers: Map<String, FormAnswer>) {
+        val lists = answers.filterValues { it is FormAnswer.Choices }.mapValues { (it.value as FormAnswer.Choices).values }
+        if (lists.isEmpty()) {
+            answer(requestId, optionId, answers.mapValues { formAnswerText(it.value) })
+            return
+        }
+        val lines = answers.filterValues { it is FormAnswer.Text }.mapValues { (it.value as FormAnswer.Text).value }
+        scope.launch {
+            try {
+                store.connect(machineId).client.sessions.write(sessionId, PermissionResponse(requestId, optionId, lines, lists))
+                _controls.update { it.copy(answeredHere = it.answeredHere + requestId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = messageOf(e)) }
+            }
         }
     }
 

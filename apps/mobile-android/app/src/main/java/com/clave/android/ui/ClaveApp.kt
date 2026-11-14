@@ -417,6 +417,7 @@ private fun ChatRoute(
             prompt = promptView(screen.provider, conversation),
             work = workCards(conversation),
             slashCommands = slashCommands(chatState.draft, controls.commands),
+            answeredHere = controls.answeredHere,
         ),
         actions = ChatActions(
             onOpenControls = { chat?.refreshControls() },
@@ -425,6 +426,7 @@ private fun ChatRoute(
             onPickMode = { chat?.pickMode(it) },
             onDismissRefusal = { chat?.dismissRefusal() },
             onStopTask = { chat?.stopTask(it) },
+            onAnswerForm = { requestId, optionId, answers -> chat?.answerForm(requestId, optionId, answers) },
         ),
         onBack = { nav.popBackStack() },
         onRequests = { nav.navigate(Routes.requests(machineId)) },

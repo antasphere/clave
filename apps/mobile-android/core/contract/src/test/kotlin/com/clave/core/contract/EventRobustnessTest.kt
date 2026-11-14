@@ -175,4 +175,15 @@ class EventRobustnessTest {
         assertEquals(json("""{"id":"s","input":{"type":"set_permission_mode","mode":"plan"}}"""), Encode.writeSession("s", SetPermissionMode("plan")))
         assertEquals(json("""{"id":"s","input":{"type":"stop_task","taskId":"b1"}}"""), Encode.writeSession("s", StopTask("b1")))
     }
+
+    @Test fun aHostedMultiSelectAnswersWithAnArrayBesideTheStrings() {
+        assertEquals(
+            json("""{"id":"s","input":{"type":"permission_response","id":"f","optionId":"answer","answers":{"login":"luca","teams":["a","b"]}}}"""),
+            Encode.writeSession("s", PermissionResponse("f", "answer", mapOf("login" to "luca"), lists = mapOf("teams" to listOf("a", "b")))),
+        )
+        assertEquals(
+            json("""{"id":"s","input":{"type":"permission_response","id":"f","optionId":"deny"}}"""),
+            Encode.writeSession("s", PermissionResponse("f", "deny")),
+        )
+    }
 }

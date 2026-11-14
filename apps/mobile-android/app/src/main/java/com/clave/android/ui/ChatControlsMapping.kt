@@ -43,6 +43,8 @@ data class ChatControlsState(
     /** How many errors the transcript held at the pick: one more is the provider's refusal. */
     val pendingErrors: Int = 0,
     val refusal: String? = null,
+    /** Forms this chat answered with a list, until the conversation echoes the answer. */
+    val answeredHere: Set<String> = emptySet(),
 )
 
 /** The pick still waits on the provider: it has said no new model and no new error since. */

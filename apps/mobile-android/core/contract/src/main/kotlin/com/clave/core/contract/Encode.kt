@@ -108,7 +108,16 @@ object Encode {
             put("type", "permission_response")
             put("id", input.id)
             put("optionId", input.optionId)
-            opt("answers", input.answers?.let(::answers))
+            val lists = input.lists.orEmpty()
+            if (input.answers != null || lists.isNotEmpty()) {
+                put(
+                    "answers",
+                    JsonObject(
+                        input.answers.orEmpty().mapValues { JsonPrimitive(it.value) } +
+                            lists.mapValues { (_, labels) -> JsonArray(labels.map(::JsonPrimitive)) },
+                    ),
+                )
+            }
         }
         Interrupt -> buildJsonObject { put("type", "interrupt") }
         is SetModel -> buildJsonObject {

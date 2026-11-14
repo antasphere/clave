@@ -227,7 +227,13 @@ sealed interface SessionEvent {
     data class Unknown(val type: String) : SessionEvent
 }
 
-data class PermissionResponse(val id: String, val optionId: String, val answers: Map<String, String>? = null) : SessionWriteInput
+/** [lists]: a hosted multi-select's labels by the question's key, sent as an array beside [answers]. */
+data class PermissionResponse(
+    val id: String,
+    val optionId: String,
+    val answers: Map<String, String>? = null,
+    val lists: Map<String, List<String>>? = null,
+) : SessionWriteInput
 
 data object Interrupt : SessionWriteInput
 
