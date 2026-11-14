@@ -98,6 +98,23 @@ describe('the conversation holds only what the agent has taken (PRDCT-4566)', ()
     expect(run([waiting([])], again).returned).toBe(again.returned)
   })
 
+  it('a page of the past never shows a list nor hands anything back again', () => {
+    const live = run([waiting([{ id: 'w2', text: 'still waiting' }])])
+    const stale = [
+      { event: { type: 'user_message', text: 'first' } as SessionEvent },
+      {
+        event: waiting([], { why: 'stopped', messages: [{ id: 'w1', text: 'gone' }] })
+      }
+    ]
+    const synced = reduceConversation(live, { sync: stale })
+    expect(synced.waiting).toBe(live.waiting)
+    expect(synced.returned).toBe(live.returned)
+    expect(userTexts(synced)).toEqual(['first'])
+    const prepended = reduceConversation(live, { prepend: stale })
+    expect(prepended.waiting).toBe(live.waiting)
+    expect(prepended.returned).toBe(live.returned)
+  })
+
   it('nothing waits once the process has ended', () => {
     const listed = run([waiting([{ id: 'w1', text: 'two' }])])
     expect(run([{ type: 'state_change', state: 'ended' }], listed).waiting).toEqual([])

@@ -386,7 +386,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       run: state.run,
       exitCode: state.exitCode,
       permissionMode: synced.permissionMode ?? state.permissionMode,
-      launchedMode: synced.launchedMode ?? state.launchedMode
+      launchedMode: synced.launchedMode ?? state.launchedMode,
+      // What waits for the agent is the live word, never the past's: a page
+      // that held a list or a return would show or hand back again what is
+      // gone (PRDCT-4566).
+      waiting: state.waiting,
+      takes: state.takes,
+      returned: state.returned
     }
   }
   if ('prepend' in action) {
