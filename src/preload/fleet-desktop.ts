@@ -1882,6 +1882,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           cb({ id: key(owner, event.id), model: event.model })
         )
       ),
+    onSessionConnectionChanged: (cb) =>
+      both(
+        local.onSessionConnectionChanged(cb),
+        eventListener('session.connection_changed', (event, owner) =>
+          cb({ id: key(owner, event.id), leftFor: event.leftFor })
+        )
+      ),
     // A server tab's CLI reported its limit (PRDCT-4329): the server pushes
     // it to every client, and the chat draws its limit card from it rather
     // than the "server ended" pane.

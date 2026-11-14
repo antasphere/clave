@@ -207,3 +207,31 @@ describe("an OpenCode terminal is handed Clave's tools (PRDCT-4507)", () => {
     expect(CLAVE_TAB_CREDENTIAL_ENV_VARS).toHaveLength(4)
   })
 })
+
+describe('a Pi terminal on a connection is watched by name (PRDCT-4540)', () => {
+  it("tells the extension the provider, the key's variable and the report file: names only", () => {
+    const { id, spec, command } = start({
+      piMode: true,
+      model: 'k-first',
+      piProvider: 'kimi-coding',
+      connectionId: 'conn-1',
+      connectionLabel: 'Kimi',
+      providerEnv: {
+        KIMI_API_KEY: 'made-up-kimi-4540',
+        PI_CODING_AGENT_DIR: path.join(dir, 'pi-c')
+      }
+    })
+    expect(command).toContain("CLAVE_CONNECTION_PROVIDER='kimi-coding'")
+    expect(command).toContain("CLAVE_CONNECTION_KEY_VAR='KIMI_API_KEY'")
+    expect(command).toContain(
+      `CLAVE_CONNECTION_REPORT_FILE='${path.join(dir, 'agent-state', `${id}.connection`)}'`
+    )
+    expect(command).not.toContain('made-up-kimi-4540')
+    expect(spec.env?.CLAVE_CONNECTION_KEY_VAR).toBeUndefined()
+  })
+
+  it('a Pi terminal on no connection is told nothing', () => {
+    const { command } = start({ piMode: true })
+    expect(command).not.toContain('CLAVE_CONNECTION_')
+  })
+})

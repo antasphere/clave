@@ -41,6 +41,7 @@ import { pickAccount } from '../../shared/account-pool'
 import { accountRefusal, openFormOf, resolveLaunch, type LaunchRequest } from '../routines/launch'
 import { poolOf, resolveAccountRef, spawnFieldsOf, usageOf } from './served-accounts'
 import { modeOf as recordModeOf } from './served-core'
+import { providerConnectionLeft } from '../../shared/provider-connection-pick'
 import {
   accountOf,
   launchOptionsInput,
@@ -533,7 +534,9 @@ function buildServer(
             mode: recordModeOf(record as ServedRecord | undefined, s.provider),
             model: record?.model ?? null,
             launchProfileId: record?.launchProfileId ?? null,
-            account: launch && record ? accountOf(launch, record) : null
+            account: launch && record ? accountOf(launch, record) : null,
+            // PRDCT-4540: a tab whose process left its connection says so.
+            connectionLeft: record ? providerConnectionLeft(record) : null
           }
         })
       })

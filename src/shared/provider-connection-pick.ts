@@ -137,13 +137,39 @@ export const providerConnectionSpawnFields = (connection: {
  *  one, else the one the record kept), never exhausted (a provider key
  *  reports no usage). Null for a tab on no stored connection. */
 export function listedProviderConnection(
-  record: Pick<SessionRecord, 'piMode' | 'opencodeMode' | 'connectionId' | 'connectionLabel'>,
+  record: Pick<
+    SessionRecord,
+    'piMode' | 'opencodeMode' | 'connectionId' | 'connectionLabel' | 'connectionLeftFor'
+  >,
   currentLabel: (id: string) => string | undefined
 ): { id: string; label: string; exhausted: false } | null {
   if (!(record.piMode || record.opencodeMode) || !record.connectionId) return null
+  // A tab whose process left the connection stops naming it (PRDCT-4540).
+  if (providerConnectionLeft(record)) return null
   return {
     id: record.connectionId,
     label: currentLabel(record.connectionId) ?? record.connectionLabel ?? 'Removed connection',
     exhausted: false
   }
+}
+
+/** The shape of a provider id a tab's report may name (Pi's `kimi-coding`,
+ *  Clave's `clave-deepseek`): anything else is not taken as one. */
+export const REPORTED_PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/**
+ * The one rule of PRDCT-4540: the connection a tab names is the credential
+ * its process uses, or the tab does not name it. A Pi tab whose own process
+ * reported a request that did not go on its connection (Clave's Pi
+ * extension, `connectionLeftFor`: the provider it went to) names no
+ * connection, and says so in this sentence, on the window's road and in
+ * `clave_list` alike. Null while the tab is on its connection, or on none.
+ */
+export function providerConnectionLeft(
+  record: Pick<SessionRecord, 'piMode' | 'opencodeMode' | 'connectionId' | 'connectionLeftFor'>
+): string | null {
+  if (!(record.piMode || record.opencodeMode) || !record.connectionId) return null
+  const provider = record.connectionLeftFor
+  if (!provider || !REPORTED_PROVIDER_RE.test(provider)) return null
+  return `${record.piMode ? 'Pi' : 'OpenCode'} runs on ${provider} now, not on this tab's connection.`
 }

@@ -760,7 +760,12 @@ export const SessionRecord = Schema.Struct({
   running: Schema.optional(Schema.Boolean),
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId: Schema.optional(Schema.String),
-  connectionLabel: Schema.optional(Schema.String)
+  connectionLabel: Schema.optional(Schema.String),
+  /** PRDCT-4540: the provider the tab's process last sent a request to when
+   *  that request was not on its connection (Clave's Pi extension reports
+   *  it); absent while it is on it. `connectionId` stays the one its next
+   *  start uses. */
+  connectionLeftFor: Schema.optional(Schema.String)
 })
 export type SessionRecord = typeof SessionRecord.Type
 

@@ -1,4 +1,7 @@
-import { listedProviderConnection } from '../../../shared/provider-connection-pick'
+import {
+  listedProviderConnection,
+  providerConnectionLeft
+} from '../../../shared/provider-connection-pick'
 import {
   useProviderConnectionsStore,
   type MachineProviderConnections
@@ -13,7 +16,8 @@ import { ownerOf } from './fleet-identity'
  * process was handed, so only the record's own `connectionId` is shown, never
  * a guess. Its label is the store's current one on the tab's own machine,
  * else the one the record kept, else "Removed connection". Null for a tab on
- * no stored connection.
+ * no stored connection, and for one whose process left it (PRDCT-4540): that
+ * one says so instead (`sessionConnectionLeft`).
  */
 export interface SessionConnectionFields {
   id: string
@@ -21,7 +25,18 @@ export interface SessionConnectionFields {
   opencodeMode?: boolean
   connectionId?: string
   connectionLabel?: string
+  connectionLeftFor?: string
 }
+
+const ruleFields = (
+  session: SessionConnectionFields
+): Parameters<typeof listedProviderConnection>[0] => ({
+  piMode: session.piMode === true,
+  opencodeMode: session.opencodeMode === true,
+  connectionId: session.connectionId,
+  connectionLabel: session.connectionLabel,
+  connectionLeftFor: session.connectionLeftFor
+})
 
 export function sessionConnection(
   session: SessionConnectionFields | null | undefined,
@@ -29,15 +44,19 @@ export function sessionConnection(
 ): { id: string; label: string } | null {
   if (!session) return null
   const listed = listedProviderConnection(
-    {
-      piMode: session.piMode === true,
-      opencodeMode: session.opencodeMode === true,
-      connectionId: session.connectionId,
-      connectionLabel: session.connectionLabel
-    },
+    ruleFields(session),
     (id) => byMachine[ownerOf(session.id)]?.connections.find((c) => c.id === id)?.label
   )
   return listed && { id: listed.id, label: listed.label }
+}
+
+/** PRDCT-4540: the sentence a tab whose process left its connection says
+ *  where it named the connection (`providerConnectionLeft`, the rule
+ *  `clave_list` follows too); null otherwise. */
+export function sessionConnectionLeft(
+  session: SessionConnectionFields | null | undefined
+): string | null {
+  return session ? providerConnectionLeft(ruleFields(session)) : null
 }
 
 /** `sessionConnection`, redrawn when a connection is renamed or removed. */

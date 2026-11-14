@@ -99,12 +99,66 @@ async function piClaveTools(form) {
             .map(([name]) => name)
   })
 }
+// PRDCT-4540: a provider request as Pi makes one, through Clave's extension on
+// the command line: its `before_provider_headers` handlers are given what
+// Pi 1.5.2 gives them (`ctx.mode`, `ctx.model`, `ctx.modelRegistry.
+// getProviderAuth`, `ctx.abort`). The credential resolved is the variable
+// the tab names, or `PI_STAND_IN_LOGIN_KEY` (a `/login` in the tab).
+let watchHandlers = null
+async function connectionHandlers() {
+  if (watchHandlers) return watchHandlers
+  watchHandlers = []
+  const extension = flags['--extension']
+  if (!extension || !process.env.CLAVE_CONNECTION_REPORT_FILE) return watchHandlers
+  try {
+    const mod = await import(pathToFileURL(extension).href)
+    mod.default({
+      on: (event, handler) => {
+        if (event === 'before_provider_headers') watchHandlers.push(handler)
+      },
+      getCommands: () => [],
+      registerMcpServer: () => {}
+    })
+  } catch {
+    // No extension: no watch.
+  }
+  return watchHandlers
+}
+async function providerRequest(mode, provider, abort) {
+  const keyVar = process.env.CLAVE_CONNECTION_KEY_VAR
+  const ctx = {
+    mode,
+    model: { provider, id: 'stand-in' },
+    modelRegistry: {
+      getProviderAuth: async () => ({
+        auth: {
+          apiKey: process.env.PI_STAND_IN_LOGIN_KEY || (keyVar ? process.env[keyVar] : undefined)
+        },
+        source: 'stand-in'
+      })
+    },
+    abort
+  }
+  for (const handler of await connectionHandlers())
+    await handler({ type: 'before_provider_headers', headers: {} }, ctx)
+}
+
 // The terminal form (`PI_STAND_IN_TERMINAL=1`, no `--mode`): Clave's tools
-// called once, a line printed, then it waits as a TUI would.
+// called once, a line printed, then it waits as a TUI would. With
+// `PI_STAND_IN_TERMINAL_CONTROL`, each new provider written in that file is
+// one request on that provider (the person's `/model` and a prompt, PRDCT-4540).
 if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
   await piClaveTools('terminal')
   process.stdout.write('stub pi terminal\r\n')
-  setInterval(() => {}, 60_000)
+  const control = process.env.PI_STAND_IN_TERMINAL_CONTROL
+  let seen = ''
+  setInterval(() => {
+    if (!control || !existsSync(control)) return
+    const provider = readFileSync(control, 'utf8').trim()
+    if (!provider || provider === seen) return
+    seen = provider
+    void providerRequest('tui', provider, () => {})
+  }, 200)
   await new Promise(() => {})
 }
 if (flags['--mode'] !== 'rpc') {
@@ -422,6 +476,13 @@ async function confirmDialog() {
 
 async function startRun(text) {
   run = { aborted: false, messages: [], current: undefined, wake: undefined }
+  // PRDCT-4540, the verifier's R3-1: an extension of the person's own that
+  // moves Pi to another provider before each run (`provider/model`).
+  const move = process.env.PI_STAND_IN_MOVE_BEFORE_RUN
+  if (move) {
+    const [provider, id] = move.split('/')
+    session.model = findModel(provider, id) ?? { ...modelObject(id), provider }
+  }
   try {
     await emit({ type: 'agent_start' })
     if (text.includes('retry')) {
@@ -436,6 +497,11 @@ async function startRun(text) {
     }
     await emit({ type: 'turn_start' })
     await userMessage(text)
+    // The provider request, through Clave's extension when it watches.
+    await providerRequest('rpc', session.model?.provider, () => {
+      run.aborted = true
+    })
+    if (run.aborted) throw new Aborted()
     if (text.includes('notify extension'))
       out({
         type: 'extension_ui_request',

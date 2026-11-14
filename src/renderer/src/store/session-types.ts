@@ -390,6 +390,9 @@ export interface Session {
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId?: string
   connectionLabel?: string
+  /** PRDCT-4540: the provider the tab's process went to off its connection,
+   *  as its own report said; the tab names no connection while it is set. */
+  connectionLeftFor?: string
   /** Bumped by a restart on another account: the pane remounts on it, so
    *  the terminal reconnects to the new process under the same id. */
   restartEpoch?: number

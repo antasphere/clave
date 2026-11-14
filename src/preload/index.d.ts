@@ -527,6 +527,8 @@ export interface SessionRecord {
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId?: string
   connectionLabel?: string
+  /** PRDCT-4540: the provider the process went to off its connection. */
+  connectionLeftFor?: string
   /** The thread a Codex chat tab resumes on relaunch. */
   codexThreadId?: string
   /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
@@ -1100,6 +1102,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
   /** The session runs on `model` now, as its provider said it (PRDCT-4256). */
   onSessionModelChanged: (callback: (payload: { id: string; model: string }) => void) => () => void
+  /** PRDCT-4540: the tab's process went off its connection, or back on it. */
+  onSessionConnectionChanged: (
+    callback: (payload: { id: string; leftFor: string | null }) => void
+  ) => () => void
   onSessionRestarted: (
     callback: (payload: {
       id: string

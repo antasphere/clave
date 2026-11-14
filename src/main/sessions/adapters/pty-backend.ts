@@ -9,7 +9,7 @@ import {
   DEFAULT_TERMINAL_ROWS,
   INITIAL_COMMAND_DELAY_MS
 } from '../../constants'
-import { stateFilePath } from '../../agent-state-manager'
+import { connectionReportPath, stateFilePath } from '../../agent-state-manager'
 import { lazyTerminalPorts, unpackedPath } from '../../ports/terminals'
 import { readJson } from '../../ports/storage'
 import type { TerminalProcess } from '../../ports/terminal'
@@ -31,6 +31,7 @@ import {
   readClaveMcpEndpoint,
   withOpencodeClaveTools
 } from '../../clave-tools-launch'
+import { CLAVE_CONNECTION_REPORT_FILE_ENV, connectionWatchNames } from '../../connection-watch'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
@@ -602,6 +603,10 @@ export interface SessionRecord {
    *  Resume opens it again; never its value. */
   connectionId?: string
   connectionLabel?: string
+  /** PRDCT-4540: the provider the process last went to off its connection,
+   *  as Clave's Pi extension reported it; absent while it is on it. Every
+   *  start writes the record afresh, so a restart begins on the connection. */
+  connectionLeftFor?: string
   /** The thread a Codex chat tab resumes: the app-server's own id, from the
    *  tab's first `session_meta`. Absent until the thread is up, and for every
    *  other kind of session. */
@@ -1234,6 +1239,10 @@ export class PtyBackend {
     /** A connection's values under Clave's private names (`connectionHandover`). */
     let handoverEnv: Record<string, string> | undefined
     if (isWindows) {
+      // No connection handover here (`connection-handover.ts` is POSIX only):
+      // nothing stops a Windows login profile from replacing a stored key,
+      // and nothing of Pi or OpenCode on a connection has run on Windows
+      // (PRDCT-4540, decision 6: not built; both throw below).
       // Windows: cmd.exe with /c to exec the command directly (no echoed prompt).
       if (usePiMode) {
         throw new Error('Pi sessions are supported on macOS only')
@@ -1362,6 +1371,18 @@ export class PtyBackend {
         // PRDCT-4507: the PATH of the tab's MCP config file, never its token.
         if (kind === 'pi' && claveToolsPath)
           assignments.push(`${CLAVE_MCP_CONFIG_FILE_ENV}=${shellSingleQuote(claveToolsPath)}`)
+        // PRDCT-4540: a Pi tab on a connection tells Clave's extension two
+        // NAMES (the provider, the variable its key rides in) and where to
+        // report: names and a path on the command line, never a value.
+        if (kind === 'pi' && options?.connectionId && options.providerEnv) {
+          const watch = connectionWatchNames(piProvider, options.providerEnv)
+          if (watch)
+            for (const [name, value] of Object.entries({
+              ...watch,
+              [CLAVE_CONNECTION_REPORT_FILE_ENV]: connectionReportPath(id)
+            }))
+              assignments.push(`${name}=${shellSingleQuote(value)}`)
+        }
         // The account's home rides in the command, after the login profile
         // has run: a `CODEX_HOME` the user's own profile exports would
         // otherwise override the one in the environment.
@@ -1878,6 +1899,22 @@ export class PtyBackend {
    *  came back in the one it started in. A key set to null is dropped
    *  (the provider says the model runs at no effort). Nothing is written
    *  when nothing changes. */
+  /** PRDCT-4540: what the tab's process reported of its connection, on its
+   *  record (`clave_list` reads the record): the provider it went to off
+   *  the connection, or null back on it. True when the record changed. */
+  setSessionConnectionLeft(id: string, provider: string | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta || !meta.connectionId) return false
+    if ((meta.connectionLeftFor ?? null) === provider) return false
+    const next: SessionRecord = { ...meta }
+    if (provider === null) delete next.connectionLeftFor
+    else next.connectionLeftFor = provider
+    writeSessionRecord(next)
+    return true
+  }
+
   setSessionRuntime(
     id: string,
     patch: { model?: string; permissionMode?: string; effort?: string | null }

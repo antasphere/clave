@@ -2,6 +2,7 @@ import { sessionManager } from './sessions/session-manager'
 import { lazyTerminalPorts } from './ports/terminals'
 import { mkdirSync, watch, type FSWatcher } from 'fs'
 import { join } from 'path'
+import { parseConnectionReport } from './connection-watch'
 
 /**
  * Deterministic Claude Code session state, sourced from CC lifecycle hooks.
@@ -63,6 +64,53 @@ export function stateFilePath(claveSessionId: string): string {
   return join(getStateDir(), `${claveSessionId}${SUFFIX}`)
 }
 
+// ── PRDCT-4540: a Pi tab's connection report, beside its state file ──
+// Clave's Pi extension writes `<id>.connection` when the answer changes, at
+// a provider request: `on` (the request went on the tab's connection) or
+// `off <provider>` (it went to that provider, or with another credential).
+// One line, an id at most; never a value.
+const CONNECTION_SUFFIX = '.connection'
+const lastConnection = new Map<string, string | null>()
+let connectionListener: ((claveSessionId: string, leftFor: string | null) => void) | null = null
+
+/** Absolute path of the connection report a Pi tab's extension writes. */
+export function connectionReportPath(claveSessionId: string): string {
+  return join(getStateDir(), `${claveSessionId}${CONNECTION_SUFFIX}`)
+}
+
+/** Who hears a tab's connection report (pty-manager: the record and the
+ *  windows). One listener; the watch below calls it on a change only. */
+export function setConnectionReportListener(
+  listener: ((claveSessionId: string, leftFor: string | null) => void) | null
+): void {
+  connectionListener = listener
+}
+
+function readConnectionReport(claveSessionId: string): string | null | undefined {
+  try {
+    return parseConnectionReport(
+      lazyTerminalPorts.storage.read(`${FOLDER}/${claveSessionId}${CONNECTION_SUFFIX}`)
+    )
+  } catch {
+    return undefined
+  }
+}
+
+/** A report file changed: forwarded once per change. */
+function connectionReportChanged(claveSessionId: string): void {
+  const leftFor = readConnectionReport(claveSessionId)
+  if (leftFor === undefined) return
+  if (lastConnection.has(claveSessionId) && lastConnection.get(claveSessionId) === leftFor) return
+  lastConnection.set(claveSessionId, leftFor)
+  connectionListener?.(claveSessionId, leftFor)
+}
+
+/** The report a session's extension last wrote, for a tab this process takes
+ *  back (a reattached tmux session): forwarded once if it says off. */
+export function lastConnectionReport(claveSessionId: string): void {
+  connectionReportChanged(claveSessionId)
+}
+
 /**
  * Start watching the state directory. The callback fires on every valid
  * transition with the Clave session id (derived from the filename) and the new
@@ -75,6 +123,10 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
     watcher = watch(dir, (_event, filename) => {
       if (!filename) return
       const name = filename.toString()
+      if (name.endsWith(CONNECTION_SUFFIX)) {
+        connectionReportChanged(name.slice(0, -CONNECTION_SUFFIX.length))
+        return
+      }
       if (!name.endsWith(SUFFIX)) return
       const claveSessionId = name.slice(0, -SUFFIX.length)
       try {
@@ -126,6 +178,7 @@ export function stopWatching(): void {
   watcher?.close()
   watcher = null
   lastForwarded.clear()
+  lastConnection.clear()
 }
 
 /** Remove a session's state file (call on session exit/kill to avoid stale files). */
@@ -133,6 +186,18 @@ export function clearState(claveSessionId: string): void {
   lastForwarded.delete(claveSessionId)
   try {
     lazyTerminalPorts.storage.remove(stateDocument(claveSessionId))
+  } catch {
+    // ignore
+  }
+  clearConnectionReport(claveSessionId)
+}
+
+/** Remove a session's connection report: at a fresh start (the process
+ *  begins on its connection) and when the session goes. */
+export function clearConnectionReport(claveSessionId: string): void {
+  lastConnection.delete(claveSessionId)
+  try {
+    lazyTerminalPorts.storage.remove(`${FOLDER}/${claveSessionId}${CONNECTION_SUFFIX}`)
   } catch {
     // ignore
   }

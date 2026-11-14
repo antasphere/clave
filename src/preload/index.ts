@@ -1623,6 +1623,14 @@ const electronAPI = {
     'session.model_changed',
     (event) => ({ id: event.id, model: event.model })
   ),
+  // PRDCT-4540: the tab's process went off its connection, or back on it.
+  onSessionConnectionChanged: viaServerEvent<
+    'session.connection_changed',
+    { id: string; leftFor: string | null }
+  >('session:connection-changed', 'session.connection_changed', (event) => ({
+    id: event.id,
+    leftFor: event.leftFor
+  })),
   onSessionRestarted: (
     callback: (payload: {
       id: string
