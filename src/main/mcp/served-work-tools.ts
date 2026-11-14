@@ -15,6 +15,7 @@ import {
   setWorkChange,
   workToolAnswer
 } from '../../shared/work-tools'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import { type Ctx, type Payload, getSession, str, tagOf } from './served-core'
 
 function callerOf(ctx: Ctx, tool: string): string {
@@ -40,7 +41,7 @@ async function changeWork(ctx: Ctx, id: string, change: WorkChange): Promise<Wor
 async function setWork(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
   const caller = callerOf(ctx, 'clave_set_work')
   const ref = str(p.sessionId) ?? 'mine'
-  const target = await getSession(ctx, ref === 'mine' ? caller : ref, ref)
+  const target = await getSession(ctx, ownSessionRef(ref, caller), ref)
   const change = setWorkChange(p, ctx.shell.record(caller)?.work?.unit)
   return workToolAnswer(target.id, await changeWork(ctx, target.id, change))
 }

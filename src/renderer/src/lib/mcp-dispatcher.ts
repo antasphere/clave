@@ -15,6 +15,7 @@ import { ownerOf } from './fleet-identity'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
+import { ownSessionRef } from '../../../shared/own-session-ref'
 import {
   captureEndpoint as captureEndpointOf,
   emitTabClosed,
@@ -729,21 +730,22 @@ function handleMoveSession(payload: {
   callerSessionId?: string
 }): unknown {
   const state = useSessionStore.getState()
-  if (!state.sessions.some((s) => s.id === payload.sessionId)) {
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  if (!state.sessions.some((s) => s.id === id)) {
     throw new Error(`No session with id "${payload.sessionId}"`)
   }
   if (payload.groupId === 'root') {
     // The explicit ungroup: a null target is the top level, at the end.
-    state.moveItems([payload.sessionId], null, 'after')
+    state.moveItems([id], null, 'after')
   } else {
     const group = resolveGroup(state.groups, payload.groupId, payload.callerSessionId)
-    state.moveItems([payload.sessionId], group.id, 'inside')
-    alignSessionToGroupWorkspace(payload.sessionId, group)
+    state.moveItems([id], group.id, 'inside')
+    alignSessionToGroupWorkspace(id, group)
   }
   const groups = useSessionStore.getState().groups
   return {
-    sessionId: payload.sessionId,
-    groupId: groupOfSession(groups, payload.sessionId)?.id ?? null
+    sessionId: id,
+    groupId: groupOfSession(groups, id)?.id ?? null
   }
 }
 
@@ -920,8 +922,7 @@ async function handleSetSessionView(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   const state = useSessionStore.getState()
-  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
-  if (!id) throw new Error('sessionId "mine" needs a caller session — pass an explicit id')
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
   const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
 
@@ -1048,9 +1049,7 @@ async function handleCloseSession(payload: {
   // "mine" is the calling tab, as for every other session tool: it is how an
   // agent closes its own tab when its work is done (the archive-and-kill action
   // asks exactly that of it).
-  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
-  if (!id)
-    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
   const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
   // An agent-initiated close is a transport event: recorded with the closing
@@ -1065,20 +1064,26 @@ async function handleCloseSession(payload: {
   return { closed: id }
 }
 
-function handleRename(payload: { target: 'group' | 'session'; id: string; name: string }): unknown {
+function handleRename(payload: {
+  target: 'group' | 'session'
+  id: string
+  name: string
+  callerSessionId?: string
+}): unknown {
   const state = useSessionStore.getState()
   if (payload.target === 'group') {
     if (!state.groups.some((g) => g.id === payload.id)) {
       throw new Error(`No group with id "${payload.id}"`)
     }
     state.renameGroup(payload.id, payload.name)
-  } else {
-    if (!state.sessions.some((s) => s.id === payload.id)) {
-      throw new Error(`No session with id "${payload.id}"`)
-    }
-    state.renameSession(payload.id, payload.name)
+    return { renamed: payload.id, name: payload.name }
   }
-  return { renamed: payload.id, name: payload.name }
+  const id = ownSessionRef(payload.id, payload.callerSessionId, 'id')
+  if (!state.sessions.some((s) => s.id === id)) {
+    throw new Error(`No session with id "${payload.id}"`)
+  }
+  state.renameSession(id, payload.name)
+  return { renamed: id, name: payload.name }
 }
 
 /** Collapse '.' and '..' segments of an absolute path (no node:path in the renderer). */
@@ -1264,7 +1269,7 @@ async function handleSetWork(payload: Record<string, unknown>): Promise<unknown>
       'clave_set_work must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   const ref = typeof payload.sessionId === 'string' ? payload.sessionId : 'mine'
-  const target = resolveTargetSession(ref === 'mine' ? caller : ref, caller)
+  const target = resolveTargetSession(ownSessionRef(ref, caller), caller)
   const callerUnit = useSessionStore.getState().sessions.find((s) => s.id === caller)?.work?.unit
   const change = setWorkChange(payload, callerUnit)
   return workToolAnswer(target.id, await window.electronAPI.sessionsChangeWork(target.id, change))
@@ -1423,11 +1428,10 @@ async function handleResumeSession(payload: {
   sessionId: string
   callerSessionId?: string
 }): Promise<unknown> {
-  const ref =
-    payload.sessionId === 'mine' && payload.callerSessionId
-      ? payload.callerSessionId
-      : payload.sessionId
-  const target = resolveTargetSession(ref, payload.callerSessionId)
+  const target = resolveTargetSession(
+    ownSessionRef(payload.sessionId, payload.callerSessionId),
+    payload.callerSessionId
+  )
   requireCaller(payload.callerSessionId, 'resume')
   if (target.alive)
     throw new Error(`Session "${target.name}" is running; there is nothing to resume.`)
@@ -1452,10 +1456,11 @@ async function handleSendToSession(payload: {
   // "mine", the caller's own id, or the caller's own tab name all mean the
   // checkpoint path — resolved BEFORE the identity gate, which has nothing to
   // gate on a message that never leaves the session.
-  if (payload.callerSessionId && payload.sessionId === 'mine') {
+  const ref = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  if (payload.callerSessionId && ref === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
-  let target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
+  let target = resolveTargetSession(ref, payload.callerSessionId)
   if (payload.callerSessionId && target.id === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
@@ -1602,7 +1607,10 @@ async function handleReadSession(payload: {
   lines?: number
   callerSessionId?: string
 }): Promise<unknown> {
-  const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
+  const target = resolveTargetSession(
+    ownSessionRef(payload.sessionId, payload.callerSessionId),
+    payload.callerSessionId
+  )
   requireCaller(payload.callerSessionId, 'read')
   const requested = Math.min(Math.max(payload.lines ?? 100, 1), 500)
   const lines: string[] = []
@@ -1660,9 +1668,10 @@ async function handleReadSession(payload: {
   }
 }
 
-function handleFocus(payload: { sessionId: string }): unknown {
+function handleFocus(payload: { sessionId: string; callerSessionId?: string }): unknown {
   const state = useSessionStore.getState()
-  const target = state.sessions.find((s) => s.id === payload.sessionId)
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  const target = state.sessions.find((s) => s.id === id)
   if (!target) {
     throw new Error(`No session with id "${payload.sessionId}"`)
   }
@@ -1672,8 +1681,8 @@ function handleFocus(payload: { sessionId: string }): unknown {
   if (target.workspaceId && activeId && target.workspaceId !== activeId) {
     void setActiveWorkspace(target.workspaceId)
   }
-  useSessionStore.getState().selectSession(payload.sessionId, false)
-  return { focused: payload.sessionId, workspaceId: target.workspaceId ?? null }
+  useSessionStore.getState().selectSession(id, false)
+  return { focused: id, workspaceId: target.workspaceId ?? null }
 }
 
 function handleSwitchWorkspace(payload: { workspace: string }): unknown {
@@ -1697,8 +1706,8 @@ async function handleSwitchAccount(payload: {
   proposed: boolean
 }> {
   const state = useSessionStore.getState()
-  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
-  const session = id ? state.sessions.find((s) => s.id === id) : undefined
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`Unknown session "${payload.sessionId}"`)
   const provider = accountProviderOf(session)
   if (!provider) throw new Error('Only Claude and Codex tabs run on an account')

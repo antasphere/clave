@@ -30,6 +30,7 @@ import {
 } from '../../shared/open-session-modes'
 // ── Wave 7, lane A: the launcher's choices on this server (PRDCT-4485) ──
 import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import {
   EFFORT_PATTERN,
   SPAWN_PERMISSION_MODES,
@@ -253,7 +254,8 @@ function buildServer(
   const { sessions, requests, sidebar } = options
   const profileFamily = options.profileFamily ?? builtInProfileFamily
   const chatDefault = options.chatDefault ?? ((): undefined => undefined)
-  const own = (id: string): string => (id === 'mine' ? sessionId : id)
+  // "mine" is the calling tab, the same resolver as every other road's.
+  const own = (id: string): string => ownSessionRef(id, sessionId)
   const known = (id: string): string => {
     const resolved = own(id)
     if (!sessions.get(resolved)) throw new Error(`Unknown session "${id}".`)
@@ -1049,7 +1051,8 @@ function buildServer(
   server.registerTool(
     'clave_rename',
     {
-      description: 'Rename a group or a session (tab) on this server.',
+      description:
+        'Rename a group or a session (tab) on this server. "mine" renames your own tab (target "session").',
       inputSchema: {
         target: z.enum(['group', 'session']),
         id: z.string().describe('Group id, or session id ("mine" for the calling tab)'),
@@ -1107,10 +1110,7 @@ function buildServer(
       }
     },
     async (args) => {
-      const target = await resolveTarget(
-        targetHost,
-        args.sessionId === 'mine' ? sessionId : args.sessionId
-      )
+      const target = await resolveTarget(targetHost, own(args.sessionId))
       requireCaller(targetHost, 'read')
       if (target.transport === 'pty') {
         const screen = await sessions.screen(target.id, args.lines)
@@ -1165,7 +1165,9 @@ function buildServer(
       description:
         'Resume a stopped tab on this server ("resume the tab", "bring the lane back"): the same tab, its agent started again under the same id with its conversation resumed where the provider can, on the model and in the permission mode it was last running. Any tab of this server can be resumed; a running tab is refused. Read a tab first with clave_read_session to learn what it is doing.',
       inputSchema: {
-        sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"')
+        sessionId: z
+          .string()
+          .describe('Target: a session id, an exact tab name, "parent", or "mine"')
       }
     },
     async (args) =>

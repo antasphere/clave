@@ -1239,7 +1239,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       description:
         'Move an existing Clave tab into a group, or out of its group with "root" — and, with window, into another WINDOW (tmux-backed tabs only: the tab keeps its id and scrollback). Use this instead of closing and recreating a session. Note: moving the last tab out of a group deletes that group (including its quick-launch terminal configs).',
       inputSchema: {
-        sessionId: z.string().describe('Id of the session to move'),
+        sessionId: z.string().describe('Id of the session to move, or "mine" for the calling tab'),
         groupId: z
           .string()
           .describe(
@@ -1394,14 +1394,15 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_rename',
     {
-      description: 'Rename a Clave group or session (tab).',
+      description:
+        'Rename a Clave group or session (tab). "mine" renames your own tab (target "session").',
       inputSchema: {
         target: z.enum(['group', 'session']),
-        id: z.string().describe('Group or session id'),
+        id: z.string().describe('Group id, or session id ("mine" for the calling tab)'),
         name: z.string().describe('New display name')
       }
     },
-    (args) => run('rename', args)
+    (args) => run('rename', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1467,9 +1468,11 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_focus',
     {
       description: 'Focus a Clave tab (bring it to the foreground in the app).',
-      inputSchema: { sessionId: z.string().describe('Id of the session to focus') }
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to focus, or "mine" for the calling tab')
+      }
     },
-    (args) => run('focus', args)
+    (args) => run('focus', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1487,7 +1490,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           )
       }
     },
-    (args) => run('switchAccount', args)
+    (args) => run('switchAccount', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1498,7 +1501,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       inputSchema: {
         sessionId: z
           .string()
-          .describe('Target: a session id or key, an exact tab name, or "parent"')
+          .describe('Target: a session id or key, an exact tab name, "parent", or "mine"')
       }
     },
     (args) => run('resumeSession', { ...args, callerSessionId })
@@ -1537,7 +1540,9 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       description:
         "Read the last N rendered lines of a tab's terminal without interrupting it — check what a delegated agent is doing, read a dev server's logs, or inspect a sibling's state. Works for any tab of this Mac and of a connected Clave server, plain terminals included: read a tab first to learn what it is doing, and message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent's next instruction. Returns scrollback for normal-buffer output (most CLIs, including claude/codex inline); for a full-screen/alternate-screen program (e.g. a pager or a TUI that took over the screen) it returns only the currently visible screen, so a large `lines` value may come back shorter. Target by session id, exact tab name, or \"parent\".",
       inputSchema: {
-        sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"'),
+        sessionId: z
+          .string()
+          .describe('Target: a session id, an exact tab name, "parent", or "mine"'),
         lines: z
           .number()
           .int()

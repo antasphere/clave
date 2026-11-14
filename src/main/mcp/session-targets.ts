@@ -25,6 +25,7 @@ import type { SidebarGroup } from '@clave/contract/sidebar'
 import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
 import { shareAGroup } from '../../shared/group-reach'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
 
 /** The host's facts a target needs. */
@@ -230,12 +231,13 @@ export async function sendToTarget(
   // "mine", the caller's own id, or the caller's own name all mean the
   // checkpoint, resolved BEFORE the identity gate, which has nothing to gate on
   // a message that never leaves the session.
-  if (caller && p.ref === 'mine') {
+  const ref = ownSessionRef(p.ref, caller)
+  if (caller && ref === caller) {
     const self = await host.get(caller)
     if (!self) throw new Error('Calling session not found')
     return checkpoint(self)
   }
-  let target = await resolveTarget(host, p.ref)
+  let target = await resolveTarget(host, ref)
   if (caller && target.id === caller) return checkpoint(target)
   requireCaller(host, 'message')
   const targetName = host.nameOf(target)
@@ -302,7 +304,7 @@ export async function resumeTarget(
   ref: string,
   resume: (target: Session) => Promise<{ resumed: boolean }>
 ): Promise<unknown> {
-  const target = await resolveTarget(host, ref === 'mine' && host.caller ? host.caller : ref)
+  const target = await resolveTarget(host, ownSessionRef(ref, host.caller))
   requireCaller(host, 'resume')
   const name = host.nameOf(target)
   if (target.state !== 'ended')

@@ -589,11 +589,11 @@ describe('resolveGroupRef', () => {
     expect(h.argsOf('awaitRehomed')).toEqual([])
   })
 
-  it('a move takes an id and nothing else, as the window does: "mine" is no session', async () => {
+  it('a move takes "mine" for the calling tab, as the window does (PRDCT-4507)', async () => {
     const h = setup({ sessions: [session('caller')] })
-    await expect(
-      serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
-    ).rejects.toThrow('No session with id "mine"')
+    expect(
+      await serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
+    ).toEqual({ sessionId: 'caller', groupId: null })
   })
 })
 

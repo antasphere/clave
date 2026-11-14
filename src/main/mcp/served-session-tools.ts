@@ -18,6 +18,7 @@ import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
 import { launchModeFields } from '../../shared/runtime-choices'
 import { historyLines } from '../../shared/history-text'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import {
   type TargetHost,
   checkpointCapture,
@@ -123,12 +124,13 @@ function targetHost(ctx: Ctx, key: string): TargetHost {
 // ── The tools ──
 
 async function rename(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
-  const id = str(p.id) ?? ''
+  const ref = str(p.id) ?? ''
+  const id = ownSessionRef(ref, ctx.callerSessionId, 'id')
   const name = str(p.name) ?? ''
   try {
     await ctx.api.sessions.rename(id, name)
   } catch (err) {
-    if (tagOf(err) === 'SessionNotFound') throw new Error(`No session with id "${id}"`)
+    if (tagOf(err) === 'SessionNotFound') throw new Error(`No session with id "${ref}"`)
     throw err
   }
   return { renamed: id, name }
@@ -142,8 +144,7 @@ async function stopServing(ctx: Ctx, ownerId: string): Promise<void> {
 
 async function setSessionView(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  if (!id) throw new Error('sessionId "mine" needs a caller session — pass an explicit id')
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   const session = await getSession(ctx, id, ref)
 
   if (p.url === null) {
@@ -208,7 +209,10 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   // "no session" for every server tab an agent had just opened.
   if (isServerTabRef(ref)) return NOT_SERVED
   const host = targetHost(ctx, key)
-  const target = ref === 'parent' ? await resolveOn(host, ref) : await findTarget(host, ref)
+  const target =
+    ref === 'parent'
+      ? await resolveOn(host, ref)
+      : await findTarget(host, ownSessionRef(ref, ctx.callerSessionId))
   if (!target) return NOT_SERVED
   requireCaller(host, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
@@ -322,8 +326,8 @@ const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
 
 async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  const session = id ? await ctx.api.sessions.get(id).catch(() => null) : null
+  const id = ownSessionRef(ref, ctx.callerSessionId)
+  const session = await ctx.api.sessions.get(id).catch(() => null)
   if (!session) throw new Error(`Unknown session "${ref}"`)
   const provider = providerOf(ctx, session)
   if (!provider)

@@ -248,6 +248,51 @@ describe('rename of a tab', () => {
       'No session with id "zz"'
     )
   })
+  it('"mine" renames the calling tab, and is refused in one sentence with no tab identity (PRDCT-4507)', async () => {
+    const h = setup({ sessions: [session('caller'), session('s1')] })
+    expect(await run(h, 'rename', { target: 'session', id: 'mine', name: 'Me' })).toEqual({
+      renamed: 'caller',
+      name: 'Me'
+    })
+    expect(h.argsOf('sessions.rename')).toEqual([['caller', 'Me']])
+    await expect(
+      run(h, 'rename', { target: 'session', id: 'mine', name: 'x' }, { callerSessionId: undefined })
+    ).rejects.toThrow('id "mine" needs a calling tab — this request has no tab identity')
+    expect(h.argsOf('sessions.rename')).toHaveLength(1)
+  })
+})
+
+describe('"mine" on every session tool of this road (PRDCT-4507)', () => {
+  it('reads the calling tab', async () => {
+    const h = setup({ sessions: [session('caller'), session('s1')] })
+    const out = (await run(h, 'readSession', { sessionId: 'mine' })) as { sessionId: string }
+    expect(out.sessionId).toBe('caller')
+  })
+  it('moves the calling tab', async () => {
+    const h = setup({
+      sessions: [session('caller')],
+      layouts: [layout('wA', [group('g1', { sessionIds: [] })])]
+    })
+    const out = (await run(h, 'moveSession', { sessionId: 'mine', groupId: 'root' })) as {
+      sessionId: string
+    }
+    expect(out.sessionId).toBe('caller')
+  })
+  it('refuses every one in the same sentence with no tab identity', async () => {
+    const h = setup({ sessions: [session('s1')] })
+    const none = { callerSessionId: undefined }
+    for (const [command, p] of [
+      ['readSession', { sessionId: 'mine' }],
+      ['moveSession', { sessionId: 'mine', groupId: 'root' }],
+      ['closeSession', { sessionId: 'mine' }],
+      ['setSessionView', { sessionId: 'mine', url: null }],
+      ['switchAccount', { sessionId: 'mine', account: 'any' }]
+    ] as const) {
+      await expect(run(h, command, p, none)).rejects.toThrow(
+        'sessionId "mine" needs a calling tab — this request has no tab identity'
+      )
+    }
+  })
 })
 
 describe('the page on a tab', () => {
@@ -274,7 +319,7 @@ describe('the page on a tab', () => {
     )
     await expect(
       run(h, 'setSessionView', { sessionId: 'mine', url: null }, { callerSessionId: undefined })
-    ).rejects.toThrow('sessionId "mine" needs a caller session — pass an explicit id')
+    ).rejects.toThrow('sessionId "mine" needs a calling tab — this request has no tab identity')
     await expect(run(h, 'setSessionView', { sessionId: 'zz', url: null })).rejects.toThrow(
       'No session with id "zz"'
     )

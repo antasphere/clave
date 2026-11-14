@@ -1243,6 +1243,84 @@ describe('an agent switches the account of a server tab', () => {
   })
 })
 
+/* "mine" is the calling tab on every session tool of the window road
+   (PRDCT-4507): a Pi and an OpenCode tab were told `No session with id
+   "mine"` by clave_rename, and listed the tabs to learn their own id. */
+describe('"mine" on the window road (PRDCT-4507)', () => {
+  const dispatch = async (
+    command: string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: command, command, payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  beforeEach(() => {
+    globals.window.electronAPI.setSessionDisplayName = vi.fn(async () => undefined)
+    useSessionStore.setState({
+      sessions: [
+        { id: 'caller', name: 'Pi tab', folderName: 'repo', sessionType: 'local' } as never,
+        { id: 'other', name: 'Other', folderName: 'repo', sessionType: 'local' } as never
+      ],
+      groups: []
+    })
+  })
+
+  it('renames the calling tab, and no other', async () => {
+    const answer = await dispatch('rename', {
+      target: 'session',
+      id: 'mine',
+      name: 'Renamed by itself',
+      callerSessionId: 'caller'
+    })
+    expect(answer).toEqual({
+      requestId: 'rename',
+      ok: true,
+      result: { renamed: 'caller', name: 'Renamed by itself' }
+    })
+    const names = useSessionStore.getState().sessions.map((s) => [s.id, s.name])
+    expect(names).toEqual([
+      ['caller', 'Renamed by itself'],
+      ['other', 'Other']
+    ])
+  })
+
+  it('refuses "mine" with no tab identity in one sentence, on every session tool', async () => {
+    const calls: [string, Record<string, unknown>, string][] = [
+      ['rename', { target: 'session', id: 'mine', name: 'x' }, 'id'],
+      ['focus', { sessionId: 'mine' }, 'sessionId'],
+      ['moveSession', { sessionId: 'mine', groupId: 'root' }, 'sessionId'],
+      ['closeSession', { sessionId: 'mine' }, 'sessionId'],
+      ['setSessionView', { sessionId: 'mine', url: null }, 'sessionId'],
+      ['readSession', { sessionId: 'mine' }, 'sessionId'],
+      ['resumeSession', { sessionId: 'mine' }, 'sessionId'],
+      ['sendToSession', { sessionId: 'mine', message: 'hi' }, 'sessionId'],
+      ['switchAccount', { sessionId: 'mine', account: 'any' }, 'sessionId']
+    ]
+    for (const [command, payload, field] of calls) {
+      const answer = await dispatch(command, payload)
+      expect({ command, ok: answer.ok, error: answer.error }).toEqual({
+        command,
+        ok: false,
+        error: `${field} "mine" needs a calling tab — this request has no tab identity`
+      })
+    }
+    expect(useSessionStore.getState().sessions.map((s) => s.name)).toEqual(['Pi tab', 'Other'])
+  })
+})
+
 describe('clave_launch_options on the window road (PRDCT-4485)', () => {
   /** This Mac as the input names it: one Claude connection, a remembered model. */
   const input: LaunchOptionsInput = {

@@ -514,6 +514,19 @@ const errorText = (result: Awaited<ReturnType<Client['callTool']>>): string => {
 }
 
 describe('standalone MCP session tools', () => {
+  it('renames the calling tab by "mine" (PRDCT-4507)', async () => {
+    const { client, sessions } = await sessionFixture()
+    expect(
+      payload(
+        await client.callTool({
+          name: 'clave_rename',
+          arguments: { target: 'session', id: 'mine', name: 'Lane lead, renamed' }
+        })
+      )
+    ).toEqual({ renamed: 'caller' })
+    expect(sessions.get('caller')?.title).toBe('Lane lead, renamed')
+  }, 15_000)
+
   it('opens a Codex chat tab with its model, name and prompt, linked to its caller', async () => {
     const { client, started, sessions, directory } = await sessionFixture()
     const opened = payload(

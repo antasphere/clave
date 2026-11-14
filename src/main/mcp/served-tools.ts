@@ -16,6 +16,7 @@
  * sends it to the window as before.
  */
 import { noteRoad } from './roads'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import {
   AGENT_MODES,
   type Ctx,
@@ -163,10 +164,8 @@ async function setGroupView(ctx: Ctx, key: string, p: Payload): Promise<unknown>
 }
 
 async function moveSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  // No "mine" here: the window's handler takes an id and nothing else, and
-  // the two roads of one tool must answer the same call the same way.
   const ref = str(p.sessionId) ?? ''
-  const id = ref
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   if (!id) throw new Error(`No session with id "${ref}"`)
   await getSession(ctx, id, ref)
 
@@ -294,10 +293,7 @@ async function addGroupTerminal(ctx: Ctx, key: string, p: Payload): Promise<unkn
 
 async function closeSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  if (!id) {
-    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
-  }
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   const session = await getSession(ctx, id, ref)
 
   // An agent-initiated close is recorded with the closing tab as `closer`
