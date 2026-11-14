@@ -326,6 +326,40 @@ class ClaveFlowTest {
         assertTrue("the stand-in saw no request it does not serve: ${server.unknownPaths}", server.unknownPaths.isEmpty())
     }
 
+    /**
+     * The quick composer's text is sent once even when the activity is recreated right after:
+     * the new chat's route still carries the message, and the send-once mark saved with the
+     * back stack entry keeps it from going a second time.
+     */
+    @Test
+    fun aQuickSendIsNotRepeatedByARecreation() {
+        connectAndOpenHome()
+        waitForDescription("Agent: Claude (chat)")
+        rule.onNodeWithTag(QUICK_COMPOSER_FIELD).performTextInput("ping")
+        rule.onNodeWithContentDescription("Send").performClick()
+        waitForText("pong")
+        waitForRequests("POST /sessions/write", 1)
+        val timelineReads = requests("GET /sessions/timeline").size
+
+        rule.activityRule.scenario.recreate()
+
+        // The chat is back and has read its timeline again: a repeated send would have gone by now.
+        waitForText("pong")
+        waitForRequests("GET /sessions/timeline", timelineReads + 1)
+        Thread.sleep(1_000)
+        rule.waitForIdle()
+        val starts = requests("POST /sessions/start")
+        assertEquals("one tap is one start: ${starts.map { it.body }}", 1, starts.size)
+        val writes = requests("POST /sessions/write")
+        assertEquals("the text is sent once across the recreation: ${writes.map { it.body }}", 1, writes.size)
+        rule.onAllNodesWithText("ping").assertCountEquals(1)
+
+        tapBack()
+        waitForDescription("Workspace: Scratch")
+        forgetFromHome()
+        assertTrue("the stand-in saw no request it does not serve: ${server.unknownPaths}", server.unknownPaths.isEmpty())
+    }
+
     private companion object {
         const val TOKEN = "test-token"
     }
