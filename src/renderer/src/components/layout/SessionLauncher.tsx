@@ -27,6 +27,7 @@ import {
   useModelsCatalogStore,
   useUsageLineStore
 } from '../../store/models-catalog-store'
+import { ensureHarnessUsage, useHarnessUsageStore } from '../../store/harness-usage-store'
 import { PROVIDER_LISTING_FACTS } from '../../../../main/models-catalog-overlay'
 import {
   startProviderConnectionsEvents,
@@ -209,6 +210,9 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const usageLines = useUsageLineStore((s) => s.byConnection)
   void modelsCatalogs
   void usageLines
+  // PRDCT-4551: each connection's own usage, read at render the same way.
+  const harnessUsage = useHarnessUsageStore((s) => s.byKey)
+  void harnessUsage
   // Lane B's stored connections of each machine (PRDCT-4496), read at render
   // by the sources' `providerConnections`.
   const providerConnectionsByMachine = useProviderConnectionsStore((s) => s.byMachine)
@@ -416,6 +420,8 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
             ? api.providerUsageRead({ connectionId })
             : api.fleetProviderUsage(machineId, { connectionId })
         )
+      // PRDCT-4551: what each connection's tabs used today on that machine.
+      void ensureHarnessUsage(machineId, 'today')
     }
   }, [menuOpen, providerReadsKey])
 
@@ -640,6 +646,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     const providerConnectionRows = (model: string | undefined): React.JSX.Element[] =>
       providerConnectionsFor(source, harness, model).map((connection) => {
         const usage = source.usageLine(connection.id)
+        const used = source.harnessUsageLine(connection.id)
         return (
           <DropdownMenuItem
             key={connection.id}
@@ -653,6 +660,16 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
               {usage && (
                 <span className="text-[11px] text-text-tertiary tabular-nums truncate">
                   {usage}
+                </span>
+              )}
+              {/* PRDCT-4551: what this connection's own tabs used, a line of
+                  its own, never mixed with the provider's line above. */}
+              {used && (
+                <span
+                  className="text-[11px] text-text-tertiary tabular-nums truncate"
+                  data-connection-usage={connection.id}
+                >
+                  {used}
                 </span>
               )}
             </span>

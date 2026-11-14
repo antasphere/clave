@@ -93,13 +93,14 @@ export function sumFigures(rows: readonly HarnessUsageFigures[]): HarnessUsageFi
   return out
 }
 
-/** A connection's figures over both harnesses, with its billing; undefined
- *  when the view lists no row of it. */
+/** A current connection's figures over both harnesses, with its billing;
+ *  undefined when the view lists no current row of it (a removed
+ *  connection is Settings → Usage's alone). */
 export function connectionUsageOf(
   view: Pick<HarnessUsageView, 'rows'> | null | undefined,
   connectionId: string
 ): { figures: HarnessUsageFigures; billing: HarnessUsageBilling } | undefined {
-  const rows = (view?.rows ?? []).filter((row) => row.connectionId === connectionId)
+  const rows = (view?.rows ?? []).filter((row) => row.connectionId === connectionId && !row.removed)
   if (rows.length === 0) return undefined
   return { figures: sumFigures(rows), billing: rows[0].billing }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { PiUsageTotals, UsageError, UsageLimits, UsageWindow } from '../../../preload/index.d'
+import type { UsageError, UsageLimits, UsageWindow } from '../../../preload/index.d'
+import { refreshHarnessUsage } from './harness-usage-store'
 import type { Session } from './session-types'
 import {
   isSharedWindow,
@@ -36,11 +37,12 @@ export type { CapWords } from '../../../shared/cap-status'
 /** The parts of a readout, over the renderer's own windows. */
 export type CapStatus = SharedCapStatus<UsageWindow>
 
-export type UsageProvider = 'claude' | 'codex' | 'pi' | 'antigravity'
+export type UsageProvider = 'claude' | 'codex' | 'pi' | 'opencode' | 'antigravity'
 export const USAGE_PROVIDER_LABELS = {
   claude: 'Claude Code',
   codex: 'Codex',
   pi: 'Pi',
+  opencode: 'OpenCode',
   antigravity: 'Antigravity'
 }
 
@@ -63,6 +65,7 @@ export function usageProviderForSession(
   if (!session) return null
   if (session.sessionType !== 'local') return null
   if (session.piMode) return 'pi'
+  if (session.opencodeMode) return 'opencode'
   if (session.codexMode) return 'codex'
   if (session.antigravityMode) return 'antigravity'
   return session.claudeMode || session.claudeAgentsMode ? 'claude' : null
@@ -120,12 +123,7 @@ export function codexUsageStore(accountId: string = DEFAULT_CODEX_ACCOUNT_ID): C
 
 /** The machine's own Codex home, the one every pre-account caller reads. */
 export const useCodexUsageStore = codexUsageStore(DEFAULT_CODEX_ACCOUNT_ID)
-export const piUsageStores = {
-  today: createUsageResource(() => window.electronAPI.getPiUsage('today')),
-  '7d': createUsageResource(() => window.electronAPI.getPiUsage('7d')),
-  '30d': createUsageResource(() => window.electronAPI.getPiUsage('30d')),
-  all: createUsageResource(() => window.electronAPI.getPiUsage('all'))
-}
+// Pi's and OpenCode's usage is per connection (PRDCT-4551): `harness-usage-store.ts`.
 export const quotaUsageStores = { claude: useUsageStore, codex: useCodexUsageStore }
 
 /** What one account's read says, for a row that cannot subscribe to each
@@ -269,15 +267,6 @@ export const useUsageNavigation = create<{
   select: (provider) => set({ provider })
 }))
 
-export function formatPiTokens(value: number): string {
-  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(
-    value
-  )
-}
-export function piTodaySummary(totals: PiUsageTotals): string {
-  return `${formatPiTokens(totals.totalTokens)} tokens · $${totals.cost.toFixed(2)} today`
-}
-
 /** Session views use shared caps plus caps for the explicitly known model.
  * Account-wide views omit the context to keep every reported cap. */
 export function claudeModelWindows(windows: UsageWindow[], model?: string): UsageWindow[] {
@@ -303,9 +292,9 @@ export function usageForModel(
 /** The name the session view had when only Claude had families. */
 export const claudeUsageForModel = usageForModel
 
-/** Read every account of both quota providers again, live, and the Pi
- *  ranges already on screen: the Usage page's one Refresh. Resolves when
- *  every read has landed, failed ones included. */
+/** Read every account of both quota providers again, live, and the Pi and
+ *  OpenCode usage already on screen (PRDCT-4551): the Usage page's one
+ *  Refresh. Resolves when every read has landed, failed ones included. */
 export async function refreshAllUsage(
   claudeAccountIds: string[],
   codexAccountIds: string[]
@@ -313,9 +302,7 @@ export async function refreshAllUsage(
   await Promise.all([
     ...claudeAccountIds.map((id) => claudeUsageStore(id).getState().load({ force: true })),
     ...codexAccountIds.map((id) => codexUsageStore(id).getState().load({ force: true })),
-    ...Object.values(piUsageStores)
-      .filter((store) => store.getState().status !== 'idle')
-      .map((store) => store.getState().load({ force: true }))
+    refreshHarnessUsage()
   ])
 }
 
@@ -338,11 +325,7 @@ export function formatReset(resetsAt: number | null): string | null {
 // resource here, whichever window it reaches.
 if (typeof window !== 'undefined') {
   const refresh = (): void => {
-    for (const store of [
-      ...claudeStores.values(),
-      ...codexStores.values(),
-      ...Object.values(piUsageStores)
-    ]) {
+    for (const store of [...claudeStores.values(), ...codexStores.values()]) {
       if (store.getState().status !== 'idle') void store.getState().load()
     }
   }
