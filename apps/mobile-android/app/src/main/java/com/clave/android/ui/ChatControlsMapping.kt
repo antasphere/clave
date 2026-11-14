@@ -3,6 +3,7 @@ package com.clave.android.ui
 import com.clave.core.chat.Conversation
 import com.clave.core.chat.Entry
 import com.clave.core.chat.claudeContextWindow
+import com.clave.core.chat.claudeModelName
 import com.clave.core.chat.contextMeterLabel
 import com.clave.core.chat.contextRatio
 import com.clave.core.chat.currentModelOption
@@ -16,11 +17,13 @@ import com.clave.core.chat.permissionModeLabel
 import com.clave.core.chat.providerLabel
 import com.clave.core.chat.readingOf
 import com.clave.core.chat.sameModelId
+import com.clave.core.contract.BackgroundTaskKind
 import com.clave.core.contract.CommandOption
 import com.clave.core.contract.ModelOption
 import com.clave.ui.chat.ChatChoice
 import com.clave.ui.chat.ChatControlsView
 import com.clave.ui.chat.PromptView
+import com.clave.ui.chat.WorkCardView
 
 /**
  * What one open chat holds beyond its composer: the session's models and commands as the
@@ -109,5 +112,18 @@ fun promptView(provider: String, conversation: Conversation): PromptView? {
         note = reading?.note,
         options = request.options.map { it.id to it.label },
         count = open.size,
+    )
+}
+
+/** The background work as cards: a command by its description (its command under it), a
+ *  subagent by its task (the model it runs on under it). */
+fun workCards(conversation: Conversation): List<WorkCardView> = conversation.backgroundTasks.map { task ->
+    val shell = task.kind == BackgroundTaskKind.Shell
+    WorkCardView(
+        id = task.id,
+        title = task.description.ifBlank { task.command ?: if (shell) "Command" else "Subagent" },
+        shell = shell,
+        startedAt = task.startedAt,
+        detail = if (shell) task.command else task.model?.let { model -> claudeModelName(model)?.let { "On $it" } },
     )
 }

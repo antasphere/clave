@@ -141,3 +141,11 @@ fun relativeTime(at: Long, now: Long, zone: java.time.ZoneId = java.time.ZoneId.
     val month = day.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)
     return if (day.year == today.year) "${day.dayOfMonth} $month" else "${day.dayOfMonth} $month ${day.year}"
 }
+
+/** How long background work has run, the desktop's work card figure: "42s", "3m 5s", "1h 12m". */
+fun elapsed(since: Long, now: Long): String {
+    val seconds = maxOf(0L, (now - since) / 1000)
+    if (seconds < 60) return "${seconds}s"
+    val minutes = seconds / 60
+    return if (minutes < 60) "${minutes}m ${seconds % 60}s" else "${minutes / 60}h ${minutes % 60}m"
+}

@@ -91,3 +91,13 @@ class RelativeTimeTest {
         assertEquals("14 Nov 2025", relativeTime(now - 365L * 24 * 60 * minute, now, zone))
     }
 }
+
+class ElapsedTest {
+    @Test
+    fun `background work counts seconds, then minutes, then hours`() {
+        assertEquals("0s", elapsed(1_000, 500))
+        assertEquals("42s", elapsed(0, 42_900))
+        assertEquals("3m 5s", elapsed(0, 185_000))
+        assertEquals("1h 12m", elapsed(0, 72 * 60_000L))
+    }
+}

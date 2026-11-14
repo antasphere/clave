@@ -87,6 +87,8 @@ import com.clave.ui.chat.ToolRow
 import com.clave.ui.chat.ToolSectionView
 import com.clave.ui.chat.ToolStatus
 import com.clave.ui.chat.UserTurn
+import com.clave.ui.chat.WorkCardView
+import com.clave.ui.chat.WorkCards
 import com.clave.ui.components.EmptyState
 import com.clave.ui.components.ListRow
 import com.clave.ui.components.Notice
@@ -146,6 +148,8 @@ data class ChatScreenState(
     val controls: ChatControlsView = ChatControlsView(),
     /** The first permission of this conversation still waiting, docked above the composer. */
     val prompt: PromptView? = null,
+    /** The background work running now (subagents, commands), as cards above the composer. */
+    val work: List<WorkCardView> = emptyList(),
 )
 
 /**
@@ -160,6 +164,8 @@ data class ChatActions(
     val onPickEffort: (String) -> Unit = {},
     val onPickMode: (String) -> Unit = {},
     val onDismissRefusal: () -> Unit = {},
+    /** Stop one background task by its id. */
+    val onStopTask: (String) -> Unit = {},
 )
 
 /** An attachment as a chip says it: its marker ("[Image #1]") or its kind, then its name. */
@@ -254,6 +260,7 @@ fun ChatScreen(
                 } else {
                     PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
                 }
+                if (!state.ended) WorkCards(state.work, onStop = actions.onStopTask)
                 Composer(
                     text = state.composer.text,
                     onTextChange = onTextChange,

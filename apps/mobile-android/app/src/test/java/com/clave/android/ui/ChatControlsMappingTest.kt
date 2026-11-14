@@ -113,3 +113,22 @@ class PromptViewMappingTest {
         assertNull(promptView("claude", Conversation(entries = listOf(permission("q", tool = "")))))
     }
 }
+
+class WorkCardsMappingTest {
+    @Test
+    fun aCommandShowsItsCommandAndASubagentItsModel() {
+        val conversation = Conversation(
+            backgroundTasks = listOf(
+                com.clave.core.contract.BackgroundTask("b1", com.clave.core.contract.BackgroundTaskKind.Shell, "Dev server", command = "npm run dev", startedAt = 5),
+                com.clave.core.contract.BackgroundTask("a1", com.clave.core.contract.BackgroundTaskKind.Agent, "Review the parser", startedAt = 6, model = "claude-haiku-4-5-20251001"),
+                com.clave.core.contract.BackgroundTask("o1", com.clave.core.contract.BackgroundTaskKind.Shell, "", command = "sleep 60", startedAt = 7),
+            ),
+        )
+        val cards = workCards(conversation)
+        assertEquals(listOf("Dev server", "Review the parser", "sleep 60"), cards.map { it.title })
+        assertEquals(listOf(true, false, true), cards.map { it.shell })
+        assertEquals("npm run dev", cards[0].detail)
+        assertEquals("On Haiku 4.5", cards[1].detail)
+        assertEquals(5L, cards[0].startedAt)
+    }
+}

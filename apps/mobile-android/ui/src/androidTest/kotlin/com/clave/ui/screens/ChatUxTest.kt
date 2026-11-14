@@ -215,4 +215,27 @@ class ChatUxTest {
         rule.onNodeWithTag("question-pill").performClick()
         rule.onNodeWithText("Which branch should I use?", useUnmergedTree = true).assertIsDisplayed()
     }
+
+    @Test
+    fun backgroundWorkShowsAsCardsThatOpenToAStop() {
+        val stopped = mutableListOf<String>()
+        rule.setContent {
+            ClaveTheme(Appearance.Dark) {
+                com.clave.ui.chat.WorkCards(
+                    listOf(
+                        com.clave.ui.chat.WorkCardView("b1", "Dev server", shell = true, startedAt = now - 185_000, detail = "npm run dev"),
+                        com.clave.ui.chat.WorkCardView("a1", "Review the parser", shell = false, startedAt = now - 5_000),
+                    ),
+                    onStop = { stopped += it },
+                    clockStart = now,
+                )
+            }
+        }
+        rule.onNodeWithText("3m 5s").assertIsDisplayed()
+        rule.onNodeWithText("5s").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Command: Dev server").performClick()
+        rule.onNodeWithText("$ npm run dev").assertIsDisplayed()
+        rule.onNodeWithText("Stop").performClick()
+        rule.runOnIdle { assertEquals(listOf("b1"), stopped) }
+    }
 }
