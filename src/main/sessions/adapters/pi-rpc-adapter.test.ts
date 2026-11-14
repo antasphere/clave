@@ -613,6 +613,110 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       expect(types(s.state)).not.toContain('prompt')
     })
 
+    // Verifier round 2, R2-1 (PRDCT-4427): a steer and a re-sent prompt skipped
+    // the check, so a message went on another provider's key. Real Pi 1.5.2
+    // takes set_model during a run, so the put-back happens mid-run too.
+    type Internal = {
+      runActive: boolean
+      connection: { command: (type: string, ...rest: unknown[]) => Promise<unknown> }
+    }
+    const internalOf = (s: Session): Internal =>
+      (s.adapter as unknown as { handles: Map<string, Internal> }).handles.get(s.handle.id)!
+    // The commands sent, but the models list (asked once, at the first look).
+    const commandsOf = (sent: { type?: string }[]): (string | undefined)[] =>
+      sent.map((f) => f.type).filter((type) => type !== 'get_available_models')
+    const BACK =
+      "Pi was on anthropic/claude-stand-in, which is not a model of its connection's provider stand-in: the chat put it back on stand-in/one."
+
+    it('a model moved off the connection during a run is put back before a steer goes', async () => {
+      const s = await open(
+        {},
+        { env: { ...OTHER, PI_STAND_IN_DELAY_MS: '40' }, connection: ON_STAND_IN }
+      )
+      s.adapter.write(s.handle, { type: 'user_message', text: 'use anthropic now' })
+      await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+      s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+      await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+      const sent = frames(s.state)
+      const kinds = sent.map((f) => f.type)
+      const steer = kinds.indexOf('steer')
+      expect(sent[steer]).toMatchObject({ type: 'steer', message: 'second' })
+      const between = sent.slice(kinds.indexOf('prompt') + 1, steer)
+      // Pi's model read, then set back on the connection's, then the steer.
+      expect(commandsOf(between)).toEqual(['get_state', 'set_model'])
+      expect(between.find((f) => f.type === 'set_model')).toMatchObject({
+        provider: 'stand-in',
+        modelId: 'one'
+      })
+      expect(notices(s.events)).toEqual([BACK])
+      expect(metaModels(s.events)).not.toContain('anthropic/claude-stand-in')
+    })
+
+    it('a model moved off the connection before a steer is re-sent as a prompt is put back first', async () => {
+      const s = await open(
+        {},
+        { env: { ...OTHER, PI_STAND_IN_IDLE_STEER: 'queue' }, connection: ON_STAND_IN }
+      )
+      await expect.poll(() => types(s.state).includes('get_commands')).toBe(true)
+      const internal = internalOf(s)
+      // The adapter reads a run as going, so the message goes as a steer;
+      // Pi's run settles and its model moves before the steer's answer.
+      internal.runActive = true
+      const command = internal.connection.command.bind(internal.connection)
+      internal.connection.command = async (type, ...rest) => {
+        if (type === 'steer') {
+          internal.runActive = false
+          await command('set_model', { provider: 'anthropic', modelId: 'claude-stand-in' })
+        }
+        return command(type, ...rest)
+      }
+      s.events.length = 0
+      s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+      await expect.poll(() => done(s.events), { timeout: 3000 }).toBe(true)
+      const sent = frames(s.state)
+      const kinds = sent.map((f) => f.type)
+      const prompt = kinds.lastIndexOf('prompt')
+      expect(sent[prompt]).toMatchObject({ type: 'prompt', message: 'hello' })
+      const between = sent.slice(kinds.indexOf('steer') + 1, prompt)
+      expect(commandsOf(between)).toEqual(['get_state', 'set_model'])
+      expect(between.find((f) => f.type === 'set_model')).toMatchObject({
+        provider: 'stand-in',
+        modelId: 'one'
+      })
+      expect(notices(s.events)).toEqual([BACK])
+    })
+
+    it('a steer while Pi refuses to be put back mid-run: one sentence, nothing sent, the run ends its turn', async () => {
+      const s = await open(
+        {},
+        { env: { ...OTHER, PI_STAND_IN_DELAY_MS: '40' }, connection: ON_STAND_IN }
+      )
+      s.adapter.write(s.handle, { type: 'user_message', text: 'use anthropic now' })
+      await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+      const internal = internalOf(s)
+      const command = internal.connection.command.bind(internal.connection)
+      internal.connection.command = (type, ...rest) =>
+        type === 'set_model' && internal.runActive
+          ? Promise.reject(new Error('Agent is streaming'))
+          : command(type, ...rest)
+      s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+      await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+      expect(types(s.state)).not.toContain('steer')
+      expect(notices(s.events)).toEqual([
+        "Pi is on anthropic/claude-stand-in, which is not a model of its connection's provider stand-in, and could not be put back on one: nothing was sent."
+      ])
+      // The run goes on to its end, and its done is the turn's only one.
+      await expect
+        .poll(() => s.events.some((e) => e.type === 'assistant_text' && e.delta === 'Done.'), {
+          timeout: 10_000
+        })
+        .toBe(true)
+      await new Promise((r) => setTimeout(r, 300))
+      expect(s.events.filter((e) => e.type === 'state_change' && e.state === 'done')).toHaveLength(
+        1
+      )
+    })
+
     // Pi not on the launch's PATH is started through the login shell, whose
     // profile may export the connection's own variable: the stored value
     // crosses it under a private name and reaches Pi under its own.

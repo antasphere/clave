@@ -709,14 +709,18 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.ended || state.closing || !connection || connection.closed) return
     const retried = retry !== undefined
     const steer = retried ? retry === 'steer' : state.runActive
-    // A prompt on a stored connection starts a run only on the connection's
-    // provider: Pi's model is read first, and one of another provider's
-    // (something typed changed it) is put back, or the turn ends unsent
-    // (PRDCT-4496).
-    if (!steer && !retried && !(await this.confirmOnConnection(state, connection))) {
+    // On a stored connection nothing goes to Pi, prompt, steer or either one
+    // re-sent, while Pi is on another provider's model: Pi's model is read
+    // first, and one of another provider's (something typed changed it, or
+    // an extension during a run) is put back, Pi taking the change mid-run
+    // too, or the message is not sent (PRDCT-4496, PRDCT-4427). A run going
+    // ends its turn itself.
+    if (!(await this.confirmOnConnection(state, connection))) {
       if (state.ended || state.closing) return
-      state.turnRunning = false
-      this.endTurn(state, false)
+      if (!state.runActive) {
+        state.turnRunning = false
+        this.endTurn(state, false)
+      }
       return
     }
     if (state.ended || state.closing || connection.closed) return

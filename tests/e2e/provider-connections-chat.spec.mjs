@@ -872,6 +872,47 @@ export async function run(t) {
         sent[lastPrompt]?.message === 'and after that',
       sent.map((f) => f?.type)
     )
+    // The same while a run is going (the verifier's R2-1, PRDCT-4427): Pi
+    // moves to Anthropic's model as a slow run starts, and the message
+    // written meanwhile goes as a steer, put back on Kimi's first.
+    await say(piId, 'use anthropic now, be slow')
+    await until(
+      async () =>
+        piFrames().some((f) => f?.type === 'prompt' && f?.message === 'use anthropic now, be slow')
+          ? true
+          : null,
+      { tries: 60 }
+    )
+    // Pi's agent_start has come: the run is Pi's own now.
+    await new Promise((r) => setTimeout(r, 300))
+    await say(piId, 'steered meanwhile')
+    const steered = await until(
+      async () =>
+        piFrames().some((f) => f?.type === 'steer' && f?.message === 'steered meanwhile')
+          ? true
+          : null,
+      { tries: 60 }
+    )
+    const withSteer = piFrames()
+    const steerAt = withSteer.findIndex((f) => f?.type === 'steer')
+    const setBeforeSteer = withSteer.map((f) => f?.type).lastIndexOf('set_model', steerAt)
+    const slowPrompt = withSteer.findIndex((f) => f?.message === 'use anthropic now, be slow')
+    t.check(
+      'a message written during a run off Kimi goes as a steer only after a set_model back on kimi-coding',
+      !!steered &&
+        setBeforeSteer > slowPrompt &&
+        withSteer[setBeforeSteer]?.provider === 'kimi-coding',
+      withSteer.map((f) => f?.type)
+    )
+    const backTwice = await until(
+      async () => ((await chatText(piId)).split(BACK).length - 1 >= 2 ? true : null),
+      { tries: 40 }
+    )
+    t.check('and the chat says so again', !!backTwice, scrub(await chatText(piId)).slice(-600))
+    await win.evaluate((id) => window.electronAPI.sessionsWrite(id, { type: 'interrupt' }), piId)
+    await until(async () => (piFrames().some((f) => f?.type === 'abort') ? true : null), {
+      tries: 40
+    })
 
     // ── 2b. Terminals: one on a connection names it in its header, one on
     // none names nothing ──
