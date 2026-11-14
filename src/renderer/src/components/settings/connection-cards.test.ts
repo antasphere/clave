@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EMPTY_FIGURES,
+  harnessUsageText,
+  type HarnessUsageBilling,
+  type HarnessUsageFigures
+} from '@clave/contract/settings/harness-usage-view'
+import {
   accountUsageText,
   claudeCardFacts,
   claudeTokenLine,
@@ -12,8 +18,10 @@ import {
   moreLabel,
   offerFacts,
   providerCardFacts,
+  ownUsageText,
   providerKeyState,
-  removalSentence
+  removalSentence,
+  USAGE_SOURCE
 } from './connection-cards'
 
 const claude = (
@@ -211,6 +219,54 @@ describe('the models a card names', () => {
   it('never folds a single model away', () => {
     expect(modelPreview(['a', 'b', 'c', 'd'])).toEqual({ first: ['a', 'b', 'c', 'd'], rest: [] })
     expect(modelPreview([])).toEqual({ first: [], rest: [] })
+  })
+})
+
+describe("a stored connection's own usage today", () => {
+  const figures = (requests: number, totalTokens: number, cost = 0): HarnessUsageFigures => ({
+    ...EMPTY_FIGURES,
+    requests,
+    totalTokens,
+    cost
+  })
+  const used = (
+    f: HarnessUsageFigures,
+    billing: HarnessUsageBilling
+  ): { figures: HarnessUsageFigures; line: string } => ({
+    figures: f,
+    line: harnessUsageText(f, billing, 'today')
+  })
+
+  it('says requests and tokens with no cost on a plan, tokens and cost when paid per use', () => {
+    expect(ownUsageText('ready', used(figures(12, 10_400), 'plan'))).toBe(
+      '12 requests · 10.4K tokens today'
+    )
+    expect(ownUsageText('ready', used(figures(3, 950, 0.012), 'payPerUse'))).toBe(
+      '950 tokens · $0.01 today'
+    )
+    expect(ownUsageText('ready', used(figures(1, 40), 'local'))).toBe('1 request · 40 tokens today')
+  })
+
+  it('says a connection that ran nothing today in plain words', () => {
+    expect(ownUsageText('ready', used(figures(0, 0), 'plan'))).toBe('Nothing run today')
+    expect(ownUsageText('ready', undefined)).toBe('Nothing run today')
+  })
+
+  it('says nothing while the first read runs, so the card draws at once', () => {
+    expect(ownUsageText(undefined, undefined)).toBeNull()
+    expect(ownUsageText('loading', undefined)).toBeNull()
+    expect(ownUsageText('idle', undefined)).toBeNull()
+  })
+
+  it('keeps the last figure through a read, and says when it could not count', () => {
+    expect(ownUsageText('loading', used(figures(2, 300), 'plan'))).toBe(
+      '2 requests · 300 tokens today'
+    )
+    expect(ownUsageText('error', undefined)).toBe('Could not be counted')
+  })
+
+  it('names the two lines so neither is read as the other', () => {
+    expect(USAGE_SOURCE).toEqual({ provider: 'Provider', tabs: 'Your tabs' })
   })
 })
 

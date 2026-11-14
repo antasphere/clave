@@ -7,6 +7,7 @@ import { ProviderLogo } from '../icons/provider-logos'
 import {
   modelPreview,
   moreLabel,
+  USAGE_SOURCE,
   removalSentence,
   type CardCompany,
   type CardState,
@@ -289,19 +290,42 @@ export function ModelList({ models, id }: { models: CardModels; id: string }): R
   )
 }
 
-/** The usage line, and beside it the place a connection's own usage takes
- *  (PRDCT-4551 fills it; it says nothing yet). */
+/** The usage of a card. A Claude or a Codex account has one line, its
+ *  provider's limits. A stored connection (`own` given) has two, never
+ *  mixed and each named: the provider's own line, then what its own Pi and
+ *  OpenCode tabs used today (PRDCT-4551), which fills in once read. */
 export function UsageLine({
   text,
   id,
+  own,
   ...rest
-}: React.HTMLAttributes<HTMLSpanElement> & { text: string | null; id: string }): ReactElement {
+}: React.HTMLAttributes<HTMLSpanElement> & {
+  text: string | null
+  id: string
+  /** The connection's own usage today; null while its first read runs. */
+  own?: string | null
+}): ReactElement {
+  const provider = (
+    <span className={text ? undefined : 'connection-card-quiet'} {...rest}>
+      {text ?? 'Not read yet'}
+    </span>
+  )
+  if (own === undefined) return <span className="connection-card-usage">{provider}</span>
   return (
-    <span className="connection-card-usage">
-      <span className={text ? undefined : 'connection-card-quiet'} {...rest}>
-        {text ?? 'Not read yet'}
+    <span className="connection-card-usage connection-card-usage--two">
+      <span className="connection-card-usage-line">
+        <span className="connection-card-usage-source">{USAGE_SOURCE.provider}</span>
+        {provider}
       </span>
-      <span className="connection-card-own-usage" data-connection-own-usage={id} />
+      <span
+        className="connection-card-usage-line"
+        data-connection-own-usage={id}
+        data-connection-own-usage-state={own === null ? 'reading' : 'read'}
+        hidden={own === null}
+      >
+        <span className="connection-card-usage-source">{USAGE_SOURCE.tabs}</span>
+        <span className="connection-card-own-usage">{own}</span>
+      </span>
     </span>
   )
 }

@@ -21,7 +21,8 @@ import {
   type ProviderCompany
 } from '@clave/contract/settings/provider-catalogue'
 import { nextProviderLabel } from './connection-companies'
-import { providerCardFacts, type CardCompany } from './connection-cards'
+import { ownUsageText, providerCardFacts, type CardCompany } from './connection-cards'
+import { useConnectionUsage, useHarnessUsage } from '../../store/harness-usage-store'
 import {
   CardFact,
   CardFacts,
@@ -379,6 +380,11 @@ function ProviderConnectionCard({
   const facts = providerCardFacts(connection)
   const ownAddress = connection.company === 'ollama' || connection.company === 'generic'
   const host = connection.endpoints[0] ? hostOf(connection.endpoints[0].baseUrl) : null
+  // PRDCT-4551: what this connection's own Pi and OpenCode tabs used today,
+  // read on the machine whose page this is.
+  const used = useConnectionUsage(machine, connection.id)
+  const read = useHarnessUsage(machine, 'today')
+  const own = ownUsageText(read?.status, used)
   return (
     <ConnectionCard
       tone={facts.state.tone}
@@ -418,6 +424,7 @@ function ProviderConnectionCard({
           <UsageLine
             text={connection.hasKey || !connection.needsKey ? usage : 'Read once the key is stored'}
             id={connection.id}
+            own={own}
             data-provider-connection-usage={usage ? connection.id : undefined}
           />
         </CardFact>

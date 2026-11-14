@@ -101,6 +101,33 @@ function claudeState(account: ClaudeCardInput): CardState {
   return { label: 'Signed in', tone: 'ok' }
 }
 
+/** The words that tell the two usage lines of a stored connection apart:
+ *  the provider's own figure, and what Clave counted of its own tabs. */
+export const USAGE_SOURCE = { provider: 'Provider', tabs: 'Your tabs' } as const
+
+/**
+ * A stored connection's own usage today (PRDCT-4551), as its card says it:
+ * the line `harnessUsageText` wrote, or "Nothing run today" once a read says
+ * its tabs ran nothing, or why it could not be counted. Null while the first
+ * read runs: the card draws without it and it fills in, as the launcher's row
+ * and the sidebar's foot do. A read lists every connection a tab can run on
+ * (zeros included; a harness whose records are missing still lists them), so
+ * one absent from a ready answer is one no tab could run on yet (no key, or
+ * made after the read): it ran nothing. A failed first read says so.
+ */
+export function ownUsageText(
+  status: 'idle' | 'loading' | 'ready' | 'error' | undefined,
+  usage: { figures: { requests: number; totalTokens: number }; line: string } | undefined
+): string | null {
+  if (usage)
+    return usage.figures.requests === 0 && usage.figures.totalTokens === 0
+      ? 'Nothing run today'
+      : usage.line
+  if (status === 'ready') return 'Nothing run today'
+  if (status === 'error') return 'Could not be counted'
+  return null
+}
+
 /** A subscription's usage line: its headroom, or why there is none. */
 export function accountUsageText(line: string | null, read: boolean): string | null {
   if (line) return line

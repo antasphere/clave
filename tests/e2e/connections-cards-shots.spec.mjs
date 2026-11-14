@@ -175,6 +175,51 @@ export async function run(t) {
         // The machine login is never read here (as cap-words).
         const settings = globalThis.__claveE2E?.settings
         if (settings) {
+          // What Pi and OpenCode tabs used today (PRDCT-4551), made up: the
+          // "Kimi work" plan connection ran 12 requests, DeepSeek (pay per
+          // use) 48.2K tokens for $0.37, every other connection nothing.
+          const zero = {
+            requests: 0,
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: 0,
+            sessions: 0
+          }
+          const figuresOf = {
+            'Kimi work': {
+              ...zero,
+              requests: 12,
+              input: 9000,
+              output: 1400,
+              totalTokens: 10400,
+              sessions: 2
+            },
+            DeepSeek: {
+              ...zero,
+              requests: 31,
+              input: 40000,
+              output: 8200,
+              totalTokens: 48200,
+              cost: 0.37,
+              sessions: 3
+            }
+          }
+          settings.harnessUsage.read = async ({ range }) => {
+            const connections = await settings.providerConnections.list()
+            const rows = connections.map((c) => ({
+              ...(figuresOf[c.label] ?? zero),
+              harness: 'pi',
+              connectionId: c.id,
+              label: c.label,
+              billing:
+                c.company === 'deepseek' ? 'payPerUse' : c.company === 'ollama' ? 'local' : 'plan',
+              removed: false
+            }))
+            return { range, rows, unavailable: [] }
+          }
           const readClaude = settings.usage.readClaude
           settings.usage.readClaude = async (accountId, force) =>
             accountId === undefined || accountId === 'default'
@@ -273,6 +318,14 @@ export async function run(t) {
       },
       { WORK_TOKEN, PLAY_TOKEN, KIMI_KEY, DEEPSEEK_KEY }
     )
+    // The window read today's usage as the cards appeared, while the seeding
+    // was still adding them, and keeps a read for 30 s: once it is stale, the
+    // page opened again reads it anew, as a person coming back would.
+    await win.waitForTimeout(31_000)
+    await win.locator('[data-settings-nav-row="servers"]').click()
+    await win.locator('[data-settings-page="servers"]').waitFor()
+    await win.locator('[data-settings-nav-row="accounts"]').click()
+    await page.locator(`[data-provider-connection-row="${seeded.kimi}"]`).waitFor()
     const workCard = page.locator(`[data-claude-account-row="${seeded.work}"]`)
     const kimiCard = page.locator(`[data-provider-connection-row="${seeded.kimi}"]`)
     const dsCard = page.locator(`[data-provider-connection-row="${seeded.ds}"]`)
@@ -286,6 +339,41 @@ export async function run(t) {
     t.check('the cards read their usage and their models', !!read, {
       work: (await workCard.textContent())?.slice(0, 200),
       ds: (await dsCard.textContent())?.slice(0, 200)
+    })
+    // ── The connection's own usage today (PRDCT-4551), apart from the provider's ──
+    const ownOf = (id) => page.locator(`[data-connection-own-usage="${id}"]`)
+    const ownText = async (id) => ((await ownOf(id).textContent()) ?? '').trim()
+    await until(async () => (await ownText(seeded.ds)).includes('$0.37'), { tries: 80, gapMs: 250 })
+    t.equal(
+      'a plan connection: its tabs’ requests and tokens, no cost',
+      await ownText(seeded.kimi),
+      'Your tabs12 requests · 10.4K tokens today'
+    )
+    t.equal(
+      'a pay-per-use connection: tokens and cost',
+      await ownText(seeded.ds),
+      'Your tabs48.2K tokens · $0.37 today'
+    )
+    t.equal(
+      'a connection whose tabs ran nothing says so',
+      await ownText(seeded.spare),
+      'Your tabsNothing run today'
+    )
+    t.check(
+      "the provider's own line stays on its own, named",
+      /Provider\s*18\.40 USD left/.test((await dsCard.innerText()) ?? '') &&
+        /Provider\s*Coding plan/.test((await kimiCard.innerText()) ?? ''),
+      await dsCard.innerText()
+    )
+    t.equal(
+      'a Claude account keeps its one line: no count of its own',
+      await workCard.locator('[data-connection-own-usage]').count(),
+      0
+    )
+    await shootEach(app, win, '07-usage-close-up', async (name) => {
+      await centre(dsCard)
+      await win.waitForTimeout(500)
+      await dsCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
     t.equal(
       'six connections now',
@@ -404,6 +492,17 @@ export async function run(t) {
       "the server's page offers the ten providers, its subscriptions being signed in there",
       await serverPage.locator('[data-provider-card]').count(),
       10
+    )
+    // The server's own count, read on the server: its connection has no key
+    // yet, so no tab ran on it there.
+    const serverOwn = serverPage.locator('[data-connection-own-usage]')
+    await until(
+      async () => (await serverOwn.getAttribute('data-connection-own-usage-state')) === 'read'
+    )
+    t.equal(
+      "the server's connection reads its own count, from the server",
+      ((await serverOwn.textContent()) ?? '').trim(),
+      'Your tabsNothing run today'
     )
     await shootEach(app, win, '06-server-page', (name, size) => shootPage(app, win, name, size))
 
