@@ -1,7 +1,3 @@
-import {
-  PROVIDER_COMPANIES,
-  type ProviderCompanyId
-} from '@clave/contract/settings/provider-catalogue'
 import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
 import { DEFAULT_CLAUDE_PROFILE_ID, useClaudeProfileStore } from '../../store/claude-profile-store'
 import { DEFAULT_CODEX_ACCOUNT_ID, useCodexAccountStore } from '../../store/codex-account-store'
@@ -10,8 +6,8 @@ import { useAccountLoginStore } from '../../store/account-login-store'
 /**
  * The companies a person connects on Settings → Connections (PRDCT-4424): who
  * pays for what a harness runs. Each one is an account pool of ADR 0002
- * (`claude`, `codex`); the harness that runs on it is named in the hint. The
- * Connect chooser lists them in this order.
+ * (`claude`, `codex`); the harness that runs on it is named in the hint.
+ * Their cards on the page are `connection-cards.ts`'s.
  */
 export interface ConnectionCompany {
   id: 'anthropic' | 'openai'
@@ -51,39 +47,6 @@ export function nextConnectionLabel(base: string, taken: readonly string[]): str
 }
 
 // ── Lane B (harness wave): provider connections (PRDCT-4426) ──
-
-/** A provider of the Connect chooser: a company of the catalogue, Ollama or
- *  another provider, connected with a key stored once. */
-export interface ProviderConnectItem {
-  id: ProviderCompanyId
-  name: string
-  /** What the person brings, in one sentence. */
-  hint: string
-}
-
-const PROVIDER_HINTS: Readonly<Record<ProviderCompanyId, string>> = {
-  moonshot: 'Kimi Code key.',
-  zai: 'GLM Coding Plan key.',
-  mistral: 'API key, pay per use.',
-  deepseek: 'API key, pay per use.',
-  minimax: 'Coding Plan key.',
-  alibaba: 'Coding Plan key.',
-  openrouter: 'One key for many models.',
-  'vercel-ai-gateway': 'One key for many models.',
-  ollama: 'Local models, no key.',
-  generic: 'A base URL, a wire format and a key.'
-}
-
-/** The providers under Anthropic and OpenAI in the chooser, in catalogue order. */
-export const PROVIDER_CONNECT_ITEMS: readonly ProviderConnectItem[] = PROVIDER_COMPANIES.map(
-  (company) => ({ id: company.id, name: company.name, hint: PROVIDER_HINTS[company.id] })
-)
-
-export function providerConnectItem(id: ProviderCompanyId): ProviderConnectItem {
-  const found = PROVIDER_CONNECT_ITEMS.find((item) => item.id === id)
-  if (!found) throw new Error(`Unknown provider company: ${String(id)}`)
-  return found
-}
 
 /** A label no connection of that provider carries yet: "Moonshot", then
  *  "Moonshot 2"… */

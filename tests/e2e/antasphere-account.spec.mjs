@@ -81,13 +81,18 @@ export async function run(t) {
     let { page, section } = await openAccounts(win)
 
     // ── The page ─────────────────────────────────────────────────────────
-    const firstSection = await page.evaluate(
-      () =>
-        !!document.querySelector('.settings-page-sections > section [data-antasphere-account]') &&
-        document.querySelector('.settings-page-sections > section') ===
-          document.querySelector('[data-antasphere-account]').closest('section')
-    )
-    t.check('the Antasphere section is the first on the Accounts page', firstSection)
+    // What is connected reads first (PRDCT-4552): the Antasphere section
+    // comes right after the connections and the providers to connect.
+    const afterConnections = await page.evaluate(() => {
+      const own = document.querySelector('[data-antasphere-account]')?.closest('section')
+      const before = own?.previousElementSibling
+      return (
+        !!own &&
+        own.parentElement?.classList.contains('settings-page-sections') === true &&
+        !!before?.querySelector('[data-connection-offers]')
+      )
+    })
+    t.check('the Antasphere section follows the connections on the Accounts page', afterConnections)
     const description = await page.locator('.settings-page-description').textContent()
     t.check(
       'the page description covers the app identity and the provider subscriptions',
