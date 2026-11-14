@@ -653,7 +653,13 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   catalog: (providerIds) => modelsCatalog.view({ providerIds }),
   providerConnections: (harness) => providerConnectionsForListing(harness),
   providerConnectionViews: () => providerConnectionsManager.list(),
-  piOwnDefault: () => piOwnDefault()
+  piOwnDefault: () => piOwnDefault(),
+  // PRDCT-4551: what this Mac's Pi and OpenCode tabs used today, where they
+  // run (the settings source refuses when a server runs them elsewhere).
+  harnessUsage: async () =>
+    (await import('../settings/shell-source')).shellSettingsSource.harnessUsage.read({
+      range: 'today'
+    })
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns

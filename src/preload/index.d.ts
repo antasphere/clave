@@ -71,6 +71,10 @@ import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
 import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
+import type {
   LaunchProfile,
   LaunchProfilePreferences,
   LauncherFamily,
@@ -1745,6 +1749,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
     connectionId: string
     force?: boolean
   }) => Promise<ProviderUsageLineView>
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** The Pi and OpenCode usage per connection of the tabs the window's server
+   *  runs (this Mac's when it has none), over the range. A saved server's is
+   *  `fleetHarnessUsage`. */
+  harnessUsageRead: (input: { range: HarnessUsageRange }) => Promise<HarnessUsageView>
 }
 
 declare global {

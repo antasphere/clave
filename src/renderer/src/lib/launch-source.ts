@@ -36,6 +36,7 @@ import {
 } from '@clave/contract/settings/provider-catalogue'
 import { HARNESS_BY_ID } from '../../../shared/harness'
 import { modelsCatalogFor, usageLineTextFor } from '../store/models-catalog-store'
+import { connectionUsageLineFor } from '../store/harness-usage-store'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 
 /** A stored provider connection a Pi or OpenCode launch can run on
@@ -110,6 +111,10 @@ export interface LaunchSource {
   catalog(): ModelsCatalogView | 'loading' | null
   /** A provider connection's usage line, or null while it is not read yet. */
   usageLine(connectionId: string): string | null
+  /** What the connection's Pi and OpenCode tabs used today on this machine
+   *  (PRDCT-4551), its one line, or null while it is not read yet. Never
+   *  mixed with the provider's own line above. */
+  harnessUsageLine(connectionId: string): string | null
 }
 
 /** This Mac, from the local stores; read at render so the caller's own
@@ -147,7 +152,8 @@ export function localLaunchSource(workspaceId: string | null): LaunchSource {
     connections: (family, model) => connectionsForModel(family, model),
     providerConnections: (harness) => machineProviderConnections(LOCAL_SERVER_ID, harness),
     catalog: () => catalogOf(LOCAL_SERVER_ID),
-    usageLine: (connectionId) => usageLineTextFor(LOCAL_SERVER_ID, connectionId)
+    usageLine: (connectionId) => usageLineTextFor(LOCAL_SERVER_ID, connectionId),
+    harnessUsageLine: (connectionId) => connectionUsageLineFor(LOCAL_SERVER_ID, connectionId)
   }
 }
 
@@ -182,6 +188,7 @@ export function serverLaunchSource(
     connections: (family, model) => connectionsForModel(family, model, serverId),
     providerConnections: (harness) => machineProviderConnections(serverId, harness),
     catalog: () => catalogOf(serverId),
-    usageLine: (connectionId) => usageLineTextFor(serverId, connectionId)
+    usageLine: (connectionId) => usageLineTextFor(serverId, connectionId),
+    harnessUsageLine: (connectionId) => connectionUsageLineFor(serverId, connectionId)
   }
 }

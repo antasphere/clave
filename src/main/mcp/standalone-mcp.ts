@@ -556,7 +556,11 @@ function buildServer(
         }
         const models = await modelsOfHarnesses(launch)
         const piStarts = await launch.piStartModels?.().catch(() => undefined)
-        const answer = launchOptions(launchOptionsInput(launch, statuses, models, piStarts))
+        // PRDCT-4551: what each connection's tabs used today.
+        const harnessUsage = await launch.harnessUsage?.().catch(() => null)
+        const answer = launchOptions(
+          launchOptionsInput(launch, statuses, models, piStarts, harnessUsage)
+        )
         return text(warnings.length > 0 ? { ...answer, warnings } : answer)
       }
     )

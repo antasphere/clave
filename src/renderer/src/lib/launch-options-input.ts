@@ -36,6 +36,7 @@ import { isAccountPoolId, isConnectionPoolId } from '../../../shared/connection'
 import { providerConnection } from '../../../shared/provider-connection'
 import { servesHarnessPool } from '../../../shared/provider-connection-pick'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-view'
 import type { PiStartModel } from '../../../shared/pi-start-model'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import type { ServerSettings } from '../store/server-settings-state'
@@ -62,6 +63,9 @@ export interface WindowLaunchFacts {
   readonly harnessSettings: HarnessSettingsById
   readonly interactionMode: InteractionMode
   readonly codexModels: CodexModels
+  /** What the machine's Pi and OpenCode tabs used today, per connection
+   *  (PRDCT-4551); absent when it could not be read. */
+  readonly harnessUsage?: Pick<HarnessUsageView, 'rows'> | null
   readonly now: number
 }
 
@@ -197,6 +201,7 @@ export function serverLaunchOptionsInput(
     // Nor the server's own Pi settings, which decide what a Pi connection
     // starts on with no model named (PRDCT-4496): said, never guessed.
     providerStartNote: (harness) => (harness === 'pi' ? serverPiStartNote(name) : undefined),
+    ...(facts.harnessUsage ? { harnessUsage: facts.harnessUsage } : {}),
     now: facts.now
   }
 }
@@ -252,6 +257,7 @@ export function localLaunchOptionsInput(
             harness === 'pi' ? facts.piStarts?.[connectionId] : undefined
         }
       : {}),
+    ...(facts.harnessUsage ? { harnessUsage: facts.harnessUsage } : {}),
     now: facts.now
   }
 }

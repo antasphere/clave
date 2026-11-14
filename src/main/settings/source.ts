@@ -71,6 +71,11 @@ import type {
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -167,6 +172,16 @@ export interface SettingsManagers {
   // Lane C of the harness wave (PRDCT-4496): a connection's usage line
   /** The usage lines of this host's stored connections; absent, refused. */
   providerUsage?: ProviderUsageLike
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** The Pi and OpenCode usage of the tabs this host runs; absent, refused.
+   *  Loaded on first use: its graph reaches the terminal backend. */
+  harnessUsage?: () => Promise<HarnessUsageLike>
+}
+
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+/** A host's harness usage as the source needs it (`../harness-usage.ts`). */
+export interface HarnessUsageLike {
+  read(range: HarnessUsageRange): Promise<HarnessUsageView>
 }
 
 // ── Lane B (harness wave): provider connections ──
@@ -505,6 +520,16 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line
     providerUsage: {
       read: (input) => providerUsage().view(input)
+    },
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection. The
+    // records are read again where they changed at every call: `force` has
+    // nothing more to drop.
+    harnessUsage: {
+      read: async (input) => {
+        if (!m.harnessUsage)
+          throw new SettingsUnavailable('harnessUsage', 'This server runs no Pi or OpenCode tabs.')
+        return (await m.harnessUsage()).read(input.range)
+      }
     }
   }
 }

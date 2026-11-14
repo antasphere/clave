@@ -17,6 +17,7 @@ import {
   type SessionRecord
 } from './pty-backend'
 import { lineageOf } from '../lineage'
+import { OPENCODE_MADE_ID_RE } from '../../opencode-session-id'
 
 /**
  * The terminal backend over its ports: a fake process behind the terminal
@@ -496,8 +497,67 @@ describe('the session records', () => {
       opencodeMode: true,
       opencodeSessionId: 'ses_0123456789abcdef'
     })
+    // A fresh one runs on a session Clave named (PRDCT-4551), kept off the
+    // record: it is no conversation yet.
     const fresh = backend.spawn(cwd, { claudeMode: false, opencodeMode: true, tmuxMode: false })
     expect(readRecord(fresh.id)).not.toHaveProperty('opencodeSessionId')
+  })
+
+  // PRDCT-4551: the ledger of starts the usage per connection is counted by.
+  it('put every Pi and OpenCode terminal start on the ledger, with its connection, and its session on the command line', async () => {
+    const ledger = (): Array<Record<string, unknown>> =>
+      fs.existsSync(path.join(dir, 'usage-ledger.jsonl'))
+        ? fs
+            .readFileSync(path.join(dir, 'usage-ledger.jsonl'), 'utf8')
+            .trim()
+            .split('\n')
+            .map((l) => JSON.parse(l))
+        : []
+    installTerminalPorts({ resourcesDir: resourcesDirOfEntry(path.resolve(__dirname, '..', '..')) })
+    const pi = backend.spawn(cwd, {
+      claudeMode: false,
+      piMode: true,
+      tmuxMode: false,
+      connectionId: 'conn-made-up',
+      connectionLabel: 'Kimi made up'
+    })
+    const oc = backend.spawn(cwd, { claudeMode: false, opencodeMode: true, tmuxMode: false })
+    backend.spawn(cwd, {
+      claudeMode: false,
+      opencodeMode: true,
+      tmuxMode: false,
+      resumeSessionId: 'ses_resumed-1',
+      connectionId: 'conn-made-up',
+      connectionLabel: 'Kimi made up'
+    })
+    await vi.waitFor(() => expect(ledger()).toHaveLength(3))
+    const ocId = ledger()[1]?.sessionId as string
+    expect(ocId).toMatch(OPENCODE_MADE_ID_RE)
+    expect(ledger().map(({ at, ...rest }) => (expect(typeof at).toBe('number'), rest))).toEqual([
+      {
+        harness: 'pi',
+        sessionId: readRecord(pi.id).piSessionId,
+        connectionId: 'conn-made-up',
+        label: 'Kimi made up',
+        // No connection store in this suite: the company is not known.
+        company: null
+      },
+      { harness: 'opencode', sessionId: ocId, connectionId: null, label: null, company: null },
+      {
+        harness: 'opencode',
+        sessionId: 'ses_resumed-1',
+        connectionId: 'conn-made-up',
+        label: 'Kimi made up',
+        company: null
+      }
+    ])
+    backend.start(oc.id, 80, 24)
+    expect(terminals.processes[0].spec.args.join(' ')).toContain(`'--session' '${ocId}'`)
+    // A plain terminal and a Claude tab write nothing there.
+    backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
+    backend.spawn(cwd, { tmuxMode: false })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(ledger()).toHaveLength(3)
   })
 
   it('take an OpenCode session id only in the shape its CLI takes on --session', () => {

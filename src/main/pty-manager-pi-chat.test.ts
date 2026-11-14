@@ -153,6 +153,9 @@ vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))
 vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
+// PRDCT-4551: the ledger of starts, recorded.
+const ledger = vi.hoisted(() => ({ recordHarnessStart: vi.fn() }))
+vi.mock('./usage-ledger', () => ledger)
 vi.mock('./title-generator', () => mocks.title)
 vi.mock('./launch-profile-manager', () => ({
   defaultViewFor: () => 'clave.chat-view/chat',
@@ -299,6 +302,30 @@ describe('a Pi chat spawn (lane D, PRDCT-4427)', () => {
     expect(writtenRecord().piSessionId).toBe(PI_SESSION)
     expect(session.piSessionId).toBe(PI_SESSION)
     expect(mocks.title.scheduleChatTitle).not.toHaveBeenCalled()
+  })
+  // PRDCT-4551: every start and every resume, with its connection.
+  it('puts each start and resume on the ledger, with its session and its connection', async () => {
+    ledger.recordHarnessStart.mockClear()
+    const fresh = await openPiChat()
+    expect(ledger.recordHarnessStart).toHaveBeenLastCalledWith({
+      harness: 'pi',
+      sessionId: fresh.piSessionId,
+      connectionId: undefined,
+      label: undefined
+    })
+    writePiSession(PI_SESSION)
+    await openPiChat({
+      resumeSessionId: PI_SESSION,
+      connectionId: 'conn-made-up',
+      connectionLabel: 'Kimi made up'
+    })
+    expect(ledger.recordHarnessStart).toHaveBeenLastCalledWith({
+      harness: 'pi',
+      sessionId: PI_SESSION,
+      connectionId: 'conn-made-up',
+      label: 'Kimi made up'
+    })
+    expect(ledger.recordHarnessStart).toHaveBeenCalledTimes(2)
   })
   it('starts fresh under the same id when the file is missing', async () => {
     writePiSession(PI_SESSION, '/another/project')

@@ -492,7 +492,10 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
       ...(shell.piOwnDefault ? { piOwnDefault: () => shell.piOwnDefault!() } : {})
     }
   ).catch(() => new Map<string, PiStartModel>())
+  // What each connection's tabs used today (PRDCT-4551), as a person reads it.
+  const harnessUsage = shell.harnessUsage ? await shell.harnessUsage().catch(() => null) : null
   return launchOptionsOf({
+    harnessUsage,
     machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
     harnesses: HARNESSES,
     presence: (id) => {

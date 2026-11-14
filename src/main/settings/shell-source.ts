@@ -86,6 +86,11 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   // Lane C of the harness wave (PRDCT-4496): a connection's usage line, the
   // server's like the catalogue: main's only while it runs in-process.
   ...(shellOwnsHelpers && { providerUsage: { view: providerUsageView } }),
+  // PRDCT-4551: what Pi and OpenCode tabs used, counted where the tabs run:
+  // main only while it runs the server in-process. Loaded on first use.
+  ...(shellOwnsHelpers && {
+    harnessUsage: () => import('../harness-usage').then((m) => m.harnessUsage())
+  }),
   // Loaded on first use so this module's own import graph reaches no PTY
   // backend (a unit test loads it without one); the app's boot imports the
   // same login manager statically, so in the app nothing loads twice.

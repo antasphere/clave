@@ -662,5 +662,10 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   providerUsageRead: localBecause(
     "the window's own server's connection, this Mac's without one; a saved server's is fleetProviderUsage"
   ),
-  fleetProviderUsage: routed
+  fleetProviderUsage: routed,
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  harnessUsageRead: localBecause(
+    "the window's own server's tabs, this Mac's without one; a saved server's is fleetHarnessUsage"
+  ),
+  fleetHarnessUsage: routed
 }
