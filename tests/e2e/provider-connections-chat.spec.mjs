@@ -83,6 +83,10 @@ const PI_CWD_FOLDER = `--${ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--
 const KIMI = 'e2e-made-up-chat-kimi-0001'
 const DEEPSEEK = 'e2e-made-up-chat-deepseek-0001'
 const MADE_UP = { KIMI, DEEPSEEK }
+// Another provider's key in the person's own login environment (PRDCT-4496):
+// real Pi lists that provider, switches to it and spends it. A Pi tab on a
+// connection is never handed it; a Pi tab on none keeps it.
+const OTHER = 'e2e-made-up-other-anthropic-0001'
 
 const CATALOGUE = {
   fetchedAt: Date.now(),
@@ -117,7 +121,7 @@ const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
 function scrub(value) {
   let text = typeof value === 'string' ? value : JSON.stringify(value)
   if (text === undefined) return text
-  for (const [name, secret] of Object.entries(MADE_UP))
+  for (const [name, secret] of Object.entries({ ...MADE_UP, OTHER }))
     text = text.split(secret).join(`‹${name.toLowerCase()}›`)
   return text
 }
@@ -162,6 +166,7 @@ const e = process.env
 appendFileSync(file, JSON.stringify({
   kind, argv,
   KIMI: e.KIMI_API_KEY ?? '', DS: e.DEEPSEEK_API_KEY ?? '', CLAVE: e.CLAVE_CONNECTION_API_KEY ?? '',
+  OTHER: e.ANTHROPIC_API_KEY ?? '',
   DIR: e.PI_CODING_AGENT_DIR ?? '', CFG: e.OPENCODE_CONFIG_CONTENT ?? ''
 }) + '\\n')
 `
@@ -199,11 +204,13 @@ case " $* " in
     fi
     PI_STAND_IN_STATE="\${PI_CODING_AGENT_DIR}/sessions/${PI_CWD_FOLDER}"
     PI_STAND_IN_ANY_PROVIDER=1
-    export PI_STAND_IN_STATE PI_STAND_IN_ANY_PROVIDER
+    PI_STAND_IN_ENV_PROVIDERS=1
+    export PI_STAND_IN_STATE PI_STAND_IN_ANY_PROVIDER PI_STAND_IN_ENV_PROVIDERS
     exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
     ;;
 esac
 if [ "$1" = "--version" ]; then echo "1.5.2"; exit 0; fi
+${quote(process.execPath)} ${quote(`${ROOT}/bin/seen.mjs`)} ${quote(SEEN)} pi-terminal "$@"
 echo "stub pi terminal"
 exec sleep 600
 `,
@@ -366,7 +373,8 @@ export async function run(t) {
   const env = {
     SHELL: `${ROOT}/bin/bash`,
     PATH: `${ROOT}/bin:${process.env.PATH}`,
-    PI_CODING_AGENT_DIR: PI_HOME
+    PI_CODING_AGENT_DIR: PI_HOME,
+    ANTHROPIC_API_KEY: OTHER
   }
   let app = null
   const errors = []
@@ -546,6 +554,32 @@ export async function run(t) {
       'the sidebar’s foot names it while the tab is focused (OpenCode · DeepSeek)',
       !!footOk,
       await footLine.innerText().catch((e) => e.message)
+    )
+    // The verifier's F3: the line is a control, and a click opens Settings
+    // on Connections, where the connection is managed.
+    const viewBefore = await win.evaluate(
+      () => window.__claveSessionStoreForTests.getState().activeView
+    )
+    await footLine.click()
+    const settingsOpened = await until(
+      () =>
+        win.evaluate(() => {
+          const s = window.__claveSessionStoreForTests.getState()
+          return s.activeView === 'settings' && s.settingsSection === 'accounts' ? true : null
+        }),
+      { tries: 40 }
+    )
+    t.check(
+      'a click on it opens Settings on Connections',
+      !!settingsOpened,
+      await win.evaluate(() => {
+        const s = window.__claveSessionStoreForTests.getState()
+        return { activeView: s.activeView, settingsSection: s.settingsSection }
+      })
+    )
+    await win.evaluate(
+      (view) => window.__claveSessionStoreForTests.getState().setActiveView(view),
+      viewBefore
     )
 
     // ── 1a. An agent asks for a model OpenCode does not have (PRDCT-4427) ──
@@ -758,6 +792,54 @@ export async function run(t) {
         .catch((e) => e.message)
     )
 
+    // ── 2a. The Pi chat on Kimi stays on Kimi (the verifier's F1, PRDCT-4496):
+    // the login environment holds another provider's key, and the stand-in
+    // lists that provider's model whenever the variable reaches it, as real
+    // Pi 1.5.2 does ──
+    t.check(
+      'the Pi chat on Kimi was handed no other provider’s variable',
+      piSeen?.OTHER === '' && piSeen?.KIMI === KIMI,
+      scrub(piSeen)
+    )
+    const piModels = await win.evaluate((id) => window.electronAPI.sessionsModels(id), piId)
+    t.check(
+      'its menu lists the connection’s provider’s models alone',
+      Array.isArray(piModels) &&
+        piModels.length > 0 &&
+        piModels.every((m) => m.id.startsWith('kimi-coding/')),
+      piModels
+    )
+    const piFrames = () =>
+      lines(path.join(piSeen?.DIR ?? kimiDir, 'sessions', PI_CWD_FOLDER, 'frames.jsonl')).map(
+        (f) => f.frame
+      )
+    await win.evaluate(
+      (id) =>
+        window.electronAPI.sessionsWrite(id, {
+          type: 'set_model',
+          model: 'anthropic/claude-stand-in'
+        }),
+      piId
+    )
+    const REFUSED =
+      'Pi stays on kimi-coding/k-first: this chat runs on its connection, whose provider is kimi-coding, and anthropic/claude-stand-in is not one of its models.'
+    const refusedSaid = await until(
+      async () => ((await chatText(piId)).includes(REFUSED) ? true : null),
+      { tries: 40 }
+    )
+    t.check(
+      'a pick of another provider’s model is refused in one sentence',
+      !!refusedSaid,
+      scrub(await chatText(piId)).slice(-600)
+    )
+    t.check(
+      'and Pi was never asked to switch to it',
+      !piFrames().some((f) => f?.type === 'set_model' && f?.provider !== 'kimi-coding'),
+      piFrames().map((f) => f?.type)
+    )
+    const pickRecord = await until(async () => recordOf(piId))
+    t.equal('the chat’s record keeps the model it runs on', pickRecord?.model, 'k-first')
+
     // ── 2b. Terminals: one on a connection names it in its header, one on
     // none names nothing ──
     const tile = (id) => win.locator(`[data-terminal-tile="${id}"]`)
@@ -795,6 +877,69 @@ export async function run(t) {
     t.check(
       'its header names none',
       (await tile(plainTermId).locator('[data-connection-badge]').count()) === 0
+    )
+
+    // ── 2c. A Pi terminal on Kimi is not handed another provider's variable
+    // (the verifier's F5, PRDCT-4496); a Pi terminal on none keeps it ──
+    const piTerminal = async (extra) => {
+      const before = seen('pi-terminal').length
+      const id = (
+        await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'pi',
+          chat: false,
+          workspace: WS.id,
+          ...extra
+        })
+      )?.sessionId
+      if (id) await callMcp(app, 'focus', { sessionId: id })
+      const started = await until(() => seen('pi-terminal')[before] ?? null, { tries: 60 })
+      return { id, started }
+    }
+    const piTermOn = await piTerminal({ account: 'Kimi work', name: 'Pi terminal on Kimi' })
+    t.check(
+      'a Pi terminal on Kimi got the Kimi value, in the connection’s directory',
+      piTermOn.started?.KIMI === KIMI && piTermOn.started?.DIR === piSeen?.DIR,
+      scrub(piTermOn.started)
+    )
+    t.check(
+      'and no other provider’s variable, though the login environment exports one',
+      piTermOn.started?.OTHER === '',
+      scrub(piTermOn.started)
+    )
+    const piTermOff = await piTerminal({ name: 'Pi terminal on no connection' })
+    t.check(
+      'a Pi terminal on no connection keeps the login environment’s variable (the check above is not empty)',
+      piTermOff.started?.OTHER === OTHER && piTermOff.started?.KIMI === '',
+      scrub(piTermOff.started)
+    )
+    // T2 of the tester's fourth pass: the stand-in terminal never writes a
+    // Pi session, as a Pi that ended before its first message; a Resume ran
+    // `pi --session <id>`, which real Pi 1.5.2 answers "No session found
+    // matching" and exits 1. It starts under the same id instead.
+    const termSession = after(piTermOff.started?.argv, '--session-id')
+    const termBefore = seen('pi-terminal').length
+    const termRestart = await win.evaluate(
+      async (id) =>
+        window.electronAPI.restartSession(id, {}, undefined).then(
+          (r) => r,
+          (e) => ({ error: String(e?.message ?? e) })
+        ),
+      piTermOff.id
+    )
+    t.check(
+      'the Pi terminal whose session Pi never wrote restarts',
+      termRestart && !('error' in termRestart),
+      scrub(termRestart)
+    )
+    await callMcp(app, 'focus', { sessionId: piTermOff.id })
+    const termResumed = await until(() => seen('pi-terminal')[termBefore] ?? null, { tries: 60 })
+    t.check(
+      'it starts under the same id (--session-id), never --session on a session that is not there',
+      !!termSession &&
+        after(termResumed?.argv, '--session-id') === termSession &&
+        !(termResumed?.argv ?? []).includes('--session'),
+      { before: piTermOff.started?.argv, after: termResumed?.argv }
     )
     await callMcp(app, 'focus', { sessionId: piId })
     const piRecord = await until(async () => recordOf(piId)?.piSessionId && recordOf(piId))
