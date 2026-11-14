@@ -148,9 +148,18 @@ describe('the ledger of starts (PRDCT-4551)', () => {
     installSettingsPorts(ports)
     try {
       const ledger = new UsageLedger(() => ports.storage)
+      // `recordHarnessStart` writes after an import of its own and answers
+      // nothing to wait on: the document is read until it holds the line,
+      // with a clear failure, not a short count of sleeps, when it never does.
       const lines = async (n: number): Promise<LedgerLine[]> => {
-        for (let i = 0; i < 200 && ledger.read().length < n; i++)
+        const deadline = Date.now() + 20_000
+        while (ledger.read().length < n) {
+          if (Date.now() > deadline)
+            throw new Error(
+              `the ledger never held ${n} line(s) within 20 s: ${JSON.stringify(ledger.read())}`
+            )
           await new Promise((resolve) => setTimeout(resolve, 10))
+        }
         return ledger.read()
       }
       const before = Date.now()
@@ -176,7 +185,7 @@ describe('the ledger of starts (PRDCT-4551)', () => {
       resetSettingsPorts()
       fs.rmSync(ports.dir, { recursive: true, force: true })
     }
-  })
+  }, 60_000)
 
   it('skips a torn line and keeps the rest', () => {
     expect(

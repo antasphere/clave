@@ -372,20 +372,57 @@ describe("the state folder's watch reads a tab's report (PRDCT-4540)", () => {
     const dir = tempDataDir('clave-watch-time-')
     dirs.push(dir)
     installTerminalPorts({ storage: fileStorage(dir) })
-    const heard: [string, string | null, number | undefined][] = []
-    setConnectionReportListener((id, leftFor, at) => heard.push([id, leftFor, at]))
+    type Heard = [string, string | null, number | undefined]
+    const heard: Heard[] = []
+    const waiters: (() => void)[] = []
+    setConnectionReportListener((id, leftFor, at) => {
+      heard.push([id, leftFor, at])
+      for (const wake of waiters.splice(0)) wake()
+    })
+    /** Wait on the listener itself for the change `id` → `leftFor`; a clear
+     *  failure, naming what was heard, when it does not come in `limitMs`. */
+    const hear = async (id: string, leftFor: string | null, limitMs: number): Promise<Heard> => {
+      const deadline = Date.now() + limitMs
+      for (;;) {
+        const found = heard.find(([i, l]) => i === id && l === leftFor)
+        if (found) return found
+        const left = deadline - Date.now()
+        if (left <= 0)
+          throw new Error(
+            `the folder's watch never forwarded ${id} → ${String(leftFor)} within ${limitMs} ms; heard: ${JSON.stringify(heard)}`
+          )
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, left)
+          waiters.push(() => {
+            clearTimeout(timer)
+            resolve()
+          })
+        })
+      }
+    }
     startWatching(() => {})
     try {
-      const file = connectionReportPath('tab-2')
-      const heardFor = async (n: number): Promise<void> => {
-        for (let i = 0; i < 200 && heard.length < n; i++)
-          await new Promise((resolve) => setTimeout(resolve, 10))
+      // The watch is proven live first: a warm-up tab's report is changed
+      // until the watch forwards it (a write made before the watch is live
+      // is never heard), then what was heard is forgotten.
+      const warm = connectionReportPath('warm-up')
+      let live = false
+      for (let i = 0; i < 40 && !live; i++) {
+        const leftFor = i % 2 === 0 ? 'warm-a' : 'warm-b'
+        fs.writeFileSync(warm, `off ${leftFor}\n`)
+        live = await hear('warm-up', leftFor, 500).then(
+          () => true,
+          () => false
+        )
       }
+      if (!live) throw new Error("the folder's watch never went live: no warm-up change heard")
+      heard.length = 0
+      const file = connectionReportPath('tab-2')
       fs.writeFileSync(file, 'off other at 1794675520788\n')
-      await heardFor(1)
+      await hear('tab-2', 'other', 10_000)
       fs.writeFileSync(file, 'on\n')
-      await heardFor(2)
-      expect(heard).toEqual([
+      await hear('tab-2', null, 10_000)
+      expect(heard.filter(([id]) => id === 'tab-2')).toEqual([
         ['tab-2', 'other', 1794675520788],
         ['tab-2', null, undefined]
       ])
@@ -396,7 +433,7 @@ describe("the state folder's watch reads a tab's report (PRDCT-4540)", () => {
     } finally {
       stopWatching()
     }
-  })
+  }, 60_000)
 })
 
 describe('the one rule: a tab off its connection names it nowhere and says so (PRDCT-4540)', () => {
