@@ -1,4 +1,4 @@
-import { isRemoteKey } from '../../lib/fleet-identity'
+import { isRemoteKey, ownerOf } from '../../lib/fleet-identity'
 import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -16,7 +16,6 @@ import { useFeedbackStore } from '../../store/feedback-store'
 import {
   claudeUsageStore,
   codexUsageStore,
-  piUsageStores,
   accountUsageFieldsOf,
   claudeUsageForModel,
   headroomWindow,
@@ -27,9 +26,19 @@ import {
   useClaudeAccountsUsage,
   useUsageNavigation,
   USAGE_PROVIDER_LABELS,
-  piTodaySummary,
   type UsageProvider
 } from '../../store/usage-store'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import type { UsageHarness } from '@clave/contract/settings/harness-usage-view'
+import {
+  connectionUsage,
+  ensureHarnessUsage,
+  refreshHarnessUsage,
+  signInUsage,
+  harnessUsageReading,
+  READING_WORDS,
+  useHarnessUsage
+} from '../../store/harness-usage-store'
 import { windowExhausted } from '../../lib/account-pool'
 import { accountForLaunch, accountProviderOf } from '../../lib/switch-account'
 import { ownAccountFrom, useSessionAccountView } from '../../lib/session-accounts'
@@ -225,6 +234,21 @@ function UsageLine({
  * the meaningless thing the usage line replaced, and repeating it as a fallback
  * would put it straight back.
  */
+/** PRDCT-4551: a Pi or OpenCode tab's turn ended (its state left `working`):
+ *  the usage of its machine is read again, so every place shows the turn. */
+function useRefreshUsageOnTurnEnd(): void {
+  useEffect(() => {
+    const working = new Set<string>()
+    return useSessionStore.subscribe((state) => {
+      for (const session of state.sessions) {
+        if (!session.piMode && !session.opencodeMode) continue
+        if (session.agentState === 'working') working.add(session.id)
+        else if (working.delete(session.id)) void refreshHarnessUsage(ownerOf(session.id))
+      }
+    })
+  }, [])
+}
+
 function WorkLine(): React.ReactElement {
   const todayTotalMinutes = useWorkTrackerStore((s) => s.todayTotalMinutes)
   const todaySessionCount = useWorkTrackerStore((s) => s.todaySessionCount)
@@ -344,9 +368,25 @@ export function SidebarFooter(): React.ReactElement {
     remoteRead && remoteRead.status !== 'error'
       ? headroomWindow(claudeUsageForModel(remoteRead, remoteFocused?.model))
       : null
-  const pi = piUsageStores.today()
-  const loadUsage =
-    provider === 'pi' ? pi.load : provider === 'claude' || provider === 'codex' ? quota.load : null
+  // PRDCT-4551: a Pi or OpenCode tab's usage is its connection's today, or
+  // its harness's own sign-in's on no connection, read on the machine that
+  // runs it. Pi's all-sessions line is gone: it was nobody's figure.
+  const harnessTab =
+    focusedSession && (focusedSession.piMode || focusedSession.opencodeMode) ? focusedSession : null
+  const tabHarness: UsageHarness = harnessTab?.piMode ? 'pi' : 'opencode'
+  const tabMachine = harnessTab ? ownerOf(harnessTab.id) : LOCAL_SERVER_ID
+  const tabEntry = useHarnessUsage(tabMachine, 'today')
+  const tabUsage = harnessTab
+    ? connection
+      ? connectionUsage(tabEntry, connection.id)
+      : signInUsage(tabEntry, tabHarness)
+    : undefined
+  const harnessTabId = harnessTab?.id ?? null
+  useEffect(() => {
+    if (harnessTabId) void ensureHarnessUsage(tabMachine, 'today')
+  }, [harnessTabId, tabMachine])
+  useRefreshUsageOnTurnEnd()
+  const loadUsage = provider === 'claude' || provider === 'codex' ? quota.load : null
   const trackerEnabled = useWorkTrackerStore((s) => s.enabled)
   const trackerMinutes = useWorkTrackerStore((s) => s.todayTotalMinutes)
   const feedbackCollapsed = useFeedbackStore((s) => s.collapsed)
@@ -387,20 +427,28 @@ export function SidebarFooter(): React.ReactElement {
           })()
         )
       : null
-  const piTotals = provider === 'pi' && pi.status !== 'error' ? pi.data : null
-  const providerStatus = provider === 'pi' ? pi.status : quota.status
-  const showProviderStatus = (quotaProvider !== null || provider === 'pi') && !usage && !piTotals
-  // A Pi or OpenCode tab's stored connection is a line of its own, never part
-  // of a usage line: Pi's figures are its local totals of the day on any
-  // connection or none, so `Moonshot · 10.4K tokens` would read as that
-  // connection's usage, and it is not (T1, PRDCT-4427).
+  // Drawn at once with what there is (PRDCT-4551): "Reading…" before the
+  // first answer, the figure so far while the host still reads that harness.
+  const tabReading = harnessTab ? harnessUsageReading(tabEntry, tabHarness) : false
+  const tabLine = harnessTab
+    ? tabUsage
+      ? tabReading
+        ? `${tabUsage.line} · ${READING_WORDS}`
+        : tabUsage.line
+      : tabReading
+        ? READING_WORDS
+        : null
+    : null
+  const providerStatus = quota.status
+  const showProviderStatus = quotaProvider !== null && !usage && !tabLine
+  // A Pi or OpenCode tab's stored connection is a line of its own, the
+  // control that opens Connections; its usage is the line below it.
   const harnessName = focusedSession?.piMode ? 'Pi' : 'OpenCode'
-  const showWork =
-    !usage && !piTotals && !showProviderStatus && trackerEnabled && trackerMinutes > 0
+  const showWork = !usage && !tabLine && !showProviderStatus && trackerEnabled && trackerMinutes > 0
   const showMetaRow =
     usage !== null ||
     remoteUsage !== null ||
-    piTotals !== null ||
+    tabLine !== null ||
     showProviderStatus ||
     showWork ||
     showFeedbackIcon
@@ -512,16 +560,17 @@ export function SidebarFooter(): React.ReactElement {
               />
             ) : remoteUsage && remoteProvider && remoteOwn ? (
               <UsageLine window={remoteUsage} provider={remoteProvider} account={remoteOwn.label} />
-            ) : piTotals ? (
+            ) : tabLine ? (
               <button
                 className="sidebar-footer-line"
-                data-usage-provider="pi"
-                onClick={() => openUsage('pi')}
-                title={`Pi · ${piTodaySummary(piTotals)} · Local totals, not account quota`}
+                data-usage-provider={tabHarness}
+                data-connection-usage={connection?.id ?? 'sign-in'}
+                onClick={() => openUsage(tabHarness)}
+                title={`${harnessName} · ${connection?.label ?? `${harnessName} sign-in`} · ${tabLine}`}
               >
-                <PiLogo className="w-3.5 h-3.5 flex-shrink-0" />
+                {tabHarness === 'pi' && <PiLogo className="w-3.5 h-3.5 flex-shrink-0" />}
                 <span className="text-[11px] text-text-secondary tabular-nums truncate">
-                  {piTodaySummary(piTotals)}
+                  {tabLine}
                 </span>
               </button>
             ) : showProviderStatus && provider ? (

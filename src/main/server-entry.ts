@@ -440,7 +440,9 @@ async function main(): Promise<void> {
     catalog: (providerIds) => modelsCatalog.view({ providerIds }),
     providerConnections: (harness) => providerConnectionsForListing(harness),
     providerConnectionViews: () => providerConnectionsManager.list(),
-    piOwnDefault: () => piOwnDefault()
+    piOwnDefault: () => piOwnDefault(),
+    // PRDCT-4551: what this server's Pi and OpenCode tabs used, per connection.
+    harnessUsage: async () => standalone.settings.harnessUsage.read({ range: 'today' })
   })
   // ── ADR 0004: the routines this server schedules, off its own workspace files ──
   const routines = createRoutineService({

@@ -1774,7 +1774,21 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
     ? await read.then((models) => models as CodexModels).catch(() => 'unavailable' as const)
     : 'unavailable'
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
-  const facts = { harnessSettings: harnesses, interactionMode, codexModels, now: Date.now() }
+  // What each connection's Pi and OpenCode tabs used today (PRDCT-4551), on
+  // the machine that runs them, as the launcher's rows say it.
+  const api = window.electronAPI
+  const harnessUsage = await (
+    serverId === LOCAL_SERVER_ID
+      ? api?.harnessUsageRead?.({ range: 'today' })
+      : api?.fleetHarnessUsage?.(serverId, { range: 'today' })
+  )?.catch(() => null)
+  const facts = {
+    harnessSettings: harnesses,
+    interactionMode,
+    codexModels,
+    harnessUsage: harnessUsage ?? null,
+    now: Date.now()
+  }
   // The machine's stored connections, read first when the window holds none
   // (PRDCT-4496), as its open reads them: the provider pools' rows and the
   // one `account: "any"` lands on come from the same list.

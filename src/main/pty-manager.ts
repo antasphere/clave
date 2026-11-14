@@ -34,6 +34,8 @@ import {
   providerInjectionForSpawn,
   type ProviderSpawnFields
 } from './provider-injection-spawn'
+// PRDCT-4551: the ledger of starts the usage per connection is counted by.
+import { recordHarnessStart } from './usage-ledger'
 import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
 import { connectionVariableNames } from './connection-handover'
 import { lineageOf } from './sessions/lineage'
@@ -217,6 +219,10 @@ class PtyManager {
   /** What each live session was spawned with, so a restart on another
    *  account (ADR 0002) rebuilds the same spawn with the account changed. */
   private spawns = new Map<string, { cwd: string; options?: PtySpawnOptions }>()
+  /** PRDCT-4551: the connection an OpenCode chat was started on, set before
+   *  its process starts: its session id arrives from the protocol, possibly
+   *  before the spawn returns, and goes on the ledger with it. */
+  private opencodeChatConnections = new Map<string, { connectionId?: string; label?: string }>()
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
   /** An OpenCode chat session's id, from the ACP agent's own meta (lane D,
@@ -533,6 +539,10 @@ class PtyManager {
     if (isEvents && adapter.id === 'opencode-chat') {
       const opencodeProfile =
         carried ?? launchProfileManager.resolve('opencode', options?.workspaceId, profileId)
+      this.opencodeChatConnections.set(session.id, {
+        connectionId: options?.connectionId,
+        label: options?.connectionLabel
+      })
       opencodeChatAdapter.configure(session.id, {
         command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
         env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
@@ -552,6 +562,13 @@ class PtyManager {
       const piProfile =
         carried ?? launchProfileManager.resolve('pi', options?.workspaceId, profileId)
       session.piSessionId = options?.resumeSessionId ?? randomUUID()
+      // PRDCT-4551: the ledger of starts the usage is counted by.
+      recordHarnessStart({
+        harness: 'pi',
+        sessionId: session.piSessionId,
+        connectionId: options?.connectionId,
+        label: options?.connectionLabel
+      })
       const argv = buildAgentArgv({
         kind: 'pi',
         profile: piProfile,
@@ -798,6 +815,15 @@ class PtyManager {
         ) {
           this.opencodeSessions.set(id, stream.event.providerSessionId)
           ptyBackend.setSessionOpencodeSessionId(id, stream.event.providerSessionId)
+          // PRDCT-4551: an OpenCode chat's session is known here, from the
+          // protocol: its start goes on the ledger now, on its connection.
+          const spawned = this.opencodeChatConnections.get(id)
+          recordHarnessStart({
+            harness: 'opencode',
+            sessionId: stream.event.providerSessionId,
+            connectionId: spawned?.connectionId,
+            label: spawned?.label
+          })
         }
       }
       // The mode and the effort the chat runs at, as the provider says them

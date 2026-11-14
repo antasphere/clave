@@ -35,6 +35,9 @@ import { CLAVE_CONNECTION_REPORT_FILE_ENV, connectionWatchNames } from '../../co
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
+// PRDCT-4551: an OpenCode terminal's session named at its start, and the ledger.
+import { newOpencodeSessionId } from '../../opencode-session-id'
+import { recordHarnessStart } from '../../usage-ledger'
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
@@ -1181,6 +1184,7 @@ export class PtyBackend {
 
     let claudeSessionId: string | undefined
     let piSessionId: string | undefined
+    let opencodeSessionId: string | undefined
     const kind: AgentKind | null = usePiMode
       ? 'pi'
       : useOpencodeMode
@@ -1325,6 +1329,18 @@ export class PtyBackend {
               ? options.piSessionId
               : randomUUID())
         }
+        // PRDCT-4551: an OpenCode terminal's session is named by Clave at its
+        // start (`--session` creates the one it does not find, 2.3.0), and
+        // every Pi or OpenCode start goes on the ledger the usage is read by.
+        if (kind === 'opencode')
+          opencodeSessionId = options?.resumeSessionId ?? newOpencodeSessionId()
+        if (kind === 'pi' || kind === 'opencode')
+          recordHarnessStart({
+            harness: kind,
+            sessionId: kind === 'pi' ? piSessionId : opencodeSessionId,
+            connectionId: options?.connectionId,
+            label: options?.connectionLabel
+          })
         const mcpConfigPath = kind === 'claude' ? lazyTerminalPorts.mcpConfig.write(id) : null
         // ── PRDCT-4507: Clave's own tools in a Pi or an OpenCode terminal ──
         // The tab's credential is the same port's file: Pi's extension reads
@@ -1347,7 +1363,8 @@ export class PtyBackend {
         const argv = buildAgentArgv({
           kind,
           profile,
-          sessionId: kind === 'pi' ? piSessionId : claudeSessionId,
+          sessionId:
+            kind === 'pi' ? piSessionId : kind === 'opencode' ? opencodeSessionId : claudeSessionId,
           resumeSessionId: options?.resumeSessionId,
           dangerousMode: options?.dangerousMode,
           model,
@@ -1452,6 +1469,9 @@ export class PtyBackend {
       piMode: usePiMode,
       opencodeMode: useOpencodeMode,
       // Lane D (PRDCT-4427): the OpenCode session the terminal resumed, kept for its next Resume.
+      // A fresh terminal's Clave-named session (PRDCT-4551) is on its command
+      // line and the ledger alone: until it ran a turn it is no conversation
+      // a move into a chat or a Resume could take up.
       opencodeSessionId: options?.opencodeMode ? options.resumeSessionId : undefined,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,

@@ -24,6 +24,7 @@ import type { AccountUsageSummary } from '../../shared/account-pool'
 import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
 import type { LaunchModel } from '../../shared/launch-options'
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-view'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { ProviderCompanyId } from '../models-catalog-overlay'
 import type { PiOwnDefault } from '../../shared/pi-start-model'
@@ -179,6 +180,9 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   /** The person's own Pi default on this machine (`piOwnDefault`), for what
    *  a Pi connection starts on with no model named; absent, not said. */
   piOwnDefault?(): PiOwnDefault | null
+  /** What this machine's Pi and OpenCode tabs used today, per connection
+   *  (PRDCT-4551); absent, the listing says nothing of it. */
+  harnessUsage?(): Promise<Pick<HarnessUsageView, 'rows'>>
 }
 
 export interface ServedContext<W extends ToolWindow = ToolWindow> {

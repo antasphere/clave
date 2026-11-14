@@ -96,6 +96,10 @@ export async function run(t) {
           [PLAY_TOKEN]: { fiveHour: '0.85', sevenDay: '0.40', status: 'allowed_warning' }
         }
         globalThis.fetch = async (url, init) => {
+          // The Connections page reads the models catalogue for its cards
+          // (PRDCT-4552): never reached from a test, and no Anthropic probe.
+          if (String(url).includes('models.dev'))
+            throw new Error('models.dev is not reached from a test')
           const auth = init?.headers?.Authorization ?? ''
           const token = auth.replace(/^Bearer /, '')
           state.probes.push({ url: String(url), method: init?.method ?? 'GET', token })
@@ -176,8 +180,8 @@ export async function run(t) {
     await win.locator('[data-settings-nav-row="accounts"]').click()
     const accountsPage = win.locator('[data-settings-page="accounts"]')
     await accountsPage.waitFor()
-    await accountsPage.locator('[data-connect]').click()
-    await win.locator('[data-connect-secondary="anthropic"]').click()
+    // The Anthropic card's second road (PRDCT-4552): the paste form opens in the card.
+    await accountsPage.locator('[data-connect-secondary="anthropic"]').click()
     const form = accountsPage.locator('[data-claude-token-form]')
     await form.waitFor()
     await form.getByLabel('Connection name').fill('Work')
@@ -254,8 +258,8 @@ export async function run(t) {
     // A refused token leaves no half-account behind.
     await win.locator('[data-settings-nav-row="accounts"]').click()
     await accountsPage.waitFor()
-    await accountsPage.locator('[data-connect]').click()
-    await win.locator('[data-connect-secondary="anthropic"]').click()
+    // The Anthropic card's second road (PRDCT-4552): the paste form opens in the card.
+    await accountsPage.locator('[data-connect-secondary="anthropic"]').click()
     await form.getByLabel('Connection name').fill('Broken')
     await form.getByLabel('Claude Code token').fill('not-a-token')
     await form.getByRole('button', { name: 'Add connection', exact: true }).click()

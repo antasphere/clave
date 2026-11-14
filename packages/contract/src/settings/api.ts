@@ -75,6 +75,8 @@ import {
 import { ReadModelsCatalog } from './models-catalog'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import { ReadProviderUsage } from './provider-usage'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+import { ReadHarnessUsage } from './harness-usage'
 
 export const settingsGroup = ApiGroup.make('settings')
   // Claude accounts
@@ -320,3 +322,5 @@ export const settingsGroup = ApiGroup.make('settings')
   .add(HttpCqrs.queryEndpoint('readModelsCatalog', '/models-catalog', ReadModelsCatalog))
   // Lane C of the harness wave (PRDCT-4496): a connection's usage line
   .add(HttpCqrs.queryEndpoint('readProviderUsage', '/provider-usage', ReadProviderUsage))
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  .add(HttpCqrs.queryEndpoint('readHarnessUsage', '/harness-usage', ReadHarnessUsage))

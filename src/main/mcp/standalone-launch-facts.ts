@@ -29,6 +29,7 @@ import {
 } from '../../shared/harness'
 import type { LaunchModel, LaunchOptionsInput } from '../../shared/launch-options'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-view'
 import { isAccountPoolId, type Connection, type ConnectionPoolId } from '../../shared/connection'
 import type { ModelOption } from '../../shared/session-model'
 import {
@@ -69,6 +70,8 @@ export interface StandaloneLaunchFacts extends LaunchFacts {
   /** What each of this server's Pi connections starts on with no model
    *  named, by id (`piStartModels`, the spawn's rule). */
   piStartModels?(): Promise<Map<string, PiStartModel>>
+  /** What this server's Pi and OpenCode tabs used today (PRDCT-4551). */
+  harnessUsage?(): Promise<Pick<HarnessUsageView, 'rows'>>
   now(): number
 }
 
@@ -88,6 +91,9 @@ export interface StandaloneLaunchDeps extends ProviderListingDeps {
   /** Every stored provider connection of this server, never a key
    *  (`providerConnectionsManager.list`); absent, none. */
   readonly providerConnectionViews?: () => readonly ProviderConnectionView[]
+  /** What this server's Pi and OpenCode tabs used today, per connection
+   *  (PRDCT-4551); absent, the listing says nothing of it. */
+  readonly harnessUsage?: () => Promise<Pick<HarnessUsageView, 'rows'>>
   readonly now?: () => number
 }
 
@@ -165,6 +171,7 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
         harnessProviderConnections(HARNESS_BY_ID.pi, deps.providerConnectionViews?.() ?? []),
         deps
       ),
+    ...(deps.harnessUsage ? { harnessUsage: deps.harnessUsage } : {}),
     now: deps.now ?? (() => Date.now())
   }
 }
@@ -208,9 +215,12 @@ export function launchOptionsInput(
   facts: StandaloneLaunchFacts,
   statuses: ReadonlyArray<AgentUpdateStatus> | undefined,
   models: Partial<Record<HarnessId, readonly LaunchModel[] | 'unavailable'>>,
-  piStarts?: ReadonlyMap<string, PiStartModel>
+  piStarts?: ReadonlyMap<string, PiStartModel>,
+  harnessUsage?: Pick<HarnessUsageView, 'rows'> | null
 ): LaunchOptionsInput {
   return {
+    // PRDCT-4551: what each connection's tabs used today.
+    ...(harnessUsage ? { harnessUsage } : {}),
     machine: facts.machine(),
     harnesses: HARNESSES,
     presence: (id) => {

@@ -88,6 +88,10 @@ import type {
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -3079,6 +3083,14 @@ const electronAPI = {
     ipc: (input) => ipcRenderer.invoke('provider-usage:read', input),
     server: async ({ api }, input) =>
       loose<ProviderUsageLineView>(await api.settings.providerUsage.read(input))
+  }),
+
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection, the window's
+  // server's when it has one, where its tabs run.
+  harnessUsageRead: viaServer<[input: { range: HarnessUsageRange }], HarnessUsageView>({
+    ipc: (input) => ipcRenderer.invoke('harness-usage:read', input),
+    server: async ({ api }, input) =>
+      loose<HarnessUsageView>(await api.settings.harnessUsage.read(input))
   })
 }
 

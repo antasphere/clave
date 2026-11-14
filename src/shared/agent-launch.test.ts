@@ -330,9 +330,22 @@ describe('agent argv', () => {
   it("launches OpenCode's TUI with the flags it has: --session, --auto, --prompt, never a model", () => {
     const profile = BUILT_IN_LAUNCH_PROFILES.find((p) => p.family === 'opencode')!
     expect(profile.command).toEqual(['opencode'])
-    expect(buildAgentArgv({ kind: 'opencode', profile, sessionId: 'fresh', model: 'x/y' })).toEqual(
-      ['opencode']
-    )
+    expect(buildAgentArgv({ kind: 'opencode', profile, model: 'x/y' })).toEqual(['opencode'])
+    // PRDCT-4551: a fresh terminal on the session Clave named, which
+    // `--session` creates; a resume wins over it.
+    expect(buildAgentArgv({ kind: 'opencode', profile, sessionId: 'ses_fresh' })).toEqual([
+      'opencode',
+      '--session',
+      'ses_fresh'
+    ])
+    expect(
+      buildAgentArgv({
+        kind: 'opencode',
+        profile,
+        sessionId: 'ses_fresh',
+        resumeSessionId: 'ses_old'
+      })
+    ).toEqual(['opencode', '--session', 'ses_old'])
     expect(
       buildAgentArgv({
         kind: 'opencode',

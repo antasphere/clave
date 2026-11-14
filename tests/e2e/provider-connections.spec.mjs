@@ -60,29 +60,28 @@ async function pickMachine(win, name, value) {
   throw new Error(`the machine picker never took ${String(name)}`)
 }
 
-/** Open a Connect menu and pick a company: the menu animates in, so the open is waited for. */
-async function connectPick(win, trigger, company) {
-  const item = win.locator(`[data-connect-company="${company}"]`)
+/** Press Connect on a provider's card (PRDCT-4552): its form opens in the card. */
+async function connectPick(win, scope, company) {
+  const card = scope.locator(`[data-provider-card="${company}"]`)
+  const button = card.locator(`[data-connect-company="${company}"]`)
   for (let attempt = 0; attempt < 3; attempt++) {
-    await trigger.click()
-    const offered = await item.waitFor({ state: 'visible', timeout: 1500 }).then(
-      () => true,
-      () => false
-    )
-    if (offered) {
-      await item.click({ timeout: 3000 }).catch(() => undefined)
-      const form = win.locator(`[data-provider-add-form="${company}"]`)
-      if (
-        await form.waitFor({ state: 'visible', timeout: 3000 }).then(
-          () => true,
-          () => false
-        )
+    await button.click({ timeout: 5000 }).catch(() => undefined)
+    const form = card.locator(`[data-provider-add-form="${company}"]`)
+    if (
+      await form.waitFor({ state: 'visible', timeout: 3000 }).then(
+        () => true,
+        () => false
       )
-        return form
-    }
-    await win.keyboard.press('Escape')
+    )
+      return form
   }
-  throw new Error(`the Connect menu never opened the ${company} form`)
+  throw new Error(`the ${company} card never opened its form`)
+}
+
+/** Remove a connection from its card: the trash, then the question's Remove. */
+async function removeConnection(scope, id) {
+  await scope.locator(`[data-provider-remove="${id}"]`).click()
+  await scope.locator(`[data-connection-remove-confirm="${id}"]`).click()
 }
 
 const macList = (win) => win.evaluate(() => window.electronAPI.providerConnectionsList())
@@ -113,10 +112,10 @@ export async function run(t) {
     await openServersPage(win)
     await win.locator('[data-settings-nav-row="accounts"]').click()
     const page = win.locator('[data-settings-page="accounts"]')
-    await page.locator('[data-connect]').waitFor()
+    await page.locator('[data-provider-card="moonshot"]').waitFor()
 
     // ── 1. Moonshot, on this Mac ──
-    const moonForm = await connectPick(win, page.locator('[data-connect]'), 'moonshot')
+    const moonForm = await connectPick(win, page, 'moonshot')
     const moonLabel = await moonForm.locator('[data-provider-add-label]').inputValue()
     await moonForm.locator('[data-provider-add-key]').fill(KEY_MAC)
     await moonForm.locator('[data-provider-add-save]').click()
@@ -195,7 +194,7 @@ export async function run(t) {
     )
 
     // ── 6. Another provider: a base URL, the default wire format, a key ──
-    const genericForm = await connectPick(win, page.locator('[data-connect]'), 'generic')
+    const genericForm = await connectPick(win, page, 'generic')
     await genericForm.locator('[data-provider-add-label]').fill('Lab box')
     await genericForm.locator('[data-provider-add-base-url]').fill('https://llm.example.test/v1')
     const wireFormat = await genericForm
@@ -218,7 +217,7 @@ export async function run(t) {
     )
 
     // ── 7. Ollama: a prefilled base URL and no key ──
-    const ollamaForm = await connectPick(win, page.locator('[data-connect]'), 'ollama')
+    const ollamaForm = await connectPick(win, page, 'ollama')
     const ollamaUrl = await ollamaForm.locator('[data-provider-add-base-url]').inputValue()
     const ollamaKeyFields = await ollamaForm.locator('[data-provider-add-key]').count()
     await ollamaForm.locator('[data-provider-add-save]').click()
@@ -291,8 +290,7 @@ export async function run(t) {
     await pickMachine(win, /^Personal VPS 1/, owner.id)
     const serverPage = page.locator(`[data-server-settings="${owner.id}"]`)
     await serverPage.waitFor()
-    const connectProviders = page.locator('[data-connect-providers]')
-    await connectProviders.waitFor()
+    await serverPage.locator('[data-provider-card="zai"]').waitFor()
 
     // ── 8. The read-only accounts stay as they were ──
     const claudeCard = await serverPage.locator('[data-server-claude-accounts]').count()
@@ -307,7 +305,7 @@ export async function run(t) {
     // ── 9. Z.ai, on the server ──
     if (!world.keychain) t.check('keychain checks skipped: not macOS', true, process.platform)
     const before = world.keychain ? world.keychain.items() : null
-    const zaiForm = await connectPick(win, connectProviders, 'zai')
+    const zaiForm = await connectPick(win, serverPage, 'zai')
     await zaiForm.locator('[data-provider-add-key]').fill(KEY_SERVER)
     await zaiForm.locator('[data-provider-add-save]').click()
     const zaiRow = serverPage.locator(
@@ -434,7 +432,7 @@ export async function run(t) {
     )
 
     // ── 15. Remove on the server page ──
-    await serverPage.locator(`[data-provider-remove="${zaiId}"]`).click()
+    await removeConnection(serverPage, zaiId)
     const rowGone = await settled(async () => (await zaiRow.count()) === 0)
     const servedEmpty = await settled(
       async () => (await request(server, '/connections/providers')).length === 0
@@ -465,7 +463,7 @@ export async function run(t) {
       { shown: pushedShown, added: typeof pushed?.id === 'string' }
     )
     if (pushedShown) {
-      await serverPage.locator(`[data-provider-remove="${pushed.id}"]`).click()
+      await removeConnection(serverPage, pushed.id)
     } else if (typeof pushed?.id === 'string') {
       await request(server, '/connections/providers/remove', { id: pushed.id })
     }
@@ -478,10 +476,19 @@ export async function run(t) {
 
     // ── 16. Remove on this Mac ──
     await pickMachine(win, 'This Mac', 'local')
-    await page.locator('[data-connect]').waitFor()
-    const moonRemove = page.locator(`[data-provider-remove="${moonId}"]`)
-    await moonRemove.waitFor()
-    await moonRemove.click()
+    await page.locator('[data-provider-card="anthropic"]').waitFor()
+    await page.locator(`[data-provider-remove="${moonId}"]`).waitFor()
+    // Removing asks first (PRDCT-4552): the question names what goes.
+    await page.locator(`[data-provider-remove="${moonId}"]`).click()
+    const moonQuestion = await page
+      .locator(`[data-connection-remove-question="${moonId}"]`)
+      .innerText()
+    t.check(
+      '16a. removing asks first, and says the key is deleted from this Mac',
+      /Remove Moonshot\?/.test(moonQuestion) && /key is deleted from this Mac/.test(moonQuestion),
+      moonQuestion
+    )
+    await page.locator(`[data-connection-remove-confirm="${moonId}"]`).click()
     const moonGone = await settled(async () => (await moonRow.count()) === 0)
     const moonUnlisted = await settled(
       async () => !(await macList(win)).some((c) => c.id === moonId)

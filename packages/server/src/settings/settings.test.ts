@@ -674,3 +674,26 @@ describe('a connection’s usage line on the server (PRDCT-4496)', () => {
     }
   })
 })
+
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+describe('the Pi and OpenCode usage per connection on the server (PRDCT-4551)', () => {
+  it('answers the rows of the range asked for, the flag decoded', async () => {
+    const read = await get('/harness-usage?range=7d&force=true')
+    expect(read.status).toBe(200)
+    expect(await read.json()).toMatchObject({
+      range: '7d',
+      rows: [{ harness: 'pi', connectionId: 'conn-minimax', billing: 'plan', requests: 3 }],
+      unavailable: []
+    })
+    expect(fake.calls.filter((c) => c.method === 'harnessUsage.read').map((c) => c.args)).toEqual([
+      [{ range: '7d', force: true }]
+    ])
+  })
+
+  it('says a host that runs no tabs as unavailable', async () => {
+    fake.refuse.harnessUsage = true
+    const read = await get('/harness-usage?range=today')
+    expect(read.status).toBe(422)
+    expect(await read.json()).toMatchObject({ capability: 'harnessUsage' })
+  })
+})

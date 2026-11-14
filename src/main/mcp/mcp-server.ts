@@ -524,7 +524,7 @@ const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.i
 const EFFORT_MODES = harnessNames((h) => h.id === 'claude' || h.id === 'codex', 'and', true)
 
 const LAUNCH_OPTIONS_DESCRIPTION =
-  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
+  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for their tabs on no connection); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
 
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
   raw === 'propose' || raw === 'automatic' ? raw : null
@@ -653,7 +653,13 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   catalog: (providerIds) => modelsCatalog.view({ providerIds }),
   providerConnections: (harness) => providerConnectionsForListing(harness),
   providerConnectionViews: () => providerConnectionsManager.list(),
-  piOwnDefault: () => piOwnDefault()
+  piOwnDefault: () => piOwnDefault(),
+  // PRDCT-4551: what this Mac's Pi and OpenCode tabs used today, where they
+  // run (the settings source refuses when a server runs them elsewhere).
+  harnessUsage: async () =>
+    (await import('../settings/shell-source')).shellSettingsSource.harnessUsage.read({
+      range: 'today'
+    })
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns

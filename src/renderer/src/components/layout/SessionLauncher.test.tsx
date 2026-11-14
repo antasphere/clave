@@ -39,7 +39,9 @@ const g = vi.hoisted(() => ({
   /** Stored provider connections of Pi and OpenCode (PRDCT-4496). */
   providerConnections: [] as { id: string; label: string; company: string }[],
   catalog: null as unknown,
-  usageLines: {} as Record<string, string>
+  usageLines: {} as Record<string, string>,
+  /** What each connection's tabs used today (PRDCT-4551). */
+  harnessLines: {} as Record<string, string>
 }))
 
 vi.mock('@clave/ui/components', () => {
@@ -179,7 +181,8 @@ vi.mock('../../lib/launch-source', () => {
     },
     providerConnections: () => g.providerConnections,
     catalog: () => g.catalog,
-    usageLine: (id: string) => g.usageLines[id] ?? null
+    usageLine: (id: string) => g.usageLines[id] ?? null,
+    harnessUsageLine: (id: string) => g.harnessLines[id] ?? null
   }
   return { localLaunchSource: () => source, serverLaunchSource: () => source }
 })
@@ -215,6 +218,7 @@ beforeEach(() => {
   g.providerConnections = []
   g.catalog = null
   g.usageLines = {}
+  g.harnessLines = {}
   vi.stubGlobal('window', {})
 })
 
@@ -374,12 +378,18 @@ describe('Pi and OpenCode on a stored provider connection (PRDCT-4496)', () => {
     g.providerConnections = [{ id: 'c1', label: 'My DeepSeek', company: 'deepseek' }]
     g.catalog = catalog
     g.usageLines = { c1: 'Pay per use' }
+    g.harnessLines = { c1: '10.4K tokens · $0.01 today' }
     const html = render()
     // OpenCode is the last row: its submenu runs to the end of the markup.
     const opencode = html.slice(html.indexOf('data-harness-row="opencode"'))
     expect(opencode).toContain('data-harness-model="deepseek-chat"')
     expect(opencode).toContain('DeepSeek Chat')
     expect(opencode).toMatch(/data-harness-connection="c1"[^]*?My DeepSeek[^]*?Pay per use/)
+    // PRDCT-4551: the connection's own usage, a line of its own beside the
+    // provider's, never mixed into it.
+    expect(opencode).toMatch(
+      /Pay per use<\/span><span[^>]*data-connection-usage="c1"[^>]*>10\.4K tokens · \$0\.01 today<\/span>/
+    )
     expect(opencode).not.toContain('Suggested')
     const rowsOf = g.items.filter((i) => i.attrs['data-harness-connection'] === 'c1')
     // Pi and OpenCode, each under its default and its catalogue model.

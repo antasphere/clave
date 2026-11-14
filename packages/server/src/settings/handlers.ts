@@ -75,6 +75,8 @@ import {
 import { ReadModelsCatalog } from '@clave/contract/settings'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import { ReadProviderUsage } from '@clave/contract/settings'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+import { ReadHarnessUsage } from '@clave/contract/settings'
 import { SettingsSource, type SettingsSourceService } from './port'
 
 /** A refusal the source threw: the contract's class, or any error carrying
@@ -282,5 +284,8 @@ export const settingsHandlers = [
   QueryHandler.make(ReadModelsCatalog, (p) => call((s) => s.modelsCatalog.read(p))),
   // Lane C of the harness wave (PRDCT-4496): a connection's usage line. A
   // host with none says so; an unknown connection is a line, never a refusal.
-  QueryHandler.make(ReadProviderUsage, (p) => call((s) => s.providerUsage.read(p)))
+  QueryHandler.make(ReadProviderUsage, (p) => call((s) => s.providerUsage.read(p))),
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection. A host that
+  // runs no tabs says so.
+  QueryHandler.make(ReadHarnessUsage, (p) => call((s) => s.harnessUsage.read(p)))
 ] as const
