@@ -173,6 +173,8 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /sessions" -> json(200, "[${session()}]")
             "GET /sessions/by-id" -> if (id == SESSION_ID) json(200, session()) else unknownSession()
             "GET /sessions/capabilities" -> if (id == SESSION_ID) json(200, """{"images":false}""") else unknownSession()
+            "GET /sessions/models" -> if (id == SESSION_ID) json(200, MODELS) else unknownSession()
+            "GET /sessions/commands" -> if (id == SESSION_ID) json(200, COMMANDS) else unknownSession()
             "GET /sessions/timeline" -> if (id == SESSION_ID) json(200, page(url?.queryParameter("before")?.toLongOrNull())) else unknownSession()
             "GET /sessions/writes" -> {
                 val asked = url?.queryParameter("clientMessageId")
@@ -349,6 +351,9 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /sessions",
             "GET /sessions/by-id",
             "GET /sessions/capabilities",
+            // The chat's pickers: the models the session may switch to, the commands under "/".
+            "GET /sessions/models",
+            "GET /sessions/commands",
             "GET /sessions/timeline",
             "GET /sessions/writes",
             "POST /sessions/write",
@@ -363,6 +368,17 @@ class FakeMachineServer(private val token: String) : Closeable {
             "GET /usage/codex/snapshot",
             "GET /server/info",
         )
+
+        /** Two models the echo chat may switch to, the first with its efforts, as `GET /sessions/models` answers them. */
+        private val MODELS =
+            """[{"id":"opus","label":"Opus","hint":"The most capable","resolved":"claude-opus-5-5","efforts":[""" +
+                """{"id":"low","label":"Low"},{"id":"medium","label":"Medium"},{"id":"high","label":"High"}],"defaultEffort":"medium"},""" +
+                """{"id":"sonnet","label":"Sonnet","hint":"Fast for everyday tasks","resolved":"claude-sonnet-5"}]"""
+
+        /** Two commands the composer offers under "/", as `GET /sessions/commands` answers them. */
+        private val COMMANDS =
+            """[{"name":"compact","description":"Summarize the conversation so far","insert":"/compact "},""" +
+                """{"name":"review","description":"Review the current changes","insert":"/review "}]"""
 
         /** One desktop group, "Tests", holding the echo chat. */
         private val OVERVIEW =

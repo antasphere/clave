@@ -149,6 +149,10 @@ class ClaveFlowTest {
         waitForDescription("Requests, 1 pending")
         waitForText("1")
         assertTrue("the chat reads the timeline of s-echo", requests("GET /sessions/timeline").any { it.query?.contains("id=s-echo") == true })
+        waitForRequests("GET /sessions/models", 1)
+        waitForRequests("GET /sessions/commands", 1)
+        assertTrue("the chat reads the models of s-echo", requests("GET /sessions/models").any { it.query?.contains("id=s-echo") == true })
+        assertTrue("the chat reads the commands of s-echo", requests("GET /sessions/commands").any { it.query?.contains("id=s-echo") == true })
 
         // 6. A message sent: one write under the phone's id, its echo and the answer streamed back.
         waitForDescription("Message")
