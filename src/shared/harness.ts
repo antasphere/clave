@@ -34,6 +34,10 @@ export interface Harness {
   id: HarnessId
   /** The name a person reads: Claude Code, Codex, Antigravity, Pi, OpenCode. */
   name: string
+  /** The name its agent is spoken of by on a card ("Claude asks", "Allow
+   *  Codex to …?"): Claude Code's agent is "Claude", the others speak under
+   *  their own name (PRDCT-4507). */
+  agentName: string
   /** The binary on the PATH (`claude`, `codex`, `agy`, `pi`, `opencode`). */
   command: string
   /** The pools this harness's connections come from (`connection.ts`, ADR
@@ -78,6 +82,7 @@ export const HARNESSES: readonly Harness[] = [
   {
     id: 'claude',
     name: 'Claude Code',
+    agentName: 'Claude',
     command: 'claude',
     connectionPools: ['claude'],
     vendorOnly: true,
@@ -120,6 +125,7 @@ export const HARNESSES: readonly Harness[] = [
   {
     id: 'codex',
     name: 'Codex',
+    agentName: 'Codex',
     command: 'codex',
     connectionPools: ['codex'],
     vendorOnly: true,
@@ -152,6 +158,7 @@ export const HARNESSES: readonly Harness[] = [
   {
     id: 'antigravity',
     name: 'Antigravity',
+    agentName: 'Antigravity',
     command: 'agy',
     connectionPools: [],
     vendorOnly: true,
@@ -185,6 +192,7 @@ export const HARNESSES: readonly Harness[] = [
   {
     id: 'pi',
     name: 'Pi',
+    agentName: 'Pi',
     command: 'pi',
     // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
     connectionPools: [...PROVIDER_COMPANY_IDS],
@@ -212,6 +220,7 @@ export const HARNESSES: readonly Harness[] = [
     // protocol the TUI's binary speaks itself (the Agent Client Protocol).
     id: 'opencode',
     name: 'OpenCode',
+    agentName: 'OpenCode',
     command: 'opencode',
     // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
     connectionPools: [...PROVIDER_COMPANY_IDS],
@@ -232,15 +241,15 @@ export const HARNESS_BY_ID: Readonly<Record<HarnessId, Harness>> = Object.fromEn
   HARNESSES.map((harness) => [harness.id, harness])
 ) as Record<HarnessId, Harness>
 
-/** The name a tab's agent goes by where Clave speaks of it ("Pi asks",
- *  "Allow OpenCode to …"), from the table for every harness (PRDCT-4507): a
+/** The name a tab's agent goes by where Clave speaks of it ("Claude asks",
+ *  "Allow OpenCode to …"), the table's `agentName` for every harness (PRDCT-4507): a
  *  session's provider or mode, `claude-agents` being Claude Code's and
  *  `gemini` Antigravity's; `fallback` for anything the table does not know. */
 export function agentNameOf(provider: string | null | undefined, fallback = 'the agent'): string {
   const id =
     provider === 'claude-agents' ? 'claude' : provider === 'gemini' ? 'antigravity' : provider
   return id && Object.prototype.hasOwnProperty.call(HARNESS_BY_ID, id)
-    ? HARNESS_BY_ID[id as HarnessId].name
+    ? HARNESS_BY_ID[id as HarnessId].agentName
     : fallback
 }
 

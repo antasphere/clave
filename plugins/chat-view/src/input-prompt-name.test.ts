@@ -31,6 +31,7 @@ vi.hoisted(() => {
 import { renderToStaticMarkup } from 'react-dom/server'
 import { HARNESSES, agentNameOf } from '../../../src/shared/harness'
 import { InputPrompt } from './InputPrompt'
+import { PromptDock } from './PromptDock'
 
 const request = {
   type: 'permission_request' as const,
@@ -54,15 +55,42 @@ const eyebrow = (agent: string): string | undefined =>
   )?.[1]
 
 describe('the card a harness asks with names it (PRDCT-4507)', () => {
-  it('says each harness by its name in the table', () => {
+  it("says each harness by its agent's name in the table, Claude's words kept", () => {
+    expect(HARNESSES.map((h) => eyebrow(agentNameOf(h.id)))).toEqual([
+      'Claude asks',
+      'Codex asks',
+      'Antigravity asks',
+      'Pi asks',
+      'OpenCode asks'
+    ])
     for (const harness of HARNESSES)
-      expect(eyebrow(agentNameOf(harness.id))).toBe(`${harness.name} asks`)
-    expect(eyebrow(agentNameOf('pi'))).toBe('Pi asks')
-    expect(eyebrow(agentNameOf('opencode'))).toBe('OpenCode asks')
+      expect(eyebrow(agentNameOf(harness.id))).toBe(`${harness.agentName} asks`)
     expect(agentNameOf('claude-agents')).toBe(agentNameOf('claude'))
     expect(agentNameOf('gemini')).toBe(agentNameOf('antigravity'))
     expect(agentNameOf('echo')).toBe('the agent')
     expect(agentNameOf(undefined, 'The agent')).toBe('The agent')
+  })
+
+  // A Claude permission card reads as it did on dev.
+  it('a Claude permission card still asks "Allow Claude to …?"', () => {
+    const html = renderToStaticMarkup(
+      createElement(PromptDock, {
+        requests: [
+          {
+            type: 'permission_request',
+            id: 'p1',
+            description: 'Write notes.txt',
+            options: [{ id: 'allow', label: 'Allow' }],
+            toolName: 'Write',
+            input: { file_path: '/repo/notes.txt', content: 'x' }
+          }
+        ],
+        agent: agentNameOf('claude'),
+        busy: () => false,
+        onAnswer: () => {}
+      })
+    )
+    expect(html).toContain('Allow Claude to write notes.txt?')
   })
 
   it('every view takes the name from the table, none from a map of its own', () => {
