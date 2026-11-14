@@ -230,7 +230,11 @@ class FakeMachineServer(private val token: String) : Closeable {
      * A message the phone wrote: accepted, then the session's stream says it back at the next
      * position and answers "pong" at the one after, as an echo agent does.
      */
+    /** Scratch (reviewer): a latch every write waits on before answering. */
+    @Volatile var holdWrites: java.util.concurrent.CountDownLatch? = null
+
     private fun write(body: String): MockResponse {
+        holdWrites?.await(10, java.util.concurrent.TimeUnit.SECONDS)
         val input = JSONObject(body).optJSONObject("input")
         refuseWritesWith?.let { status -> return json(status, """{"message":"This device may not write to that session."}""") }
         if (failWrites) {
