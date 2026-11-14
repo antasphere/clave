@@ -139,6 +139,11 @@ async function shootEach(app, win, label, shoot) {
   }
 }
 
+/** A card in the middle of the pane, clear of the page's sticky header. */
+async function centre(locator) {
+  await locator.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+}
+
 /** Pick a machine in the settings sidebar's picker (as `fleet-settings-machine`). */
 async function pickMachine(win, name, value) {
   const picker = win.locator('[data-settings-select="settings-machine"]')
@@ -298,6 +303,11 @@ export async function run(t) {
       ![WORK_TOKEN, PLAY_TOKEN, KIMI_KEY, DEEPSEEK_KEY].some((v) => pageText.includes(v))
     )
     await shootEach(app, win, '02-whole-page', (name, size) => shootPage(app, win, name, size))
+    // The app's two other skins, at the usual width.
+    for (const skin of ['coffee', 'charcoal']) {
+      await setTheme(win, skin)
+      await shootPage(app, win, `02-whole-page--${skin}-usual`, WIDE)
+    }
 
     // ── One card unfolded ──
     await kimiCard.locator('[data-connection-models-toggle]').first().click()
@@ -307,7 +317,7 @@ export async function run(t) {
       (await kimiCard.innerText()).includes('Kimi Vision')
     )
     await shootEach(app, win, '03-card-models-unfolded', async (name) => {
-      await kimiCard.scrollIntoViewIfNeeded()
+      await centre(kimiCard)
       await win.waitForTimeout(500)
       await kimiCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
@@ -322,7 +332,7 @@ export async function run(t) {
       (await routerCard.locator('[data-provider-add-label]').inputValue()) === 'OpenRouter'
     )
     await shootEach(app, win, '04-connect-form-in-card', async (name) => {
-      await routerCard.scrollIntoViewIfNeeded()
+      await centre(routerCard)
       await win.waitForTimeout(600)
       await win.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
@@ -339,7 +349,7 @@ export async function run(t) {
       await question.innerText()
     )
     await shootEach(app, win, '05-remove-question', async (name) => {
-      await dsCard.scrollIntoViewIfNeeded()
+      await centre(dsCard)
       await win.waitForTimeout(600)
       await dsCard.screenshot({ path: path.join(SHOTS, `${name}.png`) })
     })
