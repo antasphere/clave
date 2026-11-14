@@ -224,8 +224,8 @@ interface HandleState {
   toolCalls: Set<string>
   /** Pi's thinking levels for the session, asked once. */
   levels?: Promise<string[]>
-  /** The models Pi offers the session, asked once. */
-  available?: Promise<ModelOption[]>
+  /** Pi's answer to `get_available_models` for the session, asked once. */
+  available?: Promise<unknown>
   /** `parse` failures Pi reported for frames this adapter sent. */
   parseFailures: number
   initialPrompt?: string
@@ -418,13 +418,17 @@ export class PiRpcAdapter implements SessionAdapter {
   }
 
   /** The models the chat offers, asked of Pi once: on a stored connection,
-   *  that connection's provider's alone (PRDCT-4496). */
-  private available(state: HandleState, connection: PiRpcConnection): Promise<ModelOption[]> {
-    const provider = state.launch.connection?.provider
-    state.available ??= connection
-      .command('get_available_models')
-      .then((data) => piModelOptions(data, provider))
-    return state.available
+   *  that connection's provider's alone (PRDCT-4496). With `all`, every
+   *  model Pi lists, whatever its provider: what tells whether Pi knows a
+   *  name at all. */
+  private available(
+    state: HandleState,
+    connection: PiRpcConnection,
+    all = false
+  ): Promise<ModelOption[]> {
+    const provider = all ? undefined : state.launch.connection?.provider
+    state.available ??= connection.command('get_available_models')
+    return state.available.then((data) => piModelOptions(data, provider))
   }
 
   async kill(handle: SessionHandle): Promise<void> {
@@ -540,7 +544,7 @@ export class PiRpcAdapter implements SessionAdapter {
     if (!connection || connection.closed) return
     let listed: ModelOption[]
     try {
-      listed = await this.available(state, connection)
+      listed = await this.available(state, connection, true)
     } catch {
       state.available = undefined
       return
