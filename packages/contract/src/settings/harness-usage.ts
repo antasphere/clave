@@ -30,6 +30,7 @@ export const HarnessUsageRowView = Schema.Struct({
   label: Schema.String,
   billing: HarnessUsageBilling,
   removed: Schema.Boolean,
+  other: Schema.optional(Schema.Boolean),
   requests: Schema.Number,
   input: Schema.Number,
   output: Schema.Number,

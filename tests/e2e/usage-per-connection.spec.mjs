@@ -63,6 +63,47 @@ function writeFixtures() {
   // The person's Pi home has a sessions folder: a connection's directory
   // links it, so every Pi session lands in one place, as on a real Mac.
   mkdirSync(path.join(PI_HOME, 'sessions'), { recursive: true })
+  // A Pi session no Clave tab made (PRDCT-4551): the ledger never hears of
+  // it, so its one record is "Other sessions", never the sign-in.
+  const outside = path.join(PI_HOME, 'sessions', '--elsewhere--')
+  mkdirSync(outside, { recursive: true })
+  const now = new Date().toISOString()
+  writeFileSync(
+    path.join(outside, `${now.replace(/[:.]/g, '-')}_99999999-9999-4999-8999-999999999999.jsonl`),
+    [
+      {
+        type: 'session',
+        version: 3,
+        id: '99999999-9999-4999-8999-999999999999',
+        timestamp: now,
+        cwd: '/elsewhere'
+      },
+      {
+        type: 'message',
+        id: 'm1',
+        parentId: null,
+        timestamp: now,
+        message: {
+          role: 'assistant',
+          content: [],
+          provider: 'stand-in',
+          model: 'one',
+          usage: {
+            input: 700,
+            output: 77,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 777,
+            cost: { total: 0 }
+          },
+          stopReason: 'stop',
+          timestamp: Date.now()
+        }
+      }
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n'
+  )
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   writeFileSync(path.join(DIR, 'models-catalog.json'), JSON.stringify(CATALOGUE))
   seedTrustedRoots(DIR, [ROOT])
@@ -216,7 +257,8 @@ export async function run(t) {
       async () => {
         const v = await win.evaluate(() => window.electronAPI.harnessUsageRead({ range: 'today' }))
         const req = (harness, id) =>
-          v.rows.find((r) => r.harness === harness && r.connectionId === id)?.requests ?? 0
+          v.rows.find((r) => r.harness === harness && r.connectionId === id && !r.other)
+            ?.requests ?? 0
         return req('pi', C.a) === 4 &&
           req('opencode', C.b) === 1 &&
           req('pi', null) === 2 &&
@@ -228,7 +270,18 @@ export async function run(t) {
     )
     t.check('the host counts each record to the connection its tab ran on', !!view, view)
     const rowOf = (harness, id) =>
-      view?.rows.find((r) => r.harness === harness && r.connectionId === id)
+      view?.rows.find((r) => r.harness === harness && r.connectionId === id && !r.other)
+    // PRDCT-4551: the session seeded before any tab, which the ledger does not
+    // know, is "Other sessions", never Pi's sign-in.
+    const otherPi = view?.rows.find((r) => r.harness === 'pi' && r.other)
+    t.check(
+      'a session the ledger does not know is read under "Other sessions", not the sign-in',
+      otherPi?.label === 'Other sessions' &&
+        otherPi.requests === 1 &&
+        otherPi.totalTokens === 777 &&
+        rowOf('pi', null)?.totalTokens === 260,
+      { other: otherPi, signIn: rowOf('pi', null) }
+    )
     t.check(
       'Kimi A has its Pi tab and none of Kimi B’s OpenCode tab',
       rowOf('pi', C.a)?.totalTokens === 520 && (rowOf('opencode', C.a)?.requests ?? 0) === 0,
@@ -272,15 +325,16 @@ export async function run(t) {
       await footOf(ocB, LINE_B),
       LINE_B
     )
+    // Named, as a connection's line is (PRDCT-4551).
     t.equal(
-      'the foot of a Pi tab on no connection says Pi’s own sign-in’s today',
-      await footOf(piOwn, LINE_PI_OWN),
-      LINE_PI_OWN
+      'the foot of a Pi tab on no connection says Pi’s own sign-in’s today, named',
+      await footOf(piOwn, `Pi sign-in · ${LINE_PI_OWN}`),
+      `Pi sign-in · ${LINE_PI_OWN}`
     )
     t.equal(
-      'the foot of an OpenCode tab on no connection says OpenCode’s own sign-in’s today',
-      await footOf(ocOwn, LINE_OC_OWN),
-      LINE_OC_OWN
+      'the foot of an OpenCode tab on no connection says OpenCode’s own sign-in’s today, named',
+      await footOf(ocOwn, `OpenCode sign-in · ${LINE_OC_OWN}`),
+      `OpenCode sign-in · ${LINE_OC_OWN}`
     )
     t.check(
       'no foot says a cost for a plan connection',
