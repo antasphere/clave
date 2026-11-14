@@ -88,6 +88,8 @@ export async function callClaveTools(server, facts) {
         ...base,
         ok: true,
         tools: (tools?.result?.tools ?? []).map((tool) => tool.name),
+        // What the declarations weigh, as a harness would hand them on.
+        toolsBytes: JSON.stringify(tools?.result?.tools ?? []).length,
         callerSessionId: payload?.callerSessionId ?? null
       }) + '\n'
     )

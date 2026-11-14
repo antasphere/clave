@@ -200,6 +200,17 @@ export async function run(t) {
       new Set([piChat, piTerminal, opencodeChat, opencodeTerminal].map((s) => s.id)).size,
       4
     )
+    console.log(
+      JSON.stringify({
+        scenario: 'clave-tools/pi-opencode',
+        tools: [piChat, piTerminal, opencodeChat, opencodeTerminal].map(({ record }) => ({
+          harness: record.harness,
+          form: record.form,
+          count: record.tools.length,
+          bytes: record.toolsBytes
+        }))
+      })
+    )
     t.check('a Pi chat calls clave_list and is answered as itself', true)
     t.check('a Pi terminal calls clave_list and is answered as itself', true)
     t.check('an OpenCode chat calls clave_list and is answered as itself', true)
