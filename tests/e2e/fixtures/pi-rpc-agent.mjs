@@ -103,7 +103,9 @@ if (envProviders && process.env.ANTHROPIC_API_KEY)
   CATALOG.push({ ...modelObject('claude-stand-in'), provider: 'anthropic' })
 /** The model a connection's directory declares, listed beside the catalog. */
 const declared = []
-const findModel = (provider, id) => CATALOG.find((m) => m.provider === provider && m.id === id)
+// A declared model is listed, so `set_model` takes it too, as Pi does.
+const findModel = (provider, id) =>
+  [...declared, ...CATALOG].find((m) => m.provider === provider && m.id === id)
 const COMMANDS = [
   { name: 'init', description: 'Write an AGENTS.md for this folder' },
   { name: 'compact', description: 'Summarize the conversation' }

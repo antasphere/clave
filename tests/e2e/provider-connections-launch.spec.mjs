@@ -60,6 +60,9 @@ const PI_HOME = fixturePath('provider-connections-launch-pi-home')
 /** A `ZDOTDIR` of this spec's own: its `.zshenv` exports the person's Pi
  *  directory, as a profile of theirs would. */
 const ZDOT = fixturePath('provider-connections-launch-zdotdir')
+/** While this file exists, the `.zshenv` exports the connections' own
+ *  variables with the person's made-up values. */
+const PROFILE_MARK = fixturePath('provider-connections-launch-profile-exports-keys')
 const WS = {
   id: 'connections-ws',
   name: 'Connections',
@@ -73,9 +76,14 @@ const DEEPSEEK = 'e2e-made-up-deepseek-0001'
 const ALIBABA = 'e2e-made-up-alibaba-0001'
 const PI_OWN = 'e2e-made-up-pi-own-0001'
 const OWN_PROVIDER = 'e2e-made-up-own-provider-0001'
+/** What the person's own profile exports under a connection's variable
+ *  (PRDCT-4496): while `PROFILE_MARK` exists the spec's `.zshenv` exports
+ *  these, and a tab on the connection must still run on the stored value. */
+const PROFILE_KIMI = 'e2e-made-up-profile-kimi-0001'
+const PROFILE_DS = 'e2e-made-up-profile-deepseek-0001'
 /** The four values a connection carries: none may land anywhere but a process. */
 const CONNECTION_VALUES = { KIMI, DEEPSEEK, ALIBABA, OLLAMA_NONE: null }
-const MADE_UP = { KIMI, DEEPSEEK, ALIBABA, PI_OWN, OWN_PROVIDER }
+const MADE_UP = { KIMI, DEEPSEEK, ALIBABA, PI_OWN, OWN_PROVIDER, PROFILE_KIMI, PROFILE_DS }
 
 const PI_FILES = {
   'auth.json': JSON.stringify({ 'kimi-coding': { type: 'api_key', key: PI_OWN } }, null, 2) + '\n',
@@ -135,14 +143,14 @@ const CATALOGUE = {
 const PI_PRINT = [
   'sh',
   '-c',
-  'printf "ZENV=%s\\nKIMI=%s\\nCLAVE=%s\\nDIR=%s\\nAUTH=%s\\nARGS=%s\\n" "$CLAVE_E2E_ZSHENV" "$KIMI_API_KEY" "$CLAVE_CONNECTION_API_KEY" "$PI_CODING_AGENT_DIR" "$(test -e "$PI_CODING_AGENT_DIR/auth.json" && echo present || echo absent)" "$0 $*"; sleep 60'
+  'printf "ZENV=%s\\nKIMI=%s\\nCLAVE=%s\\nDIR=%s\\nAUTH=%s\\nPRIV=%s\\nARGS=%s\\n" "$CLAVE_E2E_ZSHENV" "$KIMI_API_KEY" "$CLAVE_CONNECTION_API_KEY" "$PI_CODING_AGENT_DIR" "$(test -e "$PI_CODING_AGENT_DIR/auth.json" && echo present || echo absent)" "$(env | grep -c "^CLAVE_TAB_CREDENTIAL_")" "$0 $*"; sleep 60'
 ]
 const OPENCODE_PRINT = [
   'sh',
   '-c',
   // MODEL and ENABLED are short excerpts of CFG: a line a pane can wrap is
   // read back whole through clave_read_session.
-  'printf "DS=%s\\nCFG=%s\\nMODEL=%s\\nENABLED=%s\\nARGS=%s\\n" "$DEEPSEEK_API_KEY" "$OPENCODE_CONFIG_CONTENT" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"model":"[^"]*"\')" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"enabled_providers":\\[[^]]*\\]\')" "$0 $*"; sleep 60'
+  'printf "DS=%s\\nCFG=%s\\nMODEL=%s\\nENABLED=%s\\nPRIV=%s\\nARGS=%s\\n" "$DEEPSEEK_API_KEY" "$OPENCODE_CONFIG_CONTENT" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"model":"[^"]*"\')" "$(printf %s "$OPENCODE_CONFIG_CONTENT" | grep -o \'"enabled_providers":\\[[^]]*\\]\')" "$(env | grep -c "^CLAVE_TAB_CREDENTIAL_")" "$0 $*"; sleep 60'
 ]
 
 /** Never a value in a failure detail, made up or not. */
@@ -162,7 +170,7 @@ function holdsValue(text) {
 function parsePrinted(raw) {
   const out = {}
   for (const line of raw.replace(/\r/g, '').split('\n')) {
-    const m = /^(ZENV|KIMI|CLAVE|DIR|AUTH|ARGS|DS|CFG|MODEL|ENABLED)=(.*)$/.exec(line)
+    const m = /^(ZENV|KIMI|CLAVE|DIR|AUTH|PRIV|ARGS|DS|CFG|MODEL|ENABLED)=(.*)$/.exec(line)
     if (m && !(m[1] in out)) out[m[1]] = m[2]
   }
   return 'ARGS' in out ? out : null
@@ -349,8 +357,10 @@ export async function run(t) {
   mkdirSync(ZDOT, { recursive: true })
   writeFileSync(
     path.join(ZDOT, '.zshenv'),
-    `export PATH=${JSON.stringify(process.env.PATH ?? '/usr/bin:/bin')}\nexport PI_CODING_AGENT_DIR=${JSON.stringify(PI_HOME)}\nexport CLAVE_E2E_ZSHENV=read\n`
+    `export PATH=${JSON.stringify(process.env.PATH ?? '/usr/bin:/bin')}\nexport PI_CODING_AGENT_DIR=${JSON.stringify(PI_HOME)}\nexport CLAVE_E2E_ZSHENV=read\n` +
+      `if [ -f ${JSON.stringify(PROFILE_MARK)} ]; then export KIMI_API_KEY=${JSON.stringify(PROFILE_KIMI)}; export DEEPSEEK_API_KEY=${JSON.stringify(PROFILE_DS)}; fi\n`
   )
+  rmSync(PROFILE_MARK, { force: true })
   const env = { PI_CODING_AGENT_DIR: PI_HOME, ZDOTDIR: ZDOT }
   const { app, win } = await launchApp(DIR, { server: 'in-process', env })
   const errors = []
@@ -657,6 +667,50 @@ export async function run(t) {
     t.equal("a Pi tab on no connection runs in the person's directory", plainPi?.DIR, PI_HOME)
     t.equal("and finds the person's own login there", plainPi?.AUTH, 'present')
     t.check('and is told no provider', !argTokens(plainPi).includes('--provider'), plainPi?.ARGS)
+
+    // ── A login profile exporting the connection's own variable (PRDCT-4496):
+    // it runs after Clave set the environment; the stored value still wins,
+    // carried past it under a private name the profile never exports ──
+    writeFileSync(PROFILE_MARK, '')
+    try {
+      const profKimiId = await spawn(win, {
+        piMode: true,
+        launchProfileId: 'e2e-pi-print',
+        connectionId: C.kimi,
+        connectionLabel: 'Kimi work'
+      })
+      const profKimi = await printedBy(win, profKimiId)
+      t.check(
+        'with a profile exporting KIMI_API_KEY, the Pi tab on Kimi still runs on the stored value',
+        profKimi?.KIMI === KIMI,
+        profKimi ? scrub(profKimi) : await rawOf(win, profKimiId)
+      )
+      t.equal('and holds no private name when its program starts', profKimi?.PRIV, '0')
+      const profDsId = await spawn(win, {
+        opencodeMode: true,
+        launchProfileId: 'e2e-opencode-print',
+        connectionId: C.ds,
+        connectionLabel: 'DeepSeek',
+        model: 'deepseek-chat'
+      })
+      const profDs = await printedBy(win, profDsId)
+      t.check(
+        'with a profile exporting DEEPSEEK_API_KEY, the OpenCode tab on DeepSeek still runs on the stored value',
+        profDs?.DS === DEEPSEEK,
+        profDs ? scrub(profDs) : await rawOf(win, profDsId)
+      )
+      t.equal('and holds no private name either', profDs?.PRIV, '0')
+      // The profile did run: a tab on no connection has its value.
+      const profPlainId = await spawn(win, { piMode: true, launchProfileId: 'e2e-pi-print' })
+      const profPlain = await printedBy(win, profPlainId)
+      t.check(
+        'the profile ran: a Pi tab on no connection has the person’s exported value',
+        profPlain?.KIMI === PROFILE_KIMI,
+        profPlain ? scrub(profPlain) : await rawOf(win, profPlainId)
+      )
+    } finally {
+      rmSync(PROFILE_MARK, { force: true })
+    }
 
     // ── OpenCode on DeepSeek: its own variable, its configuration, standalone ─
     const dsId = await spawn(win, {

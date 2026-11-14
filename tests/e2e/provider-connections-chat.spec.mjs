@@ -84,8 +84,8 @@ const KIMI = 'e2e-made-up-chat-kimi-0001'
 const DEEPSEEK = 'e2e-made-up-chat-deepseek-0001'
 const MADE_UP = { KIMI, DEEPSEEK }
 // Another provider's key in the person's own login environment (PRDCT-4496):
-// real Pi lists that provider, switches to it and spends it. A Pi tab on a
-// connection is never handed it; a Pi tab on none keeps it.
+// real Pi lists that provider and switches to it. It reaches every Pi tab, a
+// tab on a connection included; the chat on one keeps to its provider anyway.
 const OTHER = 'e2e-made-up-other-anthropic-0001'
 
 const CATALOGUE = {
@@ -167,6 +167,7 @@ appendFileSync(file, JSON.stringify({
   kind, argv,
   KIMI: e.KIMI_API_KEY ?? '', DS: e.DEEPSEEK_API_KEY ?? '', CLAVE: e.CLAVE_CONNECTION_API_KEY ?? '',
   OTHER: e.ANTHROPIC_API_KEY ?? '',
+  PRIV: Object.keys(e).filter((n) => n.startsWith('CLAVE_TAB_CREDENTIAL_')).join(','),
   DIR: e.PI_CODING_AGENT_DIR ?? '', CFG: e.OPENCODE_CONFIG_CONTENT ?? ''
 }) + '\\n')
 `
@@ -796,9 +797,11 @@ export async function run(t) {
     // the login environment holds another provider's key, and the stand-in
     // lists that provider's model whenever the variable reaches it, as real
     // Pi 1.5.2 does ──
+    // The person's environment reaches Pi whole, the other provider's key
+    // included: what keeps the chat on Kimi is Clave's own, below.
     t.check(
-      'the Pi chat on Kimi was handed no other provider’s variable',
-      piSeen?.OTHER === '' && piSeen?.KIMI === KIMI,
+      'the Pi chat on Kimi is handed the Kimi value and the login environment’s other key',
+      piSeen?.OTHER === OTHER && piSeen?.KIMI === KIMI,
       scrub(piSeen)
     )
     const piModels = await win.evaluate((id) => window.electronAPI.sessionsModels(id), piId)
@@ -839,6 +842,36 @@ export async function run(t) {
     )
     const pickRecord = await until(async () => recordOf(piId))
     t.equal('the chat’s record keeps the model it runs on', pickRecord?.model, 'k-first')
+    // Pi moved to Anthropic's model during a run (as a command typed in the
+    // chat could move it): the next prompt puts it back first, and says so.
+    await say(piId, 'use anthropic now')
+    await until(
+      async () => (/You said: use anthropic now/.test(await chatText(piId)) ? true : null),
+      { tries: 60 }
+    )
+    await say(piId, 'and after that')
+    const BACK =
+      "Pi was on anthropic/claude-stand-in, which is not a model of its connection's provider kimi-coding: the chat put it back on kimi-coding/k-first."
+    const backSaid = await until(
+      async () => ((await chatText(piId)).includes(BACK) ? true : null),
+      { tries: 60 }
+    )
+    t.check(
+      'Pi found on another provider’s model is put back on Kimi’s before the next prompt, and said',
+      !!backSaid,
+      scrub(await chatText(piId)).slice(-600)
+    )
+    const sent = piFrames()
+    const lastPrompt = sent.map((f) => f?.type).lastIndexOf('prompt')
+    const lastSet = sent.map((f) => f?.type).lastIndexOf('set_model')
+    t.check(
+      'the set_model back on kimi-coding went before that prompt',
+      lastSet >= 0 &&
+        lastSet < lastPrompt &&
+        sent[lastSet]?.provider === 'kimi-coding' &&
+        sent[lastPrompt]?.message === 'and after that',
+      sent.map((f) => f?.type)
+    )
 
     // ── 2b. Terminals: one on a connection names it in its header, one on
     // none names nothing ──
@@ -879,8 +912,8 @@ export async function run(t) {
       (await tile(plainTermId).locator('[data-connection-badge]').count()) === 0
     )
 
-    // ── 2c. A Pi terminal on Kimi is not handed another provider's variable
-    // (the verifier's F5, PRDCT-4496); a Pi terminal on none keeps it ──
+    // ── 2c. A Pi terminal on Kimi gets the Kimi value, under its own name
+    // alone; a Pi terminal on none gets none (PRDCT-4496) ──
     const piTerminal = async (extra) => {
       const before = seen('pi-terminal').length
       const id = (
@@ -903,14 +936,14 @@ export async function run(t) {
       scrub(piTermOn.started)
     )
     t.check(
-      'and no other provider’s variable, though the login environment exports one',
-      piTermOn.started?.OTHER === '',
-      scrub(piTermOn.started)
+      'and none of the private names its value crossed the login shell under',
+      piTermOn.started?.PRIV === '',
+      piTermOn.started?.PRIV
     )
     const piTermOff = await piTerminal({ name: 'Pi terminal on no connection' })
     t.check(
-      'a Pi terminal on no connection keeps the login environment’s variable (the check above is not empty)',
-      piTermOff.started?.OTHER === OTHER && piTermOff.started?.KIMI === '',
+      'a Pi terminal on no connection gets no Kimi value',
+      piTermOff.started?.KIMI === '',
       scrub(piTermOff.started)
     )
     // T2 of the tester's fourth pass: the stand-in terminal never writes a
