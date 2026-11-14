@@ -180,3 +180,113 @@ export class PiUsageManager {
 }
 
 export const piUsageManager = new PiUsageManager()
+
+// ── PRDCT-4551: Pi's records per session, for the attribution per connection ──
+
+/** One Pi model call, with the session and the provider it was made under. */
+export interface PiSessionRecord {
+  sessionId: string
+  at: number
+  provider: string | null
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  totalTokens: number
+  cost: number
+}
+
+const FILE_SESSION_ID = /_([A-Za-z0-9][A-Za-z0-9_-]{0,127})\.jsonl$/
+
+/**
+ * Every usage record of one Pi session file (Pi 1.5.2's format, read off a
+ * real session on 14 November 2026): an assistant message carries
+ * `provider`, `model` and `usage`; a `usage` entry carries the same; a
+ * compaction or a branch summary carries `usage` alone, and is counted
+ * under the provider the session last named (its last `model_change` or
+ * assistant message), the one that wrote it. The session id is the
+ * header's, else the file name's.
+ */
+export function scanPiSessionFile(filePath: string): PiSessionRecord[] {
+  let sessionId: string | null = null
+  let lastProvider: string | null = null
+  const pending: Omit<PiSessionRecord, 'sessionId'>[] = []
+  readJsonlLinesSync(filePath, (line) => {
+    const usage = line.includes('"usage"') ? parsePiUsageLine(line) : null
+    if (
+      !usage &&
+      !line.includes('"type":"session"') &&
+      !line.includes('"provider"') &&
+      !line.includes('"model_change"')
+    )
+      return
+    let entry: Record<string, unknown>
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      return
+    }
+    if (entry.type === 'session' && typeof entry.id === 'string' && !sessionId) {
+      sessionId = entry.id
+      return
+    }
+    const message =
+      entry.message && typeof entry.message === 'object'
+        ? (entry.message as Record<string, unknown>)
+        : null
+    const named =
+      typeof message?.provider === 'string'
+        ? message.provider
+        : typeof entry.provider === 'string'
+          ? entry.provider
+          : null
+    if (named) lastProvider = named
+    if (!usage) return
+    pending.push({ ...usage, provider: named ?? lastProvider })
+  })
+  const id = sessionId ?? FILE_SESSION_ID.exec(filePath)?.[1] ?? null
+  if (!id) return []
+  return pending.map((record) => ({ ...record, sessionId: id }))
+}
+
+/**
+ * Pi's records across its session folders, each file read once per change
+ * (its size and modification time), as `PiUsageManager` caches. A file
+ * reached twice (a connection's folder linked to the person's) is read once.
+ */
+export class PiSessionRecords {
+  private readonly cache = new Map<
+    string,
+    { size: number; mtimeMs: number; records: PiSessionRecord[] }
+  >()
+
+  read(roots: readonly string[]): PiSessionRecord[] {
+    const out: PiSessionRecord[] = []
+    const seen = new Set<string>()
+    for (const root of roots) {
+      for (const filePath of listPiFiles(root)) {
+        let real: string
+        let stat: fs.Stats
+        try {
+          real = fs.realpathSync(filePath)
+          stat = fs.statSync(real)
+        } catch {
+          continue
+        }
+        if (seen.has(real)) continue
+        seen.add(real)
+        let cached = this.cache.get(real)
+        if (!cached || cached.size !== stat.size || cached.mtimeMs !== stat.mtimeMs) {
+          try {
+            cached = { size: stat.size, mtimeMs: stat.mtimeMs, records: scanPiSessionFile(real) }
+            this.cache.set(real, cached)
+          } catch {
+            continue
+          }
+        }
+        out.push(...cached.records)
+      }
+    }
+    return out
+  }
+}

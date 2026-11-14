@@ -35,6 +35,10 @@ import type {
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 
 export interface FleetSnapshot {
   serverId: string
@@ -233,6 +237,13 @@ export interface FleetDesktopAPI {
     serverId: string,
     input: { connectionId: string; force?: boolean }
   ): Promise<ProviderUsageLineView>
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** The Pi and OpenCode usage per connection of the tabs a server runs
+   *  (this Mac's own for the local id), over the range. */
+  fleetHarnessUsage(
+    serverId: string,
+    input: { range: HarnessUsageRange }
+  ): Promise<HarnessUsageView>
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

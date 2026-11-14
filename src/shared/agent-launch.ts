@@ -381,6 +381,9 @@ export function buildAgentArgv(input: {
     // starts on a prompt. It takes no model: that is `opencode run`'s flag.
     const tokens = [...input.profile.command, ...input.profile.additionalArgs]
     if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
+    // PRDCT-4551: a fresh terminal on the id Clave named, which `--session`
+    // creates when it does not exist (2.3.0): its usage is known to be its own.
+    else if (input.sessionId) argv.push('--session', input.sessionId)
     if (input.dangerousMode && !tokens.includes('--auto')) argv.push('--auto')
     // The shared background service keeps the environment it started with
     // (OpenCode 2.3.0): a tab's connection and model, carried in its own

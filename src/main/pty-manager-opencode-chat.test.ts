@@ -140,6 +140,9 @@ vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))
 vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
+// PRDCT-4551: the ledger of starts, recorded.
+const ledger = vi.hoisted(() => ({ recordHarnessStart: vi.fn() }))
+vi.mock('./usage-ledger', () => ledger)
 vi.mock('./title-generator', () => mocks.title)
 vi.mock('./launch-profile-manager', () => ({
   defaultViewFor: () => 'clave.chat-view/chat',
@@ -288,6 +291,29 @@ describe('an OpenCode chat spawn (lane D, PRDCT-4427)', () => {
     )
     expect(mocks.backend.setSessionCodexThreadId).not.toHaveBeenCalled()
     expect(ptyManager.conversationIdOf(session.id)).toBe(OPENCODE_SESSION)
+  })
+  // PRDCT-4551: the chat's session is known from the protocol alone.
+  it('puts its session on the ledger when the agent names it, with the connection it was started on', async () => {
+    const session = await openOpencodeChat({
+      connectionId: 'conn-made-up',
+      connectionLabel: 'DeepSeek made up'
+    })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+    expect(ledger.recordHarnessStart).not.toHaveBeenCalled()
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', providerSessionId: OPENCODE_SESSION }
+    })
+    expect(ledger.recordHarnessStart).toHaveBeenCalledExactlyOnceWith({
+      harness: 'opencode',
+      sessionId: OPENCODE_SESSION,
+      connectionId: 'conn-made-up',
+      label: 'DeepSeek made up'
+    })
   })
   it('passes autoApprove on a launch that skips the permissions, and only then', async () => {
     await openOpencodeChat({ dangerousMode: true })

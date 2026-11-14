@@ -43,6 +43,7 @@ import type { ProviderConnection } from './index.d'
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-view'
 
 interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -1387,6 +1388,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (serverId === LOCAL_SERVER_ID) return local.providerUsageRead(input)
       const { api } = await backing(serverId)
       return (await api.settings.providerUsage.read(input)) as ProviderUsageLineView
+    },
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection, read on the
+    // server that runs the tabs; this Mac's over its own route.
+    fleetHarnessUsage: async (serverId, input) => {
+      if (serverId === LOCAL_SERVER_ID) return local.harnessUsageRead(input)
+      const { api } = await backing(serverId)
+      return (await api.settings.harnessUsage.read(input)) as HarnessUsageView
     }
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>

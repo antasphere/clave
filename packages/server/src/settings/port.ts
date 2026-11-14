@@ -69,6 +69,9 @@ export interface ProviderConnectionAddInput {
 export type ModelsCatalogView = typeof Settings.ModelsCatalogView.Type
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
 export type ProviderUsageLineView = typeof Settings.ProviderUsageLineView.Type
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+export type HarnessUsageView = typeof Settings.HarnessUsageView.Type
+export type HarnessUsageRange = typeof Settings.HarnessUsageRange.Type
 
 export interface SettingsSourceService {
   readonly claudeAccounts: {
@@ -215,6 +218,16 @@ export interface SettingsSourceService {
       readonly force?: boolean
     }) => Awaitable<ProviderUsageLineView>
   }
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** Every Pi and OpenCode connection's usage on this host over the range,
+   *  from the harnesses' own records; a host that runs no tabs answers
+   *  `CapabilityUnavailable`. */
+  readonly harnessUsage: {
+    readonly read: (input: {
+      readonly range: HarnessUsageRange
+      readonly force?: boolean
+    }) => Awaitable<HarnessUsageView>
+  }
 }
 
 export class SettingsSource extends Context.Tag('@clave/server/SettingsSource')<
@@ -315,6 +328,8 @@ function noneSource(): SettingsSourceService {
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog: { read: refuse('modelsCatalog') },
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line
-    providerUsage: { read: refuse('providerUsage') }
+    providerUsage: { read: refuse('providerUsage') },
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+    harnessUsage: { read: refuse('harnessUsage') }
   }
 }

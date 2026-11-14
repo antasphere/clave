@@ -23,7 +23,9 @@ import type {
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   ModelsCatalogView,
   // Lane C of the harness wave (PRDCT-4496): a connection's usage line
-  ProviderUsageLineView
+  ProviderUsageLineView,
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  HarnessUsageView
 } from './port'
 import { unavailable } from './port'
 
@@ -90,6 +92,8 @@ export class FakeSettingsSource implements SettingsSourceService {
     modelsCatalog?: boolean
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line
     providerUsage?: boolean
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+    harnessUsage?: boolean
   } = {}
   /** The host's integrations as the fake holds them (PRDCT-4410): the key it
    *  was handed goes to `secrets`, never into this. */
@@ -607,6 +611,33 @@ export class FakeSettingsSource implements SettingsSourceService {
           reason: 'The connection is not known here.'
         }
       )
+    }
+  }
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection, as the fake
+  // holds it: one Pi row on a plan connection.
+  harnessUsageRows: HarnessUsageView['rows'] = [
+    {
+      harness: 'pi',
+      connectionId: 'conn-minimax',
+      label: 'MiniMax',
+      billing: 'plan',
+      removed: false,
+      requests: 3,
+      input: 300,
+      output: 30,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 330,
+      cost: 0,
+      sessions: 1
+    }
+  ]
+  readonly harnessUsage: SettingsSourceService['harnessUsage'] = {
+    read: (input) => {
+      this.record('harnessUsage.read', input)
+      if (this.refuse.harnessUsage)
+        throw unavailable('harnessUsage', 'This server runs no Pi or OpenCode tabs.')
+      return { range: input.range, rows: this.harnessUsageRows, unavailable: [] }
     }
   }
 }
