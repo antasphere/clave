@@ -451,6 +451,10 @@ class ChatSession(
         }
         val next = _state.value.attachments.let { it + labelled(record, it) }
         owner.kv.set(attachmentKey, AttachmentJson.encodeList(next))
+        // A picture's chip shows it, from the phone's own copy; the server's path is not readable here.
+        if (record.delivery == FileDelivery.Image || record.mimeType.startsWith("image/")) {
+            _controls.update { it.copy(thumbnails = it.thumbnails + (record.id to uri.toString())) }
+        }
         _state.update { it.copy(attachments = next) }
         return admitted.note
     }

@@ -142,3 +142,14 @@ class SlashCommandsMappingTest {
         assertTrue(slashCommands("hello", commands).isEmpty())
     }
 }
+
+class ThumbnailsMappingTest {
+    @Test
+    fun aPictureChipShowsThePhonesCopyAndAnyOtherFileItsGlyph() {
+        fun file(id: String, mime: String) = com.clave.core.contract.FileAttachment(
+            id = id, path = "/s/$id", name = id, mimeType = mime, size = 1, delivery = com.clave.core.contract.FileDelivery.Reference,
+        )
+        val controls = ChatControlsState(thumbnails = mapOf("a" to "content://media/1"))
+        assertEquals(listOf("content://media/1", null), attachmentThumbnails(listOf(file("a", "image/png"), file("b", "text/plain")), controls))
+    }
+}

@@ -319,4 +319,17 @@ class ChatUxTest {
             )
         }
     }
+
+    @Test
+    fun anAttachedPictureShowsOnItsChip() {
+        show(
+            state().copy(
+                composer = ChatComposerState(text = "", attachments = listOf("[Image #1] cat.png", "notes.txt"), sending = false, deliveryMark = null),
+                attachmentThumbnails = listOf("content://nowhere/cat.png", null),
+            ),
+        )
+        rule.onNodeWithContentDescription("Picture [Image #1] cat.png").assertIsDisplayed()
+        rule.onNodeWithText("notes.txt").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Remove notes.txt").assertIsDisplayed()
+    }
 }

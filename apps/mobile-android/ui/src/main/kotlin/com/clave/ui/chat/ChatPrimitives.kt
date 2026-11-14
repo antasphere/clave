@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -478,6 +480,8 @@ fun Composer(
     working: Boolean = false,
     sending: Boolean = false,
     attachments: List<String> = emptyList(),
+    /** Each chip's picture (a content URI), in order; null or missing draws the file glyph. */
+    thumbnails: List<String?> = emptyList(),
     onRemoveAttachment: (Int) -> Unit = {},
     deliveryMark: String? = null,
     placeholder: String = "Write a message…",
@@ -506,11 +510,16 @@ fun Composer(
                     verticalArrangement = Arrangement.spacedBy(Metrics.space(1.5f)),
                 ) {
                     attachments.forEachIndexed { index, label ->
-                        Chip(
-                            label,
-                            icon = ClaveIcon.Document,
-                            onRemove = if (sending) null else { { onRemoveAttachment(index) } },
-                        )
+                        val thumbnail = thumbnails.getOrNull(index)
+                        if (thumbnail != null) {
+                            ImageChip(label, thumbnail, onRemove = if (sending) null else { { onRemoveAttachment(index) } })
+                        } else {
+                            Chip(
+                                label,
+                                icon = ClaveIcon.Document,
+                                onRemove = if (sending) null else { { onRemoveAttachment(index) } },
+                            )
+                        }
                     }
                 }
             }
@@ -611,4 +620,38 @@ fun ProviderMark(provider: String, modifier: Modifier = Modifier, size: Dp = Met
         tint = if (provider == "claude") c.shared.brandClaude else c.theme.textPrimary,
         size = size,
     )
+}
+
+/** An attached picture's chip: the picture itself, small and rounded, then its label and the way out. */
+@Composable
+fun ImageChip(label: String, model: String, onRemove: (() -> Unit)?, modifier: Modifier = Modifier) {
+    val t = Clave.colors.theme
+    val shape = RoundedCornerShape(Metrics.controlSmRadius)
+    Row(
+        modifier
+            .heightIn(min = Metrics.controlHeight + Metrics.space(2))
+            .clip(shape)
+            .background(t.surface200)
+            .padding(start = Metrics.space(1), end = if (onRemove != null) 0.dp else Metrics.controlSmPadding)
+            .semantics { contentDescription = "Picture $label" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Metrics.controlGap),
+    ) {
+        coil3.compose.AsyncImage(
+            model = model,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.size(Metrics.controlHeight).clip(RoundedCornerShape(Metrics.radiusMd)).background(t.surface100),
+        )
+        BasicText(
+            label,
+            modifier = Modifier.widthIn(max = 140.dp),
+            style = ClaveTypography.type(Metrics.controlSmText).copy(color = t.textPrimary),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (onRemove != null) {
+            ClaveIconButton(icon = ClaveIcon.XMark, onClick = onRemove, contentDescription = "Remove $label", size = Metrics.controlSmHeight)
+        }
+    }
 }

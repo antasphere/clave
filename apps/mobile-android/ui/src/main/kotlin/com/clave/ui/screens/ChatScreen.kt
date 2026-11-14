@@ -159,6 +159,8 @@ data class ChatScreenState(
     val slashCommands: List<SlashCommandView> = emptyList(),
     /** Forms answered from this phone whose answer the conversation has not echoed yet. */
     val answeredHere: Set<String> = emptySet(),
+    /** The composer chips' pictures, in their order (a content URI); null draws the file glyph. */
+    val attachmentThumbnails: List<String?> = emptyList(),
 )
 
 /**
@@ -282,6 +284,7 @@ fun ChatScreen(
                     working = state.working,
                     sending = state.composer.sending,
                     attachments = state.composer.attachments,
+                    thumbnails = state.attachmentThumbnails,
                     onRemoveAttachment = onRemoveAttachment,
                     deliveryMark = state.composer.deliveryMark,
                     placeholder = if (state.ended) "This session has ended" else "Write a message…",

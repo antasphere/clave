@@ -418,6 +418,7 @@ private fun ChatRoute(
             work = workCards(conversation),
             slashCommands = slashCommands(chatState.draft, controls.commands),
             answeredHere = controls.answeredHere,
+            attachmentThumbnails = attachmentThumbnails(chatState.attachments, controls),
         ),
         actions = ChatActions(
             onOpenControls = { chat?.refreshControls() },

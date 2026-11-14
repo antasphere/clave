@@ -45,6 +45,8 @@ data class ChatControlsState(
     val refusal: String? = null,
     /** Forms this chat answered with a list, until the conversation echoes the answer. */
     val answeredHere: Set<String> = emptySet(),
+    /** The phone's own copy of each picture attached this session, by the attachment's id. */
+    val thumbnails: Map<String, String> = emptyMap(),
 )
 
 /** The pick still waits on the provider: it has said no new model and no new error since. */
@@ -135,3 +137,7 @@ fun workCards(conversation: Conversation): List<WorkCardView> = conversation.bac
 /** The commands the composer lists for the "/" being typed; none at any other moment. */
 fun slashCommands(draft: String, commands: List<CommandOption>?): List<SlashCommandView> =
     slashMatches(draft, commands).map { SlashCommandView(it.name, it.description, it.insert) }
+
+/** Each composer chip's picture, in the chips' order; null for a file that is not one, or whose copy is gone. */
+fun attachmentThumbnails(attachments: List<com.clave.core.contract.Attachment>, controls: ChatControlsState): List<String?> =
+    attachments.map { controls.thumbnails[it.id] }
