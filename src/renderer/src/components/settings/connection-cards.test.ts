@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  accountUsageText,
   claudeCardFacts,
+  claudeTokenLine,
   codexCardFacts,
   connectLabel,
   connectedCountText,
@@ -14,7 +16,9 @@ import {
   removalSentence
 } from './connection-cards'
 
-const claude = (over: Partial<Parameters<typeof claudeCardFacts>[0]> = {}) =>
+const claude = (
+  over: Partial<Parameters<typeof claudeCardFacts>[0]> = {}
+): ReturnType<typeof claudeCardFacts> =>
   claudeCardFacts({
     id: 'a1',
     hasToken: true,
@@ -35,8 +39,15 @@ describe('a Claude account card', () => {
   })
 
   it('says it is signed in, and how long the token has', () => {
-    expect(claude().state).toEqual({ label: 'Signed in, expires in 12 months', tone: 'ok' })
-    expect(claude({ tokenLife: null }).state).toEqual({ label: 'Signed in', tone: 'ok' })
+    expect(claude().state).toEqual({ label: 'Signed in', tone: 'ok' })
+    expect(claudeTokenLine('expires in 12 months')).toBe('Token, expires in 12 months')
+    expect(claudeTokenLine(null)).toBeNull()
+  })
+
+  it('says why a usage line is empty', () => {
+    expect(accountUsageText('60% left · Overall', true)).toBe('60% left · Overall')
+    expect(accountUsageText(null, true)).toBe('No limits reported yet')
+    expect(accountUsageText(null, false)).toBeNull()
   })
 
   it('asks for attention when it cannot run a tab', () => {
@@ -64,7 +75,9 @@ describe('a Claude account card', () => {
 })
 
 describe('a Codex account card', () => {
-  const codex = (over: Partial<Parameters<typeof codexCardFacts>[0]> = {}) =>
+  const codex = (
+    over: Partial<Parameters<typeof codexCardFacts>[0]> = {}
+  ): ReturnType<typeof codexCardFacts> =>
     codexCardFacts({ id: 'c1', kind: 'chatgpt', hasCredential: true, isDefault: false, ...over })
 
   it('is a subscription, or pay per use with a key', () => {
@@ -216,9 +229,9 @@ describe('removing asks first', () => {
     expect(removalSentence('codex-key', 'Billing', mac).consequence).toMatch(
       /^Its key is deleted from this Mac\./
     )
-    expect(
-      removalSentence('provider-key', 'Kimi', machineWords('Studio')).consequence
-    ).toMatch(/^Its key is deleted from Studio\./)
+    expect(removalSentence('provider-key', 'Kimi', machineWords('Studio')).consequence).toMatch(
+      /^Its key is deleted from Studio\./
+    )
     expect(removalSentence('provider-local', 'Local', mac).consequence).toMatch(
       /^Its address is forgotten on this Mac\./
     )

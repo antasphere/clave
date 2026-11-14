@@ -42,9 +42,7 @@ export interface CardFacts {
 /** The harnesses a provider's endpoints serve: those speaking one of their
  *  wire formats. Another provider has no endpoint until it is made, and
  *  every wire format the form offers is spoken by the same harnesses. */
-export function harnessesForEndpoints(
-  endpoints: readonly ProviderEndpoint[] | null
-): HarnessId[] {
+export function harnessesForEndpoints(endpoints: readonly ProviderEndpoint[] | null): HarnessId[] {
   return HARNESSES.filter((harness) =>
     endpoints === null
       ? harness.wireFormats.length > 0
@@ -100,10 +98,19 @@ function claudeState(account: ClaudeCardInput): CardState {
   if (account.tokenInvalid) return { label: 'Sign-in refused', tone: 'attention' }
   if (account.migrated || !account.hasToken) return { label: 'Needs sign-in', tone: 'attention' }
   if (account.tokenLife === 'expired') return { label: 'Sign-in expired', tone: 'attention' }
-  return {
-    label: account.tokenLife ? `Signed in, ${account.tokenLife}` : 'Signed in',
-    tone: 'ok'
-  }
+  return { label: 'Signed in', tone: 'ok' }
+}
+
+/** A subscription's usage line: its headroom, or why there is none. */
+export function accountUsageText(line: string | null, read: boolean): string | null {
+  if (line) return line
+  return read ? 'No limits reported yet' : null
+}
+
+/** How long a Claude account's sign-in lasts, for its card's facts; null
+ *  for the machine login or an account with no token. */
+export function claudeTokenLine(tokenLife: string | null): string | null {
+  return tokenLife ? `Token, ${tokenLife}` : null
 }
 
 export interface CodexCardInput {
@@ -145,10 +152,7 @@ export interface ProviderCardInput {
 }
 
 /** The key's state, in the words the page and its specs read. */
-export function providerKeyState(connection: {
-  needsKey: boolean
-  hasKey: boolean
-}): CardState {
+export function providerKeyState(connection: { needsKey: boolean; hasKey: boolean }): CardState {
   if (!connection.needsKey) return { label: 'No key needed', tone: 'quiet' }
   return connection.hasKey
     ? { label: 'Key stored', tone: 'ok' }
@@ -223,10 +227,7 @@ export function connectedCountText(connected: number): string | null {
 // ── The models ──────────────────────────────────────────────────────────────
 
 /** The first few models by name, the rest counted behind one control. */
-export function modelPreview<T>(
-  models: readonly T[],
-  shown = 3
-): { first: T[]; rest: T[] } {
+export function modelPreview<T>(models: readonly T[], shown = 3): { first: T[]; rest: T[] } {
   // One left over is shown rather than hidden behind "1 more".
   const cut = models.length <= shown + 1 ? models.length : shown
   return { first: models.slice(0, cut), rest: models.slice(cut) }
@@ -239,7 +240,12 @@ export function moreLabel(rest: number, open: boolean): string {
 
 // ── Removing ────────────────────────────────────────────────────────────────
 
-export type RemovalKind = 'claude' | 'codex-chatgpt' | 'codex-key' | 'provider-key' | 'provider-local'
+export type RemovalKind =
+  | 'claude'
+  | 'codex-chatgpt'
+  | 'codex-key'
+  | 'provider-key'
+  | 'provider-local'
 
 /**
  * The confirmation a removal asks, in one question and one sentence of what
@@ -255,7 +261,8 @@ export function removalSentence(
   machine: string
 ): { question: string; consequence: string } {
   const question = `Remove ${label}?`
-  const tabs = 'Tabs running on it keep going until they are restarted, then they need another connection.'
+  const tabs =
+    'Tabs running on it keep going until they are restarted, then they need another connection.'
   switch (kind) {
     case 'claude':
       return { question, consequence: `Its token is deleted from ${machine}. ${tabs}` }

@@ -119,7 +119,19 @@ export function GenericProviderLogo({ className }: { className?: string }): Reac
  *  Connections: the two subscriptions' companies and the ten providers. */
 export type ConnectionCompanyKey = 'anthropic' | 'openai' | ProviderCompanyId
 
-export const PROVIDER_LOGOS: Readonly<Record<ConnectionCompanyKey, Mark>> = {
+/** A company's mark, by its key. */
+export function ProviderLogo({
+  company,
+  className
+}: {
+  company: ConnectionCompanyKey
+  className?: string
+}): React.JSX.Element {
+  const Logo = LOGOS[company]
+  return <Logo className={className} />
+}
+
+const LOGOS: Readonly<Record<ConnectionCompanyKey, Mark>> = {
   anthropic: ClaudeLogo,
   openai: CodexLogo,
   moonshot: MoonshotLogo,

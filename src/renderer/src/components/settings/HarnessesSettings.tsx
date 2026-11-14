@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
@@ -10,10 +10,9 @@ import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS } from '../../../../shared/claude-models'
 import type { AgentUpdateStatus } from '../../../../shared/agent-updates'
 import type { InstallableAgentId, OnboardingInstallResult } from '../../../../shared/onboarding'
-import type { ModelOption } from '../../../../shared/session-model'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
-import { useWorkspaceStore } from '../../store/workspace-store'
+import { useCodexModels } from './connection-models'
 import { useSessionStore } from '../../store/session-store'
 import { connectionsForModel } from '../../lib/switch-account'
 import { harnessPresent } from '../../lib/harness-presence'
@@ -38,43 +37,6 @@ const DEFAULT = '__default__'
  *  (`onboarding-handlers.ts` accepts the four). */
 function installHarness(id: InstallableAgentId): Promise<OnboardingInstallResult> {
   return window.electronAPI.onboardingInstall(id)
-}
-
-/** The folder Codex is asked its models from: the active workspace's root,
- *  else the home folder the walk knows. */
-async function modelsFolder(): Promise<string> {
-  const { workspaces, activeWorkspaceId } = useWorkspaceStore.getState()
-  const root = workspaces.find((w) => w.id === activeWorkspaceId)?.rootDir
-  if (root) return root
-  const state = await window.electronAPI.onboardingGetState?.().catch(() => null)
-  return state?.home ?? '/'
-}
-
-/** Codex's models, asked of the CLI once when the row first draws. */
-function useCodexModels(enabled: boolean): {
-  models: ModelOption[] | null
-  failed: boolean
-} {
-  const [models, setModels] = useState<ModelOption[] | null>(null)
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    if (!enabled) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const list = await window.electronAPI.adaptersModels('codex-chat', await modelsFolder())
-        if (cancelled) return
-        if (Array.isArray(list) && list.length > 0) setModels(list)
-        else setFailed(true)
-      } catch {
-        if (!cancelled) setFailed(true)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [enabled])
-  return { models, failed }
 }
 
 /** The way to Settings → Connections, from a row that needs one. */
