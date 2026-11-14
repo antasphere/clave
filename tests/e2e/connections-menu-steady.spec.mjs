@@ -104,9 +104,15 @@ export async function run(t) {
     await page.locator(`[data-provider-connection-row="${ids.kimi}"]`).waitFor()
 
     const entriesOf = (id) => win.locator(`[data-connection-menu-entries="${id}"]`)
+    // One press opens the menu: the trigger says it is open and its entries
+    // show. Waited on as such, not within a chosen number of milliseconds: on
+    // CI's loaded Mac the first press after a machine was picked missed its
+    // 3 s while the server's page was still drawing (PRDCT-4552).
     const openMenu = async (scope, id) => {
-      await scope.locator(`[data-connection-menu="${id}"]`).click()
-      await entriesOf(id).waitFor({ state: 'visible', timeout: 3000 })
+      const trigger = scope.locator(`[data-connection-menu="${id}"]`)
+      await trigger.click()
+      await scope.locator(`[data-connection-menu="${id}"][aria-expanded="true"]`).waitFor()
+      await entriesOf(id).waitFor({ state: 'visible' })
     }
     const stillOpen = async (id) =>
       (await entriesOf(id).count()) === 1 && (await entriesOf(id).isVisible())
@@ -231,6 +237,13 @@ export async function run(t) {
     await pickMachine(win, /^Personal VPS 1/, owner.id)
     const serverPage = page.locator(`[data-server-settings="${owner.id}"]`)
     await serverPage.locator(`[data-provider-connection-row="${zai.id}"]`).waitFor()
+    // The row is ready once the server's page has answered as a whole: its
+    // own accounts are drawn above the provider cards (the row moves down as
+    // they arrive), so the press lands on the row where it stays.
+    await serverPage
+      .locator('[data-server-claude-accounts] [data-server-claude-account]')
+      .first()
+      .waitFor()
     await openMenu(serverPage, zai.id)
     await request(server, '/connections/providers/rename', { id: zai.id, label: 'GLM renamed' })
     const serverRenamed = await settled(
