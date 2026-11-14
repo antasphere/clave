@@ -156,6 +156,48 @@ async function providerRequest(mode, provider, abort, how) {
 // request: `<provider>` on that provider (the person's `/model` and a
 // prompt), `<provider> credential` with another credential (a `/login`),
 // `<provider> unchecked` with a credential that cannot be resolved (PRDCT-4540).
+// The terminal form's usage (PRDCT-4551 with PRDCT-4540): with
+// `PI_STAND_IN_TERMINAL_USAGE=1`, each request leaves one assistant message
+// with made-up usage in a Pi session file under `PI_STAND_IN_STATE`, its
+// header naming the tab's `--session-id`, written a moment after the request
+// as Pi writes it once the answer came back.
+let terminalSessionFile = null
+async function terminalUsage(provider) {
+  const dir = process.env.PI_STAND_IN_STATE
+  const id = flags['--session-id'] ?? flags['--session']
+  if (process.env.PI_STAND_IN_TERMINAL_USAGE !== '1' || !dir || !id) return
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  mkdirSync(dir, { recursive: true })
+  const at = new Date().toISOString()
+  if (!terminalSessionFile) {
+    terminalSessionFile = path.join(dir, `${at.replace(/[:.]/g, '-')}_${id}.jsonl`)
+    appendFileSync(
+      terminalSessionFile,
+      `${JSON.stringify({ type: 'session', version: 3, id, timestamp: at, cwd: process.cwd() })}\n`
+    )
+  }
+  const message = {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'ok' }],
+    api: 'stand-in',
+    provider,
+    model: 'stand-in',
+    usage: {
+      input: 100,
+      output: 10,
+      cacheRead: 20,
+      cacheWrite: 0,
+      totalTokens: 130,
+      cost: { input: 0.0001, output: 0.00002, cacheRead: 0.00001, cacheWrite: 0, total: 0.00013 }
+    },
+    stopReason: 'stop',
+    timestamp: Date.now()
+  }
+  appendFileSync(
+    terminalSessionFile,
+    `${JSON.stringify({ type: 'message', id: randomUUID().slice(0, 8), parentId: null, timestamp: at, message })}\n`
+  )
+}
 if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
   await piClaveTools('terminal')
   process.stdout.write('stub pi terminal\r\n')
@@ -167,7 +209,7 @@ if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
     if (!line || line === seen) return
     seen = line
     const [provider, how] = line.split(' ')
-    void providerRequest('tui', provider, () => {}, how)
+    void providerRequest('tui', provider, () => {}, how).then(() => terminalUsage(provider))
   }, 200)
   await new Promise(() => {})
 }

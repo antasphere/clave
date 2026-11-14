@@ -37,6 +37,38 @@ export function parseConnectionReport(raw: string | null | undefined): string | 
   return undefined
 }
 
+/**
+ * PRDCT-4540 with PRDCT-4551: usage follows the report. The ledger counts a
+ * record to the connection of its session's last line at or before it, so a
+ * report that the tab left its connection writes a line for the tab's Pi
+ * session with NO connection, and one that it is back writes the line with
+ * the connection, each at the moment of the change. Pure: the line to
+ * record, or null (no Pi session, no connection to leave). The ledger skips
+ * a line that changes nothing.
+ */
+export function ledgerLineForReport(
+  record:
+    | {
+        piMode?: boolean
+        piSessionId?: string
+        connectionId?: string
+        connectionLabel?: string
+      }
+    | null
+    | undefined,
+  leftFor: string | null
+): { harness: 'pi'; sessionId: string; connectionId: string | null; label: string | null } | null {
+  if (!record?.piMode || !record.piSessionId || !record.connectionId) return null
+  return leftFor === null
+    ? {
+        harness: 'pi',
+        sessionId: record.piSessionId,
+        connectionId: record.connectionId,
+        label: record.connectionLabel ?? null
+      }
+    : { harness: 'pi', sessionId: record.piSessionId, connectionId: null, label: null }
+}
+
 /** The two names for a Pi tab on a connection: its provider, and the one
  *  variable of its environment that carries the key (none for a connection
  *  that has no key, which is then watched by its provider alone). Null when

@@ -89,7 +89,8 @@ case " $* " in
 esac
 PI_STAND_IN_TERMINAL=1
 PI_STAND_IN_TERMINAL_CONTROL=${quote(CONTROL)}
-export PI_STAND_IN_TERMINAL PI_STAND_IN_TERMINAL_CONTROL
+PI_STAND_IN_TERMINAL_USAGE=1
+export PI_STAND_IN_TERMINAL PI_STAND_IN_TERMINAL_CONTROL PI_STAND_IN_TERMINAL_USAGE
 exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
 `,
     { mode: 0o755 }
@@ -146,6 +147,11 @@ export async function run(t) {
     const headerLeft = header.locator('[data-connection-left]')
     const footLine = win.locator('[data-connection-line]')
     const footLeft = win.locator('.sidebar-footer-row [data-connection-left]')
+    // One request in the terminal, and the moment its usage record lands.
+    const control = async (line) => {
+      writeFileSync(CONTROL, line)
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+    }
     const listed = async () =>
       ((await callMcp(app, 'list', {}))?.sessions ?? []).find((s) => s.id === termId)
     // The Mac's served road: the terminal's own token (it has Clave's tools).
@@ -163,7 +169,7 @@ export async function run(t) {
       )
     }
 
-    writeFileSync(CONTROL, 'kimi-coding')
+    await control('kimi-coding')
     const named = await until(async () => ((await badge.count()) > 0 ? true : null), {
       tries: 60
     })
@@ -173,7 +179,7 @@ export async function run(t) {
     t.equal("the window's clave_list names it", (await listed())?.account?.label, 'Kimi work')
 
     // ── The person's /model to another provider, and a prompt ──
-    writeFileSync(CONTROL, 'anthropic')
+    await control('anthropic')
     const left = await until(async () => ((await headerLeft.count()) > 0 ? true : null), {
       tries: 60
     })
@@ -190,7 +196,7 @@ export async function run(t) {
     t.equal('and says the same sentence', servedRow?.connectionLeft, LEFT)
 
     // ── Back on the connection ──
-    writeFileSync(CONTROL, 'kimi-coding')
+    await control('kimi-coding')
     const back = await until(async () => ((await badge.count()) > 0 ? true : null), {
       tries: 60
     })
@@ -212,21 +218,40 @@ export async function run(t) {
             : null,
         { tries: 60 }
       )
-    writeFileSync(CONTROL, 'kimi-coding credential')
+    await control('kimi-coding credential')
     t.check('a sign-in in the tab: the header names what changed', !!(await sentenceIs(LOGIN)))
     t.equal('the foot says the same', await footLeft.innerText(), LOGIN)
     t.equal("clave_list says the same (window's road)", (await listed())?.connectionLeft, LOGIN)
     t.equal("and on the Mac's served road", (await served())?.connectionLeft, LOGIN)
 
     // ── A credential Clave cannot check ──
-    writeFileSync(CONTROL, 'kimi-coding unchecked')
+    await control('kimi-coding unchecked')
     t.check('a credential not checked: the header says so', !!(await sentenceIs(UNCHECKED)))
     t.equal('clave_list says the same', (await listed())?.connectionLeft, UNCHECKED)
     t.equal('and names no connection', (await listed())?.account ?? null, null)
-    writeFileSync(CONTROL, 'kimi-coding')
+    await control('kimi-coding')
     t.check(
       'back on it once more, the name comes back',
       !!(await until(async () => ((await badge.count()) > 0 ? true : null), { tries: 60 }))
+    )
+
+    // ── Usage follows the report (PRDCT-4551): of the six requests, the
+    // three made on the connection count to it; the three made off it (another
+    // provider, another credential, a credential not checked) to Pi's own
+    // sign-in, the sign-in road included ──
+    const counted = await until(
+      async () => {
+        const v = await win.evaluate(() => window.electronAPI.harnessUsageRead({ range: 'today' }))
+        const req = (id) =>
+          v.rows.find((r) => r.harness === 'pi' && r.connectionId === id)?.requests ?? 0
+        return req(kimiId) === 3 && req(null) === 3 ? v : null
+      },
+      { tries: 60 }
+    )
+    t.check(
+      'a record written while the tab is off counts to the sign-in, one after its return to the connection',
+      !!counted,
+      counted ?? (await win.evaluate(() => window.electronAPI.harnessUsageRead({ range: 'today' })))
     )
 
     // ── 2. A Pi chat whose Pi moves to another provider before each run ──

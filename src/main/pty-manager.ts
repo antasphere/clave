@@ -38,6 +38,7 @@ import {
 import { recordHarnessStart } from './usage-ledger'
 import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
 import { connectionVariableNames } from './connection-handover'
+import { ledgerLineForReport } from './connection-watch'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -151,6 +152,10 @@ sessionManager.registerAdapter(piChatAdapter)
 setConnectionReportListener((id, leftFor) => {
   ptyBackend.setSessionConnectionLeft(id, leftFor)
   sessionConnectionChanged(id, leftFor)
+  // Usage follows the report (PRDCT-4551): off the connection, the tab's Pi
+  // session goes on the ledger with none; back on it, with the connection.
+  const line = ledgerLineForReport(ptyBackend.getSessionRecord(id), leftFor)
+  if (line) recordHarnessStart(line)
 })
 
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */

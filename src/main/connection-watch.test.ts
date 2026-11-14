@@ -5,7 +5,13 @@ import { pathToFileURL } from 'url'
 import { tempDataDir } from './ports/testing'
 import { installTerminalPorts, resetTerminalPorts } from './ports/terminals'
 import { fileStorage } from './ports/storage'
-import { connectionWatchNames, parseConnectionReport } from './connection-watch'
+import {
+  connectionWatchNames,
+  ledgerLineForReport,
+  parseConnectionReport
+} from './connection-watch'
+import { UsageLedger } from './usage-ledger'
+import { connectionOfRecord, indexLedger, type UsageRecord } from './usage-attribution'
 import {
   connectionReportPath,
   lastConnectionReport,
@@ -280,6 +286,73 @@ describe('the one rule: a tab off its connection names it nowhere and says so (P
     expect(providerConnectionLeft(left)).toBe(said)
     expect(sessionConnectionLeft({ id: 's', ...left })).toBe(said)
     expect(listedProviderConnection(left, () => undefined)).toBeNull()
+  })
+})
+
+describe('usage follows the report (PRDCT-4540 with PRDCT-4551)', () => {
+  const record = {
+    piMode: true,
+    piSessionId: 'pi-session-1',
+    connectionId: 'c1',
+    connectionLabel: 'Kimi'
+  }
+  it('off: a line with no connection; on: a line with the connection', () => {
+    expect(ledgerLineForReport(record, 'kimi-coding credential')).toEqual({
+      harness: 'pi',
+      sessionId: 'pi-session-1',
+      connectionId: null,
+      label: null
+    })
+    expect(ledgerLineForReport(record, null)).toEqual({
+      harness: 'pi',
+      sessionId: 'pi-session-1',
+      connectionId: 'c1',
+      label: 'Kimi'
+    })
+    expect(ledgerLineForReport({ ...record, connectionId: undefined }, 'x')).toBeNull()
+    expect(ledgerLineForReport({ ...record, piSessionId: undefined }, 'x')).toBeNull()
+    expect(ledgerLineForReport(null, null)).toBeNull()
+  })
+
+  it('a record written while the tab is off is counted to the sign-in, the sign-in road included', () => {
+    const dir = tempDataDir('clave-watch-ledger-')
+    dirs.push(dir)
+    let now = 1000
+    const ledger = new UsageLedger(
+      () => fileStorage(dir),
+      () => now
+    )
+    const write = (leftFor: string | null, at: number): void => {
+      now = at
+      const line = ledgerLineForReport(record, leftFor)!
+      ledger.record({ ...line, company: line.connectionId ? 'moonshot' : null })
+    }
+    write(null, 1000) // the start, on the connection
+    write('kimi-coding credential', 2000) // a /login: the same provider
+    write('kimi-coding credential', 2500) // the same answer: nothing written
+    write(null, 3000) // back on it
+    expect(ledger.read().map((l) => [l.at, l.connectionId])).toEqual([
+      [1000, 'c1'],
+      [2000, null],
+      [3000, 'c1']
+    ])
+    const index = indexLedger(ledger.read())
+    const providerOf = (): string => 'kimi-coding'
+    const usage = (at: number): UsageRecord => ({
+      harness: 'pi',
+      sessionId: 'pi-session-1',
+      at,
+      provider: 'kimi-coding',
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: 0
+    })
+    expect(connectionOfRecord(index, usage(1500), providerOf)).toBe('c1')
+    expect(connectionOfRecord(index, usage(2200), providerOf)).toBeNull()
+    expect(connectionOfRecord(index, usage(3100), providerOf)).toBe('c1')
   })
 })
 
