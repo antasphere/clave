@@ -129,7 +129,7 @@ function nextWeeklyReset(account: AccountRead): number {
 }
 
 /** The accounts in the order both charts draw them: the next weekly reset
- *  first, an account that could not be read last, the Accounts page's order
+ *  first, an account that could not be read last, the Connections page's order
  *  breaking ties. */
 function orderAccounts(accounts: AccountRead[]): AccountRead[] {
   return accounts
@@ -402,7 +402,7 @@ export function QuotaOverview({
   )
 }
 
-/** The Claude accounts, in the Accounts page's order. */
+/** The Claude accounts, in the Connections page's order. */
 function useClaudeAccountList(): { id: string; label: string; auth: string }[] {
   const profiles = useClaudeProfileStore((s) => s.profiles)
   return profiles.map((p: ClaudeProfile) => ({
