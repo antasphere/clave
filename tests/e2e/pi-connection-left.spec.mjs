@@ -1,0 +1,243 @@
+// A Pi tab that leaves its stored connection stops naming it (PRDCT-4540).
+// Real hidden Electron, the in-process server, the stand-in Pi (tests/e2e/
+// fixtures/pi-rpc-agent.mjs), which loads Clave's Pi extension from its
+// command line as Pi does and runs each provider request through it.
+//
+// A Pi TERMINAL on a stored connection: the stand-in's terminal form makes
+// one request each time the spec names a provider in its control file (the
+// person's `/model` and a prompt). On the connection's provider the header's
+// badge, the sidebar's foot and `clave_list` (the window's road and the
+// Mac's served road) name the connection; on another provider they stop
+// naming it and say the provider in one sentence; back on it, the name comes
+// back. A Pi CHAT on the connection whose stand-in moves to another provider
+// before each run (the verifier's R3-1): nothing is sent, and the turn ends
+// with the sentence. No provider is called; every value is made up.
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import {
+  REPO,
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  callMcp,
+  until,
+  userDataDir,
+  fixturePath,
+  mcpEndpoint,
+  mcpHttpClient,
+  toolPayload
+} from './harness.mjs'
+
+const DIR = userDataDir('pi-connection-left')
+const ROOT = fixturePath('pi-connection-left-root')
+const PI_HOME = path.join(ROOT, 'pi-agent')
+const CONTROL = path.join(ROOT, 'terminal-control')
+const MOVE_MARK = path.join(ROOT, 'move-chat')
+const PI_AGENT = path.join(REPO, 'tests/e2e/fixtures/pi-rpc-agent.mjs')
+const PI_CWD_FOLDER = `--${ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
+const WS = { id: 'left-ws', name: 'Left', rootDir: ROOT, profileFile: null, createdAt: 1 }
+const KIMI = 'e2e-made-up-left-kimi-0001'
+const LEFT = "Pi runs on anthropic now, not on this tab's connection."
+const CHAT_LEFT =
+  "Pi was about to send this turn to anthropic, not to this chat's connection (kimi-coding): nothing was sent, and the turn ended."
+
+const CATALOGUE = {
+  fetchedAt: Date.now(),
+  providers: [
+    {
+      id: 'kimi-code-plan-global',
+      name: 'Kimi For Coding',
+      env: ['KIMI_API_KEY'],
+      models: [{ id: 'k-first', name: 'Kimi First', reasoning: false, toolCall: true }]
+    }
+  ]
+}
+
+const quote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
+
+function writeFixtures() {
+  rmSync(DIR, { recursive: true, force: true })
+  rmSync(ROOT, { recursive: true, force: true })
+  mkdirSync(`${ROOT}/bin`, { recursive: true })
+  mkdirSync(PI_HOME, { recursive: true })
+  seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+  writeFileSync(path.join(DIR, 'models-catalog.json'), JSON.stringify(CATALOGUE))
+  seedTrustedRoots(DIR, [ROOT])
+  writeFileSync(
+    `${ROOT}/bin/bash`,
+    '#!/bin/sh\nif [ "$1" = "-lic" ]; then env -0; else shift; exec /bin/bash --noprofile --norc "$@"; fi\n',
+    { mode: 0o755 }
+  )
+  writeFileSync(
+    `${ROOT}/bin/pi`,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.5.2"; exit 0; fi
+PI_STAND_IN_STATE="\${PI_CODING_AGENT_DIR}/sessions/${PI_CWD_FOLDER}"
+PI_STAND_IN_ANY_PROVIDER=1
+export PI_STAND_IN_STATE PI_STAND_IN_ANY_PROVIDER
+case " $* " in
+  *" --mode rpc "*)
+    if [ -f ${quote(MOVE_MARK)} ]; then
+      PI_STAND_IN_MOVE_BEFORE_RUN=anthropic/claude-stand-in
+      export PI_STAND_IN_MOVE_BEFORE_RUN
+    fi
+    exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
+    ;;
+esac
+PI_STAND_IN_TERMINAL=1
+PI_STAND_IN_TERMINAL_CONTROL=${quote(CONTROL)}
+export PI_STAND_IN_TERMINAL PI_STAND_IN_TERMINAL_CONTROL
+exec ${quote(process.execPath)} ${quote(PI_AGENT)} "$@"
+`,
+    { mode: 0o755 }
+  )
+}
+
+export async function run(t) {
+  writeFixtures()
+  const env = {
+    SHELL: `${ROOT}/bin/bash`,
+    PATH: `${ROOT}/bin:${process.env.PATH}`,
+    PI_CODING_AGENT_DIR: PI_HOME
+  }
+  let app = null
+  const opened = []
+  try {
+    const launched = await launchApp(DIR, {
+      server: 'in-process',
+      args: ['--test-no-machine-usage'],
+      env
+    })
+    app = launched.app
+    const win = launched.win
+    await win.evaluate(() => window.electronAPI.preferencesSet('tmuxMode', false))
+    await until(async () => {
+      try {
+        return await callMcp(app, 'list', {})
+      } catch {
+        return false
+      }
+    })
+    const kimiId = await win.evaluate(async (key) => {
+      const api = window.electronAPI
+      const created = await api.providerConnectionAdd({ company: 'moonshot', label: 'Kimi work' })
+      return (await api.providerConnectionSetKey(created.id, key)).id
+    }, KIMI)
+    t.check('a Kimi connection is stored', typeof kimiId === 'string' && kimiId.length > 0)
+
+    // ── 1. A Pi terminal on Kimi ──
+    const term = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: false,
+      workspace: WS.id,
+      account: 'Kimi work',
+      name: 'Pi terminal on Kimi'
+    })
+    const termId = term?.sessionId
+    t.check('the Pi terminal opened', !!termId, term)
+    opened.push(termId)
+    await callMcp(app, 'focus', { sessionId: termId })
+    const header = win.locator(`[data-terminal-tile="${termId}"] .pane-header`)
+    const badge = header.locator('[data-connection-badge]')
+    const headerLeft = header.locator('[data-connection-left]')
+    const footLine = win.locator('[data-connection-line]')
+    const footLeft = win.locator('.sidebar-footer-row [data-connection-left]')
+    const listed = async () =>
+      ((await callMcp(app, 'list', {}))?.sessions ?? []).find((s) => s.id === termId)
+    // The Mac's served road: the terminal's own token (it has Clave's tools).
+    const token = await until(() => {
+      const file = path.join(DIR, 'mcp-configs', `${termId}.json`)
+      return existsSync(file)
+        ? JSON.parse(readFileSync(file, 'utf8')).mcpServers.clave.headers.Authorization.slice(7)
+        : null
+    })
+    const served = async () => {
+      const client = mcpHttpClient(mcpEndpoint(DIR), token)
+      await client.init()
+      return (toolPayload(await client.call('clave_list', {}))?.sessions ?? []).find(
+        (s) => s.id === termId
+      )
+    }
+
+    writeFileSync(CONTROL, 'kimi-coding')
+    const named = await until(async () => ((await badge.count()) > 0 ? true : null), {
+      tries: 60
+    })
+    t.check('on its connection, the header names it', !!named)
+    t.equal('the badge reads Kimi work', await badge.innerText(), 'Kimi work')
+    t.check('the sidebar foot names it', (await footLine.count()) > 0)
+    t.equal("the window's clave_list names it", (await listed())?.account?.label, 'Kimi work')
+
+    // ── The person's /model to another provider, and a prompt ──
+    writeFileSync(CONTROL, 'anthropic')
+    const left = await until(async () => ((await headerLeft.count()) > 0 ? true : null), {
+      tries: 60
+    })
+    t.check('off its connection, the header says so', !!left)
+    t.equal('in one sentence naming the provider', await headerLeft.innerText(), LEFT)
+    t.equal('and no longer names the connection', await badge.count(), 0)
+    t.equal('the sidebar foot says the same', await footLeft.innerText(), LEFT)
+    t.equal('and names no connection', await footLine.count(), 0)
+    const windowRow = await listed()
+    t.equal("the window's clave_list names no connection", windowRow?.account ?? null, null)
+    t.equal('and says the same sentence', windowRow?.connectionLeft, LEFT)
+    const servedRow = await served()
+    t.equal("the Mac's served clave_list names no connection", servedRow?.account ?? null, null)
+    t.equal('and says the same sentence', servedRow?.connectionLeft, LEFT)
+
+    // ── Back on the connection ──
+    writeFileSync(CONTROL, 'kimi-coding')
+    const back = await until(async () => ((await badge.count()) > 0 ? true : null), {
+      tries: 60
+    })
+    t.check('back on its connection, the name comes back', !!back)
+    t.equal('the sentence is gone', await headerLeft.count(), 0)
+    t.equal(
+      "clave_list names it again (window's road)",
+      (await listed())?.account?.label,
+      'Kimi work'
+    )
+    t.equal("and on the Mac's served road", (await served())?.account?.label, 'Kimi work')
+
+    // ── 2. A Pi chat whose Pi moves to another provider before each run ──
+    writeFileSync(MOVE_MARK, '')
+    const chat = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'pi',
+      chat: true,
+      workspace: WS.id,
+      account: 'Kimi work',
+      name: 'Pi chat on Kimi'
+    })
+    const chatId = chat?.sessionId
+    t.check('the Pi chat opened', !!chatId, chat)
+    opened.push(chatId)
+    await callMcp(app, 'focus', { sessionId: chatId })
+    const view = win.locator(`.chat-host[data-session-id="${chatId}"] [data-testid="chat-view"]`)
+    await view.first().waitFor({ timeout: 20_000 })
+    await win.evaluate(
+      async ({ id }) =>
+        window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'hello moved' }),
+      { id: chatId }
+    )
+    const text = async () =>
+      view
+        .first()
+        .innerText()
+        .catch(() => '')
+    const ended = await until(async () => ((await text()).includes(CHAT_LEFT) ? true : null), {
+      tries: 80
+    })
+    t.check(
+      'the turn ends with one sentence naming where Pi was',
+      !!ended,
+      (await text()).slice(-600)
+    )
+    t.check('and nothing was answered', !(await text()).includes('You said: hello moved'))
+    t.check('and no "put it back" is said', !/put it back/.test(await text()))
+  } finally {
+    for (const id of opened) await callMcp(app, 'closeSession', { sessionId: id }).catch(() => {})
+    await app?.close()
+  }
+}
