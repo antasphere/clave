@@ -169,7 +169,8 @@ export async function run(t) {
     // each record with the time its request left, earlier than the folder's
     // watch sees the report: the request that MAKES a change must be counted
     // to the side it went to, not the side it left.
-    const usageRead = () => win.evaluate(() => window.electronAPI.harnessUsageRead({ range: 'today' }))
+    const usageRead = () =>
+      win.evaluate(() => window.electronAPI.harnessUsageRead({ range: 'today' }))
     const countedAs = async (onConnection, signIn) => {
       let last = null
       const ok = await until(

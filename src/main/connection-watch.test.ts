@@ -162,9 +162,7 @@ function watched(
                   if (apiKey === THROWS) throw new Error('made-up failure')
                   return { auth: { apiKey }, source: 'x' }
                 },
-                ...(registered === MISSING
-                  ? {}
-                  : { getRegisteredProviderIds: () => registered })
+                ...(registered === MISSING ? {} : { getRegisteredProviderIds: () => registered })
               },
         abort: () => {
           aborted = true
@@ -247,9 +245,7 @@ describe("Clave's Pi extension watches each request of a tab on a connection", (
 
   it("the connection's provider registered again by an extension is not known to be on it", async () => {
     const chat = watched(envFor())
-    expect(await chat.request('rpc', 'conn', KEY, { registered: ['llama.cpp', 'conn'] })).toBe(
-      true
-    )
+    expect(await chat.request('rpc', 'conn', KEY, { registered: ['llama.cpp', 'conn'] })).toBe(true)
     expect(chat.report()).toBe('unchecked conn\n')
     const terminal = watched(envFor())
     expect(await terminal.request('tui', 'conn', KEY, { registered: ['conn'] })).toBe(false)
