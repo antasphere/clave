@@ -16,6 +16,7 @@ import {
   providerConnectionLeft
 } from '../shared/provider-connection-pick'
 import { servedAccountOf } from './mcp/provider-launch-listing'
+import { piRequestLeftConnection } from './sessions/adapters/pi-rpc-adapter'
 import { sessionConnection, sessionConnectionLeft } from '../renderer/src/lib/session-connection'
 
 /**
@@ -26,6 +27,8 @@ import { sessionConnection, sessionConnectionLeft } from '../renderer/src/lib/se
  */
 
 const KEY = 'made-up-connection-key-4540'
+const THROWS = Symbol('throws')
+const MISSING = Symbol('missing')
 const dirs: string[] = []
 afterEach(() => {
   resetTerminalPorts()
@@ -55,8 +58,11 @@ describe('what the extension is told: names, never a value', () => {
   it('the report reads as on, off with a provider, or nothing', () => {
     expect(parseConnectionReport('on\n')).toBeNull()
     expect(parseConnectionReport('off other-provider\n')).toBe('other-provider')
+    expect(parseConnectionReport('off kimi-coding credential\n')).toBe('kimi-coding credential')
+    expect(parseConnectionReport('unchecked kimi-coding\n')).toBe('kimi-coding unchecked')
     expect(parseConnectionReport('off ')).toBeUndefined()
     expect(parseConnectionReport('off a b')).toBeUndefined()
+    expect(parseConnectionReport('unchecked a credential')).toBeUndefined()
     expect(parseConnectionReport('')).toBeUndefined()
     expect(parseConnectionReport(null)).toBeUndefined()
   })
@@ -72,7 +78,11 @@ const extension = (): Promise<ExtensionModule> =>
   ) as Promise<ExtensionModule>
 
 function watched(env: Record<string, string | undefined>): {
-  request: (mode: 'rpc' | 'tui', provider: string, apiKey: string | undefined) => Promise<boolean>
+  request: (
+    mode: 'rpc' | 'tui',
+    provider: string,
+    apiKey: string | undefined | typeof THROWS | typeof MISSING
+  ) => Promise<boolean>
   report: () => string | null
   watching: boolean
 } {
@@ -93,10 +103,19 @@ function watched(env: Record<string, string | undefined>): {
     request: async (mode, provider, apiKey) => {
       await ready
       let aborted = false
+      // `THROWS`: the call throws; `MISSING`: a Pi with no getProviderAuth.
       const ctx = {
         mode,
         model: { provider, id: 'm' },
-        modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey }, source: 'x' }) },
+        modelRegistry:
+          apiKey === MISSING
+            ? {}
+            : {
+                getProviderAuth: async () => {
+                  if (apiKey === THROWS) throw new Error('made-up failure')
+                  return { auth: { apiKey }, source: 'x' }
+                }
+              },
         abort: () => {
           aborted = true
         }
@@ -141,8 +160,17 @@ describe("Clave's Pi extension watches each request of a tab on a connection", (
   it('the same provider with another credential (a /login in the tab) is off it too', async () => {
     const chat = watched(envFor())
     expect(await chat.request('rpc', 'conn', 'made-up-login-key')).toBe(true)
-    expect(chat.report()).toBe('off conn\n')
+    expect(chat.report()).toBe('off conn credential\n')
     expect(await chat.request('rpc', 'conn', undefined)).toBe(true)
+  })
+
+  it('when it cannot tell which credential, it says so: unchecked, ended in a chat, reported in a terminal', async () => {
+    const chat = watched(envFor())
+    expect(await chat.request('rpc', 'conn', THROWS)).toBe(true)
+    expect(chat.report()).toBe('unchecked conn\n')
+    const terminal = watched(envFor())
+    expect(await terminal.request('tui', 'conn', MISSING)).toBe(false)
+    expect(terminal.report()).toBe('unchecked conn\n')
   })
 
   it('writes when the answer changes, back to on when a request goes on it again', async () => {
@@ -234,5 +262,37 @@ describe('the one rule: a tab off its connection names it nowhere and says so (P
   it('a tab on no connection, or a report naming no valid provider, says nothing', () => {
     expect(providerConnectionLeft({ piMode: true, connectionLeftFor: 'x' })).toBeNull()
     expect(providerConnectionLeft({ ...on, connectionLeftFor: 'a b' })).toBeNull()
+  })
+
+  it('the sign-in road names what changed: the credential, not the provider', () => {
+    const left = { ...on, connectionLeftFor: 'kimi-coding credential' }
+    const said =
+      "Pi runs on kimi-coding with another credential now, not with this tab's connection."
+    expect(providerConnectionLeft(left)).toBe(said)
+    expect(sessionConnectionLeft({ id: 's', ...left })).toBe(said)
+    expect(listedProviderConnection(left, () => undefined)).toBeNull()
+  })
+
+  it('a credential Clave could not check says so, never that Pi left', () => {
+    const left = { ...on, connectionLeftFor: 'kimi-coding unchecked' }
+    const said =
+      'Clave could not check which credential Pi uses now, so this tab no longer names its connection.'
+    expect(providerConnectionLeft(left)).toBe(said)
+    expect(sessionConnectionLeft({ id: 's', ...left })).toBe(said)
+    expect(listedProviderConnection(left, () => undefined)).toBeNull()
+  })
+})
+
+describe("the chat's sentence for each road (PRDCT-4540)", () => {
+  it('another provider, another credential, a credential not checked', () => {
+    expect(piRequestLeftConnection('Pi', 'anthropic', 'kimi-coding')).toBe(
+      "Pi was about to send this turn to anthropic, not to this chat's connection (kimi-coding): nothing was sent, and the turn ended."
+    )
+    expect(piRequestLeftConnection('Pi', 'kimi-coding credential', 'kimi-coding')).toBe(
+      "Pi was about to send this turn to kimi-coding with another credential than this chat's connection: nothing was sent, and the turn ended."
+    )
+    expect(piRequestLeftConnection('Pi', 'kimi-coding unchecked', 'kimi-coding')).toBe(
+      'Clave could not check which credential this turn would use: nothing was sent, and the turn ended.'
+    )
   })
 })

@@ -38,6 +38,9 @@ const PI_CWD_FOLDER = `--${ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--
 const WS = { id: 'left-ws', name: 'Left', rootDir: ROOT, profileFile: null, createdAt: 1 }
 const KIMI = 'e2e-made-up-left-kimi-0001'
 const LEFT = "Pi runs on anthropic now, not on this tab's connection."
+const LOGIN = "Pi runs on kimi-coding with another credential now, not with this tab's connection."
+const UNCHECKED =
+  'Clave could not check which credential Pi uses now, so this tab no longer names its connection.'
 const CHAT_LEFT =
   "Pi was about to send this turn to anthropic, not to this chat's connection (kimi-coding): nothing was sent, and the turn ended."
 
@@ -199,6 +202,32 @@ export async function run(t) {
       'Kimi work'
     )
     t.equal("and on the Mac's served road", (await served())?.account?.label, 'Kimi work')
+
+    // ── A /login in the tab: the same provider, another credential ──
+    const sentenceIs = async (expected) =>
+      until(
+        async () =>
+          (await headerLeft.count()) > 0 && (await headerLeft.innerText()) === expected
+            ? true
+            : null,
+        { tries: 60 }
+      )
+    writeFileSync(CONTROL, 'kimi-coding credential')
+    t.check('a sign-in in the tab: the header names what changed', !!(await sentenceIs(LOGIN)))
+    t.equal('the foot says the same', await footLeft.innerText(), LOGIN)
+    t.equal("clave_list says the same (window's road)", (await listed())?.connectionLeft, LOGIN)
+    t.equal("and on the Mac's served road", (await served())?.connectionLeft, LOGIN)
+
+    // ── A credential Clave cannot check ──
+    writeFileSync(CONTROL, 'kimi-coding unchecked')
+    t.check('a credential not checked: the header says so', !!(await sentenceIs(UNCHECKED)))
+    t.equal('clave_list says the same', (await listed())?.connectionLeft, UNCHECKED)
+    t.equal('and names no connection', (await listed())?.account ?? null, null)
+    writeFileSync(CONTROL, 'kimi-coding')
+    t.check(
+      'back on it once more, the name comes back',
+      !!(await until(async () => ((await badge.count()) > 0 ? true : null), { tries: 60 }))
+    )
 
     // ── 2. A Pi chat whose Pi moves to another provider before each run ──
     writeFileSync(MOVE_MARK, '')

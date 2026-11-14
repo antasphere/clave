@@ -122,7 +122,7 @@ describe('a Pi chat on a connection sends nothing off it (PRDCT-4540)', () => {
     const chat = await open({ PI_STAND_IN_LOGIN_KEY: 'made-up-login-key' })
     await chat.say('hello login')
     expect(texts(chat.events)).not.toContain('You said: hello login')
-    expect(readFileSync(chat.report, 'utf8')).toBe('off stand-in\n')
+    expect(readFileSync(chat.report, 'utf8')).toBe('off stand-in credential\n')
     expect(notices(chat.events)).toContain(
       "Pi was about to send this turn to stand-in with another credential than this chat's connection: nothing was sent, and the turn ended."
     )

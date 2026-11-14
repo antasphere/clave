@@ -124,18 +124,25 @@ async function connectionHandlers() {
   }
   return watchHandlers
 }
-async function providerRequest(mode, provider, abort) {
+async function providerRequest(mode, provider, abort, how) {
   const keyVar = process.env.CLAVE_CONNECTION_KEY_VAR
   const ctx = {
     mode,
     model: { provider, id: 'stand-in' },
     modelRegistry: {
-      getProviderAuth: async () => ({
-        auth: {
-          apiKey: process.env.PI_STAND_IN_LOGIN_KEY || (keyVar ? process.env[keyVar] : undefined)
-        },
-        source: 'stand-in'
-      })
+      getProviderAuth: async () => {
+        // `unchecked`: the credential cannot be resolved (the call throws).
+        if (how === 'unchecked') throw new Error('stand-in: no credential resolution')
+        return {
+          auth: {
+            apiKey:
+              how === 'credential'
+                ? 'e2e-made-up-login-key'
+                : process.env.PI_STAND_IN_LOGIN_KEY || (keyVar ? process.env[keyVar] : undefined)
+          },
+          source: 'stand-in'
+        }
+      }
     },
     abort
   }
@@ -145,8 +152,10 @@ async function providerRequest(mode, provider, abort) {
 
 // The terminal form (`PI_STAND_IN_TERMINAL=1`, no `--mode`): Clave's tools
 // called once, a line printed, then it waits as a TUI would. With
-// `PI_STAND_IN_TERMINAL_CONTROL`, each new provider written in that file is
-// one request on that provider (the person's `/model` and a prompt, PRDCT-4540).
+// `PI_STAND_IN_TERMINAL_CONTROL`, each new line written in that file is one
+// request: `<provider>` on that provider (the person's `/model` and a
+// prompt), `<provider> credential` with another credential (a `/login`),
+// `<provider> unchecked` with a credential that cannot be resolved (PRDCT-4540).
 if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
   await piClaveTools('terminal')
   process.stdout.write('stub pi terminal\r\n')
@@ -154,10 +163,11 @@ if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
   let seen = ''
   setInterval(() => {
     if (!control || !existsSync(control)) return
-    const provider = readFileSync(control, 'utf8').trim()
-    if (!provider || provider === seen) return
-    seen = provider
-    void providerRequest('tui', provider, () => {})
+    const line = readFileSync(control, 'utf8').trim()
+    if (!line || line === seen) return
+    seen = line
+    const [provider, how] = line.split(' ')
+    void providerRequest('tui', provider, () => {}, how)
   }, 200)
   await new Promise(() => {})
 }

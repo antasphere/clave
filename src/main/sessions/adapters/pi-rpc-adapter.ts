@@ -10,6 +10,7 @@ import {
   type SessionInput
 } from '../../../shared/session-model'
 import { isFileAttachment } from '../../../shared/attachments'
+import { connectionLeftReason } from '../../../shared/provider-connection-pick'
 import { findExecutable, resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import type {
   SessionAdapter,
@@ -142,8 +143,12 @@ export function piBackOnConnection(
 /** A request of the chat was about to leave its connection (another provider,
  *  or the same with another credential): Clave's extension ended it before it
  *  left, and the turn ends (PRDCT-4540). */
-export function piRequestLeftConnection(label: string, went: string, provider: string): string {
-  return went === provider
+export function piRequestLeftConnection(label: string, left: string, provider: string): string {
+  const reason = connectionLeftReason(left)
+  if (reason?.why === 'unchecked')
+    return `Clave could not check which credential this turn would use: nothing was sent, and the turn ended.`
+  const went = reason?.provider ?? left
+  return reason?.why === 'credential' || went === provider
     ? `${label} was about to send this turn to ${went} with another credential than this chat's connection: nothing was sent, and the turn ended.`
     : `${label} was about to send this turn to ${went}, not to this chat's connection (${provider}): nothing was sent, and the turn ended.`
 }
