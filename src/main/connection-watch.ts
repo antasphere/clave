@@ -19,6 +19,8 @@ export const CLAVE_CONNECTION_REPORT_FILE_ENV = 'CLAVE_CONNECTION_REPORT_FILE'
 
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 const PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+/** The words of a report line, then its optional time (` at <ms>`). */
+const REPORT_TIME_RE = /^(.*?)(?: at (\d{1,15}))?$/
 
 /** The report's line read, as the tab's record keeps it (`connectionLeftFor`):
  *  null for `on`; `<provider>` for `off <provider>` (another provider);
@@ -26,15 +28,28 @@ const PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
  *  provider, another credential); `<provider> unchecked` for
  *  `unchecked <provider>` (Clave could not check the credential); undefined
  *  for anything else (a partial write, a stranger's file). Ids and words,
- *  never a value. */
+ *  never a value. The time the extension adds (` at <ms>`) is read by
+ *  `connectionReportTime`; a line without one (an older extension) reads
+ *  the same. */
 export function parseConnectionReport(raw: string | null | undefined): string | null | undefined {
-  const line = raw?.trim()
+  const line = REPORT_TIME_RE.exec(raw?.trim() ?? '')?.[1]
   if (line === 'on') return null
   const off = /^off (\S+)( credential)?$/.exec(line ?? '')
   if (off && PROVIDER_RE.test(off[1])) return off[2] ? `${off[1]} credential` : off[1]
   const unchecked = /^unchecked (\S+)$/.exec(line ?? '')
   if (unchecked && PROVIDER_RE.test(unchecked[1])) return `${unchecked[1]} unchecked`
   return undefined
+}
+
+/** PRDCT-4551: when the extension decided the change, in the Pi process's
+ *  own clock (milliseconds), before the request that made it left. Undefined
+ *  for a line with no time (an older extension: the watch's own time is
+ *  used) or a line that does not read. */
+export function connectionReportTime(raw: string | null | undefined): number | undefined {
+  const match = REPORT_TIME_RE.exec(raw?.trim() ?? '')
+  if (!match?.[2] || parseConnectionReport(raw) === undefined) return undefined
+  const at = Number(match[2])
+  return Number.isSafeInteger(at) && at > 0 ? at : undefined
 }
 
 /**

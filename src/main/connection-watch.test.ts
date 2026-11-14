@@ -6,6 +6,7 @@ import { tempDataDir } from './ports/testing'
 import { installTerminalPorts, resetTerminalPorts } from './ports/terminals'
 import { fileStorage } from './ports/storage'
 import {
+  connectionReportTime,
   connectionWatchNames,
   ledgerLineForReport,
   parseConnectionReport
@@ -15,7 +16,9 @@ import { connectionOfRecord, indexLedger, type UsageRecord } from './usage-attri
 import {
   connectionReportPath,
   lastConnectionReport,
-  setConnectionReportListener
+  setConnectionReportListener,
+  startWatching,
+  stopWatching
 } from './agent-state-manager'
 import {
   listedProviderConnection,
@@ -72,27 +75,61 @@ describe('what the extension is told: names, never a value', () => {
     expect(parseConnectionReport('')).toBeUndefined()
     expect(parseConnectionReport(null)).toBeUndefined()
   })
+  it('the time on a line is read beside its words; a line without one reads as before', () => {
+    expect(parseConnectionReport('on at 1794675520700\n')).toBeNull()
+    expect(connectionReportTime('on at 1794675520700\n')).toBe(1794675520700)
+    expect(parseConnectionReport('off other at 12\n')).toBe('other')
+    expect(connectionReportTime('off other at 12\n')).toBe(12)
+    expect(parseConnectionReport('off kimi-coding credential at 12')).toBe('kimi-coding credential')
+    expect(parseConnectionReport('unchecked kimi-coding at 12')).toBe('kimi-coding unchecked')
+    // A provider id that is the word itself.
+    expect(parseConnectionReport('off at at 12')).toBe('at')
+    expect(connectionReportTime('off at at 12')).toBe(12)
+    // No time: an older extension's line.
+    expect(parseConnectionReport('off other\n')).toBe('other')
+    expect(connectionReportTime('off other\n')).toBeUndefined()
+    expect(connectionReportTime('on')).toBeUndefined()
+    // A time on a line that does not read, or a time that is not one.
+    expect(connectionReportTime('garbage at 12')).toBeUndefined()
+    expect(connectionReportTime('on at 0')).toBeUndefined()
+    expect(parseConnectionReport('on at -1')).toBeUndefined()
+    expect(parseConnectionReport('on at 12 at 13')).toBeUndefined()
+  })
 })
 
 /** Clave's Pi extension against a made-up `pi` and a made-up request. */
 interface ExtensionModule {
-  watchConnection: (pi: unknown, env: Record<string, string | undefined>) => boolean
+  watchConnection: (
+    pi: unknown,
+    env: Record<string, string | undefined>,
+    now?: () => number
+  ) => boolean
 }
 const extension = (): Promise<ExtensionModule> =>
   import(
     pathToFileURL(path.resolve(__dirname, '..', '..', 'resources', 'pi-clave-state.js')).href
   ) as Promise<ExtensionModule>
 
-function watched(env: Record<string, string | undefined>): {
+function watched(
+  env: Record<string, string | undefined>,
+  now?: () => number
+): {
   request: (
     mode: 'rpc' | 'tui',
     provider: string,
     apiKey: string | undefined | typeof THROWS | typeof MISSING,
     how?: { api?: string; registered?: string[] | typeof MISSING }
   ) => Promise<boolean>
+  /** The report's words, its time left out. */
   report: () => string | null
+  /** The report as written. */
+  raw: () => string | null
   watching: boolean
 } {
+  const raw = (): string | null =>
+    env.CLAVE_CONNECTION_REPORT_FILE && fs.existsSync(env.CLAVE_CONNECTION_REPORT_FILE)
+      ? fs.readFileSync(env.CLAVE_CONNECTION_REPORT_FILE, 'utf8')
+      : null
   const handlers: ((event: unknown, ctx: unknown) => Promise<void>)[] = []
   const pi = {
     on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
@@ -101,7 +138,7 @@ function watched(env: Record<string, string | undefined>): {
   }
   let watching = false
   const ready = extension().then((mod) => {
-    watching = mod.watchConnection(pi, env)
+    watching = mod.watchConnection(pi, env, now)
   })
   return {
     get watching() {
@@ -136,10 +173,8 @@ function watched(env: Record<string, string | undefined>): {
       for (const handler of handlers) await handler({ type: 'before_provider_headers' }, ctx)
       return aborted
     },
-    report: () =>
-      env.CLAVE_CONNECTION_REPORT_FILE && fs.existsSync(env.CLAVE_CONNECTION_REPORT_FILE)
-        ? fs.readFileSync(env.CLAVE_CONNECTION_REPORT_FILE, 'utf8')
-        : null
+    report: () => raw()?.replace(/ at \d+\n$/, '\n') ?? null,
+    raw
   }
 }
 
@@ -278,6 +313,36 @@ describe("Clave's Pi extension watches each request of a tab on a connection", (
     }
   })
 
+  it('each line carries the time the process decided, before the request left (PRDCT-4551)', async () => {
+    let clock = 1794675520700.6
+    const env = envFor()
+    const tab = watched(env, () => clock)
+    await tab.request('tui', 'conn', KEY)
+    expect(tab.raw()).toBe('on at 1794675520700\n')
+    clock = 1794675521000
+    await tab.request('tui', 'other', 'made-up-other')
+    expect(tab.raw()).toBe('off other at 1794675521000\n')
+    // The same answer again: no line, so the time of the change stays.
+    clock = 1794675522000
+    await tab.request('tui', 'other', 'made-up-other')
+    expect(tab.raw()).toBe('off other at 1794675521000\n')
+    clock = 1794675523000
+    await tab.request('rpc', 'conn', 'made-up-login-key')
+    expect(tab.raw()).toBe('off conn credential at 1794675523000\n')
+    // Read by Clave's watch as the words and the time.
+    expect(parseConnectionReport(tab.raw())).toBe('conn credential')
+    expect(connectionReportTime(tab.raw())).toBe(1794675523000)
+  })
+
+  it('without a clock given, the line carries the process time of the decision', async () => {
+    const tab = watched(envFor())
+    const before = Date.now()
+    await tab.request('rpc', 'conn', KEY)
+    const at = connectionReportTime(tab.raw())
+    expect(at).toBeGreaterThanOrEqual(before)
+    expect(at).toBeLessThanOrEqual(Date.now())
+  })
+
   it('a tab on no connection is told nothing and does nothing', async () => {
     const tab = watched({ CONN_KEY: KEY })
     expect(await tab.request('rpc', 'other', 'x')).toBe(false)
@@ -305,6 +370,36 @@ describe("the state folder's watch reads a tab's report (PRDCT-4540)", () => {
       ['tab-1', 'other'],
       ['tab-1', null]
     ])
+  })
+
+  it("forwards the line's time when the folder's watch sees it; none for a line without one, nor for a tab taken back", async () => {
+    const dir = tempDataDir('clave-watch-time-')
+    dirs.push(dir)
+    installTerminalPorts({ storage: fileStorage(dir) })
+    const heard: [string, string | null, number | undefined][] = []
+    setConnectionReportListener((id, leftFor, at) => heard.push([id, leftFor, at]))
+    startWatching(() => {})
+    try {
+      const file = connectionReportPath('tab-2')
+      const heardFor = async (n: number): Promise<void> => {
+        for (let i = 0; i < 200 && heard.length < n; i++)
+          await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      fs.writeFileSync(file, 'off other at 1794675520788\n')
+      await heardFor(1)
+      fs.writeFileSync(file, 'on\n')
+      await heardFor(2)
+      expect(heard).toEqual([
+        ['tab-2', 'other', 1794675520788],
+        ['tab-2', null, undefined]
+      ])
+      // A tab this process takes back: its last line holds from now on.
+      fs.writeFileSync(connectionReportPath('tab-3'), 'off other at 1794675520788\n')
+      lastConnectionReport('tab-3')
+      expect(heard.find(([id]) => id === 'tab-3')).toEqual(['tab-3', 'other', undefined])
+    } finally {
+      stopWatching()
+    }
   })
 })
 

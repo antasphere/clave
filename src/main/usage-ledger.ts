@@ -130,16 +130,20 @@ export const usageLedger = new UsageLedger(() => lazySettingsPorts.storage)
  * ledger, with the connection's label and company as they are at this
  * moment (the store's, else the label the tab carries). The time is taken
  * here, before the process starts, so the line is in force for every record
- * the process then writes. Never throws, never delays the start.
+ * the process then writes; a change the process reported itself carries the
+ * time it decided (`at`, PRDCT-4551), which is earlier than any watch can
+ * see it. Never throws, never delays the start.
  */
 export function recordHarnessStart(start: {
   harness: UsageHarness
   sessionId: string | undefined | null
   connectionId?: string | null
   label?: string | null
+  at?: number
 }): void {
   if (!start.sessionId) return
-  const at = Date.now()
+  // Never later than now: the process runs on this host, on its clock.
+  const at = start.at === undefined ? Date.now() : Math.min(start.at, Date.now())
   // The host's storage as it is at the start: the line goes where the tab runs.
   let storage: StoragePort
   try {

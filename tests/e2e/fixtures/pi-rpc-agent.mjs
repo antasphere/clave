@@ -168,15 +168,17 @@ async function providerRequest(mode, provider, abort, how, api = 'stand-in') {
 // `PI_STAND_IN_TERMINAL_USAGE=1`, each request leaves one assistant message
 // with made-up usage in a Pi session file under `PI_STAND_IN_STATE`, its
 // header naming the tab's `--session-id`, written a moment after the request
-// as Pi writes it once the answer came back.
+// and stamped with the time the request left, as Pi stamps a fast answer:
+// on the real Pi 1.5.2 that time is earlier than a watch of Clave's state
+// folder sees the extension's report (the verifier's finding 2).
 let terminalSessionFile = null
-async function terminalUsage(provider) {
+async function terminalUsage(provider, sentAt) {
   const dir = process.env.PI_STAND_IN_STATE
   const id = flags['--session-id'] ?? flags['--session']
   if (process.env.PI_STAND_IN_TERMINAL_USAGE !== '1' || !dir || !id) return
   await new Promise((resolve) => setTimeout(resolve, 1500))
   mkdirSync(dir, { recursive: true })
-  const at = new Date().toISOString()
+  const at = new Date(sentAt).toISOString()
   if (!terminalSessionFile) {
     terminalSessionFile = path.join(dir, `${at.replace(/[:.]/g, '-')}_${id}.jsonl`)
     appendFileSync(
@@ -199,7 +201,7 @@ async function terminalUsage(provider) {
       cost: { input: 0.0001, output: 0.00002, cacheRead: 0.00001, cacheWrite: 0, total: 0.00013 }
     },
     stopReason: 'stop',
-    timestamp: Date.now()
+    timestamp: sentAt
   }
   appendFileSync(
     terminalSessionFile,
@@ -217,7 +219,9 @@ if (flags['--mode'] === undefined && process.env.PI_STAND_IN_TERMINAL === '1') {
     if (!line || line === seen) return
     seen = line
     const [provider, how] = line.split(' ')
-    void providerRequest('tui', provider, () => {}, how).then(() => terminalUsage(provider))
+    void providerRequest('tui', provider, () => {}, how).then(() =>
+      terminalUsage(provider, Date.now())
+    )
   }, 200)
   await new Promise(() => {})
 }

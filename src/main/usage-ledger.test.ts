@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import fs from 'fs'
 import type { StoragePort } from './ports/storage'
-import { USAGE_LEDGER_FILE, UsageLedger, parseLedger } from './usage-ledger'
+import { installSettingsPorts, resetSettingsPorts } from './ports/registry'
+import { electronTestPorts } from './ports/testing'
+import type { LedgerLine } from './usage-attribution'
+import { USAGE_LEDGER_FILE, UsageLedger, parseLedger, recordHarnessStart } from './usage-ledger'
 
 function memoryStorage(): StoragePort & { docs: Map<string, string> } {
   const docs = new Map<string, string>()
@@ -137,6 +141,41 @@ describe('the ledger of starts (PRDCT-4551)', () => {
     })
     expect(broken.record({ harness: 'pi', sessionId: 's' })).toBeNull()
     expect(broken.read()).toEqual([])
+  })
+
+  it("a change a tab's process reported is lined at the time it gave, never later than now (PRDCT-4551)", async () => {
+    const ports = electronTestPorts()
+    installSettingsPorts(ports)
+    try {
+      const ledger = new UsageLedger(() => ports.storage)
+      const lines = async (n: number): Promise<LedgerLine[]> => {
+        for (let i = 0; i < 200 && ledger.read().length < n; i++)
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        return ledger.read()
+      }
+      const before = Date.now()
+      recordHarnessStart({ harness: 'pi', sessionId: 's', connectionId: 'c1', label: 'Kimi' })
+      await lines(1)
+      // The report's own time: the line is in force from it.
+      recordHarnessStart({ harness: 'pi', sessionId: 's', connectionId: null, at: before + 1 })
+      await lines(2)
+      // A time ahead of this host's clock is taken as now.
+      recordHarnessStart({
+        harness: 'pi',
+        sessionId: 's',
+        connectionId: 'c1',
+        label: 'Kimi',
+        at: Date.now() + 3_600_000
+      })
+      const read = await lines(3)
+      expect(read.map((l) => l.connectionId)).toEqual(['c1', null, 'c1'])
+      expect(read[0].at).toBeGreaterThanOrEqual(before)
+      expect(read[1].at).toBe(before + 1)
+      expect(read[2].at).toBeLessThanOrEqual(Date.now())
+    } finally {
+      resetSettingsPorts()
+      fs.rmSync(ports.dir, { recursive: true, force: true })
+    }
   })
 
   it('skips a torn line and keeps the rest', () => {

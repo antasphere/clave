@@ -164,6 +164,29 @@ export async function run(t) {
     }
     const listed = async () =>
       ((await callMcp(app, 'list', {}))?.sessions ?? []).find((s) => s.id === termId)
+    // PRDCT-4551, the verifier's finding 2: after each request, the requests
+    // counted to the connection and to Pi's own sign-in. The stand-in stamps
+    // each record with the time its request left, earlier than the folder's
+    // watch sees the report: the request that MAKES a change must be counted
+    // to the side it went to, not the side it left.
+    const usageRead = () => win.evaluate(() => window.electronAPI.harnessUsageRead({ range: 'today' }))
+    const countedAs = async (onConnection, signIn) => {
+      let last = null
+      const ok = await until(
+        async () => {
+          last = await usageRead()
+          const req = (id) =>
+            last.rows.find((r) => r.harness === 'pi' && r.connectionId === id)?.requests ?? 0
+          return req(kimiId) === onConnection && req(null) === signIn ? true : null
+        },
+        { tries: 30 }
+      )
+      t.check(
+        `counted so far: ${onConnection} to the connection, ${signIn} to the sign-in`,
+        !!ok,
+        last?.rows
+      )
+    }
     // The Mac's served road: the terminal's own token (it has Clave's tools).
     const token = await until(() => {
       const file = path.join(DIR, 'mcp-configs', `${termId}.json`)
@@ -187,6 +210,7 @@ export async function run(t) {
     t.equal('the badge reads Kimi work', await badge.innerText(), 'Kimi work')
     t.check('the sidebar foot names it', (await footLine.count()) > 0)
     t.equal("the window's clave_list names it", (await listed())?.account?.label, 'Kimi work')
+    await countedAs(1, 0)
 
     // ── The person's /model to another provider, and a prompt ──
     await control('anthropic')
@@ -204,6 +228,7 @@ export async function run(t) {
     const servedRow = await served()
     t.equal("the Mac's served clave_list names no connection", servedRow?.account ?? null, null)
     t.equal('and says the same sentence', servedRow?.connectionLeft, LEFT)
+    await countedAs(1, 1)
 
     // ── Back on the connection ──
     await control('kimi-coding')
@@ -218,6 +243,8 @@ export async function run(t) {
       'Kimi work'
     )
     t.equal("and on the Mac's served road", (await served())?.account?.label, 'Kimi work')
+    // The request that brought it back counts to the connection.
+    await countedAs(2, 1)
 
     // ── A /login in the tab: the same provider, another credential ──
     const sentenceIs = async (expected) =>
@@ -233,17 +260,21 @@ export async function run(t) {
     t.equal('the foot says the same', await footLeft.innerText(), LOGIN)
     t.equal("clave_list says the same (window's road)", (await listed())?.connectionLeft, LOGIN)
     t.equal("and on the Mac's served road", (await served())?.connectionLeft, LOGIN)
+    // The sign-in's first request, on the same provider, counts to the sign-in.
+    await countedAs(2, 2)
 
     // ── A credential Clave cannot check ──
     await control('kimi-coding unchecked')
     t.check('a credential not checked: the header says so', !!(await sentenceIs(UNCHECKED)))
     t.equal('clave_list says the same', (await listed())?.connectionLeft, UNCHECKED)
     t.equal('and names no connection', (await listed())?.account ?? null, null)
+    await countedAs(2, 3)
     await control('kimi-coding')
     t.check(
       'back on it once more, the name comes back',
       !!(await until(async () => ((await badge.count()) > 0 ? true : null), { tries: 60 }))
     )
+    await countedAs(3, 3)
 
     // ── Usage follows the report (PRDCT-4551): of the six requests, the
     // three made on the connection count to it; the three made off it (another

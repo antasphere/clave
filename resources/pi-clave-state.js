@@ -152,22 +152,28 @@ export function connectionReportLine(answer, went) {
  * request the extension answers "does this request go on the connection?",
  * writes one line when the answer changes (`on`, `off <provider>`,
  * `off <provider> credential` or `unchecked <provider>`: an id and a word,
+ * then ` at <ms>`, the time this process decided, before the request left;
  * nothing else), and in a chat (`rpc`) ends a request that would leave the
  * connection before it is sent. A terminal is the person's own interface:
  * reported, never blocked. Never throws into Pi.
+ *
+ * The time is the change's own (PRDCT-4551): Pi stamps the request's usage
+ * record after this moment, while Clave's watch of the folder sees the file
+ * later still, so the ledger line takes this time and the request that made
+ * the change is counted to the side it went to.
  */
-export function watchConnection(pi, env) {
+export function watchConnection(pi, env, now = Date.now) {
   const provider = env.CLAVE_CONNECTION_PROVIDER
   const reportFile = env.CLAVE_CONNECTION_REPORT_FILE
   if (!provider || !reportFile) return false
   const keyVar = env.CLAVE_CONNECTION_KEY_VAR
   let last = null
-  const report = (line) => {
+  const report = (line, at) => {
     if (line === last) return
     last = line
     try {
       mkdirSync(dirname(reportFile), { recursive: true })
-      writeFileSync(reportFile, `${line}\n`, 'utf8')
+      writeFileSync(reportFile, `${line} at ${at}\n`, 'utf8')
     } catch {
       // Reporting is best effort; the chat's request is ended regardless.
     }
@@ -180,7 +186,7 @@ export function watchConnection(pi, env) {
       answer = 'unchecked'
     }
     const went = ctx && ctx.model && ctx.model.provider
-    report(connectionReportLine(answer, went))
+    report(connectionReportLine(answer, went), Math.floor(now()))
     if (answer === 'on') return
     if (ctx && ctx.mode === 'rpc') {
       try {

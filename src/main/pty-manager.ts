@@ -149,13 +149,15 @@ sessionManager.registerAdapter(piChatAdapter)
 // PRDCT-4540: a Pi tab's own report of its connection (Clave's Pi extension,
 // read by the state folder's watch on the Mac and on a Clave server) goes on
 // the tab's record, which `clave_list` reads, and to the windows.
-setConnectionReportListener((id, leftFor) => {
+setConnectionReportListener((id, leftFor, at) => {
   ptyBackend.setSessionConnectionLeft(id, leftFor)
   sessionConnectionChanged(id, leftFor)
   // Usage follows the report (PRDCT-4551): off the connection, the tab's Pi
   // session goes on the ledger with none; back on it, with the connection.
+  // At the time the extension decided, when its line says: the request that
+  // made the change is then counted to the side it went to.
   const line = ledgerLineForReport(ptyBackend.getSessionRecord(id), leftFor)
-  if (line) recordHarnessStart(line)
+  if (line) recordHarnessStart({ ...line, at })
 })
 
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */

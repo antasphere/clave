@@ -2,7 +2,7 @@ import { sessionManager } from './sessions/session-manager'
 import { lazyTerminalPorts } from './ports/terminals'
 import { mkdirSync, watch, type FSWatcher } from 'fs'
 import { join } from 'path'
-import { parseConnectionReport } from './connection-watch'
+import { connectionReportTime, parseConnectionReport } from './connection-watch'
 
 /**
  * Deterministic Claude Code session state, sourced from CC lifecycle hooks.
@@ -67,11 +67,20 @@ export function stateFilePath(claveSessionId: string): string {
 // ── PRDCT-4540: a Pi tab's connection report, beside its state file ──
 // Clave's Pi extension writes `<id>.connection` when the answer changes, at
 // a provider request: `on` (the request went on the tab's connection) or
-// `off <provider>` (it went to that provider, or with another credential).
-// One line, an id at most; never a value.
+// `off <provider>` (it went to that provider, or with another credential),
+// then the time the extension decided (` at <ms>`, PRDCT-4551).
+// One line, an id at most, a time; never a value.
 const CONNECTION_SUFFIX = '.connection'
 const lastConnection = new Map<string, string | null>()
-let connectionListener: ((claveSessionId: string, leftFor: string | null) => void) | null = null
+/** Who hears a change: the tab, where it went (null: on its connection),
+ *  and when the tab's process decided it, when its line says (undefined for
+ *  a line with no time). */
+export type ConnectionReportListener = (
+  claveSessionId: string,
+  leftFor: string | null,
+  at?: number
+) => void
+let connectionListener: ConnectionReportListener | null = null
 
 /** Absolute path of the connection report a Pi tab's extension writes. */
 export function connectionReportPath(claveSessionId: string): string {
@@ -80,35 +89,38 @@ export function connectionReportPath(claveSessionId: string): string {
 
 /** Who hears a tab's connection report (pty-manager: the record and the
  *  windows). One listener; the watch below calls it on a change only. */
-export function setConnectionReportListener(
-  listener: ((claveSessionId: string, leftFor: string | null) => void) | null
-): void {
+export function setConnectionReportListener(listener: ConnectionReportListener | null): void {
   connectionListener = listener
 }
 
-function readConnectionReport(claveSessionId: string): string | null | undefined {
+function readConnectionReport(claveSessionId: string): {
+  leftFor: string | null | undefined
+  at: number | undefined
+} {
   try {
-    return parseConnectionReport(
-      lazyTerminalPorts.storage.read(`${FOLDER}/${claveSessionId}${CONNECTION_SUFFIX}`)
-    )
+    const raw = lazyTerminalPorts.storage.read(`${FOLDER}/${claveSessionId}${CONNECTION_SUFFIX}`)
+    return { leftFor: parseConnectionReport(raw), at: connectionReportTime(raw) }
   } catch {
-    return undefined
+    return { leftFor: undefined, at: undefined }
   }
 }
 
-/** A report file changed: forwarded once per change. */
-function connectionReportChanged(claveSessionId: string): void {
-  const leftFor = readConnectionReport(claveSessionId)
+/** A report file changed: forwarded once per change, with the line's time
+ *  when `withTime`. */
+function connectionReportChanged(claveSessionId: string, withTime = true): void {
+  const { leftFor, at } = readConnectionReport(claveSessionId)
   if (leftFor === undefined) return
   if (lastConnection.has(claveSessionId) && lastConnection.get(claveSessionId) === leftFor) return
   lastConnection.set(claveSessionId, leftFor)
-  connectionListener?.(claveSessionId, leftFor)
+  connectionListener?.(claveSessionId, leftFor, withTime ? at : undefined)
 }
 
 /** The report a session's extension last wrote, for a tab this process takes
- *  back (a reattached tmux session): forwarded once if it says off. */
+ *  back (a reattached tmux session): forwarded once if it says off. Without
+ *  its time: the change predates the take-back, whose own ledger line is
+ *  written now, so what it says holds from now on. */
 export function lastConnectionReport(claveSessionId: string): void {
-  connectionReportChanged(claveSessionId)
+  connectionReportChanged(claveSessionId, false)
 }
 
 /**
