@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -67,7 +67,7 @@ async function open(
     /** The command's session flag: a fresh id by default. */
     session?: string[]
     /** The stored connection the chat runs on (PRDCT-4496). */
-    connection?: { provider: string; unset: string[] }
+    connection?: { provider: string; variables: string[] }
   } = {}
 ): Promise<Session> {
   const adapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
@@ -508,7 +508,7 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
   // stand-in's own.
   describe('a chat on a stored connection stays on its provider (PRDCT-4496)', () => {
     const OTHER = { PI_STAND_IN_ENV_PROVIDERS: '1', ANTHROPIC_API_KEY: 'made-up-other-0001' }
-    const ON_STAND_IN = { provider: 'stand-in', unset: [] }
+    const ON_STAND_IN = { provider: 'stand-in', variables: [] }
     const metaModels = (events: SessionEvent[]): (string | null)[] =>
       events.flatMap((e) => (e.type === 'session_meta' ? [e.model] : []))
 
@@ -597,7 +597,7 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
         {
           env: OTHER,
           // A provider the stand-in has no model of.
-          connection: { provider: 'kimi-coding', unset: [] },
+          connection: { provider: 'kimi-coding', variables: [] },
           session: ['--session-id', randomUUID(), '--model', 'anthropic/claude-stand-in']
         }
       )
@@ -612,6 +612,61 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       expect(notices(s.events.slice(from))).toEqual([said])
       expect(types(s.state)).not.toContain('prompt')
     })
+
+    // Pi not on the launch's PATH is started through the login shell, whose
+    // profile may export the connection's own variable: the stored value
+    // crosses it under a private name and reaches Pi under its own.
+    it.skipIf(!existsSync('/bin/zsh'))(
+      'through the login shell, Pi gets the stored key over a profile’s, and no private name',
+      async () => {
+        const home = tmp()
+        const bin = join(home, 'bin')
+        mkdirSync(bin)
+        const seen = join(home, 'seen.json')
+        // The program only the profile's PATH finds: it writes what it was
+        // handed (booleans, never a value), then runs the stand-in.
+        writeFileSync(
+          join(bin, 'pi-behind-profile'),
+          `#!/bin/sh\n${JSON.stringify(process.execPath)} -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ stored: process.env.KIMI_API_KEY === "made-up-stored-0001", privateLeft: Object.keys(process.env).some((n) => n.startsWith("CLAVE_TAB_CREDENTIAL_")) }))' ${JSON.stringify(seen)}\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(STAND_IN)} "$@"\n`,
+          { mode: 0o755 }
+        )
+        writeFileSync(
+          join(home, '.zshenv'),
+          `export PATH=${JSON.stringify(`${bin}:/usr/bin:/bin`)}\nexport KIMI_API_KEY='made-up-profile-0002'\n`
+        )
+        const adapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+        const id = `pi-${++sequence}`
+        adapter.configure(id, {
+          command: ['pi-behind-profile', '--mode', 'rpc', '--session-dir', home],
+          env: {
+            PATH: '/usr/bin:/bin',
+            HOME: home,
+            ZDOTDIR: home,
+            SHELL: '/bin/zsh',
+            KIMI_API_KEY: 'made-up-stored-0001'
+          },
+          connection: { provider: 'stand-in', variables: ['KIMI_API_KEY'] }
+        })
+        const handle = await adapter.spawn({
+          id,
+          provider: 'pi',
+          transport: 'events',
+          cwd: home,
+          windowKey: 'w',
+          state: 'idle',
+          createdAt: 0,
+          adapterId: 'pi-chat',
+          title: 'Pi',
+          options: {}
+        })
+        live.push({ adapter, handle, pid: childPid(adapter, handle) })
+        await expect.poll(() => existsSync(seen)).toBe(true)
+        expect(JSON.parse(readFileSync(seen, 'utf8'))).toEqual({
+          stored: true,
+          privateLeft: false
+        })
+      }
+    )
 
     it('on no connection, a model Pi moves to is left alone and nothing is read before a prompt', async () => {
       const s = await open({}, { env: OTHER })

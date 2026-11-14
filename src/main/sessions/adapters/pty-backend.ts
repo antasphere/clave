@@ -20,6 +20,11 @@ import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-acco
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
 import { PROVIDER_KEY_ENV_VARS } from '../../models-catalog-overlay'
+import {
+  CLAVE_TAB_CREDENTIAL_ENV_VARS,
+  connectionHandover,
+  connectionVariableNames
+} from '../../connection-handover'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import { lineageOf } from '../lineage'
@@ -403,7 +408,8 @@ export function scrollTmuxSessionToText(
  * in the process list for the session's whole life; this keeps it in the
  * environment alone. A Pi or OpenCode tab's stored connection travels the
  * same way (PRDCT-4496): every key variable a harness reads, the inline
- * OpenCode config and the connection's Pi agent directory.
+ * OpenCode config and the connection's Pi agent directory, and the private
+ * names its values cross the login profile under (`connectionHandover`).
  */
 export const TMUX_SESSION_ENV_VARS: readonly string[] = [
   'CLAUDE_CONFIG_DIR',
@@ -411,7 +417,8 @@ export const TMUX_SESSION_ENV_VARS: readonly string[] = [
   'CODEX_HOME',
   ...PROVIDER_KEY_ENV_VARS,
   'OPENCODE_CONFIG_CONTENT',
-  'PI_CODING_AGENT_DIR'
+  'PI_CODING_AGENT_DIR',
+  ...CLAVE_TAB_CREDENTIAL_ENV_VARS
 ]
 
 /** The `set-option` calls that bring a live server's `update-environment` up
@@ -1216,6 +1223,8 @@ export class PtyBackend {
     // wrapper instead and lets resolvePosixShellLaunch pick file and args.
     let shellArgs: string[] = []
     let posixAgentCommand: string | undefined
+    /** A connection's values under Clave's private names (`connectionHandover`). */
+    let handoverEnv: Record<string, string> | undefined
     if (isWindows) {
       // Windows: cmd.exe with /c to exec the command directly (no echoed prompt).
       if (usePiMode) {
@@ -1335,7 +1344,20 @@ export class PtyBackend {
           assignments.push(
             `PI_CODING_AGENT_DIR=${shellSingleQuote(options.providerEnv.PI_CODING_AGENT_DIR)}`
           )
-        const rendered = `${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
+        // A Pi or OpenCode tab's connection: its values cross the login
+        // profile under Clave's private names and get their real names back
+        // after it, so a profile exporting the same variable never replaces
+        // the stored key (PRDCT-4496). Names only on the command line.
+        let handover = ''
+        if (options?.providerEnv) {
+          const carried = connectionHandover(
+            connectionVariableNames(options.providerEnv),
+            options.providerEnv
+          )
+          handover = carried.command
+          handoverEnv = carried.env
+        }
+        const rendered = `${handover}${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
         const failure = `__clave_status=$?; if [ $__clave_status -ne 0 ]; then printf '\\r\\n[Clave] Agent command exited with status %d\\r\\nCommand: %s\\r\\n' $__clave_status ${shellSingleQuote(argv.map(shellSingleQuote).join(' '))}; fi; exit $__clave_status`
         posixAgentCommand = `${rendered}; ${failure}`
       }
@@ -1492,7 +1514,10 @@ export class PtyBackend {
         configDir: options?.configDir,
         oauthToken,
         codexHome,
-        providerEnv: options?.providerEnv
+        providerEnv:
+          options?.providerEnv && handoverEnv
+            ? { ...options.providerEnv, ...handoverEnv }
+            : options?.providerEnv
       }
     }
     session.startedAt = recordBase.startedAt

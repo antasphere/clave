@@ -20,6 +20,7 @@ import type {
 } from '../adapter'
 import { PiRpcConnection, record, type PiRpcEvent } from './pi-rpc-client'
 import { startRefusal } from './start-refusal'
+import { connectionHandover } from '../../connection-handover'
 
 /**
  * A chat with Pi over its rpc mode (`pi --mode rpc`, Pi 1.5): one Pi process
@@ -43,10 +44,10 @@ export interface PiRpcLaunch {
   cwd?: string
   initialPrompt?: string
   /** The stored connection the chat runs on (PRDCT-4496): its Pi provider,
-   *  the only one the chat offers and lets Pi run on, and the credential
-   *  variables its process must not have (already out of `env`; unset again
-   *  after a login profile when Pi is started through the shell). */
-  connection?: { provider: string; unset: readonly string[] }
+   *  the only one the chat offers and lets Pi run on, and the names of its
+   *  own variables in `env`, carried past a login profile when Pi is started
+   *  through the shell (`connectionHandover`). */
+  connection?: { provider: string; variables: readonly string[] }
 }
 export interface PiRpcSpawnOptions {
   resume?: string
@@ -241,16 +242,19 @@ interface HandleState {
 function spawnPi(launch: PiRpcLaunch, cwd: string): ChildProcessWithoutNullStreams {
   const [program, ...args] = launch.command
   if (!program) throw new Error('The Pi launch names no command')
-  const env = launch.env
-  const executable = findExecutable(program, env.PATH)
-  const unset = launch.connection?.unset.length
-    ? `unset ${launch.connection.unset.join(' ')}; `
-    : ''
+  const executable = findExecutable(program, launch.env.PATH)
+  // Through the login shell, a profile runs before Pi: a connection's
+  // variables cross it under Clave's private names (PRDCT-4496).
+  const handover =
+    !executable && launch.connection
+      ? connectionHandover(launch.connection.variables, launch.env)
+      : null
+  const env = handover ? { ...launch.env, ...handover.env } : launch.env
   const file = executable
     ? { file: executable, args }
     : resolvePosixShellLaunch(
         env.SHELL || process.env.SHELL || '/bin/zsh',
-        `${unset}exec ${launch.command.map(shellSingleQuote).join(' ')}`
+        `${handover?.command ?? ''}exec ${launch.command.map(shellSingleQuote).join(' ')}`
       )
   return spawn(file.file, file.args, {
     cwd,

@@ -27,6 +27,7 @@ import {
   type RpcRequest
 } from './acp-client'
 import { lastWords, startRefusal } from './start-refusal'
+import { connectionHandover } from '../../connection-handover'
 
 /**
  * A chat over the Agent Client Protocol (version 1): one agent process per
@@ -46,6 +47,9 @@ export interface AcpLaunch {
   env: NodeJS.ProcessEnv
   cwd?: string
   initialPrompt?: string
+  /** A stored connection's own variables in `env`, carried past a login
+   *  profile when the agent is started through the shell (PRDCT-4496). */
+  connectionVariables?: readonly string[]
 }
 export interface AcpSpawnOptions {
   resume?: string
@@ -250,13 +254,19 @@ export function retryNotice(
 function spawnAgent(launch: AcpLaunch, cwd: string): ChildProcessWithoutNullStreams {
   const [program, ...args] = launch.command
   if (!program) throw new Error('The agent launch names no command')
-  const env = launch.env
-  const executable = findExecutable(program, env.PATH)
+  const executable = findExecutable(program, launch.env.PATH)
+  // Through the login shell, a profile runs before the agent: a stored
+  // connection's variables cross it under Clave's private names (PRDCT-4496).
+  const handover =
+    !executable && launch.connectionVariables?.length
+      ? connectionHandover(launch.connectionVariables, launch.env)
+      : null
+  const env = handover ? { ...launch.env, ...handover.env } : launch.env
   const file = executable
     ? { file: executable, args }
     : resolvePosixShellLaunch(
         env.SHELL || process.env.SHELL || '/bin/zsh',
-        `exec ${launch.command.map(shellSingleQuote).join(' ')}`
+        `${handover?.command ?? ''}exec ${launch.command.map(shellSingleQuote).join(' ')}`
       )
   return spawn(file.file, file.args, {
     cwd,

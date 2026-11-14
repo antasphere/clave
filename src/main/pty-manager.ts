@@ -29,7 +29,7 @@ import {
   type ProviderSpawnFields
 } from './provider-injection-spawn'
 import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
-import { piForeignCredentialVars } from './models-catalog-overlay'
+import { connectionVariableNames } from './connection-handover'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -514,7 +514,11 @@ class PtyManager {
       opencodeChatAdapter.configure(session.id, {
         command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
         env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
-        initialPrompt: options?.initialPrompt
+        initialPrompt: options?.initialPrompt,
+        // Carried past a login profile when started through the shell.
+        ...(chatConnection.providerEnv && options?.connectionId
+          ? { connectionVariables: connectionVariableNames(chatConnection.providerEnv) }
+          : {})
       })
     }
     // Lane D (PRDCT-4427): Pi's chat runs Pi's own command line, built as the
@@ -537,16 +541,16 @@ class PtyManager {
       })
       piChatAdapter.configure(session.id, {
         command: [...argv, '--mode', 'rpc'],
-        // On a connection, without any other provider's credential
-        // (`buildSpawnEnv`, PRDCT-4496).
         env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
         initialPrompt: options?.initialPrompt,
-        // The chat offers and runs the connection's provider's models alone.
+        // The chat offers and runs the connection's provider's models alone,
+        // and its variables, named here, cross a login profile when Pi is
+        // started through the shell (PRDCT-4496).
         ...(chatConnection.piProvider && chatConnection.providerEnv
           ? {
               connection: {
                 provider: chatConnection.piProvider,
-                unset: piForeignCredentialVars(chatConnection.providerEnv)
+                variables: connectionVariableNames(chatConnection.providerEnv)
               }
             }
           : {})

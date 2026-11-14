@@ -352,21 +352,18 @@ describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => 
     expect((configured() as { connection?: unknown }).connection).toBeUndefined()
   })
   // The verifier's F1 (PRDCT-4496): the adapter is told the connection's Pi
-  // provider (what it offers and runs on) and the variables to unset again
-  // after a login profile, the connection's own never among them.
-  it("tells the adapter the connection's provider and the other credentials to keep out", async () => {
+  // provider (what it offers and runs on) and the names of the connection's
+  // own variables (carried past a login profile on the shell road).
+  it("tells the adapter the connection's provider and its own variables' names", async () => {
     injection.forSpawn.mockResolvedValueOnce({
       providerEnv: { KIMI_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
       piProvider: 'kimi-coding'
     })
     await openPiChat({ connectionId: 'conn-1', connectionLabel: 'Kimi', model: 'k-first' })
     const { connection } = configured() as {
-      connection?: { provider: string; unset: string[] }
+      connection?: { provider: string; variables: string[] }
     }
-    expect(connection?.provider).toBe('kimi-coding')
-    expect(connection?.unset).toContain('ANTHROPIC_API_KEY')
-    expect(connection?.unset).toContain('OPENAI_API_KEY')
-    expect(connection?.unset).not.toContain('KIMI_API_KEY')
+    expect(connection).toEqual({ provider: 'kimi-coding', variables: ['KIMI_API_KEY'] })
     expect(JSON.stringify(connection)).not.toContain(STAND_IN_KEY)
   })
   // The verifier's F4: a model remembered from another chat is never what a

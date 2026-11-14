@@ -199,10 +199,9 @@ describe('a Pi session (PRDCT-4496)', () => {
     expect(fs.existsSync(extension!)).toBe(true)
   })
 
-  // The verifier's F5 (PRDCT-4496): a Pi terminal on a connection is open to
-  // Pi's own `/model` with any provider key in its environment, and the login
-  // profile the command runs after may export one again.
-  it('on a connection: no other provider credential in its environment, and unset after the profile', () => {
+  // A login profile runs before a terminal's command: one exporting the
+  // connection's own variable would replace the stored key (PRDCT-4496).
+  it('on a connection, its key crosses the profile under a private name, the command naming names only', () => {
     installTerminalPorts({ resourcesDir: resourcesDirOfEntry(path.resolve(__dirname, '..', '..')) })
     const providerEnv = {
       KIMI_API_KEY: 'made-up-kimi',
@@ -218,15 +217,40 @@ describe('a Pi session (PRDCT-4496)', () => {
     backend.start(session.id, 80, 24)
     const spec = terminals.processes[0].spec
     const command = spec.args.join(' ')
-    expect(command).toMatch(/unset [A-Z_ ]*ANTHROPIC_API_KEY[A-Z_ ]*; CLAVE_SESSION_ID=/)
-    expect(command).not.toMatch(/unset [A-Z_ ]*KIMI_API_KEY/)
+    // After the profile, before the program: the real name back, the private
+    // one gone.
+    expect(command).toContain(
+      'KIMI_API_KEY="$CLAVE_TAB_CREDENTIAL_1"; export KIMI_API_KEY; unset CLAVE_TAB_CREDENTIAL_1; CLAVE_SESSION_ID='
+    )
     expect(command).not.toContain('made-up-kimi')
+    expect(spec.env?.CLAVE_TAB_CREDENTIAL_1).toBe('made-up-kimi')
     expect(spec.env?.KIMI_API_KEY).toBe('made-up-kimi')
-    expect(spec.env).not.toHaveProperty('ANTHROPIC_API_KEY')
-    // A Pi terminal on no connection: its command unsets nothing.
+    // The Pi directory is a path on the command line, not carried.
+    expect(spec.env?.CLAVE_TAB_CREDENTIAL_2).toBeUndefined()
+    // A tab on no connection: nothing carried.
     const plain = backend.spawn(cwd, { piMode: true, tmuxMode: false })
     backend.start(plain.id, 80, 24)
-    expect(terminals.processes[1].spec.args.join(' ')).not.toContain('unset ')
+    expect(terminals.processes[1].spec.args.join(' ')).not.toContain('CLAVE_TAB_CREDENTIAL')
+    expect(terminals.processes[1].spec.env?.CLAVE_TAB_CREDENTIAL_1).toBeUndefined()
+  })
+
+  it('an OpenCode terminal on a connection carries its key and its configuration the same way', () => {
+    const session = backend.spawn(cwd, {
+      opencodeMode: true,
+      tmuxMode: false,
+      providerEnv: { DEEPSEEK_API_KEY: 'made-up-ds', OPENCODE_CONFIG_CONTENT: '{"made":"up"}' }
+    })
+    backend.start(session.id, 80, 24)
+    const spec = terminals.processes[0].spec
+    const command = spec.args.join(' ')
+    expect(command).toContain(
+      'DEEPSEEK_API_KEY="$CLAVE_TAB_CREDENTIAL_1"; export DEEPSEEK_API_KEY; unset CLAVE_TAB_CREDENTIAL_1; '
+    )
+    expect(command).toContain(
+      'OPENCODE_CONFIG_CONTENT="$CLAVE_TAB_CREDENTIAL_2"; export OPENCODE_CONFIG_CONTENT; unset CLAVE_TAB_CREDENTIAL_2; '
+    )
+    expect(command).not.toContain('made-up-ds')
+    expect(spec.env?.CLAVE_TAB_CREDENTIAL_1).toBe('made-up-ds')
   })
 })
 
