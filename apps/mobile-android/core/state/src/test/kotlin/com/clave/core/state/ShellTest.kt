@@ -207,3 +207,23 @@ class ShellTest {
         assertNull(defaultChatProfile(emptyList(), p, null))
     }
 }
+
+class ShellPrefsTest {
+    @Test
+    fun prefsRoundTripAndTheDefaultWinsOverTheLastUsed() {
+        val prefs = ShellPrefs("w1", "claude-chat", null, "codex-chat", mapOf("g1" to true, "g2" to false))
+        val back = decodeShellPrefs(encodeShellPrefs(prefs))
+        assertEquals(prefs, back)
+        assertEquals("w1", back.preferredWorkspace)
+        assertEquals("codex-chat", back.preferredProfile)
+        assertEquals("clave.shell.dev:1", shellPrefsKey("dev:1"))
+    }
+
+    @Test
+    fun unreadablePrefsAreNothingRemembered() {
+        assertEquals(ShellPrefs(), decodeShellPrefs(null))
+        assertEquals(ShellPrefs(), decodeShellPrefs("not json"))
+        assertEquals(ShellPrefs(), decodeShellPrefs("[1]"))
+        assertEquals(ShellPrefs(lastWorkspace = "w"), decodeShellPrefs("""{"lastWorkspace":"w","lastProfile":3,"folds":{"g":"yes"}}"""))
+    }
+}

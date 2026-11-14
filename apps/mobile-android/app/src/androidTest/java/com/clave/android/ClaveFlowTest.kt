@@ -127,16 +127,16 @@ class ClaveFlowTest {
         assertTrue("adding the machine tries the token on GET /launch-profiles; the stand-in saw ${server.requests}", tried.isNotEmpty())
         assertEquals("Bearer $TOKEN", tried.first().authorization)
 
-        // 3. Workspaces of the machine, and its one pending request in the header.
+        // 3. The machine's Home: the request waiting, the echo chat among the recent, in its desktop group.
         rule.onNodeWithText(machineName).performClick()
-        waitForText("Scratch")
-        waitForDescription("Requests, 1 pending")
-        waitForText("1")
+        waitForText("1 request waiting")
+        waitForText("Scratch · Tests")
+        waitForText("Work")
 
-        // 4. The workspace's sessions: the echo chat, by provider and folder, idle.
-        rule.onNodeWithText("Scratch").performClick()
-        waitForText("Echo chat")
-        waitForText("echo · scratch")
+        // 4. All sessions, grouped as on the desktop: the echo chat under Tests, by provider, workspace and folder, idle.
+        rule.onNodeWithText("All sessions").performClick()
+        waitForDescription("Tests, 1")
+        waitForText("echo · Scratch · scratch")
         waitForText("Idle")
         rule.onNodeWithText("Echo chat").performClick()
 
@@ -180,15 +180,17 @@ class ClaveFlowTest {
         assertEquals("permission", resolve.getJSONObject("response").getString("type"))
         assertEquals("allow", resolve.getJSONObject("response").getString("optionId"))
 
-        // 8. Back to Machines, and the stand-in forgotten so the next run starts clean.
+        // 8. Back to Home, then Machines from Settings, and the stand-in forgotten so the next run starts clean.
         tapBack()
         waitForText("Echo chat")
         tapBack()
-        waitForText("echo · scratch")
-        tapBack()
-        waitForText("/tmp/scratch")
+        waitForText("echo · Scratch · scratch")
         tapBack()
         rule.waitUntil(WAIT_MS) { rule.onAllNodesWithContentDescription("Back").fetchSemanticsNodes().isEmpty() }
+        waitForText("All sessions")
+        rule.onNodeWithContentDescription("Settings").performClick()
+        waitForText("0.0.0-stand-in")
+        rule.onNodeWithText("Machines").performClick()
         waitForText("Sign in with Antasphere")
         rule.onNodeWithContentDescription("More about $machineName").performScrollTo().performClick()
         waitForText("Forget this machine")

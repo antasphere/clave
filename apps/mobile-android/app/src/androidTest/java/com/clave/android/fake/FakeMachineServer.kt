@@ -184,6 +184,12 @@ class FakeMachineServer(private val token: String) : Closeable {
                 statusOf(asked)
             }
             "POST /sessions/write" -> write(body)
+            "GET /sidebar/overview" -> json(200, OVERVIEW)
+            "GET /accounts/claude" -> json(200, CLAUDE_ACCOUNTS)
+            "GET /accounts/codex" -> json(200, "[]")
+            "GET /usage/claude/snapshot" -> json(200, CLAUDE_USAGE)
+            "GET /usage/codex/snapshot" -> json(200, "{}")
+            "GET /server/info" -> json(200, """{"version":"0.0.0-stand-in","installRef":null,"upgrade":{"supported":false,"state":"idle"},"name":"stand-in"}""")
             "GET /requests/pending" -> json(200, synchronized(lock) { if (resolved) NO_REQUESTS else ONE_REQUEST })
             "POST /requests/resolve" -> {
                 if (JSONObject(body).optString("requestId") == REQUEST_ID) synchronized(lock) { resolved = true }
@@ -343,7 +349,27 @@ class FakeMachineServer(private val token: String) : Closeable {
             "POST /sessions/write",
             "GET /requests/pending",
             "POST /requests/resolve",
+            // The shell's reads (docs/mobile-server-reads.md): the desktop's groups, the accounts, their usage, the version.
+            "GET /sidebar/overview",
+            "GET /accounts/claude",
+            "GET /accounts/codex",
+            "GET /usage/claude/snapshot",
+            "GET /usage/codex/snapshot",
+            "GET /server/info",
         )
+
+        /** One desktop group, "Tests", holding the echo chat. */
+        private val OVERVIEW =
+            """{"windows":[{"windowKey":"server","displayOrder":["g-tests"],"groups":[{"id":"g-tests","name":"Tests",""" +
+                """"color":"teal","collapsed":false,"sessionIds":["$SESSION_ID"]}]}]}"""
+
+        private val CLAUDE_ACCOUNTS =
+            """[{"id":"acct-work","label":"Work","hasToken":true,"tokenSetAt":$AT,"tokenExpiresAt":null,"tokenInvalid":false}]"""
+
+        private val CLAUDE_USAGE =
+            """{"acct-work":{"windows":[{"key":"five_hour","label":"5-hour","kind":"session","scope":null,"usedPercentage":42,""" +
+                """"resetsAt":${AT + 7_800_000},"severity":"normal"},{"key":"seven_day","label":"Week, all models","kind":"weekly_all",""" +
+                """"scope":null,"usedPercentage":61,"resetsAt":${AT + 259_200_000},"severity":"normal"}],"fetchedAt":$AT}}"""
 
         private fun sessionJson(state: String) =
             """{"id":"$SESSION_ID","provider":"echo","transport":"events","cwd":"/tmp/scratch","windowKey":"server",""" +
