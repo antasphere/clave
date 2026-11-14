@@ -170,6 +170,13 @@ export const StopTask = Schema.Struct({
   type: Schema.Literal('stop_task'),
   taskId: Schema.NonEmptyString
 })
+/** Take back a message that still waits for the agent (PRDCT-4566), by the id
+ *  its `waiting_messages` entry carries: it is never sent. Mirrors
+ *  `session-model.ts`. */
+export const WithdrawMessage = Schema.Struct({
+  type: Schema.Literal('withdraw_message'),
+  id: Schema.NonEmptyString
+})
 export const SessionInput = Schema.Union(
   UserMessageInput,
   PermissionResponse,
@@ -178,7 +185,8 @@ export const SessionInput = Schema.Union(
   SetModel,
   SetEffort,
   SetPermissionMode,
-  StopTask
+  StopTask,
+  WithdrawMessage
 )
 export type SessionInput = typeof SessionInput.Type
 
@@ -200,7 +208,8 @@ export const SessionWireInput = Schema.Union(
   SetModel,
   SetEffort,
   SetPermissionMode,
-  StopTask
+  StopTask,
+  WithdrawMessage
 )
 export type SessionWireInput = typeof SessionWireInput.Type
 export const SessionWrite = Schema.Union(SessionWireInput, SessionBytes)
@@ -292,6 +301,14 @@ export const BackgroundTask = Schema.Struct({
   model: Schema.optional(Schema.String)
 })
 export type BackgroundTask = typeof BackgroundTask.Type
+/** A message written to the session that the agent has not taken yet
+ *  (PRDCT-4566): the adapter's id for it, the text as written, its files. */
+export const WaitingMessage = Schema.Struct({
+  id: Schema.String,
+  text: Schema.String,
+  attachments: Schema.optional(Attachments)
+})
+export type WaitingMessage = typeof WaitingMessage.Type
 
 // ── What a session streams ──
 
@@ -401,6 +418,22 @@ export const SessionEvent = Schema.Union(
     type: Schema.Literal('provider_event'),
     provider: Schema.String,
     payload: Schema.Unknown
+  }),
+  /** The messages the agent has not taken yet (PRDCT-4566), whole each time
+   *  the list changes; a taken one is then a `user_message` of its own.
+   *  `takes`: after the running turn (`turn`) or at the next step (`step`).
+   *  `returned`: the ones that just left it unsent, for the composer. Mirrors
+   *  `session-model.ts`. */
+  Schema.Struct({
+    type: Schema.Literal('waiting_messages'),
+    messages: Schema.Array(WaitingMessage),
+    takes: Schema.Literal('turn', 'step'),
+    returned: Schema.optional(
+      Schema.Struct({
+        why: Schema.Literal('withdrawn', 'stopped', 'ended'),
+        messages: Schema.Array(WaitingMessage)
+      })
+    )
   })
 )
 export type SessionEvent = typeof SessionEvent.Type

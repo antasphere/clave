@@ -137,6 +137,14 @@ export const StopTaskSchema = z.object({
   type: z.literal('stop_task'),
   taskId: z.string().min(1)
 })
+/** Take back a message that still waits for the agent (PRDCT-4566), by the id
+ *  its `waiting_messages` entry carries: it is never sent. An adapter that
+ *  holds no message back has nothing to do. Mirrors
+ *  `packages/contract/src/sessions.ts`. */
+export const WithdrawMessageSchema = z.object({
+  type: z.literal('withdraw_message'),
+  id: z.string().min(1)
+})
 /** One permission mode a session can be switched to, in the provider's own
  *  vocabulary (`id`) and as the reader reads it (`label`). */
 export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.string() })
@@ -174,7 +182,8 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
   SetModelSchema,
   SetEffortSchema,
   SetPermissionModeSchema,
-  StopTaskSchema
+  StopTaskSchema,
+  WithdrawMessageSchema
 ])
 /** One reasoning effort a model can run at: the provider's word (`id`), how
  *  it reads (`label`), and the provider's gloss when it gives one. */
@@ -247,6 +256,15 @@ export const BackgroundTaskSchema = z.object({
   model: z.string().optional()
 })
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
+/** A message written to the session that the agent has not taken yet
+ *  (PRDCT-4566): the adapter's own id for it, the text as written (a message
+ *  from another tab with its provenance header) and the files it carries. */
+export const WaitingMessageSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  attachments: AttachmentsSchema.optional()
+})
+export type WaitingMessage = z.infer<typeof WaitingMessageSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
   /* `parent` on a message, a text, a call or a result names the call that
@@ -383,7 +401,28 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
   /* Everything still running in the background, whole, each time it changes:
      a snapshot replaces the last one, and an empty list means nothing is. */
   z.object({ type: z.literal('background_tasks'), tasks: z.array(BackgroundTaskSchema) }),
-  z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() })
+  z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() }),
+  /* The messages written while the agent works that it has not taken yet
+     (PRDCT-4566), whole, each time the list changes: a snapshot replaces the
+     last, and an empty list means none waits. A message the agent takes
+     leaves the list and is then a `user_message` of its own, so a view that
+     does not know this event still draws it, at the moment it is taken.
+     `takes`: when the agent takes one, once the running turn has ended
+     (`turn`, OpenCode) or at its next step (`step`, Pi). `returned`: the ones
+     that just left the list unsent, for the composer to take back: the one
+     the person withdrew, or every one still waiting when the turn was
+     stopped or the session ended. Mirrors `packages/contract/src/sessions.ts`. */
+  z.object({
+    type: z.literal('waiting_messages'),
+    messages: z.array(WaitingMessageSchema),
+    takes: z.enum(['turn', 'step']),
+    returned: z
+      .object({
+        why: z.enum(['withdrawn', 'stopped', 'ended']),
+        messages: z.array(WaitingMessageSchema)
+      })
+      .optional()
+  })
 ])
 export type SessionEvent = z.infer<typeof SessionEventSchema>
 /** One event of a conversation's past, with the moment the transcript says it

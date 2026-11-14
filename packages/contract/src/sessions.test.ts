@@ -114,11 +114,13 @@ const inputs: unknown[] = [
   { type: 'set_model', model: 'opus' },
   { type: 'set_effort', effort: 'xhigh' },
   { type: 'set_permission_mode', mode: 'plan' },
-  { type: 'stop_task', taskId: 't1' }
+  { type: 'stop_task', taskId: 't1' },
+  { type: 'withdraw_message', id: 'waiting-2' }
 ]
 const rejectedInputs: unknown[] = [
   { type: 'set_effort', effort: '--dangerously' },
   { type: 'stop_task', taskId: '' },
+  { type: 'withdraw_message', id: '' },
   { type: 'permission_draft', id: 'clave:f', answers: { login: 7 } },
   { type: 'user_message' },
   { type: 'nope' }
@@ -160,7 +162,36 @@ const events: unknown[] = [
     type: 'background_tasks',
     tasks: [{ id: 'b', kind: 'shell', description: 'build', startedAt: 1 }]
   },
-  { type: 'provider_event', provider: 'claude', payload: { any: 1 } }
+  { type: 'provider_event', provider: 'claude', payload: { any: 1 } },
+  {
+    type: 'waiting_messages',
+    messages: [{ id: 'waiting-1', text: 'and the tests too' }],
+    takes: 'turn'
+  },
+  {
+    type: 'waiting_messages',
+    messages: [],
+    takes: 'step',
+    returned: {
+      why: 'stopped',
+      messages: [
+        {
+          id: 'waiting-2',
+          text: 'look',
+          attachments: [
+            {
+              id: 'a',
+              path: '/tmp/x.md',
+              name: 'x.md',
+              mimeType: 'text/markdown',
+              size: 3,
+              delivery: 'reference'
+            }
+          ]
+        }
+      ]
+    }
+  }
 ]
 
 describe('the ported session model agrees with the zod one', () => {
