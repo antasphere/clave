@@ -7,6 +7,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.clave.core.chat.Block
+import com.clave.core.chat.Entry
+import com.clave.core.chat.groupEntries
+import com.clave.core.contract.AgentQuestion
+import com.clave.core.contract.SessionEvent
+import androidx.compose.ui.test.performScrollToIndex
 import com.clave.ui.chat.ChatChoice
 import com.clave.ui.chat.ChatControlsView
 import com.clave.ui.chat.PromptView
@@ -168,5 +173,46 @@ class ChatUxTest {
         rule.onNodeWithText("Show all").performClick()
         rule.onNodeWithText("line 20").assertExists()
         rule.onNodeWithText("Show less").assertExists()
+    }
+
+    @Test
+    fun eachTurnIsStampedAndAnAnswerCanBeCopied() {
+        val blocks = groupEntries(
+            listOf(
+                Entry.User("Hello there", final = true, at = now - 5 * 60_000),
+                Entry.Assistant("Done.", final = true, at = now - 60 * 60_000 * 3),
+            ),
+        )
+        show(state(blocks))
+        rule.onNodeWithText("5 min ago").assertIsDisplayed()
+        rule.onNodeWithText("3 h ago", substring = true).assertExists()
+        rule.onNodeWithContentDescription("Copy answer").assertIsDisplayed()
+    }
+
+    @Test
+    fun scrolledUpTheChatOffersTheWayBackToTheLatest() {
+        val blocks = groupEntries((0 until 40).map { Entry.User("Message $it", final = true, at = now) })
+        show(state(blocks))
+        rule.onNodeWithContentDescription("Jump to latest").assertDoesNotExist()
+        rule.onNodeWithTag("chat-transcript").performScrollToIndex(30)
+        rule.onNodeWithContentDescription("Jump to latest").performClick()
+        rule.onNodeWithText("Message 39", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun aQuestionOffScreenIsPointedAtAndOneTapBringsIt() {
+        val question = Entry.Permission(
+            request = SessionEvent.PermissionRequest(
+                id = "q1",
+                description = "Which branch?",
+                options = emptyList(),
+                questions = listOf(AgentQuestion(id = "b", question = "Which branch should I use?", options = emptyList())),
+            ),
+            at = now,
+        )
+        val blocks = groupEntries(listOf(question) + (0 until 40).map { Entry.User("Message $it", final = true, at = now) })
+        show(state(blocks))
+        rule.onNodeWithTag("question-pill").performClick()
+        rule.onNodeWithText("Which branch should I use?", useUnmergedTree = true).assertIsDisplayed()
     }
 }

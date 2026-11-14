@@ -74,3 +74,20 @@ class ControlsTest {
         assertEquals("other", providerLabel("other"))
     }
 }
+
+class RelativeTimeTest {
+    private val zone = java.time.ZoneOffset.UTC
+    private val now = java.time.LocalDateTime.of(2026, 11, 14, 15, 0).toInstant(zone).toEpochMilli()
+    private val minute = 60_000L
+
+    @Test
+    fun `a turn is stamped relative to now, then by its day`() {
+        assertEquals("just now", relativeTime(now - 20_000, now, zone))
+        assertEquals("just now", relativeTime(now + 5 * minute, now, zone))
+        assertEquals("5 min ago", relativeTime(now - 5 * minute, now, zone))
+        assertEquals("3 h ago", relativeTime(now - 180 * minute, now, zone))
+        assertEquals("yesterday", relativeTime(now - 20 * 60 * minute, now, zone))
+        assertEquals("10 Nov", relativeTime(now - 4 * 24 * 60 * minute, now, zone))
+        assertEquals("14 Nov 2025", relativeTime(now - 365L * 24 * 60 * minute, now, zone))
+    }
+}

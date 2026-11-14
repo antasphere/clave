@@ -123,3 +123,21 @@ fun contextMeterLabel(used: Long?, window: Long?): String = when {
 /** The meter's fill, 0 to 1; 0 while either side is unknown. */
 fun contextRatio(used: Long?, window: Long?): Float =
     if (used == null || window == null || window <= 0) 0f else (used.toDouble() / window).coerceIn(0.0, 1.0).toFloat()
+
+/**
+ * When a turn was said, the way the chat stamps it: "just now", "5 min ago", "3 h ago",
+ * "yesterday", then the day ("12 Nov"). [now] and [at] are epoch milliseconds; a turn from the
+ * future (a clock ahead of the phone's) reads "just now".
+ */
+fun relativeTime(at: Long, now: Long, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String {
+    val minutes = (now - at) / 60_000
+    if (minutes < 1) return "just now"
+    if (minutes < 60) return "$minutes min ago"
+    val hours = minutes / 60
+    val day = java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
+    val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    if (day == today) return "$hours h ago"
+    if (day == today.minusDays(1)) return "yesterday"
+    val month = day.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)
+    return if (day.year == today.year) "${day.dayOfMonth} $month" else "${day.dayOfMonth} $month ${day.year}"
+}

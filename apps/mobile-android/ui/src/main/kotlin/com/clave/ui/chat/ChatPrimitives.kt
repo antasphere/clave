@@ -7,7 +7,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -38,6 +40,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -68,16 +74,20 @@ import com.clave.ui.theme.shadow
  */
 
 /** A turn the person sent: boxed on surface-100 at the end of the column; an interrupted one goes hollow. */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun UserTurn(
     text: String,
     modifier: Modifier = Modifier,
     attachmentLabels: List<String> = emptyList(),
     interrupted: Boolean = false,
+    /** When it was said ("5 min ago"); null draws no stamp. */
+    timestamp: String? = null,
 ) {
     val t = Clave.colors.theme
     val shape = RoundedCornerShape(Metrics.radiusXxl)
+    val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     Column(
         modifier.fillMaxWidth().padding(start = Metrics.userTurnInset),
         horizontalAlignment = Alignment.End,
@@ -102,15 +112,26 @@ fun UserTurn(
                 text = body,
                 modifier = Modifier
                     .clip(shape)
+                    // A long press copies the message, as the desktop's copy button does.
+                    .combinedClickable(
+                        onClickLabel = null,
+                        onLongClickLabel = "Copy",
+                        onClick = {},
+                        onLongClick = {
+                            clipboard.setText(AnnotatedString(body))
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        },
+                    )
                     .then(frame)
                     .padding(horizontal = Metrics.userTurnPaddingX, vertical = Metrics.userTurnPaddingY),
                 style = ClaveTypography.type(Metrics.textSm, lineHeight = Metrics.userTurnLineHeight)
                     .copy(color = if (interrupted) t.textTertiary else t.textPrimary),
             )
         }
-        if (interrupted) {
+        val under = listOfNotNull("Interrupted".takeIf { interrupted }, timestamp).joinToString(" · ")
+        if (under.isNotEmpty()) {
             BasicText(
-                text = "Interrupted",
+                text = under,
                 modifier = Modifier.padding(horizontal = Metrics.space(1)),
                 style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary),
             )
@@ -125,8 +146,13 @@ fun AssistantProse(
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
     onLink: ((String) -> Unit)? = null,
+    /** When it was said; with it, a finished answer gets its copy button and its stamp. */
+    timestamp: String? = null,
 ) {
+    val t = Clave.colors.theme
+    val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Metrics.space(2))) {
+        // The prose is selectable: a long press picks words and offers Copy.
         if (markdown.isNotBlank()) Markdown(markdown, onLink = onLink)
         if (streaming) {
             StatusDot(
@@ -134,6 +160,16 @@ fun AssistantProse(
                 pulsing = true,
                 modifier = Modifier.semantics { contentDescription = "Writing" },
             )
+        } else if (timestamp != null && markdown.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
+                ClaveIconButton(
+                    icon = ClaveIcon.ClipboardDocument,
+                    onClick = { clipboard.setText(AnnotatedString(markdown.trim())) },
+                    contentDescription = "Copy answer",
+                    size = Metrics.controlXsHeight,
+                )
+                BasicText(timestamp, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
+            }
         }
     }
 }

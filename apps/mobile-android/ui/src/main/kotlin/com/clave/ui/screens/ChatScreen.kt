@@ -1,6 +1,15 @@
 package com.clave.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.contentDescription
+import com.clave.ui.theme.shadow
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +63,7 @@ import com.clave.core.chat.markerOf
 import com.clave.core.chat.parseDelivery
 import com.clave.core.chat.questionKey
 import com.clave.core.chat.refused
+import com.clave.core.chat.relativeTime
 import com.clave.core.chat.toolGroupSummary
 import com.clave.core.chat.toolHint
 import com.clave.core.chat.toolLine
@@ -352,6 +362,20 @@ private fun Transcript(
     LaunchedEffect(atOldest, state.hasOlder, state.loadingOlder) {
         if (atOldest && state.hasOlder && !state.loadingOlder) loadOlder()
     }
+    val scope = rememberCoroutineScope()
+    // The newest question still open, by its place in the upside-down list.
+    val question = newestFirst.indexOfFirst { it is Entry.Permission && isQuestion(it.request) && approvalAnswered(it) == null }
+    // Null while the question is on screen (or none waits); else whether it sits above what
+    // is read. Derived, so a layout pass that changes nothing recomposes nothing.
+    val questionAbove by remember(list, question) {
+        derivedStateOf {
+            val visible = list.layoutInfo.visibleItemsInfo
+            if (question < 0 || visible.isEmpty() || visible.any { it.index == question }) null
+            else question > visible.last().index
+        }
+    }
+    val awayFromLatest by remember(list) { derivedStateOf { list.firstVisibleItemIndex > 0 } }
+    Box(Modifier.fillMaxSize()) {
     LazyColumn(
         state = list,
         reverseLayout = true,
@@ -364,7 +388,7 @@ private fun Transcript(
             key = { i, block -> blockKey(block) { blocks.size - 1 - i } },
         ) { i, block ->
             val key = blockKey(block) { blocks.size - 1 - i }
-            TranscriptBlock(block, key, state.expanded, onAnswer, onToggle, onLink, docked = state.prompt != null)
+            TranscriptBlock(block, key, state.expanded, onAnswer, onToggle, onLink, docked = state.prompt != null, now = state.now)
         }
         if (state.loadingOlder) {
             item(key = "loading-older") {
@@ -382,6 +406,64 @@ private fun Transcript(
             }
         }
     }
+    Row(
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = Metrics.gutter, vertical = Metrics.space(2)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            val above = questionAbove
+            if (above != null) {
+                // An older question, above what is read, points up; a newer one, down.
+                FloatingPill("The agent asks you something", ClaveIcon.ChevronDown, flip = above) { scope.launch { list.animateScrollToItem(question) } }
+            }
+        }
+        if (awayFromLatest) {
+            FloatingRound(ClaveIcon.ChevronDown, "Jump to latest") { scope.launch { list.animateScrollToItem(0) } }
+        }
+    }
+    }
+}
+
+/** A raised pill over the transcript: a few words and which way to go. */
+@Composable
+private fun FloatingPill(label: String, icon: ClaveIcon, flip: Boolean, onClick: () -> Unit) {
+    val t = Clave.colors.theme
+    val shape = RoundedCornerShape(Metrics.radiusXxl)
+    Row(
+        Modifier
+            .shadow(Clave.shadows.raised, shape)
+            .clip(shape)
+            .background(t.surfaceRaised)
+            .border(Metrics.hairline, t.borderSubtle, shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = Metrics.controlHeight)
+            .padding(horizontal = Metrics.space(3))
+            .testTag("question-pill"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Metrics.space(1.5f)),
+    ) {
+        BasicText(label, style = ClaveTypography.type(Metrics.textControl).copy(color = t.textPrimary), maxLines = 1)
+        Icon(icon, null, Modifier.rotate(if (flip) 180f else 0f), tint = t.textSecondary, size = Metrics.chatGlyph)
+    }
+}
+
+/** The round "jump to latest" over the transcript's bottom end. */
+@Composable
+private fun FloatingRound(icon: ClaveIcon, description: String, onClick: () -> Unit) {
+    val t = Clave.colors.theme
+    Box(
+        Modifier
+            .size(Metrics.controlHeight + Metrics.space(2))
+            .shadow(Clave.shadows.raised, CircleShape)
+            .clip(CircleShape)
+            .background(t.surfaceRaised)
+            .border(Metrics.hairline, t.borderSubtle, CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, null, tint = t.textPrimary, size = Metrics.controlIcon)
+    }
 }
 
 /** One block of the transcript as the desktop's `TranscriptRow` draws it. */
@@ -394,11 +476,12 @@ private fun TranscriptBlock(
     onToggle: (blockKey: String) -> Unit,
     onLink: (String) -> Unit,
     docked: Boolean = false,
+    now: Long = 0,
 ) {
     val t = Clave.colors.theme
     when (block) {
-        is Entry.User -> DeliveredOrOwnTurn(block)
-        is Entry.Assistant -> AssistantProse(block.text, streaming = !block.final, onLink = onLink)
+        is Entry.User -> DeliveredOrOwnTurn(block, stamp(block.at, now))
+        is Entry.Assistant -> AssistantProse(block.text, streaming = !block.final, onLink = onLink, timestamp = stamp(block.at, now))
         is Entry.Tool -> SingleTool(block, key, expanded, onToggle)
         is Block.ToolGroup -> {
             if (block.tools.size == 1) {
@@ -467,20 +550,23 @@ private fun TranscriptBlock(
             }
         }
         is Block.DeliveryGroup -> Column(verticalArrangement = Arrangement.spacedBy(Metrics.space(2))) {
-            block.messages.forEach { DeliveredOrOwnTurn(it) }
+            block.messages.forEach { DeliveredOrOwnTurn(it, stamp(it.at, now)) }
         }
         is Entry.Error -> Notice(block.message, kind = NoticeKind.Destructive)
     }
 }
 
+/** A turn's stamp; none without a clock (a preview). */
+private fun stamp(at: Long, now: Long): String? = if (now <= 0 || at <= 0) null else relativeTime(at, now)
+
 /** A user turn: the person's own words, or a message another tab sent, under who sent it. */
 @Composable
-private fun DeliveredOrOwnTurn(entry: Entry.User) {
+private fun DeliveredOrOwnTurn(entry: Entry.User, timestamp: String? = null) {
     val t = Clave.colors.theme
     val delivery = parseDelivery(entry.text)
     val labels = entry.attachments.orEmpty().map(::attachmentLabel)
     if (delivery == null) {
-        UserTurn(entry.text, attachmentLabels = labels, interrupted = entry.interrupted)
+        UserTurn(entry.text, attachmentLabels = labels, interrupted = entry.interrupted, timestamp = timestamp)
         return
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
@@ -490,7 +576,7 @@ private fun DeliveredOrOwnTurn(entry: Entry.User) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        UserTurn(delivery.body, attachmentLabels = labels, interrupted = entry.interrupted)
+        UserTurn(delivery.body, attachmentLabels = labels, interrupted = entry.interrupted, timestamp = timestamp)
     }
 }
 
