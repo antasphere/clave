@@ -31,6 +31,7 @@ import {
 // ── Wave 7, lane A: the launcher's choices on this server (PRDCT-4485) ──
 import { HARNESSES, HARNESS_BY_ID, type HarnessId } from '../../shared/harness'
 import { ownSessionRef } from '../../shared/own-session-ref'
+import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
   EFFORT_PATTERN,
   SPAWN_PERMISSION_MODES,
@@ -934,13 +935,8 @@ function buildServer(
       // The tab exists from here on: what follows is best effort, and the
       // answer always names the tab so the caller can find or close it.
       const warnings: string[] = []
-      if (args.name) {
-        try {
-          sessions.rename(info.id, args.name)
-        } catch (err) {
-          warnings.push(`The tab started but was not renamed: ${message(err)}`)
-        }
-      }
+      const name = args.name
+      if (name) await afterSpawn(warnings, 'name', () => sessions.rename(info.id, name))
       let placed: string | null = null
       if (groupId) {
         try {
@@ -952,20 +948,19 @@ function buildServer(
         else warnings.push(`Group "${groupId}" no longer exists; the tab is at the top level.`)
       }
       // A terminal starts its process at its first size; no window gives it one here.
-      if (sessions.get(info.id)?.transport === 'pty') {
-        try {
-          sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS)
-        } catch (err) {
-          warnings.push(`The terminal could not be sized to start: ${message(err)}`)
-        }
-      }
-      return text({
-        sessionId: info.id,
-        groupId: placed,
-        // Where the tab landed (PRDCT-4193): the caller's workspace, or none.
-        workspaceId: workspaceId ?? null,
-        ...(warnings.length > 0 ? { warnings } : {})
-      })
+      if (sessions.get(info.id)?.transport === 'pty')
+        await afterSpawn(warnings, 'size', () => sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS))
+      return text(
+        withWarnings(
+          {
+            sessionId: info.id,
+            groupId: placed,
+            // Where the tab landed (PRDCT-4193): the caller's workspace, or none.
+            workspaceId: workspaceId ?? null
+          },
+          warnings
+        )
+      )
     }
   )
   // ── PRDCT-4485: a tab moved to another connection, the Mac's rule with no window to ask ──

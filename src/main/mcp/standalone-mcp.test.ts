@@ -1074,6 +1074,27 @@ describe('standalone MCP session tools: boundaries', () => {
     ])
     expect(sessions.has('started-1')).toBe(true)
   }, 15_000)
+
+  it('names the started terminal when its first size fails, in the words every road uses (PRDCT-4507)', async () => {
+    const { client, sessions, directory } = await sessionFixture({
+      host: {
+        resize: () => {
+          throw new Error('made-up failure')
+        }
+      }
+    })
+    const opened = payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, mode: 'terminal' }
+      })
+    )
+    expect(opened.sessionId).toBe('started-1')
+    expect(opened.warnings).toEqual([
+      'The tab started but its terminal could not be sized to start: made-up failure'
+    ])
+    expect(sessions.has('started-1')).toBe(true)
+  }, 15_000)
 })
 
 /** A tab of the server-owned host, idle unless said otherwise. */

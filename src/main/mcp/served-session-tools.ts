@@ -19,6 +19,7 @@ import { pickAccount } from '../../shared/account-pool'
 import { launchModeFields } from '../../shared/runtime-choices'
 import { historyLines } from '../../shared/history-text'
 import { ownSessionRef } from '../../shared/own-session-ref'
+import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
   type TargetHost,
   checkpointCapture,
@@ -548,23 +549,30 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       throw new Error((err as { message?: string }).message ?? 'The session could not start')
     throw err
   }
+  // The tab exists from here on: every step after it is best effort, said in
+  // the answer beside the tab's id, never thrown (PRDCT-4507).
+  const warnings: string[] = []
   // Attached, the new record is the server's: read again before it is named.
-  await ctx.shell.syncRecords?.()
+  await afterSpawn(warnings, 'records', () => ctx.shell.syncRecords?.())
   // The parent link for "parent": only when the open came from inside
   // another tab (an agent's delegation), never from the app's own UI.
   if (ctx.callerSessionId) ctx.shell.setParent(info.id, ctx.callerSessionId)
   const name = str(p.name)
-  if (name) await ctx.api.sessions.rename(info.id, name)
+  if (name) await afterSpawn(warnings, 'name', () => ctx.api.sessions.rename(info.id, name))
   // The tab enters the window's sidebar: the first row of its group, or the
   // first row of the sidebar; the window takes it in from its record.
-  await ctx.api.sidebar.placeSession({
-    windowKey: spawnKey,
-    sessionId: info.id,
-    groupId: target?.group.id ?? null
-  })
+  const placed = await afterSpawn(warnings, target ? 'group' : 'place', () =>
+    ctx.api.sidebar.placeSession({
+      windowKey: spawnKey,
+      sessionId: info.id,
+      groupId: target?.group.id ?? null
+    })
+  )
   // With no window to mount a pane, nothing would ever start the process.
   if (!ctx.shell.windowByKey(spawnKey)) {
-    await ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS).catch(() => undefined)
+    await afterSpawn(warnings, 'size', () =>
+      ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS)
+    )
   }
   // An agent's delegation is a transport event (PRDCT-1568), recorded with
   // its launch prompt, when the harness table says it is captured; a capture
@@ -591,7 +599,10 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       // observability only
     }
   }
-  return { sessionId: info.id, groupId: target?.group.id ?? null }
+  return withWarnings(
+    { sessionId: info.id, groupId: placed ? (target?.group.id ?? null) : null },
+    warnings
+  )
 }
 
 // ── Launching a pinned group ──

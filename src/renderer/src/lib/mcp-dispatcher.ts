@@ -16,6 +16,7 @@ import { useProviderConnectionsStore } from '../store/provider-connections-store
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
 import { ownSessionRef } from '../../../shared/own-session-ref'
+import { afterSpawn, withWarnings } from '../../../shared/open-after-spawn'
 import {
   captureEndpoint as captureEndpointOf,
   emitTabClosed,
@@ -646,53 +647,63 @@ export async function openSessionProgrammatically(payload: {
   })
 
   if (payload.callerSessionId) messagingParents.set(info.id, payload.callerSessionId)
-  state.addSession({
-    id: info.id,
-    cwd: info.cwd,
-    folderName: info.folderName,
-    name: info.folderName,
-    alive: info.alive,
-    activityStatus: 'idle',
-    promptWaiting: null,
-    claudeMode,
-    antigravityMode,
-    codexMode,
-    piMode,
-    opencodeMode,
-    claudeAgentsMode: false,
-    dangerousMode,
-    model: info.model,
-    spawnedBy,
-    claudeSessionId: info.claudeSessionId ?? null,
-    piSessionId: info.piSessionId ?? null,
-    launchProfileId: info.launchProfileId,
-    piProvider: info.piProvider,
-    piThinking: info.piThinking,
-    claudeProfileId: claudeProfile?.id,
-    claudeProfileLabel: claudeProfile?.label,
-    codexAccountId: codexAccount?.id,
-    codexAccountLabel: codexAccount?.label,
-    ...(connection ?? {}),
-    // Persist so Duplicate re-primes the clone with the same prompt.
-    initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
-    sessionType: 'local',
-    detectedUrl: null,
-    serverStatus: null,
-    serverCommand: null,
-    hasUnseenActivity: false,
-    userRenamed: false,
-    planFilePath: null,
-    workspaceId
-  })
+  // The tab exists from here on: every step after it is best effort, said in
+  // the answer beside the tab's id, never thrown (PRDCT-4507).
+  const warnings: string[] = []
+  await afterSpawn(warnings, 'place', () =>
+    state.addSession({
+      id: info.id,
+      cwd: info.cwd,
+      folderName: info.folderName,
+      name: info.folderName,
+      alive: info.alive,
+      activityStatus: 'idle',
+      promptWaiting: null,
+      claudeMode,
+      antigravityMode,
+      codexMode,
+      piMode,
+      opencodeMode,
+      claudeAgentsMode: false,
+      dangerousMode,
+      model: info.model,
+      spawnedBy,
+      claudeSessionId: info.claudeSessionId ?? null,
+      piSessionId: info.piSessionId ?? null,
+      launchProfileId: info.launchProfileId,
+      piProvider: info.piProvider,
+      piThinking: info.piThinking,
+      claudeProfileId: claudeProfile?.id,
+      claudeProfileLabel: claudeProfile?.label,
+      codexAccountId: codexAccount?.id,
+      codexAccountLabel: codexAccount?.label,
+      ...(connection ?? {}),
+      // Persist so Duplicate re-primes the clone with the same prompt.
+      initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
+      sessionType: 'local',
+      detectedUrl: null,
+      serverStatus: null,
+      serverCommand: null,
+      hasUnseenActivity: false,
+      userRenamed: false,
+      planFilePath: null,
+      workspaceId
+    })
+  )
   // renameSession sets userRenamed, protecting the name from auto-title overwrite.
-  if (payload.name) useSessionStore.getState().renameSession(info.id, payload.name)
+  if (payload.name)
+    await afterSpawn(warnings, 'name', () =>
+      useSessionStore.getState().renameSession(info.id, payload.name!)
+    )
   // An agent that asked for a group gets one; one that didn't is left where
   // addSession put it — the sidebar's first row, top level. (There used to be
   // a pull-back here: addSession nested a new tab into whatever group held the
   // user's selection, which an agent spawn must never inherit. addSession does
   // not nest at all now, so there is nothing to undo.)
   if (targetGroup) {
-    useSessionStore.getState().moveItems([info.id], targetGroup.id, 'inside')
+    await afterSpawn(warnings, 'group', () =>
+      useSessionStore.getState().moveItems([info.id], targetGroup.id, 'inside')
+    )
   }
 
   // Agent-delegation spawns are transport events (PRDCT-1568): record them
@@ -702,11 +713,11 @@ export async function openSessionProgrammatically(payload: {
   // Whether each end is captured comes from the harness table (PRDCT-4507),
   // and a capture is observability: it never fails an open whose tab exists.
   if (payload.callerSessionId) {
-    const current = useSessionStore.getState().sessions
-    const spawner = current.find((s) => s.id === payload.callerSessionId)
-    const spawned = current.find((s) => s.id === info.id)
-    if (spawner && spawned && isCaptured(spawner) && isCaptured(spawned)) {
-      try {
+    try {
+      const current = useSessionStore.getState().sessions
+      const spawner = current.find((s) => s.id === payload.callerSessionId)
+      const spawned = current.find((s) => s.id === info.id)
+      if (spawner && spawned && isCaptured(spawner) && isCaptured(spawned)) {
         window.electronAPI.captureTabSpawn({
           ts: new Date().toISOString(),
           spawner: captureEndpointOf(spawner, useSessionStore.getState().groups),
@@ -714,14 +725,17 @@ export async function openSessionProgrammatically(payload: {
           prompt: payload.prompt || null,
           model: model ?? null
         })
-      } catch {
-        // observability only
       }
+    } catch {
+      // observability only
     }
   }
 
   const groups = useSessionStore.getState().groups
-  return { sessionId: info.id, groupId: groupOfSession(groups, info.id)?.id ?? null }
+  return withWarnings(
+    { sessionId: info.id, groupId: groupOfSession(groups, info.id)?.id ?? null },
+    warnings
+  )
 }
 
 function handleMoveSession(payload: {

@@ -1005,6 +1005,60 @@ describe('an account switch', () => {
   })
 })
 
+describe('an open whose tab exists never answers an error (PRDCT-4507)', () => {
+  const failing = (): never => {
+    throw new Error('made-up failure')
+  }
+  const open = (h: Harness, over: Partial<ServedContext> = {}): Promise<unknown> =>
+    run(h, 'openSession', { cwd: '/proj', mode: 'terminal', name: 'Lane', groupId: 'g1' }, over)
+  const world = (): Partial<World> => ({
+    layouts: [layout('wA', [group('g1', { name: 'Build', workspaceId: 'ws1' })])],
+    sessions: [session('caller')],
+    records: { caller: record('caller', { workspaceId: 'ws1' }) }
+  })
+  it.each([
+    ['records', 'The tab started but its record was not read again: made-up failure', 'g1'],
+    ['name', 'The tab started but was not renamed: made-up failure', 'g1'],
+    ['group', 'The tab started but was not placed in its group: made-up failure', null],
+    ['size', 'The tab started but its terminal could not be sized to start: made-up failure', 'g1']
+  ] as const)('a failed %s step: the id, and one sentence', async (step, sentence, groupId) => {
+    const h = setup({ ...world(), ...(step === 'size' ? { windows: [] } : {}) })
+    let over: Partial<ServedContext> = {}
+    if (step === 'records') over = { shell: { ...h.ctx().shell, syncRecords: failing } }
+    if (step === 'name') h.impl['sessions.rename'] = failing
+    if (step === 'group') h.impl['sidebar.placeSession'] = failing
+    if (step === 'size') h.impl['sessions.resize'] = failing
+    const answer = await open(h, over)
+    expect(answer).toEqual({ sessionId: 'new-1', groupId, warnings: [sentence] })
+    expect(h.argsOf('sessions.start')).toHaveLength(1)
+  })
+  it('a place in no group that fails names the sidebar', async () => {
+    const h = setup(world())
+    h.impl['sidebar.placeSession'] = failing
+    expect(await run(h, 'openSession', { cwd: '/proj', mode: 'terminal' })).toEqual({
+      sessionId: 'new-1',
+      groupId: null,
+      warnings: ['The tab started but was not placed in the sidebar: made-up failure']
+    })
+  })
+  it('every step failing: still the id, one sentence each', async () => {
+    const h = setup({ ...world(), windows: [] })
+    h.impl['sessions.rename'] = failing
+    h.impl['sidebar.placeSession'] = failing
+    h.impl['sessions.resize'] = failing
+    const answer = (await open(h, { shell: { ...h.ctx().shell, syncRecords: failing } })) as {
+      sessionId: string
+      warnings: string[]
+    }
+    expect(answer.sessionId).toBe('new-1')
+    expect(answer.warnings).toHaveLength(4)
+  })
+  it('an open where everything ran carries no warnings', async () => {
+    const h = setup(world())
+    expect(await open(h)).toEqual({ sessionId: 'new-1', groupId: 'g1' })
+  })
+})
+
 describe('opening a session', () => {
   const world = (): Partial<World> => ({
     layouts: [
