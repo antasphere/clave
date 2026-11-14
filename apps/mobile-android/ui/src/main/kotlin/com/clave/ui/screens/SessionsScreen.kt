@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -148,9 +149,11 @@ fun SessionsScreen(
                         Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Metrics.gutter, vertical = Metrics.space(1)),
                         horizontalArrangement = Arrangement.spacedBy(Metrics.space(2)),
                     ) {
-                        Chip("All", selected = state.workspaceId == null, onClick = { onPickWorkspace(null) })
+                        // A chip's label takes a weight: in a scrolling row it needs a bounded width to show at all.
+                        val bounded = Modifier.widthIn(max = Metrics.space(50))
+                        Chip("All", modifier = bounded, selected = state.workspaceId == null, onClick = { onPickWorkspace(null) })
                         state.workspaces.forEach { w ->
-                            Chip(w.name, selected = state.workspaceId == w.id, onClick = { onPickWorkspace(w.id) })
+                            Chip(w.name, modifier = bounded, selected = state.workspaceId == w.id, onClick = { onPickWorkspace(w.id) })
                         }
                     }
                 }
