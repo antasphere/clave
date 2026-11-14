@@ -381,6 +381,8 @@ describe('Codex adapter lifecycle', () => {
     const events: unknown[] = []
     adapter.on(handle, 'stream', (e) => events.push(e))
     adapter.write(handle, { type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } })
+    // Nothing waits in a Codex chat: a withdraw takes no turn either (PRDCT-4566).
+    adapter.write(handle, { type: 'withdraw_message', id: 'waiting-1' })
     await tick()
     expect(connection.request).not.toHaveBeenCalledWith('turn/start', expect.anything())
     expect(JSON.stringify(events)).not.toContain('user_message')
