@@ -29,6 +29,7 @@ import {
   type ProviderSpawnFields
 } from './provider-injection-spawn'
 import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
+import { piForeignCredentialVars } from './models-catalog-overlay'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
@@ -166,6 +167,18 @@ export interface RestartOverrides {
    *  family's chat adapter (`<pluginId>/<viewId>`); ignored on a move to the
    *  terminal. */
   viewId?: string
+}
+
+/** Whether Pi wrote the session `id` (it does at the first message), looked
+ *  for in the agent directory the tab's Pi runs in: what decides a Pi tab,
+ *  chat or terminal, resumes it (`--session`) or starts under its id
+ *  (`--session-id`). */
+export function piSessionWritten(
+  id: string,
+  cwd: string,
+  lookupEnv: Record<string, string | undefined>
+): boolean {
+  return findPiSession(id, cwd, lookupEnv) !== null
 }
 
 /** A connection's spawn fields a terminal's options take: the chat's own
@@ -306,6 +319,18 @@ class PtyManager {
         : ptyAdapter
     if (!adapter) throw new Error(`Adapter unavailable: ${events?.adapterId}`)
     const isEvents = !!events || echo
+    // A Pi terminal asked to resume a session Pi never wrote (it ended before
+    // its first message) starts fresh under the same id instead: `pi
+    // --session <id>` finds nothing, says "No session found matching" and
+    // exits, on every Resume. The chat's guard, below, is the same check.
+    if (
+      !isEvents &&
+      family === 'pi' &&
+      options?.resumeSessionId &&
+      UUID_RE.test(options.resumeSessionId) &&
+      !piSessionWritten(options.resumeSessionId, cwd, piSessionLookupEnv(options.connectionId))
+    )
+      options = { ...options, piSessionId: options.resumeSessionId, resumeSessionId: undefined }
     // A fresh chat that names no model starts on the one last picked in a
     // chat composer. A restored or resumed tab keeps its own, and a launch
     // that names a model (MCP, a .clave file) gets exactly that.
@@ -455,7 +480,7 @@ class PtyManager {
           !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))) ||
         // Lane D (PRDCT-4427): a Pi session exists once Pi wrote its file
         // (at the first message); until then the chat starts under its id.
-        (adapter.id === 'pi-chat' && !findPiSession(options.resumeSessionId, cwd, piLookupEnv)))
+        (adapter.id === 'pi-chat' && !piSessionWritten(options.resumeSessionId, cwd, piLookupEnv)))
         ? undefined
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {
@@ -512,8 +537,19 @@ class PtyManager {
       })
       piChatAdapter.configure(session.id, {
         command: [...argv, '--mode', 'rpc'],
+        // On a connection, without any other provider's credential
+        // (`buildSpawnEnv`, PRDCT-4496).
         env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
-        initialPrompt: options?.initialPrompt
+        initialPrompt: options?.initialPrompt,
+        // The chat offers and runs the connection's provider's models alone.
+        ...(chatConnection.piProvider && chatConnection.providerEnv
+          ? {
+              connection: {
+                provider: chatConnection.piProvider,
+                unset: piForeignCredentialVars(chatConnection.providerEnv)
+              }
+            }
+          : {})
       })
     }
     const handle = isEvents
@@ -891,7 +927,7 @@ class PtyManager {
     // A Pi tab on a stored connection runs in the connection's directory, so
     // its session file is looked for there (PRDCT-4496).
     if (family === 'pi')
-      return findPiSession(conversationId, cwd, piSessionLookupEnv(connectionId)) !== null
+      return piSessionWritten(conversationId, cwd, piSessionLookupEnv(connectionId))
     if (family === 'codex') return hasCodexRollout(conversationId, codexRoot(getLoginShellEnv()))
     return family === 'opencode'
   }

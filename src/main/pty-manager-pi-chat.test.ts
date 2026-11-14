@@ -140,8 +140,10 @@ vi.mock('./sessions/adapters/echo-adapter', () => ({
     provider = 'echo'
   }
 }))
+/** The model last picked in a chat composer, when a test sets one. */
+const remembered = vi.hoisted(() => ({ model: undefined as string | undefined }))
 vi.mock('./sessions/chat-model-default', () => ({
-  rememberedChatModel: () => undefined,
+  rememberedChatModel: () => remembered.model,
   rememberedChatEffort: () => undefined
 }))
 vi.mock('./preferences-manager', () => ({
@@ -346,6 +348,52 @@ describe('a Pi chat on a stored connection (PRDCT-4496 with PRDCT-4427)', () => 
     expect(after(configured().command, '--provider')).toBe('anthropic')
     expect(mocks.buildSpawnEnv).toHaveBeenLastCalledWith(mocks.loginEnv, {})
     expect(writtenRecord().connectionId).toBeUndefined()
+    // Nothing confines it: the adapter offers whatever Pi lists.
+    expect((configured() as { connection?: unknown }).connection).toBeUndefined()
+  })
+  // The verifier's F1 (PRDCT-4496): the adapter is told the connection's Pi
+  // provider (what it offers and runs on) and the variables to unset again
+  // after a login profile, the connection's own never among them.
+  it("tells the adapter the connection's provider and the other credentials to keep out", async () => {
+    injection.forSpawn.mockResolvedValueOnce({
+      providerEnv: { KIMI_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
+      piProvider: 'kimi-coding'
+    })
+    await openPiChat({ connectionId: 'conn-1', connectionLabel: 'Kimi', model: 'k-first' })
+    const { connection } = configured() as {
+      connection?: { provider: string; unset: string[] }
+    }
+    expect(connection?.provider).toBe('kimi-coding')
+    expect(connection?.unset).toContain('ANTHROPIC_API_KEY')
+    expect(connection?.unset).toContain('OPENAI_API_KEY')
+    expect(connection?.unset).not.toContain('KIMI_API_KEY')
+    expect(JSON.stringify(connection)).not.toContain(STAND_IN_KEY)
+  })
+  // The verifier's F4: a model remembered from another chat is never what a
+  // chat on a connection starts on, the connection decides it.
+  it('a chat on a connection never starts on the model remembered from another chat', async () => {
+    remembered.model = 'anthropic/claude-made-up'
+    try {
+      injection.forSpawn.mockResolvedValueOnce({
+        providerEnv: { STAND_IN_API_KEY: STAND_IN_KEY, PI_CODING_AGENT_DIR: '/stand-in/pi-dir' },
+        piProvider: 'stand-in-provider',
+        model: 'stand-in-start'
+      })
+      await openPiChat({ connectionId: 'conn-1', connectionLabel: 'Stand-in' })
+      expect(injection.forSpawn).toHaveBeenLastCalledWith('pi', {
+        connectionId: 'conn-1',
+        model: undefined
+      })
+      expect(after(configured().command, '--model')).toBe('stand-in-start')
+      expect(spawnOptions().model).toBe('stand-in-start')
+      expect(JSON.stringify(mocks.pi.configure.mock.calls)).not.toContain('claude-made-up')
+      // The same chat on no connection does start on it: the guard, not the
+      // absence of a remembered model, is what the test above proves.
+      await openPiChat()
+      expect(after(configured().command, '--model')).toBe('anthropic/claude-made-up')
+    } finally {
+      remembered.model = undefined
+    }
   })
   it('the value reaches the environment and nothing else: not the session spec, the adoption, the record or the spawn kept for a restart', async () => {
     injection.forSpawn.mockResolvedValue({
@@ -529,6 +577,47 @@ describe('a Pi chat on a connection resumes from the directory it runs in (PRDCT
     expect(after(command, '--session-id')).toBe(PI_SESSION)
     expect(command).not.toContain('--session')
     expect(spawnOptions().resume).toBeUndefined()
+  })
+  // T2 of the tester's fourth pass: a Pi TERMINAL whose Pi never wrote its
+  // session file ran `pi --session <id>`, which says "No session found
+  // matching" and exits (real pi 1.5.2), at every Resume.
+  describe('a Pi terminal asked to resume a session Pi never wrote', () => {
+    const terminalSpawn = async (
+      extra: Record<string, unknown> = {}
+    ): Promise<Record<string, unknown>> => {
+      mocks.pty.prepare.mockImplementation(((cwd: string) => ({
+        id: 'pi-term',
+        cwd,
+        folderName: 'project',
+        alive: true,
+        ptyProcess: null
+      })) as never)
+      await ptyManager.spawn('/project', {
+        claudeMode: false,
+        piMode: true,
+        resumeSessionId: PI_SESSION,
+        ...extra
+      })
+      return mocks.pty.prepare.mock.calls.at(-1)![1]
+    }
+    it('starts under the same id (--session-id) instead', async () => {
+      const options = await terminalSpawn()
+      expect(options.resumeSessionId).toBeUndefined()
+      expect(options.piSessionId).toBe(PI_SESSION)
+    })
+    it('resumes it once Pi wrote it', async () => {
+      writePiSession(PI_SESSION)
+      const options = await terminalSpawn()
+      expect(options.resumeSessionId).toBe(PI_SESSION)
+    })
+    it("on a connection, looks where the connection's Pi runs", async () => {
+      const dir = connectionDir()
+      writePiSession(PI_SESSION)
+      // In the person's home only: the connection's Pi would not find it.
+      expect((await terminalSpawn({ connectionId: 'conn-1' })).resumeSessionId).toBeUndefined()
+      writeSessionIn(dir, PI_SESSION)
+      expect((await terminalSpawn({ connectionId: 'conn-1' })).resumeSessionId).toBe(PI_SESSION)
+    })
   })
   it("a move to the terminal resumes the session the connection's Pi wrote", async () => {
     const dir = connectionDir()
