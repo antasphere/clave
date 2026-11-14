@@ -12,12 +12,13 @@ import { lazyTerminalPorts, unpackedPath } from './ports/terminals'
  * - Pi: Clave's extension (`resources/pi-clave-state.js`) registers the
  *   server for the session, reading the file whose PATH is in
  *   `CLAVE_MCP_CONFIG_FILE`. The token stays in the file (checked on 1.5.2:
- *   `pi.registerMcpServer` at `session_start`, `direct` exposure).
+ *   `pi.registerMcpServer` at `session_start`, seven tools declared, the rest
+ *   `deferred` behind `tool_search`).
  * - OpenCode: an `mcp.servers.clave` entry in the tab's inline configuration
  *   (`OPENCODE_CONFIG_CONTENT`) whose header names the token by reference,
  *   `{env:CLAVE_TAB_MCP_TOKEN}`, the value in the process's environment alone
  *   (checked on 2.3.0: substituted in a header, read by a standalone TUI and
- *   by `opencode acp`; `codemode: false` declares the tools to the model).
+ *   by `opencode acp`), reached through OpenCode's own code mode.
  *
  * Nothing is written to the person's own configuration of either harness.
  */
@@ -80,12 +81,12 @@ export function opencodeClaveServer(url: string): Record<string, unknown> {
     url,
     headers: { Authorization: `Bearer {env:${CLAVE_TAB_MCP_TOKEN_ENV}}` },
     // The header is the credential: no OAuth sign-in is ever started for it.
-    oauth: false,
-    // Declared to the model like its built-in tools, rather than reached
-    // through OpenCode's code mode. 2.3.0 sets this per server only, never
-    // per tool, so the seven Pi declares (CLAVE_DIRECT_TOOLS) cannot be
-    // split out here: all forty are declared (PRDCT-4507, a decision pending).
-    codemode: false
+    oauth: false
+    // No `codemode` key: OpenCode's own default, code mode, as for every
+    // server a person registers there. Declaring all forty tools would add
+    // about 62 KB to every turn (code mode adds about 4 KB: the server named
+    // in a catalog, its tools found by search), and 2.3.0 sets this per
+    // server only, so Pi's seven (CLAVE_DIRECT_TOOLS) cannot be split out.
   }
 }
 

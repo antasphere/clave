@@ -236,8 +236,7 @@ describe("an OpenCode chat is handed Clave's tools (PRDCT-4507)", () => {
       type: 'remote',
       url,
       headers: { Authorization: 'Bearer {env:CLAVE_TAB_MCP_TOKEN}' },
-      oauth: false,
-      codemode: false
+      oauth: false
     })
     expect([...launch.connectionVariables!].sort()).toEqual([
       'CLAVE_TAB_MCP_TOKEN',
@@ -247,7 +246,7 @@ describe("an OpenCode chat is handed Clave's tools (PRDCT-4507)", () => {
     expect(records(log)[0]).toMatchObject({
       harness: 'opencode',
       source: 'inline',
-      codemode: false,
+      codemode: null,
       ok: true,
       callerSessionId: id,
       tokenOnArgv: false,

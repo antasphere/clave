@@ -206,10 +206,10 @@ export async function run(t) {
       )
       assert.deepEqual(record.tokenInEnv, [])
     }
-    // OpenCode 2.3.0 has code mode per server only: all of them, declared.
+    // OpenCode: its own default, code mode; none declared, all reached in it.
     for (const { record } of [opencodeChat, opencodeTerminal]) {
-      assert.equal(record.codemode, false)
-      assert.equal(record.declaredTools.length, record.tools.length)
+      assert.equal(record.codemode, null)
+      assert.deepEqual(record.declaredTools, [])
       assert.deepEqual(record.tokenInEnv, ['CLAVE_TAB_MCP_TOKEN'])
     }
     assert.equal(opencodeChat.record.source, 'inline')

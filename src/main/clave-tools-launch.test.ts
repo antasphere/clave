@@ -67,9 +67,10 @@ describe("OpenCode's inline configuration", () => {
       type: 'remote',
       url: URL,
       headers: { Authorization: 'Bearer {env:CLAVE_TAB_MCP_TOKEN}' },
-      oauth: false,
-      codemode: false
+      oauth: false
     })
+    // OpenCode's own default, code mode: no `codemode` key at all.
+    expect(clave).not.toHaveProperty('codemode')
     expect(JSON.stringify(clave)).not.toContain(TOKEN)
   })
 

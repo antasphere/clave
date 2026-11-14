@@ -138,8 +138,7 @@ describe("an OpenCode terminal is handed Clave's tools (PRDCT-4507)", () => {
     type: 'remote',
     url: URL,
     headers: { Authorization: 'Bearer {env:CLAVE_TAB_MCP_TOKEN}' },
-    oauth: false,
-    codemode: false
+    oauth: false
   }
 
   it('on no connection and no model: its own inline configuration, standalone, the token by reference', () => {
