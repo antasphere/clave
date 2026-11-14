@@ -9,5 +9,8 @@ package com.clave.core.transport
  */
 public fun isUnsupportedRead(error: Throwable): Boolean {
     if (error !is ServerError) return false
+    // A 403 on these reads is safe to show as "Update Clave on your Mac": the server answers a
+    // paired phone 403 only for a path missing from its device allowlist (packages/server/src/
+    // devices/scope.ts), and these paths are missing only from a Mac older than the reads.
     return error.kind == ServerError.Kind.Forbidden || error.status == 404 || error.capabilityUnavailable
 }
