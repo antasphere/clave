@@ -193,6 +193,8 @@ body,
 .radio:focus-visible,
 .theme-swatch:focus-visible,
 .settings-row-action:focus-visible,
+.connection-card-more:focus-visible,
+.connection-card-link:focus-visible,
 .git-tree-row:focus-visible,
 .git-sync-badge:focus-visible,
 .panel-path:focus-visible,
@@ -318,8 +320,7 @@ body,
     transform 150ms var(--ease-out-expo),
     opacity 150ms,
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo); /* the icon button's press dip keeps its easing */
+    background-color 150ms;
 }
 /* Shown, it still cancels the row's gap: the 20px box already carries 3px of
    air around its 14px glyph, and the status glyph before it its own, so with
@@ -535,10 +536,6 @@ body,
   color: var(--text-primary);
   outline: none;
 }
-.sidebar-tab-view:active {
-  transform: scale(1.15);
-  transition-duration: 120ms;
-}
 /* Appearance → Agent mark: the row's status slot is a mark pack's canvas
    (the orbs pack draws `thinking-orbs`' 20px preset), fitted to the slot
    here. Its own motion says working. Rest and work swap with a short fade;
@@ -565,8 +562,7 @@ canvas[data-orb-state] {
     transition:
       opacity 150ms,
       color 150ms,
-      background-color 150ms,
-      scale 120ms var(--ease-out-expo);
+      background-color 150ms;
   }
 }
 
@@ -644,8 +640,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .launcher-btn:hover {
   color: var(--text-primary);
@@ -680,8 +675,7 @@ canvas[data-orb-state] {
   color: var(--text-tertiary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .launcher-caret:hover,
 .launcher-caret[data-state='open'] {
@@ -704,8 +698,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .launcher-icon-btn:hover,
 .launcher-icon-btn[data-active='true'] {
@@ -918,8 +911,7 @@ canvas[data-orb-state] {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .group-switcher-chip:hover,
 .panel-tab:hover {
@@ -1147,9 +1139,9 @@ canvas[data-orb-state] {
    Same size and the same hover fill as the launcher's trailing buttons, so the
    two panels answer to the same touch. */
 /* The panel's icon buttons — the settings gear, the chat door. The same box,
-   radius, press dip and disabled state as .panel-icon-btn, because that is
-   exactly what they are: an icon button inside a --radius-xl panel. Only the
-   hover fill differs, and it differs on purpose (see .sidebar-footer). */
+   radius and disabled state as .panel-icon-btn, because that is exactly what
+   they are: an icon button inside a --radius-xl panel. Only the hover fill
+   differs, and it differs on purpose (see .sidebar-footer). */
 .sidebar-footer-btn {
   display: inline-flex;
   align-items: center;
@@ -1162,8 +1154,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .sidebar-footer-btn:hover {
   color: var(--text-primary);
@@ -1192,9 +1183,7 @@ canvas[data-orb-state] {
   height: var(--control-h-md);
   padding: 0 0.375rem;
   border-radius: var(--radius-control);
-  transition:
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: background-color 150ms;
 }
 .sidebar-footer-line:hover {
   background-color: var(--field-fill);
@@ -1204,13 +1193,11 @@ canvas[data-orb-state] {
 }
 
 /* The avatar's own target. No fill of its own — the tile IS the picture, and a
-   wash over it would be a second field — so it says "live" with the press dip
-   the rest of the family uses. */
+   wash over it would be a second field. */
 .sidebar-footer-avatar {
   position: relative;
   flex-shrink: 0;
   border-radius: var(--radius-lg);
-  transition: scale 120ms var(--ease-out-expo);
 }
 
 /* The name. Its own hover target — clicking it opens settings — but no fill of
@@ -1271,8 +1258,7 @@ canvas[data-orb-state] {
   transition:
     color 150ms,
     background-color 150ms,
-    opacity 150ms,
-    scale 120ms var(--ease-out-expo);
+    opacity 150ms;
 }
 .panel-icon-btn:hover {
   color: var(--text-primary);
@@ -1891,9 +1877,7 @@ canvas[data-orb-state] {
   font-weight: var(--font-weight-medium);
   color: var(--color-action-foreground);
   background-color: var(--color-action);
-  transition:
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: background-color 150ms;
 }
 .btn-primary:hover {
   background-color: var(--color-action-hover);
@@ -1928,8 +1912,7 @@ canvas[data-orb-state] {
   background-color: var(--key-wash);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 /* Hover and an open select deepen the same wash a step: the key stays the same
    shape under the pointer, only more present. */
@@ -1990,8 +1973,7 @@ canvas[data-orb-state] {
   color: var(--text-tertiary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .btn-icon:hover {
   color: var(--text-primary);
@@ -2014,28 +1996,6 @@ canvas[data-orb-state] {
 .btn-icon-md {
   width: var(--control-h-md);
   height: var(--control-h-md);
-}
-
-/* Press feedback for the button family — a 3% dip the frame the pointer goes
-   down, released on the shared curve. Buttons only, never list rows: a row of
-   text shrinking under the cursor is noise, a button acknowledging the press
-   is feedback. */
-.btn-primary:active:not(:disabled),
-.btn-secondary:active:not(:disabled),
-.btn-icon:active,
-.btn-add:active,
-.launcher-btn:active:not(:disabled),
-.launcher-caret:active,
-.launcher-icon-btn:active:not(:disabled),
-.group-switcher-chip:active,
-.panel-tab:active,
-.panel-icon-btn:active:not(:disabled),
-.sidebar-footer-btn:active:not(:disabled),
-.sidebar-footer-line:active,
-.sidebar-footer-avatar:active,
-.segmented-item:active,
-.idle-group-start:active {
-  scale: 0.97;
 }
 
 /* Appearance → Agent mark: the nine orbs to pick from, each drawn live at the
@@ -2110,8 +2070,7 @@ canvas[data-orb-state] {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .segmented-item:hover {
   color: var(--text-primary);
@@ -2194,9 +2153,7 @@ canvas[data-orb-state] {
   border: var(--frame-border) solid var(--border-color);
   background-color: var(--surface-0);
   box-shadow: var(--overlay-shadow);
-  transition:
-    border-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: border-color 150ms;
 }
 .range-field::-moz-range-thumb {
   width: var(--range-thumb);
@@ -2205,9 +2162,7 @@ canvas[data-orb-state] {
   border: var(--frame-border) solid var(--border-color);
   background-color: var(--surface-0);
   box-shadow: var(--overlay-shadow);
-  transition:
-    border-color 150ms,
-    scale 120ms var(--ease-out-expo);
+  transition: border-color 150ms;
 }
 .range-field:hover::-webkit-slider-thumb,
 .range-field:focus-visible::-webkit-slider-thumb {
@@ -2216,9 +2171,6 @@ canvas[data-orb-state] {
 .range-field:hover::-moz-range-thumb,
 .range-field:focus-visible::-moz-range-thumb {
   border-color: var(--color-accent);
-}
-.range-field:active::-webkit-slider-thumb {
-  scale: 0.94;
 }
 .range-field:focus-visible {
   outline: 2px solid var(--color-ring);
@@ -2298,8 +2250,7 @@ canvas[data-orb-state] {
   background-color: transparent;
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .btn-add:hover {
   color: var(--text-secondary);
@@ -2908,15 +2859,11 @@ canvas[data-orb-state] {
   color: var(--text-primary);
   transition:
     color 150ms,
-    background-color 150ms,
-    scale 120ms var(--ease-out-expo);
+    background-color 150ms;
 }
 .select-trigger:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-.select-trigger:active:not(:disabled) {
-  scale: 0.97;
 }
 .select-trigger-label {
   flex: 1;
@@ -3100,6 +3047,419 @@ button.extension-card:hover {
 }
 .extension-card-muted {
   opacity: 0.55;
+}
+
+/* ── Connection cards ── */
+/* Settings → Connections (PRDCT-4552): one card for everything that pays for
+   a tab (a Claude account, a Codex account, a stored provider connection)
+   and one for each provider that can be connected. The paper of
+   .settings-card, standing as a tile: the provider's mark on its own small
+   ground heads it, then a few facts on a two-column ruler (a quiet word, the
+   fact), then the actions on a seam at the foot. A form, a sign-in or a
+   removal's question opens INSIDE the card, edge to edge like a row of a
+   settings card, and the card takes the whole row of the grid while it is
+   open. Two to a row on the settings column, one on a narrow window; the
+   cards to connect, smaller, three. */
+.connection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+  gap: 0.625rem;
+  align-items: stretch;
+}
+/* A card to connect that opens its form takes a row; the cards after it
+   fill the gap it leaves rather than a hole standing in the grid. The cards
+   of what is connected keep their order (the pool's) instead. */
+.connection-grid--offers {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14.5rem), 1fr));
+  grid-auto-flow: row dense;
+}
+/* A company's group of cards (a spec's hook) takes no room of its own. */
+.connection-grid-group {
+  display: contents;
+}
+.connection-grid-note {
+  grid-column: 1 / -1;
+}
+.connection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.875rem 1rem 0.625rem;
+  border-radius: var(--radius-xl);
+  background-color: var(--card-surface);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+.connection-card[data-wide='true'] {
+  grid-column: 1 / -1;
+}
+/* A card that cannot run a tab as it stands (no key, no sign-in) carries the
+   warning ink on its edge, so it is found before it is read. */
+.connection-card[data-tone='attention'] {
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-warning) 55%, transparent);
+}
+.connection-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+}
+/* The mark on its tile: the one thing on the card that is not words. */
+.connection-card-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in srgb, var(--text-primary) 6%, var(--card-surface));
+  box-shadow: inset 0 0 0 0.5px var(--edge-color);
+  color: var(--text-primary);
+}
+.connection-card-mark > svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.connection-card-titles {
+  min-width: 0;
+  padding-top: 0.0625rem;
+}
+.connection-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  min-height: 1.25rem;
+}
+.connection-card-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--control-text);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.connection-card-rename {
+  width: 100%;
+  max-width: 14rem;
+}
+.connection-card-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.375rem;
+  margin-top: 0.125rem;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.connection-card-what {
+  color: var(--text-tertiary);
+}
+.connection-card-aside {
+  padding-top: 0.125rem;
+}
+/* The state in words, a dot in its tone before it. */
+.connection-card-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 11px;
+  line-height: 1.25rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.connection-card-state::before {
+  content: '';
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-color: var(--text-tertiary);
+}
+.connection-card-state[data-tone='ok']::before {
+  background-color: var(--color-success);
+}
+.connection-card-state[data-tone='attention'] {
+  color: var(--text-primary);
+}
+.connection-card-state[data-tone='attention']::before {
+  background-color: var(--color-warning);
+}
+.connection-card-count {
+  font-size: 11px;
+  line-height: 1.25rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.connection-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.connection-card-fact {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.connection-card-fact > dt {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-card-fact > dd {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.connection-card-quiet {
+  color: var(--text-tertiary);
+}
+.connection-card-harnesses {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.75rem;
+  row-gap: 0.125rem;
+}
+.connection-card-harness {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  color: var(--text-primary);
+}
+.connection-card-harness > svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.connection-card-model-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.connection-card-model-list--rest {
+  padding-top: 0.25rem;
+}
+.connection-card-model,
+.connection-card-more {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-xs);
+  padding: 0 0.4375rem;
+  border-radius: 9999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.connection-card-model {
+  background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+.connection-card-more {
+  box-shadow: inset 0 0 0 0.5px var(--edge-color);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.connection-card-more:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.connection-card-usage {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+/* A stored connection's two lines, one under the other and each named: the
+   provider's own figure, then what Clave counted of its own tabs today
+   (PRDCT-4551), so neither is read as the other. */
+.connection-card-usage--two {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.125rem;
+}
+.connection-card-usage-line {
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.375rem;
+}
+.connection-card-usage-line[hidden] {
+  display: none;
+}
+.connection-card-usage-source {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-card-own-usage {
+  font-variant-numeric: tabular-nums;
+}
+/* A fold inside the card runs edge to edge, like a row of a settings card. */
+.connection-card-fold {
+  margin-inline: -1rem;
+}
+/* With the foot stood down, the fold runs to the card's bottom edge too. */
+.connection-card-fold:last-child {
+  margin-bottom: -0.625rem;
+}
+.connection-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+}
+.connection-card-foot-start {
+  min-width: 0;
+}
+.connection-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.125rem;
+  margin-left: auto;
+}
+.connection-card-actions > .btn-compact {
+  margin-right: 0.25rem;
+}
+.connection-card-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--control-h-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.connection-card-pick:has([data-checked='true']) {
+  color: var(--text-primary);
+}
+.connection-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  min-height: var(--control-h-sm);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  transition: color 150ms;
+}
+.connection-card-link:hover {
+  color: var(--text-primary);
+}
+
+/* What is connected: one card per provider, one under the other across the
+   column, its connections as rows. The head says once what they share; each
+   row is a line of a settings card, edge to edge and seamed by the inset
+   hairline, its actions one needed button and one menu in words. */
+.connection-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.connection-rows {
+  margin-inline: -1rem;
+  border-top: 1px solid var(--border-subtle-color);
+}
+.connection-rows > * + * {
+  background-image: linear-gradient(var(--border-subtle-color), var(--border-subtle-color));
+  background-size: calc(100% - 2rem) 1px;
+  background-position: 1rem 0;
+  background-repeat: no-repeat;
+}
+.connection-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.625rem 1rem;
+}
+/* A connection that cannot run a tab as it stands is washed in the warning
+   ink, its one button beside its state. */
+.connection-row[data-tone='attention'] > .connection-row-main {
+  background-color: color-mix(in srgb, var(--color-warning) 7%, transparent);
+}
+.connection-row-pick {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-sm);
+}
+.connection-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.connection-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: var(--control-h-sm);
+}
+.connection-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  flex: 1;
+  min-width: 0;
+}
+.connection-row-tag {
+  font-size: 11px;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+.connection-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+.connection-row-menu > svg {
+  margin-left: 0.125rem;
+}
+/* A row's menu opens with the house's pop and leaves at once: Radix keeps a
+   closing menu mounted until its exit animation reports its end, and one that
+   never did kept its outside listener armed, so the next press on Manage
+   closed the menu it had just opened. */
+.menu-pop.connection-row-menu-entries[data-state='closed'] {
+  animation: none;
+}
+.connection-row-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin-top: 0.25rem;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.connection-row-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.connection-row-empty {
+  padding: 0.75rem 1rem;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+/* The fold of a row (a form, a sign-in, the question) is already edge to
+   edge: the rows bleed to the card's sides. */
+.connection-row .connection-card-fold,
+.connection-row .connection-card-fold:last-child {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
+.connection-card--provider .connection-card-foot {
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 /* ── Pills ── */
@@ -3439,15 +3799,11 @@ button.extension-card:hover {
   animation: chat-rise var(--default-transition-duration) var(--ease-out-expo);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    background-color var(--default-transition-duration);
 }
 .chat-jump-end:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
-}
-.chat-jump-end:active {
-  scale: 0.97;
 }
 @keyframes chat-rise {
   from {
@@ -3704,15 +4060,11 @@ button.chat-turn-from:focus-visible {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    background-color var(--default-transition-duration);
 }
 .chat-turn-copy:hover {
   color: var(--text-primary);
   background-color: var(--surface-100);
-}
-.chat-turn-copy:active:not(:disabled) {
-  scale: 0.97;
 }
 .chat-turn-copy svg {
   width: var(--chat-glyph);
@@ -4170,6 +4522,159 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   gap: var(--spacing);
 }
 
+/* The messages that wait for the agent (WaitingStack.tsx, PRDCT-4566): written
+   while it works and not taken yet, docked directly above the composer, where
+   the reader looks while waiting. The count line, then one row per message,
+   in the order written: the delivery card's face on one line (the sending
+   tab's name in its ink, the first line clamped, the whole on hover or
+   focus, or opened in place by a click or Enter), when it goes in the queue
+   line's words, and the attachment chip's withdraw. The box is the
+   prompt dock's, quieter: the paper of an opened delivery card, no lift. A
+   row folds open as it arrives and shut as the agent takes it, the work
+   cards' fold; none under reduced motion. */
+.chat-waiting-stack {
+  display: flex;
+  flex-direction: column;
+  /* Never more than about a third of the pane, its count line included. */
+  max-height: 30vh;
+  margin-bottom: calc(var(--spacing) * 2);
+  padding: var(--spacing);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+  background-color: var(--surface-100);
+  font-size: var(--chat-code-size);
+}
+/* How many wait, in the prompt dock's queue line: above the rows, so it
+   stays in view however far the list is scrolled. */
+.chat-waiting-count {
+  margin: 0;
+  padding: calc(var(--spacing) / 2) var(--spacing) var(--spacing) calc(var(--spacing) * 2.5);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* Four rows (a row is one line and its padding), then the list scrolls
+   inside the stack, under its count line. A row opened to a long message
+   gets the stack's whole third of the pane to be read in. */
+.chat-waiting-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(4 * (1lh + var(--spacing) * 3));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chat-waiting-stack[data-open] .chat-waiting-list {
+  max-height: none;
+}
+.chat-waiting-row {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.chat-waiting-row[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* Clipped, never a scroller of its own: an opened row's line sticks to the
+   list's view (below). */
+.chat-waiting-fold {
+  min-height: 0;
+  overflow: clip;
+}
+.chat-waiting-face {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 1.5) var(--spacing) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+}
+/* The row's line is a button: a click, or Enter, opens the row to the whole
+   message, and closes it. */
+.chat-waiting-text {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+  text-align: start;
+}
+.chat-waiting-text:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+}
+.chat-waiting-from {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-term-model);
+}
+.chat-waiting-gist {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-ink, var(--text-primary));
+}
+/* Opened in place: the whole message, wrapped as it was written; the
+   withdraw stays on its first line. */
+.chat-waiting-row[data-open] .chat-waiting-gist {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-waiting-row[data-open] .chat-waiting-withdraw {
+  align-self: flex-start;
+  margin-top: calc((1lh - var(--spacing) * 4) / 2);
+}
+/* However far the opened message is read, its line stays in reach: when it
+   goes and its withdraw keep to the top of the list's view, and the text
+   scrolls on under them. */
+.chat-waiting-row[data-open] .chat-waiting-when,
+.chat-waiting-row[data-open] .chat-waiting-withdraw {
+  position: sticky;
+  top: calc(var(--spacing) * 1.5);
+}
+.chat-waiting-when {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.chat-waiting-withdraw {
+  flex-shrink: 0;
+  align-self: center;
+}
+/* The whole message, on hover or focus: the tooltip's paper, wrapped. */
+.chat-waiting-whole {
+  max-width: min(32rem, 80vw);
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-waiting-row {
+    transition: none;
+  }
+}
+
 /* The prompt dock: what the agent waits on, a tool to allow or questions to
    answer, docked above the composer so it is always in the same place. It
    wears the composer's own raised white and keeps colour for what means
@@ -4401,15 +4906,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   color: var(--text-primary);
   white-space: nowrap;
-  transition:
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  transition: background-color var(--default-transition-duration);
 }
 .chat-prompt-btn:hover {
   background-color: var(--surface-100);
-}
-.chat-prompt-btn:active {
-  scale: 0.97;
 }
 /* The prompt's answer (Allow, Submit) is the verb of the card: the ink. */
 .chat-prompt-btn[data-primary='true'] {
@@ -4424,7 +4924,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  scale: none;
 }
 .chat-prompt-key {
   display: inline-flex;
@@ -5070,14 +5569,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
   transition:
     background-color var(--default-transition-duration),
-    opacity calc(var(--default-transition-duration) * 2),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    opacity calc(var(--default-transition-duration) * 2);
 }
 .chat-ask-btn:hover:not(:disabled) {
   background-color: var(--key-wash-strong);
-}
-.chat-ask-btn:active:not(:disabled) {
-  scale: 0.97;
 }
 .chat-ask-btn[data-primary='true'] {
   background-color: var(--color-action);
@@ -5090,7 +5585,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-ask-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  scale: none;
 }
 .chat-ask-btn svg,
 .chat-prompt-btn svg {
@@ -5230,15 +5724,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-primary);
   font-size: var(--text-xs);
   white-space: nowrap;
-  transition:
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+  transition: background-color var(--default-transition-duration);
 }
 .chat-waiting:hover {
   background-color: var(--surface-100);
-}
-.chat-waiting:active {
-  scale: 0.97;
 }
 .chat-waiting svg {
   width: var(--chat-glyph);
@@ -5598,8 +6087,7 @@ details[open] > .chat-approval-items {
   transition:
     background-color var(--default-transition-duration),
     color var(--default-transition-duration),
-    opacity var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
+    opacity var(--default-transition-duration);
 }
 .chat-send svg {
   grid-area: 1 / 1;
@@ -5621,9 +6109,6 @@ details[open] > .chat-approval-items {
 /* Send and stop are both verbs, so both wear the ink; only the glyph turns. */
 .chat-send:hover {
   background-color: var(--color-action-hover);
-}
-.chat-send:active:not(:disabled) {
-  scale: 0.97;
 }
 /* An empty composer has nothing to send: a grey disc, not a faded ink one.
    The ink at 0.4 over a dark ground is a mid grey anyway, just a muddier one,
@@ -6095,11 +6580,7 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
-}
-.chat-composer-tool:active:not(:disabled) {
-  scale: 0.97;
+    background-color var(--default-transition-duration);
 }
 .chat-composer-tool:hover {
   color: var(--text-primary);
@@ -6196,11 +6677,7 @@ details[open] > .chat-approval-items {
   color: var(--text-tertiary);
   transition:
     color var(--default-transition-duration),
-    background-color var(--default-transition-duration),
-    scale var(--default-transition-duration) var(--ease-out-expo);
-}
-.chat-model-trigger:active:not(:disabled) {
-  scale: 0.97;
+    background-color var(--default-transition-duration);
 }
 .chat-model-trigger:hover,
 .chat-model-trigger[data-state='open'] {
@@ -7926,11 +8403,6 @@ button.exchange-part-who:hover {
 .term-mode[data-mode='bypassPermissions'] .chat-model-trigger::before {
   content: '▸▸▸';
 }
-/* The bar's chips hold still under the finger: a press that shrinks the
-   trigger moves the edge its menu is anchored to as the menu opens. */
-.term-status .chat-model-trigger:active:not(:disabled) {
-  scale: none;
-}
 .term-status .chat-model-trigger:hover,
 .term-status .chat-model-trigger[data-state='open'] {
   background-color: var(--surface-100);
@@ -7986,6 +8458,10 @@ button.exchange-part-who:hover {
   gap: calc(var(--spacing) * 1.5);
   max-inline-size: calc(var(--spacing) * 64);
   color: var(--text-secondary);
+}
+/* A Pi or OpenCode tab's connection: the same chip, nothing to open. */
+.term-connection .chat-model-trigger:hover {
+  background-color: transparent;
 }
 .term-account-dot {
   flex-shrink: 0;

@@ -182,18 +182,6 @@ export async function run(t) {
     )
     t.equal("its panel is painted with the panels' ground", gp?.bg, gp?.ground)
     await win.keyboard.press('Escape')
-    await win.waitForTimeout(200)
-
-    // --- Press feedback is wired into the button family ---
-    const press = await win.evaluate(() => {
-      const btn = document.querySelector('.launcher-btn')
-      return btn ? getComputedStyle(btn).transition : null
-    })
-    t.check(
-      'the launcher button transitions scale for press feedback',
-      !!press && press.includes('scale'),
-      press
-    )
   } finally {
     await app.close()
   }

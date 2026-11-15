@@ -7,7 +7,7 @@
  * identity of a tab). No Electron here: the shell comes in through the
  * interface, so every tool is tested on fakes.
  */
-import type { InteractionMode } from '../../shared/harness'
+import type { HarnessId, HarnessSettingsById, InteractionMode } from '../../shared/harness'
 import { workspaceForPath } from '../../shared/workspace-types'
 import type { ClaveApiClient } from '@clave/client'
 import type { LayoutSnapshot, SidebarGroup } from '@clave/contract/sidebar'
@@ -21,7 +21,17 @@ import type {
 } from '../exchange-capture/types'
 import type { ServerEvent } from '@clave/contract/events'
 import type { AccountUsageSummary } from '../../shared/account-pool'
-import type { LauncherFamily } from '../../shared/agent-launch'
+import {
+  capturesExchange,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../shared/agent-launch'
+import type { LaunchModel } from '../../shared/launch-options'
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+import type { HarnessUsageView } from '@clave/contract/settings/harness-usage-view'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import type { ProviderCompanyId } from '../models-catalog-overlay'
+import type { PiOwnDefault } from '../../shared/pi-start-model'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 
 export const NOT_SERVED: unique symbol = Symbol('not served')
@@ -139,6 +149,44 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   syncRecords?: () => Promise<void>
   /** A note to the person, as a system notification. */
   notify(title: string, body: string): void
+  // ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+  /** The machine the answer is about; absent, this Mac. */
+  machine?(): { id: string; name: string }
+  /** What the harness detection last found of each harness (agent-updates'
+   *  state); absent on a host that never checks. */
+  presence?(): ReadonlyArray<{
+    id: string
+    installed: boolean
+    currentVersion: string | null
+    lastCheckedAt: number | null
+  }>
+  /** The models a harness offers, the launcher's `modelsFor`; 'unavailable'
+   *  when the list could not be read. */
+  models?(harness: HarnessId): Promise<readonly LaunchModel[] | 'unavailable'>
+  /** The person's settings per harness (Settings → Harnesses). */
+  harnessSettings?(): HarnessSettingsById
+  /** The launch profile a click on the family's row starts. */
+  defaultProfileId?(family: LauncherFamily): string | undefined
+  /** The launch profiles of a family as full rows (built-in flag, Pi's
+   *  pinned model), built-ins first; `launchProfiles` names them only. */
+  launchProfileRows?(family: LauncherFamily): readonly LaunchProfile[]
+  /** The catalogue of those models.dev provider ids (`modelsCatalog.view`),
+   *  for Pi's and OpenCode's model lists (PRDCT-4496); absent, none listed. */
+  catalog?(providerIds: readonly string[]): Promise<ModelsCatalogView>
+  /** The stored connections a Pi or OpenCode launch can run on
+   *  (`providerConnectionsForListing`); absent, none. */
+  providerConnections?(
+    harness: 'pi' | 'opencode'
+  ): readonly { id: string; label: string; company: ProviderCompanyId }[]
+  /** Every stored provider connection, never a key
+   *  (`providerConnectionsManager.list`); absent, no provider pool lists one. */
+  providerConnectionViews?(): readonly ProviderConnectionView[]
+  /** The person's own Pi default on this machine (`piOwnDefault`), for what
+   *  a Pi connection starts on with no model named; absent, not said. */
+  piOwnDefault?(): PiOwnDefault | null
+  /** What this machine's Pi and OpenCode tabs used today, per connection
+   *  (PRDCT-4551); absent, the listing says nothing of it. */
+  harnessUsage?(): Promise<Pick<HarnessUsageView, 'rows'>>
 }
 
 export interface ServedContext<W extends ToolWindow = ToolWindow> {
@@ -322,7 +370,8 @@ export function endpointOf(
 ): EndpointIdentity | null {
   const record = ctx.shell.record(session.id)
   const mode = modeOf(record, session.provider)
-  if (mode === 'pi' || mode === 'opencode') return null
+  // The harness table decides what is captured (PRDCT-4507).
+  if (mode !== 'terminal' && !capturesExchange(mode)) return null
   const group = groupOfSession(layouts, session.id)
   return {
     sessionId: session.id,

@@ -140,7 +140,19 @@ const UNREADABLE_NO_PLACE = new Set([
   'antasphereAccountDismiss',
   'getCodexUsageLimits',
   'getCodexUsageSnapshot',
-  'getPiUsage'
+  'getPiUsage',
+  // ── Lane B (harness wave): provider connections ──
+  'providerConnectionsList',
+  'providerConnectionAdd',
+  'providerConnectionRename',
+  'providerConnectionRemove',
+  'providerConnectionSetKey',
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  'modelsCatalogRead',
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  'providerUsageRead',
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  'harnessUsageRead'
 ])
 const unreadable = (fn: unknown): boolean => {
   if (typeof fn !== 'function') return false

@@ -18,6 +18,8 @@ import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
 import { launchModeFields } from '../../shared/runtime-choices'
 import { historyLines } from '../../shared/history-text'
+import { ownSessionRef } from '../../shared/own-session-ref'
+import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
   type TargetHost,
   checkpointCapture,
@@ -35,6 +37,13 @@ import {
   usageOf
 } from './served-accounts'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
+import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
+import { capturesExchange, exchangeCaptureRefusal } from '../../shared/agent-launch'
+import { accountArgumentRefusal, accountPoolsOf } from '../../shared/launch-options'
+import {
+  providerConnectionSpawnFields,
+  resolveProviderConnection
+} from '../../shared/provider-connection-pick'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
@@ -62,6 +71,15 @@ import {
 /** How long a tool waits for a window's own answer (a tab's pin, a pin's
  *  state) before it keeps the window road for the whole call. */
 export const WINDOW_FACT_TIMEOUT_MS = 2_000
+
+// ── Wave 7, lane A: the pooled harnesses, named from the table (PRDCT-4485) ──
+
+/** The harnesses whose running tab moves to another connection, by name:
+ *  "Claude Code, Codex" (a Pi or OpenCode tab's move is lane D's restart road). */
+const POOLED_NAMES = HARNESSES.filter((h) => accountPoolsOf(h).length > 0)
+  .map((h) => h.name)
+  .join(', ')
+
 /** The size a session with no pane starts at, as the hidden spawns do. */
 const HIDDEN_COLS = 120
 const HIDDEN_ROWS = 30
@@ -107,12 +125,13 @@ function targetHost(ctx: Ctx, key: string): TargetHost {
 // ── The tools ──
 
 async function rename(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
-  const id = str(p.id) ?? ''
+  const ref = str(p.id) ?? ''
+  const id = ownSessionRef(ref, ctx.callerSessionId, 'id')
   const name = str(p.name) ?? ''
   try {
     await ctx.api.sessions.rename(id, name)
   } catch (err) {
-    if (tagOf(err) === 'SessionNotFound') throw new Error(`No session with id "${id}"`)
+    if (tagOf(err) === 'SessionNotFound') throw new Error(`No session with id "${ref}"`)
     throw err
   }
   return { renamed: id, name }
@@ -126,8 +145,7 @@ async function stopServing(ctx: Ctx, ownerId: string): Promise<void> {
 
 async function setSessionView(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  if (!id) throw new Error('sessionId "mine" needs a caller session — pass an explicit id')
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   const session = await getSession(ctx, id, ref)
 
   if (p.url === null) {
@@ -192,7 +210,10 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   // "no session" for every server tab an agent had just opened.
   if (isServerTabRef(ref)) return NOT_SERVED
   const host = targetHost(ctx, key)
-  const target = ref === 'parent' ? await resolveOn(host, ref) : await findTarget(host, ref)
+  const target =
+    ref === 'parent'
+      ? await resolveOn(host, ref)
+      : await findTarget(host, ownSessionRef(ref, ctx.callerSessionId))
   if (!target) return NOT_SERVED
   requireCaller(host, 'read')
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
@@ -239,10 +260,9 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
       // A self-addressed send: logged into the transport record, delivered
       // nowhere, typed nowhere (the solo lane's checkpoint).
       checkpoint: (self, name, message) => {
-        if (modeOfSession(ctx, self) === 'pi')
-          throw new Error('Pi exchange capture is not supported yet')
-        if (modeOfSession(ctx, self) === 'opencode')
-          throw new Error('OpenCode exchange capture is not supported yet')
+        const selfMode = modeOfSession(ctx, self)
+        if (selfMode !== 'terminal' && !capturesExchange(selfMode))
+          throw new Error(exchangeCaptureRefusal(selfMode))
         const endpoint = endpointOf(ctx, self, layouts)
         if (!endpoint) throw new Error('Exchange capture is not supported yet for this harness')
         const { text, provenance } = checkpointCapture(self, name, message)
@@ -307,11 +327,14 @@ const providerOf = (ctx: Ctx, session: Session): AccountProvider | null => {
 
 async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  const session = id ? await ctx.api.sessions.get(id).catch(() => null) : null
+  const id = ownSessionRef(ref, ctx.callerSessionId)
+  const session = await ctx.api.sessions.get(id).catch(() => null)
   if (!session) throw new Error(`Unknown session "${ref}"`)
   const provider = providerOf(ctx, session)
-  if (!provider) throw new Error('Only Claude and Codex tabs run on an account')
+  if (!provider)
+    throw new Error(
+      `Only a tab on a harness with a connection pool (${POOLED_NAMES}) runs on a connection`
+    )
   const record = ctx.shell.record(session.id)
   const current =
     (provider === 'codex' ? record?.codexAccountId : record?.claudeProfileId) ?? 'default'
@@ -441,10 +464,20 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   if (profileRef && family && !launchProfileId)
     throw new Error(`Unknown ${family} launch profile "${profileRef}"`)
   const accountRef = str(p.account)
-  if (accountRef && !claudeMode && !codexMode) {
-    throw new Error(
-      `The account argument applies to claude and codex modes only (got mode "${mode}")`
+  // Pi and OpenCode take one of this Mac's stored connections (PRDCT-4496).
+  const providerHarness = piMode ? HARNESS_BY_ID.pi : opencodeMode ? HARNESS_BY_ID.opencode : null
+  if (accountRef && !claudeMode && !codexMode && !providerHarness) {
+    throw new Error(accountArgumentRefusal(mode))
+  }
+  let connectionFields: { connectionId?: string; connectionLabel?: string } = {}
+  if (accountRef && providerHarness) {
+    const picked = resolveProviderConnection(
+      providerHarness,
+      ctx.shell.providerConnectionViews?.() ?? [],
+      accountRef
     )
+    if (!picked.ok) throw new Error(picked.reason)
+    connectionFields = providerConnectionSpawnFields(picked.connection)
   }
   // The account is judged for the model the tab will run: a Fable week
   // spent never costs a launch on Opus its account (PRDCT-4253). A launch
@@ -480,6 +513,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(model !== undefined ? { model } : {}),
         ...(launchProfileId !== undefined ? { launchProfileId } : {}),
         ...accountFields,
+        ...connectionFields,
         // A past conversation reopened (PRDCT-4236): the History's id, for
         // the spawn's --resume (Claude), resume (Codex) or --session (Pi).
         ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
@@ -515,27 +549,35 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       throw new Error((err as { message?: string }).message ?? 'The session could not start')
     throw err
   }
+  // The tab exists from here on: every step after it is best effort, said in
+  // the answer beside the tab's id, never thrown (PRDCT-4507).
+  const warnings: string[] = []
   // Attached, the new record is the server's: read again before it is named.
-  await ctx.shell.syncRecords?.()
+  await afterSpawn(warnings, 'records', () => ctx.shell.syncRecords?.())
   // The parent link for "parent": only when the open came from inside
   // another tab (an agent's delegation), never from the app's own UI.
   if (ctx.callerSessionId) ctx.shell.setParent(info.id, ctx.callerSessionId)
   const name = str(p.name)
-  if (name) await ctx.api.sessions.rename(info.id, name)
+  if (name) await afterSpawn(warnings, 'name', () => ctx.api.sessions.rename(info.id, name))
   // The tab enters the window's sidebar: the first row of its group, or the
   // first row of the sidebar; the window takes it in from its record.
-  await ctx.api.sidebar.placeSession({
-    windowKey: spawnKey,
-    sessionId: info.id,
-    groupId: target?.group.id ?? null
-  })
+  const placed = await afterSpawn(warnings, target ? 'group' : 'place', () =>
+    ctx.api.sidebar.placeSession({
+      windowKey: spawnKey,
+      sessionId: info.id,
+      groupId: target?.group.id ?? null
+    })
+  )
   // With no window to mount a pane, nothing would ever start the process.
   if (!ctx.shell.windowByKey(spawnKey)) {
-    await ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS).catch(() => undefined)
+    await afterSpawn(warnings, 'size', () =>
+      ctx.api.sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS)
+    )
   }
   // An agent's delegation is a transport event (PRDCT-1568), recorded with
-  // its launch prompt; a terminal, a Pi and an OpenCode tab are not captured.
-  if (ctx.callerSessionId && mode !== 'terminal' && mode !== 'pi' && mode !== 'opencode') {
+  // its launch prompt, when the harness table says it is captured; a capture
+  // never fails an open whose tab exists (PRDCT-4507).
+  if (ctx.callerSessionId && mode !== 'terminal' && capturesExchange(mode)) {
     try {
       const layouts = await allLayouts(ctx, key)
       const [spawner, spawned] = await Promise.all([
@@ -557,7 +599,10 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       // observability only
     }
   }
-  return { sessionId: info.id, groupId: target?.group.id ?? null }
+  return withWarnings(
+    { sessionId: info.id, groupId: placed ? (target?.group.id ?? null) : null },
+    warnings
+  )
 }
 
 // ── Launching a pinned group ──

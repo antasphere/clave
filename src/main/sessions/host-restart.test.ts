@@ -61,6 +61,18 @@ describe('the host’s restart (PRDCT-4300)', () => {
       onlyIfStopped: false
     })
   })
+  it('carries the view a move onto the chat opens in (lane D, PRDCT-4427)', async () => {
+    await host.restart('s1', {}, false, false, {
+      adapterId: 'claude-chat',
+      viewId: 'clave.chat-view/lab'
+    })
+    expect(mocks.restartSession).toHaveBeenLastCalledWith('s1', {
+      adapterId: 'claude-chat',
+      viewId: 'clave.chat-view/lab',
+      resendRejected: false,
+      onlyIfStopped: false
+    })
+  })
   it('a restart with no provider switch carries none', async () => {
     await host.restart('s1', { claudeProfileId: 'play' }, false, true)
     expect(mocks.restartSession).toHaveBeenLastCalledWith('s1', {

@@ -28,7 +28,13 @@ import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
 import { resumeOptions } from './resume-options'
 import { accountOverrides } from '../restart-overrides'
-import { providerSwitchOptions } from './provider-switch'
+import {
+  familyOfOptions,
+  isTransportSwitch,
+  providerSwitchOptions,
+  transportSwitchOptions,
+  transportTarget
+} from './provider-switch'
 import { conversationIdOf } from '../../shared/runtime-choices'
 import type { SessionRecord, SessionScreen } from '@clave/contract/sessions'
 
@@ -254,7 +260,7 @@ export function typeIntoSession(id: string, text: string): Promise<TypingOutcome
 function planFromRecord(
   record: SessionRecord | undefined,
   overrides: RestartOverrides
-): { cwd: string; options: PtySpawnOptions; resumed: boolean } | null {
+): { cwd: string; options: PtySpawnOptions; resumed: boolean; keepView: boolean } | null {
   if (!record) return null
   const {
     resendRejected: _resend,
@@ -264,6 +270,7 @@ function planFromRecord(
     resume,
     firstMessage,
     continuedFrom,
+    viewId,
     ...requested
   } = overrides
   void _resend
@@ -282,12 +289,50 @@ function planFromRecord(
   // A move to another provider (PRDCT-4300) from a stopped record: the same
   // rebuild of the spawn `restartSpawn` makes for a live one.
   const switching = adapterId !== undefined && adapterId !== record.adapterId
+  // The same harness on its other transport (lane D, PRDCT-4427), the same
+  // rule as a live tab's (`restartSpawn`).
+  const family = familyOfOptions(record)
+  if (switching && isTransportSwitch(record.adapterId, adapterId, family)) {
+    const conversationId = resume ?? conversationIdOf(record)
+    const moved = transportSwitchOptions(
+      options,
+      transportTarget(
+        { adapterId, viewId, model },
+        conversationId,
+        family,
+        (conversation) =>
+          !!family &&
+          ptyManager.hasConversation(
+            family,
+            conversation,
+            record.cwd,
+            record.configDir,
+            record.connectionId
+          )
+      ),
+      { profileExists: (owner, profileId) => ptyManager.profileExists(owner, profileId) }
+    )
+    return {
+      cwd: record.cwd,
+      // The terminal the chat's saved profile names (transportSwitchOptions),
+      // else the family's selected one in its terminal form.
+      options:
+        adapterId === 'pty' && family && moved.launchProfileId === undefined
+          ? { ...moved, launchProfileId: ptyManager.terminalProfileFor(family, moved.workspaceId) }
+          : moved,
+      // What the plan resumes: a terminal started fresh or under the id
+      // resumes nothing (verifier round 2, the Note).
+      resumed: moved.resumeSessionId !== undefined,
+      keepView: false
+    }
+  }
   return {
     cwd: record.cwd,
     options: switching
       ? providerSwitchOptions(options, { adapterId, model, resume, firstMessage, continuedFrom })
       : options,
-    resumed: switching ? resume !== undefined : !!conversationIdOf(record)
+    resumed: switching ? resume !== undefined : !!conversationIdOf(record),
+    keepView: true
   }
 }
 
@@ -354,7 +399,9 @@ export async function restartSession(
   // The chat view the tab is read in lives on the session the kill ends: a
   // tab put on Enclave from its menu came back in the interaction mode's view
   // after an account switch or a Resume (PRDCT-4495).
-  const viewId = current?.viewId
+  // A move to the terminal (lane D, PRDCT-4427) leaves the chat view behind;
+  // a move into a chat brings its own view in its plan.
+  const viewId = plan.keepView ? current?.viewId : undefined
   // Only a process this one runs is ended. A tab with none (placed stopped
   // by a restart, PRDCT-4236) has only its record, and a kill is a close
   // for good: it would discard that record before the spawn reads it back

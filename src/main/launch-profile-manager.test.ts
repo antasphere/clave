@@ -31,7 +31,8 @@ function withManager(
 }
 
 describe.each(eachTestPorts())('LaunchProfileManager on %s', (_name, makePorts) => {
-  it.each(['claude', 'codex'] as const)(
+  // OpenCode's and Pi's saved profiles have a chat form too (lane D, PRDCT-4427).
+  it.each(['claude', 'codex', 'opencode', 'pi'] as const)(
     'offers a %s chat variant using the saved command and arguments',
     (family) => {
       const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
@@ -208,11 +209,15 @@ it('lists event profiles only with registered adapters and hides Claude chat on 
       lookup.mockReturnValue(new EchoAdapter())
       expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
         'claude-chat',
-        'codex-chat'
+        'codex-chat',
+        'opencode-chat',
+        'pi-chat'
       ])
       Object.defineProperty(process, 'platform', { value: 'win32' })
       expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
-        'codex-chat'
+        'codex-chat',
+        'opencode-chat',
+        'pi-chat'
       ])
       expect(() => manager.setGlobalDefault('claude', 'claude-chat')).toThrow(
         'Unknown launch profile'
@@ -484,5 +489,102 @@ describe('the view a profile opens its sessions in', () => {
   it('names none for a terminal profile, an unknown one, or nothing at all', () => {
     for (const id of ['claude-terminal', 'tokenops-claude', 'dev-echo-adapter', null, undefined])
       expect(defaultViewFor(id)).toBeUndefined()
+  })
+})
+
+// Lane D (PRDCT-4427): OpenCode in the chat view, over the ACP adapter.
+describe('the OpenCode chat profile', () => {
+  it('is offered when its adapter is registered, and not otherwise', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    const echo = new EchoAdapter()
+    let registered = true
+    const lookup = vi
+      .spyOn(sessionManager, 'getAdapter')
+      .mockImplementation((id: string) =>
+        id === 'claude-chat' || id === 'codex-chat' || (registered && id === 'opencode-chat')
+          ? echo
+          : undefined
+      )
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin' })
+      withManager(electronTestPorts, (manager) => {
+        const ids = (): string[] =>
+          manager.getPreferences().customProfiles.map((profile) => profile.id)
+        expect(ids()).toEqual(['claude-chat', 'codex-chat', 'opencode-chat'])
+        const chat = manager.resolve('opencode', null, 'opencode-chat')
+        expect(chat).toMatchObject({
+          id: 'opencode-chat',
+          name: 'OpenCode (chat)',
+          family: 'opencode',
+          command: ['opencode'],
+          additionalArgs: []
+        })
+        registered = false
+        expect(ids()).toEqual(['claude-chat', 'codex-chat'])
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+      lookup.mockRestore()
+    }
+  })
+  it('resolves through eventsProfile, the built-in and the chat form of a saved profile', () => {
+    expect(eventsProfile('opencode-chat')).toMatchObject({
+      adapterId: 'opencode-chat',
+      family: 'opencode',
+      viewId: 'clave.chat-view/chat'
+    })
+    expect(eventsProfile('chat:opencode:mine')).toMatchObject({
+      id: 'chat:opencode:mine',
+      adapterId: 'opencode-chat',
+      sourceProfileId: 'mine'
+    })
+    expect(defaultViewFor('opencode-chat')).toBe('clave.chat-view/chat')
+  })
+})
+
+// Lane D (PRDCT-4427): Pi in the chat view, over its own rpc mode.
+describe('the Pi chat profile', () => {
+  it('is offered when its adapter is registered, and not otherwise', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    const echo = new EchoAdapter()
+    let registered = true
+    const lookup = vi
+      .spyOn(sessionManager, 'getAdapter')
+      .mockImplementation((id: string) =>
+        id === 'claude-chat' || (registered && id === 'pi-chat') ? echo : undefined
+      )
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin' })
+      withManager(electronTestPorts, (manager) => {
+        const ids = (): string[] =>
+          manager.getPreferences().customProfiles.map((profile) => profile.id)
+        expect(ids()).toEqual(['claude-chat', 'pi-chat'])
+        expect(manager.resolve('pi', null, 'pi-chat')).toMatchObject({
+          id: 'pi-chat',
+          name: 'Pi (chat)',
+          family: 'pi',
+          command: ['pi'],
+          additionalArgs: []
+        })
+        registered = false
+        expect(ids()).toEqual(['claude-chat'])
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+      lookup.mockRestore()
+    }
+  })
+  it('resolves through eventsProfile, the built-in and the chat form of a saved profile', () => {
+    expect(eventsProfile('pi-chat')).toMatchObject({
+      adapterId: 'pi-chat',
+      family: 'pi',
+      viewId: 'clave.chat-view/chat'
+    })
+    expect(eventsProfile('chat:pi:mine')).toMatchObject({
+      id: 'chat:pi:mine',
+      adapterId: 'pi-chat',
+      sourceProfileId: 'mine'
+    })
+    expect(defaultViewFor('pi-chat')).toBe('clave.chat-view/chat')
   })
 })

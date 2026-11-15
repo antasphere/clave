@@ -13,7 +13,17 @@ import {
 import { isRemoteKey } from '../lib/fleet-identity'
 import { useRegistry } from './store'
 import { useViewSessionStore } from './session-store'
-import type { AvailableView } from './resolution'
+import { chatViewsFor, type AvailableView } from './resolution'
+import { implemented } from './native-views'
+import { restartSessionProcess } from '../lib/switch-account'
+import {
+  TERMINAL_TILE,
+  familyOfTab,
+  transportSwitchOverrides,
+  transportSwitchPatch,
+  transportTiles,
+  type Tile
+} from '../lib/switch-transport'
 import { useTranscriptExport, type TranscriptExporter } from './transcript-export'
 import { ViewDrawing } from './ViewDrawing'
 import { transcriptFileName } from '../../../../plugins/chat-view/src/export'
@@ -39,11 +49,16 @@ const basename = (path: string): string => path.replace(/\/+$/, '').split('/').p
 export function SessionMenu({
   sessionId,
   views,
-  active
+  active,
+  label = 'Session menu'
 }: {
   sessionId: string
   views: AvailableView[]
   active: string | undefined
+  /** The trigger's name: a terminal pane's menu (lane D, PRDCT-4427) is named
+   *  apart, so a page holding a chat pane and a terminal pane still has one
+   *  "Session menu" button. */
+  label?: string
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState<RowNote | null>(null)
@@ -53,8 +68,24 @@ export function SessionMenu({
     (s) => s.exporters[sessionId]
   )
   const record = useViewSessionStore((s) => s.sessions.find((r) => r.id === sessionId))
-  const current = views.find((view) => view.id === active)
   const remote = isRemoteKey(sessionId)
+  // « View as » (lane D, PRDCT-4427): the views of the chat the tab is, and
+  // the other transport of its harness (the terminal of a chat, the chat views
+  // of a terminal), each a restart under the same id on the same conversation.
+  const session = useRegistry((s) => s.sessions.find((r) => r.id === sessionId))
+  const plugins = useRegistry((s) => s.plugins)
+  const tiles: Tile[] = session
+    ? transportTiles(
+        // The store hears the agent's state as it changes; the registry's is
+        // as fresh as its last read.
+        { ...session, state: record?.agentState ?? session.state },
+        record,
+        views,
+        chatViewsFor(plugins, implemented)
+      )
+    : views.map((view) => ({ id: view.id, title: view.title, drawing: view.id, kind: 'view' }))
+  const activeTile = session?.transport === 'pty' ? TERMINAL_TILE : active
+  const current = tiles.find((tile) => tile.id === activeTile)
 
   useEffect(
     () => () => {
@@ -82,6 +113,32 @@ export function SessionMenu({
     } catch (error) {
       setFailure(String(error))
     }
+  }
+
+  /** A move to the other transport (lane D, PRDCT-4427): the tab restarts
+   *  under the same id, its tile saying so while it does; main's refusal (a
+   *  terminal with no conversation to carry) is shown as main wrote it. */
+  const switchTransport = (tile: Tile): void => {
+    const family = session ? familyOfTab(session, record) : null
+    if (!family) return
+    run(tile.id, 'Restarting…', async () => {
+      const result = await restartSessionProcess(sessionId, {
+        overrides: transportSwitchOverrides(tile),
+        patch: transportSwitchPatch(tile, family)
+      })
+      if (!result.ok) {
+        setFailure(result.error ?? 'The tab could not be restarted.')
+        throw new Error(result.error)
+      }
+      setFailure('')
+      return 'Restarted'
+    })(new Event('select'))
+  }
+  const pick = (id: string): void => {
+    const tile = tiles.find((entry) => entry.id === id)
+    if (!tile || tile.disabled || id === activeTile) return
+    if (tile.kind === 'transport') switchTransport(tile)
+    else void choose(id)
   }
 
   /** Run a row's work with the menu held open, say how it went on the row,
@@ -131,7 +188,7 @@ export function SessionMenu({
         <button
           type="button"
           className="panel-icon-btn"
-          aria-label="Session menu"
+          aria-label={label}
           title={failure || 'View and transcript'}
           // The view on screen, for the specs and assistive tech: the menu's
           // own tiles say it to the eye.
@@ -150,27 +207,38 @@ export function SessionMenu({
           className="menu-surface menu-pop session-menu z-50 p-1"
           aria-label="Session menu"
         >
-          {views.length > 1 && (
+          {tiles.length > 1 && (
             <>
               <DropdownMenu.Label className="menu-label">View as</DropdownMenu.Label>
               <DropdownMenu.RadioGroup
-                value={active ?? ''}
-                onValueChange={(id) => void choose(id)}
+                value={activeTile ?? ''}
+                onValueChange={pick}
                 className="view-tiles"
                 aria-label="Views"
-                style={{ '--view-tiles': Math.min(views.length, 3) } as React.CSSProperties}
+                style={{ '--view-tiles': Math.min(tiles.length, 3) } as React.CSSProperties}
               >
-                {views.map((view) => (
+                {tiles.map((tile) => (
                   <DropdownMenu.RadioItem
-                    key={view.id}
-                    value={view.id}
+                    key={tile.id}
+                    value={tile.id}
                     className="view-tile"
-                    data-selected={view.id === active ? 'true' : undefined}
+                    disabled={tile.disabled !== undefined}
+                    title={tile.disabled}
+                    data-selected={tile.id === activeTile ? 'true' : undefined}
+                    // Which transport a move lands on, for the specs (lane D).
+                    data-transport={
+                      tile.kind === 'transport'
+                        ? tile.adapterId === 'pty'
+                          ? 'pty'
+                          : 'events'
+                        : undefined
+                    }
                   >
                     <span className="view-tile-art">
-                      <ViewDrawing viewId={view.id} active={view.id === active} />
+                      <ViewDrawing viewId={tile.drawing} active={tile.id === activeTile} />
                     </span>
-                    <span className="view-tile-name">{view.title}</span>
+                    <span className="view-tile-name">{tile.title}</span>
+                    {rowNote(tile.id)}
                   </DropdownMenu.RadioItem>
                 ))}
               </DropdownMenu.RadioGroup>
@@ -184,7 +252,7 @@ export function SessionMenu({
 
           {exporter && (
             <>
-              {views.length > 1 && <DropdownMenu.Separator className="menu-sep" />}
+              {tiles.length > 1 && <DropdownMenu.Separator className="menu-sep" />}
               <DropdownMenu.Label className="menu-label">Transcript</DropdownMenu.Label>
               <DropdownMenu.Item
                 className="menu-item"
@@ -254,7 +322,7 @@ export function SessionMenu({
 
           {record && (
             <>
-              {(views.length > 1 || exporter !== undefined) && (
+              {(tiles.length > 1 || exporter !== undefined) && (
                 <DropdownMenu.Separator className="menu-sep" />
               )}
               <DropdownMenu.Label className="menu-label">Session</DropdownMenu.Label>

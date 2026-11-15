@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
   getSessionRecord: vi.fn(() => undefined as unknown),
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
+  transcript: true,
+  // The terminal form of the family's selected profile (lane D, PRDCT-4427):
+  // undefined when the selection is a terminal, left to the spawn.
+  terminalProfile: vi.fn<(family: string) => string | undefined>(() => undefined),
+  // Whether a saved profile still exists in the store (verifier round 2).
+  profileExists: vi.fn<(family: string, id: string) => boolean>(() => true),
   writes: [] as [string, string][],
   states: new Map<string, { state: string; transport: string; viewId?: string }>(),
   preference: vi.fn<(key: string) => unknown>(() => undefined),
@@ -49,6 +55,9 @@ vi.mock('../pty-manager', () => ({
     listAdoptableSessions: () => mocks.adoptable,
     setSessionDisplayName: mocks.setSessionDisplayName,
     setSessionViewRecord: mocks.setSessionViewRecord,
+    hasConversation: () => mocks.transcript,
+    terminalProfileFor: (family: string) => mocks.terminalProfile(family),
+    profileExists: (family: string, id: string) => mocks.profileExists(family, id),
     getSession: (id: string) => (mocks.states.has(id) ? { id, alive: true } : undefined),
     write: (id: string, data: string) => void mocks.writes.push([id, data])
   }
@@ -323,7 +332,8 @@ describe('a restart on another account', () => {
     mocks.restartSpawn.mockReturnValue({
       cwd: '/work/app',
       options: { claudeMode: true, adoptSessionId: id, claudeProfileId: 'acc-2' },
-      resumed: true
+      resumed: true,
+      keepView: true
     })
   }
   it('keeps the tab in the window that holds it, with its parent link, its name and its page', async () => {
@@ -372,6 +382,33 @@ describe('a restart on another account', () => {
     expect(mocks.spawn.mock.calls.at(-1)![1]).not.toHaveProperty('viewId')
     mocks.states.delete(id)
   })
+  it('leaves the chat view behind when the tab moves to its terminal (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    await spawnSession('w1', '/work/app', { claudeMode: true })
+    mocks.states.set(id, { state: 'idle', transport: 'events', viewId: 'clave.chat-view/lab' })
+    mocks.restartSpawn.mockReturnValue({
+      cwd: '/work/app',
+      options: { claudeMode: true, adoptSessionId: id, resumeSessionId: 'conv-1' },
+      resumed: true,
+      keepView: false
+    })
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty' })
+    expect(mocks.spawn.mock.calls.at(-1)![1]).not.toHaveProperty('viewId')
+    // A move into a chat brings the view picked in its own plan.
+    mocks.restartSpawn.mockReturnValue({
+      cwd: '/work/app',
+      options: { claudeMode: true, adoptSessionId: id, viewId: 'clave.chat-view/folio' },
+      resumed: true,
+      keepView: false
+    })
+    spawned(id)
+    await restartSession(id, { adapterId: 'claude-chat', viewId: 'clave.chat-view/folio' })
+    expect(mocks.spawn.mock.calls.at(-1)![1]).toMatchObject({ viewId: 'clave.chat-view/folio' })
+    mocks.states.delete(id)
+  })
   it('takes the key the caller names, and refuses a tab it did not spawn', async () => {
     const id = `life-${++sequence}`
     windows()
@@ -396,7 +433,8 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     mocks.restartSpawn.mockReturnValue({
       cwd: '/work/app',
       options: { claudeMode: true, adoptSessionId: id, claudeProfileId: 'acc-2' },
-      resumed: true
+      resumed: true,
+      keepView: true
     })
   }
   it('resumes a session this process never spawned from its record, and refuses one with no record (PRDCT-4236)', async () => {
@@ -486,6 +524,172 @@ describe('a Resume of a running tab is refused on this Mac too (PRDCT-4193, roun
     })
     expect(options.claudeSessionId).toBeUndefined()
     expect(options.claudeProfileId).toBeUndefined()
+  })
+  it('moves a stopped Claude terminal record into its chat on the same conversation, and a chat record back (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    const terminal = {
+      id,
+      adapterId: 'pty',
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      claudeSessionId: 'conv-1',
+      claudeProfileId: 'work',
+      launchProfileId: 'claude-default'
+    }
+    mocks.getSessionRecord.mockReturnValue(terminal)
+    spawned(id)
+    await expect(
+      restartSession(id, { adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' })
+    ).resolves.toMatchObject({ id, resumed: true })
+    const [, chat] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(chat).toMatchObject({
+      adoptSessionId: id,
+      // The chat form of the saved profile the terminal ran (verifier round 1, Minor 3).
+      launchProfileId: 'chat:claude:claude-default',
+      resumeSessionId: 'conv-1',
+      viewId: 'clave.chat-view/lab',
+      claudeProfileId: 'work'
+    })
+    // Back to the terminal: resumed when the transcript exists, else under its id.
+    mocks.getSessionRecord.mockReturnValue({
+      ...terminal,
+      adapterId: 'claude-chat',
+      launchProfileId: 'claude-chat'
+    })
+    mocks.transcript = false
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty' })
+    const [, back] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(back.launchProfileId).toBeUndefined()
+    expect(back.resumeSessionId).toBeUndefined()
+    expect(back.claudeSessionId).toBe('conv-1')
+    mocks.transcript = true
+    // A terminal record with no conversation is refused, never opened fresh.
+    mocks.getSessionRecord.mockReturnValue({
+      ...terminal,
+      claudeMode: false,
+      codexMode: true,
+      claudeSessionId: undefined
+    })
+    await expect(restartSession(id, { adapterId: 'codex-chat' })).rejects.toThrow(
+      'This terminal has no conversation to carry into a chat yet.'
+    )
+  })
+  // Lane D (PRDCT-4427, verifier round 1 Minor 2 and mutation 5).
+  const stoppedChat = (id: string): Record<string, unknown> => ({
+    id,
+    adapterId: 'claude-chat',
+    cwd: '/work/app',
+    folderName: 'app',
+    claudeMode: true,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    claudeSessionId: 'conv-1',
+    launchProfileId: 'claude-chat'
+  })
+  it("moves a stopped Claude chat to the terminal's profile when the workspace's selected profile is the chat one (lane D, PRDCT-4427)", async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(stoppedChat(id))
+    // The selection is the chat: its terminal form is the built-in terminal.
+    mocks.terminalProfile.mockImplementationOnce((family) => `builtin-${family}`)
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options).toMatchObject({
+      adoptSessionId: id,
+      claudeMode: true,
+      launchProfileId: 'builtin-claude',
+      resumeSessionId: 'conv-1'
+    })
+    expect(mocks.terminalProfile).toHaveBeenCalledWith('claude')
+  })
+  it('a stopped chat moved to the terminal comes back with no view, even while its stopped handle is held (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(stoppedChat(id))
+    // The ended chat's handle still names the view it was read in.
+    mocks.states.set(id, { state: 'ended', transport: 'events', viewId: 'clave.chat-view/lab' })
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options.viewId).toBeUndefined()
+    expect(options.resumeSessionId).toBe('conv-1')
+    mocks.states.delete(id)
+  })
+  // Verifier round 2, the Gap (mutation 13) and the Major, on the stopped-record road.
+  it("a stopped chat on a saved profile's chat form lands on that saved profile's terminal, or the selection's once it is deleted (lane D, PRDCT-4427)", async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      ...stoppedChat(id),
+      launchProfileId: 'chat:claude:work'
+    })
+    mocks.terminalProfile.mockImplementation((family) => `builtin-${family}`)
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, live] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(live.launchProfileId).toBe('work')
+    expect(mocks.profileExists).toHaveBeenCalledWith('claude', 'work')
+    // `work` deleted since: the selection's terminal, never the gone id.
+    mocks.profileExists.mockReturnValue(false)
+    spawned(id)
+    await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, gone] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(gone.launchProfileId).toBe('builtin-claude')
+    mocks.profileExists.mockReturnValue(true)
+    mocks.terminalProfile.mockImplementation(() => undefined)
+  })
+  it('a stopped terminal on a saved profile deleted since moves into the built-in chat (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue({
+      ...stoppedChat(id),
+      adapterId: 'pty',
+      launchProfileId: 'work'
+    })
+    spawned(id)
+    await restartSession(id, { adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' })
+    const [, live] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(live.launchProfileId).toBe('chat:claude:work')
+    mocks.profileExists.mockReturnValue(false)
+    spawned(id)
+    await restartSession(id, { adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' })
+    const [, gone] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(gone).toMatchObject({ launchProfileId: 'claude-chat', resumeSessionId: 'conv-1' })
+    mocks.profileExists.mockReturnValue(true)
+  })
+  // Verifier round 2, the Note: `resumed` says what the plan resumes.
+  it('a stopped chat whose conversation has no transcript reports no resume when its terminal starts under the id (lane D, PRDCT-4427)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    mocks.restartSpawn.mockReturnValue(null)
+    mocks.getSessionRecord.mockReturnValue(stoppedChat(id))
+    mocks.transcript = false
+    spawned(id)
+    const fresh = await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    const [, options] = mocks.spawn.mock.calls.at(-1) as [string, PtySpawnOptions]
+    expect(options.claudeSessionId).toBe('conv-1')
+    expect(fresh.resumed).toBe(false)
+    mocks.transcript = true
+    spawned(id)
+    const resumed = await restartSession(id, { adapterId: 'pty', onlyIfStopped: true })
+    expect(resumed.resumed).toBe(true)
   })
 
   it('finds a record keyed by its tmux name, spawns under the window that placed it, and offers the tmux name (round 2, N-F1, N-F2, N-F5)', async () => {

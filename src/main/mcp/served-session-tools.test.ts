@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ClaveApiClient } from '@clave/client'
 import type { LayoutSnapshot, SidebarGroup } from '@clave/contract/sidebar'
 import type { Session } from '@clave/contract/sessions'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import type { SessionRecord } from '../sessions/adapters/pty-backend'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 import {
@@ -57,6 +58,8 @@ interface World {
   windows: string[]
   parents: Record<string, string>
   screen: string[] | null
+  /** This Mac's stored provider connections (PRDCT-4496). */
+  providerViews: ProviderConnectionView[]
 }
 
 interface Harness {
@@ -90,6 +93,7 @@ function setup(partial: Partial<World> = {}): Harness {
     windows: ['wA', 'wB'],
     parents: {},
     screen: ['$ ls', 'a  b'],
+    providerViews: [],
     ...partial
   }
   const calls: [string, unknown][] = []
@@ -175,6 +179,7 @@ function setup(partial: Partial<World> = {}): Harness {
     mintTerminalId: () => 'term-1',
     sleep: async () => undefined,
     accounts: (provider) => w.accounts[provider],
+    providerConnectionViews: () => w.providerViews,
     selectedAccountId: (provider) => w.selected[provider],
     useRecommendedAccount: () => w.useRecommendedAccount,
     switchMode: () => w.switchMode,
@@ -243,6 +248,51 @@ describe('rename of a tab', () => {
       'No session with id "zz"'
     )
   })
+  it('"mine" renames the calling tab, and is refused in one sentence with no tab identity (PRDCT-4507)', async () => {
+    const h = setup({ sessions: [session('caller'), session('s1')] })
+    expect(await run(h, 'rename', { target: 'session', id: 'mine', name: 'Me' })).toEqual({
+      renamed: 'caller',
+      name: 'Me'
+    })
+    expect(h.argsOf('sessions.rename')).toEqual([['caller', 'Me']])
+    await expect(
+      run(h, 'rename', { target: 'session', id: 'mine', name: 'x' }, { callerSessionId: undefined })
+    ).rejects.toThrow('id "mine" needs a calling tab — this request has no tab identity')
+    expect(h.argsOf('sessions.rename')).toHaveLength(1)
+  })
+})
+
+describe('"mine" on every session tool of this road (PRDCT-4507)', () => {
+  it('reads the calling tab', async () => {
+    const h = setup({ sessions: [session('caller'), session('s1')] })
+    const out = (await run(h, 'readSession', { sessionId: 'mine' })) as { sessionId: string }
+    expect(out.sessionId).toBe('caller')
+  })
+  it('moves the calling tab', async () => {
+    const h = setup({
+      sessions: [session('caller')],
+      layouts: [layout('wA', [group('g1', { sessionIds: [] })])]
+    })
+    const out = (await run(h, 'moveSession', { sessionId: 'mine', groupId: 'root' })) as {
+      sessionId: string
+    }
+    expect(out.sessionId).toBe('caller')
+  })
+  it('refuses every one in the same sentence with no tab identity', async () => {
+    const h = setup({ sessions: [session('s1')] })
+    const none = { callerSessionId: undefined }
+    for (const [command, p] of [
+      ['readSession', { sessionId: 'mine' }],
+      ['moveSession', { sessionId: 'mine', groupId: 'root' }],
+      ['closeSession', { sessionId: 'mine' }],
+      ['setSessionView', { sessionId: 'mine', url: null }],
+      ['switchAccount', { sessionId: 'mine', account: 'any' }]
+    ] as const) {
+      await expect(run(h, command, p, none)).rejects.toThrow(
+        'sessionId "mine" needs a calling tab — this request has no tab identity'
+      )
+    }
+  })
 })
 
 describe('the page on a tab', () => {
@@ -269,7 +319,7 @@ describe('the page on a tab', () => {
     )
     await expect(
       run(h, 'setSessionView', { sessionId: 'mine', url: null }, { callerSessionId: undefined })
-    ).rejects.toThrow('sessionId "mine" needs a caller session — pass an explicit id')
+    ).rejects.toThrow('sessionId "mine" needs a calling tab — this request has no tab identity')
     await expect(run(h, 'setSessionView', { sessionId: 'zz', url: null })).rejects.toThrow(
       'No session with id "zz"'
     )
@@ -868,7 +918,7 @@ describe('an account switch', () => {
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(
-      'Only Claude and Codex tabs run on an account'
+      'Only a tab on a harness with a connection pool (Claude Code, Codex) runs on a connection'
     )
     await expect(run(h, 'switchAccount', { sessionId: 'zz', account: 'any' })).rejects.toThrow(
       'Unknown session "zz"'
@@ -952,6 +1002,60 @@ describe('an account switch', () => {
     await expect(run(h, 'switchAccount', { sessionId: 's1', account: 'Second' })).rejects.toThrow(
       'This session cannot be restarted from here.'
     )
+  })
+})
+
+describe('an open whose tab exists never answers an error (PRDCT-4507)', () => {
+  const failing = (): never => {
+    throw new Error('made-up failure')
+  }
+  const open = (h: Harness, over: Partial<ServedContext> = {}): Promise<unknown> =>
+    run(h, 'openSession', { cwd: '/proj', mode: 'terminal', name: 'Lane', groupId: 'g1' }, over)
+  const world = (): Partial<World> => ({
+    layouts: [layout('wA', [group('g1', { name: 'Build', workspaceId: 'ws1' })])],
+    sessions: [session('caller')],
+    records: { caller: record('caller', { workspaceId: 'ws1' }) }
+  })
+  it.each([
+    ['records', 'The tab started but its record was not read again: made-up failure', 'g1'],
+    ['name', 'The tab started but was not renamed: made-up failure', 'g1'],
+    ['group', 'The tab started but was not placed in its group: made-up failure', null],
+    ['size', 'The tab started but its terminal could not be sized to start: made-up failure', 'g1']
+  ] as const)('a failed %s step: the id, and one sentence', async (step, sentence, groupId) => {
+    const h = setup({ ...world(), ...(step === 'size' ? { windows: [] } : {}) })
+    let over: Partial<ServedContext> = {}
+    if (step === 'records') over = { shell: { ...h.ctx().shell, syncRecords: failing } }
+    if (step === 'name') h.impl['sessions.rename'] = failing
+    if (step === 'group') h.impl['sidebar.placeSession'] = failing
+    if (step === 'size') h.impl['sessions.resize'] = failing
+    const answer = await open(h, over)
+    expect(answer).toEqual({ sessionId: 'new-1', groupId, warnings: [sentence] })
+    expect(h.argsOf('sessions.start')).toHaveLength(1)
+  })
+  it('a place in no group that fails names the sidebar', async () => {
+    const h = setup(world())
+    h.impl['sidebar.placeSession'] = failing
+    expect(await run(h, 'openSession', { cwd: '/proj', mode: 'terminal' })).toEqual({
+      sessionId: 'new-1',
+      groupId: null,
+      warnings: ['The tab started but was not placed in the sidebar: made-up failure']
+    })
+  })
+  it('every step failing: still the id, one sentence each', async () => {
+    const h = setup({ ...world(), windows: [] })
+    h.impl['sessions.rename'] = failing
+    h.impl['sidebar.placeSession'] = failing
+    h.impl['sessions.resize'] = failing
+    const answer = (await open(h, { shell: { ...h.ctx().shell, syncRecords: failing } })) as {
+      sessionId: string
+      warnings: string[]
+    }
+    expect(answer.sessionId).toBe('new-1')
+    expect(answer.warnings).toHaveLength(4)
+  })
+  it('an open where everything ran carries no warnings', async () => {
+    const h = setup(world())
+    expect(await open(h)).toEqual({ sessionId: 'new-1', groupId: 'g1' })
   })
 })
 
@@ -1167,7 +1271,16 @@ describe('opening a session', () => {
     await expect(
       run(h, 'openSession', { cwd: '/p', mode: 'terminal', account: 'x' })
     ).rejects.toThrow(
-      'The account argument applies to claude and codex modes only (got mode "terminal")'
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); a terminal runs no harness.'
+    )
+    await expect(
+      run(h, 'openSession', { cwd: '/p', mode: 'antigravity', account: 'x' })
+    ).rejects.toThrow(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
+    )
+    // Pi takes a stored connection (PRDCT-4496): this Mac stores none.
+    await expect(run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'x' })).rejects.toThrow(
+      'No stored connection serves Pi yet: add one in Settings → Connections.'
     )
     await expect(run(h, 'openSession', { cwd: '/p', groupId: 'zz' })).rejects.toThrow(
       'No group with id or name "zz"'
@@ -1176,6 +1289,72 @@ describe('opening a session', () => {
       'Unknown Claude account "Third"'
     )
     expect(h.argsOf('sessions.start')).toEqual([])
+  })
+  // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on this Mac's stored connections
+  it('opens Pi and OpenCode on the stored connection named by id, label or "any", and refuses an unknown one or none with the list', async () => {
+    const stored = (
+      id: string,
+      company: ProviderConnectionView['company'],
+      label: string,
+      hasKey = true
+    ): ProviderConnectionView => ({
+      id,
+      label,
+      company,
+      pool: company,
+      kind: 'key',
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+      needsKey: true,
+      hasKey,
+      keySetAt: null,
+      createdAt: 0
+    })
+    const h = setup({
+      ...world(),
+      providerViews: [
+        stored('c-ds', 'deepseek', 'No key yet', false),
+        stored('c-kimi', 'moonshot', 'Kimi work')
+      ]
+    })
+    const opened = (n: number): Record<string, unknown> =>
+      (h.argsOf('sessions.start')[n] as { options: Record<string, unknown> }).options
+    await run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'c-kimi' })
+    expect(opened(0)).toMatchObject({
+      piMode: true,
+      connectionId: 'c-kimi',
+      connectionLabel: 'Kimi work'
+    })
+    await run(h, 'openSession', { cwd: '/p', mode: 'opencode', account: 'KIMI work' })
+    expect(opened(1)).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    await run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'any' })
+    expect(opened(2)).toMatchObject({ connectionId: 'c-kimi' })
+    await run(h, 'openSession', { cwd: '/p', mode: 'pi' })
+    expect(opened(3)).not.toHaveProperty('connectionId')
+    await expect(
+      run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'Nobody' })
+    ).rejects.toThrow(
+      'Unknown Pi connection "Nobody". Available: "Kimi work" (c-kimi), "No key yet" (c-ds)'
+    )
+    h.w.providerViews = [stored('c-ds', 'deepseek', 'No key yet', false)]
+    await expect(run(h, 'openSession', { cwd: '/p', mode: 'pi', account: 'any' })).rejects.toThrow(
+      'No stored connection of Pi has its key yet: set one in Settings → Connections.'
+    )
+    expect(h.argsOf('sessions.start')).toHaveLength(4)
+    // PRDCT-4496: an agent's model reaches an OpenCode tab on the Mac's
+    // served road too, as it is given (main puts a bare id under the
+    // connection's provider).
+    h.w.providerViews = [stored('c-kimi', 'moonshot', 'Kimi work')]
+    await run(h, 'openSession', {
+      cwd: '/p',
+      mode: 'opencode',
+      account: 'c-kimi',
+      model: 'k-first'
+    })
+    expect(opened(4)).toMatchObject({
+      opencodeMode: true,
+      connectionId: 'c-kimi',
+      model: 'k-first'
+    })
   })
   it('a past conversation reopened carries its id to the start, and only then (PRDCT-4236)', async () => {
     const h = setup(world())

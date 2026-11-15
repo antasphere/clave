@@ -1,10 +1,54 @@
-import { ClaudeLogo, CodexLogo } from '../icons/cli-logos'
+import { ClaudeLogo, CodexLogo, OpenCodeLogo, PiLogo } from '../icons/cli-logos'
 import { capStatus, formatReset, claudeUsageForModel } from '../../store/usage-store'
 import { ownAccountFrom, useSessionAccounts } from '../../lib/session-accounts'
 import { soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
 import { useNow } from '../../lib/use-now'
 import { AccountUsageBars } from './AccountSwitchMenu'
+
+/**
+ * The header of a Pi or OpenCode tab's context menu on a stored connection
+ * (PRDCT-4427): which connection it runs on, as a Claude tab's names its
+ * account. A provider key reports no usage, so there is no second figure.
+ */
+export function ConnectionMenuHeader({
+  id,
+  label,
+  pi = false
+}: {
+  id: string
+  label: string
+  pi?: boolean
+}): React.JSX.Element {
+  const Logo = pi ? PiLogo : OpenCodeLogo
+  return (
+    <div className="flex items-center gap-2 min-w-0" data-connection-header={id}>
+      <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+      <div className="min-w-0">
+        <div className="text-xs text-text-primary truncate">{label}</div>
+        <div className="text-[11px] text-text-tertiary truncate">Connection</div>
+      </div>
+    </div>
+  )
+}
+
+/** PRDCT-4540: the row's menu of a tab whose process left its connection
+ *  says so, where it named the connection. */
+export function ConnectionLeftMenuHeader({
+  sentence,
+  pi = false
+}: {
+  sentence: string
+  pi?: boolean
+}): React.JSX.Element {
+  const Logo = pi ? PiLogo : OpenCodeLogo
+  return (
+    <div className="flex items-center gap-2 min-w-0" data-connection-left="">
+      <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+      <div className="text-xs text-text-primary min-w-0">{sentence}</div>
+    </div>
+  )
+}
 
 /**
  * The header of a Claude or Codex session's context menu: which account the

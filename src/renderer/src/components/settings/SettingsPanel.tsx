@@ -680,7 +680,7 @@ function UsageSettings(): React.JSX.Element {
   return (
     <SettingsPage
       title="Usage"
-      description="How much of each account's limits is used, and when each one resets. Read every five minutes; accounts are added under Accounts."
+      description="How much of each account's limits is used, and when each one resets. Read every five minutes; accounts are added under Connections."
       actions={<UsageRefresh />}
     >
       <UsagePanel />

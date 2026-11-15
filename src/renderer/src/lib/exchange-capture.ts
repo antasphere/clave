@@ -17,7 +17,7 @@
 import { mapAgentState, sessionStateTransition } from '../../../shared/session-state'
 import type { AgentRunStateWord } from '../../../shared/session-state'
 import type { Session, SessionGroup } from '../store/session-types'
-import { AGENT_CAPABILITIES } from '../../../shared/agent-launch'
+import { capturesExchange, exchangeCaptureRefusal } from '../../../shared/agent-launch'
 
 export type SessionMode =
   | 'claude'
@@ -65,12 +65,12 @@ export function captureEndpoint(
 } {
   const group = groupOfSession(groups, s.id)
   const mode = sessionMode(s)
-  if (mode === 'pi') throw new Error('Pi exchange capture is unsupported')
-  if (mode === 'opencode') throw new Error('OpenCode exchange capture is unsupported')
+  // The harness table decides (PRDCT-4507); a caller asks `isCaptured` first.
+  if (mode !== 'terminal' && !capturesExchange(mode)) throw new Error(exchangeCaptureRefusal(mode))
   return {
     sessionId: s.id,
     name: s.name,
-    mode,
+    mode: mode as Exclude<SessionMode, 'pi' | 'opencode'>,
     cwd: s.cwd,
     claudeSessionId: s.claudeSessionId ?? null,
     groupId: group?.id ?? null,
@@ -79,14 +79,14 @@ export function captureEndpoint(
   }
 }
 
-/** Terminals are not agents: like tab_spawn, their lifecycle is not captured. */
-function isAgentTab(s: Session): boolean {
-  const mode = sessionMode(s)
-  if (mode === 'terminal' || mode === 'pi' || mode === 'opencode') return false
-  return (
-    AGENT_CAPABILITIES[mode === 'claude-agents' ? 'claude' : mode].exchangeCapture === 'supported'
-  )
+/** Whether a tab's exchanges are captured: an agent whose harness the table
+ *  says is captured (`capturesExchange`). Terminals are not agents: like
+ *  tab_spawn, their lifecycle is not captured. */
+export function isCaptured(s: Session): boolean {
+  return capturesExchange(sessionMode(s))
 }
+
+const isAgentTab = isCaptured
 
 /**
  * A hook word arrived for a session. Emits one `session_state` per

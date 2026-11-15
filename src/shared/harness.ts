@@ -8,11 +8,16 @@
  *
  * A harness id is a `LauncherFamily` (`agent-launch.ts`): the launch profiles,
  * the spawn and the `.clave` modes keep that name. This table adds what the
- * launcher and the settings need to know about each: which connection pool it
+ * launcher and the settings need to know about each: which connection pools it
  * runs on, whether it has a chat adapter, its own permission ladder and the
  * flag that sets it, and how it is installed.
  */
 import type { LauncherFamily } from './agent-launch'
+import type { ConnectionPoolId } from './connection'
+// ── Lane B (harness wave): provider connections ──
+import type { ProviderWireFormat } from '@clave/contract/settings/provider-catalogue'
+// Lane C of the harness wave (PRDCT-4496): the pools a stored key serves
+import { PROVIDER_COMPANY_IDS } from '@clave/contract/settings/provider-catalogue'
 
 export type HarnessId = LauncherFamily
 
@@ -29,19 +34,25 @@ export interface Harness {
   id: HarnessId
   /** The name a person reads: Claude Code, Codex, Antigravity, Pi, OpenCode. */
   name: string
+  /** The name its agent is spoken of by on a card ("Claude asks", "Allow
+   *  Codex to …?"): Claude Code's agent is "Claude", the others speak under
+   *  their own name (PRDCT-4507). */
+  agentName: string
   /** The binary on the PATH (`claude`, `codex`, `agy`, `pi`, `opencode`). */
   command: string
-  /** The account pool whose connections this harness runs on (ADR 0002), or
-   *  null for a harness Clave holds no connection for yet (Antigravity, Pi:
-   *  their accounts live inside the CLI). */
-  connectionPool: 'claude' | 'codex' | null
+  /** The pools this harness's connections come from (`connection.ts`, ADR
+   *  0002), in the order the launcher lists them; empty for a harness Clave
+   *  holds no connection for yet (Antigravity, Pi, OpenCode: their accounts
+   *  live inside the CLI). A provider pool of PRDCT-4426 is added to the rows
+   *  of the harnesses that speak its wire format. */
+  connectionPools: readonly ConnectionPoolId[]
   /** A vendor-only harness runs its vendor's models alone: the launcher shows
    *  the models its connected accounts serve and nothing else. An open one
    *  (Pi) runs any provider its own config names. */
   vendorOnly: boolean
   /** The chat adapter that drives this harness in Clave's chat views, or null
    *  for a harness that runs in a terminal only. */
-  chatAdapterId: 'claude-chat' | 'codex-chat' | null
+  chatAdapterId: 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat' | null
   /** Whether the CLI takes a model on its command line (`--model`, `-m`). */
   takesModel: boolean
   /** The harness's own permission ladder, empty for a harness that never asks
@@ -60,14 +71,20 @@ export interface Harness {
   install: string | null
   /** Where the person reads about the harness. */
   docsUrl: string
+  // ── Lane B (harness wave): provider connections ──
+  /** The wire formats this harness speaks (PRDCT-4426): a stored provider
+   *  connection serves it when one of its endpoints speaks one of them. Empty
+   *  for a vendor-only harness. */
+  wireFormats: readonly ProviderWireFormat[]
 }
 
 export const HARNESSES: readonly Harness[] = [
   {
     id: 'claude',
     name: 'Claude Code',
+    agentName: 'Claude',
     command: 'claude',
-    connectionPool: 'claude',
+    connectionPools: ['claude'],
     vendorOnly: true,
     chatAdapterId: 'claude-chat',
     takesModel: true,
@@ -101,13 +118,16 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: 'bypassPermissions',
     install: 'curl -fsSL https://claude.ai/install.sh | bash',
-    docsUrl: 'https://code.claude.com/docs'
+    docsUrl: 'https://code.claude.com/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'codex',
     name: 'Codex',
+    agentName: 'Codex',
     command: 'codex',
-    connectionPool: 'codex',
+    connectionPools: ['codex'],
     vendorOnly: true,
     chatAdapterId: 'codex-chat',
     takesModel: true,
@@ -131,13 +151,16 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: null,
     bypassRung: 'danger-full-access',
     install: null,
-    docsUrl: 'https://learn.chatgpt.com/docs/cli'
+    docsUrl: 'https://learn.chatgpt.com/docs/cli',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'antigravity',
     name: 'Antigravity',
+    agentName: 'Antigravity',
     command: 'agy',
-    connectionPool: null,
+    connectionPools: [],
     vendorOnly: true,
     chatAdapterId: null,
     takesModel: false,
@@ -162,45 +185,73 @@ export const HARNESSES: readonly Harness[] = [
     defaultRung: 'default',
     bypassRung: null,
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    docsUrl: 'https://antigravity.google/docs/cli'
+    docsUrl: 'https://antigravity.google/docs/cli',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: []
   },
   {
     id: 'pi',
     name: 'Pi',
+    agentName: 'Pi',
     command: 'pi',
-    connectionPool: null,
+    // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
+    connectionPools: [...PROVIDER_COMPANY_IDS],
     vendorOnly: false,
-    chatAdapterId: null,
+    // Lane D (PRDCT-4427): Pi's chat runs through `pi --mode rpc`, Pi's own
+    // interface.
+    chatAdapterId: 'pi-chat',
     takesModel: true,
     permissionRungs: [],
     defaultRung: null,
     bypassRung: null,
     install: 'npm install -g @earendil-works/pi-coding-agent',
-    docsUrl: 'https://pi.dev/docs'
+    docsUrl: 'https://pi.dev/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   },
   {
-    // OpenCode 2's TUI takes no model on its command line (`opencode run`
-    // does, the TUI does not: the model is picked inside it or set in its
-    // config), and its permissions are config rules, not a CLI ladder; its
-    // one flag, `--auto`, is what `dangerousMode` passes.
+    // OpenCode 2's TUI has no model flag (`opencode run` has, the TUI not):
+    // the model it starts on reaches it through `OPENCODE_CONFIG_CONTENT`,
+    // set per tab, with `--standalone` so the TUI reads the tab's own
+    // environment rather than the shared service's (PRDCT-4496). Its
+    // permissions are config rules, not a CLI ladder; its one flag, `--auto`,
+    // is what `dangerousMode` passes.
+    // Lane D (PRDCT-4427): OpenCode's chat runs through `opencode acp`, the
+    // protocol the TUI's binary speaks itself (the Agent Client Protocol).
     id: 'opencode',
     name: 'OpenCode',
+    agentName: 'OpenCode',
     command: 'opencode',
-    connectionPool: null,
+    // The pools a stored key serves: one per company of the catalogue (PRDCT-4496).
+    connectionPools: [...PROVIDER_COMPANY_IDS],
     vendorOnly: false,
-    chatAdapterId: null,
-    takesModel: false,
+    chatAdapterId: 'opencode-chat',
+    takesModel: true,
     permissionRungs: [],
     defaultRung: null,
     bypassRung: null,
     install: 'curl -fsSL https://opencode.ai/v2/install | bash',
-    docsUrl: 'https://opencode.ai/docs'
+    docsUrl: 'https://opencode.ai/docs',
+    // ── Lane B (harness wave): provider connections ──
+    wireFormats: ['anthropic-messages', 'openai-chat', 'openai-responses']
   }
 ]
 
 export const HARNESS_BY_ID: Readonly<Record<HarnessId, Harness>> = Object.fromEntries(
   HARNESSES.map((harness) => [harness.id, harness])
 ) as Record<HarnessId, Harness>
+
+/** The name a tab's agent goes by where Clave speaks of it ("Claude asks",
+ *  "Allow OpenCode to …"), the table's `agentName` for every harness (PRDCT-4507): a
+ *  session's provider or mode, `claude-agents` being Claude Code's and
+ *  `gemini` Antigravity's; `fallback` for anything the table does not know. */
+export function agentNameOf(provider: string | null | undefined, fallback = 'the agent'): string {
+  const id =
+    provider === 'claude-agents' ? 'claude' : provider === 'gemini' ? 'antigravity' : provider
+  return id && Object.prototype.hasOwnProperty.call(HARNESS_BY_ID, id)
+    ? HARNESS_BY_ID[id as HarnessId].agentName
+    : fallback
+}
 
 /** A person's settings for one harness (Settings → Harnesses). Both absent
  *  means the harness's own defaults: no flag is passed. */

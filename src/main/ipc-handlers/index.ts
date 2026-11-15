@@ -55,6 +55,12 @@ import { registerActivityHandlers } from './activity-handlers'
 import { registerMicHandlers } from './mic-handlers'
 // ── Issue #227: Debug Clave… ──
 import { registerTriageHandlers } from './triage-handlers'
+// ── Lane B (harness wave): provider connections ──
+import { registerProviderConnectionsHandlers } from './provider-connections-handlers'
+// ── Lane C of the harness wave (PRDCT-4496): the models catalogue ──
+import { registerModelsCatalogHandlers } from './models-catalog-handlers'
+// ── Lane C of the harness wave (PRDCT-4496): a connection's usage line ──
+import { registerProviderUsageHandlers } from './provider-usage-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -112,4 +118,10 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerMicHandlers()
   // ── Issue #227: Debug Clave… ──
   registerTriageHandlers()
+  // ── Lane B (harness wave): provider connections ──
+  registerProviderConnectionsHandlers()
+  // ── Lane C of the harness wave (PRDCT-4496): the models catalogue ──
+  registerModelsCatalogHandlers()
+  // ── Lane C of the harness wave (PRDCT-4496): a connection's usage line ──
+  registerProviderUsageHandlers()
 }

@@ -234,7 +234,44 @@ export function describeToolHead(
   return { kind, label, target }
 }
 
+/** The Clave tools a code-mode script calls (PRDCT-4507): OpenCode's
+ *  `execute` reaches an MCP server's tools as `tools.<server>.<tool>(…)`
+ *  (`tools.clave.clave_list({})`, read off what the real 2.3.0 sent), each
+ *  named once, in the order the script first calls it. */
+export function claveToolsInScript(code: string): string[] {
+  const found: string[] = []
+  const call =
+    /tools\s*(?:\.\s*clave|\[\s*['"]clave['"]\s*\])\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])/g
+  for (const match of code.matchAll(call)) {
+    const tool = match[1] ?? match[2]
+    if (tool && !found.includes(tool)) found.push(tool)
+  }
+  return found
+}
+
+/** OpenCode's code mode: `execute` runs the script in its `code` field. The
+ *  row says it ran code and which Clave tools that code calls; the panel
+ *  shows the script itself, then what came back. Undefined for anything
+ *  else. */
+function describeScript(tool: ToolEntry, withSections: boolean): ToolDescription | undefined {
+  if ((tool.name ?? '').toLowerCase() !== 'execute') return undefined
+  const code = record(tool.input).code
+  if (typeof code !== 'string' || !code) return undefined
+  const clave = claveToolsInScript(code)
+  const sections: Section[] = withSections ? [{ label: 'Code', text: code }] : []
+  const output = withSections && tool.complete ? content(tool.output) : ''
+  if (output) sections.push({ label: 'Output', text: output })
+  return {
+    kind: 'other',
+    label: 'Ran code',
+    target: clave.length > 0 ? `calling ${clave.join(', ')}` : code.trim().split('\n')[0],
+    sections
+  }
+}
+
 export function describeTool(tool: ToolEntry, withSections = true): ToolDescription {
+  const script = describeScript(tool, withSections)
+  if (script) return script
   const name = (tool.name ?? '').toLowerCase().replace(/[\s_-]/g, '')
   const kind: ToolKind = READ.includes(name)
     ? 'read'
@@ -457,6 +494,8 @@ export function sectionLanguage(
   path: string
 ): string | undefined {
   if (kind === 'command') return section.label === 'Command' ? 'bash' : undefined
+  // An `execute` script (OpenCode's code mode) is JavaScript.
+  if (section.label === 'Code') return 'javascript'
   if (kind === 'edit') return /^[-+] /m.test(section.text) ? 'diff' : extension(section.label)
   if (kind === 'read' && section.label === 'Content') return extension(path)
   return undefined

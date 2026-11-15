@@ -9,7 +9,8 @@
  * standalone entry's settings source otherwise.
  */
 import type { AccountOverride } from '@clave/contract/sessions'
-import { pickAccount, type PoolAccount } from '../../shared/account-pool'
+import type { PoolAccount } from '../../shared/account-pool'
+import { suggestedConnection } from '../../shared/launch-options'
 import { usageSummaryForModel } from '../../shared/usage-summary'
 import type { AccountProvider, ServedPoolAccount } from './served-core'
 
@@ -47,13 +48,19 @@ export function accountForLaunch(
   model?: string
 ): ServedPoolAccount {
   const accounts = facts.accounts(provider)
-  const selected = facts.selectedAccountId(provider) ?? 'default'
-  const id = pickAccount({
-    accounts: poolOf(accounts),
-    usage: usageOf(accounts, { model }),
-    preferredId: selected,
-    preferRecommended: facts.useRecommendedAccount?.() === true
-  })
+  // The rule lives once, in the shared module clave_launch_options answers
+  // from too (PRDCT-4485): the connection it marks suggested is judged on its
+  // defaultModel, the remembered model of the profile an open naming no
+  // profile and no chat flag resolves (its `openProfileId`: the chat default
+  // under a chat interaction mode), so it is the one such an open naming
+  // neither a model nor a connection lands on. An open naming another model
+  // or profile is judged on what it names here, and may land elsewhere.
+  const id = suggestedConnection(
+    accounts,
+    facts.selectedAccountId(provider),
+    facts.useRecommendedAccount?.() ?? false,
+    model
+  )
   return accounts.find((a) => a.id === id) ?? accounts[0] ?? { id, label: id, usable: true }
 }
 

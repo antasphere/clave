@@ -1,6 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react'
-import * as DropdownMenuPrimitive from '@clave/ui/primitives/dropdown-menu'
-import { ClipboardDocumentIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
 import {
   SettingsPage,
   SettingsSection,
@@ -11,14 +9,20 @@ import {
   ToggleRow
 } from './primitives'
 import { AntasphereAccountSection } from './AntasphereAccountSection'
-import { ClaudeAccountsSection } from './ClaudeAccountsSection'
-import { CodexAccountsSection } from './CodexAccountsSection'
-import {
-  CONNECTION_COMPANIES,
-  connectAnthropic,
-  connectOpenAI,
-  type ConnectionCompany
-} from './connection-companies'
+import { ClaudeAccountsCard } from './ClaudeAccountsSection'
+import { CodexAccountsCard } from './CodexAccountsSection'
+import { ProviderConnectionCards } from './ProviderConnectionsSection'
+import { codexAccountShown, useProviderMachine } from './connection-actions'
+import { ConnectionOffers } from './ConnectionOffers'
+import type { CardModels } from './ConnectionCard'
+import { machineWords, type CardCompany } from './connection-cards'
+import { useCodexModels, useMachineCatalog } from './connection-models'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { catalogModelsOf } from '@clave/contract/settings/models-catalog-view'
+import { PROVIDER_LISTING_FACTS } from '../../../../main/models-catalog-overlay'
+import { CLAUDE_MODELS } from '../../../../shared/claude-models'
+import { useClaudeProfileStore } from '../../store/claude-profile-store'
+import { useCodexAccountStore } from '../../store/codex-account-store'
 import { loadAccountLogins } from '../../store/account-login-store'
 import {
   useAccountPolicyStore,
@@ -136,122 +140,152 @@ function SwitchPolicySection(): ReactElement {
   )
 }
 
-/** Bring a connection's row into view once it is drawn (the login flow
- *  opens under it). */
-function revealRow(selector: string): void {
-  requestAnimationFrame(() =>
-    document.querySelector(selector)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  )
+/** How a card says it has no model list, per company. */
+const NO_LIST: Partial<Record<CardCompany, string>> = {
+  ollama: 'Whatever your Ollama serves',
+  generic: 'Whatever your endpoint serves'
 }
 
 /**
- * The page's one way in: Connect, then the company. Picking one starts its
- * browser sign-in (the hidden terminal of `claude setup-token` or
- * `codex login`); the secondary road under each company opens the paste
- * form instead. The only place the words of the mechanism appear.
+ * The models each card names, for one machine: Claude's by name, Codex's as
+ * the CLI lists them (asked once a Codex connection can answer), and each
+ * provider's from the machine's models catalogue (models.dev, deprecated ones
+ * hidden). Ollama and another provider have no list Clave can read: their
+ * cards say so.
  */
-function ConnectMenu({
-  onPick,
-  onSecondary
+function useCardModels(machine: string, codexReady: boolean): (company: CardCompany) => CardModels {
+  const catalog = useMachineCatalog(machine)
+  const codex = useCodexModels(codexReady)
+  return (company) => {
+    if (company === 'anthropic') return { names: CLAUDE_MODELS.map((m) => m.name) }
+    if (company === 'openai') {
+      if (!codexReady) return { note: 'Listed once Codex is signed in' }
+      if (codex.failed) return { note: 'Codex did not list them from here' }
+      if (!codex.models) return 'loading'
+      return { names: codex.models.map((m) => m.label) }
+    }
+    const catalogId = PROVIDER_LISTING_FACTS[company].catalog
+    if (!catalogId) return { note: NO_LIST[company] ?? 'No list to read' }
+    if (catalog === 'loading') return 'loading'
+    if (catalog === null) return { note: 'The models list could not be read' }
+    return { names: catalogModelsOf(catalog, catalogId).map((m) => m.name) }
+  }
+}
+
+/** The two sections every Connections page opens on, this Mac's and a
+ *  server's alike: what is connected, then every provider that can be. */
+export function ConnectionsBoard({
+  machine,
+  machineName,
+  accounts,
+  connectedCount,
+  codexReady
 }: {
-  onPick: (company: ConnectionCompany) => void
-  onSecondary: (company: ConnectionCompany) => void
+  machine: string
+  /** The server's name, or null for this Mac. */
+  machineName: string | null
+  /** The machine's account cards (Claude, then Codex), in pool order, given
+   *  the models each company serves. */
+  accounts: (modelsOf: (company: CardCompany) => CardModels) => ReactNode
+  /** How many connections the machine has beyond its own logins. */
+  connectedCount: number
+  codexReady: boolean
 }): ReactElement {
+  const words = machineWords(machineName)
+  const modelsOf = useCardModels(machine, codexReady)
+  const providers = useProviderMachine(machine)
+  const [adding, setAdding] = useState<{ machine: string; open: boolean }>({
+    machine,
+    open: false
+  })
+  const total = connectedCount + providers.connections.length
+  const where = machineName ? `on ${machineName}` : 'here'
   return (
-    <DropdownMenuPrimitive.Root modal={false}>
-      <DropdownMenuPrimitive.Trigger asChild>
-        <button type="button" className="btn-primary" data-connect>
-          <PlusIcon className="w-3.5 h-3.5" />
-          Connect
-        </button>
-      </DropdownMenuPrimitive.Trigger>
-      <DropdownMenuPrimitive.Portal>
-        <DropdownMenuPrimitive.Content
-          align="end"
-          sideOffset={4}
-          className="menu-surface menu-pop select-menu z-50 p-1"
-          data-connect-chooser
+    <>
+      <SettingsSection
+        title="Connected"
+        description={
+          total === 0
+            ? `Nothing connected ${where} yet beyond the machine’s own login. Connect a provider below: each card says which harnesses run on it and which models it serves.`
+            : machineName
+              ? `What new sessions on ${machineName} can run on. Claude Code and Codex take the first connection of their company and move along when it nears its limit; Pi and OpenCode tabs pick theirs in the launcher.`
+              : 'What new sessions can run on. Claude Code and Codex start on the connection marked and move along when it nears its limit; Pi and OpenCode tabs pick theirs in the launcher.'
+        }
+      >
+        <div
+          className="connection-stack"
+          data-connections-connected={machine}
+          data-connections-count={total}
         >
-          {CONNECTION_COMPANIES.map((company, index) => (
-            <div key={company.id}>
-              {index > 0 && <DropdownMenuPrimitive.Separator className="menu-sep" />}
-              <DropdownMenuPrimitive.Item
-                className="menu-item select-option"
-                onSelect={() => onPick(company)}
-                data-connect-company={company.id}
-              >
-                <company.Logo className="w-4 h-4 flex-shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{company.name}</span>
-                  <span className="block truncate text-[11px] text-text-tertiary">
-                    {company.hint}
-                  </span>
-                </span>
-              </DropdownMenuPrimitive.Item>
-              <DropdownMenuPrimitive.Item
-                className="menu-item select-option text-[11px] text-text-tertiary"
-                onSelect={() => onSecondary(company)}
-                data-connect-secondary={company.id}
-              >
-                {company.pool === 'claude' ? (
-                  <ClipboardDocumentIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                ) : (
-                  <KeyIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                )}
-                {company.pool === 'claude' ? 'Paste a token instead' : 'Use an API key instead'}
-              </DropdownMenuPrimitive.Item>
-            </div>
-          ))}
-        </DropdownMenuPrimitive.Content>
-      </DropdownMenuPrimitive.Portal>
-    </DropdownMenuPrimitive.Root>
+          {accounts(modelsOf)}
+          <ProviderConnectionCards
+            machine={machine}
+            machineWords={words}
+            modelsOf={modelsOf}
+            addOpen={adding.machine === machine && adding.open}
+          />
+        </div>
+      </SettingsSection>
+      <SettingsSection
+        title="Connect a provider"
+        description={
+          machineName
+            ? `Store a key once on ${machineName}; it is sealed there and never shown again. Its subscriptions are signed in on the server itself.`
+            : 'Sign in to a subscription, or store a key once: it is sealed on this Mac and never shown again.'
+        }
+      >
+        <ConnectionOffers
+          machine={machine}
+          subscriptions={machineName === null}
+          modelsOf={modelsOf}
+          onOpenChange={(open) => setAdding({ machine, open })}
+        />
+      </SettingsSection>
+    </>
   )
 }
 
 /**
- * Settings → Connections (PRDCT-4424): the Antasphere account this Clave is
- * signed in with (PRDCT-3259, optional, Clave only), then who pays for what
- * the harnesses run: the subscriptions Clave can run a session on (ADR
- * 0002), per company, in the order the pool walks them, each connected from
- * here. Usage per connection is read on the Usage page; this page is where a
- * connection is added, signed in, ordered and removed.
+ * Settings → Connections (PRDCT-4424, as cards since PRDCT-4552): the page
+ * answers "what can I run on, and with what" at a glance. What is connected
+ * reads first, one card per provider with its connections as rows (a Claude
+ * account, a Codex account and a stored provider connection alike); then
+ * every provider not connected yet, a card each, connected from the card
+ * itself. Below them, as they were: the
+ * Antasphere account this Clave is signed in with (PRDCT-3259, optional,
+ * Clave only), how new sessions pick a connection, and the switch policy.
  */
 export function AccountsSettings(): ReactElement {
   const useRecommendedAccount = useAccountPolicyStore((s) => s.useRecommendedAccount)
   const setUseRecommendedAccount = useAccountPolicyStore((s) => s.setUseRecommendedAccount)
-  const [pasteRequest, setPasteRequest] = useState(0)
-  const [keyRequest, setKeyRequest] = useState(0)
+  const claudeCount = useClaudeProfileStore((s) => s.profiles.length - 1)
+  const codexAccounts = useCodexAccountStore((s) => s.accounts)
+  const codexShown = codexAccounts.filter(codexAccountShown).length
+  const codexReady = codexAccounts.some((a) => a.hasCredential)
   useEffect(() => {
     void loadAccountLogins()
   }, [])
-  const pick = async (company: ConnectionCompany): Promise<void> => {
-    const id = company.pool === 'claude' ? await connectAnthropic() : await connectOpenAI()
-    if (id)
-      revealRow(
-        company.pool === 'claude'
-          ? `[data-claude-account-row="${id}"]`
-          : `[data-codex-account-row="${id}"]`
-      )
-  }
-  const secondary = (company: ConnectionCompany): void => {
-    if (company.pool === 'claude') {
-      setPasteRequest((n) => n + 1)
-      revealRow('[data-claude-token-form]')
-    } else {
-      setKeyRequest((n) => n + 1)
-      revealRow('[data-codex-api-key-form]')
-    }
-  }
   return (
     <SettingsPage
       title="Connections"
-      description="Your Antasphere account, which signs you into Clave itself, and who pays for what your harnesses run: the subscriptions Clave can run sessions on. Choose how new sessions pick a connection; a running tab is switched from its menu, its conversation resumed on the other connection."
+      description="What your sessions run on: the subscriptions and the keys Clave can start a harness on, each with the models it serves. A running tab is switched from its menu, its conversation resumed on the other connection. Your Antasphere account, which signs you into Clave itself, is below."
       testId="accounts"
-      actions={<ConnectMenu onPick={(company) => void pick(company)} onSecondary={secondary} />}
     >
+      <ConnectionsBoard
+        machine={LOCAL_SERVER_ID}
+        machineName={null}
+        connectedCount={claudeCount + codexShown}
+        codexReady={codexReady}
+        accounts={(modelsOf) => (
+          <>
+            <ClaudeAccountsCard machine={machineWords(null)} />
+            {codexShown > 0 && (
+              <CodexAccountsCard machine={machineWords(null)} models={modelsOf('openai')} />
+            )}
+          </>
+        )}
+      />
       <AntasphereAccountSection />
-      <ClaudeAccountsSection pasteRequest={pasteRequest} />
-      <CodexAccountsSection keyRequest={keyRequest} />
       <SettingsSection title="New sessions">
         <SettingsCard>
           <ToggleRow

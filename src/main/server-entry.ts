@@ -92,7 +92,7 @@ import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
 import { preferencesManager, type Preferences } from './preferences-manager'
 import { fileStorage } from './ports/storage'
-import { lazyTerminalPorts } from './ports/terminals'
+import { lazyTerminalPorts, resourcesDirOfEntry } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
@@ -117,6 +117,15 @@ import { ForwardRegistry } from '@clave/server/forward-registry'
 import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
 import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
+// ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+import { standaloneLaunchFacts } from './mcp/standalone-launch-facts'
+import { modelsCatalog } from './models-catalog'
+import { piOwnDefault, providerConnectionsForListing } from './provider-injection-spawn'
+// Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+import { wireProviderConnections } from './provider-injection-wiring'
+import { providerConnectionsManager } from './provider-connections'
+import { standaloneHarnessDetection } from './agent-updates/standalone-detection'
+import { providerModels } from './provider-models'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
@@ -161,6 +170,10 @@ function readAppVersion(): string {
     'clave-server: --app-version <version> is required when no package.json is beside the entry'
   )
 }
+/** The app's `resources` folder, from this entry's own folder (`src/main` run
+ *  from source, `out/main` built, `app.asar/out/main` packaged): the routine
+ *  contract, the default report, and Pi's Clave extension (PRDCT-4496). */
+const RESOURCES_DIR = resourcesDirOfEntry(__dirname)
 /** How often the parent named by `--parent` is checked for. */
 const PARENT_POLL_MS = 2_000
 
@@ -302,7 +315,11 @@ async function main(): Promise<void> {
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
-  const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const { host: originalSessions, agentTools } = standaloneSessionHost({
+    dataDir,
+    terminals,
+    resourcesDir: RESOURCES_DIR
+  })
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
   // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
   // kept after a tab is deleted and served to every connected client.
@@ -395,6 +412,38 @@ async function main(): Promise<void> {
   }
   // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
   const workspaceFilesInstance = new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
+  // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+  // One set of facts for the routines and the agent tools: what a routine
+  // resolves its launch with is what `clave_open_session` resolves a tab
+  // with; the tools add the harnesses detected, the models and the settings.
+  const launchFacts = launchFactsFromManagers({
+    claudeAccounts: claudeAccountsManager,
+    codexAccounts: codexAccountsManager,
+    claudeUsage: usageManager,
+    codexUsage: codexUsageManager,
+    launchProfiles: launchProfileManager,
+    preference: (key) => preferencesManager.get(key as keyof Preferences),
+    launchModel: rememberedSpawnModel,
+    // An account on Pi or OpenCode names a stored connection (PRDCT-4496).
+    providerConnections: providerConnectionsManager
+  })
+  // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+  wireProviderConnections(providerConnectionsManager)
+  const agentLaunchFacts = standaloneLaunchFacts({
+    facts: launchFacts,
+    detection: standaloneHarnessDetection({ env: process.env, testMode: TEST_NO_ACTIVATE }),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    preferences: (key) => preferencesManager.get(key as keyof Preferences),
+    codexModels: (cwd) => providerModels('codex-chat', cwd),
+    homeDir: os.homedir(),
+    defaultProfile: (family) => launchProfileManager.resolve(family),
+    catalog: (providerIds) => modelsCatalog.view({ providerIds }),
+    providerConnections: (harness) => providerConnectionsForListing(harness),
+    providerConnectionViews: () => providerConnectionsManager.list(),
+    piOwnDefault: () => piOwnDefault(),
+    // PRDCT-4551: what this server's Pi and OpenCode tabs used, per connection.
+    harnessUsage: async () => standalone.settings.harnessUsage.read({ range: 'today' })
+  })
   // ── ADR 0004: the routines this server schedules, off its own workspace files ──
   const routines = createRoutineService({
     sessions,
@@ -404,21 +453,13 @@ async function main(): Promise<void> {
       standalone.settings.subscribe((event) => {
         if (event._tag === 'workspaces.state_changed') listener()
       }),
-    facts: launchFactsFromManagers({
-      claudeAccounts: claudeAccountsManager,
-      codexAccounts: codexAccountsManager,
-      claudeUsage: usageManager,
-      codexUsage: codexUsageManager,
-      launchProfiles: launchProfileManager,
-      preference: (key) => preferencesManager.get(key as keyof Preferences),
-      launchModel: rememberedSpawnModel
-    }),
+    facts: launchFacts,
     storage: fileStorage(dataDir),
     dataDir,
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
     holder: `clave-server:${process.pid}`,
-    pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
-    defaultTemplate: defaultReportDir(path.resolve(__dirname, '..', '..', 'resources')),
+    pluginDir: contractPluginDir(RESOURCES_DIR),
+    defaultTemplate: defaultReportDir(RESOURCES_DIR),
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     publisher: TEST_NO_ACTIVATE
       ? false
@@ -566,6 +607,8 @@ async function main(): Promise<void> {
         // defaults of its own.
         chatDefault: (family) =>
           chatDefaultFor(launchProfileManager.getPreferences(), family, null),
+        // PRDCT-4485: the launcher's choices, for clave_launch_options and the open.
+        launch: agentLaunchFacts,
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,

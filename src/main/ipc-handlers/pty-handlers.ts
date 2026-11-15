@@ -7,6 +7,7 @@ import {
   type PtySpawnOptions
 } from '../pty-manager'
 import { installTerminalPorts } from '../ports/terminals'
+import { resourcesDir } from '../routines/shell-routines'
 import {
   getMcpRuntime,
   writeSessionMcpConfig,
@@ -38,6 +39,7 @@ import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
 import { getSessionHost } from '../sessions/host'
 import { restartOverridesFromWire } from './restart-overrides-wire'
+import { NO_CONVERSATION_TO_CARRY } from '../sessions/provider-switch'
 import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
@@ -45,13 +47,16 @@ export function registerPtyHandlers(): void {
   // server: a Claude session's `--mcp-config` file is the MCP runtime's
   // (`mcp-runtime.ts`), written when the server is up and omitted before.
   // The storage and the terminal process keep the layer's defaults here (the
-  // app's data folder, node-pty in this process).
+  // app's data folder, node-pty in this process). The resources folder is
+  // the app's own (`resourcesDir()`: the checkout's, or the asar's when
+  // packaged), where a Pi session's Clave extension is read from (PRDCT-4496).
   installTerminalPorts({
     mcpConfig: {
       ready: waitForMcpRuntime,
       write: (sessionId) => (getMcpRuntime() ? writeSessionMcpConfig(sessionId) : null),
       remove: deleteSessionMcpConfig
-    }
+    },
+    resourcesDir: resourcesDir()
   })
   // What the session host still needs from the windows, by key: the shell's
   // registry and IPC sends (sessions/windows.ts, PRDCT-3293).
@@ -126,6 +131,8 @@ export function registerPtyHandlers(): void {
         resume?: unknown
         firstMessage?: unknown
         continuedFrom?: unknown
+        /** Lane D (PRDCT-4427): the view a move onto the chat opens in. */
+        viewId?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
@@ -142,7 +149,10 @@ export function registerPtyHandlers(): void {
         const message = error instanceof Error ? error.message : String(error)
         if (
           message === 'This session cannot be restarted from here.' ||
-          message === 'This session is running; there is nothing to resume.'
+          message === 'This session is running; there is nothing to resume.' ||
+          // Lane D (PRDCT-4427): a terminal with no conversation to carry
+          // into a chat is refused in a sentence the menu shows.
+          message === NO_CONVERSATION_TO_CARRY
         )
           return { error: message }
         throw error

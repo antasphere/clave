@@ -1,18 +1,18 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import { HARNESSES, type Harness, type HarnessId } from '../../../../shared/harness'
+import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
 import { CLAUDE_MODELS } from '../../../../shared/claude-models'
 import type { AgentUpdateStatus } from '../../../../shared/agent-updates'
 import type { InstallableAgentId, OnboardingInstallResult } from '../../../../shared/onboarding'
-import type { ModelOption } from '../../../../shared/session-model'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
-import { useWorkspaceStore } from '../../store/workspace-store'
+import { useCodexModels } from './connection-models'
 import { useSessionStore } from '../../store/session-store'
 import { connectionsForModel } from '../../lib/switch-account'
 import { harnessPresent } from '../../lib/harness-presence'
@@ -39,43 +39,6 @@ function installHarness(id: InstallableAgentId): Promise<OnboardingInstallResult
   return window.electronAPI.onboardingInstall(id)
 }
 
-/** The folder Codex is asked its models from: the active workspace's root,
- *  else the home folder the walk knows. */
-async function modelsFolder(): Promise<string> {
-  const { workspaces, activeWorkspaceId } = useWorkspaceStore.getState()
-  const root = workspaces.find((w) => w.id === activeWorkspaceId)?.rootDir
-  if (root) return root
-  const state = await window.electronAPI.onboardingGetState?.().catch(() => null)
-  return state?.home ?? '/'
-}
-
-/** Codex's models, asked of the CLI once when the row first draws. */
-function useCodexModels(enabled: boolean): {
-  models: ModelOption[] | null
-  failed: boolean
-} {
-  const [models, setModels] = useState<ModelOption[] | null>(null)
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    if (!enabled) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const list = await window.electronAPI.adaptersModels('codex-chat', await modelsFolder())
-        if (cancelled) return
-        if (Array.isArray(list) && list.length > 0) setModels(list)
-        else setFailed(true)
-      } catch {
-        if (!cancelled) setFailed(true)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [enabled])
-  return { models, failed }
-}
-
 /** The way to Settings → Connections, from a row that needs one. */
 function ConnectionsLink({ harness }: { harness: Harness }): React.JSX.Element {
   return (
@@ -100,8 +63,9 @@ function ConnectionsLink({ harness }: { harness: Harness }): React.JSX.Element {
 function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element | null {
   const value = useLaunchSettingsStore((s) => s.harnesses[harness.id]?.preferredModel ?? '')
   const setHarness = useLaunchSettingsStore((s) => s.setHarness)
-  const pool = harness.connectionPool
-  const connected = pool !== null && connectionsForModel(pool, undefined).some((c) => c.usable)
+  const pool = firstPoolOf(harness)
+  const connected =
+    isAccountPoolId(pool) && connectionsForModel(pool, undefined).some((c) => c.usable)
   const codex = useCodexModels(harness.id === 'codex' && connected)
   if (!harness.takesModel) return null
   const write = (model: string | null): void =>
@@ -109,11 +73,17 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
   const label = 'Default model'
   const description = `What a click on ${harness.name} in the launcher runs; hovering the row offers the others.`
 
-  if (pool === null) {
+  // Pi and OpenCode run on a provider's stored key only when the launcher
+  // names one (PRDCT-4496): their default is their own configuration's.
+  if (!isAccountPoolId(pool)) {
     return (
       <SettingsRow
         label={label}
-        description={`${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`}
+        description={
+          pool === null
+            ? `${harness.name} runs the model its own configuration names; Clave holds no connection for it yet.`
+            : `${harness.name} runs the model its own configuration names; a model of a stored connection is picked in the launcher.`
+        }
       />
     )
   }

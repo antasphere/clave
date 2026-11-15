@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import type { RoutinesService } from '@clave/server'
 import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
+import { providerConnectionsManager } from '../provider-connections'
 import { usageManager } from '../usage-manager'
 import { codexUsageManager } from '../codex-usage'
 import { launchProfileManager } from '../launch-profile-manager'
@@ -67,7 +68,9 @@ export function shellRoutines(): RoutineService {
       codexUsage: codexUsageManager,
       launchProfiles: launchProfileManager,
       preference: (key) => preferencesManager.get(key as keyof Preferences),
-      launchModel: rememberedSpawnModel
+      launchModel: rememberedSpawnModel,
+      // An account on Pi or OpenCode names a stored connection (PRDCT-4496).
+      providerConnections: providerConnectionsManager
     }),
     storage: fileStorage(userData),
     dataDir: userData,

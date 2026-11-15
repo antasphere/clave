@@ -29,7 +29,17 @@ interface Entry {
    *  turn. Held here, not only in a pane's log, so a pane that subscribes late
    *  reads the live list and a process that goes away takes its list with it. */
   background: BackgroundTask[]
+  /** The provider's last `session_meta`: the model it said it runs on. Held
+   *  the way `background` is, so a pane that subscribes after the adapter
+   *  said it (OpenCode and Pi say it once, at the handshake) still names the
+   *  model. */
+  meta: Extract<SessionEvent, { type: 'session_meta' }> | null
+  /** The messages the agent has not taken yet, as the adapter last listed
+   *  them (PRDCT-4566), without what it handed back: held the way
+   *  `background` is, so a view that opens while one waits shows it. */
+  waiting: WaitingSnapshot | null
 }
+type WaitingSnapshot = Omit<Extract<SessionEvent, { type: 'waiting_messages' }>, 'returned'>
 
 /** What an adoption knows beyond the record. */
 export interface AdoptMeta {
@@ -105,7 +115,9 @@ export class SessionManager {
       exits: new Set(),
       exited: false,
       ready: false,
-      background: []
+      background: [],
+      meta: null,
+      waiting: null
     }
     this.entries.set(parsed.id, entry)
     try {
@@ -128,6 +140,16 @@ export class SessionManager {
         } else {
           if (stream.kind === 'event' && stream.event.type === 'background_tasks')
             entry.background = stream.event.tasks
+          if (stream.kind === 'event' && stream.event.type === 'session_meta')
+            entry.meta = stream.event
+          if (stream.kind === 'event' && stream.event.type === 'waiting_messages')
+            entry.waiting = stream.event.messages.length
+              ? {
+                  type: 'waiting_messages',
+                  messages: stream.event.messages,
+                  takes: stream.event.takes
+                }
+              : null
           this.publish(entry, stream)
         }
       })
@@ -138,6 +160,9 @@ export class SessionManager {
         if (entry.exited) return
         entry.exited = true
         this.clearBackground(entry)
+        // Nothing waits for a process that is gone: its adapter handed what
+        // waited back before its end (PRDCT-4566).
+        entry.waiting = null
         this.setState(session.id, 'ended')
         for (const listener of [...entry.exits]) this.notify(() => listener.callback(code))
         for (const off of entry.off) off()
@@ -154,6 +179,7 @@ export class SessionManager {
     // off, so its background list would outlive it: the new process reports
     // its own.
     this.clearBackground(entry)
+    entry.waiting = null
     entry.handle = handle
     entry.exited = false
     this.bind(entry)
@@ -384,6 +410,20 @@ export class SessionManager {
   /** What the session still runs in the background, as its provider last said. */
   background(id: string): BackgroundTask[] {
     return [...(this.entries.get(id)?.background ?? [])]
+  }
+
+  /** The provider's last word on the model, for a pane that subscribes after
+   *  it was said; null until the provider has said one. */
+  meta(id: string): Extract<SessionEvent, { type: 'session_meta' }> | null {
+    const meta = this.entries.get(id)?.meta
+    return meta ? { ...meta } : null
+  }
+
+  /** The messages the agent has not taken yet, for a view that subscribes
+   *  while one waits (PRDCT-4566); null when none does. */
+  waiting(id: string): WaitingSnapshot | null {
+    const waiting = this.entries.get(id)?.waiting
+    return waiting ? { ...waiting, messages: [...waiting.messages] } : null
   }
 
   private clearBackground(entry: Entry): void {

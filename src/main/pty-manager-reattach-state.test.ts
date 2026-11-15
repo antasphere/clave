@@ -50,7 +50,14 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('./agent-state-manager', () => ({ lastHookState: mocks.lastHookState }))
+vi.mock('./agent-state-manager', () => ({
+  lastHookState: mocks.lastHookState,
+  // PRDCT-4540: the connection report's half of the state folder.
+  setConnectionReportListener: () => {},
+  clearConnectionReport: () => {},
+  lastConnectionReport: () => {},
+  connectionReportPath: (id: string) => `/stand-in/agent-state/${id}.connection`
+}))
 vi.mock('./sessions/adapters/pty-backend', () => ({
   accountTokenForSpawn: async () => undefined,
   ptyBackend: mocks.backend,

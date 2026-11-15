@@ -47,4 +47,11 @@ describe('the IPC road of a restart reads the provider switch in its own shape (
     })
     expect(continuedFromOf('claude')).toBeUndefined()
   })
+  it('takes the view a move onto the chat opens in, a string only (lane D, PRDCT-4427)', () => {
+    expect(
+      restartOverridesFromWire({ adapterId: 'claude-chat', viewId: 'clave.chat-view/lab' }).viewId
+    ).toBe('clave.chat-view/lab')
+    expect(restartOverridesFromWire({ viewId: 7 }).viewId).toBeUndefined()
+    expect(restartOverridesFromWire({ viewId: '' }).viewId).toBeUndefined()
+  })
 })

@@ -22,14 +22,12 @@ import { execFile } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { codexVersion } from '@clave/session-bridge'
-import type { ModelOption } from '../../shared/session-model'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../preload/index.d'
-import { ptyManager, buildSpawnEnv, codexHomeForSpawn, getLoginShellEnv } from '../pty-manager'
+import { ptyManager, codexHomeForSpawn, getLoginShellEnv } from '../pty-manager'
 import { sessionManager } from '../sessions/session-manager'
-import { ClaudeAdapter, findTranscript } from '../sessions/adapters/claude-adapter'
-import { CodexAdapter } from '../sessions/adapters/codex-adapter'
-import { EchoAdapter } from '../sessions/adapters/echo-adapter'
-import { isEchoLaunchProfile, launchProfileManager } from '../launch-profile-manager'
+import { findTranscript } from '../sessions/adapters/claude-adapter'
+import { isEchoLaunchProfile } from '../launch-profile-manager'
+import { providerModels } from '../provider-models'
 import { findExecutable } from '../shell-launch'
 import {
   PROVIDER_LABELS,
@@ -37,6 +35,8 @@ import {
   planRoad,
   providerOf
 } from '../sessions/provider-switch'
+
+export { providerModels } from '../provider-models'
 
 /** The providers a tab can move to: the built-in chat adapters this build
  *  registered (Claude's is not offered on Windows, as the launcher does not),
@@ -53,31 +53,6 @@ export function providerChoices(): ProviderChoice[] {
   add('codex-chat')
   if (isEchoLaunchProfile('dev-echo-adapter')) add('echo')
   return choices
-}
-
-/** One list per adapter per boot: the Claude list costs a process start,
- *  the Codex one an app-server start, and neither changes while the app
- *  runs. A list that failed is asked again next time. */
-const modelLists = new Map<string, Promise<ModelOption[]>>()
-export function providerModels(adapterId: string, cwd: string): Promise<ModelOption[]> {
-  const cached = modelLists.get(adapterId)
-  if (cached) return cached
-  const adapter = sessionManager.getAdapter(adapterId)
-  const listing: Promise<ModelOption[]> =
-    adapter instanceof ClaudeAdapter
-      ? adapter.listModels(cwd)
-      : adapter instanceof CodexAdapter
-        ? adapter.listModelsWithoutSession(
-            cwd,
-            launchProfileManager.resolve('codex', undefined, 'codex-chat'),
-            buildSpawnEnv(getLoginShellEnv(), { codexHome: codexHomeForSpawn('codex', undefined) })
-          )
-        : adapter instanceof EchoAdapter
-          ? adapter.models()
-          : Promise.reject(new Error(`No model list without a session for ${adapterId}`))
-  modelLists.set(adapterId, listing)
-  listing.catch(() => modelLists.delete(adapterId))
-  return listing
 }
 
 /** The installed Codex, on the login shell's PATH; null when it cannot be run. */
