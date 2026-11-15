@@ -64,7 +64,9 @@ export const ICONS = {
   play: 'PlayIcon',
   lock_closed: 'LockClosedIcon',
   signal: 'SignalIcon',
-  signal_slash: 'SignalSlashIcon'
+  signal_slash: 'SignalSlashIcon',
+  cog_6_tooth: 'Cog6ToothIcon',
+  chart_bar: 'ChartBarIcon'
 }
 /** The provider marks, by the component's name in cli-logos.tsx. */
 export const LOGOS = {

@@ -51,7 +51,9 @@ import com.clave.ui.screens.RequestsScreen
 import com.clave.ui.screens.RequestsScreenState
 import com.clave.ui.screens.SessionRow
 import com.clave.ui.screens.SessionsScreen
+import com.clave.ui.screens.SessionSectionView
 import com.clave.ui.screens.SessionsScreenState
+import com.clave.ui.screens.WorkspaceChoice
 import com.clave.ui.screens.UnknownSendView
 import com.clave.ui.screens.WorkspacesScreen
 import com.clave.ui.screens.WorkspacesScreenState
@@ -234,17 +236,26 @@ private fun SessionsScreenPreview(@PreviewParameter(ThemeNameProvider::class) th
     ClaveTheme(theme) {
         SessionsScreen(
             state = SessionsScreenState(
-                workspaceName = "clave",
                 machineName = "Studio",
-                sessions = listOf(
-                    SessionRow(previewSession("s1", "Fix the parser", Transport.Events), SessionStatus.Working),
-                    SessionRow(previewSession("s2", "Review the release", Transport.Events, "codex"), SessionStatus.Waiting),
-                    SessionRow(previewSession("s3", "", Transport.Pty), SessionStatus.Idle),
+                workspaces = listOf(WorkspaceChoice("w1", "clave"), WorkspaceChoice("w2", "notes")),
+                workspaceId = "w1",
+                sections = listOf(
+                    SessionSectionView(
+                        "g1",
+                        "Parser",
+                        "blue",
+                        collapsed = false,
+                        rows = listOf(
+                            SessionRow(previewSession("s1", "Fix the parser", Transport.Events), SessionStatus.Working),
+                            SessionRow(previewSession("s2", "Review the release", Transport.Events, "codex"), SessionStatus.Waiting),
+                        ),
+                    ),
+                    SessionSectionView(null, "Other sessions", null, false, listOf(SessionRow(previewSession("s3", "", Transport.Pty), SessionStatus.Idle))),
                 ),
                 error = null,
                 reachability = Reachability.Reachable,
             ),
-            onOpen = {}, onLaunch = {}, onRefresh = {}, onBack = {},
+            onOpen = {}, onPickWorkspace = {}, onToggleGroup = { _, _ -> }, onRefresh = {}, onBack = {},
         )
     }
 }

@@ -116,11 +116,12 @@ class MappingTest {
             stamps = mapOf("m" to mapOf("term" to "w1", "working" to "w1", "blocked" to "w1", "idle" to "w1", "done" to "w1", "broken" to "w1")),
             fatal = mapOf(conversationKey("m", "broken") to "The adapter crashed."),
         )
-        val state = sessionsState(store, "m", "w1")
-        val rows = state.sessions!!
-        assertEquals(listOf("done", "idle", "blocked", "working", "broken", "term"), rows.map { it.session.id })
+        val state = sessionsState(store, null, "m", "w1")
+        // Without the desktop's groups every session is in the last section, newest first.
+        val rows = state.sections!!.single().rows
+        assertEquals(listOf("term", "done", "idle", "blocked", "working", "broken"), rows.map { it.session.id })
         assertEquals(
-            listOf(SessionStatus.Finished, SessionStatus.Idle, SessionStatus.Waiting, SessionStatus.Working, SessionStatus.Error, SessionStatus.Working),
+            listOf(SessionStatus.Working, SessionStatus.Finished, SessionStatus.Idle, SessionStatus.Waiting, SessionStatus.Working, SessionStatus.Error),
             rows.map { it.status },
         )
         assertEquals("Parser", state.workspaceName)
@@ -134,13 +135,15 @@ class MappingTest {
             sessions = mapOf("m" to listOf(session("here", workspaceId = "w1"), session("elsewhere", workspaceId = "w2"), session("unstamped"))),
             stamps = mapOf("m" to mapOf("here" to "w1", "elsewhere" to "w2", "unstamped" to null)),
         )
-        assertEquals(setOf("here", "unstamped"), sessionsState(store, "m", "w1").sessions!!.map { it.session.id }.toSet())
-        assertEquals(setOf("elsewhere", "unstamped"), sessionsState(store, "m", "w2").sessions!!.map { it.session.id }.toSet())
+        fun ids(workspaceId: String?) = sessionsState(store, null, "m", workspaceId).sections!!.flatMap { it.rows }.map { it.session.id }.toSet()
+        assertEquals(setOf("here", "unstamped"), ids("w1"))
+        assertEquals(setOf("elsewhere", "unstamped"), ids("w2"))
+        assertEquals(setOf("here", "elsewhere", "unstamped"), ids(null))
     }
 
     @Test
     fun sessionsAreNullUntilTheFirstAnswer() {
-        assertNull(sessionsState(StoreState(), "m", "w1").sessions)
+        assertNull(sessionsState(StoreState(), null, "m", "w1").sections)
     }
 
     // ── machines ──
@@ -212,7 +215,11 @@ class MappingTest {
         assertEquals("Studio", state.sourceName)
         assertEquals("Laptop", state.targetName)
         assertEquals("Parser", state.workspaceName)
-        assertEquals(listOf("chat:x", "claude-chat", "t-alpha", "t-zed"), state.profiles!!.map { it.id })
+        // The built-in chats, each saved profile's chat twin, the saved chats, then the terminals by name.
+        assertEquals(
+            listOf("claude-chat", "codex-chat", "chat:claude:t-zed", "chat:claude:t-alpha", "chat:x", "t-alpha", "t-zed"),
+            state.profiles!!.map { it.id },
+        )
         assertEquals("claude-chat", state.starting)
         assertEquals("No such profile.", state.refusal)
     }
@@ -221,7 +228,7 @@ class MappingTest {
     fun launchReadsTheTargetsOwnProfilesWhenTheMainIsNotListed() {
         val store = StoreState(machines = listOf(machine("target")), mainMachineId = "gone", profiles = mapOf("target" to prefs))
         assertEquals("target", launchSourceOf(store, "target"))
-        assertEquals(4, launchState(store, "target", "w1", null, null).profiles!!.size)
+        assertEquals(7, launchState(store, "target", "w1", null, null).profiles!!.size)
     }
 
     // ── requests ──
@@ -238,7 +245,7 @@ class MappingTest {
                 ),
             ),
         )
-        assertEquals(3, workspacesState(store, "m").pendingRequests)
+        assertEquals(3, pendingOf(store, "m").size)
         val listed = requestsState(store, "m", busy = setOf("r1"), notices = mapOf("r9" to SETTLED_ELSEWHERE))
         assertEquals(listOf("r1", "r2", "r3"), listed.pending.map { it.id })
         assertFalse(listed.loading)
@@ -256,7 +263,7 @@ class MappingTest {
     @Test
     fun requestsLoadUntilTheFirstAnswer() {
         assertTrue(requestsState(StoreState(), "m", emptySet(), emptyMap()).loading)
-        assertEquals(0, workspacesState(StoreState(), "m").pendingRequests)
+        assertEquals(0, pendingOf(StoreState(), "m").size)
     }
 
     // ── chat ──
@@ -356,25 +363,35 @@ class MappingTest {
         assertEquals("chat/m/s", routeFor(DeepLink.Chat("m", "s", "")))
         assertEquals("requests/m?requestId=r1", routeFor(DeepLink.Requests("m", "r1")))
         assertEquals("requests/m", routeFor(DeepLink.Requests("m", null)))
-        assertEquals("workspaces/m", routeFor(DeepLink.Workspaces("m")))
+        assertEquals("home/m", routeFor(DeepLink.Workspaces("m")))
         assertEquals(Routes.MACHINES, routeFor(DeepLink.Machines("Studio is not paired with this phone.")))
     }
 
     @Test
-    fun aColdLaunchOpensMachinesThenTheLastMachinesWorkspaces() {
+    fun aColdLaunchOpensMachinesThenTheLastMachinesHome() {
         assertEquals(listOf("machines"), routesFor(initialLaunchState(null, null)))
-        assertEquals(listOf("machines", "workspaces/m"), routesFor(initialLaunchState("m", null)))
+        assertEquals(listOf("machines", "home/m"), routesFor(initialLaunchState("m", null)))
     }
 
     @Test
-    fun aChatLinkOpensOverItsMachinesWorkspaces() {
+    fun aChatRouteCarriesTheMessageToSendOnce() {
+        assertEquals("chat/m/s?title=clave&message=Fix%20it%20%26%20ship", Routes.chat("m", "s", "clave", "Fix it & ship"))
+        assertEquals("chat/m/s?message=hi", Routes.chat("m", "s", null, "hi"))
+        assertEquals("sessions/m", Routes.sessions("m"))
+        assertEquals("sessions/m?workspaceId=w%201", Routes.sessions("m", "w 1"))
+        assertEquals("settings/dev%3A1", Routes.settings("dev:1"))
+        assertEquals("accounts/m", Routes.accounts("m"))
+    }
+
+    @Test
+    fun aChatLinkOpensOverItsMachinesHome() {
         val link = DeepLink.Chat("m2", "s", "Fix it")
         assertEquals(
-            listOf("machines", "workspaces/m2", "chat/m2/s?title=Fix%20it"),
+            listOf("machines", "home/m2", "chat/m2/s?title=Fix%20it"),
             routesFor(initialLaunchState("m", link.toUri())),
         )
         assertEquals(
-            listOf("machines", "workspaces/m", "requests/m?requestId=r1"),
+            listOf("machines", "home/m", "requests/m?requestId=r1"),
             routesFor(initialLaunchState(null, DeepLink.Requests("m", "r1").toUri())),
         )
     }

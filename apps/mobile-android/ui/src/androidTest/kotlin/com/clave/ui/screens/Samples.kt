@@ -69,15 +69,33 @@ object Samples {
     )
 
     fun sessions() = SessionsScreenState(
-        workspaceName = "clave",
         machineName = "Studio",
-        sessions = listOf(
-            SessionRow(session("s1", "Fix the parser"), SessionStatus.Working),
-            SessionRow(session("s2", "Review the release"), SessionStatus.Waiting),
-            SessionRow(session("s3", "Notes"), SessionStatus.Idle),
-            SessionRow(session("s4", "Release 411"), SessionStatus.Finished),
-            SessionRow(session("s5", "Migrate the store"), SessionStatus.Error),
-            SessionRow(session("s6", "Dev server", Transport.Pty), SessionStatus.Idle),
+        workspaces = listOf(WorkspaceChoice("w1", "clave"), WorkspaceChoice("w2", "notes")),
+        workspaceId = "w1",
+        sections = listOf(
+            SessionSectionView(
+                "g1",
+                "Parser",
+                "blue",
+                collapsed = false,
+                rows = listOf(
+                    SessionRow(session("s1", "Fix the parser"), SessionStatus.Working),
+                    SessionRow(session("s2", "Review the release"), SessionStatus.Waiting),
+                ),
+            ),
+            SessionSectionView("g2", "Release", "green", collapsed = false, rows = listOf(SessionRow(session("s4", "Release 411"), SessionStatus.Finished))),
+            SessionSectionView("g3", "Archive", "red", collapsed = true, rows = listOf(SessionRow(session("s7", "Old work"), SessionStatus.Finished))),
+            SessionSectionView(
+                null,
+                "Other sessions",
+                null,
+                collapsed = false,
+                rows = listOf(
+                    SessionRow(session("s3", "Notes"), SessionStatus.Idle),
+                    SessionRow(session("s5", "Migrate the store"), SessionStatus.Error),
+                    SessionRow(session("s6", "Dev server", Transport.Pty), SessionStatus.Idle),
+                ),
+            ),
         ),
         error = null,
         reachability = Reachability.Reachable,
@@ -194,4 +212,92 @@ object Samples {
         now = now,
     )
 
+
+    // ── the shell ──
+
+    val composerWorkspaces = listOf(WorkspaceChoice("w1", "clave"), WorkspaceChoice("w2", "notes"))
+    val chatProfiles = listOf(ProfileChoice("claude-chat", "Claude (chat)", "claude"), ProfileChoice("codex-chat", "Codex (chat)", "codex"))
+
+    fun composer(text: String = "") = QuickComposerState(
+        text = text,
+        workspace = composerWorkspaces.first(),
+        profile = chatProfiles.first(),
+        workspaces = composerWorkspaces,
+        profiles = chatProfiles,
+    )
+
+    fun home() = HomeScreenState(
+        machineName = "Studio",
+        machines = listOf(MachineChoice("studio", "Studio"), MachineChoice("build", "Build box")),
+        currentMachineId = "studio",
+        reachability = Reachability.Reachable,
+        composer = composer(),
+        pendingRequests = 2,
+        limits = listOf(
+            LimitChip("claude", "Work", usedPercentage = 42.0, resetsAt = now + 2 * 3_600_000 + 600_000, exhausted = false),
+            LimitChip("claude", "Personal", usedPercentage = 97.0, resetsAt = now + 720_000, exhausted = true),
+            LimitChip("codex", "ChatGPT", usedPercentage = null, resetsAt = null, exhausted = false, note = "No usage read yet"),
+        ),
+        recent = listOf(
+            RecentRow(session("s1", "Fix the parser"), SessionStatus.Working, "clave", "Parser"),
+            RecentRow(session("s2", "Review the release"), SessionStatus.Waiting, "clave", null),
+            RecentRow(session("s3", "Notes"), SessionStatus.Idle, "notes", null),
+        ),
+        now = now,
+    )
+
+    fun settings() = SettingsScreenState(
+        machinesSummary = "Studio · 2 machines",
+        defaultWorkspaceId = null,
+        defaultProfileId = "claude-chat",
+        workspaces = composerWorkspaces,
+        profiles = chatProfiles,
+        appearance = "System",
+        notificationsAllowed = true,
+        appVersion = "0.1.0 (1)",
+        macVersion = "1.42.0",
+        macName = "Studio",
+        accountName = "Ada Lovelace",
+        accountEmail = "ada@example.com",
+        signingOut = false,
+    )
+
+    fun accounts() = AccountsScreenState(
+        machineName = "Studio",
+        providers = listOf(
+            ProviderAccounts(
+                "claude",
+                "Claude",
+                listOf(
+                    AccountCard(
+                        "a1",
+                        "Work",
+                        AccountStatus.SignedIn,
+                        bars = listOf(
+                            UsageBar("5-hour", 42.0, now + 2 * 3_600_000 + 600_000, BarInk.Normal),
+                            UsageBar("Week, all models", 81.0, now + 3 * 86_400_000L, BarInk.Warning),
+                            UsageBar("Week, Fable", 100.0, now + 86_400_000L, BarInk.Critical),
+                        ),
+                        exhausted = false,
+                        familiesOut = listOf("Fable"),
+                        fetchedAt = now - 240_000,
+                    ),
+                    AccountCard(
+                        "a2",
+                        "Personal",
+                        AccountStatus.SignedIn,
+                        bars = listOf(UsageBar("5-hour", 97.0, now + 720_000, BarInk.Critical)),
+                        exhausted = true,
+                        fetchedAt = now - 60_000,
+                    ),
+                ),
+            ),
+            ProviderAccounts(
+                "codex",
+                "Codex",
+                listOf(AccountCard("c1", "ChatGPT", AccountStatus.NoCredential, bars = emptyList(), exhausted = false, readNote = "No usage read yet")),
+            ),
+        ),
+        now = now,
+    )
 }

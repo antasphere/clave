@@ -19,6 +19,12 @@ import com.clave.core.devices.PairingState
 import com.clave.core.notifications.PushCleanupResult
 import com.clave.core.notifications.TokenRegistration
 import com.clave.core.state.LAST_MACHINE_KEY
+import com.clave.core.state.MachineShell
+import com.clave.core.state.ShellPrefs
+import com.clave.core.state.ShellStore
+import com.clave.core.state.decodeShellPrefs
+import com.clave.core.state.encodeShellPrefs
+import com.clave.core.state.shellPrefsKey
 import com.clave.core.state.StoreState
 import com.clave.core.transport.messageOf
 import com.clave.ui.theme.APPEARANCE_KEY
@@ -138,6 +144,33 @@ class ClaveViewModel(private val services: AppServices) : ViewModel() {
     /** The pairing under way or settled; null before it began. */
     val pairing: StateFlow<PairingState?> = _pairing.asStateFlow()
 
+    /** One shell store per owner session, made on first use and let go with the owner. */
+    private val shells = ConcurrentHashMap<OwnerSession, ShellStore>()
+
+    private fun shellOf(owner: OwnerSession): ShellStore = shells.getOrPut(owner) {
+        ShellStore(
+            scope = owner.scope,
+            connect = { owner.store.connect(it).client },
+            events = owner.store.events,
+            reloadSessions = { owner.store.loadSessions(it) },
+        )
+    }
+
+    /** Per machine, the shell's reads: the desktop's groups, the accounts, their usage, the server's version. */
+    val shell: StateFlow<Map<String, MachineShell>> = services.owner
+        .flatMapLatest { owner -> owner?.let { shellOf(it).state } ?: flowOf(emptyMap()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    private val _prefs = MutableStateFlow<Map<String, ShellPrefs>>(emptyMap())
+
+    /** Per machine, what the phone remembers of its shell: last used, defaults, folds. */
+    val prefs: StateFlow<Map<String, ShellPrefs>> = _prefs.asStateFlow()
+
+    private val _composer = MutableStateFlow<Map<String, ComposerDraft>>(emptyMap())
+
+    /** Per machine, the quick composer's text and the choices made on its chips. */
+    val composer: StateFlow<Map<String, ComposerDraft>> = _composer.asStateFlow()
+
     private val urls = Channel<String>(Channel.BUFFERED)
 
     /** The VIEW intents the activity received while running, in order. */
@@ -160,6 +193,9 @@ class ClaveViewModel(private val services: AppServices) : ViewModel() {
                 _starting.value = emptyMap()
                 _refusals.value = emptyMap()
                 _relayError.value = null
+                _prefs.value = emptyMap()
+                _composer.value = emptyMap()
+                shells.keys.retainAll { it === owner }
                 noFilesRoute.clear()
                 if (owner != null) {
                     _relayUrl.value = owner.services.relayUrl()
@@ -338,10 +374,86 @@ class ClaveViewModel(private val services: AppServices) : ViewModel() {
         owner.store.loadRequests(machineId)
     }
 
-    /** After a resume: the machine's sessions and requests read again. */
+    /** After a resume: the machine's sessions, requests and shell read again. */
     fun refreshMachine(machineId: String) {
         loadSessions(machineId)
         loadRequests(machineId)
+        loadShell(machineId)
+    }
+
+    // ── the shell ──
+
+    /** Every read of the machine's shell again (Home's and Settings' first look, a pull, a resume). */
+    fun loadShell(machineId: String) = withOwner { owner ->
+        ensureMachine(owner, machineId)
+        shellOf(owner).refresh(machineId)
+    }
+
+    /** The groups again (the session list's pull). */
+    fun refreshGroups(machineId: String) = withOwner { owner ->
+        ensureMachine(owner, machineId)
+        shellOf(owner).refreshOverview(machineId)
+    }
+
+    /** The accounts and their usage again (the limits page's pull). */
+    fun refreshLimits(machineId: String) = withOwner { owner ->
+        ensureMachine(owner, machineId)
+        shellOf(owner).refreshLimits(machineId)
+    }
+
+    /** Reads what the phone remembers of [machineId]'s shell, once per owner. */
+    fun loadPrefs(machineId: String) = withOwner { owner ->
+        if (_prefs.value.containsKey(machineId)) return@withOwner
+        val stored = decodeShellPrefs(owner.kv.get(shellPrefsKey(machineId)))
+        if (services.owner.value === owner) _prefs.update { if (it.containsKey(machineId)) it else it + (machineId to stored) }
+    }
+
+    private fun updatePrefs(machineId: String, change: (ShellPrefs) -> ShellPrefs) {
+        val owner = services.owner.value ?: return
+        val next = change(_prefs.value[machineId] ?: ShellPrefs())
+        _prefs.update { it + (machineId to next) }
+        viewModelScope.launch { owner.kv.set(shellPrefsKey(machineId), encodeShellPrefs(next)) }
+    }
+
+    /** The person folded or opened a group on the phone: it stays so on this phone. */
+    fun setGroupFolded(machineId: String, groupId: String, folded: Boolean) =
+        updatePrefs(machineId) { it.copy(folds = it.folds + (groupId to folded)) }
+
+    /** Settings' default workspace of a new chat; null goes back to the last used. */
+    fun setDefaultWorkspace(machineId: String, workspaceId: String?) = updatePrefs(machineId) { it.copy(defaultWorkspace = workspaceId) }
+
+    /** Settings' default agent of a new chat; null goes back to the last used. */
+    fun setDefaultProfile(machineId: String, profileId: String?) = updatePrefs(machineId) { it.copy(defaultProfile = profileId) }
+
+    private fun updateComposer(machineId: String, change: (ComposerDraft) -> ComposerDraft) =
+        _composer.update { it + (machineId to change(it[machineId] ?: ComposerDraft())) }
+
+    fun setComposerText(machineId: String, text: String) = updateComposer(machineId) { it.copy(text = text) }
+
+    fun pickComposerWorkspace(machineId: String, workspaceId: String) = updateComposer(machineId) { it.copy(workspaceId = workspaceId) }
+
+    fun pickComposerProfile(machineId: String, profileId: String) = updateComposer(machineId) { it.copy(profileId = profileId) }
+
+    /**
+     * The quick composer's Send: a new chat on the chosen profile in the chosen workspace
+     * (startSession, so one start at a time and the refusal kept for the composer), then
+     * [onStarted] with the session and the text, which the chat sends through its own send
+     * path as it opens. The workspace and the profile become the last used; the text leaves
+     * the composer once the session exists, since the chat now holds it.
+     */
+    fun quickStart(machineId: String, onStarted: (SessionInfo, String) -> Unit) {
+        val owner = services.owner.value ?: return
+        val draft = _composer.value[machineId] ?: return
+        val text = draft.text.trim()
+        if (text.isEmpty()) return
+        val pick = composerPick(owner.store.state.value, machineId, draft, _prefs.value[machineId] ?: ShellPrefs())
+        val workspace = pick.workspace ?: return
+        val profile = pick.profile ?: return
+        startSession(machineId, workspace, profile) { info ->
+            updatePrefs(machineId) { it.copy(lastWorkspace = workspace.id, lastProfile = profile.id) }
+            _composer.update { it + (machineId to ComposerDraft()) }
+            onStarted(info, text)
+        }
     }
 
     /** Answers a request; one the server says another client settled first keeps a sentence. */

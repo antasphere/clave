@@ -7,7 +7,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -22,6 +24,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,6 +35,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +46,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -68,16 +80,20 @@ import com.clave.ui.theme.shadow
  */
 
 /** A turn the person sent: boxed on surface-100 at the end of the column; an interrupted one goes hollow. */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun UserTurn(
     text: String,
     modifier: Modifier = Modifier,
     attachmentLabels: List<String> = emptyList(),
     interrupted: Boolean = false,
+    /** When it was said ("5 min ago"); null draws no stamp. */
+    timestamp: String? = null,
 ) {
     val t = Clave.colors.theme
     val shape = RoundedCornerShape(Metrics.radiusXxl)
+    val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     Column(
         modifier.fillMaxWidth().padding(start = Metrics.userTurnInset),
         horizontalAlignment = Alignment.End,
@@ -102,15 +118,26 @@ fun UserTurn(
                 text = body,
                 modifier = Modifier
                     .clip(shape)
+                    // A long press copies the message, as the desktop's copy button does.
+                    .combinedClickable(
+                        onClickLabel = null,
+                        onLongClickLabel = "Copy",
+                        onClick = {},
+                        onLongClick = {
+                            clipboard.setText(AnnotatedString(body))
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        },
+                    )
                     .then(frame)
                     .padding(horizontal = Metrics.userTurnPaddingX, vertical = Metrics.userTurnPaddingY),
                 style = ClaveTypography.type(Metrics.textSm, lineHeight = Metrics.userTurnLineHeight)
                     .copy(color = if (interrupted) t.textTertiary else t.textPrimary),
             )
         }
-        if (interrupted) {
+        val under = listOfNotNull("Interrupted".takeIf { interrupted }, timestamp).joinToString(" · ")
+        if (under.isNotEmpty()) {
             BasicText(
-                text = "Interrupted",
+                text = under,
                 modifier = Modifier.padding(horizontal = Metrics.space(1)),
                 style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary),
             )
@@ -125,8 +152,13 @@ fun AssistantProse(
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
     onLink: ((String) -> Unit)? = null,
+    /** When it was said; with it, a finished answer gets its copy button and its stamp. */
+    timestamp: String? = null,
 ) {
+    val t = Clave.colors.theme
+    val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Metrics.space(2))) {
+        // The prose is selectable: a long press picks words and offers Copy.
         if (markdown.isNotBlank()) Markdown(markdown, onLink = onLink)
         if (streaming) {
             StatusDot(
@@ -134,6 +166,16 @@ fun AssistantProse(
                 pulsing = true,
                 modifier = Modifier.semantics { contentDescription = "Writing" },
             )
+        } else if (timestamp != null && markdown.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
+                ClaveIconButton(
+                    icon = ClaveIcon.ClipboardDocument,
+                    onClick = { clipboard.setText(AnnotatedString(markdown.trim())) },
+                    contentDescription = "Copy answer",
+                    size = Metrics.controlXsHeight,
+                )
+                BasicText(timestamp, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
+            }
         }
     }
 }
@@ -180,6 +222,10 @@ fun ToolRow(
     failures: Int = 0,
     sections: List<Pair<String, String>> = emptyList(),
     kind: String = "other",
+    /** The sections with their languages, read by the chat; wins over [sections]. */
+    detailedSections: List<ToolSectionView>? = null,
+    /** The call's few words beside its kind once opened: "Exit 1", "Lines 1–40". */
+    detail: String? = null,
 ) {
     val c = Clave.colors
     val t = c.theme
@@ -230,31 +276,17 @@ fun ToolRow(
                     .padding(horizontal = Metrics.space(2.5f), vertical = Metrics.space(2)),
                 verticalArrangement = Arrangement.spacedBy(Metrics.space(1.5f)),
             ) {
-                if (sections.isEmpty()) {
+                val shown = detailedSections ?: sections.map { (label, body) -> ToolSectionView(label, body, guessLanguage(body)) }
+                if (detail != null) {
+                    BasicText(detail, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
+                }
+                if (shown.isEmpty()) {
                     BasicText(
                         text = if (status == ToolStatus.Running) "Waiting for output…" else "No output returned.",
                         style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary),
                     )
                 }
-                sections.forEach { (label, body) ->
-                    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
-                        BasicText(label, style = ClaveTypography.type(Metrics.textXs).copy(color = t.textTertiary))
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(Metrics.radiusMd))
-                                .background(t.surface100)
-                                .horizontalScroll(rememberScrollState())
-                                .padding(Metrics.space(2)),
-                        ) {
-                            BasicText(
-                                body,
-                                style = ClaveTypography.mono(Metrics.textXs).copy(color = t.textSecondary),
-                                softWrap = false,
-                            )
-                        }
-                    }
-                }
+                shown.forEach { ToolSection(it) }
             }
         }
     }
@@ -448,6 +480,8 @@ fun Composer(
     working: Boolean = false,
     sending: Boolean = false,
     attachments: List<String> = emptyList(),
+    /** Each chip's picture (a content URI), in order; null or missing draws the file glyph. */
+    thumbnails: List<String?> = emptyList(),
     onRemoveAttachment: (Int) -> Unit = {},
     deliveryMark: String? = null,
     placeholder: String = "Write a message…",
@@ -476,11 +510,16 @@ fun Composer(
                     verticalArrangement = Arrangement.spacedBy(Metrics.space(1.5f)),
                 ) {
                     attachments.forEachIndexed { index, label ->
-                        Chip(
-                            label,
-                            icon = ClaveIcon.Document,
-                            onRemove = if (sending) null else { { onRemoveAttachment(index) } },
-                        )
+                        val thumbnail = thumbnails.getOrNull(index)
+                        if (thumbnail != null) {
+                            ImageChip(label, thumbnail, onRemove = if (sending) null else { { onRemoveAttachment(index) } })
+                        } else {
+                            Chip(
+                                label,
+                                icon = ClaveIcon.Document,
+                                onRemove = if (sending) null else { { onRemoveAttachment(index) } },
+                            )
+                        }
                     }
                 }
             }
@@ -493,9 +532,21 @@ fun Composer(
                     enabled = enabled && !sending,
                 )
                 val style = ClaveTypography.type(Metrics.textSm, lineHeight = Metrics.proseLineHeight).copy(color = t.textPrimary)
+                // The field keeps its own caret; a text set from outside (a command picked under
+                // "/", a draft restored) puts the caret at its end, where the next key belongs.
+                // Only a change of the text handed in counts, never the echo of a key not yet back.
+                var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+                var handedIn by remember { mutableStateOf(text) }
+                if (text != handedIn) {
+                    handedIn = text
+                    if (field.text != text) field = TextFieldValue(text, TextRange(text.length))
+                }
                 BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
+                    value = field,
+                    onValueChange = {
+                        field = it
+                        if (it.text != text) onTextChange(it.text)
+                    },
                     enabled = enabled && !sending,
                     textStyle = style,
                     minLines = Metrics.composerMinLines,
@@ -569,4 +620,38 @@ fun ProviderMark(provider: String, modifier: Modifier = Modifier, size: Dp = Met
         tint = if (provider == "claude") c.shared.brandClaude else c.theme.textPrimary,
         size = size,
     )
+}
+
+/** An attached picture's chip: the picture itself, small and rounded, then its label and the way out. */
+@Composable
+fun ImageChip(label: String, model: String, onRemove: (() -> Unit)?, modifier: Modifier = Modifier) {
+    val t = Clave.colors.theme
+    val shape = RoundedCornerShape(Metrics.controlSmRadius)
+    Row(
+        modifier
+            .heightIn(min = Metrics.controlHeight + Metrics.space(2))
+            .clip(shape)
+            .background(t.surface200)
+            .padding(start = Metrics.space(1), end = if (onRemove != null) 0.dp else Metrics.controlSmPadding)
+            .semantics { contentDescription = "Picture $label" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Metrics.controlGap),
+    ) {
+        coil3.compose.AsyncImage(
+            model = model,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.size(Metrics.controlHeight).clip(RoundedCornerShape(Metrics.radiusMd)).background(t.surface100),
+        )
+        BasicText(
+            label,
+            modifier = Modifier.widthIn(max = 140.dp),
+            style = ClaveTypography.type(Metrics.controlSmText).copy(color = t.textPrimary),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (onRemove != null) {
+            ClaveIconButton(icon = ClaveIcon.XMark, onClick = onRemove, contentDescription = "Remove $label", size = Metrics.controlSmHeight)
+        }
+    }
 }

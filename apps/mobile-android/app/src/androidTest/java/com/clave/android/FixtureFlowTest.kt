@@ -132,7 +132,7 @@ private class OpenOnMachines : ExternalResource() {
  * `clave.fixture.session` (the echo session's title, matched as a substring) is optional: by
  * default the row whose subtitle reads "echo · " is opened. Without `clave.fixture.issuer`
  * the test is skipped by assumption. An app already signed in (an earlier run) skips the
- * sign-in, and a machine already paired opens on its workspaces without a pairing.
+ * sign-in, and a machine already paired opens on its Home without a pairing.
  *
  * On a failure the message carries the screen's texts as UiAutomator reads them (the first
  * 2000 characters, query strings and long token-shaped runs cut out); nothing is written to
@@ -207,9 +207,9 @@ class FixtureFlowTest {
         rule.onNodeWithText(fixture.machine).performScrollTo().performClick()
         pairUnlessPaired()
 
-        // 5. The scratch workspace, then the echo chat.
-        waitForText(fixture.workspace, timeoutMs = CHAT_MS)
-        rule.onNodeWithText(fixture.workspace).performScrollTo().performClick()
+        // 5. The machine's Home, all its sessions, then the echo chat.
+        waitForText("All sessions", timeoutMs = CHAT_MS)
+        rule.onNodeWithText("All sessions").performScrollTo().performClick()
         val sessionRow = fixture.session?.let { hasText(it, substring = true) } ?: hasText("echo · ", substring = true, ignoreCase = true)
         rule.waitUntil(CHAT_MS) { rule.onAllNodes(sessionRow).fetchSemanticsNodes().isNotEmpty() }
         rule.onAllNodes(sessionRow).onFirst().performScrollTo().performClick()
@@ -283,7 +283,7 @@ class FixtureFlowTest {
 
     /**
      * The pairing screen until "Paired with", the notification permission allowed when it is
-     * asked, then "Open workspaces"; a machine already paired opens on its workspaces instead.
+     * asked, then "Continue"; a machine already paired opens on its Home instead.
      */
     private fun pairUnlessPaired() {
         val start = System.currentTimeMillis()
@@ -291,7 +291,7 @@ class FixtureFlowTest {
             if (pressForeign(PERMISSION_BUTTONS)) continue
             if (appInFront()) {
                 if (shown("Paired with ", substring = true)) break
-                if (shown(fixture.workspace) && !shown("Pair with ", substring = true)) return
+                if (shown("All sessions") && !shown("Pair with ", substring = true)) return
                 if (shown("refused this phone", substring = true) || shown("The request expired", substring = true)) {
                     throw AssertionError("the pairing with ${fixture.machine} ended unapproved (is the runner on --approve?)")
                 }
@@ -304,7 +304,7 @@ class FixtureFlowTest {
         while (System.currentTimeMillis() - settle < 3_000) {
             if (!pressForeign(PERMISSION_BUTTONS)) Thread.sleep(300)
         }
-        rule.onNodeWithText("Open workspaces").performClick()
+        rule.onNodeWithText("Continue").performClick()
     }
 
     /** Runs [body]; a failure is rethrown with what UiAutomator reads on screen. */

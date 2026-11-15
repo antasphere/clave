@@ -167,7 +167,38 @@ object Decode {
                 )
             },
             multiSelect = opt(o["multiSelect"], "$path.multiSelect", ::bool),
+            optionsOnly = opt(o["optionsOnly"], "$path.optionsOnly", ::bool),
+            kind = opt(o["kind"], "$path.kind") { v, p -> lit(v, p, InputKind.entries) { it.wire } },
+            hint = opt(o["hint"], "$path.hint", ::str),
+            placeholder = opt(o["placeholder"], "$path.placeholder", ::str),
+            default = opt(o["default"], "$path.default", ::str),
+            optional = opt(o["optional"], "$path.optional", ::bool),
+            url = opt(o["url"], "$path.url", ::str),
+            confirm = opt(o["confirm"], "$path.confirm", ::str),
+            min = opt(o["min"], "$path.min", ::num),
+            max = opt(o["max"], "$path.max", ::num),
         )
+    }
+
+    /** A form's answers by the question's key: a string, or the labels of a multi-select. */
+    private fun formAnswers(value: JsonElement?, path: String): Map<String, FormAnswer> {
+        val o = obj(value, path)
+        val answers = LinkedHashMap<String, FormAnswer>()
+        for ((key, item) in o) {
+            answers[key] = if (item is JsonArray) {
+                FormAnswer.Choices(arr(item, "$path.$key", ::str))
+            } else {
+                FormAnswer.Text(str(item, "$path.$key"))
+            }
+        }
+        return answers
+    }
+
+    private fun stringRecord(value: JsonElement?, path: String): Map<String, String> {
+        val o = obj(value, path)
+        val record = LinkedHashMap<String, String>()
+        for ((key, item) in o) record[key] = str(item, "$path.$key")
+        return record
     }
 
     private fun idLabel(value: JsonElement?, path: String): IdLabel {
@@ -177,14 +208,30 @@ object Decode {
 
     fun sessionEvent(value: JsonElement, path: String = "event"): SessionEvent = sessionEventOf(value, path)
 
+    /**
+     * An event as a page or a live frame carries it: a member this phone cannot read (a
+     * malformed one of a known type included) is carried as [SessionEvent.Unknown] by its
+     * type, so one event never fails a whole page of history nor drops a positioned frame,
+     * whose position the order of the stream still needs. Only an item that is not an event
+     * at all (no object, no string type) is refused.
+     */
+    private fun carriedEventOf(value: JsonElement?, path: String): SessionEvent = try {
+        sessionEventOf(value, path)
+    } catch (e: DecodeError) {
+        val type = ((value as? JsonObject)?.get("type") as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
+        if (type == null) throw e
+        SessionEvent.Unknown(type)
+    }
+
     private fun sessionEventOf(value: JsonElement?, path: String): SessionEvent {
         val o = obj(value, path)
-        return when (str(o["type"], "$path.type")) {
+        return when (val type = str(o["type"], "$path.type")) {
             "user_message" -> SessionEvent.UserMessage(
                 clientMessageId = opt(o["clientMessageId"], "$path.clientMessageId", ::str),
                 text = str(o["text"], "$path.text"),
                 attachments = opt(o["attachments"], "$path.attachments") { v, p -> arr(v, p, ::attachment) },
                 parent = opt(o["parent"], "$path.parent", ::str),
+                form = opt(o["form"], "$path.form", ::str),
             )
             "assistant_text" -> SessionEvent.AssistantText(
                 delta = str(o["delta"], "$path.delta"),
@@ -213,6 +260,20 @@ object Decode {
                 questions = opt(o["questions"], "$path.questions") { v, p -> arr(v, p, ::agentQuestionOf) },
             )
             "permission_withdrawn" -> SessionEvent.PermissionWithdrawn(id = str(o["id"], "$path.id"))
+            "permission_updated" -> SessionEvent.PermissionUpdated(
+                id = str(o["id"], "$path.id"),
+                answers = formAnswers(o["answers"], "$path.answers"),
+                sent = opt(o["sent"], "$path.sent", ::bool),
+                typed = opt(o["typed"], "$path.typed", ::bool),
+                notes = opt(o["notes"], "$path.notes", ::stringRecord),
+            )
+            "permission_explained" -> SessionEvent.PermissionExplained(
+                id = str(o["id"], "$path.id"),
+                level = opt(o["level"], "$path.level") { v, p -> lit(v, p, RiskLevel.entries) { it.wire } },
+                sentence = opt(o["sentence"], "$path.sentence", ::str),
+                asked = opt(o["asked"], "$path.asked") { v, p -> lit(v, p, AskedMatch.entries) { it.wire } },
+                failed = opt(o["failed"], "$path.failed", ::str),
+            )
             "state_change" -> SessionEvent.StateChange(state = agentStateOf(o["state"], "$path.state"))
             "session_meta" -> SessionEvent.SessionMeta(
                 model = nullable(o["model"], "$path.model", ::str),
@@ -256,9 +317,9 @@ object Decode {
                 provider = str(o["provider"], "$path.provider"),
                 payload = o["payload"],
             )
-            // A session event is a closed union on the contract's side: an unknown one is
-            // a refusal, unlike a server event or a frame.
-            else -> fail("$path.type", "a known session event type")
+            // A closed union on the server, but a newer server grows it before this phone
+            // learns the member: carried by its type, read by nobody, never a refusal.
+            else -> SessionEvent.Unknown(type)
         }
     }
 
@@ -269,7 +330,7 @@ object Decode {
         return when (str(o["kind"], "$path.kind")) {
             "pty" -> SessionStream.Pty(data = str(o["data"], "$path.data"))
             "event" -> SessionStream.Event(
-                event = sessionEventOf(o["event"], "$path.event"),
+                event = carriedEventOf(o["event"], "$path.event"),
                 position = opt(o["position"], "$path.position", ::sessionPositionOf),
             )
             else -> fail("$path.kind", "pty or event")
@@ -295,7 +356,7 @@ object Decode {
         val items = arr(o["items"], "$path.items") { item, p ->
             val entry = obj(item, p)
             TimelineItem(
-                event = sessionEventOf(entry["event"], "$p.event"),
+                event = carriedEventOf(entry["event"], "$p.event"),
                 at = opt(entry["at"], "$p.at", ::long),
                 position = sessionPositionOf(entry["position"], "$p.position"),
             )
@@ -323,7 +384,7 @@ object Decode {
         return HistoryPage(
             items = arr(o["items"], "$path.items") { item, p ->
                 val entry = obj(item, p)
-                HistoryItem(event = sessionEventOf(entry["event"], "$p.event"), at = opt(entry["at"], "$p.at", ::long))
+                HistoryItem(event = carriedEventOf(entry["event"], "$p.event"), at = opt(entry["at"], "$p.at", ::long))
             },
             before = nullable(o["before"], "$path.before", ::long),
         )
@@ -364,6 +425,38 @@ object Decode {
             status = lit(o["status"], "$path.status", WriteStatusKind.entries) { it.wire },
             at = opt(o["at"], "$path.at", ::long),
             reason = opt(o["reason"], "$path.reason", ::str),
+        )
+    }
+
+    /** `GET /sessions/models`: what the session may switch to; empty when its provider offers none. */
+    fun modelOptions(value: JsonElement, path: String = "models"): List<ModelOption> = arr(value, path) { item, p ->
+        val o = obj(item, p)
+        ModelOption(
+            id = str(o["id"], "$p.id"),
+            label = str(o["label"], "$p.label"),
+            hint = opt(o["hint"], "$p.hint", ::str),
+            resolved = opt(o["resolved"], "$p.resolved", ::str),
+            efforts = opt(o["efforts"], "$p.efforts") { v, ep ->
+                arr(v, ep) { e, eap ->
+                    val effort = obj(e, eap)
+                    EffortOption(
+                        id = str(effort["id"], "$eap.id"),
+                        label = str(effort["label"], "$eap.label"),
+                        hint = opt(effort["hint"], "$eap.hint", ::str),
+                    )
+                }
+            },
+            defaultEffort = opt(o["defaultEffort"], "$p.defaultEffort", ::str),
+        )
+    }
+
+    /** `GET /sessions/commands`: what the composer offers under "/". */
+    fun commandOptions(value: JsonElement, path: String = "commands"): List<CommandOption> = arr(value, path) { item, p ->
+        val o = obj(item, p)
+        CommandOption(
+            name = str(o["name"], "$p.name"),
+            description = opt(o["description"], "$p.description", ::str),
+            insert = str(o["insert"], "$p.insert"),
         )
     }
 

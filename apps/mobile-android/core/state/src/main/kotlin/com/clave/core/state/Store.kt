@@ -60,7 +60,11 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -136,6 +140,8 @@ public data class StoreState(
     val reachability: Map<String, Reachability> = emptyMap(),
     val workspaces: Map<String, List<WorkspaceView>> = emptyMap(),
     val workspacesError: Map<String, String?> = emptyMap(),
+    /** machine id → the workspace the Mac was last active in, as its workspace list said. */
+    val lastActiveWorkspace: Map<String, String?> = emptyMap(),
     val sessions: Map<String, List<Session>> = emptyMap(),
     val sessionsError: Map<String, String?> = emptyMap(),
     /** machine id → session id → the authoritative stamp from the latest session list. */
@@ -268,7 +274,13 @@ public class ClaveStore(private val services: Services) {
     private fun setConversation(key: String, change: (ConversationState) -> ConversationState) =
         _state.update { it.copy(conversations = it.conversations + (key to change(conversationOf(it, key)))) }
 
+    private val _events = MutableSharedFlow<MachineEvent>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Every server event of every connected machine, as heard: what the shell's reads follow. */
+    public val events: SharedFlow<MachineEvent> = _events.asSharedFlow()
+
     private fun applySessionEvent(machineId: String, envelope: ServerEventEnvelope) {
+        _events.tryEmit(MachineEvent(machineId, envelope))
         when (val event = envelope.event) {
             is ServerEvent.SessionStateChanged -> _state.update { s ->
                 val sessions = s.sessions[machineId] ?: return@update s
@@ -437,6 +449,7 @@ public class ClaveStore(private val services: Services) {
                 it.copy(
                     workspaces = it.workspaces + (machineId to loaded.workspaces.toList()),
                     workspacesError = it.workspacesError + (machineId to null),
+                    lastActiveWorkspace = it.lastActiveWorkspace + (machineId to loaded.lastActiveWorkspaceId),
                 )
             }
         } catch (e: CancellationException) {

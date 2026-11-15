@@ -40,19 +40,20 @@ import com.clave.android.AppServices
 import com.clave.android.BuildConfig
 import com.clave.android.Development
 import com.clave.core.chat.PickedKind
+import com.clave.core.chat.emptyConversation
 import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.parseDeepLink
 import com.clave.core.state.LAST_MACHINE_KEY
+import com.clave.core.state.conversationKey
 import com.clave.ui.components.Notice
 import com.clave.ui.components.NoticeAction
 import com.clave.ui.screens.AppearanceScreen
+import com.clave.ui.screens.ChatActions
 import com.clave.ui.screens.ChatScreen
 import com.clave.ui.screens.LaunchScreen
 import com.clave.ui.screens.MachinesScreen
 import com.clave.ui.screens.PairingScreen
 import com.clave.ui.screens.RequestsScreen
-import com.clave.ui.screens.SessionsScreen
-import com.clave.ui.screens.WorkspacesScreen
 import com.clave.ui.screens.basename
 import com.clave.ui.screens.isChatProfile
 import com.clave.ui.theme.ClaveTheme
@@ -85,7 +86,7 @@ private fun optional(name: String) = navArgument(name) {
 
 /** The wall clock, ticking every [periodMs]: the "seen 5 min ago" lines and the pairing's countdown. */
 @Composable
-private fun rememberNow(periodMs: Long): Long {
+internal fun rememberNow(periodMs: Long): Long {
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             delay(periodMs)
@@ -113,13 +114,27 @@ fun ClaveApp(services: AppServices, launchUrl: String?, viewModel: ClaveViewMode
         val notice by viewModel.notice.collectAsStateWithLifecycle()
         val links = remember { Channel<DeepLink>(Channel.BUFFERED) }
         var started by remember { mutableStateOf(false) }
+        // The launch's routes are laid once per fresh launch. A recreation (a configuration
+        // change, a restore after the process died) finds the back stack the nav controller
+        // saved, and laying them again would put Home over the open chat.
+        var launched by rememberSaveable { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             val first = withTimeoutOrNull(RESTORE_WAIT_MS) { services.restoredOwner() } ?: services.owner.value
-            if (first != null) {
+            if (first != null && !launched) {
                 val initial = first.inbox.initialState(first.kv.get(LAST_MACHINE_KEY), launchUrl)
-                for (route in routesFor(initial).drop(1)) nav.navigate(route)
+                for (route in routesFor(initial).drop(1)) {
+                    // A machine's Home is the root of its stack: back from it leaves the app, not to Machines.
+                    nav.navigate(route) { if (route.startsWith("home/")) popUpTo(Routes.MACHINES) { inclusive = true } }
+                }
+            } else if (first != null) {
+                // Restored: only a notification's link left pending meanwhile opens, over the restored stack
+                // as a warm link does (with no link, the launch state is Machines alone, already beneath).
+                routesFor(first.inbox.initialState(null, null)).drop(1).lastOrNull()?.let { route ->
+                    nav.navigate(route) { launchSingleTop = true }
+                }
             }
+            launched = true
             started = true
         }
         LaunchedEffect(owner, started) {
@@ -147,21 +162,32 @@ fun ClaveApp(services: AppServices, launchUrl: String?, viewModel: ClaveViewMode
                     PairingRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID))
                 }
                 composable(
-                    Routes.WORKSPACES,
+                    Routes.HOME,
                     arguments = listOf(machineArg),
                     deepLinks = listOf(navDeepLink { uriPattern = Routes.LINK_WORKSPACES }),
-                ) { entry -> WorkspacesRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID)) }
+                ) { entry -> HomeRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID)) }
                 composable(
                     Routes.SESSIONS,
-                    arguments = listOf(machineArg, navArgument(Routes.WORKSPACE_ID) { type = NavType.StringType }),
-                ) { entry -> SessionsRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID), entry.arg(Routes.WORKSPACE_ID)) }
+                    arguments = listOf(machineArg, optional(Routes.WORKSPACE_ID)),
+                ) { entry -> SessionsRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID), entry.optionalArg(Routes.WORKSPACE_ID)) }
+                composable(Routes.SETTINGS, arguments = listOf(machineArg)) { entry ->
+                    SettingsRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID))
+                }
+                composable(Routes.ACCOUNTS, arguments = listOf(machineArg)) { entry ->
+                    AccountsRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID))
+                }
                 composable(
                     Routes.LAUNCH,
                     arguments = listOf(machineArg, navArgument(Routes.WORKSPACE_ID) { type = NavType.StringType }),
                 ) { entry -> LaunchRoute(nav, viewModel, entry.arg(Routes.MACHINE_ID), entry.arg(Routes.WORKSPACE_ID)) }
                 composable(
                     Routes.CHAT,
-                    arguments = listOf(machineArg, navArgument(Routes.SESSION_ID) { type = NavType.StringType }, optional(Routes.TITLE)),
+                    arguments = listOf(
+                        machineArg,
+                        navArgument(Routes.SESSION_ID) { type = NavType.StringType },
+                        optional(Routes.TITLE),
+                        optional(Routes.MESSAGE),
+                    ),
                     deepLinks = listOf(navDeepLink { uriPattern = Routes.LINK_CHAT }),
                 ) { entry ->
                     ChatRoute(
@@ -171,6 +197,7 @@ fun ClaveApp(services: AppServices, launchUrl: String?, viewModel: ClaveViewMode
                         entry.arg(Routes.MACHINE_ID),
                         entry.arg(Routes.SESSION_ID),
                         entry.optionalArg(Routes.TITLE),
+                        entry.optionalArg(Routes.MESSAGE),
                     )
                 }
                 composable(
@@ -206,14 +233,22 @@ fun ClaveApp(services: AppServices, launchUrl: String?, viewModel: ClaveViewMode
     }
 }
 
-/** A link on a warm app: its screen over the current stack; a Machines link goes back to the root with its reason. */
+/** A link on a warm app: its screen over the current stack; a Machines link goes back to Machines with its reason. */
 private fun open(nav: NavHostController, viewModel: ClaveViewModel, link: DeepLink) {
     if (link is DeepLink.Machines) {
-        nav.popBackStack(Routes.MACHINES, inclusive = false)
+        if (!nav.popBackStack(Routes.MACHINES, inclusive = false)) openRoot(nav, Routes.MACHINES)
         viewModel.showNotice(link.reason)
         return
     }
     nav.navigate(routeFor(link)) { launchSingleTop = true }
+}
+
+/** [route] as the only screen of the stack: a machine's Home, or Machines after a sign-out. */
+internal fun openRoot(nav: NavHostController, route: String) {
+    nav.navigate(route) {
+        popUpTo(nav.graph.id) { inclusive = true }
+        launchSingleTop = true
+    }
 }
 
 @Composable
@@ -238,7 +273,7 @@ private fun MachinesRoute(nav: NavHostController, viewModel: ClaveViewModel) {
         onRelayUrlChange = viewModel::editRelayUrl,
         onConnectRelay = viewModel::connectRelay,
         onRefresh = viewModel::loadMachines,
-        onOpen = { nav.navigate(Routes.workspaces(it.id)) },
+        onOpen = { openRoot(nav, Routes.home(it.id)) },
         onPair = { nav.navigate(Routes.pairing(it.id)) },
         onMakeMain = { viewModel.setMainMachine(it.id) },
         onForget = if (BuildConfig.DEVELOPMENT) ({ machine -> viewModel.removeDeveloperMachine(machine.id) }) else null,
@@ -264,45 +299,7 @@ private fun PairingRoute(nav: NavHostController, viewModel: ClaveViewModel, mach
         now = now,
         onCancel = viewModel::cancelPairing,
         onRetry = { viewModel.pair(store.machines.firstOrNull { it.id == machineId }) },
-        onDone = { nav.navigate(Routes.workspaces(machineId)) { popUpTo(Routes.PAIRING) { inclusive = true } } },
-        onBack = { nav.popBackStack() },
-    )
-}
-
-@Composable
-private fun WorkspacesRoute(nav: NavHostController, viewModel: ClaveViewModel, machineId: String) {
-    val store by viewModel.store.collectAsStateWithLifecycle()
-    val owner by viewModel.owner.collectAsStateWithLifecycle()
-    LaunchedEffect(machineId, owner) {
-        viewModel.openMachine(machineId)
-        viewModel.loadWorkspaces(machineId)
-        viewModel.loadRequests(machineId)
-    }
-    WorkspacesScreen(
-        state = workspacesState(store, machineId),
-        onOpen = { nav.navigate(Routes.sessions(machineId, it.id)) },
-        onRequests = { nav.navigate(Routes.requests(machineId)) },
-        onRefresh = {
-            viewModel.loadWorkspaces(machineId)
-            viewModel.loadRequests(machineId)
-        },
-        onBack = { nav.popBackStack() },
-    )
-}
-
-@Composable
-private fun SessionsRoute(nav: NavHostController, viewModel: ClaveViewModel, machineId: String, workspaceId: String) {
-    val store by viewModel.store.collectAsStateWithLifecycle()
-    val owner by viewModel.owner.collectAsStateWithLifecycle()
-    LaunchedEffect(machineId, workspaceId, owner) {
-        if (viewModel.store.value.workspaces[machineId] == null) viewModel.loadWorkspaces(machineId)
-        viewModel.loadSessions(machineId)
-    }
-    SessionsScreen(
-        state = sessionsState(store, machineId, workspaceId),
-        onOpen = { s -> nav.navigate(Routes.chat(machineId, s.id, s.title.ifEmpty { basename(s.cwd) })) },
-        onLaunch = { nav.navigate(Routes.launch(machineId, workspaceId)) },
-        onRefresh = { viewModel.loadSessions(machineId) },
+        onDone = { openRoot(nav, Routes.home(machineId)) },
         onBack = { nav.popBackStack() },
     )
 }
@@ -359,6 +356,7 @@ private fun ChatRoute(
     machineId: String,
     sessionId: String,
     title: String?,
+    message: String? = null,
 ) {
     val context = LocalContext.current
     val store by viewModel.store.collectAsStateWithLifecycle()
@@ -366,11 +364,14 @@ private fun ChatRoute(
     val chat = remember(owner, machineId, sessionId) { viewModel.chat(machineId, sessionId) }
     val chatFlow = remember(chat) { chat?.state ?: MutableStateFlow(ChatSessionState()) }
     val chatState by chatFlow.collectAsStateWithLifecycle()
+    val controlsFlow = remember(chat) { chat?.controls ?: MutableStateFlow(ChatControlsState()) }
+    val controls by controlsFlow.collectAsStateWithLifecycle()
     val now = rememberNow(30_000)
     DisposableEffect(chat) {
         chat?.open()
         onDispose { chat?.close() }
     }
+    SendOnce(chat, message)
     LaunchedEffect(machineId, owner) {
         if (viewModel.store.value.sessions[machineId] == null) viewModel.loadSessions(machineId)
     }
@@ -404,8 +405,27 @@ private fun ChatRoute(
         for (uri in uris) chat?.attach(uri, null)
     }
 
+    val screen = chatState(store, machineId, sessionId, chatState, now, title)
+    val conversation = store.conversations[conversationKey(machineId, sessionId)]?.conversation ?: emptyConversation
     ChatScreen(
-        state = chatState(store, machineId, sessionId, chatState, now, title),
+        state = screen.copy(
+            controls = chatControlsView(screen.provider, conversation, controls),
+            prompt = promptView(screen.provider, conversation, controls.answering),
+            work = workCards(conversation),
+            slashCommands = slashCommands(chatState.draft, controls.commands),
+            answeredHere = controls.answeredHere,
+            answering = controls.answering,
+            attachmentThumbnails = attachmentThumbnails(chatState.attachments, controls),
+        ),
+        actions = ChatActions(
+            onOpenControls = { chat?.refreshControls() },
+            onPickModel = { chat?.pickModel(it) },
+            onPickEffort = { chat?.pickEffort(it) },
+            onPickMode = { chat?.pickMode(it) },
+            onDismissRefusal = { chat?.dismissRefusal() },
+            onStopTask = { chat?.stopTask(it) },
+            onAnswerForm = { requestId, optionId, answers -> chat?.answerForm(requestId, optionId, answers) },
+        ),
         onBack = { nav.popBackStack() },
         onRequests = { nav.navigate(Routes.requests(machineId)) },
         onLoadOlder = { chat?.loadOlder() },

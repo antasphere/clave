@@ -1,6 +1,15 @@
 package com.clave.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.contentDescription
+import com.clave.ui.theme.shadow
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,7 +54,6 @@ import com.clave.core.chat.approvalRunSummary
 import com.clave.core.chat.blockKey
 import com.clave.core.chat.decisionWord
 import com.clave.core.chat.describeApproval
-import com.clave.core.chat.describeTool
 import com.clave.core.chat.describeToolHead
 import com.clave.core.chat.failureCount
 import com.clave.core.chat.groupHint
@@ -54,25 +62,43 @@ import com.clave.core.chat.isQuestion
 import com.clave.core.chat.markerOf
 import com.clave.core.chat.parseDelivery
 import com.clave.core.chat.questionKey
+import com.clave.core.chat.formAnswerText
 import com.clave.core.chat.refused
+import com.clave.core.chat.relativeTime
 import com.clave.core.chat.toolGroupSummary
 import com.clave.core.chat.toolHint
+import com.clave.core.chat.toolLine
+import com.clave.core.chat.toolPanel
 import com.clave.core.contract.Attachment
+import com.clave.core.contract.FormAnswer
 import com.clave.core.contract.FileAttachment
 import com.clave.core.contract.SessionAttachment
 import com.clave.ui.chat.ApprovalCard
 import com.clave.ui.chat.AssistantProse
+import com.clave.ui.chat.ChatControlsView
+import com.clave.ui.chat.ChatHeader
+import com.clave.ui.chat.ChoiceSheet
 import com.clave.ui.chat.Composer
+import com.clave.ui.chat.ComposerStatusRow
+import com.clave.ui.chat.ControlSheet
+import com.clave.ui.chat.FormCard
+import com.clave.ui.chat.PermissionPrompt
+import com.clave.ui.chat.SlashCommandView
+import com.clave.ui.chat.SlashMenu
+import com.clave.ui.chat.PromptView
 import com.clave.ui.chat.PromptDock
 import com.clave.ui.chat.QuestionView
 import com.clave.ui.chat.ToolRow
+import com.clave.ui.chat.ToolSectionView
 import com.clave.ui.chat.ToolStatus
 import com.clave.ui.chat.UserTurn
+import com.clave.ui.chat.WorkCardView
+import com.clave.ui.chat.WorkCards
 import com.clave.ui.components.EmptyState
 import com.clave.ui.components.ListRow
 import com.clave.ui.components.Notice
+import com.clave.ui.components.NoticeAction
 import com.clave.ui.components.NoticeKind
-import com.clave.ui.components.PaneHeader
 import com.clave.ui.components.ScreenScaffold
 import com.clave.ui.theme.Clave
 import com.clave.ui.theme.ClaveIcon
@@ -123,6 +149,38 @@ data class ChatScreenState(
     val pendingLabel: String?,
     val expanded: Set<String>,
     val now: Long,
+    /** The composer's status: the model, its effort, the mode and the context meter. */
+    val controls: ChatControlsView = ChatControlsView(),
+    /** The first permission of this conversation still waiting, docked above the composer. */
+    val prompt: PromptView? = null,
+    /** The background work running now (subagents, commands), as cards above the composer. */
+    val work: List<WorkCardView> = emptyList(),
+    /** The commands matching the "/" being typed at the start of the composer. */
+    val slashCommands: List<SlashCommandView> = emptyList(),
+    /** Forms answered from this phone whose answer the conversation has not echoed yet. */
+    val answeredHere: Set<String> = emptySet(),
+    /** Requests whose answer is on its way to the machine: their card holds still until it lands. */
+    val answering: Set<String> = emptySet(),
+    /** The composer chips' pictures, in their order (a content URI); null draws the file glyph. */
+    val attachmentThumbnails: List<String?> = emptyList(),
+)
+
+/**
+ * What the chat asks of its host beyond the transcript and the composer: the pickers under the
+ * composer. A separate holder so a screen that does not offer one keeps its call short.
+ */
+@Immutable
+data class ChatActions(
+    /** A picker opened: the host reads the choices again (the models may have changed). */
+    val onOpenControls: () -> Unit = {},
+    val onPickModel: (String) -> Unit = {},
+    val onPickEffort: (String) -> Unit = {},
+    val onPickMode: (String) -> Unit = {},
+    val onDismissRefusal: () -> Unit = {},
+    /** Stop one background task by its id. */
+    val onStopTask: (String) -> Unit = {},
+    /** A question's answers as the form gives them, a multi-select as a list; null sends one line each through onAnswer. */
+    val onAnswerForm: ((requestId: String, optionId: String, answers: Map<String, FormAnswer>) -> Unit)? = null,
 )
 
 /** An attachment as a chip says it: its marker ("[Image #1]") or its kind, then its name. */
@@ -134,12 +192,6 @@ internal fun attachmentLabel(a: Attachment): String = when (a) {
 /** The line above a message another tab sent: who sent it. Null for the person's own words. */
 internal fun deliveredCaption(text: String): String? =
     parseDelivery(text)?.let { "${it.sender?.name ?: "Another agent"} · delivered" }
-
-/** The summary line of one tool call: its label and what it was about. */
-internal fun toolSummary(tool: Entry.Tool): String {
-    val head = describeToolHead(tool)
-    return listOf(head.label, head.target).filter { it.isNotEmpty() }.joinToString(" ")
-}
 
 private fun toolStatusOf(tool: Entry.Tool): ToolStatus = when {
     !tool.complete -> ToolStatus.Running
@@ -191,14 +243,17 @@ fun ChatScreen(
     onDiscard: () -> Unit,
     onLink: (String) -> Unit,
     modifier: Modifier = Modifier,
+    actions: ChatActions = ChatActions(),
 ) {
     var attaching by remember { mutableStateOf(false) }
+    var sheet by remember { mutableStateOf<ControlSheet?>(null) }
     ScreenScaffold(
         modifier = modifier,
         header = {
-            PaneHeader(
+            ChatHeader(
                 title = state.title,
                 subtitle = listOfNotNull(state.machineName, state.status.label).joinToString(" · "),
+                provider = state.provider,
                 onBack = onBack,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 actions = { RequestsAction(state.pendingRequests, onRequests) },
@@ -214,7 +269,14 @@ fun ChatScreen(
                 if (state.ended) {
                     Notice("This session has ended" + (state.exitCode?.let { " (exit $it)" } ?: ""))
                 }
-                PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
+                val prompt = state.prompt
+                if (prompt != null && !state.ended) {
+                    PermissionPrompt(prompt, onAnswer = { requestId, optionId -> onAnswer(requestId, optionId, emptyMap()) })
+                } else {
+                    PromptDock(state.pendingRequests, state.pendingLabel ?: "Waiting for your answer", onRequests)
+                }
+                if (!state.ended) WorkCards(state.work, onStop = actions.onStopTask)
+                if (!state.ended) SlashMenu(state.slashCommands, onPick = { onTextChange(it.insert) })
                 Composer(
                     text = state.composer.text,
                     onTextChange = onTextChange,
@@ -224,11 +286,24 @@ fun ChatScreen(
                     working = state.working,
                     sending = state.composer.sending,
                     attachments = state.composer.attachments,
+                    thumbnails = state.attachmentThumbnails,
                     onRemoveAttachment = onRemoveAttachment,
                     deliveryMark = state.composer.deliveryMark,
                     placeholder = if (state.ended) "This session has ended" else "Write a message…",
                     enabled = !state.ended,
                     sendBlocked = state.unknownSend != null,
+                )
+                val refusal = state.controls.refusal
+                if (refusal != null) {
+                    Notice(refusal, kind = NoticeKind.Warning, action = NoticeAction("Dismiss", actions.onDismissRefusal))
+                }
+                ComposerStatusRow(
+                    controls = state.controls,
+                    enabled = !state.ended,
+                    onOpen = {
+                        actions.onOpenControls()
+                        sheet = it
+                    },
                 )
             }
         },
@@ -257,10 +332,23 @@ fun ChatScreen(
                         "Start a conversation",
                         text = "Ask a question or describe what you want to build.",
                     )
-                    else -> Transcript(state, onLoadOlder, onAnswer, onToggle, onLink)
+                    else -> Transcript(state, onLoadOlder, onAnswer, onToggle, onLink, actions.onAnswerForm)
                 }
             }
         }
+    }
+    when (sheet) {
+        ControlSheet.Model -> ChoiceSheet(
+            title = "Model",
+            choices = state.controls.models,
+            onPick = actions.onPickModel,
+            onDismiss = { sheet = null },
+            loading = state.controls.modelsLoading,
+            emptyText = "This agent offers no other model.",
+        )
+        ControlSheet.Effort -> ChoiceSheet("Effort", state.controls.efforts, actions.onPickEffort, { sheet = null })
+        ControlSheet.Mode -> ChoiceSheet("Permission mode", state.controls.modes, actions.onPickMode, { sheet = null })
+        null -> Unit
     }
     if (attaching) {
         AttachSheet(
@@ -283,6 +371,7 @@ private fun Transcript(
     onAnswer: (requestId: String, optionId: String, answers: Map<String, String>) -> Unit,
     onToggle: (blockKey: String) -> Unit,
     onLink: (String) -> Unit,
+    onAnswerForm: ((String, String, Map<String, FormAnswer>) -> Unit)? = null,
 ) {
     val blocks = state.blocks
     val newestFirst = blocks.asReversed()
@@ -298,6 +387,22 @@ private fun Transcript(
     LaunchedEffect(atOldest, state.hasOlder, state.loadingOlder) {
         if (atOldest && state.hasOlder && !state.loadingOlder) loadOlder()
     }
+    val scope = rememberCoroutineScope()
+    // The newest question still open, by its place in the upside-down list.
+    val question = newestFirst.indexOfFirst {
+        it is Entry.Permission && isQuestion(it.request) && approvalAnswered(it) == null && it.request.id !in state.answeredHere
+    }
+    // Null while the question is on screen (or none waits); else whether it sits above what
+    // is read. Derived, so a layout pass that changes nothing recomposes nothing.
+    val questionAbove by remember(list, question) {
+        derivedStateOf {
+            val visible = list.layoutInfo.visibleItemsInfo
+            if (question < 0 || visible.isEmpty() || visible.any { it.index == question }) null
+            else question > visible.last().index
+        }
+    }
+    val awayFromLatest by remember(list) { derivedStateOf { list.firstVisibleItemIndex > 0 } }
+    Box(Modifier.fillMaxSize()) {
     LazyColumn(
         state = list,
         reverseLayout = true,
@@ -310,7 +415,11 @@ private fun Transcript(
             key = { i, block -> blockKey(block) { blocks.size - 1 - i } },
         ) { i, block ->
             val key = blockKey(block) { blocks.size - 1 - i }
-            TranscriptBlock(block, key, state.expanded, onAnswer, onToggle, onLink)
+            TranscriptBlock(
+                block, key, state.expanded, onAnswer, onToggle, onLink,
+                docked = state.prompt != null, now = state.now, answeredHere = state.answeredHere, onAnswerForm = onAnswerForm,
+                answering = state.answering,
+            )
         }
         if (state.loadingOlder) {
             item(key = "loading-older") {
@@ -328,6 +437,64 @@ private fun Transcript(
             }
         }
     }
+    Row(
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = Metrics.gutter, vertical = Metrics.space(2)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            val above = questionAbove
+            if (above != null) {
+                // An older question, above what is read, points up; a newer one, down.
+                FloatingPill("The agent asks you something", ClaveIcon.ChevronDown, flip = above) { scope.launch { list.animateScrollToItem(question) } }
+            }
+        }
+        if (awayFromLatest) {
+            FloatingRound(ClaveIcon.ChevronDown, "Jump to latest") { scope.launch { list.animateScrollToItem(0) } }
+        }
+    }
+    }
+}
+
+/** A raised pill over the transcript: a few words and which way to go. */
+@Composable
+private fun FloatingPill(label: String, icon: ClaveIcon, flip: Boolean, onClick: () -> Unit) {
+    val t = Clave.colors.theme
+    val shape = RoundedCornerShape(Metrics.radiusXxl)
+    Row(
+        Modifier
+            .shadow(Clave.shadows.raised, shape)
+            .clip(shape)
+            .background(t.surfaceRaised)
+            .border(Metrics.hairline, t.borderSubtle, shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = Metrics.controlHeight)
+            .padding(horizontal = Metrics.space(3))
+            .testTag("question-pill"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Metrics.space(1.5f)),
+    ) {
+        BasicText(label, style = ClaveTypography.type(Metrics.textControl).copy(color = t.textPrimary), maxLines = 1)
+        Icon(icon, null, Modifier.rotate(if (flip) 180f else 0f), tint = t.textSecondary, size = Metrics.chatGlyph)
+    }
+}
+
+/** The round "jump to latest" over the transcript's bottom end. */
+@Composable
+private fun FloatingRound(icon: ClaveIcon, description: String, onClick: () -> Unit) {
+    val t = Clave.colors.theme
+    Box(
+        Modifier
+            .size(Metrics.controlHeight + Metrics.space(2))
+            .shadow(Clave.shadows.raised, CircleShape)
+            .clip(CircleShape)
+            .background(t.surfaceRaised)
+            .border(Metrics.hairline, t.borderSubtle, CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, null, tint = t.textPrimary, size = Metrics.controlIcon)
+    }
 }
 
 /** One block of the transcript as the desktop's `TranscriptRow` draws it. */
@@ -339,11 +506,16 @@ private fun TranscriptBlock(
     onAnswer: (requestId: String, optionId: String, answers: Map<String, String>) -> Unit,
     onToggle: (blockKey: String) -> Unit,
     onLink: (String) -> Unit,
+    docked: Boolean = false,
+    now: Long = 0,
+    answeredHere: Set<String> = emptySet(),
+    onAnswerForm: ((String, String, Map<String, FormAnswer>) -> Unit)? = null,
+    answering: Set<String> = emptySet(),
 ) {
     val t = Clave.colors.theme
     when (block) {
-        is Entry.User -> DeliveredOrOwnTurn(block)
-        is Entry.Assistant -> AssistantProse(block.text, streaming = !block.final, onLink = onLink)
+        is Entry.User -> DeliveredOrOwnTurn(block, stamp(block.at, now))
+        is Entry.Assistant -> AssistantProse(block.text, streaming = !block.final, onLink = onLink, timestamp = stamp(block.at, now))
         is Entry.Tool -> SingleTool(block, key, expanded, onToggle)
         is Block.ToolGroup -> {
             if (block.tools.size == 1) {
@@ -367,6 +539,36 @@ private fun TranscriptBlock(
                     }
                 }
             }
+        }
+        // The open permission is answered on the card docked above the composer: here, its place.
+        is Entry.Permission if docked && approvalAnswered(block) == null && !isQuestion(block.request) -> {
+            Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space(2)), verticalAlignment = Alignment.CenterVertically) {
+                Icon(ClaveIcon.ShieldCheck, contentDescription = null, tint = t.textTertiary, size = Metrics.chatGlyph)
+                BasicText(
+                    "Waiting for your approval below",
+                    style = ClaveTypography.type(Metrics.codeSize).copy(color = t.textTertiary),
+                )
+            }
+        }
+        is Entry.Permission if !block.request.questions.isNullOrEmpty() -> {
+            val request = block.request
+            FormCard(
+                title = request.description,
+                questions = request.questions.orEmpty(),
+                options = request.options.map { it.id to it.label },
+                onAnswer = { optionId, answers ->
+                    if (onAnswerForm != null) {
+                        onAnswerForm(request.id, optionId, answers)
+                    } else {
+                        onAnswer(request.id, optionId, answers.mapValues { formAnswerText(it.value) })
+                    }
+                },
+                draft = block.draft.orEmpty(),
+                notes = block.notes.orEmpty(),
+                answered = approvalAnswered(block) ?: if (request.id in answeredHere) "Answered" else null,
+                onLink = onLink,
+                answering = request.id in answering,
+            )
         }
         is Entry.Permission -> {
             val request = block.request
@@ -402,20 +604,23 @@ private fun TranscriptBlock(
             }
         }
         is Block.DeliveryGroup -> Column(verticalArrangement = Arrangement.spacedBy(Metrics.space(2))) {
-            block.messages.forEach { DeliveredOrOwnTurn(it) }
+            block.messages.forEach { DeliveredOrOwnTurn(it, stamp(it.at, now)) }
         }
         is Entry.Error -> Notice(block.message, kind = NoticeKind.Destructive)
     }
 }
 
+/** A turn's stamp; none without a clock (a preview). */
+private fun stamp(at: Long, now: Long): String? = if (now <= 0 || at <= 0) null else relativeTime(at, now)
+
 /** A user turn: the person's own words, or a message another tab sent, under who sent it. */
 @Composable
-private fun DeliveredOrOwnTurn(entry: Entry.User) {
+private fun DeliveredOrOwnTurn(entry: Entry.User, timestamp: String? = null) {
     val t = Clave.colors.theme
     val delivery = parseDelivery(entry.text)
     val labels = entry.attachments.orEmpty().map(::attachmentLabel)
     if (delivery == null) {
-        UserTurn(entry.text, attachmentLabels = labels, interrupted = entry.interrupted)
+        UserTurn(entry.text, attachmentLabels = labels, interrupted = entry.interrupted, timestamp = timestamp)
         return
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Metrics.space(1))) {
@@ -425,7 +630,7 @@ private fun DeliveredOrOwnTurn(entry: Entry.User) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        UserTurn(delivery.body, attachmentLabels = labels, interrupted = entry.interrupted)
+        UserTurn(delivery.body, attachmentLabels = labels, interrupted = entry.interrupted, timestamp = timestamp)
     }
 }
 
@@ -433,14 +638,17 @@ private fun DeliveredOrOwnTurn(entry: Entry.User) {
 @Composable
 private fun SingleTool(tool: Entry.Tool, key: String, expanded: Set<String>, onToggle: (String) -> Unit) {
     val open = key in expanded
+    // Read only once opened: a closed row never turns an output into text.
+    val panel = if (open) toolPanel(tool) else null
     ToolRow(
-        summary = toolSummary(tool),
+        summary = toolLine(tool),
         hint = toolHint(tool),
         status = toolStatusOf(tool),
         expanded = open,
         onToggle = { onToggle(key) },
-        sections = if (open) describeTool(tool).sections.map { it.label to it.text } else emptyList(),
         kind = describeToolHead(tool).kind.wire,
+        detailedSections = panel?.sections?.map { ToolSectionView(it.label, it.text, it.language) },
+        detail = panel?.detail,
     )
 }
 
