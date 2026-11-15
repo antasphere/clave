@@ -1069,12 +1069,15 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     const second = lists(s.events).at(-1)!.messages[0]
     s.events.length = 0
     s.adapter.write(s.handle, { type: 'withdraw_message', id: second.id })
-    expect(s.events[0]).toEqual({
-      type: 'waiting_messages',
-      messages: [{ id: expect.any(String), text: 'third' }],
-      takes: 'step',
-      returned: { why: 'withdrawn', messages: [second] }
-    })
+    // Handed back once Pi's clear_queue answer says Pi still held it.
+    await expect
+      .poll(() => lists(s.events).find((list) => list.returned))
+      .toEqual({
+        type: 'waiting_messages',
+        messages: [{ id: expect.any(String), text: 'third' }],
+        takes: 'step',
+        returned: { why: 'withdrawn', messages: [second] }
+      })
     await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
     const after = types(s.state).slice(types(s.state).lastIndexOf('steer') - 2)
     expect(after.slice(0, 3)).toEqual(['steer', 'clear_queue', 'steer'])
@@ -1082,6 +1085,122 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     expect(readings(s.events).map((r) => r.message)).toEqual(['third'])
     expect(readings(s.events)[0].said).toBe('You said: thirdDone.')
   })
+
+  // Verifier 3, finding 6 (M12): the order of the steers sent again.
+  it('a withdrawn middle steer: the two others are steered again in the order written, and Pi takes them so', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    for (const text of ['second', 'third', 'fourth'])
+      s.adapter.write(s.handle, { type: 'user_message', text })
+    await expect.poll(() => steered(s.state)).toBe(3)
+    const third = lists(s.events).at(-1)!.messages[1]
+    expect(third.text).toBe('third')
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: third.id })
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    const all = frames(s.state)
+    const clear = all.map((f) => f.type).lastIndexOf('clear_queue')
+    expect(
+      all
+        .slice(clear + 1)
+        .filter((f) => f.type === 'prompt' || f.type === 'steer')
+        .map((f) => [f.type, f.message])
+    ).toEqual([
+      ['steer', 'second'],
+      ['steer', 'fourth']
+    ])
+    expect(readings(s.events).map((r) => r.message)).toEqual(['a long turn', 'second', 'fourth'])
+  })
+
+  // Verifier 3, findings 2 and 7 (M14): Pi takes the steer at its step while
+  // the withdraw's clear_queue is on its way, and answers without it.
+  it('a withdrawn steer Pi takes before it answers the clear_queue is drawn as taken, never handed back', async () => {
+    const s = await open({}, { env: { PI_STAND_IN_CLEAR_AFTER_STEP: '1' } })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'third' })
+    await expect.poll(() => steered(s.state)).toBe(2)
+    const second = lists(s.events).at(-1)!.messages[0]
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: second.id })
+    await expect
+      .poll(() => readings(s.events).map((r) => r.message), { timeout: 15_000 })
+      .toEqual(['a long turn', 'second', 'third'])
+    await expect
+      .poll(() => s.events.filter((e) => e.type === 'state_change' && e.state === 'done').length, {
+        timeout: 15_000
+      })
+      .toBeGreaterThan(0)
+    // Nothing went back to the composer: Pi took it, and each answer is
+    // drawn under its own message.
+    expect(lists(s.events).filter((list) => list.returned)).toEqual([])
+    for (const { message, said } of readings(s.events))
+      expect(said.startsWith(`You said: ${message}`)).toBe(true)
+    // The one Pi still held went again, once (a steer, or a prompt once the
+    // run had ended).
+    const all = frames(s.state)
+    const clear = all.map((f) => f.type).lastIndexOf('clear_queue')
+    expect(
+      all
+        .slice(clear + 1)
+        .filter((f) => f.type === 'prompt' || f.type === 'steer')
+        .map((f) => f.message)
+    ).toEqual(['third'])
+  })
+
+  // The same race at a stop: the stop's clear_queue answers after Pi took
+  // the first steer; that one is drawn as taken, the other goes back.
+  it('a stop whose clear_queue Pi answers after taking a steer: that one drawn as taken, only the other handed back', async () => {
+    const s = await open({}, { env: { PI_STAND_IN_CLEAR_AFTER_STEP: '1' } })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    s.adapter.write(s.handle, { type: 'user_message', text: 'two' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'three' })
+    await expect.poll(() => steered(s.state)).toBe(2)
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    expect(lists(s.events).filter((list) => list.returned)).toEqual([
+      {
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'step',
+        returned: { why: 'stopped', messages: [{ id: expect.any(String), text: 'three' }] }
+      }
+    ])
+    expect(readings(s.events).map((r) => r.message)).toEqual(['a long turn', 'two'])
+    expect(sent(s.state).map(([, message]) => message)).toEqual(['a long turn', 'two', 'three'])
+  })
+
+  // Verifier 3, finding 10 (M35): the run's end lets go of a prompt Pi
+  // answered and never started (the stop beat it), so a later message with
+  // the same words is the one Pi's start draws.
+  it(
+    'a stop that beats Pi to a prompt’s start: the next message with the same words is the one drawn when Pi takes it',
+    {
+      timeout: 30_000
+    },
+    async () => {
+      const s = await open({}, { env: { PI_STAND_IN_DELAY_MS: '60' } })
+      s.adapter.write(s.handle, { type: 'user_message', text: 'first' })
+      await expect.poll(() => types(s.state).includes('prompt'), { interval: 5 }).toBe(true)
+      s.adapter.write(s.handle, { type: 'interrupt' })
+      await expect.poll(() => done(s.events), { timeout: 5000 }).toBe(true)
+      // The stand-in dropped the run before it said anything of it.
+      expect(s.events.filter((e) => e.type === 'assistant_text' || e.type === 'error')).toEqual([])
+      s.adapter.write(s.handle, { type: 'user_message', text: 'go on, a long turn' })
+      await expect
+        .poll(() => s.events.some((e) => e.type === 'assistant_text'), { timeout: 10_000 })
+        .toBe(true)
+      s.adapter.write(s.handle, { type: 'user_message', text: 'first' })
+      await expect
+        .poll(() => readings(s.events).map((r) => r.message), { timeout: 20_000 })
+        .toEqual(['first', 'go on, a long turn', 'first'])
+      await expect
+        .poll(() => readings(s.events)[2]?.said ?? '', { timeout: 20_000 })
+        .toMatch(/^You said: first/)
+      expect(lists(s.events).at(-1)?.messages).toEqual([])
+    }
+  )
 
   it('a stop with two messages waiting hands both back, Pi’s queue cleared before the abort', async () => {
     const s = await open()
@@ -1093,18 +1212,22 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     await expect.poll(() => steered(s.state)).toBe(2)
     s.events.length = 0
     s.adapter.write(s.handle, { type: 'interrupt' })
-    expect(s.events[0]).toEqual({
-      type: 'waiting_messages',
-      messages: [],
-      takes: 'step',
-      returned: {
-        why: 'stopped',
-        messages: [
-          { id: expect.any(String), text: 'two' },
-          { id: expect.any(String), text: 'three' }
-        ]
-      }
-    })
+    // Together, in order, once Pi's clear_queue answer says Pi held both.
+    await expect
+      .poll(() => lists(s.events).find((list) => list.returned))
+      .toEqual({
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'step',
+        returned: {
+          why: 'stopped',
+          messages: [
+            { id: expect.any(String), text: 'two' },
+            { id: expect.any(String), text: 'three' }
+          ]
+        }
+      })
+    expect(lists(s.events).filter((list) => list.returned)).toHaveLength(1)
     await expect.poll(() => done(s.events)).toBe(true)
     const sentTypes = types(s.state)
     const last = sentTypes.lastIndexOf('steer')

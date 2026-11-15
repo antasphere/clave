@@ -26,7 +26,9 @@
 // the first prompt with `Agent is streaming` and runs nothing;
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
 // and starts nothing, holding it for the next run to take, as Pi 1.5.2 does
-// (else it starts a run). A prompt containing `slow` waits 20 s
+// (else it starts a run); `PI_STAND_IN_CLEAR_AFTER_STEP=1` answers a
+// `clear_queue` sent while steers wait only once the next one has started,
+// as Pi does when the clear races its step. A prompt containing `slow` waits 20 s
 // before its first text delta (an abort cuts it short); `long turn` streams its
 // echo in three pieces a second apart, or `PI_STAND_IN_LONG_TURN_MS` apart (an
 // abort cuts it short); `ask extension` asks a
@@ -262,6 +264,12 @@ const noModel = process.env.PI_STAND_IN_NO_MODEL === '1'
 const anyProvider = process.env.PI_STAND_IN_ANY_PROVIDER === '1'
 let streamingOnce = process.env.PI_STAND_IN_STREAMING_ONCE === '1'
 const idleSteer = process.env.PI_STAND_IN_IDLE_STEER
+// A `clear_queue` that reaches Pi as it takes its next steer: answered once
+// that steer's user message has started, the steer no longer in the answer
+// (PRDCT-4566, verifier 3's finding 2).
+const clearAfterStep = process.env.PI_STAND_IN_CLEAR_AFTER_STEP === '1'
+/** The ids of the `clear_queue` commands held back until the next steer. */
+const heldClears = []
 
 const LEVELS = ['low', 'high', 'max']
 const modelObject = (id) => ({
@@ -488,9 +496,20 @@ const assistant = (content, stopReason, extra = {}) => ({
 const update = (message, assistantMessageEvent) =>
   emit({ type: 'message_update', message, assistantMessageEvent })
 
-async function userMessage(text) {
+/** The queue cleared and said, as Pi answers `clear_queue`. */
+function clearQueue(id) {
+  const cleared = { steering: [...steering], followUp: [...followUp] }
+  steering.length = 0
+  followUp.length = 0
+  ok(id, 'clear_queue', cleared)
+  out({ type: 'queue_update', steering: [], followUp: [] })
+}
+/** `taken`: a steer or a follow-up Pi takes off its queue, which answers a
+ *  `clear_queue` held back for it (PI_STAND_IN_CLEAR_AFTER_STEP). */
+async function userMessage(text, taken = false) {
   const message = { role: 'user', content: text, timestamp: Date.now() }
   await emit({ type: 'message_start', message })
+  if (taken) for (const id of heldClears.splice(0)) clearQueue(id)
   await emit({ type: 'message_end', message })
   append({ type: 'message', message })
   run.messages.push(message)
@@ -522,7 +541,7 @@ async function endMessage(message) {
 }
 async function echoTurn(text) {
   await emit({ type: 'turn_start' })
-  await userMessage(text)
+  await userMessage(text, true)
   const reply = await textMessage(['You said: ', text])
   const message = assistant([{ type: 'text', text: reply }], 'stop')
   await endMessage(message)
@@ -720,6 +739,8 @@ async function startRun(text) {
   } finally {
     const finished = run
     run = undefined
+    // A clear held back for a step that never came is answered at the end.
+    for (const id of heldClears.splice(0)) clearQueue(id)
     for (const respond of finished.onSettled ?? []) respond()
   }
 }
@@ -844,13 +865,10 @@ function handle(frame) {
       open(target)
       return ok(id, type, { cancelled: false })
     }
-    case 'clear_queue': {
-      const cleared = { steering: [...steering], followUp: [...followUp] }
-      steering.length = 0
-      followUp.length = 0
-      ok(id, type, cleared)
-      return out({ type: 'queue_update', steering: [], followUp: [] })
-    }
+    case 'clear_queue':
+      // Held back until Pi takes its next steer, when told to.
+      if (clearAfterStep && run && steering.length) return void heldClears.push(id)
+      return clearQueue(id)
     case 'abort': {
       if (!run) return ok(id, type)
       run.aborted = true

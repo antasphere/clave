@@ -206,6 +206,13 @@ export function piHistory(messages: unknown): HistoryItem[] {
 
 /** The steers Pi's `clear_queue` answer says it held, as Pi holds them. */
 const steeringOf = (data: unknown): string[] => array(record(data).steering).map(text)
+/** Those of `queued`, the steers Pi answered queued in the order it was
+ *  handed them, that Pi still held by its `clear_queue` answer: Pi takes
+ *  steers from the front of its queue, so the ones it still holds are the
+ *  last ones it was handed, whatever words it gave them (a command it
+ *  expands). */
+const heldOf = <T>(queued: T[], held: string[]): T[] =>
+  held.length ? queued.slice(Math.max(0, queued.length - held.length)) : []
 
 const DIALOGS = new Set(['select', 'confirm', 'input', 'editor'])
 const ABORT_TIMEOUT_MS = 60_000
@@ -231,7 +238,13 @@ interface Outgoing {
   sent: boolean
   /** Handed as a steer: Pi holds it in its queue until its next step. */
   steered: boolean
-  /** Withdrawn, or handed back: never sent from here on. */
+  /** Pi has answered the command that carried it. */
+  answered: boolean
+  /** The person let go of it (withdrawn, or the run stopped) once Pi had it:
+   *  it goes back only once Pi's `clear_queue` answer says Pi held it, and
+   *  is drawn as taken if Pi starts it first (PRDCT-4566). */
+  leaving?: 'withdrawn' | 'stopped'
+  /** Handed back, or let go of for good: never sent from here on. */
   dropped: boolean
 }
 /** Why messages that waited leave unsent. */
@@ -272,10 +285,11 @@ interface HandleState {
    *  the order written: those drawn at once, and those that wait for Pi to
    *  take them at its next step (PRDCT-4566). */
   outgoing: Outgoing[]
-  /** Steers handed back to the composer that Pi may still hold until it has
-   *  answered the `clear_queue` sent for them: one Pi starts meanwhile is
-   *  drawn, as it is the conversation's then. */
-  letGo: Outgoing[]
+  /** Messages handed back to the composer after Pi was handed them, until
+   *  the run's end: Pi may still start one (between taking a steer off its
+   *  queue and saying so), which is drawn then, as it is the conversation's
+   *  (PRDCT-4566). */
+  handedBack: Outgoing[]
   /** The last id given to a written message. */
   written: number
   /** A run Pi has started, or a prompt sent for one, not yet settled: the
@@ -388,7 +402,7 @@ export class PiRpcAdapter implements SessionAdapter {
       starting: true,
       sends: Promise.resolve(),
       outgoing: [],
-      letGo: [],
+      handedBack: [],
       written: 0,
       turnRunning: false,
       runActive: false,
@@ -464,6 +478,7 @@ export class PiRpcAdapter implements SessionAdapter {
           waiting: state.turnRunning || state.outgoing.some((m) => m.waiting && !m.dropped),
           sent: false,
           steered: false,
+          answered: false,
           dropped: false
         }
         state.outgoing.push(item)
@@ -483,7 +498,6 @@ export class PiRpcAdapter implements SessionAdapter {
       case 'interrupt':
         // A stop starts nothing by itself: what waited goes back to the
         // composer, unsent (PRDCT-4566).
-        this.handBack(state, 'stopped')
         void this.interrupt(state)
         return
       case 'set_model':
@@ -819,6 +833,9 @@ export class PiRpcAdapter implements SessionAdapter {
     const connection = state.connection
     if (item.dropped) return
     if (state.ended || state.closing || !connection || connection.closed) return
+    // Let go of after Pi refused it as a prompt: Pi holds nothing of it, so
+    // it goes back as it is (PRDCT-4566).
+    if (item.leaving) return this.letGo(state, item.leaving, [item])
     const retried = retry !== undefined
     const steer = retried ? retry === 'steer' : state.runActive
     // A message that waited is drawn when Pi starts it as its user message
@@ -845,13 +862,16 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.ended || state.closing || connection.closed) return
     // Withdrawn or handed back while Pi was asked its model: never sent.
     if (item.dropped) return
+    if (item.leaving) return this.letGo(state, item.leaving, [item])
     const runsBefore = state.runsStarted
     item.sent = true
     item.steered = steer
+    item.answered = false
     let data: Record<string, unknown>
     try {
       data = record(await connection.command(steer ? 'steer' : 'prompt', { message: item.message }))
     } catch (error) {
+      item.answered = true
       if (state.ended || state.closing) return
       if (!steer && !retried && /streaming/i.test(errorMessage(error)))
         return this.send(state, item, 'steer')
@@ -864,6 +884,22 @@ export class PiRpcAdapter implements SessionAdapter {
         this.endTurn(state, false)
       }
       return
+    }
+    item.answered = true
+    if (state.ended || state.closing) return
+    // The run was stopped while this message was on its way (PRDCT-4566): Pi
+    // queued it after the stop cleared its queue, so it is cleared again and
+    // goes back; or Pi started a run on it, which is stopped too.
+    if (item.leaving === 'stopped' && !item.dropped) {
+      if (data.disposition === 'queued') {
+        const held = await connection.command('clear_queue').then(steeringOf, () => [])
+        if (held.length) this.letGo(state, 'stopped', [item])
+        return
+      }
+      if (data.disposition === 'started')
+        void connection
+          .command('abort', undefined, { timeout: ABORT_TIMEOUT_MS })
+          .catch(() => undefined)
     }
     // An input handler of Pi's consumed it (an extension command): Pi took
     // it, and no user message of its own will come.
@@ -897,8 +933,11 @@ export class PiRpcAdapter implements SessionAdapter {
       }
       if (state.ended || state.closing) return
       // Pi is idle and only this chat writes to it: what it held is this
-      // message, in its own words or as a command it expanded.
-      if (held.length) return this.send(state, item, 'prompt')
+      // message, in its own words or as a command it expanded. One the person
+      // let go of meanwhile goes back instead.
+      if (!held.length) return
+      if (item.leaving) return this.letGo(state, item.leaving, [item])
+      return this.send(state, item, 'prompt')
     }
   }
 
@@ -914,26 +953,24 @@ export class PiRpcAdapter implements SessionAdapter {
   /** The message is off Pi's way: started, consumed, or refused. One that
    *  still waits was never taken, and goes back to the composer as `why`. */
   private settle(state: HandleState, item: Outgoing, why?: Returned): void {
+    if (why && item.waiting && !item.dropped) return this.letGo(state, item.leaving ?? why, [item])
     const index = state.outgoing.indexOf(item)
-    if (index < 0) return
-    state.outgoing.splice(index, 1)
-    if (!item.waiting || item.dropped || !why) return
-    item.dropped = true
-    this.emitWaiting(state, why, [item])
+    if (index >= 0) state.outgoing.splice(index, 1)
   }
 
   /** Pi started a user message (`message_start`), a prompt's as a steer's:
    *  the one this chat sent with that text, else the first sent (Pi takes
    *  them in the order sent, and a command it expands changes the words).
-   *  One the person had taken back
-   *  that Pi started before it answered the `clear_queue` is drawn: it is the
-   *  conversation's now (PRDCT-4566). */
+   *  One the person let go of that Pi starts before its `clear_queue` answer
+   *  is drawn as taken, never handed back; one handed back that Pi still
+   *  starts (it may, between taking a steer off its queue and saying so) is
+   *  drawn too: it is the conversation's now (PRDCT-4566). */
   private userMessageStarted(state: HandleState, text: string): void {
-    const sent = state.outgoing.filter((m) => m.sent)
+    const sent = state.outgoing.filter((m) => m.sent && !m.dropped)
     const exact = sent.find((m) => m.message === text)
-    const late = exact ? undefined : state.letGo.find((m) => m.message === text)
+    const late = exact ? undefined : state.handedBack.find((m) => m.message === text)
     if (late) {
-      state.letGo.splice(state.letGo.indexOf(late), 1)
+      state.handedBack.splice(state.handedBack.indexOf(late), 1)
       this.emit(state, late.event)
       return
     }
@@ -943,51 +980,68 @@ export class PiRpcAdapter implements SessionAdapter {
     this.settle(state, item)
   }
 
-  /** The person takes back a message that still waits (PRDCT-4566): it leaves
-   *  the list for the composer and is never sent. Pi may hold it already, as
-   *  a steer: its queue is then cleared and what still waits steered again,
-   *  in order, behind the sends already on their way. */
+  /** The person takes back a message that still waits (PRDCT-4566). One not
+   *  handed to Pi yet leaves the list for the composer at once, never sent.
+   *  One Pi was handed goes back only once Pi's `clear_queue` answer says Pi
+   *  still held it; one Pi took first is drawn as taken, never handed back.
+   *  The clear runs behind the sends already on their way. */
   private withdraw(state: HandleState, id: string): void {
-    const item = state.outgoing.find((m) => m.id === id && m.waiting && !m.dropped)
+    const item = state.outgoing.find((m) => m.id === id && m.waiting && !m.dropped && !m.leaving)
     if (!item) return
-    item.dropped = true
-    state.outgoing.splice(state.outgoing.indexOf(item), 1)
-    this.emitWaiting(state, 'withdrawn', [item])
-    if (!item.steered) return
-    state.letGo.push(item)
+    if (!item.sent) return this.letGo(state, 'withdrawn', [item])
+    item.leaving = 'withdrawn'
     state.sends = state.sends.then(() => this.requeue(state))
   }
 
-  /** Pi's queue cleared of what the person took back, then every message that
-   *  still waits steered again, in the order written. */
+  /** The steers Pi answered queued, in the order Pi was handed them, of the
+   *  messages that still wait. */
+  private queued(state: HandleState): Outgoing[] {
+    return state.outgoing.filter(
+      (m) => m.waiting && !m.dropped && m.sent && m.steered && m.answered
+    )
+  }
+
+  /** Pi's queue taken back (PRDCT-4566): of the steers Pi still held, by its
+   *  `clear_queue` answer, those the person let go of go back, and the others
+   *  are steered again, in the order written. One Pi took meanwhile is
+   *  neither: its user message draws it. */
   private async requeue(state: HandleState): Promise<void> {
     const connection = state.connection
     if (state.ended || state.closing || !connection || connection.closed) return
+    let held: string[]
     try {
-      await connection.command('clear_queue')
+      held = steeringOf(await connection.command('clear_queue'))
     } catch (error) {
       if (state.ended || state.closing) return
       this.notice(state, `${this.label} could not take the message back: ${errorMessage(error)}`)
       return
     }
-    state.letGo = []
-    for (const item of state.outgoing.filter((m) => m.waiting && m.steered && !m.dropped)) {
+    if (state.ended || state.closing) return
+    const cleared = heldOf(this.queued(state), held)
+    for (const why of ['withdrawn', 'stopped'] as const)
+      this.letGo(
+        state,
+        why,
+        cleared.filter((m) => m.leaving === why)
+      )
+    for (const item of cleared.filter((m) => !m.leaving && !m.dropped)) {
       item.sent = false
       item.steered = false
+      item.answered = false
       await this.send(state, item)
     }
   }
 
-  /** Every message that still waits leaves unsent, back to the composer: the
-   *  person stopped the run, or the session ended (PRDCT-4566). Those Pi
-   *  holds as steers are let go of by the `clear_queue` that follows a stop. */
-  private handBack(state: HandleState, why: 'stopped' | 'ended'): void {
-    const returned = state.outgoing.filter((m) => m.waiting && !m.dropped)
-    if (!returned.length) return
-    for (const item of returned) item.dropped = true
-    state.outgoing = state.outgoing.filter((m) => !returned.includes(m))
-    state.letGo.push(...returned.filter((m) => m.steered))
-    this.emitWaiting(state, why, returned)
+  /** Messages that leave unsent, out of the list for good (PRDCT-4566): back
+   *  to the composer as `why`. One Pi was handed is kept aside until the
+   *  run's end, to be drawn should Pi start it after all. */
+  private letGo(state: HandleState, why: Returned, items: Outgoing[]): void {
+    const leaving = items.filter((m) => !m.dropped)
+    if (!leaving.length) return
+    for (const item of leaving) item.dropped = true
+    state.outgoing = state.outgoing.filter((m) => !leaving.includes(m))
+    state.handedBack.push(...leaving.filter((m) => m.sent))
+    this.emitWaiting(state, why, leaving)
   }
 
   /** What waits for Pi, whole (PRDCT-4566): Pi takes a message at its next
@@ -1023,15 +1077,26 @@ export class PiRpcAdapter implements SessionAdapter {
   }
 
   /** Esc: the queue cleared first (an abort leaves queued messages to run),
-   *  then the abort; the run ends on `agent_settled { aborted: true }`. */
+   *  then the abort; the run ends on `agent_settled { aborted: true }`. A stop
+   *  starts nothing by itself (PRDCT-4566): every message that still waits is
+   *  let go of. Those not handed to Pi yet go back as they are; of those Pi
+   *  was handed as steers, the ones its `clear_queue` answer says it still
+   *  held go back, and one it took first is drawn as taken. All that go back
+   *  go together, in the order written. */
   private async interrupt(state: HandleState): Promise<void> {
+    const waiting = state.outgoing.filter((m) => m.waiting && !m.dropped)
+    for (const item of waiting) item.leaving = 'stopped'
+    const back = (held: Set<Outgoing>): Outgoing[] =>
+      waiting.filter((m) => m.waiting && !m.dropped && (!m.sent || held.has(m)))
     const connection = state.connection
-    if (!state.turnRunning || !connection || connection.closed) return
+    if (!state.turnRunning || !connection || connection.closed) {
+      this.letGo(state, 'stopped', back(new Set()))
+      return
+    }
     state.userAborted = true
     try {
-      await connection.command('clear_queue')
-      // Pi holds none of what was handed back any more (PRDCT-4566).
-      state.letGo = []
+      const held = steeringOf(await connection.command('clear_queue'))
+      this.letGo(state, 'stopped', back(new Set(heldOf(this.queued(state), held))))
       await connection.command('abort', undefined, { timeout: ABORT_TIMEOUT_MS })
     } catch (error) {
       if (state.ended || state.closing) return
@@ -1126,17 +1191,28 @@ export class PiRpcAdapter implements SessionAdapter {
         })
         return
       }
-      case 'agent_settled':
+      case 'agent_settled': {
         state.turnRunning = false
         state.runActive = false
-        // A message drawn at once whose user message the run never started
-        // (it stopped first) is off Pi's way: Pi settles only once nothing
-        // it was handed is left to run.
-        state.outgoing = state.outgoing.filter((m) => m.waiting || !m.sent)
+        // A message Pi answered whose user message the run never started (it
+        // stopped first) is off Pi's way: Pi settles only once nothing it was
+        // handed is left to run. One drawn at once stays as drawn; one the
+        // person let go of goes back now (PRDCT-4566). Pi starts none it was
+        // handed back after this.
+        const unstarted = state.outgoing.filter((m) => m.sent && m.answered && !m.dropped)
+        for (const why of ['withdrawn', 'stopped'] as const)
+          this.letGo(
+            state,
+            why,
+            unstarted.filter((m) => m.waiting && m.leaving === why)
+          )
+        state.outgoing = state.outgoing.filter((m) => m.waiting || !m.sent || !m.answered)
+        state.handedBack = []
         this.settledOnConnection(state, frame.aborted === true)
         this.endTurn(state, frame.aborted === true)
         void this.contextUsage(state)
         return
+      }
       case 'auto_retry_start': {
         const delay = typeof frame.delayMs === 'number' ? frame.delayMs / 1000 : 0
         this.notice(
@@ -1345,7 +1421,11 @@ export class PiRpcAdapter implements SessionAdapter {
       this.notice(state, `${this.label} stopped during the turn (exit code ${code})`)
     // Nothing that waited is lost with the process: it goes back to the
     // composer, unsent (PRDCT-4566).
-    this.handBack(state, 'ended')
+    this.letGo(
+      state,
+      'ended',
+      state.outgoing.filter((m) => m.waiting && !m.dropped)
+    )
     state.ended = true
     state.turnRunning = false
     this.emit(state, { type: 'state_change', state: 'ended' })
