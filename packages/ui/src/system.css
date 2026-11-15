@@ -4533,6 +4533,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    row folds open as it arrives and shut as the agent takes it, the work
    cards' fold; none under reduced motion. */
 .chat-waiting-stack {
+  display: flex;
+  flex-direction: column;
+  /* Never more than about a third of the pane, its count line included. */
+  max-height: 30vh;
   margin-bottom: calc(var(--spacing) * 2);
   padding: var(--spacing);
   border: thin solid var(--border-subtle-color);
@@ -4549,20 +4553,21 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--text-tertiary);
 }
 /* Four rows (a row is one line and its padding), then the list scrolls
-   inside the stack; never more than about a third of the pane. A row opened
-   to a long message gets that third to be read in. */
+   inside the stack, under its count line. A row opened to a long message
+   gets the stack's whole third of the pane to be read in. */
 .chat-waiting-list {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  max-height: calc(4 * (1lh + var(--spacing) * 3));
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: min(calc(4 * (1lh + var(--spacing) * 3)), 30vh);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 .chat-waiting-stack[data-open] .chat-waiting-list {
-  max-height: 30vh;
+  max-height: none;
 }
 .chat-waiting-row {
   display: grid;
@@ -4624,12 +4629,17 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
   color: var(--term-ink, var(--text-primary));
 }
-/* Opened in place: the whole message, wrapped as it was written. */
+/* Opened in place: the whole message, wrapped as it was written; the
+   withdraw stays on its first line. */
 .chat-waiting-row[data-open] .chat-waiting-gist {
   overflow: visible;
   text-overflow: clip;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.chat-waiting-row[data-open] .chat-waiting-withdraw {
+  align-self: flex-start;
+  margin-top: calc((1lh - var(--spacing) * 4) / 2);
 }
 .chat-waiting-when {
   flex-shrink: 0;
