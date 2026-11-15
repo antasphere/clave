@@ -1249,6 +1249,93 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     expect(readings(s.events)).toEqual([])
   })
 
+  // The verifier's closing look, finding 2: a message written in the same
+  // instant as Escape is steered into the run that is stopping, after the
+  // stop's clear. Pi does not go on after an abort and keeps its queue across
+  // it (PI_STAND_IN_ABORT_KEEPS_QUEUE, as Pi 1.5.2): it held the message for a
+  // next run that nothing starts, and the message waited in the stack for
+  // good. Once the stopped run has settled, what Pi still holds goes as a
+  // prompt, out of Pi's queue first, as an idle steer does.
+  const escapeThenWrite = async (): Promise<Session> => {
+    const s = await open(
+      {},
+      { env: { PI_STAND_IN_ABORT_KEEPS_QUEUE: '1', PI_STAND_IN_IDLE_STEER: 'queue' } }
+    )
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => types(s.state).includes('prompt')).toBe(true)
+    await new Promise((r) => setTimeout(r, 100))
+    s.events.length = 0
+    return s
+  }
+  it(
+    'a message written in the same instant as Escape goes as a prompt once the stopped run has settled',
+    {
+      timeout: 15_000
+    },
+    async () => {
+      const s = await escapeThenWrite()
+      s.adapter.write(s.handle, { type: 'interrupt' })
+      s.adapter.write(s.handle, { type: 'user_message', text: 'after the stop' })
+      await expect
+        .poll(() => readings(s.events), { timeout: 10_000 })
+        .toEqual([{ message: 'after the stop', said: 'You said: after the stopDone.' }])
+      // The stopped run ended first, the message waiting meanwhile; nothing
+      // went back to the composer, and nothing waits any more.
+      const stopped = s.events.findIndex((e) => e.type === 'turn_interrupted')
+      const drawn = s.events.findIndex((e) => e.type === 'user_message')
+      expect(stopped).toBeGreaterThanOrEqual(0)
+      expect(stopped).toBeLessThan(drawn)
+      expect(texts(lists(s.events)[0])).toEqual(['after the stop'])
+      expect(lists(s.events).filter((list) => list.returned)).toEqual([])
+      expect(lists(s.events).at(-1)?.messages).toEqual([])
+      // Steered into the stopping run, taken out of Pi's queue, sent once more
+      // as a prompt: Pi took it once.
+      const after = frames(s.state).filter(
+        (f) => f.message === 'after the stop' || f.type === 'clear_queue' || f.type === 'abort'
+      )
+      expect(after.map((f) => [f.type, f.message])).toEqual([
+        ['clear_queue', undefined],
+        ['steer', 'after the stop'],
+        ['abort', undefined],
+        ['clear_queue', undefined],
+        ['prompt', 'after the stop']
+      ])
+      expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(1)
+    }
+  )
+
+  it('a message written in the same instant as Escape and withdrawn before it goes goes back to the composer, never sent', async () => {
+    const s = await escapeThenWrite()
+    // Withdrawn the moment the stopped run has settled, before Pi's queue is
+    // taken back.
+    let withdrawn = false
+    s.adapter.on(s.handle, 'stream', (stream) => {
+      if (withdrawn || stream.kind !== 'event' || stream.event.type !== 'turn_interrupted') return
+      withdrawn = true
+      const waiting = lists(s.events).at(-1)?.messages[0]
+      if (waiting) s.adapter.write(s.handle, { type: 'withdraw_message', id: waiting.id })
+    })
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'after the stop' })
+    await expect
+      .poll(() => lists(s.events).find((list) => list.returned), { timeout: 5000 })
+      .toEqual({
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'step',
+        returned: {
+          why: 'withdrawn',
+          messages: [{ id: expect.any(String), text: 'after the stop' }]
+        }
+      })
+    expect(withdrawn).toBe(true)
+    await new Promise((r) => setTimeout(r, 500))
+    expect(sent(s.state).filter(([, message]) => message === 'after the stop')).toEqual([
+      ['steer', 'after the stop']
+    ])
+    expect(readings(s.events)).toEqual([])
+  })
+
   // Verifier 3, finding 3, as ruled: another tab's message never goes into
   // the person's composer; dropped, it leaves one line naming its tab.
   it('another tab’s message that leaves unsent is dropped with one line naming its tab, never handed back', async () => {

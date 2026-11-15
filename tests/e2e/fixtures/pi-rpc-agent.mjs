@@ -28,13 +28,17 @@
 // and starts nothing, holding it for the next run to take, as Pi 1.5.2 does
 // (else it starts a run); `PI_STAND_IN_CLEAR_AFTER_STEP=1` answers a
 // `clear_queue` sent while steers wait only once the next one has started,
-// as Pi does when the clear races its step. A prompt containing `slow` waits 20 s
+// as Pi does when the clear races its step; `PI_STAND_IN_ABORT_KEEPS_QUEUE=1`
+// keeps the queues across an abort, as Pi 1.5.2 does (its abort clears none):
+// a steer queued while the run stops stays held for a next run, which nothing
+// starts. A prompt containing `slow` waits 20 s
 // before its first text delta (an abort cuts it short); `long turn` streams its
 // echo in three pieces a second apart, or `PI_STAND_IN_LONG_TURN_MS` apart (an
 // abort cuts it short); `ask extension` asks a
 // confirm dialog first and echoes the answer; `notify extension` sends a
 // notify; `fail provider` ends its message with a provider error; `retry`
-// starts with an auto-retry. An abort drops the steering and follow-up queue.
+// starts with an auto-retry. An abort drops the steering and follow-up queue,
+// unless told to keep them.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -270,6 +274,9 @@ const idleSteer = process.env.PI_STAND_IN_IDLE_STEER
 const clearAfterStep = process.env.PI_STAND_IN_CLEAR_AFTER_STEP === '1'
 /** The ids of the `clear_queue` commands held back until the next steer. */
 const heldClears = []
+// Pi 1.5.2's abort clears no queue: what was queued stays held for a next
+// run (PRDCT-4566, the verifier's closing look, finding 2).
+const abortKeepsQueue = process.env.PI_STAND_IN_ABORT_KEEPS_QUEUE === '1'
 
 const LEVELS = ['low', 'high', 'max']
 const modelObject = (id) => ({
@@ -729,9 +736,11 @@ async function startRun(text) {
     await emit({ type: 'agent_settled', aborted: false })
   } catch (error) {
     if (!(error instanceof Aborted)) throw error
-    // The run stops where it is.
-    steering.length = 0
-    followUp.length = 0
+    // The run stops where it is, its queues dropped, or kept when told to.
+    if (!abortKeepsQueue) {
+      steering.length = 0
+      followUp.length = 0
+    }
     const partial = run.current?.content ?? []
     await endMessageNow(assistant(partial, 'aborted', { errorMessage: 'Request was aborted' }))
     out({ type: 'agent_end', messages: run.messages, willRetry: false })

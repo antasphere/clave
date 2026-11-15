@@ -1004,8 +1004,9 @@ export class PiRpcAdapter implements SessionAdapter {
 
   /** Pi's queue taken back (PRDCT-4566): of the steers Pi still held, by its
    *  `clear_queue` answer, those the person let go of go back, and the others
-   *  are steered again, in the order written. One Pi took meanwhile is
-   *  neither: its user message draws it. */
+   *  are sent again, in the order written: steered while a run goes, as a
+   *  prompt once it has settled. One Pi took meanwhile is neither: its user
+   *  message draws it. */
   private async requeue(state: HandleState): Promise<void> {
     const connection = state.connection
     if (state.ended || state.closing || !connection || connection.closed) return
@@ -1213,6 +1214,15 @@ export class PiRpcAdapter implements SessionAdapter {
           )
         state.outgoing = state.outgoing.filter((m) => m.waiting || !m.sent || !m.answered)
         state.handedBack = []
+        // A steer Pi answered queued that no step of the run took: written in
+        // the same instant as Escape, it went into the run that was stopping,
+        // after the stop's clear. Pi does not go on after an abort and keeps
+        // its queue (Pi 1.5.2), so it holds the message for a next run that
+        // nothing starts, and the message would wait in the stack for good.
+        // What Pi still holds is taken out of its queue and goes as a prompt,
+        // as an idle steer does; one the person withdrew meanwhile goes back
+        // to the composer instead (PRDCT-4566).
+        if (this.queued(state).length) state.sends = state.sends.then(() => this.requeue(state))
         this.settledOnConnection(state, frame.aborted === true)
         this.endTurn(state, frame.aborted === true)
         void this.contextUsage(state)
