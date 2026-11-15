@@ -1139,13 +1139,19 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     expect(lists(s.events).filter((list) => list.returned)).toEqual([])
     for (const { message, said } of readings(s.events))
       expect(said.startsWith(`You said: ${message}`)).toBe(true)
-    // The one Pi still held went again, once (a steer, or a prompt once the
-    // run had ended).
+    // The one Pi still held went again, once, after the withdraw's own
+    // clear_queue (a steer, or a prompt once the run had ended). The run's
+    // end may take Pi's queue back once more and find nothing held (the
+    // settle-time requeue, when the withdraw's answer is read after the
+    // settle): that clear sends nothing, so it is not the anchor.
     const all = frames(s.state)
-    const clear = all.map((f) => f.type).lastIndexOf('clear_queue')
+    const withdrawClear = all.findIndex((f) => f.type === 'clear_queue')
+    const thirdSteered = all.findIndex((f) => f.type === 'steer' && f.message === 'third')
+    expect(thirdSteered).toBeGreaterThanOrEqual(0)
+    expect(withdrawClear).toBeGreaterThan(thirdSteered)
     expect(
       all
-        .slice(clear + 1)
+        .slice(withdrawClear + 1)
         .filter((f) => f.type === 'prompt' || f.type === 'steer')
         .map((f) => f.message)
     ).toEqual(['third'])
