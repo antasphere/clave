@@ -129,6 +129,9 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       // handshake, to the first pane alone.
       const meta = manager.meta(id)
       if (meta) listener({ kind: 'event', event: meta })
+      // Nor show a message that waits for the agent (PRDCT-4566).
+      const waiting = manager.waiting(id)
+      if (waiting) listener({ kind: 'event', event: waiting })
       manager.ready(id)
       return off
     },

@@ -11,7 +11,9 @@
 // OpenCode terminal that was never a chat is refused (nothing to carry); and
 // an OpenCode chat comes back after a relaunch on the
 // same user-data folder, its session loaded (`session/load`) and its past
-// shown. Pinned to the in-process server like chat-terminal-switch: the stub
+// shown. Messages written during a long turn wait above the composer and
+// each is answered under itself (PRDCT-4566, chat-waiting.mjs).
+// Pinned to the in-process server like chat-terminal-switch: the stub
 // is found on the PATH the app was launched with. tmux is off for the run.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -26,6 +28,7 @@ import {
   userDataDir,
   fixturePath
 } from './harness.mjs'
+import { waitingMessages } from './chat-waiting.mjs'
 
 const DIR = userDataDir('opencode-chat')
 const ROOT = fixturePath('opencode-chat-root')
@@ -54,7 +57,8 @@ function writeFixtures() {
     `#!/bin/sh
 if [ "$1" = "acp" ]; then
   ACP_STAND_IN_STATE=${quote(STATE)}
-  export ACP_STAND_IN_STATE
+  ACP_STAND_IN_LONG_TURN_MS=3000
+  export ACP_STAND_IN_STATE ACP_STAND_IN_LONG_TURN_MS
   exec ${quote(process.execPath)} ${quote(AGENT)} acp
 fi
 if [ "$1" = "--version" ]; then
@@ -367,6 +371,27 @@ export async function run(t) {
     t.check('the move into a chat is refused, the reason shown', !!refusal)
     t.check('the tab is still a terminal', await isTerminalPane(freshId))
     await win.keyboard.press('Escape')
+
+    // ── 5c. Written during a long turn: each message waits above the
+    // composer and is answered under itself (PRDCT-4566). Before the
+    // relaunch, whose restore dialog would hold the focus ──
+    await waitingMessages(t, {
+      app,
+      win,
+      chat,
+      pane,
+      say,
+      mode: 'opencode',
+      agent: 'OpenCode',
+      when: 'Sent when this turn ends',
+      cwd: ROOT,
+      handed: () =>
+        lines(FRAMES)
+          .filter((f) => f.frame?.method === 'session/prompt')
+          .map((f) =>
+            (f.frame.params?.prompt ?? []).map((block) => String(block?.text ?? '')).join('')
+          )
+    })
 
     // ── 6. An OpenCode chat comes back after a relaunch ──
     const second = await callMcp(app, 'openSession', {

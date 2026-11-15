@@ -4522,6 +4522,159 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   gap: var(--spacing);
 }
 
+/* The messages that wait for the agent (WaitingStack.tsx, PRDCT-4566): written
+   while it works and not taken yet, docked directly above the composer, where
+   the reader looks while waiting. The count line, then one row per message,
+   in the order written: the delivery card's face on one line (the sending
+   tab's name in its ink, the first line clamped, the whole on hover or
+   focus, or opened in place by a click or Enter), when it goes in the queue
+   line's words, and the attachment chip's withdraw. The box is the
+   prompt dock's, quieter: the paper of an opened delivery card, no lift. A
+   row folds open as it arrives and shut as the agent takes it, the work
+   cards' fold; none under reduced motion. */
+.chat-waiting-stack {
+  display: flex;
+  flex-direction: column;
+  /* Never more than about a third of the pane, its count line included. */
+  max-height: 30vh;
+  margin-bottom: calc(var(--spacing) * 2);
+  padding: var(--spacing);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+  background-color: var(--surface-100);
+  font-size: var(--chat-code-size);
+}
+/* How many wait, in the prompt dock's queue line: above the rows, so it
+   stays in view however far the list is scrolled. */
+.chat-waiting-count {
+  margin: 0;
+  padding: calc(var(--spacing) / 2) var(--spacing) var(--spacing) calc(var(--spacing) * 2.5);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* Four rows (a row is one line and its padding), then the list scrolls
+   inside the stack, under its count line. A row opened to a long message
+   gets the stack's whole third of the pane to be read in. */
+.chat-waiting-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(4 * (1lh + var(--spacing) * 3));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chat-waiting-stack[data-open] .chat-waiting-list {
+  max-height: none;
+}
+.chat-waiting-row {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.chat-waiting-row[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* Clipped, never a scroller of its own: an opened row's line sticks to the
+   list's view (below). */
+.chat-waiting-fold {
+  min-height: 0;
+  overflow: clip;
+}
+.chat-waiting-face {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 1.5) var(--spacing) calc(var(--spacing) * 1.5)
+    calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+}
+/* The row's line is a button: a click, or Enter, opens the row to the whole
+   message, and closes it. */
+.chat-waiting-text {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+  text-align: start;
+}
+.chat-waiting-text:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 2);
+}
+.chat-waiting-from {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-term-model);
+}
+.chat-waiting-gist {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-ink, var(--text-primary));
+}
+/* Opened in place: the whole message, wrapped as it was written; the
+   withdraw stays on its first line. */
+.chat-waiting-row[data-open] .chat-waiting-gist {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-waiting-row[data-open] .chat-waiting-withdraw {
+  align-self: flex-start;
+  margin-top: calc((1lh - var(--spacing) * 4) / 2);
+}
+/* However far the opened message is read, its line stays in reach: when it
+   goes and its withdraw keep to the top of the list's view, and the text
+   scrolls on under them. */
+.chat-waiting-row[data-open] .chat-waiting-when,
+.chat-waiting-row[data-open] .chat-waiting-withdraw {
+  position: sticky;
+  top: calc(var(--spacing) * 1.5);
+}
+.chat-waiting-when {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.chat-waiting-withdraw {
+  flex-shrink: 0;
+  align-self: center;
+}
+/* The whole message, on hover or focus: the tooltip's paper, wrapped. */
+.chat-waiting-whole {
+  max-width: min(32rem, 80vw);
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-waiting-row {
+    transition: none;
+  }
+}
+
 /* The prompt dock: what the agent waits on, a tool to allow or questions to
    answer, docked above the composer so it is always in the same place. It
    wears the composer's own raised white and keeps colour for what means

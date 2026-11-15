@@ -7,7 +7,9 @@ import {
   type HistoryItem,
   type ModelOption,
   type SessionEvent,
-  type SessionInput
+  type SessionInput,
+  type UserMessage,
+  type WaitingMessage
 } from '../../../shared/session-model'
 import { isFileAttachment } from '../../../shared/attachments'
 import { findExecutable, resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
@@ -27,6 +29,7 @@ import {
   type RpcRequest
 } from './acp-client'
 import { lastWords, startRefusal } from './start-refusal'
+import { splitUnsent } from './unsent'
 import { connectionHandover } from '../../connection-handover'
 import { lazyTerminalPorts } from '../../ports/terminals'
 import { readClaveMcpEndpoint, withOpencodeClaveTools } from '../../clave-tools-launch'
@@ -98,6 +101,24 @@ type Queued = {
   [K in keyof SessionAdapterEvents]: { event: K; value: SessionAdapterEvents[K] }
 }[keyof SessionAdapterEvents]
 
+/** A message written to the chat, on its way to its own turn (PRDCT-4566). */
+interface Outgoing {
+  id: string
+  /** What the conversation draws once the agent takes it. */
+  event: UserMessage
+  /** What the agent is sent. */
+  prompt: unknown[]
+  /** Withdrawn, or handed back by a stop or an end: its turn never goes. */
+  dropped: boolean
+}
+/** Why messages that waited leave unsent. */
+type Returned = 'withdrawn' | 'stopped' | 'ended'
+const waitingOf = (message: Outgoing): WaitingMessage => ({
+  id: message.id,
+  text: message.event.text,
+  ...(message.event.attachments?.length ? { attachments: message.event.attachments } : {})
+})
+
 interface HandleState {
   spec: SpawnSpec
   launch: AcpLaunch
@@ -118,6 +139,14 @@ interface HandleState {
   started?: Promise<void>
   /** Serializes prompts: ACP runs one at a time per session. */
   turns: Promise<void>
+  /** Prompts chained and not yet over, the running one included: a message
+   *  written while there is one waits for its own turn (PRDCT-4566). */
+  prompts: number
+  /** The messages that wait for their turn, in the order written: outside
+   *  the conversation until their prompt goes (PRDCT-4566). */
+  waiting: Outgoing[]
+  /** The last id given to a written message. */
+  written: number
   /** A `session/prompt` awaiting its answer. */
   turnRunning: boolean
   /** The agent's text of the current message, streamed but not closed. */
@@ -347,6 +376,9 @@ export class AcpAdapter implements SessionAdapter {
       loading: false,
       queue: [],
       turns: Promise.resolve(),
+      prompts: 0,
+      waiting: [],
+      written: 0,
       turnRunning: false,
       textOpen: false,
       toolCalls: new Set(),
@@ -406,19 +438,41 @@ export class AcpAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error(`${this.label} session has ended`)
     switch (value.type) {
       case 'user_message': {
-        this.emit(state, userMessageEvent(value))
-        this.emit(state, { type: 'state_change', state: 'working' })
         const prompt: unknown[] = [{ type: 'text', text: value.text }]
         for (const file of value.attachments ?? [])
           if (isFileAttachment(file))
             prompt.push({ type: 'resource_link', uri: `file://${file.path}`, name: file.name })
-        state.turns = state.turns.then(() => this.prompt(state, prompt))
+        const message: Outgoing = {
+          id: `waiting-${++state.written}`,
+          event: userMessageEvent(value),
+          prompt,
+          dropped: false
+        }
+        // The agent runs one prompt at a time and takes a message only once
+        // the turns before it are over: written while one runs, it waits
+        // outside the conversation and enters it as its own turn starts, so
+        // each answer is drawn under the message it answers (PRDCT-4566).
+        if (state.prompts > 0) {
+          state.waiting.push(message)
+          this.emitWaiting(state)
+        } else {
+          this.emit(state, message.event)
+          this.emit(state, { type: 'state_change', state: 'working' })
+        }
+        state.prompts++
+        state.turns = state.turns.then(() => this.prompt(state, message))
         return
       }
+      case 'withdraw_message':
+        this.withdraw(state, value.id)
+        return
       case 'permission_response':
         this.answerPermission(state, value.id, value.optionId)
         return
       case 'interrupt':
+        // A stop starts nothing by itself: what waited goes back to the
+        // composer, unsent (PRDCT-4566).
+        this.handBack(state, 'stopped')
         this.cancel(state)
         return
       case 'set_model':
@@ -640,16 +694,34 @@ export class AcpAdapter implements SessionAdapter {
     }
   }
 
-  private async prompt(state: HandleState, prompt: unknown[]): Promise<void> {
+  private async prompt(state: HandleState, message: Outgoing): Promise<void> {
+    try {
+      await this.turn(state, message)
+    } finally {
+      state.prompts--
+    }
+  }
+
+  private async turn(state: HandleState, message: Outgoing): Promise<void> {
     if (state.started) await state.started.catch(() => {})
+    if (message.dropped) return
     if (state.ended || state.closing || !state.connection || !state.sessionId) return
+    // A message that waited enters the conversation now, at the start of its
+    // own turn: after the answer before it, never under it (PRDCT-4566).
+    const waited = state.waiting.indexOf(message)
+    if (waited >= 0) {
+      state.waiting.splice(waited, 1)
+      this.emitWaiting(state)
+      this.emit(state, message.event)
+      this.emit(state, { type: 'state_change', state: 'working' })
+    }
     state.turnRunning = true
     let stopReason = ''
     try {
       const result = object(
         await state.connection.request(
           'session/prompt',
-          { sessionId: state.sessionId, prompt },
+          { sessionId: state.sessionId, prompt: message.prompt },
           { timeout: null }
         )
       )
@@ -662,6 +734,46 @@ export class AcpAdapter implements SessionAdapter {
     }
     if (state.ended || state.closing) return
     this.endTurn(state, stopReason === 'cancelled')
+  }
+
+  /** The person takes back a message that still waits (PRDCT-4566): it
+   *  leaves the list and its turn never goes. One the agent has taken is
+   *  part of the conversation already: nothing to take back. */
+  private withdraw(state: HandleState, id: string): void {
+    const index = state.waiting.findIndex((message) => message.id === id)
+    if (index < 0) return
+    const [message] = state.waiting.splice(index, 1)
+    message.dropped = true
+    this.letGo(state, 'withdrawn', [message])
+  }
+
+  /** Every message that still waits leaves unsent, back to the composer: the
+   *  person stopped the turn, or the session ended (PRDCT-4566). */
+  private handBack(state: HandleState, why: Exclude<Returned, 'withdrawn'>): void {
+    if (!state.waiting.length) return
+    const returned = state.waiting.splice(0)
+    for (const message of returned) message.dropped = true
+    this.letGo(state, why, returned)
+  }
+
+  /** Messages that left the list unsent (PRDCT-4566): the person's own back
+   *  to the composer as `why`; another tab's never, dropped with one quiet
+   *  line in the conversation naming its tab. */
+  private letGo(state: HandleState, why: Returned, messages: Outgoing[]): void {
+    const { own, notices } = splitUnsent(messages, (message) => message.event.text)
+    this.emitWaiting(state, own.length ? why : undefined, own)
+    for (const line of notices) this.quietNotice(state, line)
+  }
+
+  /** What waits for its turn, whole (PRDCT-4566): the agent takes a message
+   *  once the running turn has ended. */
+  private emitWaiting(state: HandleState, why?: Returned, returned: Outgoing[] = []): void {
+    this.emit(state, {
+      type: 'waiting_messages',
+      messages: state.waiting.map(waitingOf),
+      takes: 'turn',
+      ...(why ? { returned: { why, messages: returned.map(waitingOf) } } : {})
+    })
   }
 
   /** The turn's end as the Codex chat says it: the open text closed, any
@@ -977,6 +1089,14 @@ export class AcpAdapter implements SessionAdapter {
     this.emit(state, { type: 'error', message, fatal: false, ...(notice ? { notice } : {}) })
   }
 
+  /** A plain fact of the turn the person caused, where nothing failed
+   *  (PRDCT-4566): the notice marked `quiet`, a quiet line of the
+   *  conversation rather than a failure. */
+  private quietNotice(state: HandleState, message: string): void {
+    if (state.ended) return
+    this.emit(state, { type: 'error', message, fatal: false, quiet: true })
+  }
+
   /** Why the agent would not start (PRDCT-4427): said live, and kept in the
    *  session's past, for the pane that subscribes after the queue was let go
    *  and reads only the past (the Pi adapter's `startNotice`). */
@@ -1025,6 +1145,9 @@ export class AcpAdapter implements SessionAdapter {
       state.exitCode = code || 1
     } else if (state.turnRunning && !state.closing)
       this.notice(state, `${this.label} stopped during the turn (exit code ${code})`)
+    // Nothing that waited is lost with the process: it goes back to the
+    // composer, unsent (PRDCT-4566).
+    this.handBack(state, 'ended')
     state.ended = true
     state.turnRunning = false
     state.permissions.clear()

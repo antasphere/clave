@@ -29,13 +29,7 @@ import type {
   HistoryItem,
   SessionEvent
 } from '../../../src/shared/session-model'
-import {
-  answeredSince,
-  emptyConversation,
-  openRequests,
-  reduceConversation,
-  type Entry
-} from './reducer'
+import { emptyConversation, openRequests, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { ConnectionChip } from './AccountChip'
@@ -115,6 +109,8 @@ import {
   type Attachment
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
+import { WaitingStack } from './WaitingStack'
+import { sendsWhileWorking, takenBack, useWaitingReturns } from './waiting'
 import { DropDrawing } from './DropDrawing'
 import { DropRefusal } from './DropRefusal'
 import { serverNameOf } from '../../../src/renderer/src/lib/drop-refusal'
@@ -136,6 +132,10 @@ export interface ChatViewProps {
   session: Session
   onState: (state: AgentState, model: string | null) => void
   visible?: boolean
+  /** The view chosen for the session in its pane, on screen or not: the one
+   *  a message handed back brings its files to (PRDCT-4566). `visible` when
+   *  not said, for a host that mounts this view alone. */
+  active?: boolean
 }
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
@@ -324,7 +324,7 @@ import { agentNameOf } from '../../../src/shared/harness'
  *  the answer it grows and nothing above it, and a keystroke in the composer
  *  re-renders no turn at all. A long conversation used to re-parse the
  *  markdown of every answer it held on each of those. */
-const EntryRow = memo(function EntryRow({
+export const EntryRow = memo(function EntryRow({
   entry,
   onError
 }: {
@@ -405,7 +405,13 @@ const EntryRow = memo(function EntryRow({
       <PermissionRow entry={entry} />
     )
   if (entry.kind === 'error')
-    return (
+    // Nothing failed (PRDCT-4566): the quiet line the mode line is, small and
+    // grey with no edge, never the failure's red.
+    return entry.quiet ? (
+      <div className="chat-notice" data-tone="quiet" role="status">
+        {entry.message}
+      </div>
+    ) : (
       <div className="chat-notice" data-tone="error" role="alert">
         {entry.message}
       </div>
@@ -478,7 +484,12 @@ function BlockView({
   if (block.kind === 'approval-group') return <ApprovalRun group={block} id={key} />
   return <EntryRow entry={block} onError={onError} />
 }
-export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
+export function ChatView({
+  session,
+  onState,
+  visible = true,
+  active = visible
+}: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
@@ -754,6 +765,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     dismissRefusal,
     startDrop
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
+  // A message that waited and left unsent comes back here (PRDCT-4566).
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, active)
   // The server a tab of another machine runs on, as the refusal card names it.
   const serverName = useFleetStore((s) => serverNameOf(s.connections, ownerOf(session.id)))
   // A message can go while files are still being prepared or one still
@@ -761,7 +774,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const filesBlocked =
     preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
   const hasDraft = !!draft.trim() || attachments.length > 0
-  const showInterrupt = state === 'working' && !(session.provider === 'codex' && hasDraft)
+  const showInterrupt = state === 'working' && !(sendsWhileWorking(session.provider) && hasDraft)
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     const typedPanel = hostPanels ? hostPanelFor(draft) : null
@@ -850,12 +863,15 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // is left as it is.
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
-    const last = lastSent.current
-    if (!answeredSince(conversation.entries)) {
+    // With messages waiting, the one taken back is the one the turn started
+    // on, never another tab's; the last one sent waits, and comes back with
+    // them (PRDCT-4566, `takenBack`).
+    const back = takenBack(conversation.entries, conversation.waiting.length > 0, lastSent.current)
+    if (back.withdraw) {
       dispatch({ withdraw: true })
-      if (last && !draft.trim() && !attachments.length) {
-        setDraft(last.text)
-        restore(last.attachments)
+      if (back.message && !draft.trim() && !attachments.length) {
+        setDraft(back.message.text)
+        restore(back.message.attachments)
       }
     }
     textarea.current?.focus()
@@ -1346,6 +1362,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             />
           </div>
         )}
+        <WaitingStack
+          messages={conversation.waiting}
+          takes={conversation.takes}
+          agent={agentNameOf(session.provider, 'The agent')}
+          onWithdraw={(id) => void write({ type: 'withdraw_message', id }).catch(report)}
+        />
         <form
           className="chat-composer"
           data-dragging={dragging === 'paths' ? 'true' : undefined}

@@ -1350,6 +1350,9 @@ export class ClaudeAdapter implements SessionAdapter {
     // The person's typing into a form is the host's (request-aware-host.ts),
     // never the CLI's; the chain below ends in an interrupt (PRDCT-4210).
     if (input.type === 'permission_draft') return
+    // A Claude chat hands every message to the CLI at once: none waits here
+    // to be withdrawn (PRDCT-4566).
+    if (input.type === 'withdraw_message') return
     const live = this.live(handle)
     if (live.ended) throw new Error('Claude session has ended')
     if (input.type === 'set_model' && input.model !== null && !isValidModelName(input.model))

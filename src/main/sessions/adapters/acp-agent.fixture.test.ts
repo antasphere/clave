@@ -245,6 +245,30 @@ describe('the ACP stand-in agent', () => {
     })
   })
 
+  it('streams a long turn in three pieces a second apart, and ends it cancelled on session/cancel (PRDCT-4566)', async () => {
+    const agent = standIn(stateDir())
+    const { sessionId } = await open(agent)
+    agent.notifications.length = 0
+    const started = Date.now()
+    const turn = say(agent, sessionId, 'a long turn')
+    const chunks = (): string[] =>
+      agent
+        .updates()
+        .flatMap((u) =>
+          u.sessionUpdate === 'agent_message_chunk' ? [(u.content as { text: string }).text] : []
+        )
+    await expect.poll(() => chunks()).toEqual(['You said: '])
+    await new Promise((r) => setTimeout(r, 300))
+    expect(chunks()).toEqual(['You said: '])
+    await expect(turn).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(chunks()).toEqual(['You said: ', 'a long', ' turn'])
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1900)
+    const cut = say(agent, sessionId, 'another long turn')
+    await new Promise((r) => setTimeout(r, 200))
+    agent.connection.notify('session/cancel', { sessionId })
+    await expect(cut).resolves.toEqual({ stopReason: 'cancelled' })
+  })
+
   it('ends a slow prompt cancelled on session/cancel', async () => {
     const agent = standIn(stateDir())
     const { sessionId } = await open(agent)

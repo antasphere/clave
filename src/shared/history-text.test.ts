@@ -32,6 +32,26 @@ describe('historyLines', () => {
       'Error: boom'
     ])
   })
+  // PRDCT-4566: a quiet notice reports no failure (another tab's message left
+  // unsent): its words alone, never as an error; a failure keeps its Error.
+  it('writes a quiet notice as its words alone, a failure as an error', () => {
+    expect(
+      historyLines([
+        item({ type: 'user_message', text: 'stop now' }),
+        item({
+          type: 'error',
+          message: 'A message from Lane B was not sent.',
+          fatal: false,
+          quiet: true
+        }),
+        item({ type: 'error', message: 'Pi stopped during the turn (exit code 137)', fatal: false })
+      ])
+    ).toEqual([
+      'You: stop now',
+      'A message from Lane B was not sent.',
+      'Error: Pi stopped during the turn (exit code 137)'
+    ])
+  })
   it('closes an answer still open at the end, drops an empty one, and skips a subagent’s lines', () => {
     expect(
       historyLines([

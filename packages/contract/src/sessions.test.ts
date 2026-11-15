@@ -20,6 +20,7 @@ import {
   SessionRecord,
   SessionInput,
   SessionStream,
+  SessionWireInput,
   SessionWrite,
   SpawnOptions
 } from './sessions'
@@ -114,11 +115,13 @@ const inputs: unknown[] = [
   { type: 'set_model', model: 'opus' },
   { type: 'set_effort', effort: 'xhigh' },
   { type: 'set_permission_mode', mode: 'plan' },
-  { type: 'stop_task', taskId: 't1' }
+  { type: 'stop_task', taskId: 't1' },
+  { type: 'withdraw_message', id: 'waiting-2' }
 ]
 const rejectedInputs: unknown[] = [
   { type: 'set_effort', effort: '--dangerously' },
   { type: 'stop_task', taskId: '' },
+  { type: 'withdraw_message', id: '' },
   { type: 'permission_draft', id: 'clave:f', answers: { login: 7 } },
   { type: 'user_message' },
   { type: 'nope' }
@@ -138,6 +141,7 @@ const events: unknown[] = [
   { type: 'session_meta', model: 'opus', providerSessionId: null },
   { type: 'effort', effort: null },
   { type: 'error', message: 'boom', fatal: false },
+  { type: 'error', message: 'A message from Lane B was not sent.', fatal: false, quiet: true },
   { type: 'turn_interrupted' },
   { type: 'permission_withdrawn', id: 'p' },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a', projects: ['reb'] } },
@@ -160,7 +164,42 @@ const events: unknown[] = [
     type: 'background_tasks',
     tasks: [{ id: 'b', kind: 'shell', description: 'build', startedAt: 1 }]
   },
-  { type: 'provider_event', provider: 'claude', payload: { any: 1 } }
+  { type: 'provider_event', provider: 'claude', payload: { any: 1 } },
+  {
+    type: 'waiting_messages',
+    messages: [{ id: 'waiting-1', text: 'and the tests too' }],
+    takes: 'turn'
+  },
+  {
+    type: 'waiting_messages',
+    messages: [],
+    takes: 'step',
+    returned: { why: 'refused', messages: [{ id: 'waiting-3', text: '/not-a-steer' }] }
+  },
+  {
+    type: 'waiting_messages',
+    messages: [],
+    takes: 'step',
+    returned: {
+      why: 'stopped',
+      messages: [
+        {
+          id: 'waiting-2',
+          text: 'look',
+          attachments: [
+            {
+              id: 'a',
+              path: '/tmp/x.md',
+              name: 'x.md',
+              mimeType: 'text/markdown',
+              size: 3,
+              delivery: 'reference'
+            }
+          ]
+        }
+      ]
+    }
+  }
 ]
 
 describe('the ported session model agrees with the zod one', () => {
@@ -193,6 +232,53 @@ describe('the ported session model agrees with the zod one', () => {
       (m) => (m.fields.type as Schema.Literal<[string]>).literals[0]
     )
     expect([...ours].sort()).toEqual([...zodTypes].sort())
+  })
+  // Verifier 3, finding 14 (M34): each union keeps its order on both sides,
+  // what PRDCT-4566 added coming last, nothing before it moved.
+  it('keeps every session union in its order, the withdraw and the waiting list last', () => {
+    const inputOrder = [
+      'user_message',
+      'permission_response',
+      'permission_draft',
+      'interrupt',
+      'set_model',
+      'set_effort',
+      'set_permission_mode',
+      'stop_task',
+      'withdraw_message'
+    ]
+    const eventOrder = [
+      'user_message',
+      'assistant_text',
+      'tool_call',
+      'tool_result',
+      'permission_request',
+      'state_change',
+      'session_meta',
+      'effort',
+      'error',
+      'turn_interrupted',
+      'permission_withdrawn',
+      'permission_updated',
+      'permission_explained',
+      'context_usage',
+      'subagent_model',
+      'permission_mode',
+      'background_tasks',
+      'provider_event',
+      'waiting_messages'
+    ]
+    const literals = (union: { members: readonly unknown[] }): string[] =>
+      union.members.map(
+        (m) => (m as { fields: { type: Schema.Literal<[string]> } }).fields.type.literals[0]
+      )
+    const zodLiterals = (union: { options: readonly { shape: { type: unknown } }[] }): string[] =>
+      union.options.map((o) => (o.shape.type as z.ZodLiteral<string>).value)
+    expect(literals(SessionInput)).toEqual(inputOrder)
+    expect(literals(SessionWireInput)).toEqual(inputOrder)
+    expect(literals(SessionEvent)).toEqual(eventOrder)
+    expect(zodLiterals(ZodSessionInput)).toEqual(inputOrder)
+    expect(zodLiterals(ZodSessionEvent)).toEqual(eventOrder)
   })
   it.each(
     [

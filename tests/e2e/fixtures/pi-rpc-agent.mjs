@@ -1,7 +1,9 @@
 // A stand-in for Pi's rpc mode (`pi --mode rpc`, Pi 1.5.2, PRDCT-4427). It
 // never calls a provider: it speaks Pi's rpc protocol (strict JSONL on its
 // stdio, commands answered by `response` frames of the same id, events with
-// no id in between) and answers every prompt by echoing it. The unit tests
+// no id in between) and answers every prompt by echoing it, the prompt's
+// answer and its run's `agent_start` in writes of their own, as Pi 1.5.2
+// sends them (a client reads them apart, PRDCT-4566). The unit tests
 // run it with `process.execPath`; the end-to-end specs install it as a
 // `bin/pi`.
 //
@@ -23,11 +25,25 @@
 // every prompt with `No model selected`; `PI_STAND_IN_STREAMING_ONCE=1` refuses
 // the first prompt with `Agent is streaming` and runs nothing;
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
-// and starts nothing (else it starts a run). A prompt containing `slow` waits 20 s
-// before its first text delta (an abort cuts it short); `ask extension` asks a
+// and starts nothing, holding it for the next run to take, as Pi 1.5.2 does
+// (else it starts a run); `PI_STAND_IN_CLEAR_AFTER_STEP=1` answers a
+// `clear_queue` sent while steers wait only once the next one has started,
+// as Pi does when the clear races its step; `PI_STAND_IN_ABORT_KEEPS_QUEUE=1`
+// keeps the queues across an abort, as Pi 1.5.2 does (its abort clears none):
+// a steer queued while the run stops stays held for a next run, which nothing
+// starts; `PI_STAND_IN_DRAIN_GAP_MS` waits that long between taking a steer off
+// the queue at a step and starting its user message, and a `clear_queue` in
+// between still lists it, though the run goes on to start it, as Pi 1.5.2 does
+// (its loop drains the queue at the step's end, and the list `clear_queue`
+// reads loses the message only at its user message_start). A prompt
+// containing `slow` waits 20 s
+// before its first text delta (an abort cuts it short); `long turn` streams its
+// echo in three pieces a second apart, or `PI_STAND_IN_LONG_TURN_MS` apart (an
+// abort cuts it short); `ask extension` asks a
 // confirm dialog first and echoes the answer; `notify extension` sends a
 // notify; `fail provider` ends its message with a provider error; `retry`
-// starts with an auto-retry. An abort drops the steering and follow-up queue.
+// starts with an auto-retry. An abort drops the steering and follow-up queue,
+// unless told to keep them.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -247,10 +263,32 @@ if (!stateDir) {
 mkdirSync(stateDir, { recursive: true })
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.PI_STAND_IN_DELAY_MS ?? 0) || 0
+const longTurnMs = Number(process.env.PI_STAND_IN_LONG_TURN_MS ?? 1000) || 1000
+// Pi 1.5.2 answers a prompt once its run is prepared, and starts the run
+// (`agent_start`) in a later write: a client reads the two apart, and a
+// second prompt sent in between is refused, the run being Pi's already
+// (PRDCT-4566). The stand-in leaves this long between them.
+const START_GAP_MS = 20
 const noModel = process.env.PI_STAND_IN_NO_MODEL === '1'
 const anyProvider = process.env.PI_STAND_IN_ANY_PROVIDER === '1'
 let streamingOnce = process.env.PI_STAND_IN_STREAMING_ONCE === '1'
 const idleSteer = process.env.PI_STAND_IN_IDLE_STEER
+// A `clear_queue` that reaches Pi as it takes its next steer: answered once
+// that steer's user message has started, the steer no longer in the answer
+// (PRDCT-4566, verifier 3's finding 2).
+const clearAfterStep = process.env.PI_STAND_IN_CLEAR_AFTER_STEP === '1'
+/** The ids of the `clear_queue` commands held back until the next steer. */
+const heldClears = []
+// Pi 1.5.2's abort clears no queue: what was queued stays held for a next
+// run (PRDCT-4566, the verifier's closing look, finding 2).
+const abortKeepsQueue = process.env.PI_STAND_IN_ABORT_KEEPS_QUEUE === '1'
+// Pi 1.5.2's own window between taking a steer off its queue and starting
+// its user message, which a `clear_queue` answer still lists the steer in
+// (PRDCT-4566, the verifier's closing look, finding 3).
+const drainGapMs = Number(process.env.PI_STAND_IN_DRAIN_GAP_MS ?? 0) || 0
+/** The steer taken off the queue in that window, until it is listed once or
+ *  its user message starts. */
+let draining
 
 const LEVELS = ['low', 'high', 'max']
 const modelObject = (id) => ({
@@ -477,23 +515,40 @@ const assistant = (content, stopReason, extra = {}) => ({
 const update = (message, assistantMessageEvent) =>
   emit({ type: 'message_update', message, assistantMessageEvent })
 
-async function userMessage(text) {
+/** The queue cleared and said, as Pi answers `clear_queue`: a steer taken off
+ *  it whose user message has not started yet is said too, and starts anyway. */
+function clearQueue(id) {
+  const listed = draining === undefined ? [] : [draining]
+  draining = undefined
+  const cleared = { steering: [...listed, ...steering], followUp: [...followUp] }
+  steering.length = 0
+  followUp.length = 0
+  ok(id, 'clear_queue', cleared)
+  out({ type: 'queue_update', steering: [], followUp: [] })
+}
+/** `taken`: a steer or a follow-up Pi takes off its queue, which answers a
+ *  `clear_queue` held back for it (PI_STAND_IN_CLEAR_AFTER_STEP). */
+async function userMessage(text, taken = false) {
   const message = { role: 'user', content: text, timestamp: Date.now() }
   await emit({ type: 'message_start', message })
+  if (taken) draining = undefined
+  if (taken) for (const id of heldClears.splice(0)) clearQueue(id)
   await emit({ type: 'message_end', message })
   append({ type: 'message', message })
   run.messages.push(message)
 }
 
 /** One assistant message of text deltas; `before` runs once the message has
- *  started and may return more deltas to lead with. */
-async function textMessage(deltas, before) {
+ *  started and may return more deltas to lead with; `pauseMs` waits between
+ *  two deltas (an abort cuts it short). */
+async function textMessage(deltas, before, pauseMs = 0) {
   run.current = assistant([], 'pending')
   await emit({ type: 'message_start', message: run.current })
   const lead = before ? await before() : []
   await update(run.current, { type: 'text_start', contentIndex: 0 })
   let text = ''
-  for (const delta of [...lead, ...deltas]) {
+  for (const [index, delta] of [...lead, ...deltas].entries()) {
+    if (index > 0 && pauseMs) await sleep(pauseMs)
     text += delta
     run.current.content = [{ type: 'text', text }]
     await update(run.current, { type: 'text_delta', contentIndex: 0, delta })
@@ -509,7 +564,7 @@ async function endMessage(message) {
 }
 async function echoTurn(text) {
   await emit({ type: 'turn_start' })
-  await userMessage(text)
+  await userMessage(text, true)
   const reply = await textMessage(['You said: ', text])
   const message = assistant([{ type: 'text', text: reply }], 'stop')
   await endMessage(message)
@@ -518,6 +573,11 @@ async function echoTurn(text) {
 async function deliverSteering() {
   while (steering.length) {
     const text = steering.shift()
+    if (drainGapMs) {
+      // Off the queue, still listed until its user message starts.
+      draining = text
+      await sleep(drainGapMs)
+    }
     await emit({ type: 'queue_update', steering: [...steering], followUp: [...followUp] })
     await echoTurn(text)
   }
@@ -557,6 +617,9 @@ async function startRun(text) {
   if (virtual && session.model)
     session.model = { ...modelObject(virtual), provider: session.model.provider, api: 'pi-virtual' }
   try {
+    // The prompt was answered in a write of its own; the run starts in the
+    // next (START_GAP_MS).
+    await sleep(START_GAP_MS)
     await emit({ type: 'agent_start' })
     if (text.includes('retry')) {
       await emit({
@@ -618,11 +681,20 @@ async function startRun(text) {
       await emit({ type: 'agent_settled', aborted: false })
       return
     }
-    const said = await textMessage(['You said: ', text], async () => {
-      const lead = text.includes('ask extension') ? [`confirm: ${await confirmDialog()}. `] : []
-      if (text.includes('slow')) await sleep(20_000)
-      return lead
-    })
+    // `long turn`: the echo streams in three pieces a second apart (or
+    // `PI_STAND_IN_LONG_TURN_MS`), as a model's long answer does while the
+    // person writes more (PRDCT-4566).
+    const long = text.includes('long turn')
+    const half = Math.ceil(text.length / 2)
+    const said = await textMessage(
+      long ? ['You said: ', text.slice(0, half), text.slice(half)] : ['You said: ', text],
+      async () => {
+        const lead = text.includes('ask extension') ? [`confirm: ${await confirmDialog()}. `] : []
+        if (text.includes('slow')) await sleep(20_000)
+        return lead
+      },
+      long ? longTurnMs : 0
+    )
     const toolCall = {
       type: 'toolCall',
       id: 'tc_1',
@@ -685,9 +757,11 @@ async function startRun(text) {
     await emit({ type: 'agent_settled', aborted: false })
   } catch (error) {
     if (!(error instanceof Aborted)) throw error
-    // The run stops where it is.
-    steering.length = 0
-    followUp.length = 0
+    // The run stops where it is, its queues dropped, or kept when told to.
+    if (!abortKeepsQueue) {
+      steering.length = 0
+      followUp.length = 0
+    }
     const partial = run.current?.content ?? []
     await endMessageNow(assistant(partial, 'aborted', { errorMessage: 'Request was aborted' }))
     out({ type: 'agent_end', messages: run.messages, willRetry: false })
@@ -695,6 +769,9 @@ async function startRun(text) {
   } finally {
     const finished = run
     run = undefined
+    draining = undefined
+    // A clear held back for a step that never came is answered at the end.
+    for (const id of heldClears.splice(0)) clearQueue(id)
     for (const respond of finished.onSettled ?? []) respond()
   }
 }
@@ -819,13 +896,10 @@ function handle(frame) {
       open(target)
       return ok(id, type, { cancelled: false })
     }
-    case 'clear_queue': {
-      const cleared = { steering: [...steering], followUp: [...followUp] }
-      steering.length = 0
-      followUp.length = 0
-      ok(id, type, cleared)
-      return out({ type: 'queue_update', steering: [], followUp: [] })
-    }
+    case 'clear_queue':
+      // Held back until Pi takes its next steer, when told to.
+      if (clearAfterStep && run && steering.length) return void heldClears.push(id)
+      return clearQueue(id)
     case 'abort': {
       if (!run) return ok(id, type)
       run.aborted = true
@@ -838,7 +912,12 @@ function handle(frame) {
       if (run) {
         if (frame.streamingBehavior === 'steer') return queue(steering, text, id, type)
         if (frame.streamingBehavior === 'followUp') return queue(followUp, text, id, type)
-        return fail(id, type, 'Agent is streaming')
+        // Pi 1.5.2's own words for a bare prompt while a run is going.
+        return fail(
+          id,
+          type,
+          "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
+        )
       }
       if (streamingOnce) {
         // Refused as if a run were going, though none is; once.
@@ -863,8 +942,10 @@ function handle(frame) {
     case 'follow_up': {
       const text = String(frame.message ?? '')
       if (run) return queue(type === 'steer' ? steering : followUp, text, id, type)
-      // Idle, told to: the steer is answered queued and nothing starts.
-      if (type === 'steer' && idleSteer === 'queue') return ok(id, type, { disposition: 'queued' })
+      // Idle, told to, as Pi 1.5.2 does: the steer is answered queued and
+      // nothing starts; Pi holds it in its queue, and its next run takes it
+      // (PRDCT-4566).
+      if (type === 'steer' && idleSteer === 'queue') return queue(steering, text, id, type)
       // Idle: nothing to steer, so the message starts a run of its own.
       if (noModel || !session.model) return fail(id, type, 'No model selected')
       ok(id, type, { disposition: 'queued' })

@@ -285,6 +285,9 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
   // The person's typing into a form is the host's; the CLI never hears of it,
   // and above all it is not taken for an interrupt (PRDCT-4210).
   adapter.write(handle, { type: 'permission_draft', id: 'clave:f', answers: { name: 'x' } })
+  // Nothing waits in a Claude chat: a withdraw reaches nothing, and is not
+  // taken for an interrupt either (PRDCT-4566).
+  adapter.write(handle, { type: 'withdraw_message', id: 'waiting-1' })
   adapter.write(handle, { type: 'interrupt' })
   const inputs = written(child)!
     .trim()

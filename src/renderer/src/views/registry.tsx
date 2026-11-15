@@ -311,6 +311,10 @@ function RegisteredSessionView({
                 session={session}
                 onState={reporters.get(view.id)!}
                 visible={visible && !hidden}
+                // The session's chosen view, whether or not the pane is on
+                // screen: a message handed back while another tab is
+                // selected brings its files there (PRDCT-4566).
+                active={view.id === viewId}
               />
             ) : null}
           </div>
