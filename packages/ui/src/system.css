@@ -4585,9 +4585,11 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   grid-template-rows: 0fr;
   opacity: 0;
 }
+/* Clipped, never a scroller of its own: an opened row's line sticks to the
+   list's view (below). */
 .chat-waiting-fold {
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
 }
 .chat-waiting-face {
   display: flex;
@@ -4640,6 +4642,14 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-waiting-row[data-open] .chat-waiting-withdraw {
   align-self: flex-start;
   margin-top: calc((1lh - var(--spacing) * 4) / 2);
+}
+/* However far the opened message is read, its line stays in reach: when it
+   goes and its withdraw keep to the top of the list's view, and the text
+   scrolls on under them. */
+.chat-waiting-row[data-open] .chat-waiting-when,
+.chat-waiting-row[data-open] .chat-waiting-withdraw {
+  position: sticky;
+  top: calc(var(--spacing) * 1.5);
 }
 .chat-waiting-when {
   flex-shrink: 0;

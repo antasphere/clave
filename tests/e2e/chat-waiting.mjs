@@ -535,6 +535,36 @@ export async function waitingMessages(
     )
     if (shots)
       await pane(id).screenshot({ path: path.join(shots, `chat-waiting-open-${mode}.png`) })
+    // The tester's second pass: read to its end, the opened message keeps its
+    // line in reach, when it goes and its withdraw in the list's view, the
+    // text scrolled on under them.
+    await stack.locator('.chat-waiting-list').evaluate((el) => (el.scrollTop = el.scrollHeight))
+    await win.waitForTimeout(200)
+    const atEnd = await longRow.evaluate((el) => {
+      const list = el.closest('.chat-waiting-list').getBoundingClientRect()
+      const text = el.querySelector('.chat-waiting-gist').getBoundingClientRect()
+      const reach = (selector) => {
+        const node = el.querySelector(selector)
+        const box = node?.getBoundingClientRect()
+        if (!box || box.height === 0) return false
+        const shown = box.top >= list.top - 1 && box.bottom <= list.bottom + 1
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+        return shown && !!hit && (hit === node || node.contains(hit))
+      }
+      return {
+        scrolledOn: text.top < list.top,
+        endInView: text.bottom <= list.bottom + 1,
+        when: reach('.chat-waiting-when'),
+        withdraw: reach('[data-waiting-withdraw]')
+      }
+    })
+    t.check(
+      'read to its end, the opened message keeps its line in reach: when it goes and its withdraw',
+      atEnd.scrolledOn && atEnd.endInView && atEnd.when && atEnd.withdraw,
+      atEnd
+    )
+    if (shots)
+      await pane(id).screenshot({ path: path.join(shots, `chat-waiting-open-end-${mode}.png`) })
     await longLine.click()
     const closed = await state()
     await longLine.focus()
