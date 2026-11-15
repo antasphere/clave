@@ -20,6 +20,7 @@ import {
   SessionRecord,
   SessionInput,
   SessionStream,
+  SessionWireInput,
   SessionWrite,
   SpawnOptions
 } from './sessions'
@@ -230,6 +231,53 @@ describe('the ported session model agrees with the zod one', () => {
       (m) => (m.fields.type as Schema.Literal<[string]>).literals[0]
     )
     expect([...ours].sort()).toEqual([...zodTypes].sort())
+  })
+  // Verifier 3, finding 14 (M34): each union keeps its order on both sides,
+  // what PRDCT-4566 added coming last, nothing before it moved.
+  it('keeps every session union in its order, the withdraw and the waiting list last', () => {
+    const inputOrder = [
+      'user_message',
+      'permission_response',
+      'permission_draft',
+      'interrupt',
+      'set_model',
+      'set_effort',
+      'set_permission_mode',
+      'stop_task',
+      'withdraw_message'
+    ]
+    const eventOrder = [
+      'user_message',
+      'assistant_text',
+      'tool_call',
+      'tool_result',
+      'permission_request',
+      'state_change',
+      'session_meta',
+      'effort',
+      'error',
+      'turn_interrupted',
+      'permission_withdrawn',
+      'permission_updated',
+      'permission_explained',
+      'context_usage',
+      'subagent_model',
+      'permission_mode',
+      'background_tasks',
+      'provider_event',
+      'waiting_messages'
+    ]
+    const literals = (union: { members: readonly unknown[] }): string[] =>
+      union.members.map(
+        (m) => (m as { fields: { type: Schema.Literal<[string]> } }).fields.type.literals[0]
+      )
+    const zodLiterals = (union: { options: readonly { shape: { type: unknown } }[] }): string[] =>
+      union.options.map((o) => (o.shape.type as z.ZodLiteral<string>).value)
+    expect(literals(SessionInput)).toEqual(inputOrder)
+    expect(literals(SessionWireInput)).toEqual(inputOrder)
+    expect(literals(SessionEvent)).toEqual(eventOrder)
+    expect(zodLiterals(ZodSessionInput)).toEqual(inputOrder)
+    expect(zodLiterals(ZodSessionEvent)).toEqual(eventOrder)
   })
   it.each(
     [
