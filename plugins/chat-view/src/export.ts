@@ -169,7 +169,11 @@ export function transcriptMarkdown(
         break
       }
       case 'error': {
-        block(`> **Error:** ${entry.message.replace(/\n+/g, ' ')}`)
+        // A quiet notice reports no failure (another tab's message left
+        // unsent, PRDCT-4566): a plain line, as the transcript's other quiet
+        // lines are written (`_Interrupted_`); a failure keeps its Error.
+        const line = entry.message.replace(/\n+/g, ' ')
+        block(entry.quiet ? `_${line.trim()}_` : `> **Error:** ${line}`)
         break
       }
     }

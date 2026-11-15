@@ -74,6 +74,30 @@ describe('transcriptMarkdown', () => {
     expect(md.indexOf('npm test')).toBeLessThan(md.indexOf('The fade covers it.'))
   })
 
+  // PRDCT-4566: a quiet notice reports no failure (another tab's message left
+  // unsent): a plain line, as `_Interrupted_` is written; a failure keeps its
+  // Error.
+  it('writes a quiet notice as a plain line, a failure as an error', () => {
+    const entries: Entry[] = [
+      {
+        kind: 'user',
+        text: 'A long turn to stop',
+        final: true,
+        at: at(14, 2),
+        interrupted: true
+      },
+      { kind: 'assistant', text: 'You said:', final: true, at: at(14, 2) },
+      { kind: 'error', message: 'A message from Lane B was not sent.', at: at(14, 3), quiet: true },
+      { kind: 'error', message: 'Pi stopped during the turn (exit code 137)', at: at(14, 4) }
+    ]
+    const md = transcriptMarkdown(entries, meta)
+    expect(md).toContain('\n\n_Interrupted_\n')
+    expect(md).toContain('\n\n_A message from Lane B was not sent._\n')
+    expect(md).not.toMatch(/Error:\*\* A message from Lane B/)
+    expect(md).toContain('> **Error:** Pi stopped during the turn (exit code 137)')
+    expect(md.indexOf('Lane B was not sent')).toBeLessThan(md.indexOf('Pi stopped'))
+  })
+
   it('names attachments and fences a target holding backticks', () => {
     const entries: Entry[] = [
       {
