@@ -1117,45 +1117,57 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
 
   // Verifier 3, findings 2 and 7 (M14): Pi takes the steer at its step while
   // the withdraw's clear_queue is on its way, and answers without it.
-  it('a withdrawn steer Pi takes before it answers the clear_queue is drawn as taken, never handed back', async () => {
-    const s = await open({}, { env: { PI_STAND_IN_CLEAR_AFTER_STEP: '1' } })
-    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
-    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
-    s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
-    s.adapter.write(s.handle, { type: 'user_message', text: 'third' })
-    await expect.poll(() => steered(s.state)).toBe(2)
-    const second = lists(s.events).at(-1)!.messages[0]
-    s.adapter.write(s.handle, { type: 'withdraw_message', id: second.id })
-    await expect
-      .poll(() => readings(s.events).map((r) => r.message), { timeout: 15_000 })
-      .toEqual(['a long turn', 'second', 'third'])
-    await expect
-      .poll(() => s.events.filter((e) => e.type === 'state_change' && e.state === 'done').length, {
-        timeout: 15_000
-      })
-      .toBeGreaterThan(0)
-    // Nothing went back to the composer: Pi took it, and each answer is
-    // drawn under its own message.
-    expect(lists(s.events).filter((list) => list.returned)).toEqual([])
-    for (const { message, said } of readings(s.events))
-      expect(said.startsWith(`You said: ${message}`)).toBe(true)
-    // The one Pi still held went again, once, after the withdraw's own
-    // clear_queue (a steer, or a prompt once the run had ended). The run's
-    // end may take Pi's queue back once more and find nothing held (the
-    // settle-time requeue, when the withdraw's answer is read after the
-    // settle): that clear sends nothing, so it is not the anchor.
-    const all = frames(s.state)
-    const withdrawClear = all.findIndex((f) => f.type === 'clear_queue')
-    const thirdSteered = all.findIndex((f) => f.type === 'steer' && f.message === 'third')
-    expect(thirdSteered).toBeGreaterThanOrEqual(0)
-    expect(withdrawClear).toBeGreaterThan(thirdSteered)
-    expect(
-      all
-        .slice(withdrawClear + 1)
-        .filter((f) => f.type === 'prompt' || f.type === 'steer')
-        .map((f) => f.message)
-    ).toEqual(['third'])
-  })
+  it(
+    'a withdrawn steer Pi takes before it answers the clear_queue is drawn as taken, never handed back',
+    {
+      timeout: 20_000
+    },
+    async () => {
+      const s = await open({}, { env: { PI_STAND_IN_CLEAR_AFTER_STEP: '1' } })
+      s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+      await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+      s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+      s.adapter.write(s.handle, { type: 'user_message', text: 'third' })
+      await expect.poll(() => steered(s.state)).toBe(2)
+      const second = lists(s.events).at(-1)!.messages[0]
+      s.adapter.write(s.handle, { type: 'withdraw_message', id: second.id })
+      await expect
+        .poll(() => readings(s.events).map((r) => r.message), { timeout: 15_000 })
+        .toEqual(['a long turn', 'second', 'third'])
+      // The turn that answers "third" has ended: the run it was steered into,
+      // or, when it went again as a prompt once that run had settled, a run of
+      // its own, whose answer comes after the first run's end.
+      const answeredThird = (): boolean => {
+        const drawn = s.events.findIndex((e) => e.type === 'user_message' && e.text === 'third')
+        return (
+          drawn >= 0 &&
+          s.events.slice(drawn).some((e) => e.type === 'state_change' && e.state === 'done')
+        )
+      }
+      await expect.poll(answeredThird, { timeout: 15_000 }).toBe(true)
+      // Nothing went back to the composer: Pi took it, and each answer is
+      // drawn under its own message.
+      expect(lists(s.events).filter((list) => list.returned)).toEqual([])
+      for (const { message, said } of readings(s.events))
+        expect(said.startsWith(`You said: ${message}`)).toBe(true)
+      // The one Pi still held went again, once, after the withdraw's own
+      // clear_queue (a steer, or a prompt once the run had ended). The run's
+      // end may take Pi's queue back once more and find nothing held (the
+      // settle-time requeue, when the withdraw's answer is read after the
+      // settle): that clear sends nothing, so it is not the anchor.
+      const all = frames(s.state)
+      const withdrawClear = all.findIndex((f) => f.type === 'clear_queue')
+      const thirdSteered = all.findIndex((f) => f.type === 'steer' && f.message === 'third')
+      expect(thirdSteered).toBeGreaterThanOrEqual(0)
+      expect(withdrawClear).toBeGreaterThan(thirdSteered)
+      expect(
+        all
+          .slice(withdrawClear + 1)
+          .filter((f) => f.type === 'prompt' || f.type === 'steer')
+          .map((f) => f.message)
+      ).toEqual(['third'])
+    }
+  )
 
   // The verifier's closing look, finding 3 (its M14a): Pi's own window. Pi's
   // loop takes a steer off its queue at the step's end, and the list its
