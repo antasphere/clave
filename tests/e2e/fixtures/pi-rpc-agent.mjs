@@ -25,7 +25,8 @@
 // every prompt with `No model selected`; `PI_STAND_IN_STREAMING_ONCE=1` refuses
 // the first prompt with `Agent is streaming` and runs nothing;
 // `PI_STAND_IN_IDLE_STEER=queue` answers a `steer` sent while idle `queued`
-// and starts nothing (else it starts a run). A prompt containing `slow` waits 20 s
+// and starts nothing, holding it for the next run to take, as Pi 1.5.2 does
+// (else it starts a run). A prompt containing `slow` waits 20 s
 // before its first text delta (an abort cuts it short); `long turn` streams its
 // echo in three pieces a second apart, or `PI_STAND_IN_LONG_TURN_MS` apart (an
 // abort cuts it short); `ask extension` asks a
@@ -892,8 +893,10 @@ function handle(frame) {
     case 'follow_up': {
       const text = String(frame.message ?? '')
       if (run) return queue(type === 'steer' ? steering : followUp, text, id, type)
-      // Idle, told to: the steer is answered queued and nothing starts.
-      if (type === 'steer' && idleSteer === 'queue') return ok(id, type, { disposition: 'queued' })
+      // Idle, told to, as Pi 1.5.2 does: the steer is answered queued and
+      // nothing starts; Pi holds it in its queue, and its next run takes it
+      // (PRDCT-4566).
+      if (type === 'steer' && idleSteer === 'queue') return queue(steering, text, id, type)
       // Idle: nothing to steer, so the message starts a run of its own.
       if (noModel || !session.model) return fail(id, type, 'No model selected')
       ok(id, type, { disposition: 'queued' })

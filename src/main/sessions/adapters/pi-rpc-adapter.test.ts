@@ -316,7 +316,9 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
 
   // Verifier round 1, gap (mutation 27): Pi's run settled while the steer was
   // on its way; Pi answers it queued and starts nothing (PI_STAND_IN_IDLE_STEER).
-  it('a steer Pi answers queued while idle, with no run starting, goes once more as prompt, and the echo arrives', async () => {
+  // Verifier 3, finding 13: Pi holds that steer for its next run, so the
+  // prompt sent after it made Pi take the message twice (PRDCT-4566).
+  it('a steer Pi answers queued while idle, with no run starting, goes once more as prompt once out of Pi’s queue: Pi takes it once', async () => {
     const s = await open({}, { env: { PI_STAND_IN_IDLE_STEER: 'queue' } })
     await expect.poll(() => types(s.state).includes('get_commands')).toBe(true)
     const internal = (
@@ -341,13 +343,23 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     s.events.length = 0
     s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
     await expect.poll(() => done(s.events), { timeout: 3000 }).toBe(true)
-    const sent = frames(s.state).filter((f) => f.type === 'prompt' || f.type === 'steer')
+    // Pi took it once: one answer, under the one message drawn.
+    const said = s.events
+      .flatMap((e) => (e.type === 'assistant_text' && e.delta ? [e.delta] : []))
+      .join('')
+    expect(said).toBe('You said: helloDone.')
+    expect(s.events.filter((e) => e.type === 'user_message')).toEqual([
+      { type: 'user_message', text: 'hello' }
+    ])
+    const sent = frames(s.state).filter(
+      (f) => f.type === 'prompt' || f.type === 'steer' || f.type === 'clear_queue'
+    )
     expect(sent.map((f) => [f.type, f.message])).toEqual([
       ['steer', 'hello'],
+      ['clear_queue', undefined],
       ['prompt', 'hello']
     ])
     expect(notices(s.events)).toEqual([])
-    expect(s.events).toContainEqual({ type: 'assistant_text', delta: 'hello', final: false })
   })
 
   it('a prompt Pi refuses as streaming goes once more as steer, and the echo arrives', async () => {
@@ -678,7 +690,8 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       const prompt = kinds.lastIndexOf('prompt')
       expect(sent[prompt]).toMatchObject({ type: 'prompt', message: 'hello' })
       const between = sent.slice(kinds.indexOf('steer') + 1, prompt)
-      expect(commandsOf(between)).toEqual(['get_state', 'set_model'])
+      // Out of Pi's queue first, so that Pi takes it once (PRDCT-4566).
+      expect(commandsOf(between)).toEqual(['clear_queue', 'get_state', 'set_model'])
       expect(between.find((f) => f.type === 'set_model')).toMatchObject({
         provider: 'stand-in',
         modelId: 'one'

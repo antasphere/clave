@@ -204,6 +204,9 @@ export function piHistory(messages: unknown): HistoryItem[] {
   return items
 }
 
+/** The steers Pi's `clear_queue` answer says it held, as Pi holds them. */
+const steeringOf = (data: unknown): string[] => array(record(data).steering).map(text)
+
 const DIALOGS = new Set(['select', 'confirm', 'input', 'editor'])
 const ABORT_TIMEOUT_MS = 60_000
 const KILL_ABORT_TIMEOUT_MS = 5_000
@@ -805,7 +808,8 @@ export class PiRpcAdapter implements SessionAdapter {
    *  while a run Pi started is going (Pi takes it up after the current tool
    *  call), a `prompt` otherwise. A prompt refused as streaming goes once
    *  more as a steer; a steer answered while no run goes, and none starts
-   *  within 200 ms, goes once more as a prompt. */
+   *  within 200 ms, goes once more as a prompt, once out of Pi's queue: a
+   *  message reaches Pi once (PRDCT-4566). */
   private async send(
     state: HandleState,
     item: Outgoing,
@@ -876,8 +880,25 @@ export class PiRpcAdapter implements SessionAdapter {
     if (steer && !retried && !state.runActive) {
       await new Promise((resolve) => setTimeout(resolve, STEER_SETTLE_MS))
       if (state.ended || state.closing) return
-      if (!state.runActive && state.runsStarted === runsBefore)
-        return this.send(state, item, 'prompt')
+      if (state.runActive || state.runsStarted !== runsBefore) return
+      // Pi answered the steer with no run going and started none: it holds
+      // the message in its queue for its next run, so the same message sent
+      // as a prompt would reach it twice (Pi 1.5.2). It is taken out of Pi's
+      // queue first, and goes as a prompt only when Pi's answer says it held
+      // it; a message Pi no longer holds was taken (PRDCT-4566).
+      let held: string[]
+      try {
+        held = steeringOf(await connection.command('clear_queue'))
+      } catch (error) {
+        if (state.ended || state.closing) return
+        this.settle(state, item, 'refused')
+        this.notice(state, `${this.label}: ${errorMessage(error)}`)
+        return
+      }
+      if (state.ended || state.closing) return
+      // Pi is idle and only this chat writes to it: what it held is this
+      // message, in its own words or as a command it expanded.
+      if (held.length) return this.send(state, item, 'prompt')
     }
   }
 

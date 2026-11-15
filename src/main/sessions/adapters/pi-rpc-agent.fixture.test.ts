@@ -381,8 +381,16 @@ describe('the stand-in Pi', () => {
     expect(queued.events.some((e) => e.type === 'agent_start')).toBe(false)
     await expect(queued.connection.command('get_state')).resolves.toMatchObject({
       isStreaming: false,
-      messageCount: 0
+      messageCount: 0,
+      pendingMessageCount: 1
     })
+    // Pi holds it: its next run takes it, as Pi 1.5.2 does (PRDCT-4566).
+    await queued.connection.command('prompt', { message: 'next' })
+    await expect.poll(() => settled(queued)).toBe(true)
+    const users = queued.events
+      .filter((e) => e.type === 'message_end' && (e.message as { role: string }).role === 'user')
+      .map((e) => (e.message as { content: string }).content)
+    expect(users).toEqual(['next', 'lost'])
   })
 
   it('set_model switches to a listed model and refuses another; thinking levels likewise', async () => {
