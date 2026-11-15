@@ -104,7 +104,7 @@ import {
 } from '../../../src/shared/attachments'
 import { useComposerAttachments } from './composer-attachments'
 import { WaitingStack } from './WaitingStack'
-import { takenBack, useWaitingReturns } from './waiting'
+import { sendsWhileWorking, takenBack, useWaitingReturns } from './waiting'
 import { DropDrawing } from './DropDrawing'
 import { DropRefusal } from './DropRefusal'
 import { serverNameOf } from '../../../src/renderer/src/lib/drop-refusal'
@@ -581,7 +581,7 @@ export function TerminalView({
   const filesBlocked =
     preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
   const hasDraft = !!draft.trim() || attachments.length > 0
-  const showInterrupt = state === 'working' && !(session.provider === 'codex' && hasDraft)
+  const showInterrupt = state === 'working' && !(sendsWhileWorking(session.provider) && hasDraft)
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     const typedPanel = hostPanels ? hostPanelFor(draft) : null

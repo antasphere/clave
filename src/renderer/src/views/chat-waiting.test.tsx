@@ -20,6 +20,7 @@ import { groupEntries, visibleEntries } from '../../../../plugins/chat-view/src/
 import {
   draftWithReturned,
   filesWithReturned,
+  sendsWhileWorking,
   startedTurn,
   takenBack,
   takesLine,
@@ -290,6 +291,15 @@ describe('what leaves unsent comes back to the composer (PRDCT-4566)', () => {
       ]
     })
     expect(draft).toBe('first\n\nsecond, waiting\n\nthird, waiting')
+  })
+})
+
+// As ruled: while a turn runs, a draft goes with the send button in an
+// OpenCode or a Pi chat as in a Codex one (every view's `showInterrupt`).
+describe('the send button while the agent works (PRDCT-4566)', () => {
+  it('sends the draft in a Codex, an OpenCode or a Pi chat; any other keeps the stop', () => {
+    expect(['codex', 'opencode', 'pi'].map(sendsWhileWorking)).toEqual([true, true, true])
+    expect(['claude', 'echo'].map(sendsWhileWorking)).toEqual([false, false])
   })
 })
 

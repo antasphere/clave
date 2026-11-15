@@ -95,6 +95,14 @@ export function takenBack(
   return { withdraw: !!message, message }
 }
 
+/** Whether a draft goes with the send button while the agent works, as with
+ *  Enter (every view's `showInterrupt`): a Codex chat steers it into the
+ *  running turn, an OpenCode or a Pi chat holds it in the stack until the
+ *  agent takes it (PRDCT-4566). With an empty composer the button stays the
+ *  stop, and Escape stops in any chat. */
+export const sendsWhileWorking = (provider: string): boolean =>
+  provider === 'codex' || provider === 'opencode' || provider === 'pi'
+
 /** When a waiting message goes, in a few words. */
 export function takesLine(takes: WaitingTakes | null, agent: string): string {
   return takes === 'step' ? `${agent} takes it at its next step` : 'Sent when this turn ends'
