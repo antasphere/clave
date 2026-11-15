@@ -54,6 +54,39 @@ A `.clave` routine names the server that runs it by that name (`"server": "MacSt
 
 On a Mac that runs the Clave app, Settings → **Servers** → **This Mac as a server** → **Run Clave as a server on this Mac** runs this script for you. It listens on the Mac's Tailscale address when Tailscale is up (read from the Tailscale app's own binary, so the `tailscale` command need not be on your PATH), on `127.0.0.1` otherwise; the page follows the script's phases, adds the server to that Mac's own list, offers its token with **Copy token** (never shown on screen), and then says the address and whether the service runs. Running it again updates the server. The script needs `node`, `git` and `npm` on your login shell's PATH, as above.
 
+### A Mac at home, set up from your laptop
+
+A Mac mini kept at home can be set up almost entirely over SSH from the laptop you work on. Done this way on 15 November 2026 (3.0.0-beta.23, upgraded to beta.24 by the app the same day).
+
+At the Mac, once:
+
+1. A user account of its own for the server (an administrator), logged in. Bluetooth pairings are the machine's, so a keyboard and a mouse paired from another account keep working.
+2. System Settings → General → Sharing: **Remote Login** on for that user.
+3. The Tailscale app signed in to the same tailnet as the laptop, with **Launch at login** on.
+4. Users & Groups → **Automatically log in as** that user (it needs FileVault off: the launchd agent runs only while the user is logged in), and sleep off (`pmset -g` shows `sleep 0`).
+
+From the laptop, with `Host mac-mini` in `~/.ssh/config` pointing at the Mac's tailnet name:
+
+1. `ssh-copy-id mac-mini`, the one time the Mac's password is typed.
+2. When Homebrew was installed by another account, it refuses to install for this one (`/opt/homebrew is not writable`): `ssh -t mac-mini 'sudo chown -R <user> /opt/homebrew'`.
+3. The agents and CLIs: `brew install gh`, `npm install -g @openai/codex`, `curl -fsSL https://claude.ai/install.sh | bash`. Put `~/.local/bin` (and any other directory a CLI lands in) on the PATH in `~/.zprofile` before installing the server: the script records the login shell's PATH for the agents.
+4. The Tailscale app puts no `tailscale` command on the PATH (PRDCT-4581), so the script cannot see Tailscale and `auto` falls back to `127.0.0.1`. A symlink to the app's binary does not work (it stops on "The current bundleIdentifier is unknown to the registry"); a wrapper does:
+
+   ```sh
+   printf '#!/bin/sh\nexec /Applications/Tailscale.app/Contents/MacOS/Tailscale "$@"\n' > ~/.local/bin/tailscale
+   chmod +x ~/.local/bin/tailscale
+   ```
+
+   Then install with `--host tailscale`, which fails rather than falling back when Tailscale is down: `bash ~/install-server.sh --host tailscale --server-name mac-mini`.
+
+5. The sign-ins, run in one SSH session (`ssh -t mac-mini`), each finished in the laptop's browser: `gh auth login --git-protocol ssh --web` (it generates the Mac's SSH key and uploads it), `codex login --device-auth` (turn on device code authorization in ChatGPT's Settings → Security first, or the page refuses the code), `claude auth login`. These become the server's default Claude and Codex accounts. Over SSH, gh cannot reach the keychain and keeps its token in `~/.config/gh/hosts.yml`.
+6. The token, straight to the laptop's clipboard without showing it: `ssh mac-mini 'node -e "process.stdout.write(require(process.env.HOME + \"/.local/share/clave-server/daemon/identity.json\").token)"' | pbcopy`. Add the server as below, then empty the clipboard.
+7. Settings → General → Workspaces → **Add**, the server, then its folder: a server's tabs show only in one of its workspaces, so a session opened on a server with none appears in no sidebar.
+
+The address is the Mac's tailnet address, so the laptop reaches it from any network with Tailscale on; Tailscale goes direct when it can and through its relay otherwise.
+
+A session opened while the server upgrades ends when the upgrade restarts it (PRDCT-4582), even though the upgrade waited for idle agents before it began building: open the first session after the Servers page says the server runs the app's version.
+
 ## Connect your Mac
 
 1. On the server, print the token: `node -p 'require(process.env.HOME + "/.local/share/clave-server/daemon/identity.json").token'`. Treat it like a password: paste it into Clave and nowhere else (not a chat, a ticket or a commit).
