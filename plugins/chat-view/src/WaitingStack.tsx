@@ -4,7 +4,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
 import type { WaitingMessage } from '../../../src/shared/session-model'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { gist } from './exchanges'
-import { takesLine, waitingCount, type WaitingTakes } from './waiting'
+import { rowText, takesLine, waitingCount, type WaitingTakes } from './waiting'
 
 /** How long a leaving row takes to fold away; the stylesheet's transition is
  *  twice the default duration, and this waits a little past it (WorkCards). */
@@ -112,8 +112,9 @@ function WaitingRow({
   // without the bracketed header.
   const delivery = parseDelivery(message.text)
   const name = delivery ? (delivery.sender?.name ?? 'Another agent') : null
-  const body = (delivery?.body ?? message.text).trim()
   const files = message.attachments ?? []
+  // A file by its name, as its chip says it, never by its marker.
+  const body = rowText(delivery?.body ?? message.text, files).trim()
   const filesLine = files.length
     ? files.length === 1
       ? files[0].name

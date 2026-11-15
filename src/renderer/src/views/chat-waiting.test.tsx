@@ -212,6 +212,37 @@ describe('the stack above the composer (PRDCT-4566)', () => {
     expect(waitingCount(1)).toBe('1 message waiting')
   })
 
+  // The tester's second pass: a waiting message with a file read "[File #1]"
+  // in its row, the text's marker, where the composer's chip names the file.
+  it('names a file in its row as the composer’s chip does; handed back, the words keep the marker', () => {
+    const clock = {
+      ...file,
+      id: 'f2',
+      label: 'File #1',
+      name: '03-clock.txt',
+      path: '/tmp/made-up/03-clock.txt',
+      mimeType: 'text/plain'
+    }
+    const message: WaitingMessage = {
+      id: 'w1',
+      text: 'File message: reply with the single word file. [File #1]',
+      attachments: [clock]
+    }
+    const markup = draw([message], 'turn')
+    expect(markup).toContain(
+      '<span class="chat-waiting-gist">File message: reply with the single word file. 03-clock.txt</span>'
+    )
+    expect(markup).not.toContain('[File #1]')
+    // A message that is its file alone reads as the file's name too.
+    expect(draw([{ ...message, text: '[File #1] ' }], 'turn')).toContain(
+      '<span class="chat-waiting-gist">03-clock.txt</span>'
+    )
+    // Handed back, the words are the ones written, the marker its chip answers to.
+    expect(draftWithReturned('', { why: 'withdrawn', messages: [message] })).toBe(
+      'File message: reply with the single word file. [File #1]'
+    )
+  })
+
   it('says when Pi takes one', () => {
     expect(draw([{ id: 'w1', text: 'next' }], 'step', 'Pi')).toContain(
       'Pi takes it at its next step'

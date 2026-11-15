@@ -25,14 +25,15 @@
 //     pane; a long message opens in place by a click or Enter, and closes;
 //   - in each skin (Enclave, Folio, Chat): while the agent works, a draft
 //     turns the stop into Send message, which queues it in that skin's
-//     stack; withdrawn, its words and its file come back to that skin's
-//     composer, and still together, to that skin alone, when they come back
-//     while another tab is on screen; an empty composer keeps the stop, and
-//     Escape stops.
+//     stack, its row naming its file as the chip did; withdrawn, its words
+//     and its file come back to that skin's composer, and still together, to
+//     that skin alone, when they come back while another tab is on screen;
+//     an empty composer keeps the stop, and Escape stops.
 // With `CLAVE_E2E_SHOTS` set, the stack with two messages waiting (one from
 // another tab), the conversation with the line saying the other tab's was
 // not sent, the stack with six waiting and a row opened to a long message
-// (OpenCode) are photographed there.
+// (OpenCode), and in the Chat skin a waiting message with its file are
+// photographed there.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { callMcp, until } from './harness.mjs'
@@ -636,6 +637,19 @@ export async function waitingMessages(
         (await kind()) === 'stop',
       { rows: await skinRows.count(), value: await box.inputValue() }
     )
+    // The tester's second pass: the file by its name in the row, as the
+    // composer's chip named it, never by the text's marker.
+    const rowGist = (await skinRows.first().locator('.chat-waiting-gist').textContent()) ?? ''
+    t.check(
+      `${testId}: its row names the file as the chip did, never by its marker`,
+      rowGist.includes(file) && !rowGist.includes('[File #'),
+      rowGist
+    )
+    if (shots && testId === 'chat-view') {
+      // Once the row's fold has settled.
+      await win.waitForTimeout(800)
+      await pane(id).screenshot({ path: path.join(shots, `chat-waiting-file-${mode}.png`) })
+    }
     await skinRows.first().locator('[data-waiting-withdraw]').click()
     // The words as sent, the file's marker after them, and the file's chip.
     const back = await until(

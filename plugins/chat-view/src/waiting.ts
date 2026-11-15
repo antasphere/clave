@@ -1,5 +1,5 @@
 import { useEffect, useRef, type SetStateAction } from 'react'
-import type { Attachment } from '../../../src/shared/attachments'
+import { markerOf, type Attachment } from '../../../src/shared/attachments'
 import type { SessionEvent, WaitingMessage } from '../../../src/shared/session-model'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { useDraftStore } from '../../../src/renderer/src/views/draft-store'
@@ -106,6 +106,16 @@ export const sendsWhileWorking = (provider: string): boolean =>
 /** The stack's count line: how many messages wait. */
 export const waitingCount = (n: number): string =>
   `${n} ${n === 1 ? 'message' : 'messages'} waiting`
+
+/** A waiting message's words as its row shows them: each file's marker
+ *  (`[File #1]`, the text's handle for the file) as the file's name, the way
+ *  the composer's chip names it. The words handed back to the composer keep
+ *  their markers, which their files' chips answer to. */
+export const rowText = (text: string, files: readonly Attachment[]): string =>
+  files.reduce((out, file) => {
+    const marker = markerOf(file)
+    return marker ? out.split(marker).join(file.name) : out
+  }, text)
 
 /** When a waiting message goes, in a few words. */
 export function takesLine(takes: WaitingTakes | null, agent: string): string {
