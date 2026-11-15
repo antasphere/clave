@@ -115,30 +115,32 @@ export function takesLine(takes: WaitingTakes | null, agent: string): string {
 /** Messages handed back go into the composer, once per return: a view's own
  *  reducer holds the latest return as a new value each time. The words go
  *  into the session's one draft, which every view of it writes the same way.
- *  The files go to the view on screen alone (`visible`): each view keeps its
- *  own, and a hidden one would show them again later, after the person had
- *  dealt with them where they were. */
+ *  The files go to the session's active view alone (`active`, the view chosen
+ *  in its pane): each view keeps its own, and another skin would show them
+ *  again later, after the person had dealt with them where they were. The
+ *  active view takes them on screen or not, so a return that comes while
+ *  another tab is selected still brings the words and their files together. */
 export function useWaitingReturns(
   sessionId: string,
   returned: WaitingReturn | null,
   setDraft: (value: SetStateAction<string>) => void,
   attachments: Attachment[],
   restore: (files: Attachment[]) => void,
-  visible: boolean
+  active: boolean
 ): void {
-  // The composer's files and whether the view is on screen, as this render
-  // holds them, for the return below (declared first, so it runs first in
-  // the same commit).
+  // The composer's files and whether the view is the session's active one,
+  // as this render holds them, for the return below (declared first, so it
+  // runs first in the same commit).
   const files = useRef(attachments)
-  const shown = useRef(visible)
+  const chosen = useRef(active)
   useEffect(() => {
     files.current = attachments
-    shown.current = visible
+    chosen.current = active
   })
   useEffect(() => {
     if (!returned) return
     setDraft((current) => draftWithReturned(current, returned))
-    if (!shown.current) return
+    if (!chosen.current) return
     const draft = useDraftStore.getState().drafts[sessionId] ?? ''
     const next = filesWithReturned(files.current, draft, returned)
     if (next) restore(next)

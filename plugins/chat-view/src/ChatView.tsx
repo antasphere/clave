@@ -132,6 +132,10 @@ export interface ChatViewProps {
   session: Session
   onState: (state: AgentState, model: string | null) => void
   visible?: boolean
+  /** The view chosen for the session in its pane, on screen or not: the one
+   *  a message handed back brings its files to (PRDCT-4566). `visible` when
+   *  not said, for a host that mounts this view alone. */
+  active?: boolean
 }
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
@@ -402,7 +406,7 @@ export const EntryRow = memo(function EntryRow({
     )
   if (entry.kind === 'error')
     // Nothing failed (PRDCT-4566): the quiet line the mode line is, small and
-    // grey in the column's centre, never the failure's red.
+    // grey with no edge, never the failure's red.
     return entry.quiet ? (
       <div className="chat-notice" data-tone="quiet" role="status">
         {entry.message}
@@ -480,7 +484,12 @@ function BlockView({
   if (block.kind === 'approval-group') return <ApprovalRun group={block} id={key} />
   return <EntryRow entry={block} onError={onError} />
 }
-export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
+export function ChatView({
+  session,
+  onState,
+  visible = true,
+  active = visible
+}: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
@@ -757,7 +766,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     startDrop
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
   // A message that waited and left unsent comes back here (PRDCT-4566).
-  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, visible)
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, active)
   // The server a tab of another machine runs on, as the refusal card names it.
   const serverName = useFleetStore((s) => serverNameOf(s.connections, ownerOf(session.id)))
   // A message can go while files are still being prepared or one still

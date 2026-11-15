@@ -734,7 +734,12 @@ function usePageScroll(
   return scroll
 }
 
-export function FolioView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
+export function FolioView({
+  session,
+  onState,
+  visible = true,
+  active = visible
+}: ChatViewProps): React.JSX.Element {
   const {
     conversation,
     dispatch,
@@ -898,7 +903,7 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     restore
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
   // A message that waited and left unsent comes back here (PRDCT-4566).
-  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, visible)
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, active)
   const filesBlocked =
     preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
   const hasDraft = !!draft.trim() || attachments.length > 0

@@ -346,7 +346,8 @@ function TermBlock({
 export function TerminalView({
   session,
   onState,
-  visible = true
+  visible = true,
+  active = visible
 }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
@@ -573,7 +574,7 @@ export function TerminalView({
     startDrop
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
   // A message that waited and left unsent comes back here (PRDCT-4566).
-  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, visible)
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, active)
   // The server a tab of another machine runs on, as the refusal card names it.
   const serverName = useFleetStore((s) => serverNameOf(s.connections, ownerOf(session.id)))
   // A message can go while files are still being prepared or one still

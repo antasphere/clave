@@ -4,7 +4,7 @@
  * failed. The adapter says it as a notice marked `quiet`, and every skin
  * draws it in the look its neutral facts already have, never in the red of
  * a failure: Chat and Enclave as the mode line is drawn (`.chat-notice`,
- * small and grey in the column's centre, a status), Folio as its page's
+ * small and grey with no edge, a status), Folio as its page's
  * aside, the way a stopped page says it stopped. A notice that reports a
  * failure keeps its red, in every skin. The quiet line answers nothing: it
  * never brings back the message Escape just took back.

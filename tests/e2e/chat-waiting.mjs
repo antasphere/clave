@@ -26,7 +26,9 @@
 //   - in each skin (Enclave, Folio, Chat): while the agent works, a draft
 //     turns the stop into Send message, which queues it in that skin's
 //     stack; withdrawn, its words and its file come back to that skin's
-//     composer; an empty composer keeps the stop, and Escape stops.
+//     composer, and still together, to that skin alone, when they come back
+//     while another tab is on screen; an empty composer keeps the stop, and
+//     Escape stops.
 // With `CLAVE_E2E_SHOTS` set, the stack with two messages waiting (one from
 // another tab), the conversation with the line saying the other tab's was
 // not sent, the stack with six waiting and a row opened to a long message
@@ -646,7 +648,57 @@ export async function waitingMessages(
       !!back,
       { value: await box.inputValue(), chips: await chip.count() }
     )
-    await skin.getByRole('button', { name: `Remove ${file}`, exact: true }).click()
+    // Handed back while another tab is on screen (the verifier's closing
+    // look, finding 1): the words and the file still come back together, to
+    // this skin's composer, the session's chosen view, and to no other.
+    await button.click()
+    const queuedAgain = await until(
+      async () => ((await skinRows.count()) === 1 && (await chip.count()) === 0 ? true : null),
+      { tries: 60 }
+    )
+    const waitingId = await skinRows.first().getAttribute('data-waiting-message')
+    const returns = async () => (await heard()).filter((h) => h.endsWith('back:withdrawn')).length
+    const returnsBefore = await returns()
+    await callMcp(app, 'focus', { sessionId: lane })
+    const away = await until(async () => ((await skin.isVisible()) ? null : true), { tries: 40 })
+    await win.evaluate(
+      ({ sessionId, message }) =>
+        window.electronAPI.sessionsWrite(sessionId, { type: 'withdraw_message', id: message }),
+      { sessionId: id, message: waitingId }
+    )
+    const handedBack = await until(async () => ((await returns()) > returnsBefore ? true : null), {
+      tries: 60
+    })
+    // The views take the return while the tab is hidden.
+    await win.waitForTimeout(300)
+    await callMcp(app, 'focus', { sessionId: id })
+    await skin.waitFor()
+    const inPane = pane(id).locator('.chat-attachment-name', { hasText: file })
+    const together = await until(
+      async () =>
+        (await box.inputValue()).startsWith(words) &&
+        (await chip.count()) === 1 &&
+        (await inPane.count()) === 1
+          ? true
+          : null,
+      { tries: 60 }
+    )
+    t.check(
+      `${testId}: handed back while another tab is on screen, its words and its file still come back together, to this skin alone`,
+      !!queuedAgain && !!waitingId && !!away && !!handedBack && !!together,
+      {
+        queuedAgain,
+        waitingId,
+        away,
+        handedBack,
+        value: await box.inputValue(),
+        chips: await chip.count(),
+        inPane: await inPane.count()
+      }
+    )
+    // Away with the file, if it came back, so the next skin starts clean.
+    const remove = skin.getByRole('button', { name: `Remove ${file}`, exact: true })
+    if ((await remove.count()) > 0) await remove.first().click()
     await box.fill('')
     await box.press('Escape')
     await idle()
