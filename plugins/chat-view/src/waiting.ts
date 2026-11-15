@@ -103,6 +103,10 @@ export function takenBack(
 export const sendsWhileWorking = (provider: string): boolean =>
   provider === 'codex' || provider === 'opencode' || provider === 'pi'
 
+/** The stack's count line: how many messages wait. */
+export const waitingCount = (n: number): string =>
+  `${n} ${n === 1 ? 'message' : 'messages'} waiting`
+
 /** When a waiting message goes, in a few words. */
 export function takesLine(takes: WaitingTakes | null, agent: string): string {
   return takes === 'step' ? `${agent} takes it at its next step` : 'Sent when this turn ends'

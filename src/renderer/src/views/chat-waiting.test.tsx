@@ -24,6 +24,7 @@ import {
   startedTurn,
   takenBack,
   takesLine,
+  waitingCount,
   type WaitingReturn
 } from '../../../../plugins/chat-view/src/waiting'
 import { WaitingStack } from '../../../../plugins/chat-view/src/WaitingStack'
@@ -199,6 +200,16 @@ describe('the stack above the composer (PRDCT-4566)', () => {
     expect(markup).toContain('<span class="chat-waiting-from">Another agent</span>')
     expect(markup).toContain('<span class="chat-waiting-gist">notes.md</span>')
     expect(markup).toContain('aria-label="3 messages waiting"')
+    // Verifier 3, findings 4 and 5: the count line over the rows (it stays in
+    // view when the list scrolls), and each row's line a button that opens
+    // the row to its whole message.
+    expect(markup).toContain(
+      '<p class="chat-waiting-count" data-waiting-count="">3 messages waiting</p>'
+    )
+    expect(markup.indexOf('data-waiting-count')).toBeLessThan(markup.indexOf('chat-waiting-list'))
+    expect(markup.match(/<button type="button" class="chat-waiting-text"/g)).toHaveLength(3)
+    expect(markup.match(/aria-expanded="false"/g)).toHaveLength(3)
+    expect(waitingCount(1)).toBe('1 message waiting')
   })
 
   it('says when Pi takes one', () => {

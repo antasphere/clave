@@ -4,7 +4,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
 import type { WaitingMessage } from '../../../src/shared/session-model'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { gist } from './exchanges'
-import { takesLine, type WaitingTakes } from './waiting'
+import { takesLine, waitingCount, type WaitingTakes } from './waiting'
 
 /** How long a leaving row takes to fold away; the stylesheet's transition is
  *  twice the default duration, and this waits a little past it (WorkCards). */
@@ -12,10 +12,14 @@ const LEAVE_MS = 340
 
 /**
  * The messages that wait for the agent (PRDCT-4566), docked directly above
- * the composer: one row per message, in the order written. A row is the
- * delivery card's face on one line — the sending tab's name when another tab
- * wrote it, the message's first line, the whole of it on hover or focus —
- * then when it goes, and a withdraw. The conversation holds only what the
+ * the composer: the count line, then one row per message, in the order
+ * written. A row is the delivery card's face on one line — the sending tab's
+ * name when another tab wrote it, the message's first line, the whole of it
+ * on hover or focus — then when it goes, and a withdraw. A click on a row's
+ * line, or Enter on it, opens the row in place to the whole message, and
+ * closes it the same way. Past four rows the list scrolls inside the stack,
+ * the count line staying in view, and the stack never takes more than about
+ * a third of the pane (system.css). The conversation holds only what the
  * agent has taken: a row folds shut as the agent takes its message, which is
  * then drawn in the transcript, after the answer before it.
  */
@@ -33,6 +37,8 @@ export function WaitingStack({
 }): React.JSX.Element | null {
   const [leaving, setLeaving] = useState<WaitingMessage[]>([])
   const [previous, setPrevious] = useState(messages)
+  // The row opened to its whole message, one at a time.
+  const [open, setOpen] = useState<string | null>(null)
   // A row the list no longer holds is kept, marked leaving, for the fold.
   if (previous !== messages) {
     const ids = new Set(messages.map((m) => m.id))
@@ -42,6 +48,7 @@ export function WaitingStack({
       ...current.filter((m) => !ids.has(m.id)),
       ...gone.filter((m) => !current.some((c) => c.id === m.id))
     ])
+    if (open && !ids.has(open)) setOpen(null)
   }
   useEffect(() => {
     if (!leaving.length) return
@@ -59,8 +66,14 @@ export function WaitingStack({
       className="chat-waiting-stack"
       data-waiting-stack=""
       data-empty={messages.length ? undefined : 'true'}
-      aria-label={`${messages.length} ${messages.length === 1 ? 'message' : 'messages'} waiting`}
+      data-open={open ? 'true' : undefined}
+      aria-label={waitingCount(messages.length)}
     >
+      {messages.length > 0 && (
+        <p className="chat-waiting-count" data-waiting-count="">
+          {waitingCount(messages.length)}
+        </p>
+      )}
       <ol className="chat-waiting-list">
         {rows.map(({ message, gone }) => (
           <WaitingRow
@@ -68,6 +81,8 @@ export function WaitingStack({
             message={message}
             when={when}
             gone={gone}
+            open={!gone && open === message.id}
+            onToggle={() => setOpen((current) => (current === message.id ? null : message.id))}
             onWithdraw={onWithdraw}
           />
         ))}
@@ -80,13 +95,19 @@ function WaitingRow({
   message,
   when,
   gone,
+  open,
+  onToggle,
   onWithdraw
 }: {
   message: WaitingMessage
   when: string
   gone: boolean
+  open: boolean
+  onToggle: () => void
   onWithdraw: (id: string) => void
 }): React.JSX.Element {
+  // The quick look on hover or focus; none while the row is open whole.
+  const [peek, setPeek] = useState(false)
   // Another tab's message is named as the delivery card names it, its words
   // without the bracketed header.
   const delivery = parseDelivery(message.text)
@@ -98,28 +119,33 @@ function WaitingRow({
       ? files[0].name
       : `${files.length} files`
     : ''
+  const whole = body || filesLine
   return (
     <li
       className="chat-waiting-row"
       data-waiting-message={message.id}
       data-from={delivery ? 'tab' : undefined}
       data-leaving={gone || undefined}
+      data-open={open || undefined}
     >
       <div className="chat-waiting-fold">
         <div className="chat-waiting-face">
-          <Tooltip disableHoverableContent>
+          <Tooltip disableHoverableContent open={peek && !open} onOpenChange={setPeek}>
             <TooltipTrigger asChild>
-              <span
+              <button
+                type="button"
                 className="chat-waiting-text"
                 tabIndex={gone ? -1 : 0}
-                aria-label={`${name ? `From ${name}: ` : ''}${body || filesLine}`}
+                aria-expanded={open}
+                aria-label={`${name ? `From ${name}: ` : ''}${whole}`}
+                onClick={onToggle}
               >
                 {name && <span className="chat-waiting-from">{name}</span>}
-                <span className="chat-waiting-gist">{gist(body) || filesLine}</span>
-              </span>
+                <span className="chat-waiting-gist">{open ? whole : gist(body) || filesLine}</span>
+              </button>
             </TooltipTrigger>
             <TooltipContent side="top" className="chat-waiting-whole">
-              {body || filesLine}
+              {whole}
             </TooltipContent>
           </Tooltip>
           <span className="chat-waiting-when">{when}</span>

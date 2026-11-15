@@ -4524,10 +4524,11 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 
 /* The messages that wait for the agent (WaitingStack.tsx, PRDCT-4566): written
    while it works and not taken yet, docked directly above the composer, where
-   the reader looks while waiting. One row per message, in the order written:
-   the delivery card's face on one line (the sending tab's name in its ink,
-   the first line clamped, the whole on hover or focus), when it goes in the
-   queue line's words, and the attachment chip's withdraw. The box is the
+   the reader looks while waiting. The count line, then one row per message,
+   in the order written: the delivery card's face on one line (the sending
+   tab's name in its ink, the first line clamped, the whole on hover or
+   focus, or opened in place by a click or Enter), when it goes in the queue
+   line's words, and the attachment chip's withdraw. The box is the
    prompt dock's, quieter: the paper of an opened delivery card, no lift. A
    row folds open as it arrives and shut as the agent takes it, the work
    cards' fold; none under reduced motion. */
@@ -4539,12 +4540,29 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   background-color: var(--surface-100);
   font-size: var(--chat-code-size);
 }
+/* How many wait, in the prompt dock's queue line: above the rows, so it
+   stays in view however far the list is scrolled. */
+.chat-waiting-count {
+  margin: 0;
+  padding: calc(var(--spacing) / 2) var(--spacing) var(--spacing) calc(var(--spacing) * 2.5);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+/* Four rows (a row is one line and its padding), then the list scrolls
+   inside the stack; never more than about a third of the pane. A row opened
+   to a long message gets that third to be read in. */
 .chat-waiting-list {
   display: flex;
   flex-direction: column;
   margin: 0;
   padding: 0;
   list-style: none;
+  max-height: min(calc(4 * (1lh + var(--spacing) * 3)), 30vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chat-waiting-stack[data-open] .chat-waiting-list {
+  max-height: 30vh;
 }
 .chat-waiting-row {
   display: grid;
@@ -4574,6 +4592,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     calc(var(--spacing) * 2.5);
   border-radius: var(--radius-lg);
 }
+/* The row's line is a button: a click, or Enter, opens the row to the whole
+   message, and closes it. */
 .chat-waiting-text {
   display: flex;
   flex: 1;
@@ -4582,6 +4602,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   min-width: 0;
   border-radius: var(--radius-sm);
   outline: none;
+  text-align: start;
 }
 .chat-waiting-text:focus-visible {
   outline: thin solid var(--color-accent);
@@ -4602,6 +4623,13 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--term-ink, var(--text-primary));
+}
+/* Opened in place: the whole message, wrapped as it was written. */
+.chat-waiting-row[data-open] .chat-waiting-gist {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .chat-waiting-when {
   flex-shrink: 0;
