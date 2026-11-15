@@ -1,8 +1,9 @@
 import { useEffect, useRef, type SetStateAction } from 'react'
 import type { Attachment } from '../../../src/shared/attachments'
 import type { SessionEvent, WaitingMessage } from '../../../src/shared/session-model'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { useDraftStore } from '../../../src/renderer/src/views/draft-store'
-import type { Entry } from './reducer'
+import { answeredSince, type Entry } from './reducer'
 
 /* The messages that wait for the agent (PRDCT-4566): written while it works,
    not yet taken. An OpenCode chat takes one once the running turn has ended,
@@ -16,9 +17,12 @@ export type WaitingReturn = NonNullable<
 >
 
 /** The texts of messages that come back, as the composer takes them: in the
- *  order written, a blank line between them. */
+ *  order written, a blank line between them. Another tab's message is never
+ *  the person's to edit: the adapter drops it with a line naming its tab, and
+ *  the composer would not take one anyway. */
 export const returnedText = (messages: readonly WaitingMessage[]): string =>
   messages
+    .filter((m) => !parseDelivery(m.text))
     .map((m) => m.text.replace(/\s+$/, ''))
     .filter((text) => text.trim() !== '')
     .join('\n\n')
@@ -55,16 +59,40 @@ export function filesWithReturned(
   return added.length ? [...files, ...added] : null
 }
 
+/** A message the person sent, as the composer takes it back. */
+export interface SentMessage {
+  text: string
+  attachments: Attachment[]
+}
+
 /** The message the running turn started on, the last one in the
  *  conversation: what Escape hands back before any answer, when messages
  *  wait behind it (the last one sent waits in the stack, and comes back with
- *  the others). */
-export function startedTurn(entries: readonly Entry[]): {
-  text: string
-  attachments: Attachment[]
-} | null {
+ *  the others). Null when it is another tab's: never the person's to take
+ *  back. */
+export function startedTurn(entries: readonly Entry[]): SentMessage | null {
   const last = entries.findLast((e) => e.kind === 'user')
-  return last?.kind === 'user' ? { text: last.text, attachments: last.attachments ?? [] } : null
+  if (last?.kind !== 'user' || parseDelivery(last.text)) return null
+  return { text: last.text, attachments: last.attachments ?? [] }
+}
+
+/** What Escape takes back while the agent works (every view's `takeBack`):
+ *  nothing once an answer has begun; before it, the turn's message leaves
+ *  the conversation (`withdraw`) and `message` goes back into the composer.
+ *  With messages waiting (PRDCT-4566) that is the message the turn started
+ *  on, never the last one sent, which waits and comes back with the others,
+ *  so no text comes back twice; and another tab's message stays where it is,
+ *  never taken back. With none waiting, the view's last message sent, as
+ *  before. */
+export function takenBack(
+  entries: Entry[],
+  waiting: boolean,
+  lastSent: SentMessage | null
+): { withdraw: boolean; message: SentMessage | null } {
+  if (answeredSince(entries)) return { withdraw: false, message: null }
+  if (!waiting) return { withdraw: true, message: lastSent }
+  const message = startedTurn(entries)
+  return { withdraw: !!message, message }
 }
 
 /** When a waiting message goes, in a few words. */

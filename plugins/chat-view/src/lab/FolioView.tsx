@@ -35,7 +35,7 @@ import {
   type Attachment
 } from '../../../../src/shared/attachments'
 import { EndedNotice, type ChatViewProps } from '../ChatView'
-import { answeredSince, openRequests, type Entry } from '../reducer'
+import { openRequests, type Entry } from '../reducer'
 import { createEntryMarkdownPlugins } from '../markdown-append'
 import { ChatCode } from '../code'
 import { describeToolHead, runTitle, toolHint, toolVerb, type ToolEntry } from '../tools'
@@ -48,7 +48,7 @@ import { SenderChip } from '../Delivery'
 import { Attachments } from '../Attachments'
 import { useComposerAttachments } from '../composer-attachments'
 import { WaitingStack } from '../WaitingStack'
-import { startedTurn, useWaitingReturns } from '../waiting'
+import { takenBack, useWaitingReturns } from '../waiting'
 import { useComposerFocus } from '../focus'
 import { useMessageHistory } from '../history'
 import { usePresentation } from '../presentation'
@@ -965,14 +965,15 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   // message comes back to the composer, as in the Chat view.
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
-    // With messages waiting (PRDCT-4566), the one taken back is the one the
-    // turn started on; the last one sent waits, and comes back with them.
-    const last = conversation.waiting.length ? startedTurn(conversation.entries) : lastSent.current
-    if (!answeredSince(conversation.entries)) {
+    // With messages waiting, the one taken back is the one the turn started
+    // on, never another tab's; the last one sent waits, and comes back with
+    // them (PRDCT-4566, `takenBack`).
+    const back = takenBack(conversation.entries, conversation.waiting.length > 0, lastSent.current)
+    if (back.withdraw) {
       dispatch({ withdraw: true })
-      if (last && !draft.trim() && !attachments.length) {
-        setDraft(last.text)
-        restore(last.attachments)
+      if (back.message && !draft.trim() && !attachments.length) {
+        setDraft(back.message.text)
+        restore(back.message.attachments)
       }
     }
     textarea.current?.focus()

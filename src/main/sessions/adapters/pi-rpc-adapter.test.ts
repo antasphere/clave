@@ -1246,6 +1246,44 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     expect(readings(s.events)).toEqual([])
   })
 
+  // Verifier 3, finding 3, as ruled: another tab's message never goes into
+  // the person's composer; dropped, it leaves one line naming its tab.
+  it('another tab’s message that leaves unsent is dropped with one line naming its tab, never handed back', async () => {
+    const lane = (body: string): string =>
+      `[Message from Clave tab "Lane B" — reply with clave_send_to_session sessionId="tab-b"]\n${body}`
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => types(s.state).includes('prompt')).toBe(true)
+    await new Promise((r) => setTimeout(r, 100))
+    s.adapter.write(s.handle, { type: 'user_message', text: lane('first word') })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'mine' })
+    await expect.poll(() => steered(s.state)).toBe(2)
+    const first = lists(s.events).at(-1)!.messages[0]
+    s.events.length = 0
+    // Its ×: out of Pi's queue, dropped, nothing for the composer.
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: first.id })
+    await expect.poll(() => notices(s.events)).toEqual(['A message from Lane B was not sent.'])
+    expect(lists(s.events).some((list) => list.returned)).toBe(false)
+    expect(texts(lists(s.events).at(-1))).toEqual(['mine'])
+    // A stop: the person's own back, the other tab's dropped and said.
+    await expect.poll(() => steered(s.state)).toBe(3)
+    s.adapter.write(s.handle, { type: 'user_message', text: lane('second word') })
+    await expect.poll(() => steered(s.state)).toBe(4)
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    await expect.poll(() => done(s.events)).toBe(true)
+    expect(lists(s.events).filter((list) => list.returned)).toEqual([
+      {
+        type: 'waiting_messages',
+        messages: [],
+        takes: 'step',
+        returned: { why: 'stopped', messages: [{ id: expect.any(String), text: 'mine' }] }
+      }
+    ])
+    expect(notices(s.events)).toEqual(['A message from Lane B was not sent.'])
+    expect(readings(s.events)).toEqual([])
+  })
+
   it('a session that ends with a message waiting hands it back before it ends', async () => {
     const s = await open()
     s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })

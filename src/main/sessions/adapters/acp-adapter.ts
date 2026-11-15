@@ -29,6 +29,7 @@ import {
   type RpcRequest
 } from './acp-client'
 import { lastWords, startRefusal } from './start-refusal'
+import { splitUnsent } from './unsent'
 import { connectionHandover } from '../../connection-handover'
 import { lazyTerminalPorts } from '../../ports/terminals'
 import { readClaveMcpEndpoint, withOpencodeClaveTools } from '../../clave-tools-launch'
@@ -743,7 +744,7 @@ export class AcpAdapter implements SessionAdapter {
     if (index < 0) return
     const [message] = state.waiting.splice(index, 1)
     message.dropped = true
-    this.emitWaiting(state, 'withdrawn', [message])
+    this.letGo(state, 'withdrawn', [message])
   }
 
   /** Every message that still waits leaves unsent, back to the composer: the
@@ -752,7 +753,16 @@ export class AcpAdapter implements SessionAdapter {
     if (!state.waiting.length) return
     const returned = state.waiting.splice(0)
     for (const message of returned) message.dropped = true
-    this.emitWaiting(state, why, returned)
+    this.letGo(state, why, returned)
+  }
+
+  /** Messages that left the list unsent (PRDCT-4566): the person's own back
+   *  to the composer as `why`; another tab's never, dropped with one line in
+   *  the conversation naming its tab. */
+  private letGo(state: HandleState, why: Returned, messages: Outgoing[]): void {
+    const { own, notices } = splitUnsent(messages, (message) => message.event.text)
+    this.emitWaiting(state, own.length ? why : undefined, own)
+    for (const line of notices) this.notice(state, line)
   }
 
   /** What waits for its turn, whole (PRDCT-4566): the agent takes a message

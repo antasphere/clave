@@ -21,6 +21,7 @@ import {
   draftWithReturned,
   filesWithReturned,
   startedTurn,
+  takenBack,
   takesLine,
   type WaitingReturn
 } from '../../../../plugins/chat-view/src/waiting'
@@ -257,5 +258,69 @@ describe('what leaves unsent comes back to the composer (PRDCT-4566)', () => {
     ])
     expect(startedTurn(state.entries)).toEqual({ text: 'first', attachments: [file] })
     expect(startedTurn([])).toBeNull()
+  })
+
+  // Verifier 3, finding 8 (M30): what each view's Escape takes back, so that
+  // the turn's own message is never lost and no waiting text comes back twice.
+  it('Escape before any answer, messages waiting: the turn’s own message is taken back, never the last one sent', () => {
+    const lastSent = { text: 'third, waiting', attachments: [] }
+    const state = run([
+      { type: 'user_message', text: 'first', attachments: [file] },
+      { type: 'state_change', state: 'working' },
+      waiting([
+        { id: 'w1', text: 'second, waiting' },
+        { id: 'w2', text: 'third, waiting' }
+      ])
+    ])
+    expect(takenBack(state.entries, true, lastSent)).toEqual({
+      withdraw: true,
+      message: { text: 'first', attachments: [file] }
+    })
+    // With none waiting, the view's own last message sent, as before.
+    expect(takenBack(state.entries, false, lastSent)).toEqual({ withdraw: true, message: lastSent })
+    // Once an answer has begun, nothing is taken back.
+    const answered = run([{ type: 'assistant_text', delta: 'On it', final: false }], state)
+    expect(takenBack(answered.entries, true, lastSent)).toEqual({ withdraw: false, message: null })
+    // The take-back, then the stop's return: each text once, in order.
+    const draft = draftWithReturned('first', {
+      why: 'stopped',
+      messages: [
+        { id: 'w1', text: 'second, waiting' },
+        { id: 'w2', text: 'third, waiting' }
+      ]
+    })
+    expect(draft).toBe('first\n\nsecond, waiting\n\nthird, waiting')
+  })
+})
+
+// Verifier 3, finding 3, as ruled: a message from another tab never goes into
+// the person's composer.
+describe('another tab’s message never goes into the composer (PRDCT-4566)', () => {
+  it('a turn started on another tab’s message: Escape leaves it where it is and takes nothing back', () => {
+    const state = run([
+      { type: 'user_message', text: LANE_B },
+      { type: 'state_change', state: 'working' },
+      waiting([{ id: 'w1', text: 'mine, waiting' }])
+    ])
+    expect(startedTurn(state.entries)).toBeNull()
+    expect(takenBack(state.entries, true, { text: 'an older one', attachments: [] })).toEqual({
+      withdraw: false,
+      message: null
+    })
+  })
+
+  it('handed back with the person’s own, another tab’s message is left out of the composer', () => {
+    const back: WaitingReturn = {
+      why: 'stopped',
+      messages: [
+        { id: 'w1', text: 'mine' },
+        { id: 'w2', text: LANE_B },
+        { id: 'w3', text: '[Message from a Clave agent]\nunnamed' }
+      ]
+    }
+    expect(draftWithReturned('', back)).toBe('mine')
+    expect(
+      draftWithReturned('', { why: 'withdrawn', messages: [{ id: 'w2', text: LANE_B }] })
+    ).toBe('')
   })
 })

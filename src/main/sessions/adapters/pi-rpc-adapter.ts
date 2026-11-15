@@ -23,6 +23,7 @@ import type {
 } from '../adapter'
 import { PiRpcConnection, record, type PiRpcEvent } from './pi-rpc-client'
 import { startRefusal } from './start-refusal'
+import { splitUnsent } from './unsent'
 import { connectionHandover } from '../../connection-handover'
 import { lazyTerminalPorts } from '../../ports/terminals'
 import { CLAVE_MCP_CONFIG_FILE_ENV, piClaveExtensionPath } from '../../clave-tools-launch'
@@ -1032,16 +1033,20 @@ export class PiRpcAdapter implements SessionAdapter {
     }
   }
 
-  /** Messages that leave unsent, out of the list for good (PRDCT-4566): back
-   *  to the composer as `why`. One Pi was handed is kept aside until the
-   *  run's end, to be drawn should Pi start it after all. */
+  /** Messages that leave unsent, out of the list for good (PRDCT-4566): the
+   *  person's own back to the composer as `why`; another tab's never,
+   *  dropped with one line in the conversation naming its tab. One Pi was
+   *  handed is kept aside until the run's end, to be drawn should Pi start
+   *  it after all. */
   private letGo(state: HandleState, why: Returned, items: Outgoing[]): void {
     const leaving = items.filter((m) => !m.dropped)
     if (!leaving.length) return
     for (const item of leaving) item.dropped = true
     state.outgoing = state.outgoing.filter((m) => !leaving.includes(m))
     state.handedBack.push(...leaving.filter((m) => m.sent))
-    this.emitWaiting(state, why, leaving)
+    const { own, notices } = splitUnsent(leaving, (m) => m.event.text)
+    this.emitWaiting(state, own.length ? why : undefined, own)
+    for (const line of notices) this.notice(state, line)
   }
 
   /** What waits for Pi, whole (PRDCT-4566): Pi takes a message at its next
