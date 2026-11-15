@@ -141,7 +141,13 @@ export const EntryRow = memo(function EntryRow({
       <PermissionRow entry={entry} />
     )
   if (entry.kind === 'error')
-    return (
+    // Nothing failed (PRDCT-4566): the quiet line the mode line is, small and
+    // grey in the column's centre, never the failure's red.
+    return entry.quiet ? (
+      <div className="chat-notice" data-tone="quiet" role="status">
+        {entry.message}
+      </div>
+    ) : (
       <div className="chat-notice" data-tone="error" role="alert">
         {entry.message}
       </div>

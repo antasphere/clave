@@ -238,7 +238,7 @@ function ToolNote({
 
 /** A line of the page: what was written, and in its margin what was done
  *  before it. */
-function Line({
+export function Line({
   row,
   pen,
   first,
@@ -264,11 +264,18 @@ function Line({
     <div className="folio-line" data-notes={row.notes.length > 0 ? 'true' : undefined}>
       <div className="folio-text">
         {row.prose && <Prose entry={row.prose} first={first} reading={reading} onError={onError} />}
-        {row.error && (
-          <div className="chat-notice" data-tone="error" role="alert">
-            {row.error.message}
-          </div>
-        )}
+        {row.error &&
+          (row.error.quiet ? (
+            // Nothing failed (PRDCT-4566): the page's own quiet aside, as a
+            // stopped page says it stopped, never the failure's red.
+            <p className="folio-aside" data-tone="quiet" role="status">
+              {row.error.message}
+            </p>
+          ) : (
+            <div className="chat-notice" data-tone="error" role="alert">
+              {row.error.message}
+            </div>
+          ))}
         {pen && <span className="folio-pen" role="status" aria-label="The agent is writing" />}
       </div>
       {row.notes.length > 0 && (

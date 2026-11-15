@@ -108,7 +108,11 @@ export type Entry =
       moved?: boolean
       at: number
     }
-  | { kind: 'error'; message: string; at: number; notice?: string }
+  /** `quiet`: nothing failed, a plain fact of the turn the adapter said as a
+   *  notice (another tab's message left unsent, PRDCT-4566): every view
+   *  draws it as a quiet line of the conversation, never in the failure's
+   *  red, and it answers nothing. */
+  | { kind: 'error'; message: string; at: number; notice?: string; quiet?: boolean }
   /** The permission mode changed (PRDCT-4331): one line, said in the
    *  transcript, never for the first word on the mode nor for a repeat.
    *  `by` is known when this view asked for the switch. */
@@ -222,7 +226,9 @@ export type Action =
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
- *  back (nothing did) and leaving it in the transcript as interrupted. */
+ *  back (nothing did) and leaving it in the transcript as interrupted. A
+ *  quiet line answers nothing: the one a stop leaves for another tab's
+ *  message (PRDCT-4566) would bring back the message Escape just took back. */
 export function answeredSince(entries: Entry[]): boolean {
   const last = entries.findLastIndex((e) => e.kind === 'user')
   return entries
@@ -231,7 +237,8 @@ export function answeredSince(entries: Entry[]): boolean {
       (e) =>
         e.kind !== 'user' &&
         (e.kind !== 'assistant' || e.text.trim() !== '') &&
-        !(e.kind === 'permission' && e.moved)
+        !(e.kind === 'permission' && e.moved) &&
+        !(e.kind === 'error' && e.quiet)
     )
 }
 /** What the reader can still answer, in the order asked: the dock shows the
@@ -687,18 +694,19 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         kind: 'error',
         message: event.message,
         at,
-        ...(event.notice ? { notice: event.notice } : {})
+        ...(event.notice ? { notice: event.notice } : {}),
+        ...(event.quiet ? { quiet: true } : {})
       })
       // A refused switch comes back as an error (the CLI's reason, or the
       // adapter's refusal of the write): the chip reads the model it is still
       // on. Any other error in that window reverts it the same way, and the
       // switch's own confirmation, when it comes, names the model again. A
-      // named notice refuses nothing: the pick stands.
+      // named notice or a quiet line refuses nothing: the pick stands.
       return {
         ...state,
         entries,
         state: event.fatal ? 'ended' : state.state,
-        pendingModel: event.notice ? state.pendingModel : null
+        pendingModel: event.notice || event.quiet ? state.pendingModel : null
       }
     }
     case 'turn_interrupted': {

@@ -121,6 +121,9 @@ const done = (events: SessionEvent[], from = 0): boolean =>
   events.slice(from).some((e) => e.type === 'state_change' && e.state === 'done')
 const notices = (events: SessionEvent[]): string[] =>
   events.flatMap((e) => (e.type === 'error' ? [e.message] : []))
+/** The notices marked quiet: nothing failed (PRDCT-4566). */
+const quietNotices = (events: SessionEvent[]): string[] =>
+  events.flatMap((e) => (e.type === 'error' && e.quiet ? [e.message] : []))
 
 describe('piModelOptions (PRDCT-4427)', () => {
   it('reads a real pi --mode rpc 1.5.2 get_available_models answer on a connection', () => {
@@ -1263,6 +1266,8 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     // Its ×: out of Pi's queue, dropped, nothing for the composer.
     s.adapter.write(s.handle, { type: 'withdraw_message', id: first.id })
     await expect.poll(() => notices(s.events)).toEqual(['A message from Lane B was not sent.'])
+    // Nothing failed: the line is quiet (PRDCT-4566).
+    expect(quietNotices(s.events)).toEqual(['A message from Lane B was not sent.'])
     expect(lists(s.events).some((list) => list.returned)).toBe(false)
     expect(texts(lists(s.events).at(-1))).toEqual(['mine'])
     // A stop: the person's own back, the other tab's dropped and said.
@@ -1281,6 +1286,7 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
       }
     ])
     expect(notices(s.events)).toEqual(['A message from Lane B was not sent.'])
+    expect(quietNotices(s.events)).toEqual(['A message from Lane B was not sent.'])
     expect(readings(s.events)).toEqual([])
   })
 

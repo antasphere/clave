@@ -13,7 +13,8 @@
 //     composer, and the agent never answers it;
 //   - Escape with messages waiting stops the turn and puts the person's own
 //     back in the composer, in order, a blank line between, none answered;
-//     another tab's never goes there: one line says it was not sent;
+//     another tab's never goes there: one line says it was not sent, a
+//     quiet line of the conversation, never the red of a failure;
 //   - the conversation copied as Markdown reads in the same order, the other
 //     tab's message under its name, without its bracketed header;
 //   - two messages written in the same tick: each answer under its own;
@@ -27,8 +28,9 @@
 //     stack; withdrawn, its words and its file come back to that skin's
 //     composer; an empty composer keeps the stop, and Escape stops.
 // With `CLAVE_E2E_SHOTS` set, the stack with two messages waiting (one from
-// another tab), the stack with six waiting and a row opened to a long
-// message (OpenCode) are photographed there.
+// another tab), the conversation with the line saying the other tab's was
+// not sent, the stack with six waiting and a row opened to a long message
+// (OpenCode) are photographed there.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { callMcp, until } from './harness.mjs'
@@ -295,6 +297,39 @@ export async function waitingMessages(
       !!(await until(async () => ((await notSent.count()) === 1 ? true : null), { tries: 40 })),
     { restored, lines: await view.locator('.chat-notice').allInnerTexts() }
   )
+  // Nothing failed: the person stopped the turn. The line is a quiet line of
+  // the conversation, the mode line's look (small, grey, no edge) in the ink
+  // of the "Interrupted" under the stopped message, never the red of a
+  // failure (PRDCT-4566).
+  const lookOf = (locator) =>
+    locator.evaluate((el) => {
+      const style = getComputedStyle(el)
+      return {
+        tone: el.getAttribute('data-tone'),
+        role: el.getAttribute('role'),
+        color: style.color,
+        size: style.fontSize,
+        edge: style.borderTopWidth
+      }
+    })
+  const lineLook = await lookOf(notSent)
+  const noteLook = await lookOf(
+    view
+      .locator('.chat-turn-wrap[data-interrupted="true"]')
+      .filter({ hasText: 'order six' })
+      .locator('.chat-turn-note')
+      .first()
+  )
+  t.check(
+    'the line is a quiet line of the conversation, never the red of a failure',
+    lineLook.tone === 'quiet' &&
+      lineLook.role === 'status' &&
+      lineLook.color === noteLook.color &&
+      lineLook.size === noteLook.size &&
+      lineLook.edge === '0px',
+    { line: lineLook, interrupted: noteLook }
+  )
+  if (shots) await pane(id).screenshot({ path: path.join(shots, `chat-not-sent-${mode}.png`) })
   await win.waitForTimeout(1500)
   t.check(
     'none was answered, nor drawn',

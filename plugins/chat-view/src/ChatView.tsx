@@ -320,7 +320,7 @@ import { agentNameOf } from '../../../src/shared/harness'
  *  the answer it grows and nothing above it, and a keystroke in the composer
  *  re-renders no turn at all. A long conversation used to re-parse the
  *  markdown of every answer it held on each of those. */
-const EntryRow = memo(function EntryRow({
+export const EntryRow = memo(function EntryRow({
   entry,
   onError
 }: {
@@ -401,7 +401,13 @@ const EntryRow = memo(function EntryRow({
       <PermissionRow entry={entry} />
     )
   if (entry.kind === 'error')
-    return (
+    // Nothing failed (PRDCT-4566): the quiet line the mode line is, small and
+    // grey in the column's centre, never the failure's red.
+    return entry.quiet ? (
+      <div className="chat-notice" data-tone="quiet" role="status">
+        {entry.message}
+      </div>
+    ) : (
       <div className="chat-notice" data-tone="error" role="alert">
         {entry.message}
       </div>

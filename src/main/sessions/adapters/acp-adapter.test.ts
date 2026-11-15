@@ -874,7 +874,8 @@ describe('a message written while a turn runs waits for its own turn (PRDCT-4566
         ],
         takes: 'turn'
       },
-      { type: 'error', message: 'A message from Lane B was not sent.', fatal: false }
+      // Nothing failed: the line is quiet (PRDCT-4566).
+      { type: 'error', message: 'A message from Lane B was not sent.', fatal: false, quiet: true }
     ])
     // A stop: the person's own back, the other tab's dropped and said.
     s.events.length = 0
@@ -886,7 +887,12 @@ describe('a message written while a turn runs waits for its own turn (PRDCT-4566
         takes: 'turn',
         returned: { why: 'stopped', messages: [{ id: expect.any(String), text: 'mine' }] }
       },
-      { type: 'error', message: 'A message from another agent was not sent.', fatal: false }
+      {
+        type: 'error',
+        message: 'A message from another agent was not sent.',
+        fatal: false,
+        quiet: true
+      }
     ])
     await expect.poll(() => dones(s.events)).toBe(1)
     await new Promise((r) => setTimeout(r, 300))
@@ -899,7 +905,7 @@ describe('a message written while a turn runs waits for its own turn (PRDCT-4566
     await expect.poll(() => s.exits.length).toBe(1)
     expect(s.events.slice(-3)).toEqual([
       { type: 'waiting_messages', messages: [], takes: 'turn' },
-      { type: 'error', message: 'A message from Lane B was not sent.', fatal: false },
+      { type: 'error', message: 'A message from Lane B was not sent.', fatal: false, quiet: true },
       { type: 'state_change', state: 'ended' }
     ])
   })

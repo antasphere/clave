@@ -757,12 +757,12 @@ export class AcpAdapter implements SessionAdapter {
   }
 
   /** Messages that left the list unsent (PRDCT-4566): the person's own back
-   *  to the composer as `why`; another tab's never, dropped with one line in
-   *  the conversation naming its tab. */
+   *  to the composer as `why`; another tab's never, dropped with one quiet
+   *  line in the conversation naming its tab. */
   private letGo(state: HandleState, why: Returned, messages: Outgoing[]): void {
     const { own, notices } = splitUnsent(messages, (message) => message.event.text)
     this.emitWaiting(state, own.length ? why : undefined, own)
-    for (const line of notices) this.notice(state, line)
+    for (const line of notices) this.quietNotice(state, line)
   }
 
   /** What waits for its turn, whole (PRDCT-4566): the agent takes a message
@@ -1087,6 +1087,14 @@ export class AcpAdapter implements SessionAdapter {
   private notice(state: HandleState, message: string, notice?: string): void {
     if (state.ended) return
     this.emit(state, { type: 'error', message, fatal: false, ...(notice ? { notice } : {}) })
+  }
+
+  /** A plain fact of the turn the person caused, where nothing failed
+   *  (PRDCT-4566): the notice marked `quiet`, a quiet line of the
+   *  conversation rather than a failure. */
+  private quietNotice(state: HandleState, message: string): void {
+    if (state.ended) return
+    this.emit(state, { type: 'error', message, fatal: false, quiet: true })
   }
 
   /** Why the agent would not start (PRDCT-4427): said live, and kept in the

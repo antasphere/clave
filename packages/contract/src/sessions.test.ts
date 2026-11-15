@@ -141,6 +141,7 @@ const events: unknown[] = [
   { type: 'session_meta', model: 'opus', providerSessionId: null },
   { type: 'effort', effort: null },
   { type: 'error', message: 'boom', fatal: false },
+  { type: 'error', message: 'A message from Lane B was not sent.', fatal: false, quiet: true },
   { type: 'turn_interrupted' },
   { type: 'permission_withdrawn', id: 'p' },
   { type: 'permission_updated', id: 'p', answers: { login: 'luca-a', projects: ['reb'] } },

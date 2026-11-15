@@ -358,12 +358,16 @@ export const SessionEvent = Schema.Union(
   }),
   Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
   /** `notice`: the latest of its kind replaces the one before under the same
-   *  name (an OpenCode chat's retry, PRDCT-4427). Mirrors `session-model.ts`. */
+   *  name (an OpenCode chat's retry, PRDCT-4427). `quiet`: nothing failed, a
+   *  plain fact of the turn (another tab's message left unsent, PRDCT-4566),
+   *  drawn as a quiet line of the conversation; a view that does not know the
+   *  flag still draws the words. Mirrors `session-model.ts`. */
   Schema.Struct({
     type: Schema.Literal('error'),
     message: Schema.String,
     fatal: Schema.Boolean,
-    notice: Schema.optional(Schema.String)
+    notice: Schema.optional(Schema.String),
+    quiet: Schema.optional(Schema.Boolean)
   }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
   Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),

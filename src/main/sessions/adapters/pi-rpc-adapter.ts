@@ -1035,9 +1035,9 @@ export class PiRpcAdapter implements SessionAdapter {
 
   /** Messages that leave unsent, out of the list for good (PRDCT-4566): the
    *  person's own back to the composer as `why`; another tab's never,
-   *  dropped with one line in the conversation naming its tab. One Pi was
-   *  handed is kept aside until the run's end, to be drawn should Pi start
-   *  it after all. */
+   *  dropped with one quiet line in the conversation naming its tab. One Pi
+   *  was handed is kept aside until the run's end, to be drawn should Pi
+   *  start it after all. */
   private letGo(state: HandleState, why: Returned, items: Outgoing[]): void {
     const leaving = items.filter((m) => !m.dropped)
     if (!leaving.length) return
@@ -1046,7 +1046,7 @@ export class PiRpcAdapter implements SessionAdapter {
     state.handedBack.push(...leaving.filter((m) => m.sent))
     const { own, notices } = splitUnsent(leaving, (m) => m.event.text)
     this.emitWaiting(state, own.length ? why : undefined, own)
-    for (const line of notices) this.notice(state, line)
+    for (const line of notices) this.quietNotice(state, line)
   }
 
   /** What waits for Pi, whole (PRDCT-4566): Pi takes a message at its next
@@ -1319,6 +1319,14 @@ export class PiRpcAdapter implements SessionAdapter {
   private notice(state: HandleState, message: string): void {
     if (state.ended) return
     this.emit(state, { type: 'error', message, fatal: false })
+  }
+
+  /** A plain fact of the turn the person caused, where nothing failed
+   *  (PRDCT-4566): the notice marked `quiet`, a quiet line of the
+   *  conversation rather than a failure. */
+  private quietNotice(state: HandleState, message: string): void {
+    if (state.ended) return
+    this.emit(state, { type: 'error', message, fatal: false, quiet: true })
   }
 
   /** Why Pi would not start (PRDCT-4427): said live, and kept in the

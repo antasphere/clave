@@ -327,12 +327,18 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('effort'), effort: z.string().nullable() }),
   /* `notice` names a notice that stands for the latest of its kind (an
      OpenCode chat's rate-limit retry, PRDCT-4427): a view shows the new one
-     in place of the one before under the same name, never a pile. */
+     in place of the one before under the same name, never a pile. `quiet`
+     says nothing failed: a plain fact of the turn (another tab's message
+     left unsent when the person withdrew it or stopped the turn,
+     PRDCT-4566), which a view draws as a quiet line of the conversation,
+     never as a failure. A view that does not know the flag still draws the
+     words, as a notice. Mirrors `packages/contract/src/sessions.ts`. */
   z.object({
     type: z.literal('error'),
     message: z.string(),
     fatal: z.boolean(),
-    notice: z.string().optional()
+    notice: z.string().optional(),
+    quiet: z.boolean().optional()
   }),
   /* The turn the reader's `interrupt` stopped ended there: the provider's word
      that it was cut short, never a failure. A view mutes the message that
