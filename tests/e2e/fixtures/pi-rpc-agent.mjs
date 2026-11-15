@@ -1,7 +1,9 @@
 // A stand-in for Pi's rpc mode (`pi --mode rpc`, Pi 1.5.2, PRDCT-4427). It
 // never calls a provider: it speaks Pi's rpc protocol (strict JSONL on its
 // stdio, commands answered by `response` frames of the same id, events with
-// no id in between) and answers every prompt by echoing it. The unit tests
+// no id in between) and answers every prompt by echoing it, the prompt's
+// answer and its run's `agent_start` in writes of their own, as Pi 1.5.2
+// sends them (a client reads them apart, PRDCT-4566). The unit tests
 // run it with `process.execPath`; the end-to-end specs install it as a
 // `bin/pi`.
 //
@@ -250,6 +252,11 @@ mkdirSync(stateDir, { recursive: true })
 const framesFile = path.join(stateDir, 'frames.jsonl')
 const delayMs = Number(process.env.PI_STAND_IN_DELAY_MS ?? 0) || 0
 const longTurnMs = Number(process.env.PI_STAND_IN_LONG_TURN_MS ?? 1000) || 1000
+// Pi 1.5.2 answers a prompt once its run is prepared, and starts the run
+// (`agent_start`) in a later write: a client reads the two apart, and a
+// second prompt sent in between is refused, the run being Pi's already
+// (PRDCT-4566). The stand-in leaves this long between them.
+const START_GAP_MS = 20
 const noModel = process.env.PI_STAND_IN_NO_MODEL === '1'
 const anyProvider = process.env.PI_STAND_IN_ANY_PROVIDER === '1'
 let streamingOnce = process.env.PI_STAND_IN_STREAMING_ONCE === '1'
@@ -562,6 +569,9 @@ async function startRun(text) {
   if (virtual && session.model)
     session.model = { ...modelObject(virtual), provider: session.model.provider, api: 'pi-virtual' }
   try {
+    // The prompt was answered in a write of its own; the run starts in the
+    // next (START_GAP_MS).
+    await sleep(START_GAP_MS)
     await emit({ type: 'agent_start' })
     if (text.includes('retry')) {
       await emit({
@@ -852,7 +862,12 @@ function handle(frame) {
       if (run) {
         if (frame.streamingBehavior === 'steer') return queue(steering, text, id, type)
         if (frame.streamingBehavior === 'followUp') return queue(followUp, text, id, type)
-        return fail(id, type, 'Agent is streaming')
+        // Pi 1.5.2's own words for a bare prompt while a run is going.
+        return fail(
+          id,
+          type,
+          "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
+        )
       }
       if (streamingOnce) {
         // Refused as if a run were going, though none is; once.

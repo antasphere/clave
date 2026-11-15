@@ -1024,6 +1024,28 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     ])
   })
 
+  // Verifier 3, finding 1: Pi answers a prompt before its agent_start, in a
+  // write of its own, so the second of two messages written together goes as
+  // a prompt Pi refuses, then as a steer it takes at its next step. Drawn as
+  // the prompt was chosen, it stood above the first answer.
+  it('two messages written in the same tick: the second enters as Pi takes it, after the first answer', async () => {
+    const s = await open()
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'first question' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'second question' })
+    expect(readings(s.events).map((r) => r.message)).toEqual(['first question'])
+    expect(texts(lists(s.events).at(-1))).toEqual(['second question'])
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    expect(readings(s.events)).toEqual([
+      { message: 'first question', said: 'You said: first question' },
+      { message: 'second question', said: 'You said: second questionDone.' }
+    ])
+    // Whatever went first, Pi took the second as a steer, once.
+    const second = sent(s.state).filter(([, message]) => message === 'second question')
+    expect(second.at(-1)).toEqual(['steer', 'second question'])
+    expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(2)
+  })
+
   it('a withdrawn steer leaves Pi’s queue, the rest steered again in order, and Pi never takes it', async () => {
     const s = await open()
     s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })

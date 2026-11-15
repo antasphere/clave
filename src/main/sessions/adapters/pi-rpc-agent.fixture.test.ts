@@ -325,8 +325,9 @@ describe('the stand-in Pi', () => {
     const pi = standIn(stateDir(), ['--session-id', 'ses-one'], { PI_STAND_IN_DELAY_MS: '40' })
     await pi.connection.command('prompt', { message: 'first' })
     await expect.poll(() => pi.events.some((e) => e.type === 'agent_start')).toBe(true)
+    // Pi 1.5.2's own words (PRDCT-4566).
     await expect(pi.connection.command('prompt', { message: 'nope' })).rejects.toThrow(
-      'Agent is streaming'
+      "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
     )
     await expect(pi.connection.command('steer', { message: 'steered' })).resolves.toEqual({
       disposition: 'queued'
@@ -342,6 +343,26 @@ describe('the stand-in Pi', () => {
       .filter((e) => e.type === 'message_end' && (e.message as { role: string }).role === 'user')
       .map((e) => (e.message as { content: string }).content)
     expect(users).toEqual(['first', 'steered'])
+  })
+
+  it('a prompt is answered in a write of its own and its run starts in a later one; a bare prompt between is refused, the run being Pi’s already (PRDCT-4566)', async () => {
+    const pi = standIn(stateDir())
+    const chunks: string[] = []
+    pi.child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk.toString('utf8')))
+    await expect(pi.connection.command('prompt', { message: 'first' })).resolves.toEqual({
+      disposition: 'started'
+    })
+    // Sent the moment the answer is read, as a client does for a message
+    // written right behind the first: Pi has not said agent_start yet.
+    expect(pi.events.some((e) => e.type === 'agent_start')).toBe(false)
+    await expect(pi.connection.command('prompt', { message: 'second' })).rejects.toThrow(
+      'Agent is already processing'
+    )
+    await expect.poll(() => settled(pi)).toBe(true)
+    const answer = chunks.findIndex((c) => c.includes('"command":"prompt","success":true'))
+    const start = chunks.findIndex((c) => c.includes('"type":"agent_start"'))
+    expect(answer).toBeGreaterThanOrEqual(0)
+    expect(start).toBeGreaterThan(answer)
   })
 
   it('a steer while idle starts a run, or with PI_STAND_IN_IDLE_STEER=queue is answered queued and starts nothing', async () => {

@@ -817,10 +817,12 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.ended || state.closing || !connection || connection.closed) return
     const retried = retry !== undefined
     const steer = retried ? retry === 'steer' : state.runActive
-    // No run going: the prompt starts one with this message, so a message
-    // that waited is the conversation's from now, after the answer before it
+    // A message that waited is drawn when Pi starts it as its user message
+    // (`userMessageStarted`), prompt or steer alike, never when it is sent:
+    // Pi answers a prompt before its `agent_start`, so a message written right
+    // behind another goes as a prompt Pi refuses, then as a steer it takes
+    // only at its next step, and the answer before it would stream under it
     // (PRDCT-4566).
-    if (!steer) this.take(state, item)
     // On a stored connection nothing goes to Pi, prompt, steer or either one
     // re-sent, while Pi is on another provider's model: Pi's model is read
     // first, and one of another provider's (something typed changed it, or
@@ -849,8 +851,8 @@ export class PiRpcAdapter implements SessionAdapter {
       if (state.ended || state.closing) return
       if (!steer && !retried && /streaming/i.test(errorMessage(error)))
         return this.send(state, item, 'steer')
-      // Pi refused it: a steer it never queued goes back to the composer; a
-      // prompt's message is drawn already, the notice under it.
+      // Pi refused it: a message that waited goes back to the composer, never
+      // taken; one drawn at once stays, the notice under it.
       this.settle(state, item, 'refused')
       this.notice(state, `${this.label}: ${errorMessage(error)}`)
       if (!steer && !state.runActive) {
@@ -899,9 +901,10 @@ export class PiRpcAdapter implements SessionAdapter {
     this.emitWaiting(state, why, [item])
   }
 
-  /** Pi started a user message (`message_start`): the one this chat sent with
-   *  that text, else the first sent (Pi takes them in the order sent, and a
-   *  command it expands changes the words). One the person had taken back
+  /** Pi started a user message (`message_start`), a prompt's as a steer's:
+   *  the one this chat sent with that text, else the first sent (Pi takes
+   *  them in the order sent, and a command it expands changes the words).
+   *  One the person had taken back
    *  that Pi started before it answered the `clear_queue` is drawn: it is the
    *  conversation's now (PRDCT-4566). */
   private userMessageStarted(state: HandleState, text: string): void {
