@@ -31,7 +31,12 @@
 // as Pi does when the clear races its step; `PI_STAND_IN_ABORT_KEEPS_QUEUE=1`
 // keeps the queues across an abort, as Pi 1.5.2 does (its abort clears none):
 // a steer queued while the run stops stays held for a next run, which nothing
-// starts. A prompt containing `slow` waits 20 s
+// starts; `PI_STAND_IN_DRAIN_GAP_MS` waits that long between taking a steer off
+// the queue at a step and starting its user message, and a `clear_queue` in
+// between still lists it, though the run goes on to start it, as Pi 1.5.2 does
+// (its loop drains the queue at the step's end, and the list `clear_queue`
+// reads loses the message only at its user message_start). A prompt
+// containing `slow` waits 20 s
 // before its first text delta (an abort cuts it short); `long turn` streams its
 // echo in three pieces a second apart, or `PI_STAND_IN_LONG_TURN_MS` apart (an
 // abort cuts it short); `ask extension` asks a
@@ -277,6 +282,13 @@ const heldClears = []
 // Pi 1.5.2's abort clears no queue: what was queued stays held for a next
 // run (PRDCT-4566, the verifier's closing look, finding 2).
 const abortKeepsQueue = process.env.PI_STAND_IN_ABORT_KEEPS_QUEUE === '1'
+// Pi 1.5.2's own window between taking a steer off its queue and starting
+// its user message, which a `clear_queue` answer still lists the steer in
+// (PRDCT-4566, the verifier's closing look, finding 3).
+const drainGapMs = Number(process.env.PI_STAND_IN_DRAIN_GAP_MS ?? 0) || 0
+/** The steer taken off the queue in that window, until it is listed once or
+ *  its user message starts. */
+let draining
 
 const LEVELS = ['low', 'high', 'max']
 const modelObject = (id) => ({
@@ -503,9 +515,12 @@ const assistant = (content, stopReason, extra = {}) => ({
 const update = (message, assistantMessageEvent) =>
   emit({ type: 'message_update', message, assistantMessageEvent })
 
-/** The queue cleared and said, as Pi answers `clear_queue`. */
+/** The queue cleared and said, as Pi answers `clear_queue`: a steer taken off
+ *  it whose user message has not started yet is said too, and starts anyway. */
 function clearQueue(id) {
-  const cleared = { steering: [...steering], followUp: [...followUp] }
+  const listed = draining === undefined ? [] : [draining]
+  draining = undefined
+  const cleared = { steering: [...listed, ...steering], followUp: [...followUp] }
   steering.length = 0
   followUp.length = 0
   ok(id, 'clear_queue', cleared)
@@ -516,6 +531,7 @@ function clearQueue(id) {
 async function userMessage(text, taken = false) {
   const message = { role: 'user', content: text, timestamp: Date.now() }
   await emit({ type: 'message_start', message })
+  if (taken) draining = undefined
   if (taken) for (const id of heldClears.splice(0)) clearQueue(id)
   await emit({ type: 'message_end', message })
   append({ type: 'message', message })
@@ -557,6 +573,11 @@ async function echoTurn(text) {
 async function deliverSteering() {
   while (steering.length) {
     const text = steering.shift()
+    if (drainGapMs) {
+      // Off the queue, still listed until its user message starts.
+      draining = text
+      await sleep(drainGapMs)
+    }
     await emit({ type: 'queue_update', steering: [...steering], followUp: [...followUp] })
     await echoTurn(text)
   }
@@ -748,6 +769,7 @@ async function startRun(text) {
   } finally {
     const finished = run
     run = undefined
+    draining = undefined
     // A clear held back for a step that never came is answered at the end.
     for (const id of heldClears.splice(0)) clearQueue(id)
     for (const respond of finished.onSettled ?? []) respond()

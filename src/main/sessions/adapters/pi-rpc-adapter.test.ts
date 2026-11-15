@@ -1151,6 +1151,54 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     ).toEqual(['third'])
   })
 
+  // The verifier's closing look, finding 3 (its M14a): Pi's own window. Pi's
+  // loop takes a steer off its queue at the step's end, and the list its
+  // clear_queue answer reads loses it only when its user message starts
+  // (PI_STAND_IN_DRAIN_GAP_MS): a withdraw landing in between hands the
+  // message back, and Pi starts it anyway. It is the conversation's then:
+  // drawn when Pi starts it, its answer under it.
+  it('a steer handed back that Pi starts anyway is drawn when Pi starts it, its answer under it', async () => {
+    const s = await open(
+      {},
+      { env: { PI_STAND_IN_DRAIN_GAP_MS: '600', PI_STAND_IN_LONG_TURN_MS: '300' } }
+    )
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    s.adapter.write(s.handle, { type: 'user_message', text: 'second' })
+    await expect.poll(() => steered(s.state)).toBe(1)
+    const second = lists(s.events).at(-1)!.messages[0]
+    expect(second.text).toBe('second')
+    // Withdrawn the moment the run's step ends (its tool's result), as Pi's
+    // loop takes the steer off its queue.
+    let withdrawn = false
+    s.adapter.on(s.handle, 'stream', (stream) => {
+      if (withdrawn || stream.kind !== 'event' || stream.event.type !== 'tool_result') return
+      withdrawn = true
+      s.adapter.write(s.handle, { type: 'withdraw_message', id: second.id })
+    })
+    await expect.poll(() => done(s.events), { timeout: 10_000 }).toBe(true)
+    expect(withdrawn).toBe(true)
+    // Handed back: Pi's clear_queue answer listed it ...
+    const returned = s.events.findIndex((e) => e.type === 'waiting_messages' && !!e.returned)
+    expect(s.events[returned]).toEqual({
+      type: 'waiting_messages',
+      messages: [],
+      takes: 'step',
+      returned: { why: 'withdrawn', messages: [second] }
+    })
+    // ... then drawn, once Pi started it, its answer under it.
+    const drawn = s.events.findIndex((e) => e.type === 'user_message' && e.text === 'second')
+    expect(drawn).toBeGreaterThan(returned)
+    expect(readings(s.events)).toEqual([
+      { message: 'a long turn', said: 'You said: a long turn' },
+      { message: 'second', said: 'You said: secondDone.' }
+    ])
+    expect(sent(s.state)).toEqual([
+      ['prompt', 'a long turn'],
+      ['steer', 'second']
+    ])
+  })
+
   // The same race at a stop: the stop's clear_queue answers after Pi took
   // the first steer; that one is drawn as taken, the other goes back.
   it('a stop whose clear_queue Pi answers after taking a steer: that one drawn as taken, only the other handed back', async () => {
