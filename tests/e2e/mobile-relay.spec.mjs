@@ -3,7 +3,10 @@
 // local OIDC provider through Settings → Accounts (the browser stood in by a
 // fetch that follows the issuer's redirect, as antasphere-account.spec.mjs
 // does), its server claims a machine credential from a relay this spec
-// starts on 127.0.0.1 (the repository's Bun running the relay's own entry)
+// starts on 127.0.0.1 (the repository's Bun running the test relay,
+// tests/e2e/fixtures/relay: the mobile branch's relay, kept as a fixture
+// since the relay became its own tool, antasphere/relay, whose wire
+// protocol is the same contract)
 // and connects to it, and a client of the spec, holding the server's own
 // token where a phone would hold its device session, reaches the server's
 // sessions and its push channel through `<relay>/m/<machineId>/...`.
@@ -47,15 +50,16 @@ const OWNER = {
   email_verified: true
 }
 
-/** The relay as its own process, the way the team runs it: the entry under
- *  the repository's Bun, announcing its url on stdout. The port is the
- *  band's when CLAVE_E2E_RELAY_PORT names one, a free one otherwise. */
+/** The test relay as its own process, the way the team runs a relay: the
+ *  fixture's entry under the repository's Bun, announcing its url on stdout.
+ *  The port is the band's when CLAVE_E2E_RELAY_PORT names one, a free one
+ *  otherwise. */
 async function startRelay(issuer) {
   const port = Number(process.env.CLAVE_E2E_RELAY_PORT) || (await freePorts())[0]
   const child = spawn(
     bunBinary(process.env, REPO),
     [
-      path.join(REPO, 'apps/relay/src/main.ts'),
+      path.join(REPO, 'tests/e2e/fixtures/relay/main.ts'),
       '--port',
       String(port),
       '--data-dir',

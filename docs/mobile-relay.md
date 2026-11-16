@@ -7,14 +7,25 @@ Antasphere keeps one outbound connection to it with a credential its owner claim
 phone holding a bearer of the hub lists the machines of its own subject and reaches one
 through it. The relay keeps connection state and nothing else.
 
-Code: the relay in `packages/server/src/relay/` (`relay.ts` the process, `auth.ts` the hub
-bearer check, `registry.ts` the machines file, `main.ts` the entry, `client.ts` the
-server's end), the wire contract in `packages/contract/src/relay.ts`, the wiring into a
-Clave server in `packages/host/src/server/relay-wiring.ts` (the in-process server through
-`server/clave-server.ts`, the standalone entry through `server-entry.ts`), the image in
-`apps/relay/Dockerfile`.
+**The relay is its own tool, [`antasphere/relay`](https://github.com/antasphere/relay)**
+(meant for `relay.antasphere.com`), since antasphere/relay#1 and this repository's #409.
+Its protocol, the ways it departs from the Bun relay that used to live here, and its
+deployment are documented there: `docs/concepts/relay.md` and
+`docs/operations/relay-on-the-team-stack.md`. This repository holds only the server's end:
+
+Code: the relay client in `packages/server/src/relay/client.ts`, the wire contract in
+`packages/contract/src/relay.ts`, the wiring into a Clave server in
+`packages/host/src/server/relay-wiring.ts` (the in-process server through
+`server/clave-server.ts`, the standalone entry through `server-entry.ts`), and the native
+apps' relay sources. The tests run the Bun relay this branch used to ship as a test
+fixture, `tests/e2e/fixtures/relay/` (byte-identical to the fixture on `dev`, #408): it
+speaks the same contract, and no build bundles it.
 
 ## What the relay does
+
+The protocol as the client meets it; antasphere/relay's `docs/concepts/relay.md` is the
+reference, with what the tool adds because it shares its origin with a dashboard (no
+cookie on the road, an allowlist of answer headers, a sandboxing CSP on every answer).
 
 - **The directory.** `POST /machines/claim` with the owner's hub bearer and the machine's
   record (`{name, platform, version, direct: [{url}]}`) answers `{machineId, machineSecret}`
@@ -115,149 +126,55 @@ listener's cross-origin rule is for browser pages.
   until it is forgotten (`POST /machines/forget`) or the relay's store is reset.
 - **Platforms.** The relay client runs on macOS and Linux (the two platforms the record
   names); a Windows server stays off the relay and says so.
-- **Not run.** A local relay on this Mac proves the protocol and the server's client
+- **Not run.** A local test relay on this Mac proves the protocol and the server's client
   (the unit tests, `tests/e2e/mobile-relay.spec.mjs`). The off-network path itself, a
   phone on mobile data reaching the Mac at home, is proven only with the deployed relay
   and a real phone.
 
-## Running it
+## A relay for development
 
-In development, from a checkout, with the repository's own Bun:
+The relay a team runs is antasphere/relay, developed and run from its own repository. For
+the client's tests and a quick local loop, this checkout starts the test relay with the
+repository's own Bun:
 
 ```sh
-node_modules/.bin/bun apps/relay/src/main.ts \
-  --port 8787 --data-dir /tmp/clave-relay --issuer https://account.antasphere.com
+node_modules/.bin/bun tests/e2e/fixtures/relay/main.ts \
+  --port 8787 --data-dir /tmp/clave-relay --issuer http://127.0.0.1:<provider port>
 ```
 
 `--host` binds another interface (`127.0.0.1` by default). The entry prints
 `{"url":"http://127.0.0.1:8787"}` on stdout once it listens, logs to stderr, and stops on
 SIGTERM or SIGINT. A Clave server on the same machine reaches it with the preference
 `mobileRelayUrl` set to that url, or `--relay http://127.0.0.1:8787` on the standalone
-entry; a test provider stands in for the hub with `--issuer http://127.0.0.1:<port>`
-(plain http is accepted for a loopback issuer only).
+entry. The issuer is a test provider (`tests/e2e/fixtures/oidc-provider.mjs`; plain http
+is accepted for a loopback issuer only).
 
 ## Deploying it
 
-The image is `apps/relay/Dockerfile`, built from the repository root on
-the digest-pinned `oven/bun:1.4.1-slim` (the Bun the repository pins). The contract is
-copied in as a module. `apps/relay/dependencies.mjs` projects the relay's `effect` and `ws`
-runtime closure from the committed root `package-lock.json`, preserving every selected
-version, tarball URL and SHA-512 integrity. It refuses missing entries, an unpinned or
-disagreeing relay manifest, and unsupported dependency kinds rather than resolving them.
-The generated install lock exists only inside the image; there is no second committed
-workspace lock and neither root manifest nor root lock is rewritten.
-
-The pinned Bun consumes that projection with
-`bun install --production --frozen-lockfile --ignore-scripts`. A check after the install
-requires unchanged manifest/lock bytes and the installed versions recorded by the
-projection. `/app/relay-dependencies.json` retains the original workspace-lock hash,
-relay-manifest hash, projected-lock hash and selected versions/URLs/integrities. Bun 1.4.1
-also writes its migrated `bun.lock` in this isolated install; that derived file is not a
-new repository lock. A missing lock is not safely frozen by the flag alone, which is why
-the projection and its input checks are part of the recipe.
-
-The primary Docker registry returned the following index on 31 October 2026 at
-00:11:50 UTC. Its response `Docker-Content-Digest` matched the SHA-256 of the received
-index bytes. Both platform-manifest digests were checked against their response bytes:
-
-| Image metadata                  | Digest                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------- |
-| `oven/bun:1.4.1-slim` OCI index | `sha256:887d0f37f674c69984be4e397fef29ca0d74df1e75155431abbe857258bffde5` |
-| `linux/amd64` manifest          | `sha256:0ef5026ed08a73e76ad7a6e2e814d4f352a66037a7aee194b69008d1429a6ae4` |
-| `linux/arm64` manifest          | `sha256:13322d1181c5956d733e50e8250fd9343b7f9c422b6057e4c7aeaac98b9c746e` |
-
-Primary source: [Docker registry image index](https://registry-1.docker.io/v2/oven/bun/manifests/1.4.1-slim),
-retrieved with anonymous pull authorization from `auth.docker.io`. The Dockerfile pins
-the index digest, so a later tag move does not change the base. This pins base and
-dependency inputs, not timestamps or the byte identity of independently rebuilt images.
-No host or target platform is selected by this record.
-
-After the build is authorized and scheduled, use a clean committed checkout and the
-owner-confirmed platform (`linux/amd64` or `linux/arm64`). These command shapes do not
-authorize a build, container start, volume creation or deployment:
-
-```sh
-: "${RELAY_PLATFORM:?Set the owner-confirmed target platform}"
-RELAY_SOURCE_SHA=$(git rev-parse HEAD)
-docker build --platform "$RELAY_PLATFORM" -f apps/relay/Dockerfile \
-  --label org.opencontainers.image.revision="$RELAY_SOURCE_SHA" \
-  --iidfile /tmp/clave-relay-image-id -t "clave-relay:$RELAY_SOURCE_SHA" .
-# Retain image ID/RepoDigests, platform, source revision and /app/relay-dependencies.json
-# with the build logs before proposing the immutable image for deployment.
-docker image inspect "clave-relay:$RELAY_SOURCE_SHA"
-# On an explicitly approved target, use that inspected immutable image ID/digest:
-docker run -d --name clave-relay --restart unless-stopped \
-  -p 127.0.0.1:8787:8787 -v clave-relay-data:/data \
-  -e RELAY_ISSUER=https://account.antasphere.com <approved-image-id-or-digest>
-```
-
-The example's loopback port is for a proxy running on the host. A proxy in another
-container needs an approved shared-network upstream or host mapping; its own
-`127.0.0.1` is not the host listener. An existing deployment pipeline must explicitly
-support this service and its `/health` endpoint; a tool pipeline requiring `/healthz`
-and `/api/v1/instance` cannot deploy it unchanged. The hostname, host administration,
-proxy/DNS changes, durable volume/backup and rollback image remain the human deploy
-gate. A local image build does not prove a phone on another network can reach it.
-
-| Variable         | Default   | Meaning                                                               |
-| ---------------- | --------- | --------------------------------------------------------------------- |
-| `RELAY_PORT`     | `8787`    | The port the relay listens on inside the container.                   |
-| `RELAY_HOST`     | `0.0.0.0` | The interface; every one inside the container, the proxy in front.    |
-| `RELAY_DATA_DIR` | `/data`   | Where `machines.json` lives; a volume, backed up with the deployment. |
-| `RELAY_ISSUER`   | none      | The hub's origin, required.                                           |
-
-The host's proxy (Caddy, nginx, Traefik) terminates TLS for the relay's public name
-(`relay.antasphere.com`, say) and forwards to `127.0.0.1:8787`, WebSocket upgrades
-included (`Connection: upgrade`, `Upgrade: websocket`; Caddy does it by default, nginx
-needs `proxy_http_version 1.1` and the two headers), with no request body limit under
-8 MiB and read timeouts above two minutes, since a forwarded request may wait on the
-machine that long and a control socket is idle between pings for 25 s. `GET /health`
-answers `{"status":"live","machines":n,"online":m}` for the proxy's and the image's
-health checks. The address the servers and the phones are given is the proxy's https url.
-
-`machines.json` carries the owners' subjects, the records and the secret hashes: back it
-up with the volume, and treat the host as holding the traffic of every machine on it.
-There is no secret of the relay's own to rotate; a machine whose credential should no
-longer be accepted is forgotten by its owner or removed from the file while the relay is
-stopped.
+Nothing in this repository builds, packages or deploys a relay any more. The relay is
+released and deployed as a tool of the team stack: antasphere/relay's
+`docs/operations/relay-on-the-team-stack.md` lists the steps (Steward, the release, the
+hub client, the stack entry, DNS, the machine). The machines a Bun relay knew can be
+carried over (`machines.json`, "Moving from the Bun relay" in its `docs/concepts/relay.md`).
 
 ## Verification
 
-`.github/workflows/relay-image.yml` builds one native `linux/amd64` image on an
-ephemeral hosted runner for relevant pull requests. It records the actual checkout
-merge SHA/tree and ordered PR base/head parents, builds that source archive, and
-retains the immutable image/config identity and typed exporter digest, platform, embedded dependency
-provenance, bounded health/unauthenticated smoke results and owned-container cleanup.
-The seven-day artifact includes a Docker image archive. It publishes no registry image
-and uses no deployment credentials. This job does not validate Linux/arm64, native
-phone behavior, a deployment host or the off-network path.
-Classic Docker metadata can identify only the image config; this is recorded as
-`kind=image-config` with no manifest digest. A supplied descriptor is validated as a
-distinct manifest identity. Raw inspection is retained before validation, including failures.
-
-- `npx vitest run packages/server/src/relay`: the relay against the local OIDC provider
-  (`tests/e2e/fixtures/oidc-provider.mjs`, its userinfo answering the subject of a bearer
-  it issued and refusing every other): two subjects and two machines, each listing their
-  own; a bad, expired or foreign bearer refused; the cache; the claim once and the
-  secret hashed; the control socket's hello, replacement and offline detection; a whole
-  and a streamed response through the road, a body, the failures and the caps; a tunnel
-  carrying frames both ways; forget, health, the close. And the client against a real
-  relay and a local listener: the claim and its storage, no address and no login, a
-  refused claim, the requests answered with `Origin` dropped, a streamed answer, a
-  tunnel piped, the reconnect, a relay that lost its store, the stop.
+- `npx vitest run packages/server/src/relay`: the client against the test relay, the local
+  OIDC provider (`tests/e2e/fixtures/oidc-provider.mjs`, its userinfo answering the
+  subject of a bearer it issued and refusing every other) and a local listener: the claim
+  and its storage, no address and no login, a refused claim, the requests answered with
+  `Origin` dropped, a streamed answer, a tunnel piped, the reconnect, a relay that lost
+  its store, the stop. The relay's own tests (the directory, the bearer check, the road,
+  the caps, the tunnels) live in antasphere/relay.
 - `npx vitest run packages/host/src/antasphere-account.test.ts -t "the access token"`: the token
   answered, kept out of every status and log, renewed through the one renewal, obtained
   once for a record sealed before it was kept.
 - `node tests/e2e/run.mjs mobile-relay` (after `npx electron-vite build`): the real app
-  signed in on the local provider, its server claiming and connecting to a relay the spec
-  starts under the repository's Bun, a client reaching the sessions and the push channel
-  through `/m/<id>/...` with the server's token where a phone will hold its device
+  signed in on the local provider, its server claiming and connecting to the test relay
+  the spec starts under the repository's Bun, a client reaching the sessions and the push
+  channel through `/m/<id>/...` with the server's token where a phone will hold its device
   session, another account seeing no machine, the Mac offline after a sign-out and after a
   quit, back online under the same id after a sign-in and after a relaunch.
-
-The named fixture scenario `mobile-relay/isolated-owners` uses `@structure-ai/fixtures`
-to claim two run-scoped machines through the authenticated relay API. Run it locally with
-`npx vitest run packages/server/src/relay/relay.test.ts -t mobile-relay/isolated-owners --maxWorkers=2`.
-It prints its run ID and machine IDs, verifies directory isolation and refusal of a foreign
-forget request, then removes only its own claims through the owner-authorized forget route.
-Its issuer and relay use isolated loopback ports and temporary data; it never uses production.
+- The native fixture stacks (`packages/mobile-native/scripts/fixture-server.mjs`,
+  `apps/mobile-ios/scripts/fixture-stack.mjs`, `apps/mobile-android/scripts/fixture-env.mjs`)
+  start the same test relay for the phones' own checks.

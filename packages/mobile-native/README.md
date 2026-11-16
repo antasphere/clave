@@ -120,7 +120,8 @@ can reach no provider:
    (`clave-ios://oauth/callback` and `clave-android://oauth/callback` both register), its
    authorization endpoint approving on sight, its tokens RS256-signed with a key it
    publishes;
-2. the relay (`apps/relay/src/main.ts`) under the repository's Bun, with that issuer;
+2. the test relay (`tests/e2e/fixtures/relay/main.ts`; the team's relay is antasphere/relay)
+   under the repository's Bun, with that issuer;
 3. this checkout's server entry (`apps/server/src/main.ts`) as a daemon under Bun with
    `--dev-echo-adapter` (a deterministic chat that repeats what it is told and raises no
    request), `--push-fake` (the recording push transport), `--relay` naming the relay, a
@@ -320,5 +321,5 @@ structure guard, the package's lint and the node typecheck.
 - the icons: `node_modules/@heroicons/react/24/outline` (MIT), the provider marks
   `apps/desktop/src/renderer/src/components/icons/cli-logos.tsx`;
 - the fonts: `node_modules/@fontsource/geist-sans` (OFL-1.1, Vercel);
-- the fixture pieces: `tests/e2e/fixtures/oidc-provider.mjs`, `apps/relay/src/main.ts`,
+- the fixture pieces: `tests/e2e/fixtures/oidc-provider.mjs`, `tests/e2e/fixtures/relay/main.ts`,
   `apps/server/src/main.ts`, `scripts/server-process.mjs`.

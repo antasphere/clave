@@ -16,7 +16,6 @@ const required = [
   'apps/terminals/src/probe.ts',
   'apps/pi-state/index.js',
   'apps/plugin-runner/src/main.ts',
-  'apps/relay/src/main.ts',
   'apps/channel/bin/clave-channel.js',
   'apps/plugins/analytics/src/main.ts',
   'apps/native/secure-files/main.c',
@@ -110,6 +109,12 @@ const obsoleteHomes = [
   // mobile-react-native-baseline-20261109, never to come back here.
   'apps/mobile',
   'packages/server/src/relay/main.ts',
+  // The relay server moved to its own tool, antasphere/relay (#409); the tests
+  // run the mobile branch's relay as a fixture under tests/e2e/fixtures/relay.
+  'apps/relay',
+  'packages/server/src/relay/relay.ts',
+  'packages/server/src/relay/auth.ts',
+  'packages/server/src/relay/registry.ts',
   'packages/clave-channel/bin'
 ]
 // A generated path that covered a whole obsolete home would let any source

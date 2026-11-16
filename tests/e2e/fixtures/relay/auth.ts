@@ -1,4 +1,13 @@
 /**
+ * TEST FIXTURE, not product code (antasphere/clave#407). The Clave relay
+ * server lives in antasphere/relay; this is the mobile branch's relay at
+ * 4aa6118c, carried verbatim (but for import paths) so the relay client of
+ * `packages/server/src/relay/client.ts` is tested against a real relay
+ * speaking the same wire protocol (`packages/contract/src/relay.ts`, which
+ * antasphere/relay keeps byte-compatible). Nothing outside the tests imports
+ * it, and no build bundles it.
+ */
+/**
  * Who a hub bearer names, asked of the hub itself: the relay holds no key
  * and no session of its own. A bearer (an opaque access token or a JWT one,
  * the hub takes both at its userinfo endpoint) is presented to

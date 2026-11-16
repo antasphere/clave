@@ -659,7 +659,7 @@ function daemonLaunch() {
   ]
   const relayArgs = [
     '--no-env-file',
-    path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
+    path.join(REPO, 'tests', 'e2e', 'fixtures', 'relay', 'main.ts'),
     '--port',
     String(RELAY_PORT),
     '--data-dir',

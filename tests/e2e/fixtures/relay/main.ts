@@ -1,7 +1,16 @@
 /**
+ * TEST FIXTURE, not product code (antasphere/clave#407). The Clave relay
+ * server lives in antasphere/relay; this is the mobile branch's relay at
+ * 4aa6118c, carried verbatim (but for import paths) so the relay client of
+ * `packages/server/src/relay/client.ts` is tested against a real relay
+ * speaking the same wire protocol (`packages/contract/src/relay.ts`, which
+ * antasphere/relay keeps byte-compatible). Nothing outside the tests imports
+ * it, and no build bundles it.
+ */
+/**
  * `clave-relay`: the relay as a process (decision 4 of the mobile spec).
  *
- *   bun apps/relay/src/main.ts --port 8787 --data-dir <dir> --issuer <hub> [--host <ip>]
+ *   bun tests/e2e/fixtures/relay/main.ts --port 8787 --data-dir <dir> --issuer <hub> [--host <ip>]
  *
  * In development the repository's own Bun runs the TypeScript as it is; in
  * production the container image (`apps/relay/Dockerfile`) runs
@@ -13,7 +22,7 @@
  * header value or a token. SIGTERM or SIGINT stops it: every machine is
  * told, every tunnel ended.
  */
-import { startRelay } from '../../../packages/server/src/relay/relay'
+import { startRelay } from './relay'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)

@@ -2,8 +2,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by node */
 // The isolated stack the native iPhone app is tested against, on this Mac
 // and nowhere else: a local OpenID Connect provider (tests/e2e/fixtures/
-// oidc-provider.mjs, which approves on sight), this checkout's relay
-// (apps/relay) pointed at that provider, and this checkout's standalone
+// oidc-provider.mjs, which approves on sight), the test relay
+// (tests/e2e/fixtures/relay; the team's relay is antasphere/relay) pointed at that provider, and this checkout's standalone
 // server as a daemon with the Echo adapter (a chat that repeats what it is
 // told; no real agent provider ever runs), pointed at the provider and at the
 // relay. The owner signs in, the server claims its machine on the relay, one
@@ -880,7 +880,7 @@ export function relayEnv({ home }) {
 export function relayArgs({ relayDir, relayPort, issuer }) {
   return [
     '--no-env-file',
-    path.join(REPO, 'apps', 'relay', 'src', 'main.ts'),
+    path.join(REPO, 'tests', 'e2e', 'fixtures', 'relay', 'main.ts'),
     '--port',
     String(relayPort),
     '--data-dir',
@@ -986,7 +986,7 @@ export async function preBootChecks({ relay, relayEnv, args, env, stubs, home, r
       expect(
         relay[0] === '--no-env-file' &&
           typeof relay[1] === 'string' &&
-          relay[1].endsWith(path.join('apps', 'relay', 'src', 'main.ts')),
+          relay[1].endsWith(path.join('tests', 'e2e', 'fixtures', 'relay', 'main.ts')),
         `the relay command does not start with --no-env-file and the relay entry: ${JSON.stringify(relay.slice(0, 2))}`
       )
       const at = relay.indexOf('--issuer')

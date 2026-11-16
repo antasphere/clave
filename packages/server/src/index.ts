@@ -160,8 +160,8 @@ export {
   type LedgerEntry,
   type WriteLedgerStorage
 } from './sessions/writes'
-// ── Lane E (mobile wave, 2026-10-29): the relay, and its client in the server ──
-export { startRelay, type Relay, type RelayOptions } from './relay/relay'
+// ── Lane E (mobile wave, 2026-10-29): the relay client in the server; the relay
+// itself is antasphere/relay (antasphere/clave#409) ──
 export {
   insecureRelayAddress,
   startRelayClient,

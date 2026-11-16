@@ -7,7 +7,7 @@
     "apps/server/src/**/*",
     "apps/terminals/src/**/*",
     "apps/plugin-runner/src/**/*",
-    "apps/relay/src/**/*",
+    "tests/e2e/fixtures/relay/**/*",
     "packages/host/src/**/*",
     "packages/shared/src/**/*",
     "packages/contract/src/**/*",

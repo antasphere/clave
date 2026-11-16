@@ -878,7 +878,7 @@ async function startRelay({ bun, port, dataDir, issuer, env, log, timeoutMs }) {
     bun,
     [
       '--no-env-file',
-      path.join(REPO, 'apps/relay/src/main.ts'),
+      path.join(REPO, 'tests/e2e/fixtures/relay/main.ts'),
       '--port',
       String(port),
       '--data-dir',
