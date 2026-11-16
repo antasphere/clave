@@ -866,6 +866,10 @@ function viaServerEvent<E extends ServerEvent['_tag'], T>(
   })
 }
 
+/** The relay address has no road but the server (issue #407). */
+const noRelayYet = (): Promise<never> =>
+  Promise.reject(new Error('This window has not reached its Clave server yet.'))
+
 /** The contract's answers are readonly through and through; the renderer's
  *  types are not. Same shape (the contract was written from them). */
 const loose = <T>(value: unknown): T => value as T
@@ -1979,6 +1983,21 @@ const electronAPI = {
       ipcRenderer.invoke('linked-documents:choose-files', signature),
     onChanged: (callback: () => void) => createIpcListener<[]>('linked-documents:changed', callback)
   },
+  // ── Issue #407: the relay address and the relay client's state (Settings → Mobile) ──
+  // They live on the server and nowhere else: there is no IPC arm. A window
+  // that has not reached its server yet is told so, and asks again later.
+  mobileRelayRead: viaServer<[], string>({
+    ipc: () => noRelayYet(),
+    server: ({ api }) => api.devices.relay.get()
+  }),
+  mobileRelaySet: viaServer<[string], string>({
+    ipc: () => noRelayYet(),
+    server: ({ api }, url) => api.devices.relay.set(url)
+  }),
+  mobileRelayStatus: viaServer<[], import('@clave/contract/devices').MobileRelayStatus>({
+    ipc: () => noRelayYet(),
+    server: ({ api }) => api.devices.relay.status()
+  }),
   // ── ADR 0004: the routines, the server's; IPC until the window reaches it ──
   routinesList: viaServer<[], import('@clave/contract/routines/model').RoutinesListing>({
     ipc: () => ipcRenderer.invoke('routines:list'),

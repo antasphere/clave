@@ -1246,6 +1246,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   artefacts: ArtefactsAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
+  // ── Issue #407: the relay address and the relay client's state (Settings → Mobile) ──
+  mobileRelayRead: () => Promise<string>
+  mobileRelaySet: (url: string) => Promise<string>
+  mobileRelayStatus: () => Promise<import('../shared/mobile-relay-types').MobileRelayStatus>
   routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
   routinesRunNow: (key: string) => Promise<import('@clave/contract/routines/model').RoutineRun>
   routinesDismiss: (runId: string) => Promise<void>

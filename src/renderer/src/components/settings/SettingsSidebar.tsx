@@ -11,6 +11,7 @@ import {
   UserCircleIcon,
   MicrophoneIcon,
   ServerIcon,
+  DevicePhoneMobileIcon,
   SparklesIcon,
   SquaresPlusIcon
 } from '@heroicons/react/24/outline'
@@ -52,6 +53,7 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     label: 'Clave',
     rows: [
       { id: 'servers', label: 'Servers', icon: ServerIcon },
+      { id: 'mobile', label: 'Mobile', icon: DevicePhoneMobileIcon },
       { id: 'plugins', label: 'Plugins', icon: PuzzlePieceIcon },
       { id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }
     ]

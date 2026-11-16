@@ -159,9 +159,9 @@ export function mobileRelayStatusView(
   status: RelayClientStatus | null,
   now: () => number = Date.now
 ): MobileRelayStatus {
-  if (!status) return { state: 'off', relay: null, machineId: null, since: now(), lastFailure: null }
-  const state =
-    status.state === 'unconfigured' || status.state === 'stopped' ? 'off' : status.state
+  if (!status)
+    return { state: 'off', relay: null, machineId: null, since: now(), lastFailure: null }
+  const state = status.state === 'unconfigured' || status.state === 'stopped' ? 'off' : status.state
   return {
     state,
     relay: status.relay,
