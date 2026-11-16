@@ -196,6 +196,7 @@ jobs:
           npx electron-builder --dir --mac --arm64 \
             -c.mac.notarize=false -c.mac.identity=null
           node scripts/check-packaged-requires.mjs dist/mac-arm64/Clave.app
+          node scripts/check-packaged-excludes.mjs dist/mac-arm64/Clave.app
 
       # The terminal process beside the standalone server, from the bundle
       # the build wrote (the tests that need it skip without one, so they run
