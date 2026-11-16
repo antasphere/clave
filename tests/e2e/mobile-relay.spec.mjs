@@ -1,5 +1,10 @@
-// The relay (lane E of the mobile wave, decision 4 of the mobile spec)
-// through the real app, with the server IN-PROCESS: the app signs in on a
+// The relay client (issue #407, ported from lane E of the mobile wave)
+// through the real app, with the server IN-PROCESS. The relay is the test
+// fixture under tests/e2e/fixtures/relay (the mobile branch's relay, whose
+// wire protocol antasphere/relay keeps byte-compatible), started under the
+// repository's Bun. The owner sets the relay's address in Settings → Mobile,
+// which refuses a plain-http address off this machine and shows the client's
+// state as it moves: signed out before the login, connected after. The app signs in on a
 // local OIDC provider through Settings → Accounts (the browser stood in by a
 // fetch that follows the issuer's redirect, as antasphere-account.spec.mjs
 // does), its server claims a machine credential from a relay this spec
@@ -10,7 +15,9 @@
 // Proven on the relay's own API and on the machine's answers, never through
 // a hook inside main: the relay lists the Mac to its owner's bearer and to
 // nobody else's, keeps the secret hashed, and lists the Mac offline once the
-// app quits and online again, under the same id, once it relaunches.
+// app quits and online again, under the same id, once it relaunches; the
+// address cleared in Settings takes the Mac off the relay. A standalone
+// server refuses a `--relay` address that is not https before it starts.
 // Nothing here reaches account.antasphere.com.
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
@@ -24,14 +31,14 @@ import {
   seedWorkspaces,
   serverEndpoint,
   until,
+  separateServerDataDir,
   userDataDir
 } from './harness.mjs'
 import { startOidcProvider } from './fixtures/oidc-provider.mjs'
+import { runKeychain } from './fixtures/run-keychain.mjs'
 import { bunBinary } from '../../scripts/server-process.mjs'
 
-const DIR = userDataDir('mobile-relay')
 const ROOT = fixturePath('mobile-relay-root')
-const RELAY_DATA = fixturePath('mobile-relay-relay')
 const WS = {
   id: 'mobile-relay-ws',
   name: 'Mobile relay',
@@ -39,7 +46,6 @@ const WS = {
   profileFile: null,
   createdAt: 1
 }
-const RELAY_FILE = path.join(DIR, 'relay.json')
 const OWNER = {
   sub: 'e2e-owner',
   name: 'E2E Owner',
@@ -50,16 +56,16 @@ const OWNER = {
 /** The relay as its own process, the way the team runs it: the entry under
  *  the repository's Bun, announcing its url on stdout. The port is the
  *  band's when CLAVE_E2E_RELAY_PORT names one, a free one otherwise. */
-async function startRelay(issuer) {
+async function startRelay(issuer, dataDir) {
   const port = Number(process.env.CLAVE_E2E_RELAY_PORT) || (await freePorts())[0]
   const child = spawn(
     bunBinary(process.env, REPO),
     [
-      path.join(REPO, 'apps/relay/src/main.ts'),
+      path.join(REPO, 'tests/e2e/fixtures/relay/main.ts'),
       '--port',
       String(port),
       '--data-dir',
-      RELAY_DATA,
+      dataDir,
       '--issuer',
       issuer
     ],
@@ -170,8 +176,10 @@ async function stubBrowser(app) {
 }
 
 async function openAccounts(win) {
-  await win.click('.sidebar-footer-btn[aria-label="Settings"]')
-  await win.click('[data-settings-nav-row="accounts"]')
+  const row = win.locator('[data-settings-nav-row="accounts"]')
+  if (!(await row.isVisible().catch(() => false)))
+    await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+  await row.click()
   const page = win.locator('[data-settings-page="accounts"]')
   await page.waitFor()
   const section = page.locator('[data-antasphere-account]')
@@ -179,20 +187,96 @@ async function openAccounts(win) {
   return { page, section }
 }
 
+/** Settings → Mobile, from wherever the window is: the page and its relay card. */
+async function openMobile(win) {
+  const row = win.locator('[data-settings-nav-row="mobile"]')
+  if (!(await row.isVisible().catch(() => false)))
+    await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+  await row.click()
+  const page = win.locator('[data-settings-page="mobile"]')
+  await page.waitFor()
+  await page.locator('[data-mobile-relay]').waitFor()
+  return page
+}
+
+/** The state the page shows, once it is `state`; null past the budget. */
+const mobileStateIs = (page, state, tries = 60) =>
+  until(
+    async () =>
+      (await page.locator('[data-mobile-relay-state]').getAttribute('data-mobile-relay-state')) ===
+      state
+        ? state
+        : null,
+    { tries, gapMs: 250 }
+  )
+
+/** A standalone server given `--relay` with a plain-http address off this
+ *  machine: it must stop before it starts, with exit code 2 and a sentence. */
+function standaloneWithRelay(address) {
+  return new Promise((resolve) => {
+    const dataDir = fixturePath('mobile-relay-standalone')
+    mkdirSync(dataDir, { recursive: true })
+    const child = spawn(
+      bunBinary(process.env, REPO),
+      [
+        path.join(REPO, 'src/main/server-entry.ts'),
+        '--data-dir',
+        dataDir,
+        '--relay',
+        address,
+        '--test-no-activate'
+      ],
+      { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    let stderr = ''
+    let stdout = ''
+    child.stderr.on('data', (d) => (stderr += d))
+    child.stdout.on('data', (d) => (stdout += d))
+    const timer = setTimeout(() => child.kill('SIGKILL'), 20_000)
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      rmSync(dataDir, { recursive: true, force: true })
+      resolve({ code, signal, stderr, stdout })
+    })
+  })
+}
+
 const phaseOf = (section) => section.getAttribute('data-antasphere-phase')
 const waitPhase = (section, phase) =>
   until(async () => ((await phaseOf(section)) === phase ? phase : null))
 
-export async function run(t) {
+/** The spec on the in-process server (`npm run dev`, `--server=in-process`). */
+export const run = (t) => runMobileRelay(t, 'in-process')
+
+/**
+ * The spec on one server mode: `in-process`, or `separate` (the packaged
+ * default: the app starts the standalone entry as its child, which owns the
+ * login, the preferences Settings → Mobile writes, `relay.json` and the relay
+ * client; `mobile-relay-separate.spec.mjs`). Each mode has its own user data,
+ * relay data and, separate, a keychain file of the run's own.
+ */
+export async function runMobileRelay(t, mode) {
+  const name = mode === 'separate' ? 'mobile-relay-separate' : 'mobile-relay'
+  const DIR = userDataDir(name)
+  const RELAY_DATA = fixturePath(`${name}-relay`)
+  // Where the server keeps its own files: the app's user data in-process,
+  // the child's data directory separate.
+  const SERVER_DIR = mode === 'separate' ? separateServerDataDir(DIR) : DIR
+  const RELAY_FILE = path.join(SERVER_DIR, 'relay.json')
+  const PREFERENCES = path.join(SERVER_DIR, 'preferences.json')
+  const keychain =
+    mode === 'separate' ? runKeychain(fixturePath(`${name}-keychain/e2e.keychain-db`)) : null
   rmSync(DIR, { recursive: true, force: true })
   rmSync(RELAY_DATA, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   const provider = await startOidcProvider({ registrationStatus: 200, user: OWNER })
-  const relay = await startRelay(provider.issuer)
-  // The preference Settings → Mobile writes (lane A's): the relay's address.
-  writeFileSync(path.join(DIR, 'preferences.json'), JSON.stringify({ mobileRelayUrl: relay.url }))
-  const env = { CLAVE_ANTASPHERE_ISSUER: provider.issuer }
+  const relay = await startRelay(provider.issuer, RELAY_DATA)
+  keychain?.create()
+  const env = {
+    CLAVE_ANTASPHERE_ISSUER: provider.issuer,
+    ...(keychain && { CLAVE_KEYCHAIN_FILE: keychain.file })
+  }
   const errors = []
   // What main says of the relay client, kept beside the relay's data with the
   // relay's own stderr: the two sides of the road, for a failed check.
@@ -205,7 +289,7 @@ export async function run(t) {
       })
     }
   }
-  let { app, win } = await launchApp(DIR, { env, server: 'in-process' })
+  let { app, win } = await launchApp(DIR, { env, server: mode })
   watchMain(app.process())
   win.on('pageerror', (e) => errors.push(e.message))
   const diagnostics = () => ({
@@ -215,6 +299,51 @@ export async function run(t) {
   try {
     const owner = provider.mintAccessToken({ sub: OWNER.sub })
     const stranger = provider.mintAccessToken({ sub: 'e2e-stranger' })
+
+    t.equal('the app runs on the server mode asked', serverEndpoint(DIR)?.mode, mode)
+
+    // ── The standalone entry refuses a relay address that is not https ───
+    const bad = await standaloneWithRelay('http://relay.example.com')
+    t.check(
+      'a standalone server given --relay http://relay.example.com stops before it listens',
+      bad.code === 2 && /--relay must be an https address/.test(bad.stderr) && bad.stdout === '',
+      bad
+    )
+
+    // ── Settings → Mobile: off, a refused address, then the relay's ──────
+    let mobile = await openMobile(win)
+    t.equal('with no address the relay is off', await mobileStateIs(mobile, 'off'), 'off')
+    const input = mobile.locator('[data-mobile-relay-input]')
+    await input.fill('http://relay.example.com')
+    await mobile.locator('[data-mobile-relay-save]').click()
+    const saveError = await until(async () => {
+      const text = await mobile
+        .locator('[data-mobile-relay-save-error]')
+        .textContent()
+        .catch(() => null)
+      return text || null
+    })
+    t.check(
+      'a plain-http address off this Mac is refused in plain words',
+      typeof saveError === 'string' && /https:\/\//.test(saveError),
+      saveError
+    )
+    t.check(
+      'and nothing is kept',
+      !existsSync(PREFERENCES) || !readFileSync(PREFERENCES, 'utf8').includes('relay.example.com')
+    )
+    await input.fill(relay.url)
+    await mobile.locator('[data-mobile-relay-save]').click()
+    t.equal(
+      'saved, the client says nobody is signed in',
+      await mobileStateIs(mobile, 'signed-out'),
+      'signed-out'
+    )
+    t.equal(
+      'the address is the mobileRelayUrl preference',
+      JSON.parse(readFileSync(PREFERENCES, 'utf8')).mobileRelayUrl,
+      relay.url
+    )
 
     // ── Before the login: nothing claimed, nothing listed ────────────────
     await new Promise((r) => setTimeout(r, 1500))
@@ -228,7 +357,7 @@ export async function run(t) {
 
     // ── The login, through Settings → Accounts ───────────────────────────
     const opened = await stubBrowser(app)
-    const { section } = await openAccounts(win)
+    let { section } = await openAccounts(win)
     await section.getByRole('button', { name: 'Sign in with Antasphere', exact: true }).click()
     const urls = await until(async () => {
       const u = await opened()
@@ -273,6 +402,12 @@ export async function run(t) {
         !readFileSync(RELAY_FILE, 'utf8').includes('cms_'),
       existsSync(RELAY_FILE) ? readFileSync(RELAY_FILE, 'utf8').slice(0, 200) : 'no file'
     )
+    mobile = await openMobile(win)
+    t.equal(
+      'Settings → Mobile says connected',
+      await mobileStateIs(mobile, 'connected'),
+      'connected'
+    )
     const store = readFileSync(path.join(RELAY_DATA, 'machines.json'), 'utf8')
     t.check(
       'the relay keeps the secret hashed, with the owner and the machine id',
@@ -304,6 +439,7 @@ export async function run(t) {
     t.check('and answers a ping through it', frames.pong !== undefined, frames)
 
     // ── Signed out: the Mac leaves the relay; signed in again: it is back ─
+    ;({ section } = await openAccounts(win))
     await section.locator('[data-antasphere-sign-out]').click()
     t.equal('sign out: signed out', await waitPhase(section, 'signed-out'), 'signed-out')
     const gone = await machineOf(relay.url, owner, false, 40)
@@ -311,6 +447,13 @@ export async function run(t) {
       gone,
       ...diagnostics()
     })
+    mobile = await openMobile(win)
+    t.equal(
+      'Settings → Mobile says signed out',
+      await mobileStateIs(mobile, 'signed-out'),
+      'signed-out'
+    )
+    ;({ section } = await openAccounts(win))
     await section.getByRole('button', { name: 'Sign in with Antasphere', exact: true }).click()
     const urls2 = await until(async () => {
       const u = await opened()
@@ -333,7 +476,7 @@ export async function run(t) {
       offline !== null && typeof offline.lastSeen === 'number',
       offline
     )
-    ;({ app, win } = await launchApp(DIR, { env, server: 'in-process' }))
+    ;({ app, win } = await launchApp(DIR, { env, server: mode }))
     watchMain(app.process())
     win.on('pageerror', (e) => errors.push(e.message))
     const again = await machineOf(relay.url, owner, true, 80)
@@ -343,11 +486,24 @@ export async function run(t) {
       again !== null && again.id === online.id && machines.machines.length === 1,
       { again, known: machines.machines.length }
     )
+
+    // ── Cleared in Settings → Mobile: the Mac leaves the relay ───────────
+    mobile = await openMobile(win)
+    t.equal(
+      'relaunched, Settings → Mobile says connected',
+      await mobileStateIs(mobile, 'connected'),
+      'connected'
+    )
+    await mobile.locator('[data-mobile-relay-clear]').click()
+    t.equal('cleared, the relay is off', await mobileStateIs(mobile, 'off'), 'off')
+    const left = await machineOf(relay.url, owner, false, 40)
+    t.check('and the relay lists the Mac offline', left !== null && left.id === online.id, left)
     t.equal('no renderer errors', errors.length, 0, errors)
   } finally {
     await app.close()
     await relay.stop()
     await provider.close()
+    keychain?.remove()
     writeFileSync(path.join(RELAY_DATA, 'app.log'), appLines.join('\n') + '\n')
     writeFileSync(path.join(RELAY_DATA, 'relay.stderr.log'), relay.stderr())
   }
