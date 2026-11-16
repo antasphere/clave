@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   setSessionViewRecord: vi.fn(),
   setSessionClaudeSessionId: vi.fn(),
   setSessionWorkspace: vi.fn(),
+  getSessionRecord: vi.fn(),
+  setSessionWindowKey: vi.fn(),
   folderName: 'app',
   typed: vi.fn(async () => ({ submitted: true, draftHandling: 'none' as const })),
   notifyChatMessage: vi.fn()
@@ -25,6 +27,8 @@ vi.mock('../pty-manager', () => ({
     setSessionViewRecord: mocks.setSessionViewRecord,
     setSessionClaudeSessionId: mocks.setSessionClaudeSessionId,
     setSessionWorkspace: mocks.setSessionWorkspace,
+    getSessionRecord: mocks.getSessionRecord,
+    setSessionWindowKey: mocks.setSessionWindowKey,
     getSession: (id: string) => (id === 'gone' ? undefined : { id, folderName: mocks.folderName })
   }
 }))
@@ -111,6 +115,18 @@ describe('the page on a tab, and a message typed in', () => {
 })
 
 describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () => {
+  it('claims only the expected window stamp, without replacing or replaying the session', () => {
+    mocks.getSessionRecord.mockReturnValue({ id: 'c1' })
+    host.keepOnRecord('c1', { window: { key: 'primary', expectedKey: null } })
+    expect(mocks.setSessionWindowKey).toHaveBeenCalledExactlyOnceWith('c1', 'primary')
+    mocks.getSessionRecord.mockReturnValue({ id: 'c1', windowKey: 'secondary' })
+    host.keepOnRecord('c1', { window: { key: 'primary', expectedKey: null } })
+    expect(mocks.setSessionWindowKey).toHaveBeenCalledTimes(1)
+    mocks.getSessionRecord.mockReturnValue(undefined)
+    host.keepOnRecord('gone', { window: { key: 'primary', expectedKey: null } })
+    expect(mocks.setSessionWindowKey).toHaveBeenCalledTimes(1)
+    expect(writes).toEqual([])
+  })
   it('writes the name as given, an auto-title included, and the page, each only when sent', () => {
     host.keepOnRecord('c1', { name: { displayName: 'Lane A', userRenamed: true } })
     host.keepOnRecord('c1', { name: { displayName: null, userRenamed: false } })
@@ -168,5 +184,49 @@ describe('a model switch through the host (PRDCT-4302)', () => {
       ['c2', { type: 'set_model', model: 'claude-opus-5-5', remember: false }]
     ])
     expect(rememberChatModel).not.toHaveBeenCalled()
+  })
+})
+
+describe('a message the phone sends, through the host (PRDCT-4448)', () => {
+  it('carries the id the client minted into the message the manager writes', async () => {
+    await host.write('c1', { type: 'user_message', text: 'hi', clientMessageId: 'phone-00000001' })
+    expect(writes).toEqual([
+      ['c1', { type: 'user_message', text: 'hi', clientMessageId: 'phone-00000001' }]
+    ])
+  })
+  it('settles a message with attachments only once the session acknowledged it', async () => {
+    let acknowledge!: () => void
+    vi.spyOn(manager, 'write').mockImplementationOnce((id, input) => {
+      writes.push([id, input])
+      return new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+    })
+    let settled = false
+    const written = host
+      .write('c1', {
+        type: 'user_message',
+        text: 'see this',
+        attachments: [
+          {
+            id: 'a',
+            path: '/tmp/x.png',
+            name: 'x.png',
+            mimeType: 'image/png',
+            size: 3,
+            delivery: 'image'
+          }
+        ],
+        clientMessageId: 'phone-00000002'
+      })
+      .then(() => {
+        settled = true
+      })
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+    acknowledge()
+    await written
+    expect(settled).toBe(true)
   })
 })

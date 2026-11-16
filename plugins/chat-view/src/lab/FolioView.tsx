@@ -68,7 +68,7 @@ import { ContextMeter } from '../TerminalStatus'
 import { WorkCards } from '../WorkCards'
 import { relaunchRequest, shownWork } from '../terminal-status'
 import { DropDrawing } from '../DropDrawing'
-import { PastFailed } from '../EarlierLoading'
+import { PastFailed, PastTruncated } from '../EarlierLoading'
 import { pastHead } from '../past'
 import { FolioDrawing } from './FolioDrawing'
 import {
@@ -750,6 +750,8 @@ export function FolioView({
     retryPast,
     earlier,
     before,
+    history,
+    truncated,
     imagesSupported
   } = useConversation(session.id, session.state)
   const presentation = usePresentation(conversation, visible)
@@ -776,8 +778,8 @@ export function FolioView({
   const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   // A move of the tab to another provider (PRDCT-4300), from the chip's menu
   // or the limit card, the popover under the book.
-  const switchSource = useRef({ conversation, before })
-  switchSource.current = { conversation, before }
+  const switchSource = useRef({ conversation, before, history })
+  switchSource.current = { conversation, before, history }
   const providerSwitch = useProviderSwitch({
     session,
     source: () => switchSource.current,
@@ -1113,6 +1115,7 @@ export function FolioView({
       <div className="folio-desk">
         <div ref={scroll} className="folio-scroll">
           <div className="folio-sheet" role="document" aria-label="Conversation">
+            {truncated && <PastTruncated />}
             {head === 'failed' && <PastFailed onRetry={retryPast} />}
             {head === 'empty' && !page && (
               <div className="folio-empty">

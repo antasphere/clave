@@ -7,6 +7,7 @@
  */
 import { Context, Layer } from 'effect'
 import { SidebarLayouts } from './layouts'
+import type { SidebarOverviewSource } from './overview'
 import { memorySidebarStorage, noWindowsHost } from './ports'
 
 export class SidebarLayoutsPort extends Context.Tag('@clave/server/SidebarLayouts')<
@@ -18,5 +19,19 @@ export class SidebarLayoutsPort extends Context.Tag('@clave/server/SidebarLayout
   }
   static get none(): SidebarLayouts {
     return new SidebarLayouts(memorySidebarStorage(), noWindowsHost)
+  }
+}
+
+/**
+ * Where the overview a phone reads comes from (`./overview.ts`): by default
+ * the layouts of the port above, or what the entry names instead, the app's
+ * own layout files for a server run as the app's child.
+ */
+export class SidebarOverviewPort extends Context.Tag('@clave/server/SidebarOverview')<
+  SidebarOverviewPort,
+  SidebarOverviewSource
+>() {
+  static layer(source: SidebarOverviewSource): Layer.Layer<SidebarOverviewPort> {
+    return Layer.succeed(SidebarOverviewPort, source)
   }
 }

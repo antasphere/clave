@@ -817,6 +817,30 @@ describe('a message written while a turn runs waits for its own turn (PRDCT-4566
     expect(s.events.length).toBe(before)
   })
 
+  it('an identified message that waits carries its client message id, in the list and when handed back, for the write ledger', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })
+    await expect.poll(() => prompted(s.state)).toEqual(['be slow'])
+    s.adapter.write(s.handle, {
+      type: 'user_message',
+      text: 'from the phone',
+      clientMessageId: 'phone-00000042'
+    })
+    expect(lists(s.events).at(-1)?.messages).toEqual([
+      { id: expect.any(String), text: 'from the phone', clientMessageId: 'phone-00000042' }
+    ])
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    await expect.poll(() => dones(s.events)).toBe(1)
+    expect(s.events[0]).toMatchObject({
+      type: 'waiting_messages',
+      returned: {
+        why: 'stopped',
+        messages: [{ text: 'from the phone', clientMessageId: 'phone-00000042' }]
+      }
+    })
+  })
+
   it('a stop with two messages waiting ends the turn and hands both back, none sent, nothing started', async () => {
     const s = await open()
     s.adapter.write(s.handle, { type: 'user_message', text: 'be slow' })

@@ -23,10 +23,11 @@ import { SettingsSource, type SettingsSourceService } from './settings/port'
 
 export { SettingsSource, type SettingsSourceService } from './settings/port'
 export { Terminals, type TerminalsService } from './terminals/port'
-import { SidebarLayoutsPort } from './sidebar/port'
+import { SidebarLayoutsPort, SidebarOverviewPort } from './sidebar/port'
 import type { SidebarLayouts } from './sidebar/layouts'
+import { layoutsOverviewSource, type SidebarOverviewSource } from './sidebar/overview'
 
-export { SidebarLayoutsPort } from './sidebar/port'
+export { SidebarLayoutsPort, SidebarOverviewPort } from './sidebar/port'
 import { WorkspaceFilesPort } from './workspace-files/port'
 import type { WorkspaceFiles } from './workspace-files/files'
 
@@ -58,6 +59,14 @@ export { Routines, type RoutinesService } from './routines/port'
 import { DigestsPort, type DigestsService } from './digests/port'
 
 export { DigestsPort, type DigestsService } from './digests/port'
+// ── Mobile wave, lane A: the devices ──
+import { DevicesPort, type DevicesPortService } from './devices/port'
+
+export { DevicesPort, type DevicesPortService } from './devices/port'
+// ── The mobile wave, lane B: where the write ledger is kept (`sessions/writes.ts`) ──
+import type { WriteLedgerStorage } from './sessions/writes'
+
+export { type WriteLedgerStorage } from './sessions/writes'
 // ── PRDCT-4411: the speech ──
 import { SpeechPort, type SpeechService } from './speech/port'
 
@@ -80,6 +89,10 @@ export interface ServerPorts {
   /** Lane C: the sidebar, one layout per window key. `SidebarLayoutsPort.none`
    *  when absent: layouts kept in memory, no window to host. */
   readonly sidebar?: SidebarLayouts
+  /** Where the overview a phone reads comes from (`sidebar/overview.ts`).
+   *  The layouts of `sidebar` when absent; a server run as the app's child
+   *  names the app's own layout files instead, since it holds none. */
+  readonly sidebarOverview?: SidebarOverviewSource
   /** Wave 3, lane A: the workspace files (`.clave`), their trust store on the
    *  entry's data directory. `WorkspaceFilesPort.none` when absent: the
    *  trust store kept in memory. */
@@ -105,6 +118,15 @@ export interface ServerPorts {
   // ── PRDCT-4327: the digests ──
   /** The one-shot digests a chat view shows, read on the server's own record of each session. `DigestsPort.none` when absent: every call refused as unavailable. */
   readonly digests?: DigestsService
+  // ── Mobile wave, lane A: the devices ──
+  /** A phone paired with this server as its owner's: the device records'
+   *  document, the owner's identity, the issuer, the server's name.
+   *  `DevicesPort.none` when absent: no owner, so no phone is ever admitted. */
+  readonly devices?: DevicesPortService
+  // ── The mobile wave, lane B: nothing is sent twice ──
+  /** Where the write ledger and the server's own history of writes are
+   *  kept, per session (`sessions/writes.ts`); in memory when absent. */
+  readonly writeLedger?: WriteLedgerStorage
   // ── PRDCT-4411: the speech ──
   /** Text spoken with the machine's ElevenLabs voice, for a session the server has a record of. `SpeechPort.none` when absent: every call refused as unavailable. */
   readonly speech?: SpeechService
@@ -129,6 +151,7 @@ export const PortsLive = (
   | SettingsSource
   | Terminals
   | SidebarLayoutsPort
+  | SidebarOverviewPort
   | WorkspaceFilesPort
   | AgentTokens
   // ── Wave 5, lane C: the plugins ──
@@ -143,18 +166,23 @@ export const PortsLive = (
   | Routines
   // ── PRDCT-4327: the digests ──
   | DigestsPort
+  // ── Mobile wave, lane A: the devices ──
+  | DevicesPort
   // ── PRDCT-4411: the speech ──
   | SpeechPort
   // ── PRDCT-4472: the artefacts ──
   | ArtefactsPort
-> =>
-  Layer.mergeAll(
+> => {
+  // One instance for both ports: `none` is a getter that builds a new one.
+  const sidebar = ports.sidebar ?? SidebarLayoutsPort.none
+  return Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
     FilesPort.layer(ports.files ?? FilesPort.none),
     SessionHost.layer(ports.sessions ?? SessionHost.none),
     SettingsSource.layer(ports.settings ?? SettingsSource.none),
     Terminals.layer(ports.terminals ?? Terminals.none),
-    SidebarLayoutsPort.layer(ports.sidebar ?? SidebarLayoutsPort.none),
+    SidebarLayoutsPort.layer(sidebar),
+    SidebarOverviewPort.layer(ports.sidebarOverview ?? layoutsOverviewSource(sidebar)),
     WorkspaceFilesPort.layer(ports.workspaceFiles ?? WorkspaceFilesPort.none),
     // ── Wave 4, lane C: the agent tools' tokens ──
     AgentTokens.layer(ports.agentTools ?? AgentTokens.none),
@@ -170,8 +198,11 @@ export const PortsLive = (
     Routines.layer(ports.routines ?? Routines.none),
     // ── PRDCT-4327: the digests ──
     DigestsPort.layer(ports.digests ?? DigestsPort.none),
+    // ── Mobile wave, lane A: the devices ──
+    DevicesPort.layer(ports.devices ?? DevicesPort.none),
     // ── PRDCT-4411: the speech ──
     SpeechPort.layer(ports.speech ?? SpeechPort.none),
     // ── PRDCT-4472: the artefacts ──
     ArtefactsPort.layer(ports.artefacts ?? ArtefactsPort.none)
   )
+}

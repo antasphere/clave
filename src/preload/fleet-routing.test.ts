@@ -64,6 +64,30 @@ vi.mock('@clave/client/node', () => ({
         dispose: async () => {},
         sessions: {
           history: call('history', { owner, items: [] }),
+          timeline: call('timeline', {
+            items: [
+              {
+                event: {
+                  type: 'user_message',
+                  text: 'hello',
+                  attachments: [
+                    {
+                      id: 'f',
+                      delivery: 'session',
+                      sessionId: 'other',
+                      name: 'Other',
+                      agent: 'Codex',
+                      cwd: '/repo'
+                    }
+                  ]
+                },
+                position: { generation: owner, sequence: 3 }
+              }
+            ],
+            cursor: { generation: owner, sequence: 4 },
+            before: 3,
+            truncated: true
+          }),
           list: call('list', []),
           listAdoptable: call('records', []),
           stop: call('stop', undefined),
@@ -292,6 +316,13 @@ async function defaultInvoke(channel: string, ...args: unknown[]): Promise<unkno
     if (channel === 'server:fleet:endpoint')
       return { url: `http://owner-${args[0]}`, token: 'test-only' }
     if (channel === 'sessions:history') return { owner: 'local', items: [] }
+    if (channel === 'sessions:timeline')
+      return {
+        items: [],
+        cursor: { generation: 'local', sequence: 0 },
+        before: null,
+        truncated: false
+      }
     // The Mac's own repo watcher answers the paths it was given.
     if (channel === 'git:watch-repos') return args[1]
     if (channel === 'sessions:files')
@@ -310,6 +341,36 @@ afterEach(() => {
 })
 
 describe('desktop owner routing', () => {
+  it('reads a timeline from its qualified owner, retaining cursor/positions and scoping session references', async () => {
+    for (const owner of ['a', 'b']) {
+      const page = await api.sessionsTimeline(resourceKey('session', owner, 'same'), 5, 20)
+      expect(page).toMatchObject({
+        cursor: { generation: owner, sequence: 4 },
+        before: 3,
+        truncated: true,
+        items: [
+          {
+            position: { generation: owner, sequence: 3 },
+            event: { attachments: [{ sessionId: resourceKey('session', owner, 'other') }] }
+          }
+        ]
+      })
+    }
+    expect(await api.sessionsTimeline('same')).toMatchObject({ cursor: { generation: 'local' } })
+    expect(mocks.calls.filter((c) => c.method === 'timeline')).toEqual(
+      ['a', 'b'].map((owner) => ({ owner, method: 'timeline', args: ['same', 5, 20] }))
+    )
+    await api.fleetDisconnect('a')
+    const before = mocks.invoke.mock.calls.filter(
+      ([channel]) => channel === 'sessions:timeline'
+    ).length
+    await expect(api.sessionsTimeline(resourceKey('session', 'a', 'same'))).rejects.toThrow(
+      /not connected/
+    )
+    expect(
+      mocks.invoke.mock.calls.filter(([channel]) => channel === 'sessions:timeline')
+    ).toHaveLength(before)
+  })
   it('routes colliding session IDs to exactly their owner and leaves local history local', async () => {
     for (const owner of ['a', 'b']) {
       expect(await api.sessionsHistory(resourceKey('session', owner, 'same'))).toMatchObject({

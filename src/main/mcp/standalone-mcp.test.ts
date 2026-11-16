@@ -13,10 +13,16 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SessionHost } from '@clave/server'
+import { SessionWrites } from '../../../packages/server/src/sessions/writes'
 import type { Session, SessionRecord } from '@clave/contract/sessions'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
-import { SidebarLayouts, memorySidebarStorage, noWindowsHost } from '@clave/server/sidebar-layouts'
+import {
+  SidebarLayouts,
+  layoutsOverviewSource,
+  memorySidebarStorage,
+  noWindowsHost
+} from '@clave/server/sidebar-layouts'
 import { PendingRequests } from '../../../packages/server/src/requests/service'
 import { createAgentTokenStore } from '../sessions/agent-tokens'
 import { executeSecretAction } from '../secret-actions'
@@ -26,7 +32,7 @@ import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { sessionHandlers } from '../../../packages/server/src/sessions/handlers'
 import { sidebarHandlers } from '../../../packages/server/src/sidebar/handlers'
-import { SidebarLayoutsPort } from '../../../packages/server/src/sidebar/port'
+import { SidebarLayoutsPort, SidebarOverviewPort } from '../../../packages/server/src/sidebar/port'
 import { ServerEvents } from '../../../packages/server/src/events'
 import type { SessionHostService } from '@clave/server'
 import { ArtefactsPort, type ArtefactsService } from '@clave/server'
@@ -1362,7 +1368,11 @@ describe('agent-sessions/delegation-group fixture', () => {
     const layer = buses.pipe(
       Layer.provide(HandlerRegistry.layer(...sidebarHandlers, ...sessionHandlers)),
       Layer.provide(SidebarLayoutsPort.layer(sidebar)),
+      // The sidebar's handlers include the phone's overview, read off the same layouts.
+      Layer.provide(SidebarOverviewPort.layer(layoutsOverviewSource(sidebar))),
       Layer.provide(SessionHost.layer(host)),
+      // ── The mobile wave, lane B: the write command reads the ledger ──
+      Layer.provide(SessionWrites.memory),
       Layer.provide(ServerEvents.layer('fixture-server').pipe(Layer.provide(InMemoryAll)))
     )
     const report = await Effect.runPromise(

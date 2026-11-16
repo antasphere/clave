@@ -111,7 +111,7 @@ function writeFixtures() {
   })
 }
 
-export async function run(t) {
+async function runSource(t, source) {
   writeFixtures()
   const env = {
     SHELL: `${ROOT}/bin/bash`,
@@ -124,17 +124,32 @@ export async function run(t) {
     app = launched.app
     const { win, fixture } = launched
     // The server's first answer for the tab's past is lost; the next ones are not.
-    await fixture.evaluate((tab) => {
-      const host = globalThis.__claveE2E.sessionHost
-      const history = host.history
-      globalThis.__historyAsked = []
-      host.history = (id, before, limit) => {
-        globalThis.__historyAsked.push(id)
-        if (id === tab && globalThis.__historyAsked.filter((x) => x === tab).length === 1)
-          throw new Error('the first answer is lost (e2e)')
-        return history.call(host, id, before, limit)
-      }
-    }, TAB)
+    await fixture.evaluate(
+      ({ tab, source }) => {
+        const host = globalThis.__claveE2E.sessionHost
+        globalThis.__historyAsked = { timeline: [], history: [] }
+        globalThis.__historyFailures = 0
+        for (const method of ['timeline', 'history']) {
+          const read = host[method]
+          host[method] = (id, before, limit) => {
+            globalThis.__historyAsked[method].push(id)
+            if (
+              method === source &&
+              id === tab &&
+              globalThis.__historyAsked[method].filter((x) => x === tab).length === 1
+            ) {
+              globalThis.__historyFailures++
+              throw new Error('the first answer is lost (e2e)')
+            }
+            return read.call(host, id, before, limit)
+          }
+        }
+        // A declared missing capability exercises the real client's legacy
+        // fallback. An available timeline's read error must never take it.
+        if (source === 'history') host.timeline = undefined
+      },
+      { tab: TAB, source }
+    )
 
     // A chat comes back without the prompt, dormant until it is opened
     // (PRDCT-3527), so the fault above is in place before its past is asked.
@@ -159,9 +174,24 @@ export async function run(t) {
       },
       { tries: 30 }
     )
-    const asked = await fixture.evaluate(
-      (tab) => globalThis.__historyAsked.filter((x) => x === tab).length,
+    const reads = await fixture.evaluate(
+      (tab) => ({
+        timeline: globalThis.__historyAsked.timeline.filter((x) => x === tab).length,
+        history: globalThis.__historyAsked.history.filter((x) => x === tab).length,
+        failures: globalThis.__historyFailures
+      }),
       TAB
+    )
+    const asked = reads[source]
+    t.check(
+      `${source}: the injected first read failed and its source was retried`,
+      reads.failures === 1 && asked >= 2,
+      reads
+    )
+    t.equal(
+      `${source}: the other history source was not read`,
+      reads[source === 'timeline' ? 'history' : 'timeline'],
+      0
     )
     t.check('the pane shows the past although the first answer was lost', !!shown, {
       asked,
@@ -254,4 +284,8 @@ export async function run(t) {
     rmSync(DIR, { recursive: true, force: true })
     rmSync(ROOT, { recursive: true, force: true })
   }
+}
+
+export async function run(t) {
+  for (const source of ['timeline', 'history']) await runSource(t, source)
 }

@@ -1,0 +1,116 @@
+import { describe, expect, it, vi } from 'vitest'
+import { Effect } from 'effect'
+import { CLOSE_DEVICE_SUSPENDED } from '@clave/contract/devices'
+import type { ServerFrame } from '@clave/contract/push'
+import { FakeSource, aSession } from '../test-support'
+import { PushHub } from './hub'
+
+describe('a phone’s welcome (PRDCT-4448)', () => {
+  it('closes a phone whose account left between its check and its welcome', async () => {
+    const touch = vi.fn()
+    const hub = new PushHub({
+      token: 'owner',
+      serverId: 'test',
+      source: new FakeSource(aSession('s1')),
+      events: {
+        stream: 'test',
+        publish: () => Effect.die('unused'),
+        subscribe: () => () => {}
+      },
+      devices: {
+        // The check passed; by the welcome, its account is no longer the one signed in.
+        authenticate: async () => ({ deviceId: 'd1', suspended: false }),
+        touch,
+        onRevoked: () => () => {},
+        isSuspended: () => true,
+        onOwnerChanged: () => () => {}
+      }
+    })
+    try {
+      const frames: ServerFrame[] = []
+      const closes: number[] = []
+      const peer = hub.attach({
+        send: (text) => frames.push(JSON.parse(text)),
+        close: (code) => void closes.push(code)
+      })
+      peer.onMessage(JSON.stringify({ _tag: 'hello', token: 'phone' }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(frames).toEqual([])
+      expect(closes).toEqual([CLOSE_DEVICE_SUSPENDED])
+      expect(touch).not.toHaveBeenCalled()
+    } finally {
+      hub.dispose()
+    }
+  })
+})
+
+describe('device push replay', () => {
+  it('keeps pending desktop requests and private events out of a phone welcome', async () => {
+    const touch = vi.fn()
+    const hub = new PushHub({
+      token: 'owner',
+      serverId: 'test',
+      source: new FakeSource(aSession('s1')),
+      events: {
+        stream: 'test',
+        publish: () => Effect.die('unused'),
+        subscribe: () => () => {}
+      },
+      devices: {
+        authenticate: async (token) =>
+          token === 'phone' ? { deviceId: 'd1', suspended: false } : null,
+        touch,
+        onRevoked: () => () => {},
+        isSuspended: () => false,
+        onOwnerChanged: () => () => {}
+      }
+    })
+    const request: ServerFrame = {
+      _tag: 'request',
+      requestId: 'r1',
+      windowKey: 'w1',
+      command: 'open_side_panel',
+      payload: { url: 'https://example.test/document' }
+    }
+    const privateEvent: ServerFrame = {
+      _tag: 'event',
+      id: 'e1',
+      seq: 1,
+      at: 1,
+      event: { _tag: 'plugins.changed' }
+    }
+    const sessionEvent: ServerFrame = {
+      _tag: 'event',
+      id: 'e2',
+      seq: 2,
+      at: 2,
+      event: { _tag: 'session.state_changed', id: 's1', state: 'working' }
+    }
+    hub.onWelcome((send) => {
+      send(request)
+      send(privateEvent)
+      send(sessionEvent)
+    })
+    const connect = (token: string): ServerFrame[] => {
+      const frames: ServerFrame[] = []
+      const peer = hub.attach({ send: (text) => frames.push(JSON.parse(text)), close: () => {} })
+      peer.onMessage(JSON.stringify({ _tag: 'hello', token }))
+      return frames
+    }
+    try {
+      const phone = connect('phone')
+      const owner = connect('owner')
+      // A phone's hello reads the owner first (PRDCT-4448): its welcome is one task later.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(touch.mock.calls).toEqual([['d1']])
+      expect(phone.map((frame) => frame._tag)).toEqual(['welcome', 'event'])
+      expect(phone[1]).toEqual(sessionEvent)
+      expect(owner.slice(1)).toEqual([request, privateEvent, sessionEvent])
+      hub.publishFrame(request)
+      expect(phone).toHaveLength(2)
+      expect(owner.at(-1)).toEqual(request)
+    } finally {
+      hub.dispose()
+    }
+  })
+})

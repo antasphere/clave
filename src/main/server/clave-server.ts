@@ -35,7 +35,11 @@ import {
   getClaveServerEndpoint,
   setClaveServerEndpoint
 } from './endpoint'
-import { publishSessionStates, setServerEventPublisher } from './session-events'
+import {
+  observeSessionWrites,
+  publishSessionStates,
+  setServerEventPublisher
+} from './session-events'
 
 export { type ClaveServerEndpoint, getClaveServerEndpoint } from './endpoint'
 
@@ -44,6 +48,8 @@ let running: EmbeddedServer | null = null
 let artefactService: { stop(): Promise<void> } | null = null
 let starting: Promise<ClaveServerEndpoint> | null = null
 let stopStates: (() => void) | null = null
+// ── The mobile wave, lane B: the write ledger's evidence, while the server runs ──
+let stopWrites: (() => void) | null = null
 
 export interface StartOptions {
   port?: number
@@ -63,6 +69,10 @@ export interface StartOptions {
    *  the app's user data. Absent (tests), the name is the environment's or
    *  the hostname's and cannot be set. */
   dataDir?: string
+  /** The sessions this Mac keeps records of, read without pruning anything
+   *  (PRDCT-4448): the write ledger's first activation seeds them, and asks
+   *  at that activation alone. The app's terminal manager by default. */
+  recordedSessionIds?: () => ReadonlyArray<string>
   /** PRDCT-4472: the artefacts of this server's sessions, over the app's user
    *  data (so the copy of Slideless the app installed under `slideless/cli`
    *  is the one it runs); `autoInstall` off under test mode with no fixture
@@ -87,7 +97,7 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
   if (options.dataDir) configureOwnServerName(options.dataDir)
-  const { startEmbedded, ServerInfoPort } = await import('@clave/server')
+  const { startEmbedded, ServerInfoPort, fileWriteLedgerStorage } = await import('@clave/server')
   // PRDCT-4327: the digests a client of this server asks for, read on this
   // process's own record of the session and filed in its own data folder.
   // PRDCT-4411: its speech, with this process's ElevenLabs key and voice.
@@ -96,6 +106,15 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
     import('../pty-manager'),
     import('../speech')
   ])
+  // ── Mobile wave, lane A: the devices port, the shell's own Antasphere login as the owner ──
+  // Loaded beside the server package (a dynamic import, so this seam stays as
+  // light as it was at main's boot) and under Electron alone (the unit tests
+  // of this file run without it); a boot that named its own port keeps it.
+  const devices =
+    ports.devices ??
+    (process.versions.electron
+      ? (await import('./devices-shell')).shellDevicesPort(options.appVersion)
+      : undefined)
   // PRDCT-4472: a session's HTML artefact, its preview and its versions, this
   // process's own; a preview a window holds is reached through the forwarder.
   const artefacts = options.artefacts
@@ -104,6 +123,20 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const server = await startEmbedded({
     ports: {
       digests: hostDigests(sessionLaunchOf(ptyManager)),
+      // ── Mobile wave, lane A: the devices ──
+      ...(devices && { devices }),
+      // ── The mobile wave, lane B: the write ledger, per session, under the user data ──
+      ...(options.dataDir !== undefined && {
+        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`, {
+          activationFile: `${options.dataDir}/write-ledger-activation.json`,
+          // Read at the first activation alone, and never through the adoptable
+          // listing, which prunes the records it cannot bring back (PRDCT-4448).
+          sessionIds: () => [
+            ...manager.list().map((session) => session.id),
+            ...(options.recordedSessionIds ?? (() => ptyManager.recordedSessionIds()))()
+          ]
+        })
+      }),
       speech: hostSpeech(sessionLaunchOf(ptyManager)),
       ...(artefacts && { artefacts: artefacts.service, forwards: artefacts.forwards }),
       ...(options.appVersion !== undefined && {
@@ -128,6 +161,13 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
+  // ── The mobile wave, lane B: an identified message passing is the ledger's evidence ──
+  stopWrites = observeSessionWrites(
+    manager,
+    server.writes.evidence,
+    server.writes.initialize,
+    server.writes
+  )
   return endpoint
 }
 
@@ -221,6 +261,8 @@ export async function stopClaveServer(): Promise<void> {
   setServerEventPublisher(null)
   stopStates?.()
   stopStates = null
+  stopWrites?.()
+  stopWrites = null
   const artefacts = artefactService
   artefactService = null
   await artefacts?.stop()

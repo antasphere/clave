@@ -6,6 +6,9 @@
  * with a `<domain>Client(call)` and one line in `api.ts`.
  */
 import { ParseResult, Schema } from 'effect'
+import { NotFoundProblem } from '@structure-ai/http'
+import { CapabilityUnavailable } from '@clave/contract/errors'
+import type { TimelinePage } from '@clave/contract/timeline'
 import {
   type AccountOverride,
   type CommandOption,
@@ -50,6 +53,9 @@ export interface SessionsClient {
   readonly control: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   readonly capabilities: (id: string) => Promise<SessionCapabilities>
   readonly history: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
+  /** Null means the owning host explicitly lacks positioned history. Other
+   * failures, including SessionNotFound, remain failures. */
+  readonly timeline: (id: string, before?: number, limit?: number) => Promise<TimelinePage | null>
   // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
   /** The records a window may bring back: every adoptable one, or those of
    *  `ids` (the sessions the server runs among them marked `running`). */
@@ -166,6 +172,23 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
         }
       })
     ),
+  timeline: (id, before, limit) =>
+    historyCall((c) =>
+      c.sessions.timeline({
+        payload: {
+          id,
+          ...(before !== undefined && { before: asParam(before) }),
+          ...(limit !== undefined && { limit: asParam(limit) })
+        }
+      })
+    ).catch((error: unknown) => {
+      if (
+        Schema.is(CapabilityUnavailable)(error) ||
+        (error instanceof Error && Schema.is(NotFoundProblem)(error.cause))
+      )
+        return null
+      throw error
+    }),
   // ── Wave 4, lane C: the records travel comma-joined on a GET (the contract says why) ──
   listAdoptable: (ids) =>
     call((c) =>
@@ -181,7 +204,8 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
           ...(fields.name !== undefined && { name: fields.name }),
           ...(fields.page !== undefined && { page: fields.page }),
           ...(fields.claudeSessionId !== undefined && { claudeSessionId: fields.claudeSessionId }),
-          ...(fields.workspaceId !== undefined && { workspaceId: fields.workspaceId })
+          ...(fields.workspaceId !== undefined && { workspaceId: fields.workspaceId }),
+          ...(fields.window !== undefined && { window: fields.window })
         }
       })
     ).then(() => undefined),

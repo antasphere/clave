@@ -14,7 +14,7 @@ import { FilesDirsChanged } from './files'
 import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
 import { WorkAssignment } from './work'
 import { SettingsEvent } from './settings'
-import { SidebarEvent } from './sidebar/layout'
+import { OverviewChanged, SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
 // ── Wave wcs1023, lane C: the git domain ──
 import { GitEvent } from './git'
@@ -22,6 +22,8 @@ import { GitEvent } from './git'
 import { ServerUpgradeEvent } from './server-info'
 // ── ADR 0004: the routines ──
 import { RoutinesChanged } from './routines/model'
+// ── Mobile wave, lane A: the devices (a phone paired, asking, or revoked) ──
+import { DevicePairingRequested, DevicesChanged } from './devices'
 // ── PRDCT-4472: the artefacts ──
 import { ArtefactEvent } from './artefacts'
 
@@ -32,6 +34,9 @@ export const ServerEvent = Schema.Union(
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
   // ── Sessions (lane A) ──
+  /** A session was registered. Clients reconcile their local projection;
+   *  this is not a request to start or resume its provider. */
+  Schema.TaggedStruct('session.registered', { id: Schema.String }),
   Schema.TaggedStruct('session.state_changed', { id: Schema.String, state: AgentState }),
   /** The tab's name, earned from its first message. */
   Schema.TaggedStruct('session.title_changed', { id: Schema.String, title: Schema.String }),
@@ -78,6 +83,8 @@ export const ServerEvent = Schema.Union(
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──
   ...SidebarEvent.members,
+  // ── The phone's notice that the sidebar overview may have changed, with no payload ──
+  OverviewChanged,
   // ── Wave 3, lane A: the workspace files (a watched file changed, a review needed) ──
   ...WorkspaceFilesEvent.members,
   // ── Wave 4, lane D: what the served agent tools did to a session, for the windows ──
@@ -136,6 +143,9 @@ export const ServerEvent = Schema.Union(
   ServerUpgradeEvent,
   // ── ADR 0004: the routines (the routines or their runs changed) ──
   RoutinesChanged,
+  // ── Mobile wave, lane A: the paired phones or the pending pairings changed; a phone asked ──
+  DevicesChanged,
+  DevicePairingRequested,
   // ── PRDCT-4472: the artefacts (a session's artefact opened or closed, its preview died, Slideless changed state) ──
   ...ArtefactEvent.members
   // ── Lane B: terminals ──

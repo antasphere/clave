@@ -19,6 +19,13 @@ import type { ProviderSwitchLanding } from './ProviderSwitch'
 import { reduceConversation, type Conversation, type Entry } from './reducer'
 import { editedFiles, handoffMessage, transcriptMarkdown, type TranscriptMeta } from './export'
 import { providerLabel } from './models'
+import type { HistorySource } from './conversation-reader'
+
+export interface ConversationSource {
+  conversation: Conversation
+  before: number | null
+  history?: HistorySource
+}
 
 export { handoffBudgetChars }
 
@@ -27,15 +34,21 @@ export { handoffBudgetChars }
  *  before the pane's first page too. */
 export async function wholeConversation(
   sessionId: string,
-  source: { conversation: Conversation; before: number | null }
+  source: ConversationSource
 ): Promise<Entry[]> {
+  if (source.history && !source.history.current())
+    throw new Error('Conversation is still loading. Try again.')
   let { conversation: whole, before: cursor } = source
   while (cursor !== null) {
-    const page = await window.electronAPI.sessionsHistory(sessionId, cursor, 2000)
+    const page = source.history
+      ? await source.history.read(cursor, 2000)
+      : await window.electronAPI.sessionsHistory(sessionId, cursor, 2000)
     whole = reduceConversation(whole, { prepend: page.items })
     // A cursor that does not move would ask the same page forever.
     cursor = page.before !== null && page.before < cursor ? page.before : null
   }
+  if (source.history && !source.history.current())
+    throw new Error('Conversation changed. Try again.')
   return whole.entries
 }
 
@@ -81,7 +94,7 @@ export function useProviderSwitch({
   working: () => boolean
   /** The conversation as the view holds it and where its unread past starts,
    *  read when the move is made. */
-  source: () => { conversation: Conversation; before: number | null }
+  source: () => ConversationSource
   meta: () => Pick<TranscriptMeta, 'title' | 'cwd' | 'model'>
   /** Whether this view is the one on screen for the tab: the limit card's
    *  ask is taken by the visible pane alone (integration round 3, R2-3),
@@ -204,7 +217,7 @@ export async function performProviderSwitch(input: {
   working: boolean
   /** The limit card's word when it asked; else the report the tab holds decides. */
   resendRejected?: boolean
-  source: { conversation: Conversation; before: number | null }
+  source: ConversationSource
   meta: Pick<TranscriptMeta, 'title' | 'cwd' | 'model'>
   onBusy: (busy: string) => void
   onError: (error: unknown) => void
@@ -235,7 +248,12 @@ export async function performProviderSwitch(input: {
     resendRejected: input.resendRejected ?? !!stored?.limitReported,
     handoff: async () => {
       const entries = await wholeConversation(sessionId, input.source)
-      const head: TranscriptMeta = { ...input.meta, agent: from, exportedAt: new Date() }
+      const head: TranscriptMeta = {
+        ...input.meta,
+        agent: from,
+        exportedAt: new Date(),
+        truncated: input.source.history?.truncated
+      }
       // The whole conversation, every output whole, beside the work.
       const tape = transcriptMarkdown(entries, head, {
         lastStretchOutputs: true,

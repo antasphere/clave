@@ -8,6 +8,9 @@ import { connect } from 'node:net'
 export async function observeDaemon(url) {
   const entries = []
   const sockets = new Set()
+  const pushSockets = new Set()
+  let pushPaused = false
+  let pushConnections = 0
   const track = (socket) => {
     sockets.add(socket)
     socket.once('close', () => sockets.delete(socket))
@@ -74,6 +77,10 @@ export async function observeDaemon(url) {
   // The real push protocol upgrades to WebSocket. Tunnel the original
   // handshake and bytes unchanged; the observer is not a push adapter.
   server.on('upgrade', (incoming, client, head) => {
+    if (pushPaused) return client.destroy()
+    pushConnections++
+    pushSockets.add(client)
+    client.once('close', () => pushSockets.delete(client))
     const target = new URL(url)
     const upstream = track(
       connect(Number(target.port), target.hostname, () => {
@@ -117,6 +124,18 @@ export async function observeDaemon(url) {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     entries,
+    /** Drop only this observer's push connections. HTTP stays available so
+     * the real provider can finish turns while the desktop misses frames. */
+    pausePush() {
+      pushPaused = true
+      for (const socket of pushSockets) socket.destroy()
+    },
+    resumePush() {
+      pushPaused = false
+    },
+    get pushConnections() {
+      return pushConnections
+    },
     /** Park the next request matching `match(method, pathname)` before the daemon sees it. */
     holdRequest: (match) => hold('request', match),
     /** Park the daemon's reply to the next request matching `match` before the Mac sees it. */

@@ -74,6 +74,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   ),
   sessionsCapabilities: routed,
   sessionsHistory: routed,
+  sessionsTimeline: routed,
   'sessionsFiles.prepare': routed,
   'sessionsFiles.pick': localBecause(
     'a file dialog of this Mac; the file picked is uploaded to a server tab by prepare()'
@@ -134,6 +135,8 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   setSessionWorkspace: routed,
   tmuxAvailable: local,
   listSessionRecords: localBecause("this Mac's records; a server's come in fleetSnapshot"),
+  adoptRunningChats: localBecause("this Mac's primary claims local orphan chats"),
+  onSessionRegistered: localBecause("this Mac's server's discovery notifications"),
   listServerRestoreRecords: localBecause("this Mac's server's records"),
   serverHasRestoreRecords: local,
   bootRecordsComplete: local,
