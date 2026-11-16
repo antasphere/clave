@@ -794,6 +794,42 @@ describe('the scope, as a table', () => {
     expect(deviceHearsEvent('sidebar.layout_removed')).toBe(false)
     expect(deviceHearsEvent('server.upgrade_changed')).toBe(false)
   })
+
+  it('keeps dev’s artefacts, provider connections, catalogue and usage reads the owner’s, and lets the phone hear its sessions’ connection', () => {
+    // The tags dev added since the scope was written: a session's own is a
+    // phone's, the artefacts, Slideless and the provider connections are not.
+    expect(deviceHearsEvent('session.connection_changed')).toBe(true)
+    for (const tag of [
+      'artefact.changed',
+      'artefact.preview_exited',
+      'slideless.state_changed',
+      'accounts.providers_changed'
+    ])
+      expect(deviceHearsEvent(tag), tag).toBe(false)
+    // The routes, as the contract declares them (a query is a GET, a command a POST).
+    const refused: Array<['GET' | 'POST', string]> = [
+      ['GET', '/artefacts'],
+      ['GET', '/artefacts/slideless'],
+      ['GET', '/artefacts/versions'],
+      ['POST', '/artefacts/open'],
+      ['POST', '/artefacts/close'],
+      ['POST', '/artefacts/hold'],
+      ['POST', '/artefacts/release'],
+      ['POST', '/artefacts/save-version'],
+      ['POST', '/artefacts/slideless/install'],
+      ['GET', '/connections/providers'],
+      ['POST', '/connections/providers'],
+      ['POST', '/connections/providers/rename'],
+      ['POST', '/connections/providers/remove'],
+      ['POST', '/connections/providers/key'],
+      ['GET', '/models-catalog'],
+      ['GET', '/provider-usage'],
+      ['GET', '/harness-usage']
+    ]
+    for (const [method, path] of refused)
+      for (const asked of [method, method === 'GET' ? 'POST' : 'GET'])
+        expect(deviceMayCall(asked, path), `${asked} ${path}`).toBe(false)
+  })
 })
 
 describe('the reads a phone’s list and settings show (UX round, 13 November 2026)', () => {
