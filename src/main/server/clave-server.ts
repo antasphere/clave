@@ -162,7 +162,12 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
   // ── The mobile wave, lane B: an identified message passing is the ledger's evidence ──
-  stopWrites = observeSessionWrites(manager, server.writes.evidence, server.writes.initialize)
+  stopWrites = observeSessionWrites(
+    manager,
+    server.writes.evidence,
+    server.writes.initialize,
+    server.writes
+  )
   return endpoint
 }
 

@@ -162,26 +162,50 @@ export function stopSessionWritesObservation(): void {
   stopWriteObservation = null
 }
 
+/** What the write ledger hears of a session's waiting list (PRDCT-4566). */
+export interface WaitingWrites {
+  readonly waits: (sessionId: string, clientMessageId: string) => void
+  readonly handedBack: (
+    sessionId: string,
+    clientMessageId: string,
+    why: 'withdrawn' | 'stopped' | 'ended' | 'refused'
+  ) => void
+}
+
 /**
  * Feed the server's own history of writes (`packages/server/src/sessions/writes.ts`)
  * what only the process hosting the sessions sees: a `user_message` carrying
  * a client message id passing on a session's stream, which is the durable
- * evidence that the provider took it, and the sessions generated here, whose
- * ledger starts complete. Both entries wire it once their server starts and
+ * evidence that the provider took it, the identified messages a session
+ * holds in its waiting list or hands back unsent, and the sessions generated
+ * here, whose ledger starts complete. Both entries wire it once their server starts and
  * stop it before their sessions are shut down. Returns the way to stop.
  */
 export function observeSessionWrites(
   manager: SessionManager,
   evidence: (sessionId: string, clientMessageId: string, at: number) => void,
-  initialize: (sessionId: string) => void
+  initialize: (sessionId: string) => void,
+  waiting?: WaitingWrites
 ): () => void {
   stopWriteObservation?.()
   initializeWrites = initialize
   let stopped = false
   const offAll = manager.subscribeAll((id, stream) => {
     if (stopped || stream.kind !== 'event') return
-    if (stream.event.type === 'user_message' && stream.event.clientMessageId !== undefined)
-      evidence(id, stream.event.clientMessageId, Date.now())
+    const event = stream.event
+    if (event.type === 'user_message' && event.clientMessageId !== undefined)
+      evidence(id, event.clientMessageId, Date.now())
+    // An OpenCode or a Pi agent at work holds what it is written in a waiting
+    // list (PRDCT-4566): an identified message there is not the agent's yet,
+    // so the ledger keeps it pending, and records it rejected when it comes
+    // back unsent. Its taking is the `user_message` above.
+    if (event.type === 'waiting_messages' && waiting) {
+      for (const message of event.messages)
+        if (message.clientMessageId !== undefined) waiting.waits(id, message.clientMessageId)
+      for (const message of event.returned?.messages ?? [])
+        if (message.clientMessageId !== undefined)
+          waiting.handedBack(id, message.clientMessageId, event.returned!.why)
+    }
   })
   const stop = (): void => {
     stopped = true

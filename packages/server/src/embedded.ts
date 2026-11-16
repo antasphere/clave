@@ -23,7 +23,7 @@ import type { ServerEvent } from '@clave/contract/events'
 import { CLOSE_SERVER_STOPPING } from '@clave/contract/push'
 import { ServerEvents } from './events'
 // ── The mobile wave, lane B: the server's own history of writes ──
-import { SessionWrites } from './sessions/writes'
+import { SessionWrites, type HandedBack } from './sessions/writes'
 import type { ServerPorts } from './ports'
 import type { PushHub } from './push/hub'
 import { PushHubService } from './push/route'
@@ -86,6 +86,11 @@ export interface EmbeddedServer {
   readonly writes: {
     readonly initialize: (sessionId: string) => void
     readonly evidence: (sessionId: string, clientMessageId: string, at: number) => void
+    /** The session holds the identified message in its waiting list
+     *  (PRDCT-4566): the ledger keeps it pending until the agent takes it. */
+    readonly waits: (sessionId: string, clientMessageId: string) => void
+    /** The session handed the identified message back unsent: rejected. */
+    readonly handedBack: (sessionId: string, clientMessageId: string, why: HandedBack) => void
   }
 }
 
@@ -132,7 +137,10 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
       writes: {
         initialize: (sessionId) => ledger.initialize(sessionId),
         evidence: (sessionId, clientMessageId, at) =>
-          ledger.evidence(sessionId, clientMessageId, at)
+          ledger.evidence(sessionId, clientMessageId, at),
+        waits: (sessionId, clientMessageId) => ledger.waits(sessionId, clientMessageId),
+        handedBack: (sessionId, clientMessageId, why) =>
+          ledger.handBack(sessionId, clientMessageId, why)
       },
       stop: () =>
         (stopping ??= stopEmbedded({

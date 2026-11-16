@@ -201,3 +201,78 @@ describe('a message the phone sends is acknowledged by its provider, not by the 
     expect(source.writes).toHaveLength(1)
   })
 })
+
+describe('a message an OpenCode or a Pi agent at work holds in its waiting list', () => {
+  /** The session queues the message (PRDCT-4566): its write resolves at once,
+   *  and the observer of the session's stream tells the ledger it waits. */
+  const queueing = (taken?: number): void => {
+    Object.assign(source, {
+      write: async (id: string, input: { clientMessageId?: string }) => {
+        source.writes.push({ id, input })
+        server.writes.waits(id, input.clientMessageId!)
+        if (taken !== undefined) server.writes.evidence(id, input.clientMessageId!, taken)
+      }
+    })
+  }
+  const status = async (clientMessageId: string): Promise<unknown> =>
+    (await get(`/sessions/writes?id=s1&clientMessageId=${clientMessageId}`, server.token)).json()
+
+  it('is pending, never accepted, until the agent takes it', async () => {
+    queueing()
+    const answer = await post(
+      '/sessions/write',
+      phoneWrite('s1', 'hi', 'm-native-0020'),
+      server.token
+    )
+    expect(answer.status).toBe(200)
+    expect(await answer.json()).toEqual({ status: 'pending' })
+    expect(await status('m-native-0020')).toEqual({ status: 'pending' })
+    // The agent takes it: the message passes on the stream as its user message.
+    server.writes.evidence('s1', 'm-native-0020', 42)
+    expect(await status('m-native-0020')).toEqual({ status: 'accepted', at: 42 })
+    expect(source.writes).toHaveLength(1)
+  })
+
+  it('reads rejected with a reason the phone shows when the tab is stopped before the agent read it, and a retry sends nothing', async () => {
+    queueing()
+    await post('/sessions/write', phoneWrite('s1', 'hi', 'm-native-0021'), server.token)
+    server.writes.handedBack('s1', 'm-native-0021', 'stopped')
+    expect(await status('m-native-0021')).toMatchObject({
+      status: 'rejected',
+      reason: 'stopped before the agent read it'
+    })
+    const again = await post(
+      '/sessions/write',
+      phoneWrite('s1', 'hi', 'm-native-0021'),
+      server.token
+    )
+    expect(again.status).toBe(422)
+    expect(await again.json()).toMatchObject({
+      _tag: 'SessionWriteRefused',
+      message: 'stopped before the agent read it'
+    })
+    expect(source.writes).toHaveLength(1)
+  })
+
+  it('reads rejected when the message is withdrawn before the agent read it', async () => {
+    queueing()
+    await post('/sessions/write', phoneWrite('s1', 'hi', 'm-native-0022'), server.token)
+    server.writes.handedBack('s1', 'm-native-0022', 'withdrawn')
+    expect(await status('m-native-0022')).toMatchObject({
+      status: 'rejected',
+      reason: 'withdrawn before the agent read it'
+    })
+  })
+
+  it('is accepted when the agent takes it before the hand-off answers, and a late hand-back changes nothing', async () => {
+    queueing(7)
+    const answer = await post(
+      '/sessions/write',
+      phoneWrite('s1', 'hi', 'm-native-0023'),
+      server.token
+    )
+    expect(await answer.json()).toEqual({ status: 'accepted', at: 7 })
+    server.writes.handedBack('s1', 'm-native-0023', 'stopped')
+    expect(await status('m-native-0023')).toEqual({ status: 'accepted', at: 7 })
+  })
+})

@@ -247,6 +247,42 @@ describe('the write ledger hears identified messages where the sessions live (mo
     expect(evidence).not.toHaveBeenCalled()
   })
 
+  it('tells the ledger which identified messages wait for the agent, and which came back unsent (PRDCT-4566)', () => {
+    const { manager, emit } = managerOf()
+    const evidence = vi.fn()
+    const waiting = { waits: vi.fn(), handedBack: vi.fn() }
+    observeSessionWrites(manager, evidence, vi.fn(), waiting)
+    emit('s1', {
+      kind: 'event',
+      event: {
+        type: 'waiting_messages',
+        takes: 'turn',
+        messages: [
+          { id: 'waiting-1', text: 'from the phone', clientMessageId: 'phone-0010' },
+          { id: 'waiting-2', text: 'typed on the Mac' }
+        ]
+      }
+    })
+    expect(waiting.waits.mock.calls).toEqual([['s1', 'phone-0010']])
+    emit('s1', {
+      kind: 'event',
+      event: {
+        type: 'waiting_messages',
+        takes: 'turn',
+        messages: [],
+        returned: {
+          why: 'stopped',
+          messages: [
+            { id: 'waiting-1', text: 'from the phone', clientMessageId: 'phone-0010' },
+            { id: 'waiting-2', text: 'typed on the Mac' }
+          ]
+        }
+      }
+    })
+    expect(waiting.handedBack.mock.calls).toEqual([['s1', 'phone-0010', 'stopped']])
+    expect(evidence).not.toHaveBeenCalled()
+  })
+
   it('a second observation replaces the first, as a restarted server does', () => {
     const first = managerOf()
     const second = managerOf()

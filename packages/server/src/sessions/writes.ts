@@ -13,7 +13,12 @@
  * `received` when the write arrives, before any validation of the session,
  * then `dispatched` immediately before the message is handed to the
  * provider; then `accepted` with `at` when the provider took it, or
- * `rejected` with a short reason when it refused. A phase that cannot be
+ * `rejected` with a short reason when it refused. A session that holds the
+ * message in its waiting list (an OpenCode or a Pi agent at work, PRDCT-4566)
+ * has not given it to its agent yet: the entry stays `dispatched` until the
+ * message passes on the stream as the agent takes it, or becomes `rejected`
+ * when the session hands it back unsent (`waits`, `delivered`, `handBack`).
+ * A phase that cannot be
  * persisted refuses the write: an entry exists in memory only once it is on
  * disk, which is what keeps the file complete.
  *
@@ -73,6 +78,16 @@ export const STOPPED_AFTER_DISPATCH =
 export const LEDGER_INCOMPLETE =
   'the ledger of this session had to be started again and is incomplete'
 export const LEDGER_UNREADABLE = 'the ledger of this session cannot be read'
+/** Why a message that waited left the session unsent (PRDCT-4566), as its
+ *  `waiting_messages` event says it. */
+export type HandedBack = 'withdrawn' | 'stopped' | 'ended' | 'refused'
+/** What a client shows for a message handed back before its agent took it. */
+export const HANDED_BACK: Readonly<Record<HandedBack, string>> = {
+  stopped: 'stopped before the agent read it',
+  withdrawn: 'withdrawn before the agent read it',
+  ended: 'the session ended before the agent read it',
+  refused: 'the agent refused it before reading it'
+}
 /** The most a rejection's reason carries. */
 export const REASON_MAX = 160
 
@@ -94,6 +109,10 @@ export const ledgerFileStem = (sessionId: string): string =>
 
 export class WriteLedger {
   private readonly sessions = new Map<string, SessionLedger>()
+  /** The ids each session holds in its waiting list, handed over and not
+   *  taken yet. In memory only: on disk such an entry stays `dispatched`,
+   *  which a restart reads as `unknown` unless the history carries the id. */
+  private readonly waiting = new Map<string, Set<string>>()
 
   constructor(
     private readonly storage: WriteLedgerStorage,
@@ -140,9 +159,42 @@ export class WriteLedger {
     this.put(sessionId, ledger, id, { status: 'dispatched', at: this.now() })
   }
 
+  /** The session put the message in its waiting list (PRDCT-4566): handed
+   *  over, not taken by its agent yet. A settled entry is left as it is. */
+  waits(sessionId: string, id: string): void {
+    const entry = this.knownEntry(this.load(sessionId), id)
+    if (entry?.status !== 'received' && entry?.status !== 'dispatched') return
+    let ids = this.waiting.get(sessionId)
+    if (!ids) this.waiting.set(sessionId, (ids = new Set()))
+    ids.add(id)
+  }
+
+  /** The session answered the hand-off: `accepted`, unless the message waits
+   *  for its agent, in which case the entry stays as it is (`pending` on the
+   *  route) until the stream's evidence or a hand-back settles it. An entry
+   *  settled meanwhile is answered as it stands. */
+  delivered(sessionId: string, id: string): LedgerEntry {
+    const entry = this.knownEntry(this.load(sessionId), id)
+    if (entry && entry.status !== 'received' && entry.status !== 'dispatched') return entry
+    if (entry && this.waiting.get(sessionId)?.has(id)) return entry
+    return this.accept(sessionId, id)
+  }
+
+  /** The session handed the message back unsent (stopped, withdrawn, ended,
+   *  refused): its agent never read it, so it is `rejected` with a reason the
+   *  client shows, and the client offers it back. One already settled, the
+   *  agent's taking above all, is left as it is. */
+  handBack(sessionId: string, id: string, why: HandedBack): void {
+    const entry = this.knownEntry(this.load(sessionId), id)
+    this.waiting.get(sessionId)?.delete(id)
+    if (entry?.status !== 'received' && entry?.status !== 'dispatched') return
+    this.reject(sessionId, id, HANDED_BACK[why] ?? HANDED_BACK.refused)
+  }
+
   /** The provider took it. A persistence failure here is logged, not
    *  thrown: the message landed, and the history carries the id. */
   accept(sessionId: string, id: string, at = this.now()): LedgerEntry {
+    this.waiting.get(sessionId)?.delete(id)
     const ledger = this.load(sessionId)
     const current = this.knownEntry(ledger, id)
     const entry: LedgerEntry = current?.status === 'accepted' ? current : { status: 'accepted', at }
@@ -164,6 +216,7 @@ export class WriteLedger {
 
   /** The provider refused it, or the dispatch failed. */
   reject(sessionId: string, id: string, reason: string): LedgerEntry {
+    this.waiting.get(sessionId)?.delete(id)
     const ledger = this.load(sessionId)
     const entry: LedgerEntry = { status: 'rejected', at: this.now(), reason }
     this.put(sessionId, ledger, id, entry, { tolerate: true })
@@ -176,6 +229,7 @@ export class WriteLedger {
    * settled by that evidence; the first accepted result is never replaced.
    */
   evidence(sessionId: string, id: string, at = this.now()): void {
+    this.waiting.get(sessionId)?.delete(id)
     const ledger = this.load(sessionId)
     if (!ledger.history.has(id)) {
       ledger.history.set(id, at)

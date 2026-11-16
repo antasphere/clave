@@ -276,7 +276,10 @@ export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
 export const WaitingMessageSchema = z.object({
   id: z.string(),
   text: z.string(),
-  attachments: AttachmentsSchema.optional()
+  attachments: AttachmentsSchema.optional(),
+  /** The id the sending client minted, when it minted one: the write ledger
+   *  keeps the message pending until the agent takes it. Mirrors the contract. */
+  clientMessageId: ClientMessageIdSchema.optional()
 })
 export type WaitingMessage = z.infer<typeof WaitingMessageSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [

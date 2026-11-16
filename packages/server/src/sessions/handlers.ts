@@ -166,8 +166,11 @@ export const sessionHandlers = [
           new SessionWriteRefused({ id, message: entry.status === 'rejected' ? entry.reason : '' })
         )
       }
-      const accepted = yield* Effect.tryPromise({
-        try: () => host.write(id, input).then(() => ledger.accept(id, clientMessageId)),
+      // Answered by the hand-off: `accepted`, unless the session holds the
+      // message in its waiting list (an OpenCode or a Pi agent at work): then
+      // it is pending until the agent takes it, or rejected if handed back.
+      const settled = yield* Effect.tryPromise({
+        try: () => host.write(id, input).then(() => ledger.delivered(id, clientMessageId)),
         catch: (error) => {
           if (error instanceof SessionWriteUnknown || error instanceof UnconfirmedSessionWrite) {
             const reason = sanitizeReason(error, input.text)
@@ -179,7 +182,18 @@ export const sessionHandlers = [
           return new SessionWriteRefused({ id, message: reason })
         }
       })
-      return { status: 'accepted', at: accepted.at } as const
+      switch (settled.status) {
+        case 'accepted':
+          return { status: 'accepted', at: settled.at } as const
+        case 'rejected':
+          return yield* Effect.fail(new SessionWriteRefused({ id, message: settled.reason }))
+        case 'unknown':
+          return yield* Effect.fail(
+            new SessionWriteUnknown({ id, clientMessageId, message: settled.reason })
+          )
+        default:
+          return { status: 'pending' } as const
+      }
     })
   ),
   QueryHandler.make(GetSessionWriteStatus, (payload) =>

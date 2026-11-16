@@ -674,7 +674,8 @@ async function main(): Promise<void> {
   const stopWrites = observeSessionWrites(
     sessionManager,
     server.writes.evidence,
-    server.writes.initialize
+    server.writes.initialize,
+    server.writes
   )
   // A tab that runs in a terminal says its state through its lifecycle hooks,
   // which write under this server's own data folder: they are read here

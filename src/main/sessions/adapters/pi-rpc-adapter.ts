@@ -253,7 +253,12 @@ type Returned = 'withdrawn' | 'stopped' | 'ended' | 'refused'
 const waitingOf = (message: Outgoing): WaitingMessage => ({
   id: message.id,
   text: message.event.text,
-  ...(message.event.attachments?.length ? { attachments: message.event.attachments } : {})
+  ...(message.event.attachments?.length ? { attachments: message.event.attachments } : {}),
+  // The ledger keeps an identified message pending while it waits, and
+  // records it rejected when it is handed back (`session-events.ts`).
+  ...(message.event.clientMessageId !== undefined
+    ? { clientMessageId: message.event.clientMessageId }
+    : {})
 })
 
 interface HandleState {

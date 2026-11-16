@@ -322,11 +322,15 @@ export const BackgroundTask = Schema.Struct({
 })
 export type BackgroundTask = typeof BackgroundTask.Type
 /** A message written to the session that the agent has not taken yet
- *  (PRDCT-4566): the adapter's id for it, the text as written, its files. */
+ *  (PRDCT-4566): the adapter's id for it, the text as written, its files,
+ *  and the id its sending client minted, when it minted one: the server's
+ *  write ledger reads it to keep such a message `pending` until the agent
+ *  takes it, and to record it `rejected` when it is handed back. */
 export const WaitingMessage = Schema.Struct({
   id: Schema.String,
   text: Schema.String,
-  attachments: Schema.optional(Attachments)
+  attachments: Schema.optional(Attachments),
+  clientMessageId: Schema.optional(ClientMessageId)
 })
 export type WaitingMessage = typeof WaitingMessage.Type
 
@@ -663,8 +667,12 @@ export const StopSession = Command.define('StopSession', {
   failure: Schema.Union(CapabilityUnavailable, SessionStopFailed)
 })
 /** What a write answers (the mobile wave, lane B): `accepted` with when the
- *  provider took it; `pending` for a second write of a client message id
- *  whose first write has not settled yet, which writes nothing. */
+ *  provider took it; `pending` for a message the session holds in its waiting
+ *  list, not taken by its agent yet (an OpenCode or a Pi agent at work,
+ *  PRDCT-4566: `GET /sessions/writes` then reads `accepted` once the agent
+ *  takes it, `rejected` if it is handed back unsent), and for a second write
+ *  of a client message id whose first write has not settled yet, which
+ *  writes nothing. */
 export const WriteAnswer = Schema.Struct({
   status: Schema.Literal('accepted', 'pending'),
   at: Schema.optional(Schema.Number)
@@ -1120,8 +1128,9 @@ export const ChangeSessionWork = Command.define('ChangeSessionWork', {
  * What became of a message a client minted an id for, as the server's
  * complete per-session ledger and its own history of writes say it:
  * `accepted` (the provider took it; `at` is when), `pending` (received, not
- * settled yet), `rejected` (the provider refused it, or the server restarted
- * before the dispatch; `reason` is one short sentence, never the message's
+ * settled yet), `rejected` (the provider refused it, the session handed it
+ * back unsent before its agent read it, or the server restarted before the
+ * dispatch; `reason` is one short sentence, never the message's
  * text), `absent` (the ledger is intact and complete and never saw the id:
  * the write never arrived, and the client may complete the same send with
  * the same id), `unknown` (the ledger is missing, unreadable or incomplete,
