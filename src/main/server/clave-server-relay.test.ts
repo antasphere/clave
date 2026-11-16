@@ -1,3 +1,8 @@
+/**
+ * The in-process server's relay client (issue #407, from mobile's lane E):
+ * started once the server listens, stopped after it, and a restart asked
+ * while a stop runs waits for it, so two clients never overlap.
+ */
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ServerPorts } from '@clave/server'
 
@@ -13,13 +18,14 @@ vi.mock('../sessions/e2e-hooks', () => ({ installE2eHooks: vi.fn() }))
 vi.mock('./session-events', () => ({
   setServerEventPublisher: vi.fn(),
   publishSessionStates: () => () => {},
-  observeSessionsForNotify: () => () => {}
+  observeSessionWrites: () => () => {}
 }))
+vi.mock('../exchange-digest', () => ({ hostDigests: vi.fn(), sessionLaunchOf: vi.fn() }))
+vi.mock('../pty-manager', () => ({ ptyManager: {} }))
+vi.mock('../speech', () => ({ hostSpeech: vi.fn() }))
 vi.mock('@clave/server', () => ({
   ServerInfoPort: {},
-  loadPushPorts: vi.fn(),
   fileWriteLedgerStorage: vi.fn(),
-  parsePushFixtureArgs: () => ({}),
   startEmbedded: async () => {
     const id = ++state.count
     state.order.push(`embedded-start:${id}`)

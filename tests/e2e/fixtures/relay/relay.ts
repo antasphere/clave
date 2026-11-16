@@ -1,4 +1,13 @@
 /**
+ * TEST FIXTURE, not product code (antasphere/clave#407). The Clave relay
+ * server lives in antasphere/relay; this is the mobile branch's relay at
+ * 4aa6118c, carried verbatim (but for import paths) so the relay client of
+ * `packages/server/src/relay/client.ts` is tested against a real relay
+ * speaking the same wire protocol (`packages/contract/src/relay.ts`, which
+ * antasphere/relay keeps byte-compatible). Nothing outside the tests imports
+ * it, and no build bundles it.
+ */
+/**
  * The relay (decision 4 of the mobile spec): one process the team deploys
  * behind TLS, the directory of a person's machines and the road from their
  * phone to them. Plain `node:http` and `ws`, no framework: the same file

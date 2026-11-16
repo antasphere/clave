@@ -13,6 +13,7 @@ import {
   DevicePairingNotFound,
   DevicePairingRefused,
   RelayAddressInvalid,
+  type MobileRelayStatus,
   type DeviceDescription,
   type DevicePlatform,
   type DeviceSessionView,
@@ -21,6 +22,7 @@ import {
   type PairingStatus
 } from '@clave/contract/devices'
 import { DevicesPort, type DevicesPortService } from './port'
+import type { RelayClientStatus } from '../relay/client'
 import {
   IdentityTokenRefused,
   JwksCache,
@@ -90,7 +92,12 @@ export interface DeviceSessionsService {
   readonly me: (deviceId: string) => DeviceView
   readonly setPushToken: (deviceId: string, token: string, platform: DevicePlatform) => void
   readonly clearPushToken: (deviceId: string) => void
-  readonly relay: { readonly get: () => string; readonly set: (url: string) => string }
+  readonly relay: {
+    readonly get: () => string
+    readonly set: (url: string) => string
+    /** The relay client's state as Settings → Mobile shows it (issue #407). */
+    readonly status: () => MobileRelayStatus
+  }
   /** Lane B's seam. */
   readonly pushTargets: PushTargets
 }
@@ -107,7 +114,15 @@ export class DeviceSessions extends Context.Tag('@clave/server/DeviceSessions')<
   }
 }
 
-/** The relay address as it is kept: an http(s) origin and nothing more, or empty. */
+/** The literal loopback hosts a plain-http relay address may name (the
+ *  client's own rule, `insecureRelayAddress` in `relay/client.ts`). */
+const LOOPBACK_RELAY_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/** The relay address as it is kept: an https origin and nothing more (plain
+ *  http only to this machine, the development relay), or empty. The claim
+ *  carries the owner's access token and the hello the machine secret, so an
+ *  address that would send them in clear is refused here, at once, and again
+ *  by the client where they would leave (issue #407). */
 export function normalizeRelayUrl(value: string): string {
   const trimmed = value.trim()
   if (trimmed === '') return ''
@@ -130,7 +145,30 @@ export function normalizeRelayUrl(value: string): string {
       message:
         'Enter the relay address as an http(s) origin, without a path, a query or credentials.'
     })
+  if (url.protocol === 'http:' && !LOOPBACK_RELAY_HOSTS.has(url.hostname))
+    throw new RelayAddressInvalid({
+      message:
+        'The relay address must start with https://. Plain http is only for a relay on this Mac.'
+    })
   return url.origin
+}
+
+/** The relay client's state as the devices domain answers it (issue #407):
+ *  no client, no address and a stopped client are all `off`. */
+export function mobileRelayStatusView(
+  status: RelayClientStatus | null,
+  now: () => number = Date.now
+): MobileRelayStatus {
+  if (!status) return { state: 'off', relay: null, machineId: null, since: now(), lastFailure: null }
+  const state =
+    status.state === 'unconfigured' || status.state === 'stopped' ? 'off' : status.state
+  return {
+    state,
+    relay: status.relay,
+    machineId: status.machineId,
+    since: status.since,
+    lastFailure: status.lastFailure
+  }
 }
 
 const view = (device: StoredDevice): DeviceView => ({
@@ -444,6 +482,14 @@ export function makeDeviceSessions(
         port.relay.set(normalized)
         changed()
         return normalized
+      },
+      status: () => {
+        if (!port.relay)
+          throw new CapabilityUnavailable({
+            capability: 'relay',
+            message: 'This server runs no relay client.'
+          })
+        return mobileRelayStatusView(port.relay.status?.() ?? null)
       }
     },
     pushTargets: devicesPushTargets(store)

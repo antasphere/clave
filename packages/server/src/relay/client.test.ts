@@ -20,7 +20,11 @@ import {
   type OidcProvider
 } from '../../../../tests/e2e/fixtures/oidc-provider.mjs'
 import { sleep } from '../test-support'
-import { startRelay, type Relay, type RelayOptions } from './relay'
+import {
+  startRelay,
+  type Relay,
+  type RelayOptions
+} from '../../../../tests/e2e/fixtures/relay/relay'
 import {
   startRelayClient,
   type RelayClient,
@@ -633,13 +637,15 @@ describe('the claim', () => {
     await until(() => harness.claims.length >= 2, 3_000, 'a second claim')
     // The first wait is between half the base and the base: 25 to 50 ms.
     expect(harness.claims[1] - harness.claims[0]).toBeGreaterThanOrEqual(20)
-    const waiting = await eventually(
+    // The relay saying no to the login is a refusal the owner can act on:
+    // `refused`, its sentence kept, and still the backoff (issue #407).
+    const refused = await eventually(
       async () => harness.client.status(),
-      (status) => status.state === 'waiting',
+      (status) => status.state === 'refused',
       1_000
     )
-    expect(waiting.state).toBe('waiting')
-    expect(waiting.lastFailure).toMatch(/refused/)
+    expect(refused.state).toBe('refused')
+    expect(refused.lastFailure).toMatch(/the relay refused the login/)
     expect(harness.store.saved).toEqual([])
     expect(await machinesOf(relay, provider.mintAccessToken())).toEqual([])
   })
@@ -884,7 +890,7 @@ describe('the address rule', () => {
     expect(opened).toEqual([])
     expect(harness.tokens).toEqual([])
     expect(harness.store.saved).toEqual([])
-    expect(harness.client.status().state).toBe('unconfigured')
+    expect(harness.client.status().state).toBe('refused')
     expect(harness.client.status().lastFailure).toMatch(/plain http to relay\.example/)
     const said = harness.logs.filter((line) => line.includes('plain http to relay.example'))
     expect(said).toHaveLength(1)

@@ -25,6 +25,11 @@
  * `--test-upgrade-idle-ms <n>` shortens the minute of no working agent an
  * upgrade waits for, under `--test-no-activate` only.
  *
+ * `--relay <url>` names the relay this server reaches a phone through (issue
+ * #407, `docs/mobile-relay.md`): an https address, or plain http to this
+ * machine; anything else stops the entry before it starts. Without it the
+ * server follows the `mobileRelayUrl` preference Settings → Mobile writes.
+ *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
  * both start it this way. Inside the packaged app (wave 5, PRDCT-3434) the
@@ -142,6 +147,7 @@ import { providerModels } from './provider-models'
 import { standalonePlugins } from './plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
 import { serverGitPort } from './server/git-port'
+import { relayAddressOf, startMobileRelay, stopMobileRelay } from './server/relay-wiring'
 // ── Issue #266: the server's version and its self-upgrade (server/self-upgrade.ts) ──
 import {
   createSelfUpgrade,
@@ -199,6 +205,14 @@ async function main(): Promise<void> {
   const config = daemonConfig(process.argv.slice(2))
   // ── Issue #266: the version this server reports, `--app-version` first ──
   const version = serverVersion(process.argv.slice(2), readAppVersion)
+  // ── Issue #407: `--relay <url>` names the relay for a daemon, refused before anything starts ──
+  const relayFlag = arg('relay')
+  if (relayFlag !== undefined && relayAddressOf(relayFlag) === null) {
+    process.stderr.write(
+      'clave-server: --relay must be an https address (plain http only to this machine)\n'
+    )
+    process.exit(2)
+  }
   const dataDir = arg('data-dir')
   if (!dataDir) {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
@@ -743,6 +757,20 @@ async function main(): Promise<void> {
       ')\n'
   )
 
+  // ── Issue #407: the relay client, on `--relay <url>` or the mobileRelayUrl preference ──
+  // The flag names the relay for a daemon; the separate server the app
+  // starts carries no flag and follows the preference Settings → Mobile
+  // writes through this server. A daemon that binds an address of its own
+  // reports it as a direct address; the loopback listeners report none.
+  startMobileRelay({
+    local: { url: server.url },
+    version,
+    flag: relayFlag ?? null,
+    antasphere: standalone.antasphere,
+    direct: config.daemon && config.host !== '127.0.0.1' ? [server.url] : [],
+    log: (line) => process.stderr.write(`clave-server: ${line}\n`)
+  })
+
   let stopping = false
   const sessions_shutdown = (): void => {
     // `quit: true`: the standalone server's stop is a quit for its sessions,
@@ -758,6 +786,8 @@ async function main(): Promise<void> {
     stopping = true
     writeDiscovery = (): void => {}
     process.stderr.write(`clave-server: ${signal}, stopping\n`)
+    // ── Issue #407: off the relay first, so no forwarded request meets a closing listener ──
+    const relayStopped = stopMobileRelay().catch(() => undefined)
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
     standalone.shutdown()
@@ -791,6 +821,7 @@ async function main(): Promise<void> {
       /* nothing to remove */
     }
     stopping_sessions
+      .then(() => relayStopped)
       .then(() => mcp?.close())
       .then(() => server.stop())
       .then(() => closeTerminals())

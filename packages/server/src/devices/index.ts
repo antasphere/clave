@@ -10,6 +10,7 @@ export {
   DeviceSessions,
   makeDeviceSessions,
   normalizeRelayUrl,
+  mobileRelayStatusView,
   type DeviceSessionsService
 } from './service'
 export { deviceHandlers } from './handlers'

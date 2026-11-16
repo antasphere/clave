@@ -1,14 +1,13 @@
 /**
- * The relay client wired into a Clave server (lane E of the mobile wave,
- * decision 4 of the mobile spec): what the server package's client needs of
+ * The relay client wired into a Clave server (issue #407, ported from lane E
+ * of the mobile wave, decision 4 of the mobile spec): what the server package's client needs of
  * the process it runs in, and nothing the package can know on its own.
  *
  *  - the relay's address: the standalone entry's `--relay` flag when given,
  *    the `mobileRelayUrl` preference otherwise, read again at every attempt
  *    so an address saved in Settings → Mobile takes effect without a restart.
- *    The preference is declared by the lane that owns the preferences
- *    contract; this side reads it by name and refuses anything that is not
- *    an http(s) address.
+ *    This side refuses anything that is not an https address (plain http
+ *    to this machine only), whatever wrote it.
  *  - the owner: the Antasphere account manager of this process (the shell's
  *    while the server runs in-process, the standalone entry's otherwise),
  *    its subject for the credential's binding and `currentAccessToken()`
@@ -39,10 +38,10 @@ import { lazySettingsPorts, type SettingsPorts } from '../ports/registry'
 import { readJson, writeJson } from '../ports/storage'
 import type { AntasphereAccountManager } from '../antasphere-account'
 import { preferencesManager, type PreferencesManager } from '../preferences-manager'
+import { setRunningRelayClient } from './relay-state'
 
 export const RELAY_FILE = 'relay.json'
-/** The preference naming the relay, declared in the preferences contract by
- *  the lane that owns it (Settings → Mobile). */
+/** The preference naming the relay (Settings → Mobile). */
 export const MOBILE_RELAY_PREFERENCE = 'mobileRelayUrl'
 
 interface RelayFile {
@@ -78,11 +77,9 @@ export function relayAddressOf(value: unknown): string | null {
 export function readMobileRelayPreference(
   manager: PreferencesManager = preferencesManager
 ): string | null {
-  // Read by name: the key belongs to the preferences contract of the lane
-  // that owns Settings → Mobile, and a preferences file without it answers
-  // nothing, which is "no relay".
-  const value = (manager as unknown as { get(key: string): unknown }).get(MOBILE_RELAY_PREFERENCE)
-  return relayAddressOf(value)
+  // A preferences file written before the key existed answers the default,
+  // which is "no relay"; anything that is not an address is none either.
+  return relayAddressOf(manager.get(MOBILE_RELAY_PREFERENCE))
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -235,6 +232,7 @@ export function startMobileRelay(wiring: MobileRelayWiring): RelayClient | null 
     log
   })
   running = client
+  setRunningRelayClient(client)
   // The login changing is what the client waits on most: a sign-out takes
   // the machine off the relay now, a sign-in puts it back now.
   let owner = manager?.status().account?.subject ?? null
@@ -263,5 +261,6 @@ export function mobileRelayStatus(): ReturnType<RelayClient['status']> | null {
 export async function stopMobileRelay(): Promise<void> {
   const client = running
   running = null
+  setRunningRelayClient(null)
   if (client) await client.stop()
 }

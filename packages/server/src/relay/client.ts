@@ -62,6 +62,7 @@ export type RelayClientState =
   | 'connecting'
   | 'connected'
   | 'waiting'
+  | 'refused'
   | 'stopped'
 
 export interface RelayClientStatus {
@@ -111,6 +112,9 @@ export interface RelayClient {
   /** End the socket and the loop; idempotent. */
   stop(): Promise<void>
 }
+
+/** The relay answered the claim with a refusal of the login itself. */
+class ClaimRefused extends Error {}
 
 type SessionOutcome = 'unauthorized' | 'replaced' | 'closed' | 'failed' | 'silent' | 'stopped'
 
@@ -273,6 +277,10 @@ class Client implements RelayClient {
   private since: number
   private attempt = 0
   private lastFailure: string | null = null
+  /** What a provider failed to answer in this attempt, if anything: the one
+   *  failure an idle state carries, so a state the owner left (an address
+   *  refused, a claim refused) does not linger under "off". */
+  private askFailure: string | null = null
   private relay: string | null = null
   private machineId: string | null = null
   private stopped = false
@@ -315,6 +323,7 @@ class Client implements RelayClient {
       const message = `${what} could not be read: ${(error as Error).message}`
       if (this.lastFailure !== message) this.options.log(`relay: ${message}`)
       this.lastFailure = message
+      this.askFailure = message
       return fallback
     }
   }
@@ -379,6 +388,7 @@ class Client implements RelayClient {
       connecting: 'connecting',
       connected: `connected as ${this.machineId ?? '?'}`,
       waiting: 'waiting to try again',
+      refused: 'refused, waiting to try again',
       stopped: 'stopped'
     }
     this.options.log(`relay: ${words[state]}${failure ? ` (${failure})` : ''}`)
@@ -411,10 +421,11 @@ class Client implements RelayClient {
   private async run(): Promise<void> {
     while (!this.stopped) {
       const generation = this.generation
+      this.askFailure = null
       const address = this.ask('the relay address', () => this.options.address(), null)
       if (!address) {
         this.relay = null
-        this.set('unconfigured', this.lastFailure)
+        this.set('unconfigured', this.askFailure)
         await this.sleep(this.idleRetryMs)
         continue
       }
@@ -423,13 +434,13 @@ class Client implements RelayClient {
       // clear: no claim, no hello, until the address changes.
       const insecure = insecureRelayAddress(address)
       if (insecure) {
-        this.set('unconfigured', insecure)
+        this.set('refused', insecure)
         await this.sleep(this.idleRetryMs)
         continue
       }
       const owner = this.ask('the owner', () => this.options.owner(), null)
       if (!owner) {
-        this.set('signed-out', this.lastFailure)
+        this.set('signed-out', this.askFailure)
         await this.sleep(this.idleRetryMs)
         continue
       }
@@ -473,7 +484,12 @@ class Client implements RelayClient {
         } catch (error) {
           if (!current()) continue
           this.attempt++
-          this.set('waiting', `the claim failed: ${(error as Error).message}`)
+          // The relay saying no to the login is a refusal the owner can act
+          // on (another account, another relay); anything else is the road.
+          this.set(
+            error instanceof ClaimRefused ? 'refused' : 'waiting',
+            `the claim failed: ${(error as Error).message}`
+          )
           await this.sleep(this.backoffMs())
           continue
         }
@@ -518,9 +534,9 @@ class Client implements RelayClient {
         body: JSON.stringify(this.options.record()),
         signal: abort.signal
       })
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
         await response.body?.cancel()
-        throw new Error('the relay refused the login')
+        throw new ClaimRefused('the relay refused the login')
       }
       if (response.status !== 201 && response.status !== 200) {
         await response.body?.cancel()
