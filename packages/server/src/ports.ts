@@ -10,6 +10,7 @@
  * composition root (`runtime.ts`) provides every port from this object.
  */
 import { Layer } from 'effect'
+import type { ForwardRegistry } from './forward/registry'
 import { RequestsPort, type RequestsService } from './requests/port'
 import { FilesPort, type FilesService } from './files/port'
 export { FilesPort, type FilesService } from './files/port'
@@ -70,6 +71,10 @@ export { type WriteLedgerStorage } from './sessions/writes'
 import { SpeechPort, type SpeechService } from './speech/port'
 
 export { SpeechPort, type SpeechService } from './speech/port'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactsPort, type ArtefactsService } from './artefacts/port'
+
+export { ArtefactsPort, type ArtefactsService } from './artefacts/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -125,6 +130,15 @@ export interface ServerPorts {
   // ── PRDCT-4411: the speech ──
   /** Text spoken with the machine's ElevenLabs voice, for a session the server has a record of. `SpeechPort.none` when absent: every call refused as unavailable. */
   readonly speech?: SpeechService
+  // ── PRDCT-4473: the forwarded pages ──
+  /** The loopback pages a client may reach through `/forward/<lease>/…`
+   *  (`forward/route.ts`). A plain object, NOT a `Context.Tag`: only the
+   *  route outside the router reads it, and the entry that starts a page
+   *  registers its port on the same object. No page is forwarded when absent. */
+  readonly forwards?: ForwardRegistry
+  // ── PRDCT-4472: the artefacts ──
+  /** A session's HTML artefact, its preview and its versions, run by this server. `ArtefactsPort.none` when absent: every call refused as unavailable. */
+  readonly artefacts?: ArtefactsService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -156,6 +170,8 @@ export const PortsLive = (
   | DevicesPort
   // ── PRDCT-4411: the speech ──
   | SpeechPort
+  // ── PRDCT-4472: the artefacts ──
+  | ArtefactsPort
 > => {
   // One instance for both ports: `none` is a getter that builds a new one.
   const sidebar = ports.sidebar ?? SidebarLayoutsPort.none
@@ -185,6 +201,8 @@ export const PortsLive = (
     // ── Mobile wave, lane A: the devices ──
     DevicesPort.layer(ports.devices ?? DevicesPort.none),
     // ── PRDCT-4411: the speech ──
-    SpeechPort.layer(ports.speech ?? SpeechPort.none)
+    SpeechPort.layer(ports.speech ?? SpeechPort.none),
+    // ── PRDCT-4472: the artefacts ──
+    ArtefactsPort.layer(ports.artefacts ?? ArtefactsPort.none)
   )
 }

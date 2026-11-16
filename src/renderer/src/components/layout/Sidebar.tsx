@@ -67,6 +67,7 @@ import { canMoveToOngoing, moveToOngoing } from '../../lib/ongoing-actions'
 import { accountSpawnFields, accountSessionFields } from '../../store/claude-profile-store'
 import { primeClaudeAccountsUsage, primeCodexAccountsUsage } from '../../store/usage-store'
 import { codexAccountSessionFields } from '../../store/codex-account-store'
+import { connectionSessionFields } from '../../lib/connection-fields'
 import {
   accountProviderOf,
   switchModeLabel,
@@ -75,7 +76,13 @@ import {
   switchSessionAccount,
   type SwitchTarget
 } from '../../lib/switch-account'
-import { AccountMenuHeader } from './AccountMenuHeader'
+import {
+  AccountMenuHeader,
+  ConnectionLeftMenuHeader,
+  ConnectionMenuHeader
+} from './AccountMenuHeader'
+import { sessionConnection, sessionConnectionLeft } from '../../lib/session-connection'
+import { useProviderConnectionsStore } from '../../store/provider-connections-store'
 import { AccountSwitchRow, AccountUsagePreview } from './AccountSwitchMenu'
 import { effectiveSwitchMode, loadAccountPolicy } from '../../store/account-policy-store'
 import { startAccountPolicy } from '../../lib/account-policy'
@@ -1070,6 +1077,8 @@ export function Sidebar(): React.JSX.Element {
               // machine login while every readout still named the account.
               ...(dupClaudeKind ? accountSpawnFields(session) : {}),
               ...(session.codexMode ? codexAccountSessionFields(session) : {}),
+              // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+              ...connectionSessionFields(session),
               // A duplicate belongs where its source lives, not to the active view.
               workspaceId: session.workspaceId
             }
@@ -1098,6 +1107,8 @@ export function Sidebar(): React.JSX.Element {
             piThinking: sessionInfo.piThinking,
             ...(dupClaudeKind ? accountSessionFields(session) : {}),
             ...(session.codexMode ? codexAccountSessionFields(session) : {}),
+            // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+            ...connectionSessionFields(session),
             // Persist so re-duplicating the clone also re-primes.
             initialPrompt,
             sessionType: 'local',
@@ -1145,6 +1156,8 @@ export function Sidebar(): React.JSX.Element {
           resumeSessionId: conversationId,
           // The conversation resumes on the account it ran on.
           ...(isPi ? {} : accountSpawnFields(session)),
+          // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+          ...connectionSessionFields(session),
           // The resumed conversation stays in its session's workspace.
           workspaceId: session.workspaceId
         })
@@ -1168,6 +1181,8 @@ export function Sidebar(): React.JSX.Element {
           piProvider: sessionInfo.piProvider,
           piThinking: sessionInfo.piThinking,
           ...(isPi ? {} : accountSessionFields(session)),
+          // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
+          ...connectionSessionFields(session),
           sessionType: 'local'
         })
         useSessionStore.getState().selectSession(sessionInfo.id, false)
@@ -1318,9 +1333,24 @@ export function Sidebar(): React.JSX.Element {
         session: NonNullable<typeof session>
         rowsOf: (targets: SwitchTarget[]) => ContextMenuItem[]
       } | null = null
+      // A Pi or OpenCode tab names its stored connection there (PRDCT-4427).
+      const connection = sessionConnection(
+        session,
+        useProviderConnectionsStore.getState().byMachine
+      )
+      // PRDCT-4540: a process that left its connection says so instead.
+      const connectionLeft = sessionConnectionLeft(session)
       const header =
         session && accountProviderOf(session) ? (
           <AccountMenuHeader session={session} chart />
+        ) : connection ? (
+          <ConnectionMenuHeader
+            label={connection.label}
+            id={connection.id}
+            pi={session?.piMode === true}
+          />
+        ) : connectionLeft ? (
+          <ConnectionLeftMenuHeader sentence={connectionLeft} pi={session?.piMode === true} />
         ) : undefined
       // Every other account of the tab's provider, those with headroom first
       // and the one whose week renews soonest on top (Suggested), in one

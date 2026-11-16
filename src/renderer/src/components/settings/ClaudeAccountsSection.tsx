@@ -1,14 +1,5 @@
-import { useMemo, useState, type ReactElement } from 'react'
-import {
-  TrashIcon,
-  PlusIcon,
-  KeyIcon,
-  XMarkIcon,
-  ArrowUpIcon,
-  ArrowDownIcon,
-  ClipboardDocumentIcon,
-  SparklesIcon
-} from '@heroicons/react/24/outline'
+import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { ClipboardDocumentIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import type { UsageError, UsageLimits } from '../../../../preload/index.d'
 import {
   useClaudeProfileStore,
@@ -24,8 +15,29 @@ import {
   capStatusLine
 } from '../../store/usage-store'
 import { isExhausted, switchTargets } from '../../lib/account-pool'
-import { CONNECTION_COMPANY_BY_POOL } from './connection-companies'
-import { SettingsSection, SettingsCard, SettingsCallout, Radio } from './primitives'
+import type { AccountUsageSummary } from '../../../../shared/account-pool'
+import { CLAUDE_MODELS } from '../../../../shared/claude-models'
+import {
+  accountUsageText,
+  claudeCardFacts,
+  claudeTokenLine,
+  connectLabel,
+  rowMenuEntries
+} from './connection-cards'
+import { connectAnthropic } from './connection-companies'
+import { reveal } from './connection-actions'
+import {
+  CardFold,
+  CardLabel,
+  ConnectionRow,
+  ProviderCard,
+  RemoveConfirm,
+  RowMenu,
+  RowNote,
+  UsageLine,
+  type CardModels
+} from './ConnectionCard'
+import { SettingsCallout, Radio } from './primitives'
 import { LoginFlow } from './LoginFlow'
 
 /** What a paste came back with, in one line under the form. */
@@ -43,7 +55,7 @@ function describeUsageResult(result: UsageLimits | UsageError): string {
 
 /** The paste form, for a new account or a replacement token: the way in
  *  when the browser flow is not wanted. */
-function TokenForm({
+export function TokenForm({
   title,
   askName,
   onSubmit,
@@ -143,254 +155,231 @@ function TokenForm({
   )
 }
 
-/** The name form for an account that will sign in through the browser. */
-function NameForm({
-  onSubmit,
-  onCancel
-}: {
-  onSubmit: (label: string) => Promise<void>
-  onCancel: () => void
-}): ReactElement {
-  const [label, setLabel] = useState('')
-  const [busy, setBusy] = useState(false)
-  const submit = async (): Promise<void> => {
-    if (busy || !label.trim()) return
-    setBusy(true)
-    try {
-      await onSubmit(label.trim())
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <div data-claude-name-form>
-      <SettingsCallout
-        inset
-        tone="accent"
-        title="Add a connection"
-        text="Name the subscription, then sign in to it in the browser that opens. What Claude hands back is stored here, encrypted, and never shown."
-        actions={
-          <>
-            <button onClick={onCancel} className="btn-secondary">
-              Cancel
-            </button>
-            <button
-              onClick={() => void submit()}
-              disabled={busy || !label.trim()}
-              className="btn-primary"
-            >
-              Log in
-            </button>
-          </>
-        }
-      >
-        <input
-          className="input-compact w-full max-w-72 mt-2"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="Connection name"
-          aria-label="Connection name"
-          autoFocus
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void submit()
-          }}
-        />
-      </SettingsCallout>
-    </div>
-  )
+/** The Claude models every Claude subscription serves, by name. */
+const CLAUDE_MODEL_NAMES: CardModels = { names: CLAUDE_MODELS.map((model) => model.name) }
+
+/** A Claude account as a row reads it: this Mac's or a server's. */
+export interface ClaudeRowAccount {
+  id: string
+  label: string
+  hasToken: boolean
+  tokenInvalid: boolean
+  tokenSetAt: number | null
+  tokenExpiresAt: number | null
 }
 
-function AccountRow({
-  account,
-  index,
-  count,
-  selected,
-  migrated,
-  suggested,
-  onSelect,
-  onMove,
-  onLogin,
-  onPasteToken
-}: {
-  account: ClaudeProfile
+/** What a row on this Mac can do; a server's rows do none of it. */
+export interface ClaudeRowControls {
   index: number
   count: number
   selected: boolean
-  migrated: boolean
-  /** The open connection the pool would spend first (its week renews soonest). */
   suggested: boolean
   onSelect: () => void
   onMove: (offset: -1 | 1) => void
   onLogin: () => void
   onPasteToken: () => void
-}): ReactElement {
-  const updateProfile = useClaudeProfileStore((s) => s.updateProfile)
-  const removeProfile = useClaudeProfileStore((s) => s.removeProfile)
-  const clearToken = useClaudeProfileStore((s) => s.clearToken)
-  const summary = useClaudeAccountsUsage((s) => s.byAccount[account.id])
-  const isDefault = account.id === DEFAULT_CLAUDE_PROFILE_ID
-  const life = describeTokenLife(account)
-  const { Logo } = CONNECTION_COMPANY_BY_POOL.claude
-  // The shared headroom first, then every family that is out, named with
-  // its return ("60% left · Overall · Fable out · back in 2d 5h"): a family
-  // week spent is not the account out (PRDCT-4253, PRDCT-4254). How the
-  // connection signs in is never on the card (PRDCT-4424): only the Mac's own
-  // login says where it lives.
-  const description = [isDefault ? 'Machine login · ~/.claude' : null, life, capStatusLine(summary)]
-    .filter(Boolean)
-    .join(' · ')
+  onRename: (label: string) => void
+  onForget: () => void
+  onRemove: () => void
+  /** The token form, open on the row. */
+  form: ReactNode
+}
 
+/**
+ * One Claude account as a row of the Anthropic card (PRDCT-4552): where new
+ * sessions start, its label, its sign-in in a word, its headroom. On this
+ * Mac its one needed button (Sign in) stands out and everything else is in
+ * its menu, in words; a server's row (`controls` absent) only reads.
+ */
+export function ClaudeAccountRow({
+  account,
+  summary,
+  migrated,
+  machine,
+  attrs,
+  controls
+}: {
+  account: ClaudeRowAccount
+  summary: AccountUsageSummary | undefined
+  migrated: boolean
+  /** How the removal's question names the machine. */
+  machine: string
+  attrs: Record<string, string | undefined>
+  controls?: ClaudeRowControls
+}): ReactElement {
+  const [draft, setDraft] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const isDefault = account.id === DEFAULT_CLAUDE_PROFILE_ID
+  const tokenLife = describeTokenLife(account as ClaudeProfile)
+  const facts = claudeCardFacts({
+    id: account.id,
+    hasToken: account.hasToken,
+    tokenInvalid: account.tokenInvalid,
+    tokenLife,
+    migrated,
+    isDefault,
+    exhausted: isExhausted(summary)
+  })
+  const signIn = isDefault
+    ? controls
+      ? 'This Mac’s own login, ~/.claude'
+      : 'The server’s own login, ~/.claude'
+    : claudeTokenLine(tokenLife)
+  const editable = !!controls && !isDefault
   return (
-    <div
-      className="settings-row"
-      data-claude-account-row={account.id}
+    <ConnectionRow
+      {...attrs}
       data-account-exhausted={isExhausted(summary) ? 'true' : undefined}
       data-account-scoped-out={summary?.scopedOut?.length ? summary.scopedOut.join(' ') : undefined}
-    >
-      <div className="flex items-center gap-3 flex-1 min-w-0">
-        <Radio
-          checked={selected}
-          onSelect={onSelect}
-          title={selected ? 'Connection new sessions start on' : 'Start new sessions here'}
-          ariaLabel={
-            selected ? 'Connection new sessions start on' : `Start new sessions on ${account.label}`
-          }
-        />
-        <Logo className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            {isDefault ? (
-              <p className="settings-row-title">{account.label}</p>
-            ) : (
-              <input
-                className="input-compact w-full max-w-56"
-                value={account.label}
-                onChange={(e) => updateProfile(account.id, { label: e.target.value })}
-                placeholder="Connection name"
-                aria-label="Connection name"
-              />
-            )}
-            {suggested && (
-              <span className="badge account-switch-suggested" data-connection-suggested>
-                <SparklesIcon aria-hidden />
-                Suggested
-              </span>
-            )}
-            {(migrated || (!isDefault && !account.hasToken)) && (
-              <span className="badge badge-muted flex-shrink-0">Needs login</span>
-            )}
-            {account.tokenInvalid && (
-              <span className="badge badge-muted flex-shrink-0">Sign-in refused</span>
-            )}
-          </div>
-          <p className="settings-row-description truncate">{description}</p>
-        </div>
-      </div>
-
-      <div className="settings-row-controls">
-        {!isDefault && (
-          <>
-            <button
-              onClick={() => onMove(-1)}
-              disabled={index <= 1}
-              className="btn-icon btn-icon-sm"
-              title="Earlier in the pool"
-              aria-label={`Move ${account.label} up`}
-            >
-              <ArrowUpIcon className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => onMove(1)}
-              disabled={index >= count - 1}
-              className="btn-icon btn-icon-sm"
-              title="Later in the pool"
-              aria-label={`Move ${account.label} down`}
-            >
-              <ArrowDownIcon className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={onLogin}
-              className="btn-icon btn-icon-sm"
-              title={account.hasToken ? 'Log in again' : 'Log in'}
-              aria-label={`Log in to ${account.label}`}
-              data-claude-account-login={account.id}
-            >
-              <KeyIcon className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={onPasteToken}
-              className="btn-icon btn-icon-sm"
-              title={account.hasToken ? 'Replace the token by pasting one' : 'Paste a token'}
-              aria-label={
-                account.hasToken
-                  ? `Replace token for ${account.label}`
-                  : `Paste a token for ${account.label}`
+      pick={
+        controls && (
+          <Radio
+            checked={controls.selected}
+            onSelect={controls.onSelect}
+            title={
+              controls.selected ? 'Connection new sessions start on' : 'Start new sessions here'
+            }
+            ariaLabel={
+              controls.selected
+                ? 'Connection new sessions start on'
+                : `Start new sessions on ${account.label}`
+            }
+          />
+        )
+      }
+      heading={
+        <>
+          <CardLabel
+            label={account.label}
+            draft={draft}
+            onDraft={setDraft}
+            onCommit={(label) => controls?.onRename(label)}
+          />
+          {controls?.selected && (
+            <span className="connection-row-tag" data-connection-starts-here>
+              New sessions start here
+            </span>
+          )}
+          {controls?.suggested && (
+            <span className="badge account-switch-suggested" data-connection-suggested>
+              <SparklesIcon aria-hidden />
+              Suggested
+            </span>
+          )}
+        </>
+      }
+      state={facts.state}
+      stateAttrs={{ 'data-connection-state': account.id }}
+      fix={
+        editable &&
+        facts.state.tone === 'attention' && (
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            onClick={controls.onLogin}
+            data-connection-fix={account.id}
+          >
+            Sign in
+          </button>
+        )
+      }
+      menu={
+        editable && (
+          <RowMenu
+            id={account.id}
+            label={account.label}
+            entries={rowMenuEntries({
+              kind: 'claude',
+              index: controls.index,
+              count: controls.count,
+              signedIn: account.hasToken,
+              onMove: controls.onMove,
+              onRename: () => setDraft(account.label),
+              onSignIn: controls.onLogin,
+              onCredential: controls.onPasteToken,
+              onForget: controls.onForget,
+              onRemove: () => setConfirming(true),
+              hooks: {
+                rename: { 'data-claude-account-rename': account.id },
+                signIn: { 'data-claude-account-login': account.id },
+                remove: { 'data-claude-account-remove': account.id }
               }
-            >
-              <ClipboardDocumentIcon className="w-3.5 h-3.5" />
-            </button>
-            {account.hasToken && (
-              <button
-                onClick={() => void clearToken(account.id)}
-                className="btn-icon btn-icon-sm"
-                title="Forget token"
-                aria-label={`Forget token for ${account.label}`}
-              >
-                <XMarkIcon className="w-3.5 h-3.5" />
-              </button>
+            })}
+          />
+        )
+      }
+      lines={
+        <>
+          <UsageLine
+            text={accountUsageText(
+              capStatusLine(summary),
+              !!summary,
+              isDefault || (account.hasToken && !account.tokenInvalid && !migrated)
             )}
-            <button
-              onClick={() => removeProfile(account.id)}
-              className="btn-icon btn-icon-sm btn-icon--danger"
-              title="Remove connection"
-              aria-label={`Remove connection ${account.label}`}
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-            </button>
+            id={account.id}
+          />
+          {signIn && <RowNote>{signIn}</RowNote>}
+        </>
+      }
+      fold={
+        controls && (
+          <>
+            <LoginFlow provider="claude" accountId={account.id} label={account.label} />
+            <CardFold open={!!controls.form}>{controls.form}</CardFold>
+            <CardFold open={confirming}>
+              <RemoveConfirm
+                kind="claude"
+                label={account.label}
+                machine={machine}
+                id={account.id}
+                onCancel={() => setConfirming(false)}
+                onRemove={() => {
+                  setConfirming(false)
+                  controls.onRemove()
+                }}
+              />
+            </CardFold>
           </>
-        )}
-      </div>
-    </div>
+        )
+      }
+    />
   )
 }
 
 /**
- * The Anthropic connections: the machine login plus every subscription
- * handed to Clave, in the order the pool walks them (ADR 0002). A connection
- * is signed in through the browser, or by pasting a `claude setup-token`
- * token. `pasteRequest` opens the paste form from the page's Connect chooser
- * (a new number each time it is asked).
+ * The Anthropic card of this Mac (PRDCT-4552): Claude Code, the Claude
+ * models, then one row per connection in the order the pool walks them
+ * (the machine login first); its foot connects another through the browser,
+ * or with a pasted token in the card.
  */
-export function ClaudeAccountsSection({
-  pasteRequest = 0
-}: { pasteRequest?: number } = {}): ReactElement {
+export function ClaudeAccountsCard({ machine }: { machine: string }): ReactElement {
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
   const migratedIds = useClaudeProfileStore((s) => s.migratedIds)
   const setSelectedProfile = useClaudeProfileStore((s) => s.setSelectedProfile)
-  const addTokenProfile = useClaudeProfileStore((s) => s.addTokenProfile)
-  const addProfile = useClaudeProfileStore((s) => s.addProfile)
+  const updateProfile = useClaudeProfileStore((s) => s.updateProfile)
+  const removeProfile = useClaudeProfileStore((s) => s.removeProfile)
+  const clearToken = useClaudeProfileStore((s) => s.clearToken)
   const reorderProfiles = useClaudeProfileStore((s) => s.reorderProfiles)
   const setToken = useClaudeProfileStore((s) => s.setToken)
+  const addTokenProfile = useClaudeProfileStore((s) => s.addTokenProfile)
   const startLogin = useAccountLoginStore((s) => s.start)
-  const [form, setForm] = useState<
-    { kind: 'add-login' } | { kind: 'add-token' } | { kind: 'replace'; id: string } | null
-  >(null)
-  // The chooser's "Paste a token instead": derived during render, the
-  // React-sanctioned shape, rather than a setState inside an effect.
-  const [seenPaste, setSeenPaste] = useState(pasteRequest)
-  if (seenPaste !== pasteRequest) {
-    setSeenPaste(pasteRequest)
-    if (pasteRequest > 0) setForm({ kind: 'add-token' })
-  }
+  const [replacing, setReplacing] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
   const byAccount = useClaudeAccountsUsage((s) => s.byAccount)
   const suggestedId = useMemo(() => {
     const pool = profiles.map((p) => ({ id: p.id, usable: claudeProfileUsable(p) }))
     if (pool.filter((p) => p.usable).length < 2) return null
     return switchTargets(pool, byAccount).find((t) => t.suggested)?.id ?? null
   }, [profiles, byAccount])
-  const company = CONNECTION_COMPANY_BY_POOL.claude
+  const facts = claudeCardFacts({
+    id: '',
+    hasToken: false,
+    tokenInvalid: false,
+    tokenLife: null,
+    migrated: false,
+    isDefault: true
+  })
 
   const move = (index: number, offset: -1 | 1): void => {
     const ids = profiles.filter((p) => p.id !== DEFAULT_CLAUDE_PROFILE_ID).map((p) => p.id)
@@ -402,86 +391,129 @@ export function ClaudeAccountsSection({
   }
 
   return (
-    <SettingsSection
-      title={
-        <span className="flex items-center gap-2">
-          <company.Logo className="w-4 h-4 text-text-tertiary" />
-          {company.name}
-        </span>
-      }
-      description={`${company.hint} New Claude sessions start on the selected connection and move along this list when it is about to hit its limit. Every connection shares ~/.claude, so a conversation can carry on under another.`}
-    >
-      <SettingsCard>
-        {profiles.map((account, index) => (
-          <div key={account.id}>
-            <AccountRow
-              account={account}
-              index={index}
-              count={profiles.length}
-              selected={account.id === selectedProfileId}
-              migrated={migratedIds.includes(account.id)}
-              suggested={account.id === suggestedId}
-              onSelect={() => setSelectedProfile(account.id)}
-              onMove={(offset) => move(index, offset)}
-              onLogin={() => {
-                setForm(null)
-                void startLogin('claude', account.id)
-              }}
-              onPasteToken={() => setForm({ kind: 'replace', id: account.id })}
-            />
-            <LoginFlow provider="claude" accountId={account.id} label={account.label} />
-            {form?.kind === 'replace' && form.id === account.id && (
-              <TokenForm
-                title={`Token for ${account.label}`}
-                askName={false}
-                onSubmit={(_label, token) => setToken(account.id, token)}
-                onCancel={() => setForm(null)}
-              />
-            )}
-          </div>
-        ))}
-
-        {form?.kind === 'add-login' && (
-          <NameForm
-            onSubmit={async (label) => {
-              const created = await addProfile(label)
-              setForm(null)
-              if (created) void startLogin('claude', created.id)
-            }}
-            onCancel={() => setForm(null)}
-          />
-        )}
-        {form?.kind === 'add-token' && (
+    <ProviderCard
+      company="anthropic"
+      name="Anthropic"
+      what="Claude subscription"
+      harnesses={facts.harnesses}
+      models={CLAUDE_MODEL_NAMES}
+      modelsId="anthropic"
+      data-provider-card="anthropic"
+      data-provider-group="anthropic"
+      rows={profiles.map((account, index) => (
+        <ClaudeAccountRow
+          key={account.id}
+          account={account}
+          summary={byAccount[account.id]}
+          migrated={migratedIds.includes(account.id)}
+          machine={machine}
+          attrs={{ 'data-claude-account-row': account.id }}
+          controls={{
+            index,
+            count: profiles.length,
+            selected: account.id === selectedProfileId,
+            suggested: account.id === suggestedId,
+            onSelect: () => setSelectedProfile(account.id),
+            onMove: (offset) => move(index, offset),
+            onLogin: () => {
+              setReplacing(null)
+              void startLogin('claude', account.id)
+            },
+            onPasteToken: () => setReplacing(account.id),
+            onRename: (label) => updateProfile(account.id, { label }),
+            onForget: () => void clearToken(account.id),
+            onRemove: () => removeProfile(account.id),
+            form:
+              replacing === account.id ? (
+                <TokenForm
+                  title={`Token for ${account.label}`}
+                  askName={false}
+                  onSubmit={(_label, token) => setToken(account.id, token)}
+                  onCancel={() => setReplacing(null)}
+                />
+              ) : null
+          }}
+        />
+      ))}
+      form={
+        adding ? (
           <TokenForm
             title="Add a connection with a token"
             askName
             onSubmit={async (label, token) => (await addTokenProfile(label, token)).usage}
-            onCancel={() => setForm(null)}
+            onCancel={() => setAdding(false)}
           />
-        )}
+        ) : null
+      }
+      foot={
+        <>
+          <button
+            type="button"
+            className="connection-card-link"
+            onClick={() => {
+              setAdding(true)
+              reveal('[data-provider-card="anthropic"]')
+            }}
+            title="Paste a token from `claude setup-token` instead of signing in here"
+            data-connect-secondary="anthropic"
+            data-claude-paste-token
+          >
+            <ClipboardDocumentIcon className="w-3.5 h-3.5" />
+            Paste a token
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            title="Sign in to Anthropic in the browser that opens"
+            onClick={() =>
+              void connectAnthropic().then((id) => {
+                if (id) reveal(`[data-claude-account-row="${id}"]`)
+              })
+            }
+            data-connect-company="anthropic"
+            data-claude-add-account
+          >
+            {connectLabel(1)}
+          </button>
+        </>
+      }
+    />
+  )
+}
 
-        {!form && (
-          <div className="flex">
-            <button
-              onClick={() => setForm({ kind: 'add-login' })}
-              className="settings-row-action"
-              data-claude-add-account
-            >
-              <PlusIcon className="w-4 h-4" />
-              Add connection
-            </button>
-            <button
-              onClick={() => setForm({ kind: 'add-token' })}
-              className="settings-row-action"
-              title="Paste a token from `claude setup-token` instead of signing in here"
-              data-claude-paste-token
-            >
-              <ClipboardDocumentIcon className="w-4 h-4" />
-              Paste a token instead
-            </button>
-          </div>
-        )}
-      </SettingsCard>
-    </SettingsSection>
+/** The Anthropic card of a Clave server: its accounts, signed in there, as
+ *  rows that only read. */
+export function ServerClaudeCard({
+  accounts,
+  migrated,
+  usage,
+  machine
+}: {
+  accounts: readonly ClaudeRowAccount[]
+  migrated: readonly string[]
+  usage: Record<string, AccountUsageSummary | undefined>
+  machine: string
+}): ReactElement {
+  return (
+    <ProviderCard
+      company="anthropic"
+      name="Anthropic"
+      what="Claude subscription"
+      harnesses={['claude']}
+      models={CLAUDE_MODEL_NAMES}
+      modelsId="server-anthropic"
+      data-provider-group="anthropic"
+      data-server-claude-accounts
+      rows={accounts.map((account) => (
+        <ClaudeAccountRow
+          key={account.id}
+          account={account}
+          summary={usage[account.id]}
+          migrated={migrated.includes(account.id)}
+          machine={machine}
+          attrs={{ 'data-server-claude-account': account.id }}
+        />
+      ))}
+    />
   )
 }

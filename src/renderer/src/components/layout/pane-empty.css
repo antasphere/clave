@@ -1,0 +1,48 @@
+/* The main pane with nothing in it (PaneEmpty.tsx, PRDCT-4487), laid out
+   like the app's other empty states (Ongoing's, the conversation's): the
+   drawing, one line in the primary ink, one sentence under it, and the key
+   that starts a session when there is none. The text keeps the app's sizes:
+   nothing here is larger than the pane around it. */
+.pane-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  max-width: 100%;
+  padding: calc(var(--spacing) * 10) calc(var(--spacing) * 6);
+  text-align: center;
+}
+.pane-empty-drawing {
+  width: calc(var(--spacing) * 64);
+  max-width: 100%;
+  height: auto;
+  margin-bottom: calc(var(--spacing) * 3);
+}
+.pane-empty strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+.pane-empty span {
+  max-width: 44ch;
+  color: var(--text-secondary);
+  font-size: calc(var(--text-sm) - var(--spacing) / 4);
+  line-height: 1.5;
+}
+.pane-empty .btn-primary {
+  margin-top: calc(var(--spacing) * 3);
+}
+/* The sidebar's steps arrive one after the other, from the left, before the
+   accent draws its way into the pane (.chat-drawing .travel). */
+@media (prefers-reduced-motion: no-preference) {
+  .pane-empty-step {
+    animation: pane-empty-step-in calc(var(--default-transition-duration) * 3) var(--ease-out-expo)
+      backwards;
+  }
+}
+@keyframes pane-empty-step-in {
+  from {
+    opacity: 0;
+    translate: calc(var(--spacing) * -1) 0;
+  }
+}

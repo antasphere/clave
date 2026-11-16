@@ -49,6 +49,14 @@ async function boot(main: string, transport: Transport): Promise<void> {
   }
 }
 
+// A runner ends with its server (PRDCT-4471). Thirteen runners were found
+// alive two days after their servers had gone: the plugin they ran kept the
+// event loop busy (a listening server, a timer), and nothing told them their
+// server was gone. The channel to the server is what tells: when it closes,
+// however the server ended, the runner exits, and an exit runs the plugin's
+// own exit hooks, which end its children.
+const endWithServer = (): never => process.exit(0)
+
 const parentPort = (process as NodeJS.Process & { parentPort?: Electron.ParentPort }).parentPort
 if (parentPort) {
   parentPort.once('message', (event) => {
@@ -57,6 +65,7 @@ if (parentPort) {
     port.on('message', (message) => {
       for (const listener of listeners) listener(message.data)
     })
+    port.on('close', endWithServer)
     port.start()
     void boot((event.data as { main: string }).main, {
       post: (message) => port.postMessage(message),
@@ -69,6 +78,9 @@ if (parentPort) {
     })
   })
 } else {
+  // Registered before the first message is awaited: a server that dies
+  // before it names the plugin leaves no runner behind either.
+  process.once('disconnect', endWithServer)
   process.once('message', (first) => {
     const listeners = new Set<(message: unknown) => void>()
     process.on('message', (message) => {

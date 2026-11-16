@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { availableViews, resolveView } from './resolution'
+import { availableViews, chatViewsFor, resolveView } from './resolution'
 import type { Session } from '../../../shared/session-model'
 import type { PluginRecord } from '../../../main/plugins/plugin-store'
 
@@ -179,5 +179,19 @@ describe('view resolution', () => {
         availableViews(session(), [surface({ permissionsGranted: ['sessions.read'] })], new Set())
       ).toHaveLength(1)
     })
+  })
+})
+
+describe('the chat views a terminal tab may become (lane D, PRDCT-4427)', () => {
+  it('lists the views that render events, with no session to read', () => {
+    expect(chatViewsFor([plugin()], both).map((view) => view.id)).toEqual([
+      'clave.chat-view/chat',
+      'clave.chat-view/terminal'
+    ])
+    // A pty session itself still gets none from availableViews.
+    expect(availableViews(session({ transport: 'pty' }), [plugin()], both)).toEqual([])
+  })
+  it('lists nothing when the chat view plugin cannot render', () => {
+    expect(chatViewsFor([plugin({ status: 'error' })], both)).toEqual([])
   })
 })

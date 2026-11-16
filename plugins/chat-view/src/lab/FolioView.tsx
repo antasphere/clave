@@ -35,7 +35,7 @@ import {
   type Attachment
 } from '../../../../src/shared/attachments'
 import { EndedNotice, type ChatViewProps } from '../ChatView'
-import { answeredSince, openRequests, type Entry } from '../reducer'
+import { openRequests, type Entry } from '../reducer'
 import { createEntryMarkdownPlugins } from '../markdown-append'
 import { ChatCode } from '../code'
 import { describeToolHead, runTitle, toolHint, toolVerb, type ToolEntry } from '../tools'
@@ -47,6 +47,8 @@ import { serverDock, withServerPending } from '../server-requests'
 import { SenderChip } from '../Delivery'
 import { Attachments } from '../Attachments'
 import { useComposerAttachments } from '../composer-attachments'
+import { WaitingStack } from '../WaitingStack'
+import { sendsWhileWorking, takenBack, useWaitingReturns } from '../waiting'
 import { useComposerFocus } from '../focus'
 import { useMessageHistory } from '../history'
 import { usePresentation } from '../presentation'
@@ -97,7 +99,8 @@ import { LAB_VIEW } from './meta'
    with the arrows, or from the contents. The page being written is followed
    until the reader turns away from it. A finished page can be read aloud. */
 
-const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+// The agent's name, from the harness table for every harness (PRDCT-4507).
+import { agentNameOf } from '../../../../src/shared/harness'
 const NOTES_SHOWN = 4
 
 const filesDrag = (dt: DataTransfer): boolean =>
@@ -235,7 +238,7 @@ function ToolNote({
 
 /** A line of the page: what was written, and in its margin what was done
  *  before it. */
-function Line({
+export function Line({
   row,
   pen,
   first,
@@ -261,11 +264,18 @@ function Line({
     <div className="folio-line" data-notes={row.notes.length > 0 ? 'true' : undefined}>
       <div className="folio-text">
         {row.prose && <Prose entry={row.prose} first={first} reading={reading} onError={onError} />}
-        {row.error && (
-          <div className="chat-notice" data-tone="error" role="alert">
-            {row.error.message}
-          </div>
-        )}
+        {row.error &&
+          (row.error.quiet ? (
+            // Nothing failed (PRDCT-4566): the page's own quiet aside, as a
+            // stopped page says it stopped, never the failure's red.
+            <p className="folio-aside" data-tone="quiet" role="status">
+              {row.error.message}
+            </p>
+          ) : (
+            <div className="chat-notice" data-tone="error" role="alert">
+              {row.error.message}
+            </div>
+          ))}
         {pen && <span className="folio-pen" role="status" aria-label="The agent is writing" />}
       </div>
       {row.notes.length > 0 && (
@@ -724,7 +734,12 @@ function usePageScroll(
   return scroll
 }
 
-export function FolioView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
+export function FolioView({
+  session,
+  onState,
+  visible = true,
+  active = visible
+}: ChatViewProps): React.JSX.Element {
   const {
     conversation,
     dispatch,
@@ -889,10 +904,12 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
     clearSent,
     restore
   } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
+  // A message that waited and left unsent comes back here (PRDCT-4566).
+  useWaitingReturns(session.id, conversation.returned, setDraft, attachments, restore, active)
   const filesBlocked =
     preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
   const hasDraft = !!draft.trim() || attachments.length > 0
-  const showInterrupt = state === 'working' && !(session.provider === 'codex' && hasDraft)
+  const showInterrupt = state === 'working' && !(sendsWhileWorking(session.provider) && hasDraft)
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     const imageBytes = attachments.reduce(
@@ -962,12 +979,15 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
   // message comes back to the composer, as in the Chat view.
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
-    const last = lastSent.current
-    if (!answeredSince(conversation.entries)) {
+    // With messages waiting, the one taken back is the one the turn started
+    // on, never another tab's; the last one sent waits, and comes back with
+    // them (PRDCT-4566, `takenBack`).
+    const back = takenBack(conversation.entries, conversation.waiting.length > 0, lastSent.current)
+    if (back.withdraw) {
       dispatch({ withdraw: true })
-      if (last && !draft.trim() && !attachments.length) {
-        setDraft(last.text)
-        restore(last.attachments)
+      if (back.message && !draft.trim() && !attachments.length) {
+        setDraft(back.message.text)
+        restore(back.message.attachments)
       }
     }
     textarea.current?.focus()
@@ -1163,9 +1183,15 @@ export function FolioView({ session, onState, visible = true }: ChatViewProps): 
         )}
         <PromptDock
           requests={waitingOn}
-          agent={AGENT_NAMES[session.provider] ?? 'the agent'}
+          agent={agentNameOf(session.provider)}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+        />
+        <WaitingStack
+          messages={conversation.waiting}
+          takes={conversation.takes}
+          agent={agentNameOf(session.provider, 'The agent')}
+          onWithdraw={(id) => void write({ type: 'withdraw_message', id }).catch(report)}
         />
         <form
           className="chat-composer"

@@ -83,6 +83,15 @@ export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesServic
 export { DigestsPort, type DigestsService, digestHandlers } from './digests'
 // ── PRDCT-4411: the speech of the server a tab runs on ──
 export { SpeechPort, type SpeechService, speechHandlers } from './speech'
+// ── PRDCT-4472: the artefacts of the server a session runs on ──
+export {
+  ArtefactsPort,
+  ArtefactRefusal,
+  type ArtefactsService,
+  type ArtefactEvent,
+  artefactHandlers,
+  ArtefactsEventsLive
+} from './artefacts'
 // ── Wave wcs1023, lane C: the git domain ──
 export { GitPort, type GitService, type GitEvent, gitHandlers, GitEventsLive } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──

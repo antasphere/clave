@@ -63,6 +63,20 @@ import {
   UpdateWorkspacePins,
   UpdateWorkspaceRegistry
 } from './workspaces'
+// ── Lane B (harness wave): provider connections ──
+import {
+  AddProviderConnection,
+  ListProviderConnections,
+  RemoveProviderConnection,
+  RenameProviderConnection,
+  SetProviderConnectionKey
+} from './connections'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import { ReadModelsCatalog } from './models-catalog'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import { ReadProviderUsage } from './provider-usage'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+import { ReadHarnessUsage } from './harness-usage'
 
 export const settingsGroup = ApiGroup.make('settings')
   // Claude accounts
@@ -268,3 +282,45 @@ export const settingsGroup = ApiGroup.make('settings')
       SetLastActiveWorkspace
     )
   )
+  // ── Lane B (harness wave): provider connections ──
+  .add(
+    HttpCqrs.queryEndpoint(
+      'listProviderConnections',
+      '/connections/providers',
+      ListProviderConnections
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'addProviderConnection',
+      '/connections/providers',
+      AddProviderConnection
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'renameProviderConnection',
+      '/connections/providers/rename',
+      RenameProviderConnection
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'removeProviderConnection',
+      '/connections/providers/remove',
+      RemoveProviderConnection
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'setProviderConnectionKey',
+      '/connections/providers/key',
+      SetProviderConnectionKey
+    )
+  )
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  .add(HttpCqrs.queryEndpoint('readModelsCatalog', '/models-catalog', ReadModelsCatalog))
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  .add(HttpCqrs.queryEndpoint('readProviderUsage', '/provider-usage', ReadProviderUsage))
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  .add(HttpCqrs.queryEndpoint('readHarnessUsage', '/harness-usage', ReadHarnessUsage))

@@ -10,13 +10,16 @@
      and the block cursor.
    - folio: one sheet of paper, a heading and its paragraph.
    - report (a routine run): a frame with a chart's bars.
+   - pty (the tab's own terminal, lane D, PRDCT-4427): the prompt's chevron
+     and the cursor bar, nothing more.
    - any other view (a plugin's page): a frame with two lines.
 
    The accent goes on ONE mark, and only in the tile of the view on screen: the
-   send dot, the cursor, the folio's marker, the tallest bar. Words never go
+   send dot, the cursor, the folio's marker, the tallest bar, the terminal's
+   cursor bar. Words never go
    inside a drawing; the tile says the view's name underneath. */
 
-type ViewDrawingKind = 'chat' | 'terminal' | 'folio' | 'report' | 'page'
+type ViewDrawingKind = 'chat' | 'terminal' | 'folio' | 'report' | 'pty' | 'page'
 
 /** Which drawing a view id gets: the bundled views by their id, anything a
  *  plugin contributes as a page. */
@@ -25,6 +28,8 @@ function drawingKind(viewId: string): ViewDrawingKind {
   if (viewId === 'clave.chat-view/terminal') return 'terminal'
   if (viewId === 'clave.chat-view/lab') return 'folio'
   if (viewId === 'clave.routine-report/report') return 'report'
+  // The terminal tile of « View as » (`lib/switch-transport.ts`).
+  if (viewId === 'transport:pty') return 'pty'
   return 'page'
 }
 
@@ -79,6 +84,12 @@ export function ViewDrawing({
           <rect className="bx" x="27" y="18" width="6" height="16" rx="1" />
           <rect className={mark} x="38" y="11" width="6" height="23" rx="1" />
           <rect className="bx" x="49" y="21" width="6" height="13" rx="1" />
+        </>
+      )}
+      {kind === 'pty' && (
+        <>
+          <path className="ln" d="M24,15 L31,22 L24,29" />
+          <rect className={mark} x="35" y="27" width="12" height="3" rx="1" />
         </>
       )}
       {kind === 'page' && (

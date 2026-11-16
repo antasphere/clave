@@ -21,6 +21,7 @@ import {
   toolDescription
 } from '../../shared/permission-risk'
 import {
+  LATEST_MESSAGES,
   parseExplainerReply,
   type ExplainerInput,
   type ExplainerReading
@@ -89,16 +90,29 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
     inflight.delete(key)
     options.cancel?.(owner)
   }
-  const said = new Map<string, { asked?: string; words: string }>()
+  /** What the conversation says, as the explainer reads it (PRDCT-4489):
+   *  the person's first message, their latest ones, and the agent's words
+   *  since the last of them. A request is judged against the work of the
+   *  conversation, not the last sentence alone. */
+  interface Said {
+    opening?: string
+    latest: string[]
+    words: string
+  }
+  const said = new Map<string, Said>()
   const keyOf = (sessionId: string, id: string): string => `${sessionId}\u0000${id}`
-  const contextOf = (sessionId: string): { asked?: string; words: string } => {
+  const contextOf = (sessionId: string): Said => {
     let context = said.get(sessionId)
-    if (!context) said.set(sessionId, (context = { words: '' }))
+    if (!context) said.set(sessionId, (context = { latest: [], words: '' }))
     return context
   }
   const hear = (sessionId: string, text: string): void => {
     const context = contextOf(sessionId)
-    context.asked = text
+    context.opening ??= text
+    // The same message heard twice (as it leaves, then as the stream echoes
+    // it) counts once.
+    if (context.latest.at(-1) !== text)
+      context.latest = [...context.latest, text].slice(-LATEST_MESSAGES)
     context.words = ''
   }
 
@@ -124,7 +138,9 @@ export function explainingSessionHost(options: ExplainingHostOptions): {
       toolDescription: toolDescription(toolName),
       input: request.input,
       ...(request.detail && { reason: request.detail }),
-      ...(context.asked && { asked: context.asked }),
+      ...(context.latest.length > 0 && { latest: context.latest }),
+      ...(context.opening !== undefined &&
+        !context.latest.includes(context.opening) && { opening: context.opening }),
       ...(context.words.trim() && { agentWords: context.words.slice(-AGENT_WORDS_CHARS) }),
       ...(cwd && { cwd }),
       floor,

@@ -74,6 +74,30 @@ describe('transcriptMarkdown', () => {
     expect(md.indexOf('npm test')).toBeLessThan(md.indexOf('The fade covers it.'))
   })
 
+  // PRDCT-4566: a quiet notice reports no failure (another tab's message left
+  // unsent): a plain line, as `_Interrupted_` is written; a failure keeps its
+  // Error.
+  it('writes a quiet notice as a plain line, a failure as an error', () => {
+    const entries: Entry[] = [
+      {
+        kind: 'user',
+        text: 'A long turn to stop',
+        final: true,
+        at: at(14, 2),
+        interrupted: true
+      },
+      { kind: 'assistant', text: 'You said:', final: true, at: at(14, 2) },
+      { kind: 'error', message: 'A message from Lane B was not sent.', at: at(14, 3), quiet: true },
+      { kind: 'error', message: 'Pi stopped during the turn (exit code 137)', at: at(14, 4) }
+    ]
+    const md = transcriptMarkdown(entries, meta)
+    expect(md).toContain('\n\n_Interrupted_\n')
+    expect(md).toContain('\n\n_A message from Lane B was not sent._\n')
+    expect(md).not.toMatch(/Error:\*\* A message from Lane B/)
+    expect(md).toContain('> **Error:** Pi stopped during the turn (exit code 137)')
+    expect(md.indexOf('Lane B was not sent')).toBeLessThan(md.indexOf('Pi stopped'))
+  })
+
   it('names attachments and fences a target holding backticks', () => {
     const entries: Entry[] = [
       {
@@ -105,6 +129,50 @@ describe('transcriptMarkdown', () => {
     const md = transcriptMarkdown(entries, meta)
     expect(md).toContain('_Attached: `shot.png`_')
     expect(md).toContain('`` echo `date` ``')
+  })
+
+  it('writes a message another tab sent under that tab’s name, without the bracketed header, in the order shown (PRDCT-4566)', () => {
+    const entries: Entry[] = [
+      { kind: 'user', text: 'Refactor the parser', final: true, at: at(10, 0) },
+      { kind: 'assistant', text: 'On it.', final: true, at: at(10, 1) },
+      {
+        kind: 'user',
+        text: '[Message from Clave tab "Lane B" — reply with clave_send_to_session sessionId="tab-b"]\nThe parser tests are mine, leave them.',
+        final: true,
+        at: at(10, 2)
+      },
+      {
+        kind: 'user',
+        text: '[Message from Clave tab "Lane B" — reply with clave_send_to_session sessionId="tab-b"]\nAnd the fixtures.',
+        final: true,
+        at: at(10, 2)
+      },
+      { kind: 'assistant', text: 'Understood, Lane B.', final: true, at: at(10, 3) },
+      {
+        kind: 'user',
+        text: '[Message from a Clave agent]\nA word from nowhere.',
+        final: true,
+        at: at(10, 4)
+      },
+      { kind: 'user', text: 'Thanks', final: true, at: at(10, 5) }
+    ]
+    const md = transcriptMarkdown(entries, meta)
+    expect(md).not.toContain('[Message from')
+    expect(md).not.toContain('clave_send_to_session')
+    // One heading for the tab's two messages in a row; never "You" for them.
+    expect(md.match(/^## Lane B · 10:02$/gm)).toHaveLength(1)
+    expect(md.match(/^## Another agent · 10:04$/gm)).toHaveLength(1)
+    expect(md.match(/^## You/gm)).toHaveLength(2)
+    const order = [
+      'Refactor the parser',
+      'On it.',
+      'The parser tests are mine, leave them.',
+      'And the fixtures.',
+      'Understood, Lane B.',
+      'A word from nowhere.',
+      'Thanks'
+    ].map((words) => md.indexOf(words))
+    expect(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1]))).toBe(true)
   })
 })
 

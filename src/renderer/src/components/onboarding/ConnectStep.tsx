@@ -240,7 +240,7 @@ export function ConnectStep({
         />
       ))}
       <p className="onb-footnote" data-stagger-item>
-        One is enough; you can add more accounts later in Settings → Accounts.{' '}
+        One is enough; you can add more accounts later in Settings → Connections.{' '}
         <button type="button" className="onb-link" onClick={onCheckAgain}>
           Check again
         </button>

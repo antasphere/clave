@@ -8,6 +8,7 @@ vi.mock('../store/session-store', () => ({
 }))
 import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
 import { useFleetStore } from '../store/fleet-store'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { resourceKey } from '@clave/contract/fleet'
 const profile = {
   id: 'remote',
@@ -168,6 +169,63 @@ describe('MCP fleet session launch', () => {
         openFleetSession('server', undefined, undefined, { cwd: '/srv/repo', ...args })
       ).rejects.toThrow()
     expect(api.fleetStart).not.toHaveBeenCalled()
+  })
+  // Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on the server's stored connections
+  it('opens Pi and OpenCode on the server\'s stored connection named by id, label or "any", its list read first, and refuses an unknown one or none', async () => {
+    const api = setup() as ReturnType<typeof setup> & Record<string, ReturnType<typeof vi.fn>>
+    const stored = (id: string, company: string, label: string, hasKey = true): unknown => ({
+      id,
+      label,
+      company,
+      pool: company,
+      kind: 'key',
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+      needsKey: true,
+      hasKey,
+      keySetAt: null,
+      createdAt: 0
+    })
+    const list = vi
+      .fn()
+      .mockResolvedValue([
+        stored('c-ds', 'deepseek', 'No key yet', false),
+        stored('c-kimi', 'moonshot', 'Kimi work')
+      ])
+    ;(
+      window as unknown as { electronAPI: Record<string, unknown> }
+    ).electronAPI.fleetProviderConnections = list
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    const open = (args: Record<string, unknown>): Promise<unknown> =>
+      openFleetSession('server', undefined, undefined, { cwd: '/srv/repo', ...args })
+    const startedWith = (n: number): Record<string, unknown> =>
+      api.fleetStart.mock.calls[n][2] as Record<string, unknown>
+    await open({ mode: 'pi', account: 'c-kimi' })
+    expect(list).toHaveBeenCalledWith('server')
+    expect(startedWith(0)).toMatchObject({
+      piMode: true,
+      connectionId: 'c-kimi',
+      connectionLabel: 'Kimi work'
+    })
+    await open({ mode: 'opencode', account: 'kimi WORK' })
+    expect(startedWith(1)).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    await open({ mode: 'pi', account: 'any' })
+    expect(startedWith(2)).toMatchObject({ connectionId: 'c-kimi' })
+    await open({ mode: 'pi' })
+    expect(startedWith(3)).not.toHaveProperty('connectionId')
+    await expect(open({ mode: 'pi', account: 'Nobody' })).rejects.toThrow(
+      'Unknown Pi connection "Nobody". Available: "Kimi work" (c-kimi), "No key yet" (c-ds)'
+    )
+    useProviderConnectionsStore.setState({
+      byMachine: { server: { connections: [], loading: false, error: null } }
+    })
+    await expect(open({ mode: 'pi', account: 'any' })).rejects.toThrow(
+      'No stored connection serves Pi yet: add one in Settings → Connections.'
+    )
+    // Antigravity has no pool: still refused.
+    await expect(open({ mode: 'antigravity', account: 'x' })).rejects.toThrow(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
+    )
+    expect(api.fleetStart).toHaveBeenCalledTimes(4)
   })
   it('reopens a resumed conversation on the profile and the server account it ran on, unless the call names its account (PRDCT-4321)', async () => {
     const api = setup()

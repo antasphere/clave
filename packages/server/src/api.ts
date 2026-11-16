@@ -78,6 +78,8 @@ import { RoutinesLive } from './routines/api'
 import { DigestsLive } from './digests/api'
 // ── PRDCT-4411: the speech ──
 import { SpeechLive } from './speech/api'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactsLive } from './artefacts/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade, SetServerName } from '@clave/contract/server-info'
 // ── PRDCT-4321: the conversations a server's tabs ran ──
@@ -287,6 +289,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       DevicesLive,
       // ── PRDCT-4411: the speech ──
       SpeechLive,
+      // ── PRDCT-4472: the artefacts ──
+      ArtefactsLive,
       HealthLive
     )
   )

@@ -46,5 +46,7 @@ export * as Digests from './digests'
 export * as Devices from './devices'
 // ── PRDCT-4411: the speech of the server a tab runs on ──
 export * as Speech from './speech'
+// ── PRDCT-4472: the artefacts of the server a session runs on ──
+export * as Artefacts from './artefacts'
 
 // ── Lane B: terminals · Lane D: settings served ──

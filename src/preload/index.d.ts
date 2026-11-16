@@ -63,7 +63,7 @@ import type {
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { SlidelessAPI } from '../shared/slideless'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   HelperAccount,
@@ -71,6 +71,14 @@ import type {
   HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -171,6 +179,9 @@ export interface RestartOverridesInput {
   /** The first message of the fresh conversation when nothing is resumed (the handoff). */
   firstMessage?: string
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId?: string
 }
 
 /** The server a History row's conversation ran on (PRDCT-4321): absent for
@@ -522,8 +533,16 @@ export interface SessionRecord {
   claudeProfileLabel?: string
   codexAccountId?: string
   codexAccountLabel?: string
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId?: string
+  connectionLabel?: string
+  /** PRDCT-4540: the provider the process went to off its connection. */
+  connectionLeftFor?: string
   /** The thread a Codex chat tab resumes on relaunch. */
   codexThreadId?: string
+  /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
+   *  on relaunch. */
+  opencodeSessionId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string
@@ -607,6 +626,45 @@ export interface ClaudeAccount {
   tokenExpiresAt: number | null
   /** The service refused the token on its last read. */
   tokenInvalid: boolean
+}
+
+// ── Lane B (harness wave): provider connections ──
+/** The wire format a provider endpoint speaks (`@clave/contract/settings`). */
+export type ProviderWireFormat = 'anthropic-messages' | 'openai-chat' | 'openai-responses'
+/** The ten cards of the catalogue (`@clave/contract/settings`, `PROVIDER_COMPANIES`). */
+export type ProviderCompanyId =
+  | 'moonshot'
+  | 'zai'
+  | 'mistral'
+  | 'deepseek'
+  | 'minimax'
+  | 'alibaba'
+  | 'openrouter'
+  | 'vercel-ai-gateway'
+  | 'ollama'
+  | 'generic'
+/** A provider connection as the renderer sees it (PRDCT-4426), field by
+ *  field the contract's `ProviderConnectionView`: never the key. */
+export interface ProviderConnection {
+  id: string
+  label: string
+  company: ProviderCompanyId
+  kind: 'key'
+  /** The pool this connection belongs to: the company's id. */
+  pool: ProviderCompanyId
+  endpoints: { wireFormat: ProviderWireFormat; baseUrl: string }[]
+  /** False for Ollama, which takes no key. */
+  needsKey: boolean
+  hasKey: boolean
+  keySetAt: number | null
+  createdAt: number
+}
+/** A new card: a company of the catalogue, Ollama at a base URL, or a generic endpoint. */
+export interface ProviderConnectionAddInput {
+  company: ProviderCompanyId
+  label?: string
+  baseUrl?: string
+  wireFormat?: ProviderWireFormat
 }
 
 /** A Codex account as the renderer sees it (ADR 0002): a home per account,
@@ -775,6 +833,31 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
+/** The window's road to the artefacts (PRDCT-4474). */
+export interface ArtefactsAPI {
+  /** Every artefact this window can show: this Mac's own server's, and each connected server's, their session ids as the window keys them. */
+  list(): Promise<Artefact[]>
+  /** Hold the preview of a session's artefact; call again with the holdId before ttlMs runs out. The url is one this window can frame. */
+  hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
+  release(sessionId: string, holdId: string): Promise<void>
+  saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
+  /** The versions the session's artefact keeps, from its running preview (PRDCT-4494). */
+  versions(sessionId: string): Promise<ArtefactVersions>
+  /** The session shows no artefact any more, for every window and every Mac. */
+  close(sessionId: string): Promise<void>
+  onChanged(
+    callback: (change: { sessionId: string; artefact: Artefact | null }) => void
+  ): () => void
+  /** The preview died under its holders: hold again. */
+  onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
+  slidelessState(serverId?: string): Promise<SlidelessState>
+  installSlideless(serverId?: string): Promise<SlidelessState>
+  onSlidelessState(
+    callback: (change: { serverId: string | null; state: SlidelessState }) => void
+  ): () => void
+}
+
 export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
@@ -968,6 +1051,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       spawnedBy?: string
       /** The same tab, nested or not (PRDCT-4192) — persisted on the record. */
       openedBy?: string
+      // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+      connectionId?: string
+      connectionLabel?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void
@@ -1029,6 +1115,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
   /** The session runs on `model` now, as its provider said it (PRDCT-4256). */
   onSessionModelChanged: (callback: (payload: { id: string; model: string }) => void) => () => void
+  /** PRDCT-4540: the tab's process went off its connection, or back on it. */
+  onSessionConnectionChanged: (
+    callback: (payload: { id: string; leftFor: string | null }) => void
+  ) => () => void
   onSessionRestarted: (
     callback: (payload: {
       id: string
@@ -1148,7 +1238,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
   secretSubmit: (id: string, secret: string) => Promise<SecretRequestView>
   secretDismiss: (id: string) => Promise<SecretRequestView>
   onSecretRequestsChanged: (callback: (requests: SecretRequestView[]) => void) => () => void
-  slideless: SlidelessAPI
+  /**
+   * A session's HTML artefact (PRDCT-4474), on the server the session runs
+   * on: this Mac's own server for its own sessions, a connected server for
+   * its sessions, their ids keyed as the window keys them.
+   */
+  artefacts: ArtefactsAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
@@ -1627,6 +1722,53 @@ export interface ElectronAPI extends FleetDesktopAPI {
   // ── Lane C: settings behind ports ──
 
   // ── Lane F: the shell ──
+
+  // ── Lane B (harness wave): provider connections ──
+  /** This Mac's provider connections (PRDCT-4426); a server's are `fleetProviderConnections`. */
+  providerConnectionsList: () => Promise<ProviderConnection[]>
+  /** What each of this machine's Pi connections starts on when an open names
+   *  no model, by connection id (PRDCT-4496, `piStartModel`), over the
+   *  connections passed (the ones the window lists), else main's own. */
+  providerPiStartModels: (
+    connections?: readonly ProviderConnection[]
+  ) => Promise<Record<string, import('../shared/pi-start-model').PiStartModel>>
+  /** Refuses (the sentence in the error) an unknown company, a generic one
+   *  without its base URL and wire format, or a base URL that is not http(s). */
+  providerConnectionAdd: (input: ProviderConnectionAddInput) => Promise<ProviderConnection>
+  /** Refuses an unknown connection ("No such connection."). */
+  providerConnectionRename: (id: string, label: string) => Promise<ProviderConnection>
+  /** Removing a connection forgets its key with it. False for an unknown id. */
+  providerConnectionRemove: (id: string) => Promise<boolean>
+  /** The key goes in here and comes back in nothing: the answer says `hasKey`. */
+  providerConnectionSetKey: (id: string, apiKey: string) => Promise<ProviderConnection>
+  /** The whole list after any change, never a key. */
+  onProviderConnectionsChanged: (
+    callback: (connections: ProviderConnection[]) => void
+  ) => () => void
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of the window's server (this Mac's when it has
+   *  none): the providers of those ids in their order, every one when none is
+   *  named, fetched again first with `force`. A failed fetch is `stale` with
+   *  its `error`, never a rejection. A saved server's is `fleetModelsCatalog`. */
+  modelsCatalogRead: (input?: {
+    providerIds?: string[]
+    force?: boolean
+  }) => Promise<ModelsCatalogView>
+
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage line of that stored provider connection on the window's server
+   *  (this Mac's when it has none), read again first with `force`. A failed
+   *  read or an unknown connection is the unknown line with its reason, never
+   *  a rejection. A saved server's is `fleetProviderUsage`. */
+  providerUsageRead: (input: {
+    connectionId: string
+    force?: boolean
+  }) => Promise<ProviderUsageLineView>
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** The Pi and OpenCode usage per connection of the tabs the window's server
+   *  runs (this Mac's when it has none), over the range. A saved server's is
+   *  `fleetHarnessUsage`. */
+  harnessUsageRead: (input: { range: HarnessUsageRange }) => Promise<HarnessUsageView>
 }
 
 declare global {

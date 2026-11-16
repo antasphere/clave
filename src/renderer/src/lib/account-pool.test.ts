@@ -193,6 +193,31 @@ describe('pickAccount', () => {
     expect(pickAccount({ accounts: withKey, usage, preferredId: 'work' })).toBe('key')
   })
 
+  it('a launch keeps a SELECTED fallback once every subscription is out; a move leaves it', () => {
+    const withKey = [...accounts, { id: 'key', usable: true, fallback: true }]
+    const out = { default: used(96), work: used(96), team: used(96) }
+    expect(pickAccount({ accounts: withKey, usage: {}, preferredId: 'key' })).toBe('default')
+    expect(pickAccount({ accounts: withKey, usage: out, preferredId: 'key' })).toBe('key')
+    expect(
+      pickAccount({ accounts: withKey, usage: out, preferredId: 'key', leavingId: 'key' })
+    ).not.toBe('key')
+  })
+
+  it('a launch keeps the SELECTED key among two once the subscription is out; a switch leaving it takes the other (verifier, round 2)', () => {
+    const twoKeys = [
+      { id: 'sub', usable: true },
+      { id: 'keyA', usable: true, fallback: true },
+      { id: 'keyB', usable: true, fallback: true }
+    ]
+    const out = { sub: used(96) }
+    expect(pickAccount({ accounts: twoKeys, usage: out, preferredId: 'keyA' })).toBe('keyA')
+    // Open, the subscription still wins over the selected key.
+    expect(pickAccount({ accounts: twoKeys, usage: {}, preferredId: 'keyA' })).toBe('sub')
+    expect(
+      pickAccount({ accounts: twoKeys, usage: out, preferredId: 'keyA', leavingId: 'keyA' })
+    ).not.toBe('keyA')
+  })
+
   it('with everything out and no fallback, takes the account that resets soonest', () => {
     const usage = {
       default: used(96, { resetsAt: 3000 }),

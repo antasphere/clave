@@ -6,7 +6,9 @@ In a Claude Code or Codex tab running inside Clave, ask:
 
 The agent calls `clave_open_side_panel`. The session immediately focuses into conversation on the left and editing on the right. Select another session and return: the pair, split width and document scroll are preserved. Drag the divider or focus it and use left/right arrow keys. Hide closes the panel; **Open linked document** brings it back. Linking another item preserves the old record in profile storage, but the MVP only exposes the current item per session (there is no draft library yet).
 
-Markdown uses the rendered editor with a Source toggle. HTML opens in Source, with a Rendered toggle that uses the existing directory-scoped preview protocol: sibling CSS, scripts and images work. HTML is source editing plus preview, not arbitrary visual page editing. Independent file tabs continue to work.
+Markdown uses the rendered editor with a Source toggle. Independent file tabs continue to work.
+
+The side panel is Markdown and email only. An HTML page, document or deck, or a folder holding one, is the session's **artefact**: the agent opens it with `clave_open_artefact`, the server the session runs on shows it through Slideless and saves a version at each finished turn, and the window frames it in the same place beside the session. `clave_open_side_panel` refuses an `.html` path or a folder with the sentence that names that tool, and an HTML document a build before PRDCT-4474 kept is dropped when the store loads (the page on disk is left alone). One card shows beside a session at a time, the one opened last. See [artefacts.md](artefacts.md).
 
 Every edit autosaves. The **Saved** status means main-process persistence completed. A file modified externally produces a visible conflict: user edits remain in Clave's profile and the external file stays untouched. **Copy my edits** preserves your version before **Load saved version** loads the external source. If an agent races an edit, revision checks refuse its stale update. An agent's read flushes the editor's pending saves first, so what it reads back is what you see.
 

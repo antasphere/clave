@@ -24,6 +24,8 @@ import { ServerUpgradeEvent } from './server-info'
 import { RoutinesChanged } from './routines/model'
 // ── Mobile wave, lane A: the devices (a phone paired, asking, or revoked) ──
 import { DevicePairingRequested, DevicesChanged } from './devices'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactEvent } from './artefacts'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -51,6 +53,13 @@ export const ServerEvent = Schema.Union(
    *  Codex app-server's thread): what a window's sidebar judges the caps by
    *  (PRDCT-4256). Sent over the window's IPC too while no server runs. */
   Schema.TaggedStruct('session.model_changed', { id: Schema.String, model: Schema.String }),
+  /** PRDCT-4540: the session's own process reported a request off its stored
+   *  connection (`leftFor`, the provider it went to), or back on it (null).
+   *  Sent over the window's IPC too while no server runs. */
+  Schema.TaggedStruct('session.connection_changed', {
+    id: Schema.String,
+    leftFor: Schema.NullOr(Schema.String)
+  }),
   /** The session's CLI reported its account's limit and WHICH cap it hit
    *  (ADR 0002, PRDCT-4302): a shared cap, one model family's week, the org's
    *  credits, or nothing more than the refusal. The window's policy picks its
@@ -136,7 +145,9 @@ export const ServerEvent = Schema.Union(
   RoutinesChanged,
   // ── Mobile wave, lane A: the paired phones or the pending pairings changed; a phone asked ──
   DevicesChanged,
-  DevicePairingRequested
+  DevicePairingRequested,
+  // ── PRDCT-4472: the artefacts (a session's artefact opened or closed, its preview died, Slideless changed state) ──
+  ...ArtefactEvent.members
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

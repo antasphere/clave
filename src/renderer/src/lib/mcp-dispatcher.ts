@@ -1,20 +1,31 @@
 import { workspaceForPath } from '../../../shared/workspace-types'
+import { sessionConnectionLeft } from './session-connection'
 import { launchModeFields } from '../../../shared/runtime-choices'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import { useFleetStore } from '../store/fleet-store'
 import { allWorkspaces } from '../store/workspace-store'
 import { resolveSessionTarget } from './mcp-session-target'
-import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
+import {
+  assertServerConnected,
+  machineProviderConnection,
+  openFleetSession,
+  readProviderConnections
+} from './mcp-fleet-session'
 import { ownerOf } from './fleet-identity'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { flushLinkedDocument } from '../store/linked-document-store'
 import type { LinkedOpen } from '../../../shared/linked-documents'
+import { ownSessionRef } from '../../../shared/own-session-ref'
+import { afterSpawn, withWarnings } from '../../../shared/open-after-spawn'
 import {
   captureEndpoint as captureEndpointOf,
   emitTabClosed,
   groupOfSession,
+  isCaptured,
   sessionMode,
   type SessionMode
 } from './exchange-capture'
+import { exchangeCaptureRefusal } from '../../../shared/agent-launch'
 import { useSessionStore, fileTabDedupKey, inActiveWorkspace } from '../store/session-store'
 import type {
   GroupTerminalConfig,
@@ -26,7 +37,7 @@ import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinn
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor, selectedChatProfile } from '../store/launch-profile-store'
-import { rememberedLaunchModel } from './launch-model'
+import { localOpenProfileId, rememberedLaunchModel } from './launch-model'
 import { claudeProfileSpawnFields, type ClaudeProfile } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
 import {
@@ -55,6 +66,12 @@ import {
   workToolAnswer
 } from '../../../shared/work-tools'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
+import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
+import type { CodexModels } from './launch-options-input'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
+import { useAgentUpdatesStore } from '../store/agent-updates-store'
+import { useAccountPolicyStore } from '../store/account-policy-store'
+import { getWorkspaceById } from '../store/workspace-store'
 import {
   buildCheckpointProvenance,
   buildProvenanceHeader
@@ -215,7 +232,18 @@ function listedAccount(
   s: Session
 ): { id: string; label: string; removed: boolean; exhausted: boolean } | null {
   const provider = s.claudeMode || s.claudeAgentsMode ? 'claude' : s.codexMode ? 'codex' : null
-  if (!provider) return null
+  // A Pi or OpenCode tab on a stored connection (PRDCT-4496): its id and
+  // label, never exhausted (a provider key reports no usage).
+  // A tab whose process left it names it no more (PRDCT-4540, one rule).
+  if (!provider)
+    return (s.piMode || s.opencodeMode) && s.connectionId && !sessionConnectionLeft(s)
+      ? {
+          id: s.connectionId,
+          label: s.connectionLabel ?? s.connectionId,
+          removed: false,
+          exhausted: false
+        }
+      : null
   const { id, label, removed } = sessionOwnAccount(s, provider)
   return { id, label, removed, exhausted: sessionAccountExhausted(s) }
 }
@@ -229,9 +257,16 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
     .filter((s) => s.sessionType === 'local' && inScope(s))
     .map((s) => ({
       id: s.id,
+      // The tab that opened it, as the served and the daemon's roads say
+      // (PRDCT-4507): the open's memory, main's lineage, the record's opener.
+      ...parentOf(s),
       name: s.name,
       cwd: s.cwd,
       mode: sessionMode(s),
+      // What the tab runs on, as its record keeps it (the store follows each
+      // model the agent reports), under the daemon's names (PRDCT-4496).
+      model: s.model ?? null,
+      launchProfileId: s.launchProfileId ?? null,
       alive: s.alive,
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
@@ -241,6 +276,8 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       // the tab predates accounts or was launched without naming one.
       // Whether that account is about to hit its limit, for an agent to act on.
       account: listedAccount(s),
+      // PRDCT-4540: a tab whose process left its connection says so.
+      connectionLeft: sessionConnectionLeft(s),
       groupId: groupOfSession(state.groups, s.id)?.id ?? null,
       view: s.view ? { url: s.view.url, title: s.view.title ?? null } : null,
       workspaceId: s.workspaceId ?? null,
@@ -431,11 +468,16 @@ const messagingParentOf = (session: Session): string | undefined =>
   persistedParents.get(session.id) ??
   session.openedBy ??
   session.spawnedBy
+/** `{ parentId }` for a tab some tab opened, nothing otherwise. */
+const parentOf = (session: Session): { parentId?: string } => {
+  const parentId = messagingParentOf(session)
+  return parentId ? { parentId } : {}
+}
 
 export async function openSessionProgrammatically(payload: {
   cwd: string
   server?: string
-  mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
+  mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'opencode' | 'terminal'
   groupId?: string
   name?: string
   dangerous?: boolean
@@ -443,7 +485,8 @@ export async function openSessionProgrammatically(payload: {
   profile?: string
   /** Open claude / codex in Clave's chat view instead of the terminal. */
   chat?: boolean
-  /** The Claude account (id or label) the tab runs on; claude mode only. */
+  /** The connection (id or label, or "any") the tab runs on: a Claude or
+   *  Codex account, or a stored connection of Pi's or OpenCode's. */
   account?: string
   provider?: string
   thinking?: PiThinkingLevel
@@ -556,14 +599,20 @@ export async function openSessionProgrammatically(payload: {
   const codexAccount = codexMode
     ? (resolveAccountRef('codex', payload.account, judgedModel) as CodexAccount)
     : null
-  if (payload.account && !claudeMode && !codexMode) {
-    throw new Error(
-      `The account argument applies to claude and codex modes only (got mode "${mode}")`
-    )
+  const providerHarness = piMode ? 'pi' : opencodeMode ? 'opencode' : null
+  if (payload.account && !claudeMode && !codexMode && !providerHarness) {
+    throw new Error(accountArgumentRefusal(mode))
   }
+  // Pi and OpenCode run on one of this Mac's stored connections when the
+  // account names one (PRDCT-4496); with none, on the login inside the harness.
+  const connection =
+    payload.account && providerHarness
+      ? await machineProviderConnection(LOCAL_SERVER_ID, providerHarness, payload.account)
+      : null
   const accountFields = {
     ...(claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}),
-    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
+    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {}),
+    ...(connection ?? {})
   }
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
@@ -598,75 +647,95 @@ export async function openSessionProgrammatically(payload: {
   })
 
   if (payload.callerSessionId) messagingParents.set(info.id, payload.callerSessionId)
-  state.addSession({
-    id: info.id,
-    cwd: info.cwd,
-    folderName: info.folderName,
-    name: info.folderName,
-    alive: info.alive,
-    activityStatus: 'idle',
-    promptWaiting: null,
-    claudeMode,
-    antigravityMode,
-    codexMode,
-    piMode,
-    opencodeMode,
-    claudeAgentsMode: false,
-    dangerousMode,
-    model: info.model,
-    spawnedBy,
-    claudeSessionId: info.claudeSessionId ?? null,
-    piSessionId: info.piSessionId ?? null,
-    launchProfileId: info.launchProfileId,
-    piProvider: info.piProvider,
-    piThinking: info.piThinking,
-    claudeProfileId: claudeProfile?.id,
-    claudeProfileLabel: claudeProfile?.label,
-    codexAccountId: codexAccount?.id,
-    codexAccountLabel: codexAccount?.label,
-    // Persist so Duplicate re-primes the clone with the same prompt.
-    initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
-    sessionType: 'local',
-    detectedUrl: null,
-    serverStatus: null,
-    serverCommand: null,
-    hasUnseenActivity: false,
-    userRenamed: false,
-    planFilePath: null,
-    workspaceId
-  })
+  // The tab exists from here on: every step after it is best effort, said in
+  // the answer beside the tab's id, never thrown (PRDCT-4507).
+  const warnings: string[] = []
+  await afterSpawn(warnings, 'place', () =>
+    state.addSession({
+      id: info.id,
+      cwd: info.cwd,
+      folderName: info.folderName,
+      name: info.folderName,
+      alive: info.alive,
+      activityStatus: 'idle',
+      promptWaiting: null,
+      claudeMode,
+      antigravityMode,
+      codexMode,
+      piMode,
+      opencodeMode,
+      claudeAgentsMode: false,
+      dangerousMode,
+      model: info.model,
+      spawnedBy,
+      claudeSessionId: info.claudeSessionId ?? null,
+      piSessionId: info.piSessionId ?? null,
+      launchProfileId: info.launchProfileId,
+      piProvider: info.piProvider,
+      piThinking: info.piThinking,
+      claudeProfileId: claudeProfile?.id,
+      claudeProfileLabel: claudeProfile?.label,
+      codexAccountId: codexAccount?.id,
+      codexAccountLabel: codexAccount?.label,
+      ...(connection ?? {}),
+      // Persist so Duplicate re-primes the clone with the same prompt.
+      initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
+      sessionType: 'local',
+      detectedUrl: null,
+      serverStatus: null,
+      serverCommand: null,
+      hasUnseenActivity: false,
+      userRenamed: false,
+      planFilePath: null,
+      workspaceId
+    })
+  )
   // renameSession sets userRenamed, protecting the name from auto-title overwrite.
-  if (payload.name) useSessionStore.getState().renameSession(info.id, payload.name)
+  if (payload.name)
+    await afterSpawn(warnings, 'name', () =>
+      useSessionStore.getState().renameSession(info.id, payload.name!)
+    )
   // An agent that asked for a group gets one; one that didn't is left where
   // addSession put it — the sidebar's first row, top level. (There used to be
   // a pull-back here: addSession nested a new tab into whatever group held the
   // user's selection, which an agent spawn must never inherit. addSession does
   // not nest at all now, so there is nothing to undo.)
   if (targetGroup) {
-    useSessionStore.getState().moveItems([info.id], targetGroup.id, 'inside')
+    await afterSpawn(warnings, 'group', () =>
+      useSessionStore.getState().moveItems([info.id], targetGroup.id, 'inside')
+    )
   }
 
   // Agent-delegation spawns are transport events (PRDCT-1568): record them
   // with their launch prompt. UI-originated opens have no caller identity and
   // are the human's own act, not transport — never captured. Terminals are
   // not agents; not captured either.
-  if (payload.callerSessionId && mode !== 'terminal' && mode !== 'pi') {
-    const current = useSessionStore.getState().sessions
-    const spawner = current.find((s) => s.id === payload.callerSessionId)
-    const spawned = current.find((s) => s.id === info.id)
-    if (spawner && spawned) {
-      window.electronAPI.captureTabSpawn({
-        ts: new Date().toISOString(),
-        spawner: captureEndpointOf(spawner, useSessionStore.getState().groups),
-        session: captureEndpointOf(spawned, useSessionStore.getState().groups),
-        prompt: payload.prompt || null,
-        model: model ?? null
-      })
+  // Whether each end is captured comes from the harness table (PRDCT-4507),
+  // and a capture is observability: it never fails an open whose tab exists.
+  if (payload.callerSessionId) {
+    try {
+      const current = useSessionStore.getState().sessions
+      const spawner = current.find((s) => s.id === payload.callerSessionId)
+      const spawned = current.find((s) => s.id === info.id)
+      if (spawner && spawned && isCaptured(spawner) && isCaptured(spawned)) {
+        window.electronAPI.captureTabSpawn({
+          ts: new Date().toISOString(),
+          spawner: captureEndpointOf(spawner, useSessionStore.getState().groups),
+          session: captureEndpointOf(spawned, useSessionStore.getState().groups),
+          prompt: payload.prompt || null,
+          model: model ?? null
+        })
+      }
+    } catch {
+      // observability only
     }
   }
 
   const groups = useSessionStore.getState().groups
-  return { sessionId: info.id, groupId: groupOfSession(groups, info.id)?.id ?? null }
+  return withWarnings(
+    { sessionId: info.id, groupId: groupOfSession(groups, info.id)?.id ?? null },
+    warnings
+  )
 }
 
 function handleMoveSession(payload: {
@@ -675,21 +744,22 @@ function handleMoveSession(payload: {
   callerSessionId?: string
 }): unknown {
   const state = useSessionStore.getState()
-  if (!state.sessions.some((s) => s.id === payload.sessionId)) {
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  if (!state.sessions.some((s) => s.id === id)) {
     throw new Error(`No session with id "${payload.sessionId}"`)
   }
   if (payload.groupId === 'root') {
     // The explicit ungroup: a null target is the top level, at the end.
-    state.moveItems([payload.sessionId], null, 'after')
+    state.moveItems([id], null, 'after')
   } else {
     const group = resolveGroup(state.groups, payload.groupId, payload.callerSessionId)
-    state.moveItems([payload.sessionId], group.id, 'inside')
-    alignSessionToGroupWorkspace(payload.sessionId, group)
+    state.moveItems([id], group.id, 'inside')
+    alignSessionToGroupWorkspace(id, group)
   }
   const groups = useSessionStore.getState().groups
   return {
-    sessionId: payload.sessionId,
-    groupId: groupOfSession(groups, payload.sessionId)?.id ?? null
+    sessionId: id,
+    groupId: groupOfSession(groups, id)?.id ?? null
   }
 }
 
@@ -866,8 +936,7 @@ async function handleSetSessionView(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   const state = useSessionStore.getState()
-  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
-  if (!id) throw new Error('sessionId "mine" needs a caller session — pass an explicit id')
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
   const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
 
@@ -994,9 +1063,7 @@ async function handleCloseSession(payload: {
   // "mine" is the calling tab, as for every other session tool: it is how an
   // agent closes its own tab when its work is done (the archive-and-kill action
   // asks exactly that of it).
-  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
-  if (!id)
-    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
   const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
   // An agent-initiated close is a transport event: recorded with the closing
@@ -1011,20 +1078,26 @@ async function handleCloseSession(payload: {
   return { closed: id }
 }
 
-function handleRename(payload: { target: 'group' | 'session'; id: string; name: string }): unknown {
+function handleRename(payload: {
+  target: 'group' | 'session'
+  id: string
+  name: string
+  callerSessionId?: string
+}): unknown {
   const state = useSessionStore.getState()
   if (payload.target === 'group') {
     if (!state.groups.some((g) => g.id === payload.id)) {
       throw new Error(`No group with id "${payload.id}"`)
     }
     state.renameGroup(payload.id, payload.name)
-  } else {
-    if (!state.sessions.some((s) => s.id === payload.id)) {
-      throw new Error(`No session with id "${payload.id}"`)
-    }
-    state.renameSession(payload.id, payload.name)
+    return { renamed: payload.id, name: payload.name }
   }
-  return { renamed: payload.id, name: payload.name }
+  const id = ownSessionRef(payload.id, payload.callerSessionId, 'id')
+  if (!state.sessions.some((s) => s.id === id)) {
+    throw new Error(`No session with id "${payload.id}"`)
+  }
+  state.renameSession(id, payload.name)
+  return { renamed: id, name: payload.name }
 }
 
 /** Collapse '.' and '..' segments of an absolute path (no node:path in the renderer). */
@@ -1210,7 +1283,7 @@ async function handleSetWork(payload: Record<string, unknown>): Promise<unknown>
       'clave_set_work must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   const ref = typeof payload.sessionId === 'string' ? payload.sessionId : 'mine'
-  const target = resolveTargetSession(ref === 'mine' ? caller : ref, caller)
+  const target = resolveTargetSession(ownSessionRef(ref, caller), caller)
   const callerUnit = useSessionStore.getState().sessions.find((s) => s.id === caller)?.work?.unit
   const change = setWorkChange(payload, callerUnit)
   return workToolAnswer(target.id, await window.electronAPI.sessionsChangeWork(target.id, change))
@@ -1272,9 +1345,7 @@ function handleSelfCheckpoint(sessionId: string, message: string): unknown {
   // the two paths cannot quietly diverge on what may enter the record.
   const self = state.sessions.find((s) => s.sessionType === 'local' && s.id === sessionId)
   if (!self) throw new Error('Calling session not found')
-  if (sessionMode(self) === 'pi') throw new Error('Pi exchange capture is not supported yet')
-  if (sessionMode(self) === 'opencode')
-    throw new Error('OpenCode exchange capture is not supported yet')
+  if (!isCaptured(self)) throw new Error(exchangeCaptureRefusal(sessionMode(self)))
   const text = sanitizeForPaste(message)
   const endpoint = captureEndpointOf(self, state.groups)
   window.electronAPI.captureExchangeMessage({
@@ -1371,11 +1442,10 @@ async function handleResumeSession(payload: {
   sessionId: string
   callerSessionId?: string
 }): Promise<unknown> {
-  const ref =
-    payload.sessionId === 'mine' && payload.callerSessionId
-      ? payload.callerSessionId
-      : payload.sessionId
-  const target = resolveTargetSession(ref, payload.callerSessionId)
+  const target = resolveTargetSession(
+    ownSessionRef(payload.sessionId, payload.callerSessionId),
+    payload.callerSessionId
+  )
   requireCaller(payload.callerSessionId, 'resume')
   if (target.alive)
     throw new Error(`Session "${target.name}" is running; there is nothing to resume.`)
@@ -1400,10 +1470,11 @@ async function handleSendToSession(payload: {
   // "mine", the caller's own id, or the caller's own tab name all mean the
   // checkpoint path — resolved BEFORE the identity gate, which has nothing to
   // gate on a message that never leaves the session.
-  if (payload.callerSessionId && payload.sessionId === 'mine') {
+  const ref = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  if (payload.callerSessionId && ref === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
-  let target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
+  let target = resolveTargetSession(ref, payload.callerSessionId)
   if (payload.callerSessionId && target.id === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
@@ -1494,8 +1565,7 @@ async function handleSendToSession(payload: {
   if (sender) {
     const recordDelivery = (): void => {
       if (!submitted) return
-      const uncaptured = (mode: string): boolean => mode === 'pi' || mode === 'opencode'
-      if (uncaptured(sessionMode(sender)) || uncaptured(sessionMode(target))) return
+      if (!isCaptured(sender) || !isCaptured(target)) return
       window.electronAPI.captureExchangeMessage({
         ts: new Date().toISOString(),
         sender: captureEndpointOf(sender, useSessionStore.getState().groups),
@@ -1551,7 +1621,10 @@ async function handleReadSession(payload: {
   lines?: number
   callerSessionId?: string
 }): Promise<unknown> {
-  const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
+  const target = resolveTargetSession(
+    ownSessionRef(payload.sessionId, payload.callerSessionId),
+    payload.callerSessionId
+  )
   requireCaller(payload.callerSessionId, 'read')
   const requested = Math.min(Math.max(payload.lines ?? 100, 1), 500)
   const lines: string[] = []
@@ -1609,9 +1682,10 @@ async function handleReadSession(payload: {
   }
 }
 
-function handleFocus(payload: { sessionId: string }): unknown {
+function handleFocus(payload: { sessionId: string; callerSessionId?: string }): unknown {
   const state = useSessionStore.getState()
-  const target = state.sessions.find((s) => s.id === payload.sessionId)
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  const target = state.sessions.find((s) => s.id === id)
   if (!target) {
     throw new Error(`No session with id "${payload.sessionId}"`)
   }
@@ -1621,8 +1695,8 @@ function handleFocus(payload: { sessionId: string }): unknown {
   if (target.workspaceId && activeId && target.workspaceId !== activeId) {
     void setActiveWorkspace(target.workspaceId)
   }
-  useSessionStore.getState().selectSession(payload.sessionId, false)
-  return { focused: payload.sessionId, workspaceId: target.workspaceId ?? null }
+  useSessionStore.getState().selectSession(id, false)
+  return { focused: id, workspaceId: target.workspaceId ?? null }
 }
 
 function handleSwitchWorkspace(payload: { workspace: string }): unknown {
@@ -1646,8 +1720,8 @@ async function handleSwitchAccount(payload: {
   proposed: boolean
 }> {
   const state = useSessionStore.getState()
-  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
-  const session = id ? state.sessions.find((s) => s.id === id) : undefined
+  const id = ownSessionRef(payload.sessionId, payload.callerSessionId)
+  const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`Unknown session "${payload.sessionId}"`)
   const provider = accountProviderOf(session)
   if (!provider) throw new Error('Only Claude and Codex tabs run on an account')
@@ -1707,6 +1781,98 @@ function handlePinnedState(payload: { pinnedId: string }): unknown {
   return { state: getPinnedState(pin), groupId: pin.activeGroupId }
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** `clave_launch_options` in the window: for a connected server, from the
+ *  settings this Mac keeps of it (read first when it has none); without one,
+ *  this Mac from its own stores. The server reference resolves as
+ *  `clave_open_session`'s does. Codex's models are this Mac's list, as the
+ *  launcher offers them under every machine. */
+async function handleLaunchOptions(payload: { server?: string }): Promise<unknown> {
+  // Loaded on the call: the launch sources and the server settings pull in
+  // the usage store, which starts its polling on import.
+  const [{ localLaunchOptionsInput, serverLaunchOptionsInput }, serverSettings] = await Promise.all(
+    [import('./launch-options-input'), import('../store/server-settings-store')]
+  )
+  const { loadServerSettings, serverSettingsFor } = serverSettings
+  const serverId =
+    payload.server === undefined
+      ? LOCAL_SERVER_ID
+      : resolveSessionTarget({
+          server: payload.server,
+          connections: useFleetStore.getState().connections,
+          workspaces: []
+        }).serverId
+  // The launcher's own read (SessionLauncher.tsx): the active workspace's root, else '/'.
+  const cwd = getWorkspaceById(useWorkspaceStore.getState().activeWorkspaceId)?.rootDir ?? '/'
+  const read = window.electronAPI?.adaptersModels?.('codex-chat', cwd)
+  const codexModels: CodexModels = read
+    ? await read.then((models) => models as CodexModels).catch(() => 'unavailable' as const)
+    : 'unavailable'
+  const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
+  // What each connection's Pi and OpenCode tabs used today (PRDCT-4551), on
+  // the machine that runs them, as the launcher's rows say it.
+  const api = window.electronAPI
+  const harnessUsage = await (
+    serverId === LOCAL_SERVER_ID
+      ? api?.harnessUsageRead?.({ range: 'today' })
+      : api?.fleetHarnessUsage?.(serverId, { range: 'today' })
+  )?.catch(() => null)
+  const facts = {
+    harnessSettings: harnesses,
+    interactionMode,
+    codexModels,
+    harnessUsage: harnessUsage ?? null,
+    now: Date.now()
+  }
+  // The machine's stored connections, read first when the window holds none
+  // (PRDCT-4496), as its open reads them: the provider pools' rows and the
+  // one `account: "any"` lands on come from the same list.
+  await readProviderConnections(serverId).catch(() => undefined)
+  if (serverId === LOCAL_SERVER_ID) {
+    // Each pool's remembered model on the profile an open naming none
+    // resolves (the chat default in a chat interaction mode), as the listing's
+    // `openProfileId` says: never on the terminal default (verifier, round 2).
+    const launchModels = Object.fromEntries(
+      await Promise.all(
+        (['claude', 'codex'] as const).map(
+          async (pool) =>
+            [
+              pool,
+              await rememberedLaunchModel(
+                pool,
+                localOpenProfileId(pool, interactionMode, null),
+                null
+              ).catch(() => undefined)
+            ] as const
+        )
+      )
+    )
+    // What each Pi connection starts on with no model named (PRDCT-4496):
+    // main's answer, by the spawn's own rule, over the very connections this
+    // listing shows (with the server as a separate process they are that
+    // server's, and main's own store holds none of them); unsaid when it
+    // cannot be read.
+    const listed = useProviderConnectionsStore.getState().byMachine[LOCAL_SERVER_ID]?.connections
+    const piStarts = listed
+      ? await window.electronAPI?.providerPiStartModels?.([...listed]).catch(() => undefined)
+      : undefined
+    return launchOptions(
+      localLaunchOptionsInput({
+        ...facts,
+        agents: useAgentUpdatesStore.getState().agents,
+        preferRecommended: useAccountPolicyStore.getState().useRecommendedAccount,
+        launchModels,
+        ...(piStarts ? { piStarts } : {})
+      })
+    )
+  }
+  if (serverSettingsFor(serverId).status !== 'ready')
+    await loadServerSettings(serverId).catch(() => undefined)
+  const name = useFleetStore.getState().connections.find((c) => c.id === serverId)?.name ?? serverId
+  return launchOptions(serverLaunchOptionsInput(serverId, name, serverSettingsFor(serverId), facts))
+}
+
 async function execute(command: string, payload: unknown): Promise<unknown> {
   switch (command) {
     case 'list':
@@ -1725,6 +1891,8 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return openSessionProgrammatically(
         payload as Parameters<typeof openSessionProgrammatically>[0]
       )
+    case 'launchOptions':
+      return handleLaunchOptions(payload as { server?: string })
     case 'moveSession':
       return handleMoveSession(payload as Parameters<typeof handleMoveSession>[0])
     case 'launchGroup':

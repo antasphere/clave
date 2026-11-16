@@ -6,8 +6,8 @@ import { useAccountLoginStore } from '../../store/account-login-store'
 /**
  * The companies a person connects on Settings → Connections (PRDCT-4424): who
  * pays for what a harness runs. Each one is an account pool of ADR 0002
- * (`claude`, `codex`); the harness that runs on it is named in the hint. The
- * Connect chooser lists them in this order.
+ * (`claude`, `codex`); the harness that runs on it is named in the hint.
+ * Their cards on the page are `connection-cards.ts`'s.
  */
 export interface ConnectionCompany {
   id: 'anthropic' | 'openai'
@@ -44,6 +44,14 @@ export function nextConnectionLabel(base: string, taken: readonly string[]): str
     const label = `${base} ${n}`
     if (!used.has(label.toLowerCase())) return label
   }
+}
+
+// ── Lane B (harness wave): provider connections (PRDCT-4426) ──
+
+/** A label no connection of that provider carries yet: "Moonshot", then
+ *  "Moonshot 2"… */
+export function nextProviderLabel(name: string, taken: readonly string[]): string {
+  return nextConnectionLabel(name, taken)
 }
 
 /**

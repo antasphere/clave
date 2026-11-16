@@ -2,7 +2,8 @@ import type {
   AgentState,
   HistoryItem,
   PermissionModeOption,
-  SessionEvent
+  SessionEvent,
+  WaitingMessage
 } from '../../../src/shared/session-model'
 import type { Attachment } from '../../../src/shared/attachments'
 import { inputRequestMeta } from '@clave/contract/input-kinds'
@@ -113,7 +114,11 @@ export type Entry =
       moved?: boolean
       at: number
     }
-  | { kind: 'error'; message: string; at: number }
+  /** `quiet`: nothing failed, a plain fact of the turn the adapter said as a
+   *  notice (another tab's message left unsent, PRDCT-4566): every view
+   *  draws it as a quiet line of the conversation, never in the failure's
+   *  red, and it answers nothing. */
+  | { kind: 'error'; message: string; at: number; notice?: string; quiet?: boolean }
   /** The permission mode changed (PRDCT-4331): one line, said in the
    *  transcript, never for the first word on the mode nor for a repeat.
    *  `by` is known when this view asked for the switch. */
@@ -166,6 +171,16 @@ export interface Conversation {
    *  the request, is not lost. */
   explained: Record<string, PermissionReading>
   exitCode?: number
+  /** The messages written that the agent has not taken yet, as the adapter
+   *  last listed them (PRDCT-4566): drawn in the stack above the composer,
+   *  never in the transcript, until each enters it as the agent takes it. */
+  waiting: WaitingMessage[]
+  /** When the agent takes one: after the running turn, or at its next step;
+   *  null until an adapter has listed what waits. */
+  takes: Extract<SessionEvent, { type: 'waiting_messages' }>['takes'] | null
+  /** The messages that last left the list unsent, for the composer to take
+   *  back: a new value at each return, which the view takes once. */
+  returned: NonNullable<Extract<SessionEvent, { type: 'waiting_messages' }>['returned']> | null
 }
 export const emptyConversation: Conversation = {
   entries: [],
@@ -176,7 +191,10 @@ export const emptyConversation: Conversation = {
   pendingModel: null,
   effort: null,
   permissionMode: null,
-  explained: {}
+  explained: {},
+  waiting: [],
+  takes: null,
+  returned: null
 }
 export type Action =
   | { event: ChatEvent; at?: number; current?: boolean }
@@ -216,7 +234,9 @@ export type Action =
 
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
- *  back (nothing did) and leaving it in the transcript as interrupted. */
+ *  back (nothing did) and leaving it in the transcript as interrupted. A
+ *  quiet line answers nothing: the one a stop leaves for another tab's
+ *  message (PRDCT-4566) would bring back the message Escape just took back. */
 export function answeredSince(entries: Entry[]): boolean {
   const last = entries.findLastIndex((e) => e.kind === 'user')
   return entries
@@ -225,7 +245,8 @@ export function answeredSince(entries: Entry[]): boolean {
       (e) =>
         e.kind !== 'user' &&
         (e.kind !== 'assistant' || e.text.trim() !== '') &&
-        !(e.kind === 'permission' && e.moved)
+        !(e.kind === 'permission' && e.moved) &&
+        !(e.kind === 'error' && e.quiet)
     )
 }
 /** What the reader can still answer, in the order asked: the dock shows the
@@ -294,7 +315,7 @@ function liveBefore(entries: Entry[], id: string): boolean {
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action)
-    return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null }
+    return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null, waiting: [] }
   if ('pickModel' in action) return { ...state, pendingModel: action.pickModel }
   if ('askMode' in action) return { ...state, askedMode: action.askMode }
   if ('reconnected' in action) return state.run === null ? state : { ...state, run: null }
@@ -406,18 +427,36 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       run: state.run,
       exitCode: state.exitCode,
       permissionMode: synced.permissionMode ?? state.permissionMode,
-      launchedMode: synced.launchedMode ?? state.launchedMode
+      launchedMode: synced.launchedMode ?? state.launchedMode,
+      // What waits for the agent is the live word, never the past's: a page
+      // that held a list or a return would show or hand back again what is
+      // gone (PRDCT-4566).
+      waiting: state.waiting,
+      takes: state.takes,
+      returned: state.returned
     }
   }
   if ('prepend' in action) {
-    if (!action.prepend.length) return state
-    const earlier = action.prepend.reduce(reduceConversation, emptyConversation)
+    // A notice the adapter keeps in the past AND said live (a Pi or OpenCode
+    // chat refused at start, PRDCT-4427) is shown once: the past's copy of a
+    // notice this pane already heard live is dropped.
+    const heard = new Set(state.entries.flatMap((e) => (e.kind === 'error' ? [e.message] : [])))
+    const items = heard.size
+      ? action.prepend.filter(
+          (item) => item.event.type !== 'error' || !heard.has(item.event.message)
+        )
+      : action.prepend
+    if (!items.length) return state
+    const earlier = items.reduce(reduceConversation, emptyConversation)
     const past = earlier.entries
     return {
       ...state,
       entries: [...past, ...state.entries],
       first: state.first - past.length,
-      explained: { ...earlier.explained, ...state.explained }
+      explained: { ...earlier.explained, ...state.explained },
+      // The past's word on the model stands until the live one says its own
+      // (PRDCT-4427): an OpenCode or Pi tab says it once.
+      model: state.model ?? earlier.model
     }
   }
   if ('answer' in action) {
@@ -489,8 +528,10 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       event.state === 'idle' || event.state === 'done' || event.state === 'ended'
         ? closeTurn(state.entries)
         : state.entries
+    // Nothing waits for a process that is gone (PRDCT-4566).
+    const waiting = event.state === 'ended' ? [] : state.waiting
     if (!closed.some(touches))
-      return { ...state, entries: closed, state: event.state, run, exitCode }
+      return { ...state, entries: closed, state: event.state, run, exitCode, waiting }
     return {
       ...state,
       entries: closed.map((e) =>
@@ -498,9 +539,20 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       ),
       state: event.state,
       run,
-      exitCode
+      exitCode,
+      waiting
     }
   }
+  if (event.type === 'waiting_messages')
+    // What waits for the agent is the stack's, never the transcript's: a
+    // message enters the conversation as its own `user_message`, the moment
+    // the agent takes it (PRDCT-4566).
+    return {
+      ...state,
+      waiting: event.messages,
+      takes: event.takes,
+      ...(event.returned ? { returned: { ...event.returned } } : {})
+    }
   if (event.type === 'permission_withdrawn') {
     // The adapter no longer waits on it: the card is settled for good, as the
     // server's request store settles its record on the same word, and no
@@ -683,18 +735,32 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     }
     case 'permission_explained':
       return { ...state, explained: { ...state.explained, [event.id]: event } }
-    case 'error':
-      entries.push({ kind: 'error', message: event.message, at })
+    case 'error': {
+      // A named notice stands for the latest of its kind (an OpenCode retry,
+      // PRDCT-4427): the one before under that name gives way to it.
+      const before = event.notice
+        ? entries.findLastIndex((e) => e.kind === 'error' && e.notice === event.notice)
+        : -1
+      if (before >= 0) entries.splice(before, 1)
+      entries.push({
+        kind: 'error',
+        message: event.message,
+        at,
+        ...(event.notice ? { notice: event.notice } : {}),
+        ...(event.quiet ? { quiet: true } : {})
+      })
       // A refused switch comes back as an error (the CLI's reason, or the
       // adapter's refusal of the write): the chip reads the model it is still
       // on. Any other error in that window reverts it the same way, and the
-      // switch's own confirmation, when it comes, names the model again.
+      // switch's own confirmation, when it comes, names the model again. A
+      // named notice or a quiet line refuses nothing: the pick stands.
       return {
         ...state,
         entries,
         state: event.fatal ? 'ended' : state.state,
-        pendingModel: null
+        pendingModel: event.notice || event.quiet ? state.pendingModel : null
       }
+    }
     case 'turn_interrupted': {
       // The message that started the turn is the last one the reader sent;
       // an answer still streaming when the stop landed is closed as it stands.

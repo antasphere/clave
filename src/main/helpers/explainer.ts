@@ -22,7 +22,7 @@ export const EXPLAINER_TIMEOUT_MS = 30_000
 export const permissionExplainerHelper = defineHelper<ExplainerInput, ExplainerReading>({
   id: 'permission-explainer',
   label: 'Permission explanations',
-  systemPrompt: `${HELPER_SYSTEM_PREAMBLE} Your one task: say in one line of JSON, in plain words for someone who does not program, what allowing a coding agent's permission request would do. You never approve or refuse it.`,
+  systemPrompt: `${HELPER_SYSTEM_PREAMBLE} Your one task: tell the person deciding on a coding agent's permission request how much harm allowing it could do, in one line of JSON, in plain words for someone who does not program. You never approve or refuse it.`,
   buildPrompt: explainerPrompt,
   parseReply: (stdout) => parseExplainerReply(stdout),
   model: 'haiku',

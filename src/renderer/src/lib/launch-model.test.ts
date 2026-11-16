@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const selected = vi.hoisted(() => ({ claude: 'claude-chat', codex: 'codex-terminal' }))
 vi.mock('../store/launch-profile-store', () => ({
-  selectedLaunchProfile: (family: string) => ({
-    id: family === 'claude' ? 'claude-chat' : 'codex-terminal'
-  })
+  selectedLaunchProfile: (family: 'claude' | 'codex') => ({ id: selected[family] }),
+  selectedChatProfile: () => undefined
 }))
-import { chatAdapterOf, rememberedLaunchModel } from './launch-model'
+import { chatAdapterOf, localOpenProfileId, rememberedLaunchModel } from './launch-model'
 
 /**
  * The model a launch is judged by (PRDCT-4302): a chat launch starts on the
@@ -24,6 +24,22 @@ describe('chatAdapterOf', () => {
     expect(chatAdapterOf('claude', 'claude-work')).toBeNull()
     expect(chatAdapterOf('claude', 'codex-chat')).toBeNull()
     expect(chatAdapterOf('codex', 'chat:claude:work')).toBeNull()
+  })
+})
+
+describe('localOpenProfileId', () => {
+  /** The launcher's own exception (`transportProfileFor`, launch-session.ts):
+   *  a Claude chat is not offered on Windows, so an open there that names no
+   *  profile runs the family's selected terminal profile, whatever the mode. */
+  it('answers the selected terminal profile for Claude on Windows under a chat mode, the chat default elsewhere', () => {
+    selected.claude = 'claude-work'
+    try {
+      expect(localOpenProfileId('claude', 'chat', 'ws', 'win32')).toBe('claude-work')
+      expect(localOpenProfileId('claude', 'chat', 'ws', 'darwin')).toBe('claude-chat')
+      expect(localOpenProfileId('codex', 'chat', 'ws', 'win32')).toBe('codex-chat')
+    } finally {
+      selected.claude = 'claude-chat'
+    }
   })
 })
 

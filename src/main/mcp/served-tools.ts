@@ -16,6 +16,7 @@
  * sends it to the window as before.
  */
 import { noteRoad } from './roads'
+import { ownSessionRef } from '../../shared/own-session-ref'
 import {
   AGENT_MODES,
   type Ctx,
@@ -41,6 +42,32 @@ import { sessionTools } from './served-session-tools'
 import { workTools } from './served-work-tools'
 import { isServerTabRef } from './session-targets'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
+import {
+  DEFAULT_INTERACTION_MODE,
+  HARNESSES,
+  HARNESS_BY_ID,
+  type HarnessId
+} from '../../shared/harness'
+import {
+  harnessProviderConnections,
+  providerConnectionLeft
+} from '../../shared/provider-connection-pick'
+import type { PiStartModel } from '../../shared/pi-start-model'
+import {
+  launchOptions as launchOptionsOf,
+  type LaunchModel,
+  type LaunchOptions
+} from '../../shared/launch-options'
+import type { LaunchProfile } from '../../shared/agent-launch'
+import { isAccountPoolId, type ConnectionPoolId } from '../../shared/connection'
+import { resolveProfileRef } from '../../shared/open-session-modes'
+import {
+  pinnedPiModels,
+  piStartModels,
+  providerHarnessModels,
+  providerPoolConnections,
+  type ProviderListingDeps
+} from './provider-launch-listing'
 
 export {
   NOT_SERVED,
@@ -137,10 +164,8 @@ async function setGroupView(ctx: Ctx, key: string, p: Payload): Promise<unknown>
 }
 
 async function moveSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
-  // No "mine" here: the window's handler takes an id and nothing else, and
-  // the two roads of one tool must answer the same call the same way.
   const ref = str(p.sessionId) ?? ''
-  const id = ref
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   if (!id) throw new Error(`No session with id "${ref}"`)
   await getSession(ctx, id, ref)
 
@@ -268,10 +293,7 @@ async function addGroupTerminal(ctx: Ctx, key: string, p: Payload): Promise<unkn
 
 async function closeSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
-  if (!id) {
-    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
-  }
+  const id = ownSessionRef(ref, ctx.callerSessionId)
   const session = await getSession(ctx, id, ref)
 
   // An agent-initiated close is recorded with the closing tab as `closer`
@@ -320,6 +342,9 @@ const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
   return items.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)))
 }
 
+const parentIdOf = (parentId: string | null | undefined): { parentId?: string } =>
+  parentId ? { parentId } : {}
+
 async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   const activeWorkspaceId = ctx.win ? ctx.shell.workspaceOfWindow(ctx.win.id) : null
   const scope = str(p.workspace) ?? 'all'
@@ -346,14 +371,24 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
     .filter(({ record }) => inScope(record?.workspaceId))
     .map(({ s, record }) => ({
       id: s.id,
+      // The tab that opened it, as the daemon's road says (PRDCT-4507):
+      // main's lineage, else the opener the record keeps.
+      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy),
       name: s.title,
       cwd: s.cwd,
       mode: modeOf(record, s.provider),
+      // What the tab runs on, from its record, under the daemon's names
+      // (PRDCT-4496): on a connection the model's plain id, else what the
+      // agent reported.
+      model: record?.model ?? null,
+      launchProfileId: record?.launchProfileId ?? null,
       alive: s.state !== 'ended',
       // The window's listing never said 'ended' (its run state has no such
       // word; an ended tab kept its last state or none): the same vocabulary.
       agentState: s.state === 'ended' ? null : s.state,
       account: record ? ctx.shell.accountOf(record) : null,
+      // PRDCT-4540: a tab whose process left its connection says so.
+      connectionLeft: record ? providerConnectionLeft(record) : null,
       groupId: groupOfSession(layouts, s.id)?.id ?? null,
       view: record?.view ? { url: record.view.url, title: record.view.title ?? null } : null,
       workspaceId: record?.workspaceId ?? null,
@@ -415,6 +450,105 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
   }
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** `clave_launch_options` on the machine the shell describes: the shell's
+ *  facts assembled into the shared function's input, the rules all
+ *  `launchOptions`' (`src/shared/launch-options.ts`). A shell missing a fact
+ *  still answers: no presence lists every harness as unchecked, no model
+ *  list offers the harness's Default. */
+async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
+  const { shell } = ctx
+  const presence = shell.presence?.()
+  const profiles = (family: HarnessId): readonly LaunchProfile[] =>
+    shell.launchProfileRows?.(family) ??
+    shell
+      .launchProfiles(family)
+      .map(({ id, name }) => ({ id, name, family, command: [], additionalArgs: [] }))
+  // Pi's and OpenCode's lists are the daemon's (PRDCT-4496): the default,
+  // the catalogue models of each stored connection's company, Pi's pinned.
+  const listing: ProviderListingDeps = {
+    ...(shell.catalog ? { catalog: (ids) => shell.catalog!(ids) } : {}),
+    ...(shell.providerConnections
+      ? { providerConnections: (harness) => shell.providerConnections!(harness) }
+      : {})
+  }
+  const models = new Map<HarnessId, readonly LaunchModel[] | 'unavailable'>()
+  await Promise.all(
+    HARNESSES.filter((h) => h.takesModel).map(async (h) => {
+      const listed =
+        h.id === 'pi' || h.id === 'opencode'
+          ? await providerHarnessModels(
+              h.id,
+              h.id === 'pi' ? pinnedPiModels(profiles('pi')) : [],
+              listing
+            ).catch(() => 'unavailable' as const)
+          : shell.models
+            ? await shell.models(h.id).catch(() => 'unavailable' as const)
+            : 'unavailable'
+      models.set(h.id, listed)
+    })
+  )
+  const workspaceId = (ctx.win ? shell.workspaceOfWindow(ctx.win.id) : null) ?? undefined
+  // What each Pi connection starts on with no model named, by the spawn's
+  // own rule (PRDCT-4496): the person's Pi default, else the first listed.
+  const piStarts = await piStartModels(
+    harnessProviderConnections(HARNESS_BY_ID.pi, shell.providerConnectionViews?.() ?? []),
+    {
+      ...listing,
+      ...(shell.piOwnDefault ? { piOwnDefault: () => shell.piOwnDefault!() } : {})
+    }
+  ).catch(() => new Map<string, PiStartModel>())
+  // What each connection's tabs used today (PRDCT-4551), as a person reads it.
+  const harnessUsage = shell.harnessUsage ? await shell.harnessUsage().catch(() => null) : null
+  return launchOptionsOf({
+    harnessUsage,
+    machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
+    harnesses: HARNESSES,
+    presence: (id) => {
+      const status = presence?.find((p) => p.id === id)
+      return status
+        ? {
+            installed: status.installed,
+            version: status.currentVersion,
+            checkedAt: status.lastCheckedAt
+          }
+        : undefined
+    },
+    profiles,
+    defaultProfileId: (id) => shell.defaultProfileId?.(id),
+    // The served open's own resolution (`openSession`, served-session-tools.ts)
+    // with no chat and no profile: the chat default under a chat interaction
+    // mode, else nothing named, and main runs the family's default profile.
+    openProfileId: (id) =>
+      resolveProfileRef(
+        { mode: id },
+        shell.chatDefault(id, workspaceId),
+        shell.interactionMode?.() ?? 'terminal'
+      ) ?? shell.defaultProfileId?.(id),
+    models: (id) => models.get(id) ?? 'unavailable',
+    harnessSettings: shell.harnessSettings?.() ?? {},
+    interactionMode: shell.interactionMode?.() ?? DEFAULT_INTERACTION_MODE,
+    // A provider pool lists this Mac's stored connections of that company
+    // (PRDCT-4496), as the window's and the daemon's roads do; an account
+    // pool its accounts.
+    connections: (pool, harness) =>
+      isAccountPoolId(pool)
+        ? shell.accounts(pool)
+        : providerPoolConnections(pool, shell.providerConnectionViews?.() ?? [], harness),
+    selectedConnectionId: (pool) =>
+      isAccountPoolId(pool) ? shell.selectedAccountId(pool) : undefined,
+    preferRecommended: shell.useRecommendedAccount?.() ?? false,
+    launchModel: (pool, profileId) =>
+      isAccountPoolId(pool as ConnectionPoolId)
+        ? shell.launchModel?.(pool as 'claude' | 'codex', profileId, workspaceId)
+        : undefined,
+    providerStartModel: (id, connectionId) =>
+      id === 'pi' ? piStarts.get(connectionId) : undefined,
+    now: Date.now()
+  })
+}
+
 /** Wave 3's tools here, wave 4's in `served-session-tools.ts`. */
 const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unknown>> = {
   list,
@@ -426,7 +560,8 @@ const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unkno
   addGroupTerminal,
   closeSession,
   ...sessionTools.others,
-  ...workTools
+  ...workTools,
+  launchOptions: (ctx) => launchOptions(ctx)
 }
 const SERVED = new Set(Object.keys(TOOLS))
 

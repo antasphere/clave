@@ -9,6 +9,8 @@ export interface ReadableEvent {
   readonly final?: boolean
   readonly name?: string
   readonly message?: string
+  /** A notice that reports no failure (PRDCT-4566). */
+  readonly quiet?: boolean
   readonly description?: string
   readonly parent?: string
   readonly attachments?: ReadonlyArray<unknown>
@@ -20,8 +22,9 @@ export interface ReadableEvent {
  * desktop and on the daemon alike. One line per thing said or done, the
  * reader's messages marked `You:`, the agent's answers `Agent:` (one line
  * per turn, the deltas joined), a tool call by its name, an error by its
- * message; the provider's own frames, the state changes and the meta stay
- * out. The items come oldest first, as the history page gives them.
+ * message (`Error:`), a quiet notice, which reports no failure, by its words
+ * alone (PRDCT-4566); the provider's own frames, the state changes and the
+ * meta stay out. The items come oldest first, as the history page gives them.
  */
 export function historyLines(items: ReadonlyArray<{ readonly event: ReadableEvent }>): string[] {
   const lines: string[] = []
@@ -49,7 +52,7 @@ export function historyLines(items: ReadonlyArray<{ readonly event: ReadableEven
         break
       case 'error':
         closeAnswer()
-        lines.push(`Error: ${event.message ?? ''}`)
+        lines.push(event.quiet ? (event.message ?? '') : `Error: ${event.message ?? ''}`)
         break
       case 'permission_request':
         closeAnswer()

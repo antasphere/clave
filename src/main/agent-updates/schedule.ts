@@ -19,6 +19,15 @@ export interface AgentUpdateSchedule {
    * `CLAVE_AGENT_UPDATES_AUTO=1` runs them from a dev build. Never in test mode.
    */
   scheduled: boolean
+  /**
+   * Whether a build without the timers still looks once at boot, so the
+   * launcher and Settings → Harnesses list what is on the PATH (PRDCT-4423).
+   * Never in test mode: a spec says which harnesses are there
+   * (`markHarnessesInstalled` in `tests/e2e/harness.mjs`), its fixture CLIs
+   * count every call made to them, and `agent-updates.spec.mjs` proves no check
+   * ran at boot.
+   */
+  looksAtBoot: boolean
   /** E2E seams, honoured in test mode only (`--test-no-activate`): the PATH
    *  the updater searches and the registry it asks, so a spec drives fixture
    *  CLIs and never the machine's own agents. */
@@ -34,6 +43,7 @@ export function agentUpdateSchedule(inputs: ScheduleInputs): AgentUpdateSchedule
       supported &&
       !inputs.testMode &&
       (inputs.packaged || inputs.env.CLAVE_AGENT_UPDATES_AUTO === '1'),
+    looksAtBoot: supported && !inputs.testMode,
     agentPath: inputs.testMode ? inputs.env.CLAVE_TEST_AGENT_PATH : undefined,
     registry: inputs.testMode ? inputs.env.CLAVE_TEST_NPM_REGISTRY : undefined
   }

@@ -49,14 +49,38 @@ vi.mock('./switch-account', () => ({
 vi.mock('./session-accounts', () => ({
   sessionOwnAccount: () => ({ id: 'default', label: 'Default', removed: false })
 }))
+/* clave_launch_options loads these on the call (the usage store polls on
+   import): the window's input is recorded, the server settings never read. */
+const launchInput = vi.hoisted(() => ({
+  local: vi.fn(),
+  server: vi.fn(),
+  loadServerSettings: vi.fn(async () => undefined),
+  serverSettingsFor: vi.fn(() => ({ status: 'ready' }))
+}))
+vi.mock('./launch-options-input', () => ({
+  localLaunchOptionsInput: launchInput.local,
+  serverLaunchOptionsInput: launchInput.server
+}))
+vi.mock('../store/server-settings-store', () => ({
+  loadServerSettings: launchInput.loadServerSettings,
+  serverSettingsFor: launchInput.serverSettingsFor
+}))
 import { openSessionProgrammatically, initMcpDispatcher } from './mcp-dispatcher'
 import { usePinnedStore } from '../store/pinned-store'
-import { resourceKey } from '@clave/contract/fleet'
+import { LOCAL_SERVER_ID, resourceKey } from '@clave/contract/fleet'
+import { useProviderConnectionsStore } from '../store/provider-connections-store'
 
 import { useWorkspaceStore } from '../store/workspace-store'
 import { useSessionStore } from '../store/session-store'
 import { useFleetStore } from '../store/fleet-store'
 import { usePairingStore } from '../store/pairing-store'
+import { useAccountPolicyStore } from '../store/account-policy-store'
+import { DEFAULT_INTERACTION_MODE, HARNESSES } from '../../../shared/harness'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
+import { launchOptions, type LaunchOptionsInput } from '../../../shared/launch-options'
+import { servesHarnessPool } from '../../../shared/provider-connection-pick'
+import { providerConnection } from '../../../shared/provider-connection'
+import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 const codex = (id: string, name: string, flags: string[] = []): LaunchProfile => ({
   id,
   name,
@@ -299,6 +323,54 @@ it('launches the legacy caller pinned group when pinned names match across works
   })
   expect(await response).toMatchObject({ ok: true, result: { pinnedId: 'pin-home' } })
   unsubscribe()
+})
+
+// PRDCT-4507: an open from ANY tab to ANY harness succeeds whole on the
+// window road. The capture is the harness table's (`exchangeCapture`): a Pi
+// or OpenCode end is not captured, and never fails an open whose tab exists.
+describe('an open between harnesses the capture does not cover (PRDCT-4507)', () => {
+  const callerOf = (fields: Record<string, unknown>): void =>
+    useSessionStore.setState({
+      sessions: [{ id: 'caller', cwd: '/repo', sessionType: 'local', ...fields } as never],
+      groups: []
+    })
+  const listed = async (): Promise<Array<{ id: string; parentId?: string }>> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ result?: unknown; ok: boolean }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'list', command: 'list', payload: {} })
+    const answer = (await response) as { result: { sessions: Array<{ id: string }> } }
+    unsubscribe()
+    return answer.result.sessions
+  }
+  for (const [caller, fields] of [
+    ['an OpenCode chat', { opencodeMode: true }],
+    ['a Pi chat', { piMode: true }],
+    ['a Claude tab', { claudeMode: true }]
+  ] as const)
+    for (const mode of ['opencode', 'pi', 'claude'] as const)
+      it(`${caller} opens a ${mode} tab: answered its id, its parent listed, captured only when both ends are`, async () => {
+        callerOf(fields)
+        const opened = (await openSessionProgrammatically({
+          cwd: '/repo',
+          mode,
+          callerSessionId: 'caller'
+        })) as { sessionId: string }
+        expect(opened.sessionId).toBe('tab-1')
+        expect(spawnSession).toHaveBeenCalledTimes(1)
+        expect(spawned()).toMatchObject({ openedBy: 'caller' })
+        const captured = mode === 'claude' && 'claudeMode' in fields
+        expect(globals.window.electronAPI.captureTabSpawn).toHaveBeenCalledTimes(captured ? 1 : 0)
+        expect((await listed()).find((s) => s.id === 'tab-1')).toMatchObject({
+          parentId: 'caller'
+        })
+      })
 })
 
 /* The work tools on the window road (PRDCT-4123): a call the server does not
@@ -939,6 +1011,82 @@ describe('round 1: the window road refuses before resuming, and places by the pa
   })
 })
 
+// Lane C of the harness wave (PRDCT-4496): Pi and OpenCode on this Mac's stored connections
+describe('the account of a window-road Pi or OpenCode open', () => {
+  const stored = (id: string, company: string, label: string, hasKey = true): unknown => ({
+    id,
+    label,
+    company,
+    pool: company,
+    kind: 'key',
+    endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+    needsKey: true,
+    hasKey,
+    keySetAt: null,
+    createdAt: 0
+  })
+  it('runs on this Mac\'s stored connection named by id, label or "any", and refuses an unknown one with the list', async () => {
+    globals.window.electronAPI.fleetProviderConnections = vi.fn(async () => [
+      stored('c-ds', 'deepseek', 'No key yet', false),
+      stored('c-kimi', 'moonshot', 'Kimi work')
+    ])
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'c-kimi' })
+    expect(globals.window.electronAPI.fleetProviderConnections).toHaveBeenCalledWith(
+      LOCAL_SERVER_ID
+    )
+    expect(spawned()).toMatchObject({
+      piMode: true,
+      connectionId: 'c-kimi',
+      connectionLabel: 'Kimi work'
+    })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'opencode', account: 'kimi work' })
+    expect(spawned()).toMatchObject({ opencodeMode: true, connectionId: 'c-kimi' })
+    // PRDCT-4496: an agent's model reaches the OpenCode tab on the window's
+    // road; main puts it under the connection's provider (`opencodeModelRef`).
+    await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'opencode',
+      account: 'kimi work',
+      model: 'k-first'
+    })
+    expect(spawned()).toMatchObject({
+      opencodeMode: true,
+      connectionId: 'c-kimi',
+      model: 'k-first'
+    })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'any' })
+    expect(spawned()).toMatchObject({ connectionId: 'c-kimi' })
+    // The window's tab names the connection it runs on.
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === `tab-${spawnSession.mock.calls.length}`)
+    ).toMatchObject({ connectionId: 'c-kimi', connectionLabel: 'Kimi work' })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'pi' })
+    expect(spawned()).not.toHaveProperty('connectionId')
+    const before = spawnSession.mock.calls.length
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'Nobody' })
+    ).rejects.toThrow(
+      'Unknown Pi connection "Nobody". Available: "Kimi work" (c-kimi), "No key yet" (c-ds)'
+    )
+    useProviderConnectionsStore.setState({
+      byMachine: { [LOCAL_SERVER_ID]: { connections: [], loading: false, error: null } }
+    })
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'pi', account: 'any' })
+    ).rejects.toThrow('No stored connection serves Pi yet: add one in Settings → Connections.')
+    // A harness with no pool: the sentence every other road says.
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'antigravity', account: 'x' })
+    ).rejects.toThrow(
+      'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'
+    )
+    expect(spawnSession.mock.calls.length).toBe(before)
+  })
+})
+
 describe('the account of a window-road open', () => {
   it('is judged for the model the tab will run (PRDCT-4253)', async () => {
     switchAccount.resolveAccountRef.mockClear()
@@ -1092,5 +1240,430 @@ describe('an agent switches the account of a server tab', () => {
     expect(
       useSessionStore.getState().sessions.find((s) => s.id === SERVER_TAB)?.accountProposal
     ).toMatchObject({ rungs: [{ kind: 'account', accountId: 'srv-two', label: 'Play' }] })
+  })
+})
+
+/* An open whose tab exists never answers an error (PRDCT-4507): on the window
+   road, a step after the spawn that fails (the tab entered in the store, its
+   name, its group; on a server, the name, the snapshot, the group, the size)
+   leaves the answer the tab's id and one sentence, never a thrown call. */
+describe('an open whose tab exists never answers an error on the window road (PRDCT-4507)', () => {
+  const failing = (): never => {
+    throw new Error('made-up failure')
+  }
+  const actions = (() => {
+    const s = useSessionStore.getState()
+    return { addSession: s.addSession, renameSession: s.renameSession, moveItems: s.moveItems }
+  })()
+  beforeEach(() => {
+    globals.window.electronAPI.setSessionDisplayName = vi.fn(async () => undefined)
+    useSessionStore.setState({
+      sessions: [],
+      groups: [
+        {
+          id: 'g1',
+          name: 'Build',
+          sessionIds: [],
+          terminals: [],
+          collapsed: false,
+          cwd: null
+        } as never
+      ]
+    })
+  })
+  afterEach(() => useSessionStore.setState(actions))
+
+  it.each([
+    ['addSession', 'The tab started but was not placed in the sidebar: made-up failure'],
+    ['renameSession', 'The tab started but was not renamed: made-up failure'],
+    ['moveItems', 'The tab started but was not placed in its group: made-up failure']
+  ] as const)('this Mac: a failed %s answers the id and one sentence', async (action, sentence) => {
+    useSessionStore.setState({ [action]: failing } as never)
+    const answer = (await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'terminal',
+      name: 'Lane',
+      groupId: 'g1'
+    })) as { sessionId: string; warnings?: string[] }
+    expect(answer.sessionId).toBe('tab-1')
+    expect(answer.warnings).toEqual([sentence])
+    expect(spawnSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('this Mac: an open where everything ran carries no warnings', async () => {
+    const answer = await openSessionProgrammatically({
+      cwd: '/repo',
+      mode: 'terminal',
+      name: 'Lane',
+      groupId: 'g1'
+    })
+    expect(answer).toEqual({ sessionId: 'tab-1', groupId: 'g1' })
+  })
+
+  describe('on a saved server', () => {
+    const SERVER_TAB = resourceKey('session', 'srv', 'new-tab')
+    let fleetStart: ReturnType<typeof vi.fn>
+    beforeEach(() => {
+      useFleetStore.setState({
+        connections: [{ id: 'srv', name: 'Studio box', url: 'http://srv', enabled: true }] as never,
+        statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+      })
+      fleetStart = vi.fn(async () => ({ id: SERVER_TAB, cwd: '/srv', folderName: 'srv' }))
+      Object.assign(globals.window.electronAPI, {
+        fleetStart,
+        fleetSnapshot: vi.fn(async () => undefined),
+        resizeSession: vi.fn(async () => undefined),
+        setSessionDisplayName: vi.fn(async () => undefined)
+      })
+    })
+    afterEach(() => useFleetStore.setState({ connections: [], statuses: {} } as never))
+    const openOnServer = (): Promise<unknown> =>
+      openSessionProgrammatically({ cwd: '/srv', server: 'srv', mode: 'terminal', name: 'Lane' })
+
+    it.each([
+      ['setSessionDisplayName', 'The tab started but was not renamed: made-up failure'],
+      ['fleetSnapshot', 'The tab started but its record was not read again: made-up failure'],
+      [
+        'resizeSession',
+        'The tab started but its terminal could not be sized to start: made-up failure'
+      ]
+    ] as const)('a failed %s answers the id and one sentence', async (call, sentence) => {
+      globals.window.electronAPI[call] = vi.fn(async () => failing())
+      const answer = (await openOnServer()) as { sessionId: string; warnings?: string[] }
+      expect(answer.sessionId).toBe(SERVER_TAB)
+      expect(answer.warnings).toEqual([sentence])
+      expect(fleetStart).toHaveBeenCalledTimes(1)
+    })
+
+    it('a failed move into its group answers the id and one sentence', async () => {
+      useSessionStore.setState({
+        groups: [
+          {
+            id: resourceKey('group', 'srv', 'g-srv'),
+            name: 'Far',
+            sessionIds: [],
+            terminals: [],
+            collapsed: false,
+            cwd: null
+          } as never
+        ],
+        moveItems: failing
+      } as never)
+      const answer = (await openSessionProgrammatically({
+        cwd: '/srv',
+        server: 'srv',
+        mode: 'terminal',
+        groupId: resourceKey('group', 'srv', 'g-srv')
+      })) as { sessionId: string; groupId: string | null; warnings?: string[] }
+      expect(answer).toMatchObject({
+        sessionId: SERVER_TAB,
+        groupId: null,
+        warnings: ['The tab started but was not placed in its group: made-up failure']
+      })
+    })
+  })
+})
+
+/* "mine" is the calling tab on every session tool of the window road
+   (PRDCT-4507): a Pi and an OpenCode tab were told `No session with id
+   "mine"` by clave_rename, and listed the tabs to learn their own id. */
+describe('"mine" on the window road (PRDCT-4507)', () => {
+  const dispatch = async (
+    command: string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: command, command, payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  beforeEach(() => {
+    globals.window.electronAPI.setSessionDisplayName = vi.fn(async () => undefined)
+    useSessionStore.setState({
+      sessions: [
+        { id: 'caller', name: 'Pi tab', folderName: 'repo', sessionType: 'local' } as never,
+        { id: 'other', name: 'Other', folderName: 'repo', sessionType: 'local' } as never
+      ],
+      groups: []
+    })
+  })
+
+  it('renames the calling tab, and no other', async () => {
+    const answer = await dispatch('rename', {
+      target: 'session',
+      id: 'mine',
+      name: 'Renamed by itself',
+      callerSessionId: 'caller'
+    })
+    expect(answer).toEqual({
+      requestId: 'rename',
+      ok: true,
+      result: { renamed: 'caller', name: 'Renamed by itself' }
+    })
+    const names = useSessionStore.getState().sessions.map((s) => [s.id, s.name])
+    expect(names).toEqual([
+      ['caller', 'Renamed by itself'],
+      ['other', 'Other']
+    ])
+  })
+
+  it('refuses "mine" with no tab identity in one sentence, on every session tool', async () => {
+    const calls: [string, Record<string, unknown>, string][] = [
+      ['rename', { target: 'session', id: 'mine', name: 'x' }, 'id'],
+      ['focus', { sessionId: 'mine' }, 'sessionId'],
+      ['moveSession', { sessionId: 'mine', groupId: 'root' }, 'sessionId'],
+      ['closeSession', { sessionId: 'mine' }, 'sessionId'],
+      ['setSessionView', { sessionId: 'mine', url: null }, 'sessionId'],
+      ['readSession', { sessionId: 'mine' }, 'sessionId'],
+      ['resumeSession', { sessionId: 'mine' }, 'sessionId'],
+      ['sendToSession', { sessionId: 'mine', message: 'hi' }, 'sessionId'],
+      ['switchAccount', { sessionId: 'mine', account: 'any' }, 'sessionId']
+    ]
+    for (const [command, payload, field] of calls) {
+      const answer = await dispatch(command, payload)
+      expect({ command, ok: answer.ok, error: answer.error }).toEqual({
+        command,
+        ok: false,
+        error: `${field} "mine" needs a calling tab — this request has no tab identity`
+      })
+    }
+    expect(useSessionStore.getState().sessions.map((s) => s.name)).toEqual(['Pi tab', 'Other'])
+  })
+})
+
+describe('clave_launch_options on the window road (PRDCT-4485)', () => {
+  /** This Mac as the input names it: one Claude connection, a remembered model. */
+  const input: LaunchOptionsInput = {
+    machine: { id: 'local', name: 'This Mac' },
+    harnesses: HARNESSES,
+    presence: () => undefined,
+    profiles: () => [],
+    defaultProfileId: () => undefined,
+    openProfileId: () => undefined,
+    models: () => 'unavailable',
+    harnessSettings: {},
+    interactionMode: 'chat',
+    connections: (pool) =>
+      pool === 'claude' ? [{ id: 'default', label: 'Me', usable: true }] : [],
+    selectedConnectionId: () => 'default',
+    preferRecommended: true,
+    launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
+    now: 1
+  }
+  beforeEach(() => {
+    launchInput.local.mockReset().mockReturnValue(input)
+    launchInput.server.mockReset()
+    useAccountPolicyStore.setState({ useRecommendedAccount: true })
+    // A full id: a bare default alias is the CLI's own default, read as none.
+    // Only the chat adapter remembers a model; a terminal has none.
+    globals.window.electronAPI.launchRememberedModel = vi.fn(async (adapterId: string) =>
+      adapterId === 'claude-chat' ? 'claude-opus-5-5' : undefined
+    )
+    // The default profile is the built-in TERMINAL one, as on a fresh
+    // install; the chat default is a profile apart (the built-in chat). An
+    // open in a chat interaction mode lands on the chat default, so the
+    // remembered model is read there (verifier, round 2: a default profile
+    // set to the chat hid the difference).
+    useLaunchProfileStore.setState({ preferences: preferences({}), loaded: true })
+    useLaunchSettingsStore.setState({ interactionMode: 'chat' })
+  })
+  afterEach(() => {
+    useAccountPolicyStore.setState({ useRecommendedAccount: false })
+    useLaunchSettingsStore.setState({ interactionMode: DEFAULT_INTERACTION_MODE })
+  })
+
+  it('reads the remembered model on the chat default in a chat mode, none in a terminal mode', async () => {
+    expect(useLaunchProfileStore.getState().preferences.globalDefaults.claude).toBeUndefined()
+    const ask = async (): Promise<unknown> => {
+      let receive: (msg: {
+        requestId: string
+        command: string
+        payload: unknown
+      }) => void = () => {}
+      const response = new Promise<{ ok: boolean; result?: unknown }>((resolve) => {
+        globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+          receive = handler
+          return () => {}
+        }
+        globals.window.electronAPI.mcpRespond = resolve
+      })
+      const unsubscribe = initMcpDispatcher()
+      receive({ requestId: 'options', command: 'launchOptions', payload: { server: undefined } })
+      try {
+        return await response
+      } finally {
+        unsubscribe()
+      }
+    }
+    await ask()
+    expect(globals.window.electronAPI.launchRememberedModel).toHaveBeenCalledWith('claude-chat')
+    expect(launchInput.local).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        launchModels: expect.objectContaining({ claude: 'claude-opus-5-5' })
+      })
+    )
+    useLaunchSettingsStore.setState({ interactionMode: 'terminal' })
+    await ask()
+    expect(launchInput.local).toHaveBeenLastCalledWith(
+      expect.objectContaining({ launchModels: expect.objectContaining({ claude: undefined }) })
+    )
+  })
+
+  it('answers this Mac with the shared function, from the stores the window keeps', async () => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'options', command: 'launchOptions', payload: { server: undefined } })
+    try {
+      const answer = await response
+      expect(answer).toMatchObject({ requestId: 'options', ok: true })
+      expect(answer.result).toEqual(launchOptions(input))
+      expect(launchInput.server).not.toHaveBeenCalled()
+      expect(launchInput.local).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preferRecommended: true,
+          codexModels: 'unavailable',
+          launchModels: expect.objectContaining({ claude: 'claude-opus-5-5' })
+        })
+      )
+    } finally {
+      unsubscribe()
+    }
+  })
+})
+
+// Lane C of the harness wave (PRDCT-4496), verifier's F1: the window's listing
+// and its open read the same list of a server's stored connections.
+describe("clave_launch_options and clave_open_session agree on a server's stored connection", () => {
+  afterEach(() => {
+    useFleetStore.setState({ connections: [], statuses: {} } as never)
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    launchInput.server.mockReset()
+  })
+
+  it('reads the list the window does not hold yet, and suggests the connection `any` lands on', async () => {
+    const kimi = {
+      id: 'c-kimi',
+      label: 'Kimi work',
+      company: 'moonshot',
+      pool: 'moonshot',
+      kind: 'key',
+      endpoints: [{ wireFormat: 'openai-chat', baseUrl: 'https://e2e-made-up.example/v1' }],
+      needsKey: true,
+      hasKey: true,
+      keySetAt: 1,
+      createdAt: 0
+    }
+    // The fake machine: one keyed Kimi connection on `srv`, none held by the window.
+    const fleetProviderConnections = vi.fn(async (machine: string) =>
+      machine === 'srv' ? [kimi] : []
+    )
+    useProviderConnectionsStore.setState({ byMachine: {} })
+    useFleetStore.setState({
+      connections: [{ id: 'srv', name: 'Studio box', url: 'http://srv', enabled: true }] as never,
+      statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+    })
+    const fleetStart = vi.fn(async (serverId: string, cwd: string, options: unknown) => ({
+      id: resourceKey('session', serverId, 'pi-tab'),
+      cwd,
+      options,
+      folderName: 'repo',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    }))
+    Object.assign(globals.window.electronAPI, {
+      fleetProviderConnections,
+      fleetStart,
+      fleetSnapshot: vi.fn(async () => undefined),
+      fleetLaunchSettings: vi.fn(async () => ({
+        profiles: preferences({}),
+        claudeAccounts: [],
+        codexAccounts: []
+      })),
+      resizeSession: vi.fn(),
+      setSessionDisplayName: vi.fn(async () => undefined)
+    })
+    // The server's input as the window builds it (`poolConnections`, whose
+    // module loads the usage store and cannot load here): its provider pools
+    // read from lane B's store at listing time; no account pool here.
+    launchInput.server.mockImplementation(
+      (serverId: string): LaunchOptionsInput => ({
+        machine: { id: serverId, name: 'Studio box' },
+        harnesses: HARNESSES,
+        presence: () => undefined,
+        profiles: () => [],
+        defaultProfileId: () => undefined,
+        openProfileId: () => undefined,
+        models: () => 'unavailable',
+        harnessSettings: {},
+        interactionMode: 'chat',
+        connections: (pool, harness) =>
+          pool === 'claude' || pool === 'codex'
+            ? []
+            : (
+                (useProviderConnectionsStore.getState().byMachine[serverId]?.connections ??
+                  []) as unknown as ProviderConnectionView[]
+              )
+                .filter((view) => servesHarnessPool(view, pool, harness))
+                .map(providerConnection),
+        selectedConnectionId: () => undefined,
+        preferRecommended: false,
+        launchModel: () => undefined,
+        now: 1
+      })
+    )
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    let listed: { id: string; suggested: boolean }[] = []
+    try {
+      receive({ requestId: 'options', command: 'launchOptions', payload: { server: 'srv' } })
+      const answer = await response
+      expect(answer).toMatchObject({ ok: true })
+      const pi = (
+        answer.result as {
+          harnesses: { id: string; connections: { id: string; suggested: boolean }[] }[]
+        }
+      ).harnesses.find((h) => h.id === 'pi')!
+      listed = pi.connections
+    } finally {
+      unsubscribe()
+    }
+    expect(fleetProviderConnections).toHaveBeenCalledWith('srv')
+    expect(listed.map((c) => [c.id, c.suggested])).toEqual([['c-kimi', true]])
+    await openSessionProgrammatically({
+      cwd: '/srv/repo',
+      server: 'srv',
+      mode: 'pi',
+      account: 'any'
+    })
+    const started = fleetStart.mock.calls.at(-1)![2] as Record<string, unknown>
+    expect(started.connectionId).toBe(listed.find((c) => c.suggested)?.id)
+    // Read once: the open found the list the listing read.
+    expect(fleetProviderConnections).toHaveBeenCalledTimes(1)
   })
 })

@@ -340,10 +340,19 @@ export async function run(t) {
         groupMoved.moved.includes(term.sessionId),
       groupMoved
     )
+    // The window takes the member in first and its quick-launch terminal one
+    // reattach later (`adoptRehomed` adopts one record after the other, the
+    // terminal last so the focus goes to the member): the list is read once
+    // both are in, so the focus below is read after the terminal's adoption too.
     const back1 = await until(async () => {
       const l = await callMcpIn(app, id1.windowId, 'list', {})
       const grp = l.groups.find((x) => x.name === 'Moving group')
-      return grp && grp.sessionIds.includes(SESS.id) && idsIn(l).includes(SESS.id) ? l : null
+      return grp &&
+        grp.sessionIds.includes(SESS.id) &&
+        idsIn(l).includes(SESS.id) &&
+        l.sessions.find((x) => x.id === term.sessionId)?.alive === true
+        ? l
+        : null
     })
     t.check(
       'window 1 has the group with the session in it',

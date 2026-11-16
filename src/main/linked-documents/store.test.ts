@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { LinkedDocumentStore } from './store'
 import { emailSchema } from '../../shared/linked-documents'
 import { importSignature, validateEmailHtml } from './email'
+import { SIDE_PANEL_HTML_REFUSAL } from '../mcp/artefact-tool'
 const dirs: string[] = []
 function fixture(): { root: string; store: LinkedDocumentStore } {
   const root = mkdtempSync(join(tmpdir(), 'clave-linked-'))
@@ -245,95 +246,110 @@ it('rejects contradictory signature choices without mutating draft or preference
   expect(store.getDefaultSignature()).toBeNull()
 })
 
-describe('the side panel follows its file (PRDCT-4261) and opens a folder (PRDCT-4262)', () => {
+describe('the side panel follows its file (PRDCT-4261)', () => {
   it('reloads on the watcher only when the file differs from what the panel holds', async () => {
     const { root, store } = fixture()
-    const path = join(root, 'page.html')
-    writeFileSync(path, '<h1>one</h1>')
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
     const doc = await store.open('s1', { path })
     // Nothing changed: no new revision, nothing re-read.
     const same = await store.update(doc.id, doc.revision, { reloadExternal: true, ifChanged: true })
     expect(same.revision).toBe(doc.revision)
     // The panel's own save writes the file: the watcher that follows is a no-op.
-    const saved = await store.update(doc.id, doc.revision, { content: '<h1>mine</h1>' })
+    const saved = await store.update(doc.id, doc.revision, { content: '# mine' })
     const after = await store.update(saved.id, saved.revision, {
       reloadExternal: true,
       ifChanged: true
     })
     expect(after.revision).toBe(saved.revision)
-    expect(after.content).toBe('<h1>mine</h1>')
+    expect(after.content).toBe('# mine')
     // An agent rewrites it: the watcher reloads it.
-    writeFileSync(path, '<h1>agent</h1>')
+    writeFileSync(path, '# agent')
     const reloaded = await store.update(after.id, after.revision, {
       reloadExternal: true,
       ifChanged: true
     })
     expect(reloaded.revision).toBe(after.revision + 1)
-    expect(reloaded.content).toBe('<h1>agent</h1>')
+    expect(reloaded.content).toBe('# agent')
   })
 
   it('never reloads over a conflict the person has to resolve', async () => {
     const { root, store } = fixture()
-    const path = join(root, 'page.html')
-    writeFileSync(path, '<h1>one</h1>')
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
     const doc = await store.open('s1', { path })
-    writeFileSync(path, '<h1>outside</h1>')
-    const conflicted = await store.update(doc.id, doc.revision, { content: '<h1>my edit</h1>' })
+    writeFileSync(path, '# outside')
+    const conflicted = await store.update(doc.id, doc.revision, { content: '# my edit' })
     expect(conflicted.conflict).toBeTruthy()
-    writeFileSync(path, '<h1>outside again</h1>')
+    writeFileSync(path, '# outside again')
     const kept = await store.update(conflicted.id, conflicted.revision, {
       reloadExternal: true,
       ifChanged: true
     })
-    expect(kept.content).toBe('<h1>my edit</h1>')
+    expect(kept.content).toBe('# my edit')
     expect(kept.conflict).toBeTruthy()
   })
 
   it('opening the same file again shows what is on disk now', async () => {
     const { root, store } = fixture()
-    const path = join(root, 'page.html')
-    writeFileSync(path, '<h1>one</h1>')
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
     const first = await store.open('s1', { path })
     await store.update(first.id, first.revision, { hidden: true })
-    writeFileSync(path, '<h1>two</h1>')
+    writeFileSync(path, '# two')
     const again = await store.open('s1', { path })
     expect(again.id).toBe(first.id)
     expect(again.hidden).toBe(false)
-    expect(again.content).toBe('<h1>two</h1>')
+    expect(again.content).toBe('# two')
     expect(again.revision).toBe(first.revision + 1)
     // Unchanged on disk: the same revision, only shown again.
     const third = await store.open('s1', { path })
     expect(third.revision).toBe(again.revision)
   })
 
-  it('opens a folder through its entry page and remembers the folder', async () => {
+  it('never opens an HTML page or a folder: that is the session’s artefact (PRDCT-4474)', async () => {
     const { root, store } = fixture()
     const folder = join(root, 'brief')
     mkdirSync(folder)
     writeFileSync(join(folder, 'index.html'), '<h1>brief</h1>')
-    writeFileSync(join(folder, 'other.html'), '<h1>other</h1>')
-    const doc = await store.open('s1', { path: folder })
-    expect(doc.kind).toBe('html')
-    expect(doc.root).toBe(folder)
-    expect(doc.path).toBe(join(folder, 'index.html'))
-    expect(doc.title).toBe('index.html')
-    expect(doc.content).toBe('<h1>brief</h1>')
+    writeFileSync(join(root, 'page.HTM'), '<h1>page</h1>')
+    for (const path of [folder, join(folder, 'index.html'), join(root, 'page.HTM')])
+      await expect(store.open('s1', { path })).rejects.toThrow(SIDE_PANEL_HTML_REFUSAL)
+    expect(store.list()).toEqual([])
   })
 
-  it('takes a folder with one page and no index.html, and refuses an empty or ambiguous one', async () => {
+  it('still opens Markdown and email', async () => {
     const { root, store } = fixture()
-    const one = join(root, 'one')
-    mkdirSync(one)
-    writeFileSync(join(one, 'deck.html'), '<p>x</p>')
-    expect((await store.open('s1', { path: one })).path).toBe(join(one, 'deck.html'))
-    const empty = join(root, 'empty')
-    mkdirSync(empty)
-    await expect(store.open('s2', { path: empty })).rejects.toThrow(/no HTML page/)
-    const two = join(root, 'two')
-    mkdirSync(two)
-    writeFileSync(join(two, 'a.html'), 'a')
-    writeFileSync(join(two, 'b.html'), 'b')
-    await expect(store.open('s3', { path: two })).rejects.toThrow(/several HTML pages/)
+    writeFileSync(join(root, 'notes.markdown'), '# notes')
+    expect((await store.open('s1', { path: join(root, 'notes.markdown') })).kind).toBe('markdown')
+    expect((await store.open('s2', { email: email() })).kind).toBe('email')
+    expect(
+      store
+        .list()
+        .map((d) => d.kind)
+        .sort()
+    ).toEqual(['email', 'markdown'])
+  })
+
+  it('drops a stored HTML document at load, and leaves its page on disk alone', async () => {
+    const { root, store } = fixture()
+    writeFileSync(join(root, 'notes.md'), '# kept')
+    const kept = await store.open('s1', { path: join(root, 'notes.md') })
+    const page = join(root, 'old.html')
+    writeFileSync(page, '<h1>old</h1>')
+    // A record an earlier build wrote for an HTML page, beside the Markdown one.
+    const id = '00000000-0000-4000-8000-000000000001'
+    const record = { ...kept, id, sessionId: 's2', kind: 'html', path: page, root: root }
+    writeFileSync(join(root, 'store', id + '.json'), JSON.stringify(record))
+    const index = JSON.parse(readFileSync(join(root, 'store', 'index.json'), 'utf8'))
+    writeFileSync(join(root, 'store', 'index.json'), JSON.stringify({ ...index, s2: id }))
+    const reopened = new LinkedDocumentStore(join(root, 'store'))
+    expect(reopened.list().map((d) => d.id)).toEqual([kept.id])
+    expect(existsSync(join(root, 'store', id + '.json'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(root, 'store', 'index.json'), 'utf8'))).toEqual({
+      s1: kept.id
+    })
+    expect(readFileSync(page, 'utf8')).toBe('<h1>old</h1>')
   })
 })
 
@@ -358,28 +374,15 @@ describe('round 1 of the review (PRDCT-4261, PRDCT-4262)', () => {
 
   it('opening the same file again never reloads over a conflict', async () => {
     const { root, store } = fixture()
-    const path = join(root, 'page.html')
-    writeFileSync(path, '<h1>one</h1>')
+    const path = join(root, 'page.md')
+    writeFileSync(path, '# one')
     const doc = await store.open('s1', { path })
-    writeFileSync(path, '<h1>outside</h1>')
-    const conflicted = await store.update(doc.id, doc.revision, { content: '<h1>my edit</h1>' })
+    writeFileSync(path, '# outside')
+    const conflicted = await store.update(doc.id, doc.revision, { content: '# my edit' })
     expect(conflicted.conflict).toBeTruthy()
     const again = await store.open('s1', { path })
-    expect(again.content).toBe('<h1>my edit</h1>')
+    expect(again.content).toBe('# my edit')
     expect(again.conflict).toBeTruthy()
-  })
-
-  it('the same page opened as a folder after a file (or the reverse) is a new open with its folder', async () => {
-    const { root, store } = fixture()
-    const folder = join(root, 'deck')
-    mkdirSync(folder)
-    writeFileSync(join(folder, 'index.html'), '<h1>deck</h1>')
-    const asFile = await store.open('s1', { path: join(folder, 'index.html') })
-    expect(asFile.root).toBeUndefined()
-    const asFolder = await store.open('s1', { path: folder })
-    expect(asFolder.root).toBe(folder)
-    const backToFile = await store.open('s1', { path: join(folder, 'index.html') })
-    expect(backToFile.root).toBeUndefined()
   })
 })
 

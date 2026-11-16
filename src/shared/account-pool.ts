@@ -162,7 +162,13 @@ export function pickAccount(input: PickInput): string {
     return openTargets[0].id
   }
   // Nothing with headroom: a fallback that can run, else whichever
-  // subscription account comes back first, else stay where we are.
+  // subscription account comes back first, else stay where we are. A launch
+  // (no account being left) keeps a SELECTED usable fallback before any other
+  // key: the person chose that key (verifier, round 2: the ring search ends
+  // on the selected one, so another key was found first). A switch searches
+  // the ring after the account it leaves, never landing back on it.
+  if (input.leavingId === undefined && preferred && ok(preferred) && preferred.fallback)
+    return preferredId
   const fallback = ring.find((a) => a.id !== from && ok(a) && a.fallback)
   if (fallback) return fallback.id
   let soonest: { id: string; at: number } | null = null

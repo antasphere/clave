@@ -418,6 +418,9 @@ interface SessionState {
   /** The model the session runs on, as its provider said it (PRDCT-4256):
    *  written at launch and here, never derived in the window. */
   setSessionModel: (id: string, model: string) => void
+  /** PRDCT-4540: the provider the tab's process went to off its connection,
+   *  or null back on it, as its own report said. */
+  setSessionConnectionLeft: (id: string, provider: string | null) => void
   /** The policy's knobs and its proposal on a session (ADR 0002). */
   setAccountPinned: (id: string, pinned: boolean) => void
   setModelPinned: (id: string, pinned: boolean) => void
@@ -2064,6 +2067,21 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) =>
       state.sessions.some((s) => s.id === id && s.model !== model)
         ? { sessions: state.sessions.map((s) => (s.id === id ? { ...s, model } : s)) }
+        : state
+    ),
+
+  setSessionConnectionLeft: (id, provider) =>
+    set((state) =>
+      state.sessions.some((s) => s.id === id && (s.connectionLeftFor ?? null) !== provider)
+        ? {
+            sessions: state.sessions.map((s) => {
+              if (s.id !== id) return s
+              const next = { ...s }
+              if (provider === null) delete next.connectionLeftFor
+              else next.connectionLeftFor = provider
+              return next
+            })
+          }
         : state
     ),
 

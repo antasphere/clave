@@ -200,8 +200,9 @@ tabular-nums`.
 
 ## Motion
 
-Color/background transitions are 150ms; press feedback is the shared 3% scale dip
-on `--ease-out-expo` (buttons only, never rows). Overlays enter with
+Color/background transitions are 150ms. A press never moves or resizes a control:
+a menu or popover is anchored to its trigger's edge, so a press dip carried the
+open surface with it as the button grew back. Overlays enter with
 `.menu-pop` / `.menu-pop-mount` (140ms) or `.modal-pop` (160ms). Content
 appearing/disappearing inside a box: Framer Motion, ~140–160ms, easeOut. Scrolling
 a terminal programmatically glides (ease-out, duration scaled to distance, capped
@@ -244,10 +245,10 @@ import { ConfirmDialog, ColorPicker, cn } from '@clave/ui/components'
 that order. Skins can import `@clave/ui/tokens.css` independently. Shared controls
 must never import the app's stores, Electron bridge, or feature components.
 
-`ColorPicker` accepts a `presets` map and an explicit `presetOrder` array; `ThemeToggle` accepts `theme` and `setTheme`;
-`EmptyState` accepts an `action` node. The app keeps thin adapters at the old paths
-for its terminal palette and new-session action; Appearance owns persisted skin selection. All other old
-primitive paths are compatibility re-exports for one release.
+`ColorPicker` accepts a `presets` map and an explicit `presetOrder` array; `ThemeToggle` accepts `theme` and `setTheme`.
+The app keeps a thin adapter at the old path for its terminal palette; Appearance owns persisted skin
+selection. The main pane's empty states are the app's own (`components/layout/PaneEmpty.tsx`), drawn in
+the `.chat-drawing` hand. All other old primitive paths are compatibility re-exports for one release.
 
 ## Verification
 

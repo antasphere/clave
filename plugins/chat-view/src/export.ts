@@ -1,5 +1,6 @@
 import type { Entry } from './reducer'
 import { describeToolHead, visibleEntries } from './tools'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 
 /** What the transcript's head says about the conversation it holds. */
 export interface TranscriptMeta {
@@ -90,13 +91,15 @@ export function transcriptMarkdown(
   if (meta.truncated) out.push('', '> Some earlier messages are no longer retained by this server.')
 
   // Who holds the floor: a heading is written only when the speaker changes,
-  // so an answer split by tool runs reads as one answer.
-  let speaker: 'user' | 'agent' | null = null
-  const turn = (who: 'user' | 'agent', at: number): void => {
+  // so an answer split by tool runs reads as one answer. Another tab is a
+  // speaker of its own, by its name.
+  let speaker: string | null = null
+  const turn = (who: string, name: string, at: number): void => {
     if (speaker === who) return
     speaker = who
-    out.push('', `## ${who === 'user' ? 'You' : meta.agent} · ${clock(at)}`)
+    out.push('', `## ${name} · ${clock(at)}`)
   }
+  const agentTurn = (at: number): void => turn('agent', meta.agent, at)
   // Tool lines sit together as one list; anything else closes it.
   let inList = false
   const block = (text: string): void => {
@@ -113,8 +116,16 @@ export function transcriptMarkdown(
   for (const entry of shown) {
     switch (entry.kind) {
       case 'user': {
-        turn('user', entry.at)
-        if (entry.text.trim()) block(entry.text.trim())
+        // A message another tab sent reads as that tab's, under its name and
+        // without the bracketed header, as the transcript shows it: never as
+        // the reader's (PRDCT-4566).
+        const delivery = parseDelivery(entry.text)
+        if (delivery) {
+          const name = delivery.sender?.name ?? 'Another agent'
+          turn(`tab:${delivery.sender?.id ?? name}`, name, entry.at)
+        } else turn('user', 'You', entry.at)
+        const words = (delivery ? delivery.body : entry.text).trim()
+        if (words) block(words)
         const files = (entry.attachments ?? []).map((file) =>
           file.delivery === 'session' ? `the session “${file.name}”` : code(file.name)
         )
@@ -124,12 +135,12 @@ export function transcriptMarkdown(
       }
       case 'assistant': {
         if (!entry.text.trim()) break
-        turn('agent', entry.at)
+        agentTurn(entry.at)
         block(entry.text.trim())
         break
       }
       case 'tool': {
-        turn('agent', entry.at)
+        agentTurn(entry.at)
         const { label, target } = describeToolHead(entry)
         const what = target ? `${label} ${code(target)}` : label
         item(entry.failed ? `${what} _(failed)_` : what)
@@ -148,7 +159,7 @@ export function transcriptMarkdown(
         break
       }
       case 'permission': {
-        turn('agent', entry.at)
+        agentTurn(entry.at)
         const asked = entry.request.description.trim() || entry.request.toolName || 'Approval'
         const answered = entry.answers
           ? Object.values(entry.answers).join('; ')
@@ -161,7 +172,11 @@ export function transcriptMarkdown(
         break
       }
       case 'error': {
-        block(`> **Error:** ${entry.message.replace(/\n+/g, ' ')}`)
+        // A quiet notice reports no failure (another tab's message left
+        // unsent, PRDCT-4566): a plain line, as the transcript's other quiet
+        // lines are written (`_Interrupted_`); a failure keeps its Error.
+        const line = entry.message.replace(/\n+/g, ' ')
+        block(entry.quiet ? `_${line.trim()}_` : `> **Error:** ${line}`)
         break
       }
     }

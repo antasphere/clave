@@ -34,6 +34,8 @@ export function restartOverridesFromWire(raw: unknown): RestartOverrides {
     model: str(overrides.model),
     resume: str(overrides.resume),
     firstMessage: str(overrides.firstMessage),
-    continuedFrom: continuedFromOf(overrides.continuedFrom)
+    continuedFrom: continuedFromOf(overrides.continuedFrom),
+    // Lane D (PRDCT-4427): the view a move onto the family's chat opens in.
+    viewId: str(overrides.viewId) || undefined
   }
 }

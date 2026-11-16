@@ -41,9 +41,14 @@ export function serverHistory(dataDir: string): {
   return {
     read,
     record(id, stream) {
+      // Live state, never the conversation's past: what still waits for the
+      // agent (PRDCT-4566) is told to a late view by the manager, and a page
+      // of the past that held it would hand its messages back again.
       if (
         stream.kind === 'event' &&
-        ['provider_event', 'state_change', 'background_tasks'].includes(stream.event.type)
+        ['provider_event', 'state_change', 'background_tasks', 'waiting_messages'].includes(
+          stream.event.type
+        )
       )
         return
       const old = read(id)

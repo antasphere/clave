@@ -81,7 +81,8 @@ export async function run(t) {
     }
     t.check(
       'connected servers show their own Claude and Codex logins read-only in the overview',
-      (await firstRow.getByText('Accounts', { exact: true }).first().isVisible()) &&
+      // The section is Connections since the launcher's three words (PRDCT-4424).
+      (await firstRow.getByText('Connections', { exact: true }).first().isVisible()) &&
         (await firstRow.getByText('Fixture login', { exact: true }).isVisible()) &&
         (await firstRow.getByText('Claude', { exact: true }).isVisible()) &&
         (await firstRow.getByText('Codex', { exact: true }).isVisible()) &&

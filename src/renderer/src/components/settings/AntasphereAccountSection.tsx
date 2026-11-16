@@ -8,7 +8,7 @@ import {
 import { SettingsSection, SettingsCard, SettingsRow, SettingsCallout } from './primitives'
 
 /**
- * Settings → Accounts, the first section: the Antasphere account this Clave
+ * Settings → Connections, the first section: the Antasphere account this Clave
  * is signed in with (PRDCT-3259). Signed out, one button that opens the
  * browser at the hub; signing in, a line and a way to cancel or to open the
  * page again; signed in, who, and a sign-out that is local to Clave.

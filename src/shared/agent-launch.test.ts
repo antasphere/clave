@@ -3,6 +3,9 @@ import {
   BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
+  capturesExchange,
+  exchangeCaptureRefusal,
+  chatProfileSource,
   codexProfilePolicy,
   codexRungPolicy,
   resolveLaunchProfile,
@@ -62,6 +65,38 @@ describe('a carried launch profile', () => {
     }
     expect(sanitizeCarriedLaunchProfile(codex)).toEqual(codex)
     expect(sanitizeCarriedLaunchProfile({ ...codex, id: 'chat:claude:x' })).toBeNull()
+  })
+
+  // Lane D (PRDCT-4427): OpenCode's saved profiles have a chat form too.
+  it('accepts the chat form of a saved OpenCode profile, for its own family only', () => {
+    const opencode = {
+      id: 'chat:opencode:x',
+      name: 'X (chat)',
+      family: 'opencode',
+      command: ['opencode'],
+      additionalArgs: [],
+      sourceProfileId: 'x'
+    }
+    expect(sanitizeCarriedLaunchProfile(opencode)).toEqual(opencode)
+    expect(sanitizeCarriedLaunchProfile({ ...opencode, family: 'codex' })).toBeNull()
+    expect(chatProfileSource('chat:opencode:x')).toEqual({ family: 'opencode', id: 'x' })
+    expect(chatProfileSource('chat:antigravity:x')).toBeUndefined()
+  })
+
+  // Lane D (PRDCT-4427): Pi's saved profiles have a chat form too.
+  it('accepts the chat form of a saved Pi profile, its Pi settings kept, for its own family only', () => {
+    const pi = {
+      id: 'chat:pi:x',
+      name: 'X (chat)',
+      family: 'pi',
+      command: ['pi'],
+      additionalArgs: [],
+      sourceProfileId: 'x',
+      pi: { provider: 'anthropic', model: 'sonnet', thinking: 'high' }
+    }
+    expect(sanitizeCarriedLaunchProfile(pi)).toEqual(pi)
+    expect(sanitizeCarriedLaunchProfile({ ...pi, family: 'opencode' })).toBeNull()
+    expect(chatProfileSource('chat:pi:x')).toEqual({ family: 'pi', id: 'x' })
   })
 
   it.each([
@@ -297,9 +332,22 @@ describe('agent argv', () => {
   it("launches OpenCode's TUI with the flags it has: --session, --auto, --prompt, never a model", () => {
     const profile = BUILT_IN_LAUNCH_PROFILES.find((p) => p.family === 'opencode')!
     expect(profile.command).toEqual(['opencode'])
-    expect(buildAgentArgv({ kind: 'opencode', profile, sessionId: 'fresh', model: 'x/y' })).toEqual(
-      ['opencode']
-    )
+    expect(buildAgentArgv({ kind: 'opencode', profile, model: 'x/y' })).toEqual(['opencode'])
+    // PRDCT-4551: a fresh terminal on the session Clave named, which
+    // `--session` creates; a resume wins over it.
+    expect(buildAgentArgv({ kind: 'opencode', profile, sessionId: 'ses_fresh' })).toEqual([
+      'opencode',
+      '--session',
+      'ses_fresh'
+    ])
+    expect(
+      buildAgentArgv({
+        kind: 'opencode',
+        profile,
+        sessionId: 'ses_fresh',
+        resumeSessionId: 'ses_old'
+      })
+    ).toEqual(['opencode', '--session', 'ses_old'])
     expect(
       buildAgentArgv({
         kind: 'opencode',
@@ -314,20 +362,40 @@ describe('agent argv', () => {
       'opencode',
       '--auto'
     ])
+    // A tab's connection and model ride in its environment, read only by a
+    // standalone TUI (PRDCT-4496): pushed once, never twice.
+    expect(buildAgentArgv({ kind: 'opencode', profile, opencodeStandalone: true })).toEqual([
+      'opencode',
+      '--standalone'
+    ])
+    const standalone = {
+      ...profile,
+      id: 'oc-standalone',
+      builtIn: false,
+      additionalArgs: ['--standalone']
+    }
+    expect(
+      buildAgentArgv({ kind: 'opencode', profile: standalone, opencodeStandalone: true })
+    ).toEqual(['opencode', '--standalone'])
+    expect(buildAgentArgv({ kind: 'opencode', profile, opencodeStandalone: false })).toEqual([
+      'opencode'
+    ])
     const managed = { ...profile, id: 'oc-bad', builtIn: false, additionalArgs: ['--prompt=x'] }
     expect(() => buildAgentArgv({ kind: 'opencode', profile: managed })).toThrow(
       'Clave-managed flag'
     )
+    // PRDCT-4507: OpenCode is handed Clave's tools; the rest stays explicit.
     expect(AGENT_CAPABILITIES.opencode).toEqual({
-      claveTools: 'unsupported',
+      claveTools: 'supported',
       exchangeCapture: 'unsupported',
       blockedState: 'unsupported'
     })
   })
 
-  it('keeps unsupported Pi capabilities explicit', () => {
+  it('keeps unsupported Pi capabilities explicit, Clave tools supported (PRDCT-4507)', () => {
+    expect(AGENT_CAPABILITIES.antigravity.claveTools).toBe('unsupported')
     expect(AGENT_CAPABILITIES.pi).toEqual({
-      claveTools: 'unsupported',
+      claveTools: 'supported',
       exchangeCapture: 'unsupported',
       blockedState: 'unsupported'
     })
@@ -546,5 +614,20 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     })
     expect(codexRungPolicy('never')).toBeUndefined()
     expect(codexRungPolicy(undefined)).toBeUndefined()
+  })
+})
+
+// PRDCT-4507: every capture road asks the table, never a list of modes.
+describe('capturesExchange', () => {
+  it('answers the harness table, aliases included, and never for a terminal or an unknown mode', () => {
+    for (const [mode, capability] of Object.entries(AGENT_CAPABILITIES))
+      expect(capturesExchange(mode), mode).toBe(capability.exchangeCapture === 'supported')
+    expect(capturesExchange('claude-agents')).toBe(capturesExchange('claude'))
+    expect(capturesExchange('gemini')).toBe(capturesExchange('antigravity'))
+    expect(capturesExchange('terminal')).toBe(false)
+    expect(capturesExchange('nope')).toBe(false)
+    expect(exchangeCaptureRefusal('opencode')).toBe(
+      'OpenCode exchange capture is not supported yet'
+    )
   })
 })

@@ -91,13 +91,15 @@ describe('the settings contract keeps secrets off every surface a client reads',
     expect(JSON.stringify(confirm)).not.toContain('secret-state')
   })
 
-  it('only three payloads carry a secret in, and each carries it redacted', () => {
+  it('only four payloads carry a secret in, and each carries it redacted', () => {
     const carrying = definitions.filter((d) =>
       propertyNames(d.payload.ast).some((n) => SECRET_FIELDS.has(n))
     )
     expect(carrying.map((d) => d.tag).sort()).toEqual([
       'SetClaudeAccountToken',
       'SetElevenLabsKey',
+      // ── Lane B (harness wave): provider connections ──
+      'SetProviderConnectionKey',
       'StartCodexApiKeyLogin'
     ])
     // The ElevenLabs key (PRDCT-4410): in redacted, out in nothing.
@@ -131,6 +133,24 @@ describe('the settings contract keeps secrets off every surface a client reads',
       const literal = (tag.type as SchemaAST.Literal).literal
       expect(String(literal)).toMatch(/^(accounts|usage|workspaces)\.[a-z_]+$/)
     }
-    expect(tags).toHaveLength(7)
+    expect(tags).toHaveLength(8)
+  })
+
+  // ── Lane B (harness wave): provider connections ──
+  it('the provider key goes in redacted and comes out in nothing', () => {
+    const key = Schema.decodeUnknownSync(Settings.SetProviderConnectionKey.payload)({
+      id: 'c',
+      apiKey: 'sk-contract-provider-key'
+    })
+    expect(String(key.apiKey)).toBe('<redacted>')
+    expect(JSON.stringify(key)).not.toContain('sk-contract')
+    for (const definition of [
+      Settings.ListProviderConnections,
+      Settings.AddProviderConnection,
+      Settings.RenameProviderConnection,
+      Settings.RemoveProviderConnection,
+      Settings.SetProviderConnectionKey
+    ])
+      expect(propertyNames(definition.success.ast)).not.toContain('sealed')
   })
 })

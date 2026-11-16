@@ -18,8 +18,9 @@ import { parseDelivery } from '../../../src/shared/exchange-provenance'
  * the words are marked with the CSS Custom Highlight API.
  *
  * - What is searched: the messages as they read, the reader's and the
- *   agent's, and error notices. Tool calls are not: their output sits behind
- *   a closed group, and a match there would point at nothing on screen.
+ *   agent's, and the adapter's notices, an error or a quiet one (PRDCT-4566).
+ *   Tool calls are not: their output sits behind a closed group, and a match
+ *   there would point at nothing on screen.
  * - The query settles for DEBOUNCE_MS before it is searched; the field shows a
  *   spinner meanwhile.
  * - The first match shown is the newest. Older walks up; at the oldest match
@@ -30,8 +31,10 @@ import { parseDelivery } from '../../../src/shared/exchange-provenance'
  */
 
 export const DEBOUNCE_MS = 200
-/** Where message text lives in both views' rows. */
-export const MESSAGE_TEXT = 'article.chat-turn, .chat-notice[data-tone="error"]'
+/** Where message text lives in both views' rows: every entry `rowTexts`
+ *  reads, a notice in either of its tones. */
+export const MESSAGE_TEXT =
+  'article.chat-turn, .chat-notice[data-tone="error"], .chat-notice[data-tone="quiet"]'
 /** How long to wait for a page of the past before giving up on it. */
 const PAGE_WAIT_MS = 5000
 

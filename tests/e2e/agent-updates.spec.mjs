@@ -134,7 +134,8 @@ async function settingsAndInstallers(t) {
     // --- Nothing runs on its own in test mode ---
     const boot = await win.evaluate(() => window.electronAPI.getAgentUpdates())
     t.equal('automatic updates are on by default', boot?.autoUpdate, true)
-    t.equal('four agents are tracked', boot?.agents?.length, 4)
+    // OpenCode joined Claude, Codex, Antigravity and Pi (PRDCT-4423).
+    t.equal('five agents are tracked', boot?.agents?.length, 5)
     t.check(
       'no check ran at boot under test mode',
       boot?.agents?.every((a) => a.lastCheckedAt === null),

@@ -94,6 +94,18 @@ export function sessionModelChanged(id: string, model: string): void {
     )
 }
 
+/** PRDCT-4540: the tab's process went off its connection (`leftFor`, the
+ *  provider it went to) or back on it (null), as its own report said. Both
+ *  transports from this one source, the way the model change goes. */
+export function sessionConnectionChanged(id: string, leftFor: string | null): void {
+  const windows = sessionWindows()
+  windows.send(windows.windowOf(id), 'session:connection-changed', { id, leftFor })
+  if (publisher)
+    void publisher({ _tag: 'session.connection_changed', id, leftFor }).catch((error) =>
+      console.error('[clave-server] session.connection_changed not published', error)
+    )
+}
+
 /** The session's CLI reported its account's limit, and which cap it hit
  *  (ADR 0002, PRDCT-4302). Both transports, from this one source, the way the
  *  model change goes: the window's IPC channel at once and the server's push

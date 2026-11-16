@@ -61,6 +61,21 @@ import type {
   HelperPreferenceView
 } from '../helpers/preferences'
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
+// ── Lane B (harness wave): provider connections ──
+import type {
+  ProviderCompanyId,
+  ProviderConnectionView,
+  ProviderWireFormat
+} from '@clave/contract/settings'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 
 /** The login jobs as the source needs them (`account-login.ts`'s manager). */
 export interface LoginJobsLike {
@@ -100,6 +115,20 @@ export interface IntegrationsLike {
   voices(): Promise<{ voices: ElevenLabsVoice[] }>
 }
 
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+/** The models catalogue of a host as the source needs it
+ *  (`../models-catalog.ts`'s `ModelsCatalog`). */
+export interface ModelsCatalogLike {
+  view(input: { providerIds?: readonly string[]; force?: boolean }): Promise<ModelsCatalogView>
+}
+
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+/** A host's usage lines as the source needs them
+ *  (`../provider-usage.ts`'s `providerUsageView`). */
+export interface ProviderUsageLike {
+  view(input: { connectionId: string; force?: boolean }): Promise<ProviderUsageLineView>
+}
+
 export interface SettingsManagers {
   claudeAccounts: ClaudeAccountsManager
   codexAccounts: CodexAccountsManager
@@ -130,6 +159,46 @@ export interface SettingsManagers {
   /** Where this process owns the Antasphere login (the server's own process,
    *  in-process or standalone); absent, every account call is refused. */
   antasphere?: AntasphereAccountLike
+  // ── Lane B (harness wave): provider connections ──
+  /** The provider connections of this host (PRDCT-4426): the keys sealed on
+   *  its own secret port; absent, refused. Loaded on the first call, as the
+   *  login jobs are: the manager reads its catalogue from
+   *  `@clave/contract/settings` at runtime, which reaches Effect, and this
+   *  seam loads nothing of Effect at boot (`boot-graph.test.ts`). */
+  providerConnections?: () => Promise<ProviderConnectionsLike>
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  /** The models catalogue of this host; absent, refused. */
+  modelsCatalog?: ModelsCatalogLike
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  /** The usage lines of this host's stored connections; absent, refused. */
+  providerUsage?: ProviderUsageLike
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  /** The Pi and OpenCode usage of the tabs this host runs; absent, refused.
+   *  Loaded on first use: its graph reaches the terminal backend. */
+  harnessUsage?: () => Promise<HarnessUsageLike>
+}
+
+// PRDCT-4551: what Pi and OpenCode tabs used, per connection
+/** A host's harness usage as the source needs it (`../harness-usage.ts`). */
+export interface HarnessUsageLike {
+  read(range: HarnessUsageRange): Promise<HarnessUsageView>
+}
+
+// ── Lane B (harness wave): provider connections ──
+/** The provider connections of a host as the source needs them
+ *  (`../provider-connections.ts`'s `ProviderConnectionsManager`). */
+export interface ProviderConnectionsLike {
+  list(): ProviderConnectionView[]
+  add(input: {
+    company: ProviderCompanyId
+    label?: string
+    baseUrl?: string
+    wireFormat?: ProviderWireFormat
+  }): ProviderConnectionView
+  rename(id: string, label: string): ProviderConnectionView | undefined
+  remove(id: string): Promise<boolean>
+  setKey(id: string, apiKey: string): Promise<ProviderConnectionView>
+  onChange(listener: (connections: ProviderConnectionView[]) => void): () => void
 }
 
 /** The machine's own login, when a usage read names no account. */
@@ -225,6 +294,12 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // status each write answers.
   const integrations = (): IntegrationsLike =>
     m.integrations ?? refuse('integrations', 'This server has no integrations.')
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  const modelsCatalog = (): ModelsCatalogLike =>
+    m.modelsCatalog ?? refuse('modelsCatalog', 'This server has no models catalogue.')
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  const providerUsage = (): ProviderUsageLike =>
+    m.providerUsage ?? refuse('providerUsage', 'This server has no provider usage.')
 
   // The change event and the write's answer carry the state after the write
   // with its stamp (PRDCT-3405): a window compares the stamp with the last
@@ -243,6 +318,35 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       instance
     })
     return { workspaces, pins, revision, instance }
+  }
+
+  // ── Lane B (harness wave): provider connections ──
+  // PRDCT-4426: the manager, loaded once on first use (every change goes
+  // through a call, which loads it), each change of its list one event from
+  // then on, never a key.
+  let connections: Promise<ProviderConnectionsLike> | null = null
+  const providerConnections = (): Promise<ProviderConnectionsLike> => {
+    const load = m.providerConnections
+    if (!load) {
+      return Promise.reject(
+        new SettingsUnavailable(
+          'providerConnections',
+          'This server stores no provider connections.'
+        )
+      )
+    }
+    if (!connections) {
+      const loading = load().then((manager) => {
+        manager.onChange((list) => emit({ _tag: 'accounts.providers_changed', connections: list }))
+        return manager
+      })
+      connections = loading
+      // A load that failed is tried again at the next call.
+      loading.catch(() => {
+        if (connections === loading) connections = null
+      })
+    }
+    return connections
   }
 
   return {
@@ -395,6 +499,36 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       listeners.add(listener)
       return () => {
         listeners.delete(listener)
+      }
+    },
+    // ── Lane B (harness wave): provider connections ──
+    providerConnections: {
+      list: async () => (await providerConnections()).list(),
+      add: async (input) => (await providerConnections()).add({ ...input }),
+      rename: async (id, label) => {
+        const connection = (await providerConnections()).rename(id, label)
+        if (!connection) throw new Error('No such connection.')
+        return connection
+      },
+      remove: async (id) => (await providerConnections()).remove(id),
+      setKey: async (id, apiKey) => (await providerConnections()).setKey(id, apiKey)
+    },
+    // Lane C of the harness wave (PRDCT-4496): the models catalogue
+    modelsCatalog: {
+      read: (input) => modelsCatalog().view(input)
+    },
+    // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+    providerUsage: {
+      read: (input) => providerUsage().view(input)
+    },
+    // PRDCT-4551: what Pi and OpenCode tabs used, per connection. The
+    // records are read again where they changed at every call: `force` has
+    // nothing more to drop.
+    harnessUsage: {
+      read: async (input) => {
+        if (!m.harnessUsage)
+          throw new SettingsUnavailable('harnessUsage', 'This server runs no Pi or OpenCode tabs.')
+        return (await m.harnessUsage()).read(input.range)
       }
     }
   }

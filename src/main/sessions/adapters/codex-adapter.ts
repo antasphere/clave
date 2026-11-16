@@ -877,6 +877,9 @@ export class CodexAdapter implements SessionAdapter {
     // The person's typing into a form is the host's (request-aware-host.ts),
     // never a provider's (PRDCT-4210).
     if (value.type === 'permission_draft') return
+    // Codex steers every message into its turn at once: none waits here to
+    // be withdrawn (PRDCT-4566).
+    if (value.type === 'withdraw_message') return
     const prompt = providerPrompt(value)
     const identified = value.clientMessageId !== undefined
     const deferLegacy = !identified && state.orderedInputs > 0

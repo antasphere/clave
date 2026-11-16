@@ -32,6 +32,8 @@ import { ServerEvents } from './events'
 import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } from './ports'
 import { PushHubService, pushRoute } from './push/route'
 import { fixtureRoute } from './fixtures/route'
+// ── PRDCT-4473: the forwarded pages ──
+import { forwardRoute } from './forward/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, WorkspacesWelcomeLive, settingsHandlers } from './settings'
 import {
@@ -71,6 +73,8 @@ import { DeviceSessions, DevicesEventsLive, PhoneRoad, deviceHandlers } from './
 import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
 // ── PRDCT-4411: the speech ──
 import { SpeechPort, speechHandlers } from './speech'
+// ── PRDCT-4472: the artefacts ──
+import { ArtefactsEventsLive, ArtefactsPort, artefactHandlers } from './artefacts'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -129,6 +133,8 @@ export type ServerServices =
   | SessionWrites
   // ── PRDCT-4411: the speech ──
   | SpeechPort
+  // ── PRDCT-4472: the artefacts ──
+  | ArtefactsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -182,6 +188,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const routinesEvents = RoutinesEventsLive.pipe(Layer.provide(services))
   // ── Mobile wave, lane A: every change of the devices told to the clients ──
   const devicesEvents = DevicesEventsLive.pipe(Layer.provide(services))
+  // ── PRDCT-4472: a session's artefact, its preview and Slideless told to the clients ──
+  const artefactsEvents = ArtefactsEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -204,7 +212,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── ADR 0004: the routines ──
     routinesEvents,
     // ── Mobile wave, lane A: the devices ──
-    devicesEvents
+    devicesEvents,
+    // ── PRDCT-4472: the artefacts ──
+    artefactsEvents
   )
 }
 
@@ -254,7 +264,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Mobile wave, lane A: the devices ──
       ...deviceHandlers,
       // ── PRDCT-4411: the speech ──
-      ...speechHandlers
+      ...speechHandlers,
+      // ── PRDCT-4472: the artefacts ──
+      ...artefactHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )
@@ -263,9 +275,13 @@ export const BusesLive = busesLayer.pipe(
 /** The middleware outside the router, outermost first: the phone's road
  *  (its alias resolved before anything else reads the path, PRDCT-4448),
  *  the loopback CORS answer, the push upgrade, then the token check, then
- *  (test mode only) the fixture route, inside the token check so it is never
- *  open. The token check also knows the phones' device sessions (mobile
- *  wave, lane A). */
+ *  the forwarded pages (PRDCT-4473, `forward/route.ts`) and (test mode only)
+ *  the fixture route, both inside the token check so neither is ever open.
+ *  The token check also knows the phones' device sessions (mobile wave,
+ *  lane A); a phone's call reaches only the paths `deviceMayCall` lets
+ *  through, so a forwarded page stays the owner's. The forward route sits
+ *  before the body bounds: its bodies are streamed to the page, never read
+ *  here, so no limit applies to them. */
 const outer =
   (options: ServerOptions) =>
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService | DeviceSessions | PhoneRoad> =>
@@ -279,8 +295,10 @@ const outer =
                   options.token,
                   devices
                 )(
-                  fixtureRoute(options.testFixtures === true)(
-                    boundedFileRequest(privateAnswerJson(app))
+                  forwardRoute(options.ports.forwards)(
+                    fixtureRoute(options.testFixtures === true)(
+                      boundedFileRequest(privateAnswerJson(app))
+                    )
                   )
                 )
               )
@@ -320,7 +338,8 @@ export const DIGEST_BODY_LIMIT = 3 * 1024 * 1024
 export const SPEECH_BODY_LIMIT = 64 * 1024
 
 /** Bound transfer and sensitive resolution bodies before JSON decoding.
- * Authentication runs first; oversized secret inputs are never echoed. */
+ * Authentication runs first; oversized secret inputs are never echoed.
+ * `/forward/` never reaches this: its route answers before it (`outer`). */
 const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
     const limit =

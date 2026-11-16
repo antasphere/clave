@@ -101,7 +101,7 @@ import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
 import { preferencesManager, type Preferences } from './preferences-manager'
 import { fileStorage } from './ports/storage'
-import { lazyTerminalPorts } from './ports/terminals'
+import { lazyTerminalPorts, resourcesDirOfEntry } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
@@ -120,7 +120,24 @@ import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { hostDigests, sessionLaunchOf } from './exchange-digest'
 import { hostSpeech } from './speech'
+import {
+  startWatching as startAgentStateWatching,
+  stopWatching as stopAgentStateWatching
+} from './agent-state-manager'
+// ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
+import { ForwardRegistry } from '@clave/server/forward-registry'
+import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
+import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
+// ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+import { standaloneLaunchFacts } from './mcp/standalone-launch-facts'
+import { modelsCatalog } from './models-catalog'
+import { piOwnDefault, providerConnectionsForListing } from './provider-injection-spawn'
+// Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+import { wireProviderConnections } from './provider-injection-wiring'
+import { providerConnectionsManager } from './provider-connections'
+import { standaloneHarnessDetection } from './agent-updates/standalone-detection'
+import { providerModels } from './provider-models'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
@@ -165,6 +182,10 @@ function readAppVersion(): string {
     'clave-server: --app-version <version> is required when no package.json is beside the entry'
   )
 }
+/** The app's `resources` folder, from this entry's own folder (`src/main` run
+ *  from source, `out/main` built, `app.asar/out/main` packaged): the routine
+ *  contract, the default report, and Pi's Clave extension (PRDCT-4496). */
+const RESOURCES_DIR = resourcesDirOfEntry(__dirname)
 /** How often the parent named by `--parent` is checked for. */
 const PARENT_POLL_MS = 2_000
 
@@ -306,7 +327,11 @@ async function main(): Promise<void> {
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
-  const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const { host: originalSessions, agentTools } = standaloneSessionHost({
+    dataDir,
+    terminals,
+    resourcesDir: RESOURCES_DIR
+  })
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
   // The phone's overview of the sidebar: a daemon's own layouts, else the
   // app's layout files when the app named its folder, else nothing to show.
@@ -403,6 +428,38 @@ async function main(): Promise<void> {
   }
   // ── Wave 3, lane A: the `.clave` files of this machine, their trust store under `--data-dir` ──
   const workspaceFilesInstance = new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
+  // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
+  // One set of facts for the routines and the agent tools: what a routine
+  // resolves its launch with is what `clave_open_session` resolves a tab
+  // with; the tools add the harnesses detected, the models and the settings.
+  const launchFacts = launchFactsFromManagers({
+    claudeAccounts: claudeAccountsManager,
+    codexAccounts: codexAccountsManager,
+    claudeUsage: usageManager,
+    codexUsage: codexUsageManager,
+    launchProfiles: launchProfileManager,
+    preference: (key) => preferencesManager.get(key as keyof Preferences),
+    launchModel: rememberedSpawnModel,
+    // An account on Pi or OpenCode names a stored connection (PRDCT-4496).
+    providerConnections: providerConnectionsManager
+  })
+  // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
+  wireProviderConnections(providerConnectionsManager)
+  const agentLaunchFacts = standaloneLaunchFacts({
+    facts: launchFacts,
+    detection: standaloneHarnessDetection({ env: process.env, testMode: TEST_NO_ACTIVATE }),
+    identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    preferences: (key) => preferencesManager.get(key as keyof Preferences),
+    codexModels: (cwd) => providerModels('codex-chat', cwd),
+    homeDir: os.homedir(),
+    defaultProfile: (family) => launchProfileManager.resolve(family),
+    catalog: (providerIds) => modelsCatalog.view({ providerIds }),
+    providerConnections: (harness) => providerConnectionsForListing(harness),
+    providerConnectionViews: () => providerConnectionsManager.list(),
+    piOwnDefault: () => piOwnDefault(),
+    // PRDCT-4551: what this server's Pi and OpenCode tabs used, per connection.
+    harnessUsage: async () => standalone.settings.harnessUsage.read({ range: 'today' })
+  })
   // ── ADR 0004: the routines this server schedules, off its own workspace files ──
   const routines = createRoutineService({
     sessions,
@@ -412,21 +469,13 @@ async function main(): Promise<void> {
       standalone.settings.subscribe((event) => {
         if (event._tag === 'workspaces.state_changed') listener()
       }),
-    facts: launchFactsFromManagers({
-      claudeAccounts: claudeAccountsManager,
-      codexAccounts: codexAccountsManager,
-      claudeUsage: usageManager,
-      codexUsage: codexUsageManager,
-      launchProfiles: launchProfileManager,
-      preference: (key) => preferencesManager.get(key as keyof Preferences),
-      launchModel: rememberedSpawnModel
-    }),
+    facts: launchFacts,
     storage: fileStorage(dataDir),
     dataDir,
     ...(TEST_NO_ACTIVATE ? { claimsDir: path.join(dataDir, 'routine-claims') } : {}),
     holder: `clave-server:${process.pid}`,
-    pluginDir: contractPluginDir(path.resolve(__dirname, '..', '..', 'resources')),
-    defaultTemplate: defaultReportDir(path.resolve(__dirname, '..', '..', 'resources')),
+    pluginDir: contractPluginDir(RESOURCES_DIR),
+    defaultTemplate: defaultReportDir(RESOURCES_DIR),
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     publisher: TEST_NO_ACTIVATE
       ? false
@@ -448,6 +497,36 @@ async function main(): Promise<void> {
     log: (level, message) => process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
   })
   installE2eHooks({ routines })
+  // ── PRDCT-4472: a session's HTML artefact, its preview and its versions ──
+  // This server's own: the links in `--data-dir/artefacts.json`, its own copy
+  // of Slideless under `--data-dir/slideless`, run under the Node the entry
+  // was told (`--node`, as the terminal process gets it) or its own; a
+  // preview a window holds reaches it through `/forward/<lease>/…`.
+  const forwards = new ForwardRegistry()
+  // Under test mode only: a spec registers a target of its own on this server.
+  installE2eHooks({ forwards })
+  const recordOf = sessionLaunchOf(ptyManager)
+  const artefacts = createArtefactService({
+    dataDir,
+    execPath: arg('node') ?? process.execPath,
+    env: process.env,
+    links: new ArtefactLinks(fileLinksStorage(path.join(dataDir, 'artefacts.json')), (line) =>
+      log(line)
+    ),
+    forwards,
+    sessions: {
+      knows: (id) => Boolean(recordOf(id)),
+      // Read as `publishSessionStates` reads it (`server/session-events.ts`).
+      onState: (listener) =>
+        sessionManager.subscribeAll((id, stream) => {
+          if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+          listener(id, stream.event.state)
+        })
+    },
+    // A test instance never reaches npm: it installs only from the fixture registry it was given.
+    autoInstall: !TEST_NO_ACTIVATE || Boolean(process.env[REGISTRY_ENV]),
+    log: (line) => log(line)
+  })
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -472,6 +551,9 @@ async function main(): Promise<void> {
       // ── PRDCT-4411: speech with this server's ElevenLabs key and voice, for
       // a session it has a record of ──
       speech: hostSpeech(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
+      artefacts,
+      forwards,
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
       // A desktop may still announce its own endpoint for old servers. This
       // server owns its endpoint and never points local providers at a Mac.
@@ -533,6 +615,8 @@ async function main(): Promise<void> {
     testFixtures: TEST_NO_ACTIVATE
   })
   listeningServerId = server.serverId
+  // ── PRDCT-4472: the preview host written, the stale links dropped, the sweep and the turn saves armed ──
+  artefacts.start()
 
   const mcp = config.daemon
     ? await startStandaloneMcp({
@@ -541,6 +625,8 @@ async function main(): Promise<void> {
         requests,
         createHosted: requestHost.createHosted,
         routines,
+        // PRDCT-4472: `clave_open_artefact`, on this server's own artefacts.
+        artefacts,
         // PRDCT-4243: the routine tools on this server: its workspaces, its files, its name.
         routineTools: {
           workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
@@ -560,6 +646,8 @@ async function main(): Promise<void> {
         // defaults of its own.
         chatDefault: (family) =>
           chatDefaultFor(launchProfileManager.getPreferences(), family, null),
+        // PRDCT-4485: the launcher's choices, for clave_launch_options and the open.
+        launch: agentLaunchFacts,
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,
@@ -588,6 +676,14 @@ async function main(): Promise<void> {
     server.writes.evidence,
     server.writes.initialize
   )
+  // A tab that runs in a terminal says its state through its lifecycle hooks,
+  // which write under this server's own data folder: they are read here
+  // (PRDCT-4472). Until now only the desktop app read its own folder, so on a
+  // server running on its own such a tab never said a turn had ended, to the
+  // clients (ADR 0003, wave 5, named there as a gap) or to the artefact
+  // service, which saves a version at that moment. A chat's state comes from
+  // its stream and is left alone by the watch.
+  startAgentStateWatching(() => undefined)
   // A chat's CLI reported its account's limit (PRDCT-4329): the shell wires
   // this in its IPC handlers, which a daemon never registers, so until now a
   // server's limit reached no client and its chat drew "server ended".
@@ -670,6 +766,7 @@ async function main(): Promise<void> {
     selfUpgrade?.close()
     stopStates()
     stopWrites()
+    stopAgentStateWatching()
     stopLimits()
     stopCleared()
     setServerEventPublisher(null)
@@ -677,6 +774,8 @@ async function main(): Promise<void> {
     plugins.close()
     // ── ADR 0004: the scheduler's tick and viewer go with the server; the runs die with their sessions ──
     void routines.close()
+    // ── PRDCT-4472: the previews go before the sessions (the preview host ends them anyway on any exit) ──
+    void artefacts.stop()
     // The sessions go with the server, as they go with the app at its quit
     // (`index.ts`): a chat's CLI is a detached child of this process and
     // would outlive it; a terminal's tmux session is left for the next

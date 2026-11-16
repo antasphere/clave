@@ -12,7 +12,7 @@ interface FileContentProps {
   editor: ReturnType<typeof useFileEditor>
   cwd: string | null
   filePath: string | null
-  /** How markdown renders: page (document column), preview (compact), source (editor). Owned by the header's ViewModeToggle. */
+  /** How markdown renders: page (document column) or source (editor). Owned by the bar's file menu. */
   viewMode?: FileViewMode
   /** Bumped by the header's Reload button; reloads a rendered .html page. */
   reloadKey?: number
@@ -108,15 +108,11 @@ export function FileContent({
     )
   }
 
-  // Markdown, rendered read-only (compact preview, or page for non-writable files)
+  // Markdown, rendered read-only: the page of a file that cannot be written
   if (isMarkdown && effectiveMode !== 'source') {
     return (
       <div className="flex-1 overflow-auto overscroll-contain min-h-0">
-        <MarkdownRenderer
-          content={content}
-          variant={effectiveMode === 'page' ? 'page' : 'compact'}
-          frontmatter
-        />
+        <MarkdownRenderer content={content} variant="page" frontmatter />
       </div>
     )
   }

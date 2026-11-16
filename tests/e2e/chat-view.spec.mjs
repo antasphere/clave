@@ -12,7 +12,8 @@
 // transport. Only what is Electron's (an `ipcMain` stub, a `BrowserWindow`
 // send) stays on `app.evaluate`. The road is the same in both modes.
 import assert from 'node:assert/strict'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
 export const TOOL_RESULT = 'chat-result: verified payload 2537'
@@ -32,10 +33,40 @@ export async function selectChatView(win, sessionId, kind) {
   }
 }
 
+/** The interaction mode that opens each chat-view view (`INTERACTION_MODES`
+ *  in `src/shared/harness.ts`). */
+const MODE_OF_CHAT_VIEW = { chat: 'chat', terminal: 'enclave', lab: 'folio' }
+const ECHO_CHAT_VIEW = '--dev-echo-view=clave.chat-view/'
+
+/**
+ * Since the launcher's three words (PRDCT-4425) a chat opens in the view of
+ * the person's interaction mode, whatever chat-view view its profile names,
+ * and `launchApp` starts every instance in the Terminal mode, where a chat
+ * opens in the Chat view. A spec that asks the echo session for Enclave
+ * (`--dev-echo-view=clave.chat-view/terminal`) or Folio (`…/lab`) therefore
+ * starts in the mode that opens it there (PRDCT-4495): written into the
+ * folder's `preferences.json` before the launch, beside what a `beforeLaunch`
+ * wrote, so the server of the attached and separate modes reads it too.
+ */
+export function seedEchoViewMode(dir, args) {
+  const flag = args.find((arg) => arg.startsWith(ECHO_CHAT_VIEW))
+  const mode = flag ? MODE_OF_CHAT_VIEW[flag.slice(ECHO_CHAT_VIEW.length)] : undefined
+  if (!mode) return
+  const file = path.join(dir, 'preferences.json')
+  // A folder with no preference file is one the harness would seed itself:
+  // its onboarding stays what it seeds (`seedInteractionMode`).
+  const prefs = existsSync(file)
+    ? JSON.parse(readFileSync(file, 'utf8'))
+    : { onboarding: 'pending' }
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(file, JSON.stringify({ ...prefs, interactionMode: mode }, null, 2))
+}
+
 /** `extraArgs` go to the Electron launch; `ready` is the visible selector the
  *  caller waits for before the fixture is handed over, the chat composer by
- *  default. `{ view, selector }` explicitly selects a native reading first;
- *  a plain selector leaves the launch's view untouched. `env` is laid over
+ *  default, another view's when a launch profile opens the session in one.
+ *  `{ view, selector }` explicitly selects a native reading first; a plain
+ *  selector leaves the launch's view untouched. `env` is laid over
  *  the process environment, for a spec that puts a stub on the PATH. */
 export async function openChat(
   suffix = 'chat-view',
@@ -60,6 +91,7 @@ export async function openChat(
   })
   seedTrustedRoots(dir, [root])
   if (beforeLaunch) await beforeLaunch(dir)
+  seedEchoViewMode(dir, extraArgs)
   const { app, win, server, fixture } = await launchApp(dir, {
     args: ['--dev-echo-adapter', ...extraArgs],
     env,

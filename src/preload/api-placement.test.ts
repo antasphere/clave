@@ -140,7 +140,19 @@ const UNREADABLE_NO_PLACE = new Set([
   'antasphereAccountDismiss',
   'getCodexUsageLimits',
   'getCodexUsageSnapshot',
-  'getPiUsage'
+  'getPiUsage',
+  // ── Lane B (harness wave): provider connections ──
+  'providerConnectionsList',
+  'providerConnectionAdd',
+  'providerConnectionRename',
+  'providerConnectionRemove',
+  'providerConnectionSetKey',
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  'modelsCatalogRead',
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  'providerUsageRead',
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  'harnessUsageRead'
 ])
 const unreadable = (fn: unknown): boolean => {
   if (typeof fn !== 'function') return false
@@ -388,7 +400,9 @@ describe('routed reaches the server a key names; refused never does', () => {
     [{ sessionId: S, key: 'k', launch: {}, messages: [], notes: [], tools: 0 }],
     ['/srv/a', { link: { kind: 'group-terminal', groupId: G, terminalId: 't' } }],
     [S, null],
-    [{ path: resourceKey('file', 'x', ATTACHMENT) }]
+    [{ path: resourceKey('file', 'x', ATTACHMENT) }],
+    // A server's own id (the Slideless copy of a machine, PRDCT-4474).
+    ['x']
   ]
   /** Routed members that make no call of their own: they read or release
    *  what the routed members got from the server. Pinned below. */
@@ -399,6 +413,7 @@ describe('routed reaches the server a key names; refused never does', () => {
   /** Routed members whose server call carries no id of their arguments:
    *  what they send is the window's own state. Pinned below. */
   const NOT_BY_ARGUMENT = new Map([
+    ['artefacts.list', 'asks every connected server for its artefacts'],
     ['listTrustedRoots', 'asks every connected server for its trusted roots'],
     ['unwatchDir', 'sends the server the empty tree watch'],
     ['gitUnwatchRepos', 'sends the server the namespace’s whole remaining watch map']
@@ -487,6 +502,7 @@ describe('routed reaches the server a key names; refused never does', () => {
       ['sessionsUnsubscribe', 'releases the stream sessionsSubscribe holds on the server']
     ])
     expect([...NOT_BY_ARGUMENT]).toEqual([
+      ['artefacts.list', 'asks every connected server for its artefacts'],
       ['listTrustedRoots', 'asks every connected server for its trusted roots'],
       ['unwatchDir', 'sends the server the empty tree watch'],
       ['gitUnwatchRepos', 'sends the server the namespace’s whole remaining watch map']

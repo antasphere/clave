@@ -30,16 +30,11 @@ export interface LinkedAttachment {
 export interface LinkedDocument {
   id: string
   sessionId: string
-  kind: 'markdown' | 'html' | 'email'
+  /** An HTML page is a session's artefact since PRDCT-4474 (`@clave/contract/artefacts`), never a linked document. */
+  kind: 'markdown' | 'email'
   title: string
   revision: number
   path?: string
-  /**
-   * The folder an agent opened (PRDCT-4262): `path` is then its entry page
-   * (`index.html`, else its one .html file), and the folder is what Slideless
-   * serves and keeps versions of. Absent when a file was opened.
-   */
-  root?: string
   content: string
   sourceHash?: string
   conflict?: string

@@ -29,6 +29,7 @@ export const agentUpdateManager = new AgentUpdateManager({
   getAutoUpdate: () => preferencesManager.get('agentAutoUpdate') !== false,
   setAutoUpdate: (value) => preferencesManager.set('agentAutoUpdate', value),
   scheduled: schedule.scheduled,
+  looksAtBoot: schedule.looksAtBoot,
   supported: schedule.supported,
   broadcast: (state) => broadcastToAllWindows('agent-updates:state', state),
   notify: (title, body) => {

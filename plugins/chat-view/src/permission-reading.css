@@ -8,11 +8,16 @@
   align-items: baseline;
   gap: var(--spacing) calc(var(--spacing) * 2);
 }
+/* The pill's words set its baseline, never its icon (PRDCT-4483): with the
+   icon first and the box aligned on centres, the baseline was the icon's
+   lower edge, so a line aligned on baselines (the record's row, the card's
+   reading) lifted the pill and grew around it. The words align on their
+   baseline, alone, and the icon stands in the middle of the box. */
 .chat-permission-level {
   --level-ink: var(--text-secondary);
   display: inline-flex;
   flex-shrink: 0;
-  align-items: center;
+  align-items: baseline;
   gap: var(--spacing);
   padding: calc(var(--spacing) * 0.25) calc(var(--spacing) * 2);
   border-radius: var(--radius-full);
@@ -22,7 +27,9 @@
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
-.chat-permission-level svg {
+.chat-permission-level svg,
+.chat-permission-secrets svg {
+  align-self: center;
   width: calc(var(--spacing) * 3.5);
   height: calc(var(--spacing) * 3.5);
 }
@@ -66,19 +73,16 @@
   color: var(--text-primary);
   animation: chat-permission-sentence-in 220ms var(--ease-out-expo);
 }
-/* The secrets note: a hint beside the level, in its neutral ink. */
+/* The secrets note: a hint beside the level, in its neutral ink, on the
+   baseline of its words as the pill is. */
 .chat-permission-secrets {
   display: inline-flex;
   flex-shrink: 0;
-  align-items: center;
+  align-items: baseline;
   gap: var(--spacing);
   color: var(--text-secondary);
   font-size: var(--text-xs);
   white-space: nowrap;
-}
-.chat-permission-secrets svg {
-  width: calc(var(--spacing) * 3.5);
-  height: calc(var(--spacing) * 3.5);
 }
 /* No level earned: the model's reading, said to be one, in the quiet ink;
    never a tone that reads as "safe". */

@@ -191,9 +191,12 @@ async function onAManualTab(t) {
     await dock
       .getByText('Runs the project tests. Changes nothing.', { exact: false })
       .waitFor({ timeout: 15_000 })
-    assert.match(await reading.innerText(), /Not verified/)
+    assert.match(await reading.innerText(), /Clave could not check this\. A model's reading:/)
     assert.doesNotMatch(await reading.innerText(), /Reads only/)
-    t.check('an unproven request shows no level, then "Not verified" beside the sentence', true)
+    t.check(
+      'an unproven request shows no level, then says Clave could not check it, before the sentence',
+      true
+    )
     const wayBack = dock.getByRole('button', { name: 'Back to skipping permissions' })
     assert.equal(await wayBack.count(), 0, 'modes without skipping permissions: no way back')
     // The provider now lists skipping permissions (a profile that allows the

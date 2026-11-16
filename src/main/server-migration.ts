@@ -57,9 +57,20 @@ export const MIGRATED_DOCUMENTS: readonly string[] = [
   'agent-launch-profiles.json',
   'claude-accounts.json',
   'codex-accounts.json',
-  'antasphere-account-client.json'
+  'antasphere-account-client.json',
+  // ── Lane B (harness wave): provider connections ──
+  'provider-connections.json'
 ]
 export const CLAUDE_CREDENTIALS_FILE = 'claude-accounts-credentials.json'
+// ── Lane B (harness wave): provider connections ──
+/** The provider connections' two files (PRDCT-4426), named as
+ *  `provider-connections.ts` names them (`PROVIDER_CONNECTIONS_FILE`,
+ *  `PROVIDER_CONNECTIONS_CREDENTIALS_FILE`; the test holds them equal). Not
+ *  imported from there: that module reads the catalogue from
+ *  `@clave/contract/settings` at runtime, which reaches Effect, and main's
+ *  entry imports this file at boot (`server/lazy-load.test.ts`). */
+export const PROVIDER_CONNECTIONS_FILE = 'provider-connections.json'
+export const PROVIDER_CONNECTIONS_CREDENTIALS_FILE = 'provider-connections-credentials.json'
 export const ANTASPHERE_SESSION_FILE = 'antasphere-account-session.json'
 export const CODEX_HOMES_DIR = 'codex-homes'
 
@@ -122,7 +133,8 @@ export interface MigrationReport {
   readonly kept: string[]
   /** The Claude tokens re-sealed, and whether the Antasphere session was. */
   readonly resealed: { claude: number; antasphere: boolean }
-  /** The secrets that could not be opened here, by name (`claude:<id>`, `antasphere`). */
+  /** The secrets that could not be opened here, by name (`claude:<id>`,
+   *  `antasphere`, `provider:<id>`). */
   readonly unopened: string[]
   /** The Codex homes copied. */
   codexHomes: number
@@ -182,7 +194,10 @@ export async function migrateAppDataToServer(options: MigrationOptions): Promise
     exists(path.join(appDir, CLAUDE_CREDENTIALS_FILE)) ||
     exists(path.join(appDir, ANTASPHERE_SESSION_FILE)) ||
     exists(path.join(appDir, CODEX_HOMES_DIR)) ||
-    exists(path.join(appDir, SESSION_RECORDS_DIR))
+    exists(path.join(appDir, SESSION_RECORDS_DIR)) ||
+    // ── Lane B (harness wave): provider connections ──
+    exists(path.join(appDir, PROVIDER_CONNECTIONS_FILE)) ||
+    exists(path.join(appDir, PROVIDER_CONNECTIONS_CREDENTIALS_FILE))
   if (ran === 0 && !hasAnything) {
     writeMarker(marker, appDir, { ...report, outcome: 'nothing' }, options.now)
     log('nothing to migrate: the app has no data of its own')
@@ -330,6 +345,43 @@ async function carryVersion1(
       .readdirSync(target, { withFileTypes: true })
       .filter((entry) => entry.isDirectory()).length
     report.copied.push(CODEX_HOMES_DIR)
+  })
+
+  // ── Lane B (harness wave): provider connections ──
+  // The provider keys (PRDCT-4426): `{ [id]: { apiKey: sealed, setAt } }`,
+  // each opened with the app's adapter and sealed with the server's, `setAt`
+  // kept; one that cannot be opened here is left out and named. The file
+  // counts among `copied` once written, as the Claude credentials do.
+  await step(PROVIDER_CONNECTIONS_CREDENTIALS_FILE, async () => {
+    const source = path.join(appDir, PROVIDER_CONNECTIONS_CREDENTIALS_FILE)
+    const target = path.join(serverDir, PROVIDER_CONNECTIONS_CREDENTIALS_FILE)
+    if (!exists(source)) return
+    if (exists(target)) {
+      report.kept.push(PROVIDER_CONNECTIONS_CREDENTIALS_FILE)
+      return
+    }
+    const parsed = readJson(source)
+    if (!isRecord(parsed)) return
+    const out: Record<string, unknown> = {}
+    const sealer = await sealAll(options.to)
+    const unopened: string[] = []
+    try {
+      for (const [id, credential] of Object.entries(parsed)) {
+        if (!isRecord(credential) || typeof credential.apiKey !== 'string') continue
+        const plain = await options.from.open(credential.apiKey)
+        if (plain === undefined) {
+          unopened.push(`provider:${id}`)
+          continue
+        }
+        out[id] = { ...credential, apiKey: await sealer.seal(plain) }
+      }
+      writeJson(target, out, 0o600)
+    } catch (err) {
+      await sealer.rollback()
+      throw err
+    }
+    report.unopened.push(...unopened)
+    report.copied.push(PROVIDER_CONNECTIONS_CREDENTIALS_FILE)
   })
 }
 

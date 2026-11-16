@@ -22,12 +22,41 @@ import {
   useSessionAccountView
 } from '../../../src/renderer/src/lib/session-accounts'
 import { effectiveSwitchMode } from '../../../src/renderer/src/store/account-policy-store'
+import { useSessionConnection } from '../../../src/renderer/src/lib/session-connection'
 import { AccountMenuHeader } from '../../../src/renderer/src/components/layout/AccountMenuHeader'
 import {
   AccountSwitchRow,
   AccountUsagePreview
 } from '../../../src/renderer/src/components/layout/AccountSwitchMenu'
 import { MenuPreview } from '../../../src/renderer/src/components/ui/ContextMenu'
+
+/**
+ * The stored connection a Pi or OpenCode tab runs on (PRDCT-4427), where a
+ * Claude tab names its account: its label alone, no usage (a provider key
+ * reports none) and no menu (a tab is not moved to another key from here).
+ * Nothing for a tab on no stored connection.
+ */
+export function ConnectionChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+  const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
+  const connection = useSessionConnection(host)
+  if (!connection) return null
+  return (
+    <span
+      className="term-account term-connection"
+      data-level="unknown"
+      data-connection-chip={connection.id}
+    >
+      <span
+        className="chat-model-trigger"
+        aria-label="Connection"
+        title={`Connection: ${connection.label}`}
+      >
+        <span className="term-account-dot" aria-hidden />
+        <span className="chat-model-trigger-label">{connection.label}</span>
+      </span>
+    </span>
+  )
+}
 
 /**
  * The account chip on the status line: which account the session runs on and
@@ -55,6 +84,7 @@ export function AccountChip({ sessionId }: { sessionId: string }): React.JSX.Ele
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState<{ id: string; row: HTMLElement } | null>(null)
   const clearFrame = useRef<number | null>(null)
+  if (host && !provider) return <ConnectionChip sessionId={sessionId} />
   if (!host || !provider || !own || !view) return null
 
   const summary = claudeUsageForModel(view.usage[own.id], host.model)

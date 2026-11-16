@@ -61,6 +61,12 @@ export function initServedToolsEvents(): void {
     const store = useSessionStore.getState()
     if (store.sessions.some((s) => s.id === id)) store.setSessionModel(id, model)
   })
+  // PRDCT-4540: the tab's process went off its connection, or back on it:
+  // the header, the foot and the row's menu stop naming it, or name it again.
+  api.onSessionConnectionChanged?.(({ id, leftFor }) => {
+    const store = useSessionStore.getState()
+    if (store.sessions.some((s) => s.id === id)) store.setSessionConnectionLeft(id, leftFor)
+  })
   api.onSessionRestarting?.(({ id }) => {
     const store = useSessionStore.getState()
     if (store.sessions.some((s) => s.id === id)) store.setSessionRestarting(id, true)

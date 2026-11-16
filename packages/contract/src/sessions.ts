@@ -190,6 +190,13 @@ export const StopTask = Schema.Struct({
   type: Schema.Literal('stop_task'),
   taskId: Schema.NonEmptyString
 })
+/** Take back a message that still waits for the agent (PRDCT-4566), by the id
+ *  its `waiting_messages` entry carries: it is never sent. Mirrors
+ *  `session-model.ts`. */
+export const WithdrawMessage = Schema.Struct({
+  type: Schema.Literal('withdraw_message'),
+  id: Schema.NonEmptyString
+})
 export const SessionInput = Schema.Union(
   UserMessageInput,
   PermissionResponse,
@@ -198,7 +205,8 @@ export const SessionInput = Schema.Union(
   SetModel,
   SetEffort,
   SetPermissionMode,
-  StopTask
+  StopTask,
+  WithdrawMessage
 )
 export type SessionInput = typeof SessionInput.Type
 
@@ -220,7 +228,8 @@ export const SessionWireInput = Schema.Union(
   SetModel,
   SetEffort,
   SetPermissionMode,
-  StopTask
+  StopTask,
+  WithdrawMessage
 )
 export type SessionWireInput = typeof SessionWireInput.Type
 export const SessionWrite = Schema.Union(SessionWireInput, SessionBytes)
@@ -312,6 +321,14 @@ export const BackgroundTask = Schema.Struct({
   model: Schema.optional(Schema.String)
 })
 export type BackgroundTask = typeof BackgroundTask.Type
+/** A message written to the session that the agent has not taken yet
+ *  (PRDCT-4566): the adapter's id for it, the text as written, its files. */
+export const WaitingMessage = Schema.Struct({
+  id: Schema.String,
+  text: Schema.String,
+  attachments: Schema.optional(Attachments)
+})
+export type WaitingMessage = typeof WaitingMessage.Type
 
 // ── What a session streams ──
 
@@ -360,7 +377,18 @@ export const SessionEvent = Schema.Union(
     providerSessionId: Schema.NullOr(Schema.String)
   }),
   Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
-  Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
+  /** `notice`: the latest of its kind replaces the one before under the same
+   *  name (an OpenCode chat's retry, PRDCT-4427). `quiet`: nothing failed, a
+   *  plain fact of the turn (another tab's message left unsent, PRDCT-4566),
+   *  drawn as a quiet line of the conversation; a view that does not know the
+   *  flag still draws the words. Mirrors `session-model.ts`. */
+  Schema.Struct({
+    type: Schema.Literal('error'),
+    message: Schema.String,
+    fatal: Schema.Boolean,
+    notice: Schema.optional(Schema.String),
+    quiet: Schema.optional(Schema.Boolean)
+  }),
   Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
   Schema.Struct({ type: Schema.Literal('permission_withdrawn'), id: Schema.String }),
   /** A hosted form's answers changed under the card (PRDCT-4157): the agent
@@ -414,6 +442,22 @@ export const SessionEvent = Schema.Union(
     type: Schema.Literal('provider_event'),
     provider: Schema.String,
     payload: Schema.Unknown
+  }),
+  /** The messages the agent has not taken yet (PRDCT-4566), whole each time
+   *  the list changes; a taken one is then a `user_message` of its own.
+   *  `takes`: after the running turn (`turn`) or at the next step (`step`).
+   *  `returned`: the ones that just left it unsent, for the composer. Mirrors
+   *  `session-model.ts`. */
+  Schema.Struct({
+    type: Schema.Literal('waiting_messages'),
+    messages: Schema.Array(WaitingMessage),
+    takes: Schema.Literal('turn', 'step'),
+    returned: Schema.optional(
+      Schema.Struct({
+        why: Schema.Literal('withdrawn', 'stopped', 'ended', 'refused'),
+        messages: Schema.Array(WaitingMessage)
+      })
+    )
   })
 )
 export type SessionEvent = typeof SessionEvent.Type
@@ -529,7 +573,10 @@ export const SpawnOptions = Schema.Struct({
   openedBy: Schema.optional(Schema.String),
   /** Bypass stays reachable to a Claude chat resumed in another mode when
    *  its launch had it (`--allow-dangerously-skip-permissions`), PRDCT-4191. */
-  allowDangerous: Schema.optional(Schema.Boolean)
+  allowDangerous: Schema.optional(Schema.Boolean),
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: Schema.optional(Schema.String),
+  connectionLabel: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -787,8 +834,19 @@ export const SessionRecord = Schema.Struct({
   work: Schema.optional(WorkAssignment),
   /** The conversation came from another provider (PRDCT-4300). */
   continuedFrom: Schema.optional(ContinuedFrom),
+  /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes (PRDCT-4427),
+   *  the id `opencode --session` takes in a terminal. */
+  opencodeSessionId: Schema.optional(Schema.String),
   live: Schema.optional(Schema.Boolean),
-  running: Schema.optional(Schema.Boolean)
+  running: Schema.optional(Schema.Boolean),
+  // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+  connectionId: Schema.optional(Schema.String),
+  connectionLabel: Schema.optional(Schema.String),
+  /** PRDCT-4540: the provider the tab's process last sent a request to when
+   *  that request was not on its connection (Clave's Pi extension reports
+   *  it); absent while it is on it. `connectionId` stays the one its next
+   *  start uses. */
+  connectionLeftFor: Schema.optional(Schema.String)
 })
 export type SessionRecord = typeof SessionRecord.Type
 
@@ -956,7 +1014,10 @@ export const ProviderOverride = Schema.Struct({
   model: Schema.optional(Schema.String),
   resume: Schema.optional(Schema.String),
   firstMessage: Schema.optional(Schema.String),
-  continuedFrom: Schema.optional(ContinuedFrom)
+  continuedFrom: Schema.optional(ContinuedFrom),
+  /** Lane D (PRDCT-4427): the view the tab opens in after a move onto a chat
+   *  adapter (`<pluginId>/<viewId>`); ignored on a move to the terminal. */
+  viewId: Schema.optional(Schema.NonEmptyString)
 })
 export type ProviderOverride = typeof ProviderOverride.Type
 /** Correlates one caller's answer and event; never a spawn override. */

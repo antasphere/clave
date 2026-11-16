@@ -15,6 +15,7 @@ import type {
   SessionHostService,
   SettingsSourceService
 } from '@clave/server'
+import type { ForwardRegistry } from '@clave/server/forward-registry'
 import type { SessionStream } from '../../shared/session-model'
 import type { AccountUsageManager } from '../usage-manager'
 import { TEST_NO_ACTIVATE } from '../test-mode'
@@ -55,6 +56,13 @@ export interface E2eHooks {
   // (`src/main/server-connections/connection-log.ts`), oldest first, so a
   // spec reads what the log says without reading the person's log file. ──
   fleetLog: string[]
+  // ── PRDCT-4473: the forwards, for the spec that opens a socket from a real
+  // window across both hops. On a server, the registry of the ports it
+  // forwards (a spec registers its own target there); in main, a forward
+  // opened as the window's IPC handler opens one, answering its local url.
+  // Neither reaches the preload. ──
+  forwards: ForwardRegistry
+  openForward: (serverId: string, lease: string) => Promise<string>
   // ── later lanes add theirs here ──
 }
 

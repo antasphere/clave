@@ -149,12 +149,14 @@ describe('the explainer trigger', () => {
     expect(sessionId).toBe(session.id)
     expect(input).toMatchObject({
       toolName: 'Bash',
-      asked: 'why is the cart empty?',
+      latest: ['why is the cart empty?'],
       agentWords: 'Let me look at the cart code.',
       cwd: session.cwd,
       floor: 'reads'
     })
     expect(input.toolDescription).toMatch(/command/)
+    // The first message is among the latest: it is not sent twice.
+    expect(input).not.toHaveProperty('opening')
     expect(f.published).toEqual([
       {
         type: 'permission_explained',
@@ -164,6 +166,25 @@ describe('the explainer trigger', () => {
         asked: 'yes'
       }
     ])
+  })
+
+  // PRDCT-4489: a request is judged against the work of the conversation,
+  // not the last sentence alone.
+  it("reads the conversation: the person's first message and their latest three", async () => {
+    const explain = vi.fn<Explain>(async () => reading({}))
+    const f = fixture(explain)
+    for (const text of ['fix the card', 'now the pane', 'ok', 'and the drawing', 'go'])
+      await f.host.write(session.id, { type: 'user_message', text })
+    // The stream echoes the last message: heard twice, it counts once.
+    f.emit({ type: 'user_message', text: 'go' })
+    f.emit({ type: 'assistant_text', delta: 'Checking my change before I push it.', final: true })
+    f.emit(bash('r1', 'ls'))
+    await settle()
+    expect(explain.mock.calls[0][1]).toMatchObject({
+      opening: 'fix the card',
+      latest: ['ok', 'and the drawing', 'go'],
+      agentWords: 'Checking my change before I push it.'
+    })
   })
 
   it('lets the model raise the floor', async () => {

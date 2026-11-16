@@ -204,7 +204,7 @@ export function validateOwnershipRunner(realUid, effectiveUid, fixtureBound) {
 // Exact reviewed fixture/spawn sources: these paths must enter the NEW freeze.
 // Source inheritance is conditional on this fixed echo fixture, never child EUID proof.
 export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
-  'tests/e2e/harness.mjs': '95d423be331ece290c9073fc31529dae777a1bf7f64fac53b61057bbd0eb8254',
+  'tests/e2e/harness.mjs': '612b9dfa840bacaa1e45b492a2cc234f9a0472940175cfe78acc83d4e8d9d1cc',
   'tests/e2e/renderer-resource-workload.mjs':
     '7375b8e899c59e91a4f183b4ceac35d2560f2a190fd76e68555c0ef8ff62504f',
   'tests/e2e/renderer-resource-fixture.mjs':
@@ -212,9 +212,9 @@ export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
   'src/main/sessions/adapters/echo-adapter.ts':
     '5761c7077f7667ba7efa45675ec173af416e8502c576d45c3316f893fa97cb8b',
   'src/main/sessions/session-manager.ts':
-    '2a13401a655fc99052a08401324f63446a1ec48d4fff7691e4ee4e01c105773f',
+    '732311e05d3ef8ff01cd371c0ca67c2e8ed75b463e0762b950c476cf13cc66d9',
   'src/main/server-child.ts': 'a52bcbe2fbac42a3a145b6eb7481eade568346dd71b8bbf3f4628f7de1f5a246',
-  'src/main/server-entry.ts': 'ca223bafe53519afa80b74b1da849d3722321e75aa6d5c9e573a5e227f53187c',
+  'src/main/server-entry.ts': '627dbae5c212cfa4b4f532d4ea182bae84252e6603bdd822e54863085551189f',
   'src/main/terminal-process/supervisor.ts':
     '91638099f61e11cee25ffcc4da233574cb96f4af85b3ce1d21b30fe7c0880ed7',
   'src/main/terminal-process/announcing.ts':

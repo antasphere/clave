@@ -27,6 +27,10 @@ export interface AgentSetup {
    *  the account by and what the spawn passes as the CLI's model flag.
    *  Absent = the harness's own default. */
   model?: string
+  /** The stored provider connection a Pi or OpenCode launch runs on, and its
+   *  name (PRDCT-4496); never its key. Absent = the harness's own login. */
+  connectionId?: string
+  connectionLabel?: string
 }
 
 export const DEFAULT_AGENT_SETUP: AgentSetup = { kind: 'claude', dangerousMode: false }
@@ -113,6 +117,14 @@ export function parseSetup(raw: unknown): AgentSetup | null {
       : {}),
     ...(typeof value.model === 'string' && isValidModelName(value.model)
       ? { model: value.model }
+      : {}),
+    ...(typeof value.connectionId === 'string' && (kind === 'pi' || kind === 'opencode')
+      ? {
+          connectionId: value.connectionId,
+          ...(typeof value.connectionLabel === 'string'
+            ? { connectionLabel: value.connectionLabel }
+            : {})
+        }
       : {})
   }
 }
@@ -147,6 +159,12 @@ export function getLastAgentSetup(workspaceId: string | null): AgentSetup {
     const rest = { ...setup }
     delete rest.claudeProfileId
     delete rest.codexAccountId
+    // A Pi or OpenCode setup's catalogue model belongs to its stored
+    // connection (PRDCT-4496): the two are dropped together, so the replay
+    // never asks the harness's own login for a model of another company.
+    if (rest.connectionId) delete rest.model
+    delete rest.connectionId
+    delete rest.connectionLabel
     return rest
   }
   return setup

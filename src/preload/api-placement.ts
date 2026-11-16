@@ -157,6 +157,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onSessionTyped: routed,
   onSessionRestarting: routed,
   onSessionModelChanged: routed,
+  onSessionConnectionChanged: routed,
   onSessionRestarted: routed,
   onPinnedGroupLaunched: localBecause("this Mac's pinned groups"),
   onSessionData: routed,
@@ -203,17 +204,18 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   secretSubmit: local,
   secretDismiss: local,
   onSecretRequestsChanged: local,
-  'slideless.getState': local,
-  'slideless.install': local,
-  'slideless.serve': wrongForServerTab(
-    "serves a target of this Mac's disk: a server file's key is not served (unverified, PRDCT-4334)"
-  ),
-  'slideless.release': localBecause('releases the lease serve() gave on this Mac'),
-  'slideless.snapshot': wrongForServerTab(
-    "snapshots a target of this Mac's disk (unverified for a server file, PRDCT-4334)"
-  ),
-  'slideless.onState': local,
-  'slideless.onServerExited': local,
+  // ── PRDCT-4474: a session's artefact, on the server it runs on ──
+  'artefacts.list': routed,
+  'artefacts.hold': routed,
+  'artefacts.release': routed,
+  'artefacts.saveVersion': routed,
+  'artefacts.versions': routed,
+  'artefacts.close': routed,
+  'artefacts.onChanged': routed,
+  'artefacts.onPreviewExited': routed,
+  'artefacts.slidelessState': routed,
+  'artefacts.installSlideless': routed,
+  'artefacts.onSlidelessState': routed,
   'linkedDocuments.getDefaultSignature': local,
   'linkedDocuments.setDefaultSignature': localBecause('a file of this Mac'),
   'linkedDocuments.list': local,
@@ -626,5 +628,48 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetServerVersions: routed,
   fleetUpgradeServer: routed,
   fleetSetServerName: routed,
-  onFleetServerVersions: routed
+  onFleetServerVersions: routed,
+  // ── Lane B (harness wave): provider connections ──
+  providerConnectionsList: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  // PRDCT-4496: what this Mac's Pi connections start on with no model named.
+  providerPiStartModels: localBecause(
+    "this Mac's Pi connections and Pi default; a server's own clave_launch_options says its"
+  ),
+  providerConnectionAdd: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionRename: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionRemove: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  providerConnectionSetKey: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  onProviderConnectionsChanged: localBecause(
+    "this Mac's provider connections; a server's are fleetProviderConnections"
+  ),
+  fleetProviderConnections: routed,
+  fleetProviderConnectionAdd: routed,
+  fleetProviderConnectionRename: routed,
+  fleetProviderConnectionRemove: routed,
+  fleetProviderConnectionSetKey: routed,
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue
+  modelsCatalogRead: localBecause(
+    "the window's own server's catalogue, this Mac's without one; a saved server's is fleetModelsCatalog"
+  ),
+  fleetModelsCatalog: routed,
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line
+  providerUsageRead: localBecause(
+    "the window's own server's connection, this Mac's without one; a saved server's is fleetProviderUsage"
+  ),
+  fleetProviderUsage: routed,
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection
+  harnessUsageRead: localBecause(
+    "the window's own server's tabs, this Mac's without one; a saved server's is fleetHarnessUsage"
+  ),
+  fleetHarnessUsage: routed
 }

@@ -240,7 +240,10 @@ function RegisteredSessionView({
               <MagnifyingGlassIcon className="w-4 h-4" />
             </button>
           )}
+          {/* inline-flex: an inline wrapper adds half a pixel of line box to the
+              bar, which then stands taller than a file's (PRDCT-4491). */}
           <span
+            className="inline-flex"
             title={
               terminalSessionId
                 ? terminal
@@ -308,6 +311,10 @@ function RegisteredSessionView({
                 session={session}
                 onState={reporters.get(view.id)!}
                 visible={visible && !hidden}
+                // The session's chosen view, whether or not the pane is on
+                // screen: a message handed back while another tab is
+                // selected brings its files there (PRDCT-4566).
+                active={view.id === viewId}
               />
             ) : null}
           </div>

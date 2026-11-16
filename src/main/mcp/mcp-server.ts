@@ -1,4 +1,5 @@
 import { linkedDocuments } from '../linked-documents/runtime'
+import { claudeConnection, codexConnection, poolAccountOf } from '../../shared/connection'
 import { linkedOpenSchema, linkedUpdateSchema } from '../../shared/linked-documents'
 import * as http from 'http'
 import * as path from 'path'
@@ -20,8 +21,16 @@ import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
 import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
 import { launchProfileManager } from '../launch-profile-manager'
-import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
-import { chatDefaultFor, chatOfInteractionMode } from '../../shared/open-session-modes'
+import {
+  BUILT_IN_LAUNCH_PROFILES,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../shared/agent-launch'
+import {
+  DANGEROUS_MODE_FAMILIES,
+  chatDefaultFor,
+  chatOfInteractionMode
+} from '../../shared/open-session-modes'
 import { getLaunchSettings } from '../launch-settings'
 import { getPreference } from '../ipc-handlers/clave-file-handlers'
 import { initLineage, parentOf, setParent } from '../sessions/lineage'
@@ -37,6 +46,13 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
+import {
+  OPEN_ARTEFACT_DESCRIPTION_DESKTOP,
+  OPEN_ARTEFACT_TOOL,
+  openArtefactSchema,
+  openedAnswer,
+  sidePanelRefusal
+} from './artefact-tool'
 import { type RoutineMachine, registerRoutineTools } from './routine-tools'
 import {
   historyWithServers,
@@ -71,6 +87,16 @@ import {
 } from '../secret-request-manager'
 import { createOffer } from '../copy-offer-manager'
 import { rememberedSpawnModel } from '../sessions/spawn-model'
+import * as os from 'os'
+import { agentUpdateManager } from '../agent-updates'
+import { providerModels } from '../provider-models'
+import { modelsCatalog } from '../models-catalog'
+import { piOwnDefault, providerConnectionsForListing } from '../provider-injection-spawn'
+import { providerConnectionsManager } from '../provider-connections'
+import { servedAccountOf } from './provider-launch-listing'
+import { CLAUDE_MODELS } from '../../shared/claude-models'
+import { HARNESSES, type HarnessId } from '../../shared/harness'
+import { accountPoolsOf, poolsOf, type LaunchModel } from '../../shared/launch-options'
 import {
   INPUT_RESULT_DESCRIPTION,
   INPUT_SET_DESCRIPTION,
@@ -96,7 +122,8 @@ const MCP_PATH = '/mcp'
 const INSTRUCTIONS = `You run inside Clave, which runs agent sessions as tabs in sidebar groups; you are one of them. Tabs and groups belong to a WORKSPACE (a root folder) and to the WINDOW they were opened in; address a tab by id or name. What you open lands in your window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it beside your tab ("the panel"); clave_side_panel reads it back; you send an email yourself, never from the panel. An HTML page or deck is a folder with index.html: open the folder ONCE, then edit its files; it reloads itself and keeps a version per turn.
+- the user will REVIEW or EDIT something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it beside your tab ("the panel"); clave_side_panel reads it back; you send an email yourself, never from the panel.
+- to SHOW an HTML page or deck -> clave_open_artefact: a folder with index.html, opened ONCE; it reloads itself and keeps a version per turn.
 - they only need to READ a file -> clave_open_file (a tab).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view.
 - work could run in parallel -> clave_open_session (an agent tab or terminal, any directory, a prompt, a model) or clave_add_group_terminal (a saved command). clave_launch_group starts a pinned .clave template.
@@ -436,6 +463,69 @@ function exhaustedFrom(
   return isExhausted(context ? usageSummaryForModel(summary, context.model) : summary)
 }
 
+// ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+
+/** The launch profiles of a family as rows: the built-ins, then the person's. */
+function launchProfileRowsOf(family: LauncherFamily): LaunchProfile[] {
+  return [
+    ...BUILT_IN_LAUNCH_PROFILES,
+    ...launchProfileManager.getPreferences().customProfiles
+  ].filter((profile) => profile.family === family)
+}
+
+/** The models the launcher offers on a harness's row (`SessionLauncher.tsx`'s
+ *  `modelsFor`), read on this Mac: Claude's from the table, Codex's from its
+ *  adapter (unavailable when the list fails or is empty). Pi's and OpenCode's
+ *  are the served road's own (`provider-launch-listing.ts`, over the shell's
+ *  `catalog` and stored connections); any other harness, none. */
+async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | 'unavailable'> {
+  if (harness === 'claude')
+    return CLAUDE_MODELS.map((model) => ({
+      id: model.id,
+      label: model.name,
+      family: model.alias.charAt(0).toUpperCase() + model.alias.slice(1)
+    }))
+  if (harness === 'codex') {
+    const models = await providerModels('codex-chat', os.homedir()).catch(() => [])
+    return models.length > 0
+      ? models.map((model) => ({ id: model.id, label: model.label, family: model.label }))
+      : 'unavailable'
+  }
+  return []
+}
+
+/** The harness table's names, for the tools' descriptions (PRDCT-4485):
+ *  every one, and the ones that have a chat view, take a model, start
+ *  without approvals, run on a connection pool. With `ids`, each name carries
+ *  the `mode` an agent passes: "Claude Code (claude)". */
+function harnessNames(
+  pick: (harness: (typeof HARNESSES)[number]) => boolean,
+  conjunction: 'and' | 'or',
+  ids = false
+): string {
+  const names = HARNESSES.filter(pick).map((h) => (ids ? `${h.name} (${h.id})` : h.name))
+  return names.length > 1
+    ? `${names.slice(0, -1).join(', ')} ${conjunction} ${names[names.length - 1]}`
+    : (names[0] ?? 'none')
+}
+const ALL_HARNESS_NAMES = harnessNames(() => true, 'or')
+const CHAT_VIEW_NAMES = harnessNames((h) => h.chatAdapterId !== null, 'and')
+const CHAT_VIEW_MODES = harnessNames((h) => h.chatAdapterId !== null, 'and', true)
+const MODEL_TAKING_MODES = harnessNames((h) => h.takesModel, 'and', true)
+// The account pools: the harnesses whose running tab moves to another
+// connection (a Pi or OpenCode tab's move is lane D's restart road).
+const POOLED_HARNESS_NAMES = harnessNames((h) => accountPoolsOf(h).length > 0, 'and')
+// Every harness with a pool takes an account on open and lists its
+// connection: Pi's and OpenCode's stored connections included (PRDCT-4496).
+const OPEN_POOLED_HARNESS_NAMES = harnessNames((h) => poolsOf(h).length > 0, 'and')
+const DANGEROUS_MODES = harnessNames((h) => DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
+const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.id), 'and', true)
+/** The effort follows the launch fields rule (`launchModeFields`): Claude and Codex. */
+const EFFORT_MODES = harnessNames((h) => h.id === 'claude' || h.id === 'codex', 'and', true)
+
+const LAUNCH_OPTIONS_DESCRIPTION =
+  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for the tabs Clave started on no connection, never sessions started outside Clave); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
+
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
   raw === 'propose' || raw === 'automatic' ? raw : null
 
@@ -463,30 +553,22 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
           !!r && r.link?.kind === 'session-view' && r.link.ownerId === ownerId
       )
       .map((r) => r.id),
-  accountOf: (record) => {
-    if (record.codexMode) {
-      const id = record.codexAccountId ?? 'default'
-      const account = codexAccountsManager.get(id)
-      const read = codexUsageManager.snapshot()[id]
-      return {
-        id,
-        label: account?.label ?? record.codexAccountLabel ?? 'Removed account',
-        // Codex's model buckets (Spark) are families too: judged for the tab's model.
-        exhausted: exhaustedFrom(read, { model: record.model })
-      }
-    }
-    if (record.claudeMode || record.claudeAgentsMode) {
-      const id = record.claudeProfileId ?? 'default'
-      const account = claudeAccountsManager.get(id)
-      const read = usageManager.snapshot()[id]
-      return {
-        id,
-        label: account?.label ?? record.claudeProfileLabel ?? 'Removed account',
-        exhausted: exhaustedFrom(read, { model: record.model })
-      }
-    }
-    return null
-  },
+  // The rule is `servedAccountOf`'s (provider-launch-listing.ts): a Pi or
+  // OpenCode tab on a stored connection (PRDCT-4496) is reported the way a
+  // Claude tab's account is, the store's label first, never exhausted.
+  accountOf: (record) =>
+    servedAccountOf(record, {
+      accountLabel: (pool, id) =>
+        pool === 'codex'
+          ? codexAccountsManager.get(id)?.label
+          : claudeAccountsManager.get(id)?.label,
+      exhausted: (pool, id, model) =>
+        exhaustedFrom(
+          pool === 'codex' ? codexUsageManager.snapshot()[id] : usageManager.snapshot()[id],
+          { model }
+        ),
+      providerConnectionLabel: (id) => providerConnectionsManager.get(id)?.label
+    }),
   statKind: async (absPath) => {
     try {
       const stat = await fs.promises.stat(absPath)
@@ -503,25 +585,23 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   // ── Wave 4, lane D: what the last seven tools read of the shell ──
+  // Each row a Connection (lane P's shape) with the pool rule's view over it.
   accounts: (provider) =>
     provider === 'codex'
-      ? codexAccountsManager.list().map((a) => ({
-          id: a.id,
-          label: a.label,
-          usable: a.hasCredential,
-          ...(a.kind === 'apiKey' ? { fallback: true } : {}),
-          ...(summaryOf(codexUsageManager.snapshot()[a.id])
-            ? { usage: summaryOf(codexUsageManager.snapshot()[a.id]) }
-            : {})
-        }))
-      : claudeAccountsManager.list().map((a) => ({
-          id: a.id,
-          label: a.label,
-          usable: a.id === 'default' || (a.hasToken && !a.tokenInvalid),
-          ...(summaryOf(usageManager.snapshot()[a.id])
-            ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
-            : {})
-        })),
+      ? codexAccountsManager.list().map((a) => {
+          const connection = codexConnection(
+            { id: a.id, label: a.label, kind: a.kind, hasCredential: a.hasCredential },
+            summaryOf(codexUsageManager.snapshot()[a.id])
+          )
+          return { ...connection, ...poolAccountOf(connection) }
+        })
+      : claudeAccountsManager.list().map((a) => {
+          const connection = claudeConnection(
+            { id: a.id, label: a.label, hasToken: a.hasToken, tokenInvalid: a.tokenInvalid },
+            summaryOf(usageManager.snapshot()[a.id])
+          )
+          return { ...connection, ...poolAccountOf(connection) }
+        }),
   useRecommendedAccount: () => getPreference('useRecommendedAccount') === true,
   selectedAccountId: (provider) => {
     const raw = getPreference(
@@ -555,7 +635,31 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
     publishOrSend(event, () => sessionWindows().send(windowKey, 'pinned-group:launched', event)),
   notify: (title, body) => {
     if (Notification.isSupported()) new Notification({ title, body }).show()
-  }
+  },
+  // ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+  machine: () => ({ id: 'local', name: 'This Mac' }),
+  presence: () => agentUpdateManager.getState().agents,
+  models: (harness) => macModels(harness),
+  harnessSettings: () => getLaunchSettings().harnesses,
+  defaultProfileId: (family) => {
+    try {
+      return launchProfileManager.resolve(family).id
+    } catch {
+      return undefined
+    }
+  },
+  launchProfileRows: (family) => launchProfileRowsOf(family),
+  // Pi's and OpenCode's rows (PRDCT-4496), read as the daemon reads them.
+  catalog: (providerIds) => modelsCatalog.view({ providerIds }),
+  providerConnections: (harness) => providerConnectionsForListing(harness),
+  providerConnectionViews: () => providerConnectionsManager.list(),
+  piOwnDefault: () => piOwnDefault(),
+  // PRDCT-4551: what this Mac's Pi and OpenCode tabs used today, where they
+  // run (the settings source refuses when a server runs them elsewhere).
+  harnessUsage: async () =>
+    (await import('../settings/shell-source')).shellSettingsSource.harnessUsage.read({
+      range: 'today'
+    })
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
@@ -715,9 +819,12 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // window there.
       const attached = getClaveServerEndpoint()?.mode === 'attached'
       // Fleet launches and listings need the window's merged owner inventory.
+      // clave_launch_options goes there only for a server it names: this Mac
+      // answers for itself without a window round-trip (PRDCT-4485).
       const fleetTool =
-        (command === 'openSession' || command === 'list') &&
-        (p.server !== undefined || serverConnectionRegistry().list().length > 0)
+        ((command === 'openSession' || command === 'list') &&
+          (p.server !== undefined || serverConnectionRegistry().list().length > 0)) ||
+        (command === 'launchOptions' && typeof p.server === 'string' && p.server !== 'local')
       if (!fleetTool && (sidebarTransport() === 'server' || attached)) {
         const api = await serverClient.api()
         const served = await serveCommand(command, p, {
@@ -882,8 +989,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_list',
     {
-      description:
-        'List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
+      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; each session carries its harness (mode), model and launchProfileId as its record keeps them; a session on a harness with a connection pool (${OPEN_POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit).`,
       inputSchema: {
         workspace: z
           .string()
@@ -894,6 +1000,25 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       }
     },
     (args) => run('list', { ...args, callerSessionId })
+  )
+
+  // ── Wave 7, lane A: what a machine can launch, for clave_launch_options (PRDCT-4485) ──
+  server.registerTool(
+    'clave_launch_options',
+    {
+      description: LAUNCH_OPTIONS_DESCRIPTION,
+      inputSchema: {
+        server: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            'A connected server id or name from clave_list, or local for this Mac; omit for the machine your tab runs on'
+          )
+      }
+    },
+    (args) => run('launchOptions', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -956,8 +1081,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_open_session',
     {
-      description:
-        "Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex open in Clave's CHAT VIEW — the conversation interface with message bubbles and a composer — or in the terminal. Omit `chat` to open the way the person's launcher does (their interaction mode: a chat view or the terminal); `chat: true` forces a chat view, `chat: false` the terminal. Optionally place it in a group — pass a groupId, an exact group name, or \"mine\" for the calling tab's own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch.",
+      description: `Open a new tab in Clave: a ${ALL_HARNESS_NAMES} session, or a plain terminal, in the given directory. ${CHAT_VIEW_NAMES} open in Clave's CHAT VIEW — the conversation interface with message bubbles and a composer — or in the terminal. Omit \`chat\` to open the way the person's launcher does (their interaction mode: a chat view or the terminal); \`chat: true\` forces a chat view, \`chat: false\` the terminal. Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab's own group. Pass server to run on a connected server, using its own directory, profiles and accounts. clave_list shows server IDs and names. Returns { sessionId, groupId } plus serverId for a remote launch. clave_launch_options lists what each machine can launch: harnesses, models, connections with their headroom, profiles.`,
       inputSchema: {
         attachToParent: z
           .boolean()
@@ -993,7 +1117,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .enum(['claude', 'antigravity', 'gemini', 'codex', 'pi', 'opencode', 'terminal'])
           .optional()
           .describe(
-            "Which agent CLI to start, or terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused."
+            `Which harness to start, by its id: ${harnessNames(() => true, 'or', true)}; terminal for a plain shell; claude when omitted. With resume, omit it: the conversation's own provider is used, and another is refused.`
           ),
         groupId: z
           .string()
@@ -1004,13 +1128,13 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .boolean()
           .optional()
           .describe(
-            'true forces Clave\'s chat view ("chat", "chat mode", "chat session", "the chat UI"), false the terminal; omit it to open the way the person\'s launcher does (their interaction mode). true is for claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person\'s own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.'
+            `true forces Clave's chat view ("chat", "chat mode", "chat session", "the chat UI"), false the terminal; omit it to open the way the person's launcher does (their interaction mode). true is for ${CHAT_VIEW_MODES} only (Claude chat is macOS/Linux only); errors for any other mode. Opens the chat the launcher would in that workspace: the chat form of its default profile for the family (the person's own flags included), the built-in "claude-chat" / "codex-chat" otherwise; profile may name another chat profile by its id instead.`
           ),
         dangerous: z
           .boolean()
           .optional()
           .describe(
-            'Start the agent without approval prompts: claude with --dangerously-skip-permissions, codex with --yolo, opencode with --auto. Ignored for antigravity, pi and terminal.'
+            `Start the agent without approval prompts: ${DANGEROUS_MODES} only (Claude Code with --dangerously-skip-permissions, Codex with --yolo, OpenCode with --auto). Ignored for ${NOT_DANGEROUS_MODES} and terminal.`
           ),
         model: z
           .string()
@@ -1018,7 +1142,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(200)
           .optional()
           .describe(
-            'Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"). claude, codex and pi modes only (the OpenCode TUI takes no model flag: pick it inside OpenCode); omitted = the launch profile\'s default, else the CLI\'s. The user can still switch later with /model inside the tab.'
+            `Model the new agent starts on: an alias ("opus", "sonnet", "haiku") or a full model id ("claude-fable-5"), as clave_launch_options lists them. ${MODEL_TAKING_MODES} only (OpenCode reads it as provider/model; on a stored connection a bare id is put under the connection's provider); omitted = the launch profile's default, else the CLI's (a Pi tab on a stored connection: the model clave_launch_options names as that connection's startModel). The user can still switch later with /model inside the tab.`
           ),
         profile: z
           .string()
@@ -1034,7 +1158,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe(
-            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to follow Settings → Accounts: the selected account, or the recommended account when enabled, moved along the pool when exhausted. Unknown names error with the list. clave_list reports each session\'s account.'
+            `The connection (a subscription or a key) the new tab runs on: its id or exact name as Settings → Connections lists it ("default" is the machine login), or "any" for whichever connection of the pool has headroom, judged on the model the tab will run. Harnesses with a connection pool only (${OPEN_POOLED_HARNESS_NAMES}). Omit to follow Settings → Connections: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. On Pi and OpenCode, a stored provider connection by its label or its id, or "any" for the first one with a key; omitted, they run on the login inside the harness. Unknown names error with the list; clave_launch_options lists them with their headroom.`
           ),
         permissionMode: z
           .enum(SPAWN_PERMISSION_MODES)
@@ -1047,7 +1171,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .regex(EFFORT_PATTERN)
           .optional()
           .describe(
-            'The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). claude and codex chats. With resume, defaults to the effort the conversation last ran at.'
+            `The reasoning effort the agent starts at ("low", "medium", "high", "xhigh", "max"). ${EFFORT_MODES} only. With resume, defaults to the effort the conversation last ran at.`
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z
@@ -1115,7 +1239,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       description:
         'Move an existing Clave tab into a group, or out of its group with "root" — and, with window, into another WINDOW (tmux-backed tabs only: the tab keeps its id and scrollback). Use this instead of closing and recreating a session. Note: moving the last tab out of a group deletes that group (including its quick-launch terminal configs).',
       inputSchema: {
-        sessionId: z.string().describe('Id of the session to move'),
+        sessionId: z.string().describe('Id of the session to move, or "mine" for the calling tab'),
         groupId: z
           .string()
           .describe(
@@ -1270,14 +1394,15 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_rename',
     {
-      description: 'Rename a Clave group or session (tab).',
+      description:
+        'Rename a Clave group or session (tab). "mine" renames your own tab (target "session").',
       inputSchema: {
         target: z.enum(['group', 'session']),
-        id: z.string().describe('Group or session id'),
+        id: z.string().describe('Group id, or session id ("mine" for the calling tab)'),
         name: z.string().describe('New display name')
       }
     },
-    (args) => run('rename', args)
+    (args) => run('rename', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1343,26 +1468,29 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_focus',
     {
       description: 'Focus a Clave tab (bring it to the foreground in the app).',
-      inputSchema: { sessionId: z.string().describe('Id of the session to focus') }
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to focus, or "mine" for the calling tab')
+      }
     },
-    (args) => run('focus', args)
+    (args) => run('focus', { ...args, callerSessionId })
   )
 
   server.registerTool(
     'clave_switch_account',
     {
-      description:
-        'Switch a tab to another account (subscription) when the one it runs on is about to hit its limit, or when the user asks to move it: the same tab, its agent restarted on the other account with the conversation resumed. Claude and Codex tabs only. "mine" moves your own tab (your process restarts; finish what you are writing first). The account is an id, an exact name from Settings → Accounts, or "any" for whichever account of the pool has headroom. Per the mode set in Settings the switch is made at once or proposed to the user first; the answer says which.',
+      description: `Switch a tab to another connection (a subscription or a key) when the one it runs on is about to hit its limit, or when the user asks to move it: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only (${POOLED_HARNESS_NAMES}). "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name from Settings → Connections, or "any" for whichever connection of the pool has headroom. Per the mode set in Settings the switch is made at once or proposed to the user first; the answer says which.`,
       inputSchema: {
         sessionId: z.string().describe('Id of the session to move, or "mine" for the calling tab'),
         account: z
           .string()
           .min(1)
           .max(128)
-          .describe('Account id, exact name, or "any" for the pool\'s next account with headroom')
+          .describe(
+            'Connection id, exact name, or "any" for the pool\'s next connection with headroom'
+          )
       }
     },
-    (args) => run('switchAccount', args)
+    (args) => run('switchAccount', { ...args, callerSessionId })
   )
 
   server.registerTool(
@@ -1373,7 +1501,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       inputSchema: {
         sessionId: z
           .string()
-          .describe('Target: a session id or key, an exact tab name, or "parent"')
+          .describe('Target: a session id or key, an exact tab name, "parent", or "mine"')
       }
     },
     (args) => run('resumeSession', { ...args, callerSessionId })
@@ -1412,7 +1540,9 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       description:
         "Read the last N rendered lines of a tab's terminal without interrupting it — check what a delegated agent is doing, read a dev server's logs, or inspect a sibling's state. Works for any tab of this Mac and of a connected Clave server, plain terminals included: read a tab first to learn what it is doing, and message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent's next instruction. Returns scrollback for normal-buffer output (most CLIs, including claude/codex inline); for a full-screen/alternate-screen program (e.g. a pager or a TUI that took over the screen) it returns only the currently visible screen, so a large `lines` value may come back shorter. Target by session id, exact tab name, or \"parent\".",
       inputSchema: {
-        sessionId: z.string().describe('Target: a session id, an exact tab name, or "parent"'),
+        sessionId: z
+          .string()
+          .describe('Target: a session id, an exact tab name, "parent", or "mine"'),
         lines: z
           .number()
           .int()
@@ -1429,16 +1559,44 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_side_panel',
     {
       description:
-        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. An HTML page, document or deck: pass a FOLDER holding a self-contained index.html (inline style and script, its assets beside it). HTML is shown through Slideless, which Clave runs locally: it reloads on every edit you make to its files and Clave saves a version when each of your turns ends, so open it ONCE and keep editing; never reopen it to refresh. Reopening a path shows the file as it is on disk now. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
+        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
       inputSchema: linkedOpenSchema
     },
     async (args) => {
+      // PRDCT-4472: an HTML page or a folder is an artefact of the server
+      // now, never a panel document; said before anything else is read.
+      const refusal = sidePanelRefusal(args.path)
+      if (refusal) return { content: [{ type: 'text' as const, text: refusal }], isError: true }
       if (!callerSessionId)
         return {
           content: [{ type: 'text' as const, text: 'Requires an authenticated Clave session' }],
           isError: true
         }
       return run('openLinkedDocument', { callerSessionId, input: args })
+    }
+  )
+  // ── PRDCT-4472: a session's HTML artefact, opened on the server the session runs on ──
+  server.registerTool(
+    OPEN_ARTEFACT_TOOL,
+    { description: OPEN_ARTEFACT_DESCRIPTION_DESKTOP, inputSchema: openArtefactSchema },
+    async ({ path: target }) => {
+      try {
+        if (!callerSessionId) throw new Error('Requires an authenticated Clave session')
+        // Through the typed client, as the served tools reach the server;
+        // nothing is focused, the windows hear `artefact.changed`.
+        const api = await serverClient.api()
+        const artefact = await api.artefacts.open(callerSessionId, target)
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(openedAnswer(artefact)) }]
+        }
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) }
+          ],
+          isError: true
+        }
+      }
     }
   )
   server.registerTool(

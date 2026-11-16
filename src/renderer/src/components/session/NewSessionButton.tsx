@@ -71,15 +71,13 @@ export function NewSessionButton(): React.JSX.Element {
   }, [addSession])
 
   return (
-    <button
-      onClick={handleNewSession}
-      disabled={loading}
-      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-surface-200 hover:bg-surface-300 text-text-secondary hover:text-text-primary transition-colors text-sm font-medium disabled:opacity-50"
-    >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    // The empty pane's verb: the action ink, the house's primary key
+    // (PRDCT-4487), under the pane's drawing.
+    <button type="button" onClick={handleNewSession} disabled={loading} className="btn-primary">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
-      {loading ? 'Starting...' : 'New Session'}
+      {loading ? 'Starting…' : 'New session'}
     </button>
   )
 }

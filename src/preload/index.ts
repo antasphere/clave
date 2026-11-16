@@ -16,7 +16,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { SlidelessServed, SlidelessSnapshot, SlidelessState } from '../shared/slideless'
+import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -37,7 +37,10 @@ import type {
   ProviderChoice,
   ProviderSwitchPlan,
   RestartOverridesInput,
-  SessionInfo
+  SessionInfo,
+  // ── Lane B (harness wave): provider connections ──
+  ProviderConnection,
+  ProviderConnectionAddInput
 } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
@@ -82,6 +85,14 @@ import type {
   ServerInstallStatus,
   TailnetScan
 } from '../shared/server-setup-types'
+// Lane C of the harness wave (PRDCT-4496): the models catalogue
+import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
+// Lane C of the harness wave (PRDCT-4496): a connection's usage line
+import type { ProviderUsageLineView } from '@clave/contract/settings/provider-usage-view'
+import type {
+  HarnessUsageRange,
+  HarnessUsageView
+} from '@clave/contract/settings/harness-usage-view'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -1438,6 +1449,9 @@ const electronAPI = {
           | { kind: 'group-terminal'; groupId: string; terminalId: string }
           | { kind: 'session-view'; ownerId: string }
           | { kind: 'toolbar'; key: string }
+        // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
+        connectionId?: string
+        connectionLabel?: string
       }?
     ],
     SessionInfo
@@ -1622,6 +1636,14 @@ const electronAPI = {
     'session.model_changed',
     (event) => ({ id: event.id, model: event.model })
   ),
+  // PRDCT-4540: the tab's process went off its connection, or back on it.
+  onSessionConnectionChanged: viaServerEvent<
+    'session.connection_changed',
+    { id: string; leftFor: string | null }
+  >('session:connection-changed', 'session.connection_changed', (event) => ({
+    id: event.id,
+    leftFor: event.leftFor
+  })),
   onSessionRestarted: (
     callback: (payload: {
       id: string
@@ -1879,19 +1901,68 @@ const electronAPI = {
   onSecretRequestsChanged: (callback: (requests: unknown[]) => void) =>
     createIpcListener<[unknown[]]>('secret:requests-changed', callback),
 
-  slideless: {
-    getState: () => ipcRenderer.invoke('slideless:get-state') as Promise<SlidelessState>,
-    install: () => ipcRenderer.invoke('slideless:install') as Promise<SlidelessState>,
-    serve: (target: string) =>
-      ipcRenderer.invoke('slideless:serve', target) as Promise<SlidelessServed>,
-    release: (target: string, lease: string) =>
-      ipcRenderer.invoke('slideless:release', target, lease) as Promise<void>,
-    snapshot: (target: string) =>
-      ipcRenderer.invoke('slideless:snapshot', target) as Promise<SlidelessSnapshot>,
-    onState: (callback: (state: SlidelessState) => void) =>
-      createIpcListener<[SlidelessState]>('slideless:state', callback),
-    onServerExited: (callback: (target: string) => void) =>
-      createIpcListener<[string]>('slideless:server-exited', callback)
+  // ── PRDCT-4474: a session's artefact, on the server the session runs on.
+  // This Mac's own server here, on the digests' road (`viaOwnServer`): main
+  // over IPC until it names its server, the server after. A connected
+  // server's sessions are routed by `createFleetDesktop`. ──
+  artefacts: {
+    list: viaOwnServer<[], Artefact[]>({
+      ipc: () => ipcRenderer.invoke('artefacts:list'),
+      server: async ({ api }) => [...(await api.artefacts.list())]
+    }),
+    // The preview runs on this machine's loopback: its own address is framed as it is.
+    hold: viaOwnServer<[string, string?], { url: string; holdId: string; ttlMs: number }>({
+      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:hold', sessionId, holdId),
+      server: async ({ api }, sessionId, holdId) => {
+        const held = await api.artefacts.hold(sessionId, holdId)
+        return { url: held.url, holdId: held.holdId, ttlMs: held.ttlMs }
+      }
+    }),
+    release: viaOwnServer<[string, string], void>({
+      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:release', sessionId, holdId),
+      server: ({ api }, sessionId, holdId) => api.artefacts.release(sessionId, holdId)
+    }),
+    saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    }),
+    versions: viaOwnServer<[string], ArtefactVersions>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:versions', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.versions(sessionId)
+    }),
+    close: viaOwnServer<[string], void>({
+      ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),
+      server: ({ api }, sessionId) => api.artefacts.close(sessionId)
+    }),
+    onChanged: viaServerEvent<'artefact.changed', { sessionId: string; artefact: Artefact | null }>(
+      'artefacts:changed',
+      'artefact.changed',
+      (event) => ({
+        sessionId: event.sessionId,
+        artefact: event.artefact
+      })
+    ),
+    onPreviewExited: viaServerEvent<'artefact.preview_exited', string>(
+      'artefacts:preview-exited',
+      'artefact.preview_exited',
+      (event) => event.sessionId
+    ),
+    // This Mac's own copy here; a server's id is the fleet wrapper's to route.
+    slidelessState: viaOwnServer<[string?], SlidelessState>({
+      ipc: () => ipcRenderer.invoke('artefacts:slidelessState'),
+      server: ({ api }) => api.artefacts.slidelessState()
+    }),
+    installSlideless: viaOwnServer<[string?], SlidelessState>({
+      ipc: () => ipcRenderer.invoke('artefacts:installSlideless'),
+      server: ({ api }) => api.artefacts.installSlideless()
+    }),
+    onSlidelessState: viaServerEvent<
+      'slideless.state_changed',
+      { serverId: string | null; state: SlidelessState }
+    >('artefacts:slideless-state', 'slideless.state_changed', (event) => ({
+      serverId: null,
+      state: event.state
+    }))
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),
@@ -2597,6 +2668,8 @@ const electronAPI = {
         resume,
         firstMessage,
         continuedFrom,
+        // Lane D (PRDCT-4427): the view a move onto the chat opens in.
+        viewId,
         ...account
       },
       requestId
@@ -2615,7 +2688,9 @@ const electronAPI = {
               ...(model !== undefined && { model }),
               ...(resume !== undefined && { resume }),
               ...(firstMessage !== undefined && { firstMessage }),
-              ...(continuedFrom !== undefined && { continuedFrom })
+              ...(continuedFrom !== undefined && { continuedFrom }),
+              // Lane D (PRDCT-4427).
+              ...(viewId ? { viewId } : {})
             }
           )
         : onlyIfStopped === true
@@ -2952,11 +3027,80 @@ const electronAPI = {
   // ── Triage (issue #227): over IPC only, never routed to the server, whose
   // failure is one of the things a triage must be able to describe ──
   triagePrepare: () => ipcRenderer.invoke(TRIAGE_IPC.prepare) as Promise<TriagePrepareResult>,
-  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>
+  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>,
 
   // ── Lane D: the settings are served (their methods sit in their sections above) ──
 
   // ── Lane F: the shell ──
+
+  // ── Lane B (harness wave): provider connections ──
+  // PRDCT-4426: the key goes in once, in `providerConnectionSetKey`, and comes
+  // back in no answer and no event, on either road: a connection says `hasKey`.
+  providerConnectionsList: viaServer<[], ProviderConnection[]>({
+    ipc: () => ipcRenderer.invoke('provider-connections:list'),
+    server: async ({ api }) =>
+      loose<ProviderConnection[]>([...(await api.settings.providerConnections.list())])
+  }),
+  // PRDCT-4496: main reads the person's Pi default on the machine whose Pi runs,
+  // over the connections the window lists (a separate server's own).
+  providerPiStartModels: (
+    connections?: readonly unknown[]
+  ): Promise<Record<string, import('../shared/pi-start-model').PiStartModel>> =>
+    ipcRenderer.invoke('provider-connections:pi-start-models', connections),
+  providerConnectionAdd: viaServer<[ProviderConnectionAddInput], ProviderConnection>({
+    ipc: (input) => ipcRenderer.invoke('provider-connections:add', input),
+    server: async ({ api }, input) =>
+      loose<ProviderConnection>(await api.settings.providerConnections.add(input))
+  }),
+  providerConnectionRename: viaServer<[string, string], ProviderConnection>({
+    ipc: (id, label) => ipcRenderer.invoke('provider-connections:rename', id, label),
+    server: async ({ api }, id, label) =>
+      loose<ProviderConnection>(await api.settings.providerConnections.rename(id, label))
+  }),
+  providerConnectionRemove: viaServer<[string], boolean>({
+    ipc: (id) => ipcRenderer.invoke('provider-connections:remove', id),
+    server: ({ api }, id) => api.settings.providerConnections.remove(id)
+  }),
+  providerConnectionSetKey: viaServer<[string, string], ProviderConnection>({
+    ipc: (id, apiKey) => ipcRenderer.invoke('provider-connections:set-key', id, apiKey),
+    server: async ({ api }, id, apiKey) =>
+      loose<ProviderConnection>(await api.settings.providerConnections.setKey(id, apiKey))
+  }),
+  onProviderConnectionsChanged: viaServerEvent(
+    'provider-connections:changed',
+    'accounts.providers_changed',
+    (event) => [...event.connections] as unknown[],
+    async (api) => [[...(await api.settings.providerConnections.list())] as unknown[]]
+  ),
+  // Lane C of the harness wave (PRDCT-4496): the models catalogue, the window's
+  // server's when it has one, so a window on a server lists that server's models.
+  modelsCatalogRead: viaServer<
+    [input?: { providerIds?: string[]; force?: boolean }],
+    ModelsCatalogView
+  >({
+    ipc: (input) => ipcRenderer.invoke('models-catalog:read', input ?? {}),
+    server: async ({ api }, input) =>
+      loose<ModelsCatalogView>(await api.settings.modelsCatalog.read(input ?? {}))
+  }),
+
+  // Lane C of the harness wave (PRDCT-4496): a connection's usage line, the
+  // window's server's when it has one, where that server's connection lives.
+  providerUsageRead: viaServer<
+    [input: { connectionId: string; force?: boolean }],
+    ProviderUsageLineView
+  >({
+    ipc: (input) => ipcRenderer.invoke('provider-usage:read', input),
+    server: async ({ api }, input) =>
+      loose<ProviderUsageLineView>(await api.settings.providerUsage.read(input))
+  }),
+
+  // PRDCT-4551: what Pi and OpenCode tabs used, per connection, the window's
+  // server's when it has one, where its tabs run.
+  harnessUsageRead: viaServer<[input: { range: HarnessUsageRange }], HarnessUsageView>({
+    ipc: (input) => ipcRenderer.invoke('harness-usage:read', input),
+    server: async ({ api }, input) =>
+      loose<HarnessUsageView>(await api.settings.harnessUsage.read(input))
+  })
 }
 
 contextBridge.exposeInMainWorld(

@@ -138,6 +138,13 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       const background = manager.background(id)
       if (background.length)
         listener({ kind: 'event', event: { type: 'background_tasks', tasks: background } })
+      // Nor would it name the model: OpenCode and Pi say it once, at the
+      // handshake, to the first pane alone.
+      const meta = manager.meta(id)
+      if (meta) listener({ kind: 'event', event: meta })
+      // Nor show a message that waits for the agent (PRDCT-4566).
+      const waiting = manager.waiting(id)
+      if (waiting) listener({ kind: 'event', event: waiting })
       manager.ready(id)
       return off
     },
@@ -161,8 +168,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
         // A move the policy makes at a cap says `remember: false` (PRDCT-4302):
         // Opus at the Fable cap is this tab's way on, not the person's pick.
         manager.write(id, value)
-        const adapterId = manager.get(id)?.adapterId
-        if (adapterId && value.remember !== false) rememberChatModel(adapterId, value.model)
+        const { adapterId, provider } = manager.get(id) ?? {}
+        // An OpenCode or Pi pick stays the tab's (PRDCT-4427): its models are
+        // its connection's provider's, which the next chat may not run on.
+        const own = provider === 'opencode' || provider === 'pi'
+        if (adapterId && !own && value.remember !== false) rememberChatModel(adapterId, value.model)
         return
       }
       if (value.type === 'set_effort') {

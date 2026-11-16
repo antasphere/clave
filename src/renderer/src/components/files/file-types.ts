@@ -1,10 +1,19 @@
 /** Display modes for file surfaces. Markdown uses page (document-style,
- *  default) / preview (compact) / source; HTML uses rendered (live page,
- *  default) / source. */
-export type FileViewMode = 'page' | 'preview' | 'source' | 'rendered'
+ *  editable where the file is, the default) / source; HTML uses rendered (live
+ *  page, default) / source. A compact preview of Markdown was a third view until
+ *  13 November 2026: two formatted renderings of one file read as the same thing
+ *  twice (PRDCT-4491). */
+export type FileViewMode = 'page' | 'source' | 'rendered'
 
-export const MARKDOWN_MODES: FileViewMode[] = ['page', 'preview', 'source']
+export const MARKDOWN_MODES: FileViewMode[] = ['page', 'source']
 export const HTML_MODES: FileViewMode[] = ['rendered', 'source']
+
+/** What the file menu calls each view. */
+export const VIEW_LABELS: Record<FileViewMode, string> = {
+  page: 'Page',
+  source: 'Source',
+  rendered: 'Rendered'
+}
 
 export const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'])
 export const MARKDOWN_EXTS = new Set(['md', 'mdx'])

@@ -151,6 +151,14 @@ export const StopTaskSchema = z.object({
   type: z.literal('stop_task'),
   taskId: z.string().min(1)
 })
+/** Take back a message that still waits for the agent (PRDCT-4566), by the id
+ *  its `waiting_messages` entry carries: it is never sent. An adapter that
+ *  holds no message back has nothing to do. Mirrors
+ *  `packages/contract/src/sessions.ts`. */
+export const WithdrawMessageSchema = z.object({
+  type: z.literal('withdraw_message'),
+  id: z.string().min(1)
+})
 /** One permission mode a session can be switched to, in the provider's own
  *  vocabulary (`id`) and as the reader reads it (`label`). */
 export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.string() })
@@ -188,7 +196,8 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
   SetModelSchema,
   SetEffortSchema,
   SetPermissionModeSchema,
-  StopTaskSchema
+  StopTaskSchema,
+  WithdrawMessageSchema
 ])
 /** One reasoning effort a model can run at: the provider's word (`id`), how
  *  it reads (`label`), and the provider's gloss when it gives one. */
@@ -261,6 +270,15 @@ export const BackgroundTaskSchema = z.object({
   model: z.string().optional()
 })
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
+/** A message written to the session that the agent has not taken yet
+ *  (PRDCT-4566): the adapter's own id for it, the text as written (a message
+ *  from another tab with its provenance header) and the files it carries. */
+export const WaitingMessageSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  attachments: AttachmentsSchema.optional()
+})
+export type WaitingMessage = z.infer<typeof WaitingMessageSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
   /* `parent` on a message, a text, a call or a result names the call that
@@ -321,7 +339,21 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
    *  turn; null when the provider says the model runs at none or will not
    *  say. Sent at ready and after every switch of model or effort. */
   z.object({ type: z.literal('effort'), effort: z.string().nullable() }),
-  z.object({ type: z.literal('error'), message: z.string(), fatal: z.boolean() }),
+  /* `notice` names a notice that stands for the latest of its kind (an
+     OpenCode chat's rate-limit retry, PRDCT-4427): a view shows the new one
+     in place of the one before under the same name, never a pile. `quiet`
+     says nothing failed: a plain fact of the turn (another tab's message
+     left unsent when the person withdrew it or stopped the turn,
+     PRDCT-4566), which a view draws as a quiet line of the conversation,
+     never as a failure. A view that does not know the flag still draws the
+     words, as a notice. Mirrors `packages/contract/src/sessions.ts`. */
+  z.object({
+    type: z.literal('error'),
+    message: z.string(),
+    fatal: z.boolean(),
+    notice: z.string().optional(),
+    quiet: z.boolean().optional()
+  }),
   /* The turn the reader's `interrupt` stopped ended there: the provider's word
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
@@ -389,7 +421,29 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
   /* Everything still running in the background, whole, each time it changes:
      a snapshot replaces the last one, and an empty list means nothing is. */
   z.object({ type: z.literal('background_tasks'), tasks: z.array(BackgroundTaskSchema) }),
-  z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() })
+  z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() }),
+  /* The messages written while the agent works that it has not taken yet
+     (PRDCT-4566), whole, each time the list changes: a snapshot replaces the
+     last, and an empty list means none waits. A message the agent takes
+     leaves the list and is then a `user_message` of its own, so a view that
+     does not know this event still draws it, at the moment it is taken.
+     `takes`: when the agent takes one, once the running turn has ended
+     (`turn`, OpenCode) or at its next step (`step`, Pi). `returned`: the ones
+     that just left the list unsent, for the composer to take back: the one
+     the person withdrew, every one still waiting when the turn was stopped
+     or the session ended, or one the agent refused to queue (`refused`).
+     Mirrors `packages/contract/src/sessions.ts`. */
+  z.object({
+    type: z.literal('waiting_messages'),
+    messages: z.array(WaitingMessageSchema),
+    takes: z.enum(['turn', 'step']),
+    returned: z
+      .object({
+        why: z.enum(['withdrawn', 'stopped', 'ended', 'refused']),
+        messages: z.array(WaitingMessageSchema)
+      })
+      .optional()
+  })
 ])
 export type SessionEvent = z.infer<typeof SessionEventSchema>
 /** One event of a conversation's past, with the moment the transcript says it
