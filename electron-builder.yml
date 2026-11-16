@@ -7,6 +7,8 @@ files:
   - '!**/.vscode/*'
   - '!apps'
   - '!packages'
+  # The tests and their fixtures (among them the relay the tests run, #409) never ship.
+  - '!tests'
   - '!src/*'
   - '!native'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

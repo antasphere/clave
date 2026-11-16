@@ -142,6 +142,24 @@ for (const home of obsoleteHomes) {
   }
 }
 
+// The packaged app takes the repository root minus electron-builder's `files`
+// exclusions. Source homes and the tests must stay out of it: the tests carry
+// fixtures such as the relay the client tests run (#409), which must never
+// ship. Read the `files` list of electron-builder.yml line by line.
+{
+  const builder = readFileSync(path.join(root, 'electron-builder.yml'), 'utf8').split('\n')
+  const start = builder.indexOf('files:')
+  assert(start >= 0, 'electron-builder.yml has no top-level files: list')
+  const excluded = []
+  for (const line of builder.slice(start + 1)) {
+    if (/^\S/.test(line)) break
+    const entry = /^\s+-\s+'?(.*?)'?\s*$/.exec(line)
+    if (entry) excluded.push(entry[1])
+  }
+  for (const home of ['!apps', '!packages', '!tests'])
+    assert(excluded.includes(home), `electron-builder.yml files must exclude ${home.slice(1)}/`)
+}
+
 // Workspace names and the renderer alias resolve to app source too.
 const { workspaces } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert(Array.isArray(workspaces), 'Expected the root workspace directory list')
