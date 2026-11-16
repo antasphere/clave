@@ -263,6 +263,60 @@ describe('SessionManager', () => {
     expect(manager.background('absent')).toEqual([])
   })
 
+  it('keeps the waiting list and the session’s meta in the timeline a phone reads, in order with the rest', async () => {
+    // The mobile wave's ordered history: a phone that opens the session late
+    // reads what waits for the agent and which model runs from the timeline,
+    // not only from the live frames. A provider's raw event stays out of it.
+    const manager = new SessionManager()
+    const emitter = new EventEmitter()
+    const adapter: SessionAdapter = {
+      id: 'chat',
+      provider: '*',
+      transports: ['events'],
+      spawn: vi.fn(),
+      attach: vi.fn(async (id: string) => ({ id })),
+      write: vi.fn(),
+      kill: vi.fn(),
+      on: <K extends keyof SessionAdapterEvents>(
+        _handle: { id: string },
+        event: K,
+        cb: (value: SessionAdapterEvents[K]) => void
+      ) => {
+        emitter.on(event, cb)
+        return () => {
+          emitter.off(event, cb)
+        }
+      }
+    }
+    manager.adopt({ ...session('a'), adapterId: 'chat' }, { id: 'a' }, adapter)
+    const meta = { type: 'session_meta' as const, model: 'pi-model', providerSessionId: 'p-1' }
+    const waiting = {
+      type: 'waiting_messages' as const,
+      messages: [{ id: 'waiting-1', text: 'from the phone', clientMessageId: 'phone-00000044' }],
+      takes: 'step' as const
+    }
+    const handedBack = {
+      type: 'waiting_messages' as const,
+      messages: [],
+      takes: 'step' as const,
+      returned: { why: 'stopped' as const, messages: waiting.messages }
+    }
+    for (const event of [
+      meta,
+      { type: 'user_message' as const, text: 'first' },
+      waiting,
+      { type: 'provider_event' as const, provider: 'pi', payload: { raw: true } },
+      handedBack
+    ])
+      emitter.emit('stream', { kind: 'event', event })
+    expect(manager.timeline('a').items.map((item) => item.event)).toEqual([
+      meta,
+      { type: 'user_message', text: 'first' },
+      waiting,
+      handedBack
+    ])
+  })
+
   it('forgets a transferred handle without killing it and permits readoption', async () => {
     const { manager, adapter } = fixture()
     const record = await manager.create(session('a'))
