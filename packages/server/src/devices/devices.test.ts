@@ -638,7 +638,10 @@ describe('the relay address', () => {
 })
 
 describe('the relay client’s state as the devices domain says it (issue #407)', () => {
-  const at = (state: RelayClientStatus['state'], lastFailure: string | null = null) => ({
+  const at = (
+    state: RelayClientStatus['state'],
+    lastFailure: string | null = null
+  ): RelayClientStatus => ({
     state,
     relay: 'https://relay.example.com',
     machineId: 'm_1',

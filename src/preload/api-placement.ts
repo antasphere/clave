@@ -226,6 +226,10 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   'linkedDocuments.openAttachment': local,
   'linkedDocuments.chooseFiles': localBecause('a dialog of this Mac'),
   'linkedDocuments.onChanged': local,
+  // Issue #407: Settings → Mobile, the relay of this Mac's own server.
+  mobileRelayRead: local,
+  mobileRelaySet: local,
+  mobileRelayStatus: local,
   routinesList: local,
   routinesRunNow: local,
   routinesDismiss: local,
