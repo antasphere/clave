@@ -37,6 +37,8 @@ import { PendingRequests } from '../requests/service'
 import { createServerFiles } from '../files/service'
 import { ensureFileHelper } from '../files/test-support'
 import type { TimelinePage } from '@clave/contract/timeline'
+import { ForwardRegistry } from '../forward/registry'
+import { startTestTarget } from '../forward/test-target'
 
 type Provider = Awaited<ReturnType<typeof startOidcProvider>>
 const OWNER = 'user-7f3a'
@@ -108,6 +110,8 @@ interface World {
 }
 
 const PHONE = { name: 'Valentin’s iPhone', platform: 'ios' as const, appVersion: '0.1.0' }
+/** The machine id of the road, when a world has one. */
+const ROAD_ID = `m_${'ab'.repeat(16)}`
 let provider: Provider
 let world: World | null = null
 
@@ -132,6 +136,8 @@ async function start(
     notices?: boolean
     /** The entry answers the owner synchronously, at the moment of each check (PRDCT-4448). */
     fresh?: boolean
+    /** The phone's road without a relay (PRDCT-4448), under `ROAD_ID`. */
+    road?: boolean
   } = {}
 ): Promise<World> {
   const source = options.source ?? new FakeSource(aSession('s1'))
@@ -155,7 +161,10 @@ async function start(
     serverName: () => 'the-mac',
     relay: { get: () => relay.url, set: (url) => void (relay.url = url) },
     onPairingRequested: (pairing) => void asked.push({ ...pairing }),
-    now: () => clock.now
+    now: () => clock.now,
+    ...(options.road && {
+      road: { machineId: () => ROAD_ID, platform: 'macos' as const, version: '3.0.0-test' }
+    })
   }
   const server = await startEmbedded({
     ports: { ...options.ports, sessions: source, devices: port },
@@ -716,6 +725,37 @@ describe('the notice a pairing request raises', () => {
     mac.ws.close()
     phone.ws.close()
     await Promise.all([mac.closed, phone.closed])
+  })
+})
+
+describe('a forwarded page stays the owner’s (PRDCT-4473)', () => {
+  it('refuses a phone on /forward/<lease>, and on the road’s /m/<id>/forward/…, and relays nothing', async () => {
+    const target = await startTestTarget()
+    try {
+      const forwards = new ForwardRegistry()
+      const { lease } = forwards.register(target.port)
+      const w = await start({ ports: { forwards }, road: true })
+      const { token } = await w.device()
+      // The lease is live: the owner reaches the page, directly and on the road.
+      expect((await w.json('GET', `/forward/${lease}/echo`)).status).toBe(200)
+      expect((await w.json('GET', `/m/${ROAD_ID}/forward/${lease}/echo`)).status).toBe(200)
+      const relayed = target.received.length
+      for (const path of [`/forward/${lease}/echo`, `/m/${ROAD_ID}/forward/${lease}/echo`])
+        for (const method of ['GET', 'POST'] as const) {
+          const answer = await w.json(method, path, {
+            token,
+            ...(method === 'POST' && { body: { x: 1 } })
+          })
+          expect(answer.status, `${method} ${path}`).toBe(403)
+          expect(answer.body, `${method} ${path}`).toMatchObject({
+            message: DEVICE_FORBIDDEN_MESSAGE
+          })
+        }
+      // Nothing of the phone's reached the page.
+      expect(target.received.length).toBe(relayed)
+    } finally {
+      await target.stop()
+    }
   })
 })
 
