@@ -14,12 +14,16 @@ import {
   PUSH_PROTOCOL,
   type ServerFrame,
   decodeClientFrame,
+  type ClientFrame,
   encodeServerFrame
 } from '@clave/contract/push'
+import { CLOSE_DEVICE_REVOKED, CLOSE_DEVICE_SUSPENDED } from '@clave/contract/devices'
 import { Either } from 'effect'
 import { safeEqual } from '../auth'
 import type { ServerEventsService } from '../events'
 import type { SessionStreamSource, Unsubscribe } from '../sessions/port'
+// ── Mobile wave, lane A: a phone's socket ──
+import { deviceHearsEvent } from '../devices/scope'
 
 export interface PushSocket {
   send(text: string): void
@@ -39,14 +43,33 @@ export interface PushHubOptions {
   readonly helloTimeoutMs?: number
   /** The Clave version the welcome names (issue #266); none when unknown. */
   readonly version?: () => string | undefined
+  // ── Mobile wave, lane A: a phone's device session in the hello frame ──
+  /** The devices domain: a hello token that is not the server's may be a
+   *  phone's session; a revoked phone's sockets are closed from here. */
+  readonly devices?: {
+    readonly authenticate: (
+      presented: string
+    ) => Promise<{ readonly deviceId: string; readonly suspended: boolean } | null>
+    readonly touch: (deviceId: string) => void
+    readonly onRevoked: (listener: (deviceId: string) => void) => Unsubscribe
+    /** PRDCT-4448: whether a phone is suspended now (its approving account signed out or
+     *  replaced), and word of every change of the signed-in owner. */
+    readonly isSuspended: (deviceId: string) => boolean
+    readonly onOwnerChanged: (listener: () => void) => Unsubscribe
+  }
 }
 
 interface Peer {
   readonly socket: PushSocket
   welcomed: boolean
+  /** A phone's hello is being checked; frames that arrive meanwhile wait, in order. */
+  authenticating: boolean
+  queued: string[]
   helloTimer: ReturnType<typeof setTimeout> | null
   readonly subscriptions: Map<string, Unsubscribe>
   closed: boolean
+  /** The phone this socket belongs to, when it said hello with a device session. */
+  deviceId: string | null
 }
 
 export class PushHub {
@@ -55,10 +78,35 @@ export class PushHub {
   // ── Lane D (wave 3): the view requests ──
   private readonly welcomeListeners = new Set<(send: (frame: ServerFrame) => void) => void>()
 
+  // ── Mobile wave, lane A ──
+  private readonly offRevoked: Unsubscribe
+  private readonly offOwner: Unsubscribe
+
   constructor(private readonly options: PushHubOptions) {
     this.offEvents = options.events.subscribe((envelope) =>
       this.broadcast({ _tag: 'event', ...envelope })
     )
+    // A revoked phone's sockets end at once, with the code that says why.
+    this.offRevoked =
+      options.devices?.onRevoked((deviceId) => this.closeDevice(deviceId)) ?? (() => {})
+    // A phone whose approving account is no longer the one signed in is closed with a code
+    // it retries on: it is suspended, never revoked (PRDCT-4448).
+    this.offOwner = options.devices?.onOwnerChanged(() => this.closeSuspended()) ?? (() => {})
+  }
+
+  /** The sockets of the phones suspended now, closed with the code they retry on. */
+  closeSuspended(): void {
+    const devices = this.options.devices
+    if (!devices) return
+    for (const peer of [...this.peers])
+      if (peer.deviceId !== null && devices.isSuspended(peer.deviceId))
+        this.close(peer, CLOSE_DEVICE_SUSPENDED, 'device suspended')
+  }
+
+  /** The sockets of one phone, closed (its session was revoked). */
+  closeDevice(deviceId: string): void {
+    for (const peer of [...this.peers])
+      if (peer.deviceId === deviceId) this.close(peer, CLOSE_DEVICE_REVOKED, 'device revoked')
   }
 
   /** Peers that said hello with the right token. */
@@ -70,9 +118,12 @@ export class PushHub {
     const peer: Peer = {
       socket,
       welcomed: false,
+      authenticating: false,
+      queued: [],
       helloTimer: null,
       subscriptions: new Map(),
-      closed: false
+      closed: false,
+      deviceId: null
     }
     this.peers.add(peer)
     peer.helloTimer = setTimeout(() => {
@@ -91,6 +142,8 @@ export class PushHub {
 
   dispose(): void {
     this.offEvents()
+    this.offRevoked()
+    this.offOwner()
     this.closeAll(1001, 'hub disposed')
   }
 
@@ -108,6 +161,13 @@ export class PushHub {
   }
 
   private handle(peer: Peer, text: string): void {
+    if (peer.authenticating) {
+      // A phone's hello is being checked: what it sent after waits, a bounded few frames.
+      if (peer.queued.length >= 64)
+        return this.close(peer, CLOSE_MALFORMED, 'too many frames before the welcome')
+      peer.queued.push(text)
+      return
+    }
     const decoded = decodeClientFrame(text)
     if (Either.isLeft(decoded)) {
       if (!peer.welcomed) return this.close(peer, CLOSE_MALFORMED, 'malformed frame')
@@ -116,21 +176,56 @@ export class PushHub {
     const frame = decoded.right
     if (!peer.welcomed) {
       if (frame._tag !== 'hello') return this.close(peer, CLOSE_MALFORMED, 'hello first')
-      if (!safeEqual(frame.token, this.options.token))
-        return this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
-      peer.welcomed = true
-      if (peer.helloTimer) clearTimeout(peer.helloTimer)
-      peer.helloTimer = null
-      const version = this.options.version?.()
-      this.send(peer, {
-        _tag: 'welcome',
-        serverId: this.options.serverId,
-        protocol: PUSH_PROTOCOL,
-        ...(version !== undefined && { version })
-      })
-      for (const listener of [...this.welcomeListeners]) listener((frame) => this.send(peer, frame))
+      if (!safeEqual(frame.token, this.options.token)) {
+        // ── Mobile wave, lane A: a phone's device session, told apart by hash; the owner
+        // is read now, so the check is asynchronous and the peer waits (PRDCT-4448) ──
+        const devices = this.options.devices
+        if (!devices) return this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
+        peer.authenticating = true
+        void devices.authenticate(frame.token).then(
+          (device) => {
+            peer.authenticating = false
+            if (peer.closed) return
+            if (!device) return this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
+            // Its account may have left since the check: asked again at the welcome itself.
+            if (device.suspended || devices.isSuspended(device.deviceId))
+              return this.close(peer, CLOSE_DEVICE_SUSPENDED, 'device suspended')
+            peer.deviceId = device.deviceId
+            devices.touch(device.deviceId)
+            this.welcome(peer)
+            const queued = peer.queued.splice(0)
+            for (const next of queued) if (!peer.closed) this.handle(peer, next)
+          },
+          () => {
+            peer.authenticating = false
+            this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
+          }
+        )
+        return
+      }
+      this.welcome(peer)
       return
     }
+    this.answer(peer, frame)
+  }
+
+  /** The welcome, once the hello's token is the server's or a phone's admitted session. */
+  private welcome(peer: Peer): void {
+    peer.welcomed = true
+    if (peer.helloTimer) clearTimeout(peer.helloTimer)
+    peer.helloTimer = null
+    const version = this.options.version?.()
+    this.send(peer, {
+      _tag: 'welcome',
+      serverId: this.options.serverId,
+      protocol: PUSH_PROTOCOL,
+      ...(version !== undefined && { version })
+    })
+    for (const listener of [...this.welcomeListeners]) listener((frame) => this.send(peer, frame))
+  }
+
+  /** A frame of a welcomed peer. */
+  private answer(peer: Peer, frame: ClientFrame): void {
     switch (frame._tag) {
       case 'hello':
         return this.send(peer, { _tag: 'error', message: 'Already welcomed' })
@@ -177,6 +272,16 @@ export class PushHub {
     this.publishFrame(frame)
   }
 
+  // ── Mobile wave, lane A ──
+  /** Whether a frame is for this peer: everything for a desktop client; for
+   *  a phone, the events of its own domains and no view request frame. */
+  private hears(peer: Peer, frame: ServerFrame): boolean {
+    if (peer.deviceId === null) return true
+    // A suspended phone hears nothing, even before its socket is closed (PRDCT-4448).
+    if (this.options.devices?.isSuspended(peer.deviceId) ?? true) return false
+    return frame._tag === 'event' ? deviceHearsEvent(frame.event._tag) : frame._tag !== 'request'
+  }
+
   // ── Lane D (wave 3): the view requests ──
   /**
    * Send one frame to every welcomed peer. The view requests go out through
@@ -203,7 +308,9 @@ export class PushHub {
   }
 
   private send(peer: Peer, frame: ServerFrame): void {
-    if (peer.closed) return
+    // Apply the scope to every path, including a welcome listener replaying
+    // requests that were already pending before this socket connected.
+    if (peer.closed || !this.hears(peer, frame)) return
     try {
       peer.socket.send(encodeServerFrame(frame))
     } catch (error) {

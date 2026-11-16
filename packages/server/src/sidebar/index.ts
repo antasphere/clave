@@ -4,5 +4,5 @@
  * the clients (PRDCT-3241).
  */
 export * from './light'
-export { SidebarLayoutsPort } from './port'
-export { SidebarEventsLive, sidebarHandlers } from './handlers'
+export { SidebarLayoutsPort, SidebarOverviewPort } from './port'
+export { SidebarEventsLive, SidebarOverviewEventsLive, sidebarHandlers } from './handlers'

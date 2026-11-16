@@ -14,7 +14,7 @@ import {
   callMcp
 } from './harness.mjs'
 import { chatSelector } from './renderer-workload.mjs'
-import { inject, seedEchoViewMode } from './chat-view.spec.mjs'
+import { inject, seedEchoViewMode, selectChatView } from './chat-view.spec.mjs'
 import {
   DEPTHS,
   STAGES,
@@ -187,6 +187,7 @@ export async function run(t) {
         const sessionId = opened.sessionId
         assert.equal(typeof sessionId, 'string', 'fresh real echo session ID')
         await win.locator(`[data-sidebar-item-id="${sessionId}"] > button`).click()
+        await selectChatView(win, sessionId, view)
         const selector = chatSelector(sessionId, view)
         await win.locator(selector + ' textarea:not(:disabled)').waitFor()
         await win.evaluate(() => {

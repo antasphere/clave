@@ -41,6 +41,9 @@ import { providerUsageView } from '../provider-usage'
 
 export interface StandaloneSettings {
   settings: SettingsSourceService
+  /** The login the settings serve, itself (PRDCT-4448): the devices port reads its
+   *  status synchronously at every check and hears its every change. */
+  antasphere: AntasphereAccountManager
   /** The server is stopping: nothing of the login stays listening or fires later. */
   shutdown: () => void
 }
@@ -112,6 +115,7 @@ export function standaloneSettingsSource(
   if (!TEST_NO_ACTIVATE) startUsagePolling()
   return {
     settings,
+    antasphere,
     shutdown: () => {
       usageManager.stopPolling()
       codexUsageManager.stopPolling()

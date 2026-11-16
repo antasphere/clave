@@ -14,6 +14,19 @@ function counting(value: unknown): { call: Call; used: () => number } {
 }
 
 describe('the history deadline (PRDCT-3526)', () => {
+  it('reads the positioned snapshot under the history deadline, keeping cursor and retention', async () => {
+    const ordinary = counting({ id: 's1' })
+    const page = {
+      items: [],
+      before: null,
+      cursor: { generation: 'g', sequence: 7 },
+      truncated: true
+    }
+    const history = counting(page)
+    expect(await sessionsClient(ordinary.call, history.call).timeline('s1', 200, 50)).toEqual(page)
+    expect(history.used()).toBe(1)
+    expect(ordinary.used()).toBe(0)
+  })
   it('a page of the past goes through the history call, the rest through the ordinary one', async () => {
     const ordinary = counting({ id: 's1' })
     const history = counting({ items: [], before: null })
@@ -65,13 +78,15 @@ describe('what the window keeps on a record (PRDCT-3526, round 2 of the verifier
     await client.keepOnRecord('t', { claudeSessionId: 'after-clear' })
     await client.keepOnRecord('t', { workspaceId: 'ws-2' })
     await client.keepOnRecord('t', { workspaceId: null })
+    await client.keepOnRecord('t', { window: { key: 'primary', expectedKey: null } })
     expect(payloads).toEqual([
       { id: 't', name: { displayName: 'A', userRenamed: true } },
       { id: 't', page: { url: 'http://127.0.0.1:1' } },
       { id: 't', page: null },
       { id: 't', claudeSessionId: 'after-clear' },
       { id: 't', workspaceId: 'ws-2' },
-      { id: 't', workspaceId: null }
+      { id: 't', workspaceId: null },
+      { id: 't', window: { key: 'primary', expectedKey: null } }
     ])
   })
 })

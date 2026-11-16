@@ -123,6 +123,47 @@ export const ListWindowLayouts = Query.define('ListWindowLayouts', {
   success: Schema.Array(LayoutSnapshot)
 })
 
+// ── The phone's read: the groups and nothing that drives an agent ──
+
+/** A group as a paired phone reads it: its name, its colour, whether it is
+ *  folded, its workspace and its member sessions, in order. Nothing else of
+ *  the group crosses: not its quick-launch terminals (their commands and
+ *  folders), its prompt, its folder or its view, any of which can carry a
+ *  path or drive an agent, and none of which a phone's list needs. */
+export const OverviewGroup = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  color: Schema.optional(Schema.String),
+  collapsed: Schema.Boolean,
+  workspaceId: Schema.optional(Schema.String),
+  sessionIds: Schema.Array(Schema.String)
+})
+export type OverviewGroup = typeof OverviewGroup.Type
+
+/** One window's sidebar as a phone reads it. `workspaceId` is the workspace
+ *  the window shows when the server knows it (the shell's window list), and
+ *  absent otherwise, as on a daemon whose one sidebar shows every workspace.
+ *  `displayOrder` is the window's top level in order: group ids, standalone
+ *  session ids and file-tab ids, which a phone that knows no such id skips. */
+export const OverviewWindow = Schema.Struct({
+  windowKey: Schema.String,
+  workspaceId: Schema.optional(Schema.String),
+  displayOrder: Schema.Array(Schema.String),
+  groups: Schema.Array(OverviewGroup)
+})
+export type OverviewWindow = typeof OverviewWindow.Type
+
+export const SidebarOverview = Schema.Struct({ windows: Schema.Array(OverviewWindow) })
+export type SidebarOverview = typeof SidebarOverview.Type
+
+/** Every window's sidebar, projected for a phone: the owner and a paired
+ *  phone may both read it (`packages/server/src/devices/scope.ts`), while
+ *  the full layouts above stay the owner's. */
+export const GetSidebarOverview = Query.define('GetSidebarOverview', {
+  payload: Schema.Struct({}),
+  success: SidebarOverview
+})
+
 // ── The window's own write ──
 
 /** A window hands its whole layout back. With `baseRevision`, the write is
@@ -335,3 +376,12 @@ export const LayoutRemoved = Schema.TaggedStruct('sidebar.layout_removed', {
 })
 export const SidebarEvent = Schema.Union(LayoutChanged, LayoutRemoved)
 export type SidebarEvent = typeof SidebarEvent.Type
+
+/** The overview a phone reads may have changed: a notice with no payload,
+ *  so a phone that hears it reads `GetSidebarOverview` again. It exists
+ *  because `sidebar.layout_changed` carries the whole layout (prompts,
+ *  terminal commands, folders), which a phone must not hear. Not a member
+ *  of `SidebarEvent`: the layouts class never emits it, the server's
+ *  overview wiring does (`packages/server/src/sidebar/handlers.ts`). */
+export const OverviewChanged = Schema.TaggedStruct('sidebar.overview_changed', {})
+export type OverviewChanged = typeof OverviewChanged.Type

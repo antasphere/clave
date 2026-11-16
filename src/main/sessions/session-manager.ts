@@ -1,3 +1,5 @@
+import type { TimelinePage } from '@clave/contract/timeline'
+import { SessionTimeline } from './timeline'
 import {
   SessionSchema,
   type AgentState,
@@ -29,6 +31,7 @@ interface Entry {
    *  turn. Held here, not only in a pane's log, so a pane that subscribes late
    *  reads the live list and a process that goes away takes its list with it. */
   background: BackgroundTask[]
+  timeline: SessionTimeline
   /** The provider's last `session_meta`: the model it said it runs on. Held
    *  the way `background` is, so a pane that subscribes after the adapter
    *  said it (OpenCode and Pi say it once, at the handshake) still names the
@@ -116,6 +119,7 @@ export class SessionManager {
       exited: false,
       ready: false,
       background: [],
+      timeline: new SessionTimeline(() => adapter.history?.(handle) ?? []),
       meta: null,
       waiting: null
     }
@@ -181,6 +185,7 @@ export class SessionManager {
     this.clearBackground(entry)
     entry.waiting = null
     entry.handle = handle
+    entry.timeline = new SessionTimeline(() => entry.adapter.history?.(entry.handle) ?? [])
     entry.exited = false
     this.bind(entry)
     return handle
@@ -190,6 +195,7 @@ export class SessionManager {
     const entry = this.require(id)
     if (entry.ready) return
     try {
+      if (entry.session.transport === 'events') entry.timeline.initialize()
       entry.adapter.ready?.(entry.handle)
       entry.ready = true
     } catch (error) {
@@ -213,9 +219,10 @@ export class SessionManager {
     return entry !== undefined && entry.ready && !entry.exited
   }
 
-  write(id: string, input: Uint8Array | SessionInput): void {
+  write(id: string, input: Uint8Array | SessionInput): void | Promise<void> {
     const entry = this.require(id)
-    entry.adapter.write(entry.handle, input)
+    if (entry.session.transport === 'events') entry.timeline.initialize()
+    return entry.adapter.write(entry.handle, input)
   }
   async models(id: string): Promise<ModelOption[]> {
     const entry = this.require(id)
@@ -243,6 +250,10 @@ export class SessionManager {
   history(id: string, before?: number, limit?: number): HistoryPage {
     const entry = this.require(id)
     return pageHistory(entry.adapter.history?.(entry.handle) ?? [], before, limit)
+  }
+
+  timeline(id: string, before?: number, limit?: number): TimelinePage {
+    return this.require(id).timeline.read(before, limit)
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -433,8 +444,13 @@ export class SessionManager {
   }
 
   private publish(entry: Entry, stream: SessionStream): void {
-    for (const listener of [...entry.streams]) this.notify(() => listener.callback(stream))
-    for (const callback of [...this.all]) this.notify(() => callback(entry.session.id, stream))
+    const deliver = (value: SessionStream): void => {
+      for (const listener of [...entry.streams]) this.notify(() => listener.callback(value))
+      for (const callback of [...this.all]) this.notify(() => callback(entry.session.id, value))
+    }
+    if (stream.kind === 'event' && stream.event.type !== 'provider_event')
+      entry.timeline.capture(stream.event, (position) => deliver({ ...stream, position }))
+    else deliver(stream)
   }
 
   private require(id: string): Entry {

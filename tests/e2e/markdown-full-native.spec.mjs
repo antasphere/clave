@@ -65,7 +65,7 @@ export async function run(t) {
     const chat = await openChat(
       'full-native-' + kind,
       ['--dev-echo-view=clave.chat-view/' + kind, '--test-no-machine-usage'],
-      `[data-testid="${kind}-view"] textarea:not(:disabled)`,
+      { view: kind, selector: `[data-testid="${kind}-view"] textarea:not(:disabled)` },
       { SHELL: '/bin/zsh' }
     )
     const { app, win, fixture, record } = chat

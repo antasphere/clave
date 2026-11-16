@@ -34,6 +34,25 @@ describe('the standalone settings source', () => {
     expect(typeof shutdown).toBe('function')
     shutdown()
   })
+
+  it('hands the devices port the very login its settings serve, read at once and heard on change (PRDCT-4448)', async () => {
+    const dir = tempDataDir('clave-standalone-source-')
+    const standalone = standaloneSettingsSource(dir, {
+      CLAVE_ANTASPHERE_ISSUER: 'http://127.0.0.1:1'
+    })
+    try {
+      // Synchronous: the phone's checks read it at the moment they decide. Nothing here
+      // signs in or out, so no Keychain is touched.
+      const status = standalone.antasphere.status()
+      expect(status).toMatchObject({ phase: 'signed-out', account: null })
+      const read = vi.spyOn(standalone.antasphere, 'status')
+      expect(await standalone.settings.antasphere.status()).toEqual(status)
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(typeof standalone.antasphere.onChange(() => {})).toBe('function')
+    } finally {
+      standalone.shutdown()
+    }
+  })
 })
 
 describe('the helpers on the standalone server (PRDCT-4330)', () => {

@@ -1062,6 +1062,28 @@ describe('a message written while Pi works waits until Pi takes it (PRDCT-4566)'
     expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(2)
   })
 
+  it('an identified message that waits carries its client message id, in the list and when handed back, for the write ledger', async () => {
+    const s = await open()
+    s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })
+    await expect.poll(() => s.events.some((e) => e.type === 'assistant_text')).toBe(true)
+    s.adapter.write(s.handle, {
+      type: 'user_message',
+      text: 'from the phone',
+      clientMessageId: 'phone-00000043'
+    })
+    const waiting = lists(s.events).at(-1)!.messages[0]
+    expect(waiting).toEqual({
+      id: expect.any(String),
+      text: 'from the phone',
+      clientMessageId: 'phone-00000043'
+    })
+    await expect.poll(() => steered(s.state)).toBe(1)
+    s.adapter.write(s.handle, { type: 'withdraw_message', id: waiting.id })
+    await expect
+      .poll(() => lists(s.events).find((list) => list.returned)?.returned)
+      .toEqual({ why: 'withdrawn', messages: [waiting] })
+  })
+
   it('a withdrawn steer leaves Pi’s queue, the rest steered again in order, and Pi never takes it', async () => {
     const s = await open()
     s.adapter.write(s.handle, { type: 'user_message', text: 'a long turn' })

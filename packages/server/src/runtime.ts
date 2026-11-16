@@ -36,7 +36,13 @@ import { fixtureRoute } from './fixtures/route'
 import { forwardRoute } from './forward/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, WorkspacesWelcomeLive, settingsHandlers } from './settings'
-import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
+import {
+  SidebarEventsLive,
+  SidebarLayoutsPort,
+  SidebarOverviewEventsLive,
+  SidebarOverviewPort,
+  sidebarHandlers
+} from './sidebar'
 import {
   ReviewDesk,
   WorkspaceFilesEventsLive,
@@ -61,6 +67,10 @@ import { HistoryPort, historyHandlers } from './history'
 import { Routines, RoutinesEventsLive, routineHandlers } from './routines'
 // ── PRDCT-4327: the digests ──
 import { DigestsPort, digestHandlers } from './digests'
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+import { DeviceSessions, DevicesEventsLive, PhoneRoad, deviceHandlers } from './devices'
+// ── The mobile wave, lane B: the write ledger ──
+import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
 // ── PRDCT-4411: the speech ──
 import { SpeechPort, speechHandlers } from './speech'
 // ── PRDCT-4472: the artefacts ──
@@ -96,6 +106,7 @@ export type ServerServices =
   | PushHubService
   | EventStore
   | SidebarLayoutsPort
+  | SidebarOverviewPort
   | WorkspaceFilesPort
   | ReviewDesk
   // ── Lane D (wave 3): the view requests ──
@@ -114,6 +125,12 @@ export type ServerServices =
   | Routines
   // ── PRDCT-4327: the digests ──
   | DigestsPort
+  // ── Mobile wave, lane A: the devices ──
+  | DeviceSessions
+  // ── PRDCT-4448: the phone's road to this server without a relay ──
+  | PhoneRoad
+  // ── The mobile wave, lane B: the write ledger ──
+  | SessionWrites
   // ── PRDCT-4411: the speech ──
   | SpeechPort
   // ── PRDCT-4472: the artefacts ──
@@ -131,15 +148,25 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave 3, lane A: the reviews a `.clave` read waits on ──
     ReviewDesk.layer({
       ...(options.reviewTimeoutMs !== undefined && { timeoutMs: options.reviewTimeoutMs })
-    })
+    }),
+    // ── The mobile wave, lane B: the ids of the messages written once ──
+    SessionWrites.layer(options.ports.writeLedger ?? memoryWriteLedgerStorage())
   )
   const events = ServerEvents.layer(options.serverId).pipe(Layer.provide(foundations))
-  const services = Layer.mergeAll(foundations, events)
+  // ── Mobile wave, lane A: the devices domain over its port, beside the events ──
+  const devices = DeviceSessions.layer({ serverId: options.serverId }).pipe(
+    Layer.provide(foundations)
+  )
+  // ── PRDCT-4448: the phone's road, built once over the devices port ──
+  const road = PhoneRoad.layer.pipe(Layer.provide(foundations))
+  const services = Layer.mergeAll(foundations, events, devices, road)
   const hub = PushHubService.layer(options).pipe(Layer.provide(services))
   // ── Lane D: the settings source's changes go out as server events ──
   const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
   // ── Lane C: every change of the layouts told to the clients ──
   const sidebarEvents = SidebarEventsLive.pipe(Layer.provide(services))
+  // ── The phone's notice that the overview may have changed, no payload ──
+  const overviewEvents = SidebarOverviewEventsLive.pipe(Layer.provide(services))
   // ── Lane B: a terminals port over a wire is a readiness check ──
   const terminalsReady = TerminalsReadyLive.pipe(Layer.provide(services))
   // ── Wave 3, lane A: a watched `.clave` file's changes told to the clients ──
@@ -159,6 +186,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
   // ── ADR 0004: the scheduler's news told to the clients ──
   const routinesEvents = RoutinesEventsLive.pipe(Layer.provide(services))
+  // ── Mobile wave, lane A: every change of the devices told to the clients ──
+  const devicesEvents = DevicesEventsLive.pipe(Layer.provide(services))
   // ── PRDCT-4472: a session's artefact, its preview and Slideless told to the clients ──
   const artefactsEvents = ArtefactsEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
@@ -168,6 +197,7 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     hub,
     settingsEvents,
     sidebarEvents,
+    overviewEvents,
     terminalsReady,
     workspaceFilesEvents,
     views,
@@ -181,6 +211,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     serverInfoEvents,
     // ── ADR 0004: the routines ──
     routinesEvents,
+    // ── Mobile wave, lane A: the devices ──
+    devicesEvents,
     // ── PRDCT-4472: the artefacts ──
     artefactsEvents
   )
@@ -229,6 +261,8 @@ export const BusesLive = busesLayer.pipe(
       ...routineHandlers,
       // ── PRDCT-4327: the digests ──
       ...digestHandlers,
+      // ── Mobile wave, lane A: the devices ──
+      ...deviceHandlers,
       // ── PRDCT-4411: the speech ──
       ...speechHandlers,
       // ── PRDCT-4472: the artefacts ──
@@ -238,22 +272,35 @@ export const BusesLive = busesLayer.pipe(
   )
 )
 
-/** The middleware outside the router, outermost first: the loopback CORS
- *  answer, the push upgrade, then the token check, then the forwarded pages
- *  (PRDCT-4473, `forward/route.ts`) and (test mode only) the fixture route,
- *  both inside the token check so neither is ever open. The forward route
- *  sits before the body bounds: its bodies are streamed to the page, never
- *  read here, so no limit applies to them. */
+/** The middleware outside the router, outermost first: the phone's road
+ *  (its alias resolved before anything else reads the path, PRDCT-4448),
+ *  the loopback CORS answer, the push upgrade, then the token check, then
+ *  the forwarded pages (PRDCT-4473, `forward/route.ts`) and (test mode only)
+ *  the fixture route, both inside the token check so neither is ever open.
+ *  The token check also knows the phones' device sessions (mobile wave,
+ *  lane A); a phone's call reaches only the paths `deviceMayCall` lets
+ *  through, so a forwarded page stays the owner's. The forward route sits
+ *  before the body bounds: its bodies are streamed to the page, never read
+ *  here, so no limit applies to them. */
 const outer =
   (options: ServerOptions) =>
-  (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
-    Effect.flatMap(PushHubService, (hub) =>
-      corsForLoopback(
-        pushRoute(hub)(
-          bearerAuth(options.token)(
-            forwardRoute(options.ports.forwards)(
-              fixtureRoute(options.testFixtures === true)(
-                boundedFileRequest(privateAnswerJson(app))
+  (app: HttpApp.Default): HttpApp.Default<never, PushHubService | DeviceSessions | PhoneRoad> =>
+    Effect.flatMap(PhoneRoad, (road) =>
+      road.wrap(
+        Effect.flatMap(PushHubService, (hub) =>
+          Effect.flatMap(DeviceSessions, (devices) =>
+            corsForLoopback(
+              pushRoute(hub)(
+                bearerAuth(
+                  options.token,
+                  devices
+                )(
+                  forwardRoute(options.ports.forwards)(
+                    fixtureRoute(options.testFixtures === true)(
+                      boundedFileRequest(privateAnswerJson(app))
+                    )
+                  )
+                )
               )
             )
           )

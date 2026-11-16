@@ -18,6 +18,21 @@ import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from 
 
 export const TOOL_RESULT = 'chat-result: verified payload 2537'
 
+/** Select the reading through the pane's own menu. The interaction mode now
+ *  owns a new chat's view, so an echo profile's old view hint cannot select
+ *  Enclave or Folio for a fixture. Hidden native views remain mounted. */
+export async function selectChatView(win, sessionId, kind) {
+  const title = { chat: 'Chat', terminal: 'Enclave', lab: 'Folio' }[kind]
+  assert.ok(title, 'known native chat reading: ' + kind)
+  const pane = win.locator(`.chat-host[data-session-id="${sessionId}"]`)
+  const picker = pane.getByRole('button', { name: 'Session menu', exact: true })
+  await picker.waitFor()
+  if ((await picker.getAttribute('data-view-title')) !== title) {
+    await picker.click()
+    await win.getByRole('menuitemradio', { name: title, exact: true }).click()
+  }
+}
+
 /** The interaction mode that opens each chat-view view (`INTERACTION_MODES`
  *  in `src/shared/harness.ts`). */
 const MODE_OF_CHAT_VIEW = { chat: 'chat', terminal: 'enclave', lab: 'folio' }
@@ -47,9 +62,11 @@ export function seedEchoViewMode(dir, args) {
   writeFileSync(file, JSON.stringify({ ...prefs, interactionMode: mode }, null, 2))
 }
 
-/** `extraArgs` go to the Electron launch; `ready` is what the caller waits for
- *  before the fixture is handed over — the chat composer by default, another
- *  view's when a launch profile opens the session in one; `env` is laid over
+/** `extraArgs` go to the Electron launch; `ready` is the visible selector the
+ *  caller waits for before the fixture is handed over, the chat composer by
+ *  default, another view's when a launch profile opens the session in one.
+ *  `{ view, selector }` explicitly selects a native reading first; a plain
+ *  selector leaves the launch's view untouched. `env` is laid over
  *  the process environment, for a spec that puts a stub on the PATH. */
 export async function openChat(
   suffix = 'chat-view',
@@ -102,13 +119,14 @@ export async function openChat(
   await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('claude', 'dev-echo-adapter'))
   await win.reload()
   await win.locator('.launcher-split .launcher-btn').click()
-  await win.locator(ready).waitFor()
   const record = await until(async () =>
     (await win.evaluate(() => window.electronAPI.sessionsList())).find(
       (s) => s.adapterId === 'echo'
     )
   )
   assert.ok(record)
+  if (typeof ready !== 'string') await selectChatView(win, record.id, ready.view)
+  await win.locator(typeof ready === 'string' ? ready : ready.selector).waitFor()
   return {
     app,
     win,

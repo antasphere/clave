@@ -10,6 +10,7 @@ import {
   AddGroupTerminal,
   CreateGroup,
   DeleteGroup,
+  GetSidebarOverview,
   GetWindowLayout,
   ListWindowLayouts,
   MoveGroupToWindow,
@@ -30,6 +31,8 @@ import {
 export const sidebarGroup = ApiGroup.make('sidebar')
   .add(HttpCqrs.queryEndpoint('getLayout', '/sidebar/layout', GetWindowLayout))
   .add(HttpCqrs.queryEndpoint('listLayouts', '/sidebar/layouts', ListWindowLayouts))
+  // The phone's read (the owner's too): every window's groups without what drives an agent.
+  .add(HttpCqrs.queryEndpoint('getOverview', '/sidebar/overview', GetSidebarOverview))
   .add(HttpCqrs.commandEndpoint('saveLayout', '/sidebar/layout', SaveWindowLayout))
   .add(HttpCqrs.commandEndpoint('createGroup', '/sidebar/groups', CreateGroup))
   .add(HttpCqrs.commandEndpoint('renameGroup', '/sidebar/groups/rename', RenameGroup))

@@ -10,6 +10,12 @@
  * shared sidebar. It forbids --parent and never prints its token. See
  * docs/server-daemon.md. Without it the app-child protocol below is retained.
  *
+ * `--shell-data-dir <dir>` names the app's own data folder, for a child the
+ * app started: the windows' sidebars stay in the app's process, and this
+ * server reads their files there (never writes them) for the overview a
+ * paired phone reads (`GET /sidebar/overview`). A daemon owns its sidebar
+ * and ignores it.
+ *
  * `--app-version <semver>` is the version this server reports (issue #266):
  * the release's own, since a beta's package.json carries the stable version
  * it was cut from; without it, the checkout's package.json. A daemon that
@@ -58,6 +64,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
 import { standaloneSidebar } from './server/standalone-sidebar'
+import { shellFilesOverviewSource } from '@clave/server/sidebar-layouts'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import { runningIn, serverConversations } from './session-history/server-conversations'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
@@ -76,7 +83,9 @@ import {
   FileTreeWatcher,
   createServerFiles,
   PendingRequests,
-  ServerInfoPort
+  ServerInfoPort,
+  // ── The mobile wave, lane B: the write ledger ──
+  fileWriteLedgerStorage
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 // ── ADR 0004: the routines, this server's own scheduler ──
@@ -96,11 +105,14 @@ import { lazyTerminalPorts, resourcesDirOfEntry } from './ports/terminals'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
+  observeSessionWrites,
   publishSessionStates,
   sessionLimitCleared,
   sessionLimitReported,
   setServerEventPublisher
 } from './server/session-events'
+// ── Mobile wave, lane A: the devices, a phone paired with this server (server/devices-port.ts) ──
+import { accountDevicesPort } from './server/devices-port'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { rememberedSpawnModel } from './sessions/spawn-model'
@@ -321,6 +333,10 @@ async function main(): Promise<void> {
     resourcesDir: RESOURCES_DIR
   })
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
+  // The phone's overview of the sidebar: a daemon's own layouts, else the
+  // app's layout files when the app named its folder, else nothing to show.
+  const shellDataDir = config.daemon ? undefined : arg('shell-data-dir')
+  const sidebarOverview = shellDataDir ? shellFilesOverviewSource(shellDataDir) : undefined
   // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
   // kept after a tab is deleted and served to every connected client.
   const conversations = sidebar
@@ -521,6 +537,7 @@ async function main(): Promise<void> {
       }),
       terminals,
       ...(sidebar && { sidebar }),
+      ...(sidebarOverview && { sidebarOverview }),
       settings: standalone.settings,
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
@@ -556,6 +573,28 @@ async function main(): Promise<void> {
           list: async () => conversations.list(),
           search: (request) => conversations.search(request)
         }
+      }),
+      // ── Mobile wave, lane A: the devices, this server's own Antasphere login as
+      // the owner (the manager the settings source serves, read at every check and
+      // heard on every change, PRDCT-4448), the records under `--data-dir`, a line
+      // on stderr when a phone asks. ──
+      devices: accountDevicesPort(standalone.antasphere, {
+        // ── PRDCT-4448: the phone's road to this server, its version reported ──
+        version,
+        onPairingRequested: ({ name, platform }) =>
+          log(
+            `a phone asks to pair: ${name} (${platform}); the owner approves or refuses it with POST /devices/approve or /devices/refuse naming its pairing id`
+          )
+      }),
+      // ── The mobile wave, lane B: the write ledger, per session, under `--data-dir` ──
+      writeLedger: fileWriteLedgerStorage(path.join(dataDir, 'write-ledger'), {
+        activationFile: path.join(dataDir, 'write-ledger-activation.json'),
+        // Read at the first activation alone, and never through the adoptable
+        // listing, which prunes the records it cannot bring back (PRDCT-4448).
+        sessionIds: () => [
+          ...sessionManager.list().map((session) => session.id),
+          ...ptyManager.recordedSessionIds()
+        ]
       }),
       // ── Issue #266: the server domain ──
       serverInfo:
@@ -631,6 +670,13 @@ async function main(): Promise<void> {
   // entry publishes them.
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
+  // ── The mobile wave, lane B: an identified message passing is the ledger's evidence ──
+  const stopWrites = observeSessionWrites(
+    sessionManager,
+    server.writes.evidence,
+    server.writes.initialize,
+    server.writes
+  )
   // A tab that runs in a terminal says its state through its lifecycle hooks,
   // which write under this server's own data folder: they are read here
   // (PRDCT-4472). Until now only the desktop app read its own folder, so on a
@@ -720,6 +766,7 @@ async function main(): Promise<void> {
     owned?.close()
     selfUpgrade?.close()
     stopStates()
+    stopWrites()
     stopAgentStateWatching()
     stopLimits()
     stopCleared()
