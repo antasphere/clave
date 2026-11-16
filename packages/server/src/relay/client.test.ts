@@ -897,4 +897,27 @@ describe('the address rule', () => {
     for (const line of harness.logs)
       for (const token of harness.tokens) expect(line).not.toContain(token)
   })
+
+  it('leaves no refusal behind once the address is cleared (issue #407)', async () => {
+    const local = await startLocal()
+    let address: string | null = 'http://relay.example:8787'
+    const harness = startClient({ address: () => address, local: { url: local.url } })
+    await until(() => harness.client.status().state === 'refused', 1_000, 'refused')
+    address = null
+    harness.client.kick()
+    await until(() => harness.client.status().state === 'unconfigured', 1_000, 'unconfigured')
+    expect(harness.client.status().lastFailure).toBeNull()
+  })
+
+  it('calls a claim the relay forbids refused, like one it does not authenticate (issue #407)', async () => {
+    const local = await startLocal()
+    const harness = startClient({
+      address: () => 'http://127.0.0.1:9',
+      local: { url: local.url },
+      fetch: async () => new Response('no', { status: 403 })
+    })
+    await until(() => harness.client.status().state === 'refused', 1_000, 'refused')
+    expect(harness.client.status().lastFailure).toMatch(/the relay refused the login/)
+    expect(harness.store.saved).toEqual([])
+  })
 })

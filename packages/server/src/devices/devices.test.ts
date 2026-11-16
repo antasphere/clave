@@ -24,7 +24,8 @@ import { FakeSource, Peer, aSession } from '../test-support'
 import { memoryDeviceStorage, type DevicesPortService } from './port'
 import { DEVICE_FORBIDDEN_MESSAGE, deviceHearsEvent, deviceMayCall } from './scope'
 import { FIXTURE_PATH } from '../fixtures/route'
-import { OWNER_READ_ATTEMPTS, makeDeviceSessions } from './service'
+import { OWNER_READ_ATTEMPTS, makeDeviceSessions, mobileRelayStatusView } from './service'
+import type { RelayClientStatus } from '../relay/client'
 import type { ServerPorts } from '../ports'
 import { memoryWriteLedgerStorage, STOPPED_AFTER_DISPATCH } from '../sessions/writes'
 import { FakeSettingsSource } from '../settings/test-support'
@@ -586,7 +587,10 @@ describe('the relay address', () => {
       'ftp://relay.example.com',
       'https://relay.example.com/path',
       'https://u:p@relay.example.com',
-      'https://relay.example.com/?q=1'
+      'https://relay.example.com/?q=1',
+      // Issue #407: the claim and the hello would leave in clear.
+      'http://relay.example.com',
+      'http://192.168.1.10:8787'
     ]) {
       const answer = await w.json('POST', '/devices/relay', { body: { url: bad } })
       expect(answer.status, bad).toBe(422)
@@ -597,6 +601,91 @@ describe('the relay address', () => {
       url: ''
     })
     expect(w.relay.url).toBe('')
+  })
+
+  it('keeps plain http for a relay on this machine alone (issue #407)', async () => {
+    const w = await start()
+    for (const [given, kept] of [
+      ['http://127.0.0.1:8787', 'http://127.0.0.1:8787'],
+      ['http://localhost:8787/', 'http://localhost:8787'],
+      ['http://[::1]:8787', 'http://[::1]:8787']
+    ]) {
+      const answer = await w.json('POST', '/devices/relay', { body: { url: given } })
+      expect(answer.status, given).toBe(200)
+      expect(answer.body, given).toEqual({ url: kept })
+    }
+    const refused = await w.json('POST', '/devices/relay', {
+      body: { url: 'http://relay.example.com' }
+    })
+    expect(JSON.stringify(refused.body)).toMatch(/https:\/\//)
+  })
+
+  it('answers the relay client’s state to the owner alone (issue #407)', async () => {
+    const w = await start()
+    // This world's port runs no client: off, nothing more.
+    const off = await w.json('GET', '/devices/relay/status')
+    expect(off.status).toBe(200)
+    expect(off.body).toMatchObject({
+      state: 'off',
+      relay: null,
+      machineId: null,
+      lastFailure: null
+    })
+    const { token } = await w.device()
+    expect((await w.json('GET', '/devices/relay/status', { token })).status).toBe(403)
+    expect((await w.json('GET', '/devices/relay/status', { token: null })).status).toBe(401)
+  })
+})
+
+describe('the relay client’s state as the devices domain says it (issue #407)', () => {
+  const at = (state: RelayClientStatus['state'], lastFailure: string | null = null) => ({
+    state,
+    relay: 'https://relay.example.com',
+    machineId: 'm_1',
+    since: 5,
+    attempt: 2,
+    lastFailure
+  })
+  it('calls no client, no address and a stopped client off', () => {
+    expect(mobileRelayStatusView(null, () => 9)).toEqual({
+      state: 'off',
+      relay: null,
+      machineId: null,
+      since: 9,
+      lastFailure: null
+    })
+    expect(mobileRelayStatusView(at('unconfigured')).state).toBe('off')
+    expect(mobileRelayStatusView(at('stopped')).state).toBe('off')
+  })
+  it('passes every other state on with its address, id and failure, never the attempt count', () => {
+    for (const state of [
+      'signed-out',
+      'claiming',
+      'connecting',
+      'connected',
+      'waiting',
+      'refused'
+    ] as const) {
+      expect(mobileRelayStatusView(at(state, 'why'))).toEqual({
+        state,
+        relay: 'https://relay.example.com',
+        machineId: 'm_1',
+        since: 5,
+        lastFailure: 'why'
+      })
+    }
+  })
+  it('is unavailable on a server whose port keeps no relay address', () => {
+    const devices = makeDeviceSessions(
+      {
+        storage: memoryDeviceStorage(),
+        owner: () => OWNER,
+        issuer: provider.issuer,
+        serverName: () => 'the-mac'
+      },
+      { serverId: 'server-1' }
+    )
+    expect(() => devices.relay.status()).toThrow(/runs no relay client/)
   })
 })
 
