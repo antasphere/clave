@@ -1,6 +1,7 @@
 /**
  * The in-process server's relay client (issue #407, from mobile's lane E):
- * started once the server listens, stopped after it, and a restart asked
+ * started once the server listens, stopped before it (off the relay before
+ * the listener closes, issue #407 V1-F3), and a restart asked
  * while a stop runs waits for it, so two clients never overlap.
  */
 import { afterEach, expect, it, vi } from 'vitest'
@@ -78,8 +79,8 @@ it('orders delayed relay startup, shutdown and a concurrent restart', async () =
   expect(state.order).toEqual([
     'embedded-start:1',
     'relay-start:1',
-    'server-stop:1',
     'relay-stop:1',
+    'server-stop:1',
     'embedded-start:2',
     'relay-start:2'
   ])

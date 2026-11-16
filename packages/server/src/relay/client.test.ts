@@ -168,7 +168,7 @@ interface LocalListener {
   close(): Promise<void>
 }
 
-async function startLocal(): Promise<LocalListener> {
+async function startLocal(host = '127.0.0.1'): Promise<LocalListener> {
   const requests: SeenRequest[] = []
   const pushes: LocalListener['pushes'] = []
   const server = createServer((req, res) => {
@@ -197,10 +197,10 @@ async function startLocal(): Promise<LocalListener> {
       else socket.send(`echo:${text}`)
     })
   })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  await new Promise<void>((resolve) => server.listen(0, host, () => resolve()))
   const { port } = server.address() as AddressInfo
   const local: LocalListener = {
-    url: `http://127.0.0.1:${port}`,
+    url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
     requests,
     pushes,
     answer: (_seen, res) => {
@@ -651,6 +651,65 @@ describe('the claim', () => {
   })
 })
 
+describe('a kept credential is bound to its owner and its relay (issue #407, V1-F2)', () => {
+  /** A WebSocket that keeps every frame the machine sends, for a check that
+   *  a secret never left toward a relay it was not claimed from. */
+  const recordingSocket = (sent: string[]): typeof WebSocket =>
+    class extends WebSocket {
+      override send(data: unknown, ...rest: unknown[]): void {
+        sent.push(Buffer.isBuffer(data) ? data.toString('utf8') : String(data))
+        ;(super.send as (...args: unknown[]) => void)(data, ...rest)
+      }
+    } as unknown as typeof WebSocket
+
+  it('claims anew for another owner, never connecting under the previous owner’s machine', async () => {
+    const { relay, local, harness, machineId } = await connectedClient()
+    const kept = harness.store.current!
+    expect(kept.owner).toBe(OWNER)
+    await harness.client.stop()
+    const store = new MemoryStore()
+    store.current = kept
+    const sent: string[] = []
+    const other = 'user-other'
+    const next = startClient({
+      address: () => relay.url,
+      local: { url: local.url },
+      owner: () => other,
+      accessToken: async () => provider.mintAccessToken({ sub: other }),
+      credentials: store,
+      WebSocket: recordingSocket(sent)
+    })
+    await until(() => next.client.status().state === 'connected', 3_000, 'connected')
+    expect(store.clears).toBeGreaterThanOrEqual(1)
+    expect(next.client.status().machineId).not.toBe(machineId)
+    expect(store.current?.owner).toBe(other)
+    expect(sent.join('\n')).not.toContain(kept.machineSecret)
+    const listed = await machinesOf(relay, provider.mintAccessToken({ sub: other }))
+    expect(listed.map((m) => m.id)).toEqual([next.client.status().machineId])
+  })
+
+  it('claims anew for another relay, and the old secret never reaches it', async () => {
+    const { local, harness } = await connectedClient()
+    const kept = harness.store.current!
+    await harness.client.stop()
+    const second = await relayFor()
+    const store = new MemoryStore()
+    store.current = kept
+    const sent: string[] = []
+    const next = startClient({
+      address: () => second.url,
+      local: { url: local.url },
+      credentials: store,
+      WebSocket: recordingSocket(sent)
+    })
+    await until(() => next.client.status().state === 'connected', 3_000, 'connected')
+    expect(store.clears).toBeGreaterThanOrEqual(1)
+    expect(store.current?.relay).toBe(second.url)
+    expect(sent.join('\n')).not.toContain(kept.machineSecret)
+    expect(sent.join('\n')).not.toContain(kept.machineId)
+  })
+})
+
 describe('the requests it performs', () => {
   it('performs a forwarded request against the local listener, the origin left out', async () => {
     const { relay, local, machineId } = await connectedClient()
@@ -671,6 +730,26 @@ describe('the requests it performs', () => {
     expect(seen.headers.authorization).toBe('Bearer t')
     expect(seen.headers).not.toHaveProperty('origin')
     expect(seen.headers.host).not.toBe(new URL(relay.url).host)
+  })
+
+  it('reaches a listener bound on an IPv6 address, requests and push alike (issue #407, V1-F1)', async () => {
+    const relay = await relayFor()
+    const local = await startLocal('::1')
+    expect(local.url).toMatch(/^http:\/\/\[::1\]:\d+$/)
+    const harness = startClient({ address: () => relay.url, local: { url: local.url } })
+    await until(() => harness.client.status().state === 'connected', 3_000, 'connected')
+    const machineId = harness.client.status().machineId!
+    const response = await fetch(`${relay.url}/m/${machineId}/sessions`, {
+      headers: { authorization: 'Bearer t' }
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    expect(await response.text()).toBe('ok')
+    expect(local.requests.map((seen) => seen.url)).toEqual(['/sessions'])
+    const phone = openPhone(`${relay.url.replace(/^http/, 'ws')}/m/${machineId}/push`)
+    await phone.opened
+    phone.socket.send('hi')
+    expect(await phone.nextText()).toBe('echo:hi')
+    phone.socket.close()
   })
 
   it('streams a long answer to the phone byte for byte, with a length or chunked', async () => {

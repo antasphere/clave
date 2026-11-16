@@ -300,6 +300,12 @@ async function stop(): Promise<void> {
   const artefacts = artefactService
   artefactService = null
   await artefacts?.stop()
+  // ── Issue #407: off the relay before the listener stops (V1-F3), as the
+  // standalone entry does, so no forwarded request meets a closing listener ──
+  if (mobileRelayStarted) {
+    mobileRelayStarted = false
+    await import('./relay-wiring').then((wiring) => wiring.stopMobileRelay())
+  }
   if (!server) return
   // The stop's own figures, in the log (PRDCT-3375): what it answered, who it
   // told, what it had to destroy. A quit measured at ten seconds in wave 3
@@ -310,9 +316,4 @@ async function stop(): Promise<void> {
       `${report.drained ? '' : ', NOT all answered'}, ${report.peers} push peer(s) closed, ` +
       `${report.destroyed} connection(s) destroyed`
   )
-  // ── Issue #407: the relay client goes with the server ──
-  if (mobileRelayStarted) {
-    mobileRelayStarted = false
-    await import('./relay-wiring').then((wiring) => wiring.stopMobileRelay())
-  }
 }

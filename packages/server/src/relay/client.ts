@@ -737,7 +737,10 @@ class Client implements RelayClient {
       return
     }
     const req = httpRequest({
-      host: local.hostname,
+      // `URL.hostname` keeps an IPv6 address in brackets (`[::1]`), which
+      // the request's `host` would resolve as a name: a daemon bound on an
+      // IPv6 address answered every forwarded request 502 (issue #407, V1-F1).
+      host: local.hostname.replace(/^\[(.*)\]$/, '$1'),
       port: Number(local.port),
       method: frame.method,
       path,
