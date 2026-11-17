@@ -5,6 +5,7 @@ import com.clave.core.chat.Reachability
 import com.clave.core.chat.SendOutcome
 import com.clave.core.contract.AgentState
 import com.clave.core.contract.LaunchProfileView
+import com.clave.core.contract.MachinePlatform
 import com.clave.core.contract.LauncherFamily
 import com.clave.core.contract.RequestResponse
 import com.clave.core.contract.RequestSnapshot
@@ -14,9 +15,14 @@ import com.clave.core.contract.StartSessionInput
 import com.clave.core.contract.WorkspaceView
 import com.clave.core.contract.Encode
 import com.clave.core.contract.Decode
+import com.clave.core.devices.AddressListing
 import com.clave.core.devices.BuildKind
 import com.clave.core.devices.Credential
 import com.clave.core.devices.DeveloperMachineSource
+import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineAddress
+import com.clave.core.devices.MachineDirectory
+import com.clave.core.devices.MachineListing
 import com.clave.core.devices.RelayMachineSource
 import com.clave.core.devices.SecureCredentialStore
 import com.clave.core.transport.OkHttpPort
@@ -571,6 +577,61 @@ class StoreTest {
         } finally {
             scope.cancel()
             relay.close()
+        }
+    }
+
+    @Test
+    fun `the machine addresses are carried in the state, and an address's failure is said on its own row, not in machinesError`() {
+        val http = OkHttpClient()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val kv = SyncKv()
+        val credentials = SecureCredentialStore(SyncSecure())
+        fun mac(id: String, address: String, online: Boolean) =
+            Machine(id, "Mac $id", MachinePlatform.Macos, "2.4.0", online, null, "$address/m/$id", "$address/m/$id/push", address)
+        val home = MachineAddress("https://home.example", "Home")
+        val lab = MachineAddress("https://lab.example")
+        var next: () -> MachineListing = {
+            MachineListing(
+                listOf(mac("h1", home.url, true), mac("l1", lab.url, false)),
+                listOf(
+                    AddressListing(home, listOf("h1"), null, fromCache = false),
+                    AddressListing(lab, listOf("l1"), "The relay answered 503.", fromCache = true),
+                ),
+            )
+        }
+        try {
+            runBlocking {
+                val store = ClaveStore(
+                    Services(
+                        build = BuildKind.Development,
+                        credentials = credentials,
+                        relaySource = object : MachineDirectory {
+                            override suspend fun listing(): MachineListing = next()
+                        },
+                        developerSource = null,
+                        kv = kv,
+                        drafts = com.clave.core.chat.Drafts(kv),
+                        http = OkHttpPort(http),
+                        sockets = OkHttpWebSocketFactory(http),
+                        scope = scope,
+                    ),
+                )
+                store.loadMachines()
+                val state = store.state.value
+                assertEquals(listOf("h1", "l1"), state.machines.map { it.id })
+                assertEquals(next().addresses, state.addresses)
+                assertNull(state.machinesError)
+                assertEquals("h1", state.mainMachineId)
+
+                // A listing that fails whole (the account changed) is the machines' error, and leaves no address rows.
+                next = { throw IllegalStateException("The account changed.") }
+                store.loadMachines()
+                assertEquals(emptyList<AddressListing>(), store.state.value.addresses)
+                assertEquals(emptyList<Machine>(), store.state.value.machines)
+                assertEquals("The account changed.", store.state.value.machinesError)
+            }
+        } finally {
+            scope.cancel()
         }
     }
 

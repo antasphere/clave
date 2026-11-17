@@ -20,25 +20,32 @@ import com.clave.core.contract.RequestResponse
 import com.clave.core.contract.RequestSnapshot
 import com.clave.core.contract.ResolveOutcome
 import com.clave.core.contract.WriteAnswer
+import com.clave.core.devices.AddressListing
 import com.clave.core.devices.BuildKind
 import com.clave.core.devices.Credential
 import com.clave.core.devices.EnrollmentRecord
 import com.clave.core.devices.EnrollmentRecords
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineAddress
+import com.clave.core.devices.MachineListing
 import com.clave.core.devices.PairingState
+import com.clave.core.devices.TransportPolicyError
 import com.clave.core.notifications.ActionIds
 import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.DeviceToken
 import com.clave.core.notifications.HandleResult
 import com.clave.core.notifications.IncomingResponse
+import com.clave.core.notifications.PushCleanupResult
 import com.clave.core.notifications.SettleClient
 import com.clave.core.notifications.TokenRegistration
+import com.clave.core.notifications.pushTokenKey
 import com.clave.core.ports.HttpFailure
 import com.clave.core.ports.HttpPort
 import com.clave.core.ports.JvmCrypto
 import com.clave.core.ports.MemorySecureStore
 import com.clave.core.transport.OkHttpPort
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -101,11 +108,17 @@ class OwnerTest {
 
     private suspend fun storesOf(auth: HubSignIn) = ownerStores(auth.status(), rawKv, rawSecure, JvmCrypto)
 
-    private fun services(auth: HubSignIn, stores: OwnerStores, granted: Boolean = true, defaultRelay: String = "https://relay.default.example") = OwnerServices(
+    private fun services(
+        auth: HubSignIn,
+        stores: OwnerStores,
+        granted: Boolean = true,
+        defaultRelay: String = "https://relay.default.example",
+        build: BuildKind = BuildKind.Development,
+    ) = OwnerServices(
         auth = auth,
         stores = stores,
         http = port,
-        build = BuildKind.Development,
+        build = build,
         device = device,
         defaultRelayUrl = defaultRelay,
         pushTokens = { DeviceToken("android", "fcm-token") },
@@ -185,7 +198,7 @@ class OwnerTest {
     }
 
     @Test
-    fun `owner isolation two subjects never share a draft, a credential, a relay url or a pairing record`() = runBlocking {
+    fun `owner isolation two subjects never share a draft, a credential, an address or a pairing record`() = runBlocking {
         val authA = signedIn("sub-a")
         val authB = signedIn("sub-b")
         val a = storesOf(authA)
@@ -200,9 +213,12 @@ class OwnerTest {
 
         val servicesA = services(authA, a)
         val servicesB = services(authB, b)
-        servicesA.setRelayUrl("https://relay-a.example/")
-        assertEquals("https://relay-a.example", servicesA.relayUrl())
-        assertEquals("https://relay.default.example", servicesB.relayUrl())
+        servicesA.addAddress("https://relay-a.example/")
+        assertEquals(
+            listOf(MachineAddress("https://relay.default.example"), MachineAddress("https://relay-a.example")),
+            servicesA.addresses(),
+        )
+        assertEquals(listOf(MachineAddress("https://relay.default.example")), servicesB.addresses())
 
         val approve = CompletableDeferred(Unit)
         enrollment(approve)
@@ -273,13 +289,13 @@ class OwnerTest {
 
         // The old owner's services start nothing after the sign-out.
         try {
-            servicesA.setRelayUrl("https://relay-late.example")
+            servicesA.addAddress("https://relay-late.example")
             fail("a write after the sign-out must be refused")
         } catch (e: AuthError) {
             assertEquals("The account is signing out.", e.message)
         }
-        assertNull(a.kv.get(RELAY_URL_KEY))
-        assertNull(b.kv.get(RELAY_URL_KEY))
+        assertNull(a.kv.get(MACHINE_ADDRESSES_KEY))
+        assertNull(b.kv.get(MACHINE_ADDRESSES_KEY))
         assertEquals(TokenRegistration.Failed("The account is signing out."), servicesA.registerPush("m1"))
         assertEquals(emptyList<TokenRegistration>(), servicesA.syncPushTokens())
     }
@@ -291,14 +307,21 @@ class OwnerTest {
         val servicesA = services(authA, a)
         // Signed out elsewhere (another screen, an expiry): the epoch moved.
         authA.signOut()
-        try {
-            servicesA.setRelayUrl("https://relay-late.example")
-            fail("old work must stop once the account changed")
-        } catch (e: AuthError) {
-            assertEquals("The account changed.", e.message)
+        val writes = listOf<suspend () -> Unit>(
+            { servicesA.addAddress("https://relay-late.example") },
+            { servicesA.removeAddress("https://relay.default.example") },
+            { servicesA.forgetMachine("m1") },
+        )
+        for (write in writes) {
+            try {
+                write()
+                fail("old work must stop once the account changed")
+            } catch (e: AuthError) {
+                assertEquals("The account changed.", e.message)
+            }
         }
-        assertNull(a.kv.get(RELAY_URL_KEY))
-        assertEquals(emptyList<Machine>(), servicesA.source.list())
+        assertNull(a.kv.get(MACHINE_ADDRESSES_KEY))
+        assertEquals(MachineListing(emptyList(), emptyList()), servicesA.source.listing())
     }
 
     @Test
@@ -375,8 +398,8 @@ class OwnerTest {
         )
         val outcome = awaitGate("the list to end", listing)
         assertEquals("The account changed.", (outcome.exceptionOrNull() as? AuthError)?.message)
-        assertNull(a.kv.get(MACHINES_CACHE_KEY))
-        assertTrue(rawKv.map.keys.toString(), rawKv.map.keys.none { it.endsWith(MACHINES_CACHE_KEY) })
+        assertNull(a.kv.get(machinesCacheKey(machine.base)))
+        assertTrue(rawKv.map.keys.toString(), rawKv.map.keys.none { it.contains(MACHINES_CACHE_KEY) })
     }
 
     @Test
@@ -425,78 +448,343 @@ class OwnerTest {
         assertNull(services(authB, storesOf(authB)).machineForServer("srv-2"))
     }
 
-    @Test
-    fun `the machines come from the relay, and from the cache only when the relay is out of reach`() = runBlocking {
-        val auth = signedIn("sub-a")
-        val servicesA = services(auth, storesOf(auth), defaultRelay = "")
-        var status = 200
-        machine.handler = { call ->
+    /** One machine row of the relay's `GET /machines`, online. */
+    private fun row(id: String): String =
+        "{\"id\":\"$id\",\"name\":\"Mac $id\",\"platform\":\"macos\",\"version\":\"2.4.0\",\"online\":true,\"lastSeen\":5,\"direct\":[]}"
+
+    private fun machinesJson(vararg ids: String): String = "{\"machines\":[" + ids.joinToString(",") { row(it) } + "]}"
+
+    /** [server] lists [ids] on `/machines` while [status] says 200, and answers [status] otherwise. */
+    private fun lists(server: FakeMachine, vararg ids: String, status: () -> Int = { 200 }) {
+        server.handler = { call ->
             if (call.rawPath == "/machines") {
-                if (status == 200) answer(200, """{"machines":[{"id":"r1","name":"Relay Mac","platform":"macos","version":"2.4.0","online":true,"lastSeen":5,"direct":[]}]}""")
-                else answer(status, "{}")
+                val s = status()
+                if (s == 200) answer(200, machinesJson(*ids)) else answer(s, "{}")
             } else answer(404, "{}")
         }
-        try {
-            servicesA.source.list()
-            fail("no relay address yet")
-        } catch (e: IllegalStateException) {
-            assertEquals("Enter the team relay address to see your machines.", e.message)
+    }
+
+    /** The fixture machine listed by its own address, paired and registered for push, as
+     *  after a pairing from its row. */
+    private suspend fun pairedThroughAddress(services: OwnerServices) {
+        enrollment(CompletableDeferred(Unit))
+        val enroll = machine.handler
+        machine.handler = { call -> if (call.rawPath == "/machines") answer(200, machinesJson("m1")) else enroll(call) }
+        services.addAddress(machine.base)
+        assertTrue(services.pair(fixture, {}, { false }) is PairingState.Approved)
+        assertEquals(TokenRegistration.Registered("fcm-token"), services.registerPush("m1"))
+    }
+
+    @Test
+    fun `the single relay of earlier versions becomes the one address, its cache follows, and no pairing is touched`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a)
+        twoPaired(servicesA)
+        a.kv.set(pushTokenKey("studio"), "fcm-token")
+        a.kv.set(RELAY_URL_KEY, "https://relay.example")
+        a.kv.set(MACHINES_CACHE_KEY, "[\"the relay's last list\"]")
+        val secure = rawSecure.map.toMap()
+        val records = servicesA.records.list()
+        val generation = a.pushWork.roadGeneration
+
+        // The relay typed wins over the one the build ships with.
+        assertEquals(listOf(MachineAddress("https://relay.example")), servicesA.addresses())
+        assertEquals("""[{"url":"https://relay.example"}]""", a.kv.get(MACHINE_ADDRESSES_KEY))
+        assertEquals("[\"the relay's last list\"]", a.kv.get(machinesCacheKey("https://relay.example")))
+        assertNull(a.kv.get(RELAY_URL_KEY))
+        assertNull(a.kv.get(MACHINES_CACHE_KEY))
+        assertEquals(secure, rawSecure.map.toMap())
+        assertEquals(records, servicesA.records.list())
+        assertEquals("fcm-token", a.kv.get(pushTokenKey("studio")))
+        assertEquals(generation, a.pushWork.roadGeneration)
+        assertEquals(0, machine.calls.size)
+
+        // The move happens once: a relay written afterwards is not read.
+        a.kv.set(RELAY_URL_KEY, "https://relay-later.example")
+        assertEquals(listOf(MachineAddress("https://relay.example")), servicesA.addresses())
+    }
+
+    @Test
+    fun `an empty list is kept as it is, and the build's relay is the first address only when nothing was ever kept`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val a = storesOf(authA)
+        a.kv.set(MACHINE_ADDRESSES_KEY, "[]")
+        a.kv.set(RELAY_URL_KEY, "https://relay.example")
+        assertEquals(emptyList<MachineAddress>(), services(authA, a).addresses())
+        assertEquals("[]", a.kv.get(MACHINE_ADDRESSES_KEY))
+        assertEquals("https://relay.example", a.kv.get(RELAY_URL_KEY))
+
+        val authB = signedIn("sub-b")
+        val b = storesOf(authB)
+        assertEquals(listOf(MachineAddress("https://relay.default.example")), services(authB, b, defaultRelay = "https://relay.default.example/").addresses())
+        assertEquals("""[{"url":"https://relay.default.example"}]""", b.kv.get(MACHINE_ADDRESSES_KEY))
+
+        val authC = signedIn("sub-c")
+        val c = storesOf(authC)
+        assertEquals(emptyList<MachineAddress>(), services(authC, c, defaultRelay = "").addresses())
+        assertEquals("[]", c.kv.get(MACHINE_ADDRESSES_KEY))
+    }
+
+    @Test
+    fun `two first reads at once move the single relay once`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a)
+        a.kv.set(RELAY_URL_KEY, "https://relay.example")
+        val reads = AtomicInteger()
+        val writes = AtomicInteger()
+        rawKv.beforeGet = { key -> if (key.endsWith(":$MACHINE_ADDRESSES_KEY")) reads.incrementAndGet() }
+        rawKv.beforeWrite = { key, _ ->
+            if (key.endsWith(":$MACHINE_ADDRESSES_KEY")) {
+                writes.incrementAndGet()
+                // The first move is held until the second read has found no list either.
+                until(what = "the second read to find no list") { reads.get() >= 3 }
+            }
         }
-        servicesA.kv.set(RELAY_URL_KEY, machine.base)
-        val listed = servicesA.source.list()
-        assertEquals(listOf("r1"), listed.map { it.id })
-        assertTrue(listed.single().online)
-        assertEquals("${machine.base}/m/r1", listed.single().baseUrl)
+        val first = scope.async { servicesA.addresses() }
+        val second = scope.async { servicesA.addresses() }
+        val expected = listOf(MachineAddress("https://relay.example"))
+        assertEquals(expected, awaitGate("the first read", first))
+        assertEquals(expected, awaitGate("the second read", second))
+        assertEquals(1, writes.get())
+    }
 
-        status = 503
-        val cached = servicesA.source.list()
-        assertEquals(listOf("r1"), cached.map { it.id })
-        assertFalse(cached.single().online)
-        assertEquals(listed.single().copy(online = false), cached.single())
-
-        status = 401
+    @Test
+    fun `an address is added once, at the end, named or not, and renamed, and a release build refuses plain http`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "https://relay.example")
+        assertEquals(MachineAddress("https://home.example", "Home"), servicesA.addAddress(" https://home.example/ ", " Home "))
+        assertEquals(MachineAddress("https://lab.example"), servicesA.addAddress("https://lab.example", "  "))
+        assertEquals(
+            listOf(MachineAddress("https://relay.example"), MachineAddress("https://home.example", "Home"), MachineAddress("https://lab.example")),
+            servicesA.addresses(),
+        )
+        for (again in listOf("https://home.example/", "HTTPS://Home.example", "https://relay.example")) {
+            try {
+                servicesA.addAddress(again, "Again")
+                fail("$again is already in the list")
+            } catch (e: IllegalArgumentException) {
+                assertEquals("That address is already in the list.", e.message)
+            }
+        }
         try {
-            servicesA.source.list()
-            fail("a refusal is never papered over by the cache")
-        } catch (e: Exception) {
-            assertEquals("The relay refused the sign-in.", e.message)
+            servicesA.addAddress("https://relay.example/team?x=1")
+            fail("a path or a query is refused")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Enter the address as an origin, without a path or query.", e.message)
+        }
+        try {
+            services(auth, a, build = BuildKind.Release).addAddress("http://127.0.0.1:4711")
+            fail("a release build never sends a credential over plain http")
+        } catch (e: TransportPolicyError) {
+            assertEquals("A credential never travels over plain http (127.0.0.1:4711); only https is used.", e.message)
+        }
+        assertEquals(3, servicesA.addresses().size)
+
+        servicesA.renameAddress("https://lab.example", " Lab ")
+        servicesA.renameAddress("https://home.example", " ")
+        servicesA.renameAddress("https://unknown.example", "Nowhere")
+        assertEquals(
+            listOf(MachineAddress("https://relay.example"), MachineAddress("https://home.example"), MachineAddress("https://lab.example", "Lab")),
+            servicesA.addresses(),
+        )
+        assertEquals(0, machine.calls.size)
+    }
+
+    @Test
+    fun `removing an address drops its cache and moves the road, but keeps the credential, record and push token of a machine it listed`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        pairedThroughAddress(servicesA)
+        assertEquals(listOf("m1"), servicesA.source.listing().machines.map { it.id })
+        assertTrue(a.kv.get(machinesCacheKey(machine.base)) != null)
+        val token = a.kv.get(pushTokenKey("m1"))
+        assertTrue(token != null)
+        val generation = a.pushWork.roadGeneration
+
+        servicesA.removeAddress(machine.base)
+        assertEquals(generation + 1, a.pushWork.roadGeneration)
+        assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        assertNull(a.kv.get(machinesCacheKey(machine.base)))
+        assertEquals(Credential(machine.base, "device-session"), a.credentials.get("m1"))
+        assertEquals(listOf("m1"), servicesA.records.list().map { it.machineId })
+        assertEquals(token, a.kv.get(pushTokenKey("m1")))
+        assertEquals(0, machine.count("POST /devices/me/push-token/clear"))
+
+        // An address not in the list changes nothing.
+        servicesA.removeAddress("https://unknown.example")
+        assertEquals(generation + 1, a.pushWork.roadGeneration)
+    }
+
+    @Test
+    fun `a paired machine whose address was removed stays listed from its record, offline, at its own road`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val servicesA = services(auth, storesOf(auth), defaultRelay = "")
+        pairedThroughAddress(servicesA)
+        servicesA.removeAddress(machine.base)
+        val listing = servicesA.source.listing()
+        assertEquals(emptyList<AddressListing>(), listing.addresses)
+        assertEquals(
+            listOf(Machine("m1", "Mac", MachinePlatform.Unknown, "", false, null, machine.base, "${machine.base}/push", address = null)),
+            listing.machines,
+        )
+        // A record without a credential is no machine to reach.
+        servicesA.records.set(EnrollmentRecord("lost", "device-9", "srv-9", "Lost", 9))
+        assertEquals(listOf("m1"), servicesA.source.list().map { it.id })
+    }
+
+    @Test
+    fun `a pairing still waiting when an address is removed never lands`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        servicesA.addAddress(machine.base)
+        val approve = CompletableDeferred<Unit>()
+        enrollment(approve)
+        val states = CopyOnWriteArrayList<PairingState>()
+        val pairing = scope.async { servicesA.pair(fixture, { states += it }, { false }) }
+        until(what = "the pairing to wait for the approval") { states.any { it is PairingState.Waiting } }
+        servicesA.removeAddress(machine.base)
+        approve.complete(Unit)
+        assertEquals(PairingState.Cancelled, awaitGate("the pairing to end", pairing))
+        assertNull(a.credentials.get("m1"))
+        assertEquals(emptyList<EnrollmentRecord>(), servicesA.records.list())
+    }
+
+    @Test
+    fun `two addresses are read side by side and merged by machine id, a paired machine reached at its own road`() = runBlocking {
+        val other = FakeMachine()
+        try {
+            val auth = signedIn("sub-a")
+            val a = storesOf(auth)
+            val servicesA = services(auth, a, defaultRelay = "")
+            lists(machine, "a1", "shared", "paired")
+            lists(other, "shared", "b1", "paired")
+            servicesA.addAddress(machine.base, "A")
+            servicesA.addAddress(other.base, "B")
+            // Paired through the second address's road, though the first one lists it first.
+            servicesA.records.set(EnrollmentRecord("paired", "device-1", "srv-1", "Paired", 1))
+            servicesA.credentials.set("paired", Credential("${other.base}/m/paired", "paired-session"))
+
+            val listing = servicesA.source.listing()
+            assertEquals(listOf("a1", "shared", "paired", "b1"), listing.machines.map { it.id })
+            assertEquals(listOf(machine.base, machine.base, machine.base, other.base), listing.machines.map { it.address })
+            assertTrue(listing.machines.all { it.online })
+            assertEquals("${machine.base}/m/shared", listing.machines[1].baseUrl)
+            val paired = listing.machines[2]
+            assertEquals("Mac paired", paired.name)
+            assertEquals("${other.base}/m/paired", paired.baseUrl)
+            assertEquals("${other.base}/m/paired/push", paired.pushUrl)
+            assertEquals("${other.base}/m/b1/push", listing.machines[3].pushUrl)
+            assertEquals(
+                listOf(
+                    AddressListing(MachineAddress(machine.base, "A"), listOf("a1", "shared", "paired"), null, fromCache = false),
+                    AddressListing(MachineAddress(other.base, "B"), listOf("shared", "b1", "paired"), null, fromCache = false),
+                ),
+                listing.addresses,
+            )
+            assertTrue(a.kv.get(machinesCacheKey(machine.base)) != null)
+            assertTrue(a.kv.get(machinesCacheKey(other.base)) != null)
+            assertEquals(listing.machines, servicesA.source.list())
+        } finally {
+            other.close()
         }
     }
 
     @Test
-    fun `a new relay moves the road generation, clears the push registrations and forgets every pairing`() = runBlocking {
+    fun `an address answering 5xx lends its cache and says why beside the one that answers, and a refusal is never papered over`() = runBlocking {
+        val other = FakeMachine()
+        try {
+            val auth = signedIn("sub-a")
+            val servicesA = services(auth, storesOf(auth), defaultRelay = "")
+            var status = 200
+            lists(machine, "a1")
+            lists(other, "b1") { status }
+            servicesA.addAddress(machine.base)
+            servicesA.addAddress(other.base)
+            val fresh = servicesA.source.listing()
+            assertEquals(listOf("a1", "b1"), fresh.machines.map { it.id })
+
+            status = 503
+            val cached = servicesA.source.listing()
+            assertEquals(listOf("a1", "b1"), cached.machines.map { it.id })
+            assertTrue(cached.machines[0].online)
+            assertEquals(fresh.machines[1].copy(online = false), cached.machines[1])
+            assertEquals(other.base, cached.machines[1].address)
+            assertEquals(AddressListing(MachineAddress(machine.base), listOf("a1"), null, fromCache = false), cached.addresses[0])
+            assertEquals(AddressListing(MachineAddress(other.base), listOf("b1"), "The relay answered 503.", fromCache = true), cached.addresses[1])
+
+            status = 401
+            val refused = servicesA.source.listing()
+            assertEquals(listOf("a1"), refused.machines.map { it.id })
+            assertEquals(AddressListing(MachineAddress(other.base), emptyList(), "The relay refused the sign-in.", fromCache = false), refused.addresses[1])
+        } finally {
+            other.close()
+        }
+    }
+
+    @Test
+    fun `an address that refuses the connection lends its cache, and one never read gives only its sentence`() = runBlocking {
+        val other = FakeMachine()
+        val never = FakeMachine()
+        val neverBase = never.base
+        never.close()
+        try {
+            val auth = signedIn("sub-a")
+            val servicesA = services(auth, storesOf(auth), defaultRelay = "")
+            lists(machine, "a1")
+            lists(other, "b1")
+            servicesA.addAddress(machine.base)
+            servicesA.addAddress(other.base)
+            assertEquals(listOf("a1", "b1"), servicesA.source.list().map { it.id })
+            val otherBase = other.base
+            other.close()
+            servicesA.addAddress(neverBase)
+
+            val listing = servicesA.source.listing()
+            assertEquals(listOf("a1", "b1"), listing.machines.map { it.id })
+            assertFalse(listing.machines[1].online)
+            assertEquals(
+                listOf(
+                    AddressListing(MachineAddress(machine.base), listOf("a1"), null, fromCache = false),
+                    AddressListing(MachineAddress(otherBase), listOf("b1"), "The relay could not be reached.", fromCache = true),
+                    AddressListing(MachineAddress(neverBase), emptyList(), "The relay could not be reached.", fromCache = false),
+                ),
+                listing.addresses,
+            )
+        } finally {
+            runCatching { other.close() }
+        }
+    }
+
+    @Test
+    fun `forgetting a machine clears its push registration first, then its credential, record and push token`() = runBlocking {
         val auth = signedIn("sub-a")
         val a = storesOf(auth)
-        val servicesA = services(auth, a)
-        enrollment(CompletableDeferred(Unit))
-        servicesA.setRelayUrl(machine.base)
-        assertTrue(servicesA.pair(fixture, {}, { false }) is PairingState.Approved)
-        assertEquals(TokenRegistration.Registered("fcm-token"), servicesA.registerPush("m1"))
-        assertEquals(TokenRegistration.Unchanged, servicesA.registerPush("m1"))
-        val push = machine.calls.single { it.path == "/devices/me/push-token" }
-        assertEquals(json("""{"token":"fcm-token","platform":"android"}"""), json(push.body))
-        a.kv.set(MACHINES_CACHE_KEY, "[]")
-
-        val generation = a.pushWork.roadGeneration
-        // The same relay again changes nothing.
-        servicesA.setRelayUrl("${machine.base}/")
-        assertEquals(generation, a.pushWork.roadGeneration)
-        assertEquals(Credential(machine.base, "device-session"), a.credentials.get("m1"))
-
-        try {
-            servicesA.setRelayUrl("https://relay.example/team?x=1")
-            fail("a path or a query is refused")
-        } catch (e: IllegalArgumentException) {
-            assertEquals("Enter the team relay origin without a path or query.", e.message)
+        val servicesA = services(auth, a, defaultRelay = "")
+        pairedThroughAddress(servicesA)
+        val routes = machine.handler
+        val pairedAtClear = CopyOnWriteArrayList<Boolean>()
+        machine.handler = { call ->
+            if (call.line == "POST /devices/me/push-token/clear") {
+                pairedAtClear += rawSecure.map.keys.any { it.endsWith("clave.credential.m1") }
+                pairedAtClear += rawKv.map.values.any { it.contains("\"machineId\":\"m1\"") }
+            }
+            routes(call)
         }
-        val cleanup = servicesA.setRelayUrl("https://relay-b.example")
-        assertEquals(generation + 1, a.pushWork.roadGeneration)
-        assertEquals(0, cleanup.pending)
+        assertEquals(PushCleanupResult(pending = 0, retryRecorded = true), servicesA.forgetMachine("m1"))
         assertEquals(1, machine.count("POST /devices/me/push-token/clear"))
+        assertEquals(listOf(true, true), pairedAtClear)
         assertNull(a.credentials.get("m1"))
+        assertNull(a.credentials.mainMachineId())
         assertEquals(emptyList<EnrollmentRecord>(), servicesA.records.list())
-        assertNull(a.kv.get(MACHINES_CACHE_KEY))
-        assertEquals("https://relay-b.example", servicesA.relayUrl())
+        assertNull(a.kv.get(pushTokenKey("m1")))
+        // The address that lists it stays, and so does its row, now unpaired.
+        assertEquals(listOf(MachineAddress(machine.base)), servicesA.addresses())
+        assertEquals("${machine.base}/m/m1", servicesA.source.list().single().baseUrl)
     }
 
     @Test

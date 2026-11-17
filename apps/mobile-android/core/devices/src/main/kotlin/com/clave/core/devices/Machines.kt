@@ -22,6 +22,9 @@ public data class Machine(
     val baseUrl: String,
     /** Where its push channel is reached. */
     val pushUrl: String,
+    /** The url of the address that listed it; null for a developer machine, or a paired
+     *  machine no address lists any more. */
+    val address: String? = null,
 )
 
 public interface MachineSource {

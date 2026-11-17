@@ -43,7 +43,9 @@ import com.clave.core.contract.SessionStream
 import com.clave.core.contract.SpawnOptions
 import com.clave.core.contract.StartSessionInput
 import com.clave.core.contract.WorkspaceView
+import com.clave.core.devices.AddressListing
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineDirectory
 import com.clave.core.transport.ClavePushClient
 import com.clave.core.transport.ClaveServerClient
 import com.clave.core.transport.PushState
@@ -136,6 +138,9 @@ public data class StoreState(
     val machines: List<Machine> = emptyList(),
     val machinesLoading: Boolean = false,
     val machinesError: String? = null,
+    /** How each machine address answered the last listing, in the person's order; its
+     *  failure is said on its own row, never in [machinesError]. */
+    val addresses: List<AddressListing> = emptyList(),
     val mainMachineId: String? = null,
     val reachability: Map<String, Reachability> = emptyMap(),
     val workspaces: Map<String, List<WorkspaceView>> = emptyMap(),
@@ -306,9 +311,16 @@ public class ClaveStore(private val services: Services) {
         _state.update { it.copy(machinesLoading = true, machinesError = null) }
         val found = mutableListOf<Machine>()
         val problems = mutableListOf<String>()
+        var addresses = emptyList<AddressListing>()
         for (source in listOfNotNull(services.relaySource, services.developerSource)) {
             try {
-                found += source.list()
+                if (source is MachineDirectory) {
+                    val listing = source.listing()
+                    found += listing.machines
+                    addresses = listing.addresses
+                } else {
+                    found += source.list()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -321,6 +333,7 @@ public class ClaveStore(private val services: Services) {
                 machines = found.toList(),
                 machinesLoading = false,
                 machinesError = if (problems.isEmpty()) null else problems.joinToString(" "),
+                addresses = addresses,
                 mainMachineId = main ?: found.firstOrNull()?.id,
             )
         }
