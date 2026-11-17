@@ -283,12 +283,12 @@ export class SessionManager {
   }
 
   /** The page of the session's past that ends at `before` (its end when
-   *  absent), about `limit` events long. A chat kept whole is read from its
-   *  run's file, so it holds what happened since the launch replay too
-   *  (PRDCT-4666); without a directory, the adapter's launch replay, as before. */
+   *  absent), about `limit` events long. A chat's is read from its timeline,
+   *  so it holds what happened since the launch replay too (PRDCT-4666):
+   *  whole from its run's file, or bounded in memory without a directory. */
   history(id: string, before?: number, limit?: number): HistoryPage {
     const entry = this.require(id)
-    if (entry.timeline instanceof JournalTimeline) {
+    if (entry.session.transport === 'events') {
       const page = entry.timeline.read(before === undefined ? undefined : before + 1, limit)
       return {
         // The contract's event and the model's are one shape (see publishHostEvent).
