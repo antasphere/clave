@@ -348,4 +348,19 @@ describe('a streamed message with other events between its deltas (PRDCT-4666)',
   it('takes a top-level permission request as the end of the message before it', () => {
     closes({ type: 'permission_request', id: 'p', description: 'Run a command', options: [] })
   })
+
+  it('begins a page at a top-level tool call that ends an unfinished message', () => {
+    const items: HistoryItem[] = [
+      item({ type: 'user_message', text: 'q' }),
+      ...Array.from({ length: 30 }, (_, n) => delta(n)),
+      item({ type: 'tool_call', id: 'run', name: 'Bash', input: {} }),
+      item({ type: 'tool_result', id: 'run', output: 'ok' }),
+      ...Array.from({ length: 10 }, (_, n) =>
+        item({ type: 'context_usage', used: n, window: 1000 })
+      )
+    ]
+    expect(items.length).toBe(43)
+    expect(pageHistory(items, undefined, 10).before).toBe(31)
+    expect(pageWindow(asFile(items), items.length, 10).start).toBe(31)
+  })
 })
