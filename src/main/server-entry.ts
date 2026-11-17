@@ -66,6 +66,8 @@ import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemo
 import { standaloneSidebar } from './server/standalone-sidebar'
 import { shellFilesOverviewSource } from '@clave/server/sidebar-layouts'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
+import { JournalTimeline } from './sessions/journal-timeline'
+import { readTimelineFile } from './sessions/timeline-store'
 import { runningIn, serverConversations } from './session-history/server-conversations'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
@@ -204,6 +206,9 @@ async function main(): Promise<void> {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
     process.exit(2)
   }
+  // PRDCT-4666: each chat's run kept whole, for every late reader.
+  const timelineDir = path.join(dataDir, 'session-timelines')
+  sessionManager.keepTimelines(timelineDir)
   const port = Number(arg('port') ?? '0')
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     process.stderr.write(`clave-server: --port must be 0..65535, got ${arg('port')}\n`)
@@ -365,7 +370,14 @@ async function main(): Promise<void> {
         conversations,
         subscribeAll: (listener) => sessionManager.subscribeAll(listener),
         ready: (id) => sessionManager.ready(id),
-        currentState: (id) => sessionManager.currentState(id)
+        currentState: (id) => sessionManager.currentState(id),
+        timelines: {
+          stopped: (id) => {
+            const file = readTimelineFile(timelineDir, id)
+            return file && JournalTimeline.stopped(file)
+          },
+          forget: (id) => sessionManager.forgetTimeline(id)
+        }
       })
     : undefined
   const requests = new PendingRequests()

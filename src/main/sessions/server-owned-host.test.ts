@@ -977,7 +977,7 @@ describe('stopped conversation timeline', () => {
     // An older checkpoint is there too: the run's file wins.
     legacyCheckpoint(dataDir, record.id, [{ event: { type: 'user_message', text: 'old' } }])
     const f = fixture(dataDir, { timelines })
-    const timelineItems: HistoryItem[] = []
+    const timelineItems: unknown[] = []
     let before: number | null | undefined
     do {
       const page = f.host.timeline!(record.id, before ?? undefined, 200)
@@ -986,7 +986,7 @@ describe('stopped conversation timeline', () => {
       before = page.before
     } while (before !== null)
     expect(timelineItems).toEqual(run)
-    const historyItems: HistoryItem[] = []
+    const historyItems: unknown[] = []
     let older: number | null | undefined
     do {
       const page = f.host.history(record.id, older ?? undefined, 200)

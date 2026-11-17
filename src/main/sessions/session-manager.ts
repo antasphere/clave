@@ -291,7 +291,11 @@ export class SessionManager {
     if (entry.timeline instanceof JournalTimeline) {
       const page = entry.timeline.read(before === undefined ? undefined : before + 1, limit)
       return {
-        items: page.items.map(({ event, at }) => ({ event, ...(at !== undefined && { at }) })),
+        // The contract's event and the model's are one shape (see publishHostEvent).
+        items: page.items.map(({ event, at }) => ({
+          event: event as SessionEvent,
+          ...(at !== undefined && { at })
+        })),
         before: page.before === null ? null : page.before - 1
       }
     }
