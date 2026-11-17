@@ -29,7 +29,10 @@ const WRITES = [
   /\bhistory(?:\[[^\]]*\])+[\w.]*\s*=(?!=)/,
   /\bhistory\.(?:push|unshift|splice|pop|shift|fill|sort|reverse|copyWithin)\(/,
   /\bhistory\.length\s*=(?!=)/,
-  /=\s*(?:[\w.()]+\.)?history\s*;?$/
+  // The list taken under another name: as the end of any expression, or by
+  // a destructuring that names it.
+  /=\s*.*\bhistory\s*;?$/,
+  /\{[^}]*\bhistory\b[^}]*\}\s*=/
 ]
 
 /** Every such line of `source`, with where it sits, comments left out. */

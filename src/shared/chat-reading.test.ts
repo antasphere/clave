@@ -101,9 +101,29 @@ describe('what an agent reads of a chat (PRDCT-4664)', () => {
     const timeline = pages(Array.from({ length: 5000 }, (_, n) => piece(`w${n} `)))
     const chat = await readChat({ timeline, history: none }, 50)
     expect(chat.lines).toHaveLength(1)
+    // Each page twice the last, the last one cut to what is left of the bound.
     const asked = timeline.mock.calls.reduce((sum, [, limit]) => sum + limit, 0)
-    expect(asked).toBeGreaterThanOrEqual(CHAT_READ_EVENTS)
-    expect(asked).toBeLessThanOrEqual(2 * CHAT_READ_EVENTS)
+    expect(asked).toBe(CHAT_READ_EVENTS)
+  })
+
+  it('leaves out a page read from another process than the first', async () => {
+    // A Resume landed between two reads: the older page is the new process's,
+    // and its positions are not this conversation's.
+    const timeline = vi
+      .fn()
+      .mockReturnValueOnce({
+        items: [piece('the end.', true)],
+        before: 5,
+        cursor: { generation: 'the first' }
+      })
+      .mockReturnValue({
+        items: [you('from another process')],
+        before: null,
+        cursor: { generation: 'another' }
+      })
+    const chat = await readChat({ timeline, history: none }, 10)
+    expect(chat.lines).toEqual(['Agent: the end.'])
+    expect(timeline).toHaveBeenCalledTimes(2)
   })
 
   it('stops on a host whose cursor does not move, or whose timeline goes away between two pages', async () => {

@@ -11,6 +11,8 @@ interface Page<E> {
   readonly items: readonly Said<E>[]
   /** Where the page before this one ends; null when nothing is older. */
   readonly before?: number | null
+  /** A timeline's page names the process it was read from. */
+  readonly cursor?: { readonly generation: string }
 }
 
 /** The most events one read of a chat goes back through: the most a page may
@@ -38,7 +40,9 @@ export const CHAT_READ_EVENTS = 2000
  * were the end of that answer and nothing of what led to it. The read starts
  * with a page of `lines` events, which is the whole of it for a conversation
  * at rest, and goes back a page at a time, each twice the last, until it
- * holds more lines than asked or `CHAT_READ_EVENTS` events.
+ * holds more lines than asked or has asked for `CHAT_READ_EVENTS` events. A
+ * page read from another process than the first (a Resume landed between two
+ * reads) is left out: its positions are another conversation's.
  */
 export async function readChat<E extends ReadableEvent>(
   ports: {
@@ -63,8 +67,13 @@ export async function readChat<E extends ReadableEvent>(
   let text: string[] = []
   let before: number | undefined
   let limit = Math.min(Math.max(lines, 1), CHAT_READ_EVENTS)
+  let asked = 0
+  let generation: string | undefined
   for (;;) {
     const read = await page(before, limit)
+    asked += limit
+    if (before === undefined) generation = read.cursor?.generation
+    else if (read.cursor?.generation !== generation) break
     // The position is the reader's business, not the agent's.
     said = [
       ...read.items.map(({ event, at }) => ({ event, ...(at !== undefined && { at }) })),
@@ -76,7 +85,7 @@ export async function readChat<E extends ReadableEvent>(
       // One line more than asked: the first line of what is held may be an
       // answer whose beginning is on the page before.
       text.length > lines ||
-      said.length >= CHAT_READ_EVENTS ||
+      asked >= CHAT_READ_EVENTS ||
       read.items.length === 0 ||
       older === null ||
       older === undefined ||
@@ -85,7 +94,7 @@ export async function readChat<E extends ReadableEvent>(
     )
       break
     before = older
-    limit = Math.min(limit * 2, CHAT_READ_EVENTS)
+    limit = Math.min(limit * 2, CHAT_READ_EVENTS - asked)
   }
   return { lines: text.slice(-lines), history: said.slice(-lines) }
 }

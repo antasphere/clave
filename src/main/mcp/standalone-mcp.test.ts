@@ -1498,6 +1498,7 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
       at: 2
     }
     let pastReads = 0
+    const timelineReads: unknown[][] = []
     const past = (): { items: (typeof before)[]; before: null } => {
       pastReads += 1
       return { items: [before], before: null }
@@ -1506,15 +1507,18 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
       host: {
         // The legacy past stops where this process began; the timeline goes on.
         history: past,
-        timeline: () => ({
-          items: [
-            { ...before, position: { generation: 'g', sequence: 1 } },
-            { ...since, position: { generation: 'g', sequence: 2 } }
-          ],
-          before: null,
-          cursor: { generation: 'g', sequence: 2 },
-          truncated: false
-        })
+        timeline: (...asked: unknown[]) => {
+          timelineReads.push(asked)
+          return {
+            items: [
+              { ...before, position: { generation: 'g', sequence: 1 } },
+              { ...since, position: { generation: 'g', sequence: 2 } }
+            ],
+            before: null,
+            cursor: { generation: 'g', sequence: 2 },
+            truncated: false
+          }
+        }
       }
     })
     sessions.set('stranger', tab('stranger'))
@@ -1528,15 +1532,21 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
       history: [before, since]
     })
     expect(pastReads).toBe(0)
+    // The tab, nothing before it, and the hundred lines the tool asks by default.
+    expect(timelineReads).toEqual([['stranger', undefined, 100]])
   }, 15_000)
 
   it('keeps the past of a host that has no timeline to read (PRDCT-4664)', async () => {
     // This tool asks the host itself: a host without the capability says so
     // by throwing, where a client would have answered null.
     const said = { event: { type: 'user_message' as const, text: 'the past' }, at: 1 }
+    const pastAsked: unknown[][] = []
     const { client, sessions } = await messagingFixture({
       host: {
-        history: () => ({ items: [said], before: null }),
+        history: (...asked: unknown[]) => {
+          pastAsked.push(asked)
+          return { items: [said], before: null }
+        },
         timeline: () => {
           throw new CapabilityUnavailable({
             capability: 'session timeline',
@@ -1552,6 +1562,7 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
     })
     expect(answer.isError).not.toBe(true)
     expect(payload(answer)).toMatchObject({ text: 'You: the past', history: [said] })
+    expect(pastAsked).toEqual([['stranger', undefined, 100]])
   }, 15_000)
 
   it('refuses a stopped plain terminal it opened even with resume: true, and restarts nothing', async () => {
