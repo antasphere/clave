@@ -1,5 +1,4 @@
 import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
-import { CapabilityUnavailable } from '@clave/contract/errors'
 import { codexConnection, type ConnectionPoolId } from '../../shared/connection'
 import { HARNESS_BY_ID } from '../../shared/harness'
 import { asPoolRow } from '../routines/facts'
@@ -1489,80 +1488,6 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
     expect(answer.isError).not.toBe(true)
     expect(payload(answer)).toMatchObject({ sessionId: 'stranger', history: [] })
     expect(read).toEqual(['stranger'])
-  }, 15_000)
-
-  it('reads a chat where its views read it: what it said since a resume is there (PRDCT-4664)', async () => {
-    const before = { event: { type: 'user_message' as const, text: 'before the resume' }, at: 1 }
-    const since = {
-      event: { type: 'assistant_text' as const, delta: 'since the resume', final: true },
-      at: 2
-    }
-    let pastReads = 0
-    const timelineReads: unknown[][] = []
-    const past = (): { items: (typeof before)[]; before: null } => {
-      pastReads += 1
-      return { items: [before], before: null }
-    }
-    const { client, sessions } = await messagingFixture({
-      host: {
-        // The legacy past stops where this process began; the timeline goes on.
-        history: past,
-        timeline: (...asked: unknown[]) => {
-          timelineReads.push(asked)
-          return {
-            items: [
-              { ...before, position: { generation: 'g', sequence: 1 } },
-              { ...since, position: { generation: 'g', sequence: 2 } }
-            ],
-            before: null,
-            cursor: { generation: 'g', sequence: 2 },
-            truncated: false
-          }
-        }
-      }
-    })
-    sessions.set('stranger', tab('stranger'))
-    const answer = await client.callTool({
-      name: 'clave_read_session',
-      arguments: { sessionId: 'stranger' }
-    })
-    expect(answer.isError).not.toBe(true)
-    expect(payload(answer)).toMatchObject({
-      text: 'You: before the resume\nAgent: since the resume',
-      history: [before, since]
-    })
-    expect(pastReads).toBe(0)
-    // The tab, nothing before it, and the hundred lines the tool asks by default.
-    expect(timelineReads).toEqual([['stranger', undefined, 100]])
-  }, 15_000)
-
-  it('keeps the past of a host that has no timeline to read (PRDCT-4664)', async () => {
-    // This tool asks the host itself: a host without the capability says so
-    // by throwing, where a client would have answered null.
-    const said = { event: { type: 'user_message' as const, text: 'the past' }, at: 1 }
-    const pastAsked: unknown[][] = []
-    const { client, sessions } = await messagingFixture({
-      host: {
-        history: (...asked: unknown[]) => {
-          pastAsked.push(asked)
-          return { items: [said], before: null }
-        },
-        timeline: () => {
-          throw new CapabilityUnavailable({
-            capability: 'session timeline',
-            message: 'This host does not provide ordered conversation history.'
-          })
-        }
-      }
-    })
-    sessions.set('stranger', tab('stranger'))
-    const answer = await client.callTool({
-      name: 'clave_read_session',
-      arguments: { sessionId: 'stranger' }
-    })
-    expect(answer.isError).not.toBe(true)
-    expect(payload(answer)).toMatchObject({ text: 'You: the past', history: [said] })
-    expect(pastAsked).toEqual([['stranger', undefined, 100]])
   }, 15_000)
 
   it('refuses a stopped plain terminal it opened even with resume: true, and restarts nothing', async () => {

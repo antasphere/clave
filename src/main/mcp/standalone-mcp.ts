@@ -77,8 +77,7 @@ import type {
   SessionRecord,
   SpawnOptions
 } from '@clave/contract/sessions'
-import { CapabilityUnavailable } from '@clave/contract/errors'
-import { readChat } from '../../shared/chat-reading'
+import { historyLines } from '../../shared/history-text'
 import {
   type TargetHost,
   readAnswer,
@@ -1112,28 +1111,12 @@ function buildServer(
         const screen = await sessions.screen(target.id, args.lines)
         return text(readAnswer(targetHost, target, screen.lines))
       }
-      // A chat has no screen: its recent conversation, one line per thing
-      // said or done, under the same envelope (PRDCT-4199), read where its
-      // views read it (`readChat`, PRDCT-4664).
-      const chat = await readChat(
-        {
-          // This tool asks the host itself, not a client that would turn a
-          // host with no timeline into null: said here, so the past is kept.
-          timeline: (before, limit) => {
-            try {
-              return sessions.timeline?.(target.id, before, limit)
-            } catch (error) {
-              if (error instanceof CapabilityUnavailable) return null
-              throw error
-            }
-          },
-          history: (before, limit) => sessions.history(target.id, before, limit)
-        },
-        args.lines
-      )
+      // A chat has no screen: its recent history, one line per thing said
+      // or done, under the same envelope (PRDCT-4199).
+      const page = sessions.history(target.id, undefined, args.lines)
       return text({
-        ...(readAnswer(targetHost, target, chat.lines) as Record<string, unknown>),
-        history: chat.history
+        ...(readAnswer(targetHost, target, historyLines(page.items)) as Record<string, unknown>),
+        history: page.items
       })
     }
   )
