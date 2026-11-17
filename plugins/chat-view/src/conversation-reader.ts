@@ -23,24 +23,16 @@ export interface ConversationReader extends PastReader {
 
 type Frame = Extract<SessionStream, { kind: 'event' }>
 export type ConversationItem = HistoryItem & { current?: boolean }
-// The existing host wrappers send these current-state overlays at subscribe
-// time, outside the manager's positioned transcript. They are not message
-// identity and must not select legacy history or prevent a snapshot loading.
-// `session_meta` and `waiting_messages` are among them (host.ts subscribe): a
-// Claude chat names its model at ready, so every later subscribe repeated it
-// unpositioned and every Claude conversation failed to load.
-const overlay = (frame: Frame): boolean =>
-  !frame.position &&
-  [
-    'state_change',
-    'background_tasks',
-    'session_meta',
-    'waiting_messages',
-    'permission_request',
-    'permission_updated',
-    'permission_withdrawn',
-    'permission_explained'
-  ].includes(frame.event.type)
+// A frame with no position is the host's current state, never the transcript:
+// what a view that binds late is told (the session's state, its model, what
+// runs in the background, what waits for the agent, the requests still open),
+// and whatever a host tells that way next. A server that orders its transcript
+// gives every event of it a position, so on such a stream the absence of one
+// is the whole test. Which events those are is the host's business: the list
+// of their types kept here until PRDCT-4664 was a second copy of that
+// knowledge, and each time it fell behind (`session_meta` and
+// `waiting_messages`, v3.0.0-beta.25) a conversation stopped loading for good.
+const overlay = (frame: Frame): boolean => !frame.position
 // Only the subscribe/snapshot handoff is buffered here. The server owns
 // retention and event identity; this is neither a cache nor a second timeline.
 export const HANDOFF_MAX_ITEMS = 2000
@@ -75,7 +67,11 @@ export function conversationReader(
   let hasPage = false
   let buffered: Frame[] = []
   let bytes = 0
-  let dropped: SessionPosition | 'legacy' | null = null
+  // What the bounded handoff let go of the transcript: the highest position
+  // per generation, and whether frames of a stream that orders nothing went
+  // too. A snapshot answers for its own generation alone.
+  const droppedAt = new Map<string, number>()
+  let droppedUnordered = false
   const retired = new Set<string>()
   const retire = (value: string): void => {
     retired.add(value)
@@ -89,38 +85,52 @@ export function conversationReader(
   const clear = (): void => {
     buffered = []
     bytes = 0
-    dropped = null
+    droppedAt.clear()
+    droppedUnordered = false
   }
-  const discard = (at: SessionPosition | 'legacy'): void => {
-    if (dropped === 'legacy') return
-    if (at === 'legacy' || (dropped && dropped.generation !== at.generation)) {
-      dropped = 'legacy'
-      return
-    }
-    if (!dropped || at.sequence > dropped.sequence) dropped = at
+  const sizeOf = (frame: Frame): number => JSON.stringify(frame).length * 2
+  /** Whether this stream orders its transcript: a snapshot said so, or a
+   *  frame carried a position. Only a server older than the timeline sends a
+   *  transcript with none. */
+  const ordering = (): boolean => mode === 'timeline' || generation !== null
+  const discard = (frame: Frame): void => {
+    const at = frame.position
+    if (!at) droppedUnordered = true
+    else if (at.sequence > (droppedAt.get(at.generation) ?? -1))
+      droppedAt.set(at.generation, at.sequence)
   }
   const buffer = (frame: Frame): void => {
-    const size = JSON.stringify(frame).length * 2
-    if (buffered.length >= HANDOFF_MAX_ITEMS || bytes + size > HANDOFF_MAX_BYTES) {
-      // A late duplicate can trigger the bound after higher positions arrived.
-      // Cover every discarded position, including prefixes from earlier overflows.
-      for (const pending of buffered) {
-        if (pending.position) discard(pending.position)
-        else if (!overlay(pending)) discard('legacy')
-      }
-      discard(frame.position ?? 'legacy')
-      buffered = []
-      bytes = 0
-    } else {
+    const size = sizeOf(frame)
+    if (buffered.length < HANDOFF_MAX_ITEMS && bytes + size <= HANDOFF_MAX_BYTES) {
       buffered.push(frame)
       bytes += size
+      return
     }
+    // A late duplicate can trigger the bound after higher positions arrived.
+    // Cover every discarded position, including prefixes from earlier overflows.
+    // The host's current state is not transcript and no snapshot holds it, so
+    // on a stream that orders its transcript it stays: let go, a request still
+    // open would never be drawn, and counted as lost transcript it refused
+    // every snapshot from then on.
+    const state: Frame[] = []
+    for (const pending of [...buffered, frame]) {
+      if (!pending.position && ordering()) state.push(pending)
+      else discard(pending)
+    }
+    buffered = state
+    bytes = state.reduce((sum, pending) => sum + sizeOf(pending), 0)
+    // Current state alone past the bound: the newest words are the ones that hold.
+    while (
+      buffered.length > 1 &&
+      (buffered.length > HANDOFF_MAX_ITEMS || bytes > HANDOFF_MAX_BYTES)
+    )
+      bytes -= sizeOf(buffered.shift()!)
   }
   const ordered = (at: SessionPosition): Frame[] => {
     const pending = new Map<number, Frame>()
     for (const frame of buffered) {
-      if (overlay(frame)) continue
-      if (!frame.position) throw new Error('The session stream has no ordered position.')
+      // Current state has no place in the order: it is applied beside it.
+      if (!frame.position) continue
       if (frame.position.generation === at.generation && frame.position.sequence > at.sequence)
         pending.set(frame.position.sequence, frame)
     }
@@ -174,12 +184,14 @@ export function conversationReader(
           timeline.cursor.sequence < applied.sequence
         )
           throw new Error('The conversation snapshot is older than the live stream.')
+        // A snapshot answers for its own generation: positions let go under
+        // another one belong to a process this snapshot says is gone. A past
+        // read from a server that orders nothing covers nothing let go.
+        const lost = timeline ? droppedAt.get(timeline.cursor.generation) : undefined
         if (
-          dropped !== null &&
-          (!timeline ||
-            dropped === 'legacy' ||
-            dropped.generation !== timeline.cursor.generation ||
-            dropped.sequence > timeline.cursor.sequence)
+          timeline
+            ? lost !== undefined && lost > timeline.cursor.sequence
+            : droppedAt.size > 0 || droppedUnordered
         )
           throw new Error('The snapshot does not cover the overflowing handoff buffer.')
         mode = timeline ? 'timeline' : 'legacy'

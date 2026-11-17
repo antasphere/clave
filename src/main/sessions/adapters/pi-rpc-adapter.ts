@@ -662,7 +662,7 @@ export class PiRpcAdapter implements SessionAdapter {
    *  open): its word, then the session ends with code 1. */
   private refuse(state: HandleState, error: unknown): void {
     if (state.ended || state.closing) return
-    this.startNotice(state, `${this.label} could not start: ${errorMessage(error)}`)
+    this.notice(state, `${this.label} could not start: ${errorMessage(error)}`)
     state.exitCode = 1
     if (state.connection && !state.connection.closed) void state.connection.close()
     else this.exited(state, 1)
@@ -682,7 +682,7 @@ export class PiRpcAdapter implements SessionAdapter {
     }
     if (state.ended || state.closing || listed.length === 0) return
     if (listed.some((m) => m.id === state.model)) return
-    this.startNotice(
+    this.notice(
       state,
       piUnknownModel(this.label, state.modelId ?? state.model ?? '', state.modelProvider)
     )
@@ -749,13 +749,13 @@ export class PiRpcAdapter implements SessionAdapter {
       // PRDCT-4540: with the extension watching, said once a request has in
       // fact gone on the connection (the run's end reads its report).
       if (state.launch.connectionReportFile) state.pendingBack = said
-      else if (when === 'start') this.startNotice(state, said)
+      else if (when === 'start') this.notice(state, said)
       else this.notice(state, said)
       this.emitMeta(state)
       return true
     }
     const said = piOffConnection(this.label, foreign, provider)
-    if (when === 'start') this.startNotice(state, said)
+    if (when === 'start') this.notice(state, said)
     else this.notice(state, said)
     return false
   }
@@ -1330,7 +1330,11 @@ export class PiRpcAdapter implements SessionAdapter {
     })
   }
 
-  /** The adapter's word to the reader, never fatal. */
+  /** The adapter's word to the reader, never fatal. Said live and nowhere
+   *  else, a refusal at start included: the session's timeline holds every
+   *  word said since the spawn, heard or not, so a pane that binds after the
+   *  queue was let go reads it there. Kept in the past as well (PRDCT-4427),
+   *  a start notice stood twice in the conversation (PRDCT-4664). */
   private notice(state: HandleState, message: string): void {
     if (state.ended) return
     this.emit(state, { type: 'error', message, fatal: false })
@@ -1342,19 +1346,6 @@ export class PiRpcAdapter implements SessionAdapter {
   private quietNotice(state: HandleState, message: string): void {
     if (state.ended) return
     this.emit(state, { type: 'error', message, fatal: false, quiet: true })
-  }
-
-  /** Why Pi would not start (PRDCT-4427): said live, and kept in the
-   *  session's past. The live word reaches only the views subscribed when the
-   *  queue is let go, and the first subscriber lets it go: a pane that opens
-   *  after it (another view of the window subscribed first, a server's push
-   *  subscription shared) reads the past and nothing else, and saw only
-   *  "Session ended". The view drops the past's copy of a notice it already
-   *  shows. */
-  private startNotice(state: HandleState, message: string): void {
-    if (state.ended) return
-    this.notice(state, message)
-    state.history.push({ event: { type: 'error', message, fatal: false }, at: Date.now() })
   }
 
   /** PRDCT-4507: the launch with Clave's own tools: the tab's MCP config file
@@ -1443,7 +1434,7 @@ export class PiRpcAdapter implements SessionAdapter {
     if (state.starting && !state.closing && state.exitCode === undefined) {
       // Pi died before it gave its state: a refusal, said as one, in Pi's
       // own last words and with its status (PRDCT-4427).
-      this.startNotice(state, startRefusal(this.label, code, stderrTail, state.launch.env))
+      this.notice(state, startRefusal(this.label, code, stderrTail, state.launch.env))
       state.exitCode = code || 1
     } else if (state.turnRunning && !state.closing)
       this.notice(state, `${this.label} stopped during the turn (exit code ${code})`)

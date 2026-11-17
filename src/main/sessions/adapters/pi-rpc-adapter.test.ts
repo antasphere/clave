@@ -482,7 +482,7 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
 
   // PRDCT-4427: Pi 1.5.2 keeps a name it does not have as a custom model id
   // and get_state names it as asked: only its list tells.
-  it('a model name Pi keeps as a custom id: said once, kept in the past', async () => {
+  it('a model name Pi keeps as a custom id: said once, and live alone', async () => {
     const s = await open(
       { model: 'no-such-model-zz' },
       {
@@ -500,9 +500,9 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     const said =
       'Pi does not know the model no-such-model-zz of kimi-coding: it sends that name to the provider as it is, and the provider may refuse it.'
     await expect.poll(() => notices(s.events)).toEqual([said])
-    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([
-      { type: 'error', message: said, fatal: false }
-    ])
+    // Said live alone: the session's timeline keeps it for a pane that binds
+    // after it was said, and a copy in the past stood twice (PRDCT-4664).
+    expect(s.adapter.history(s.handle)).toEqual([])
     // A model Pi lists for that provider: nothing said.
     const known = await open(
       { model: 'k-first' },
@@ -844,8 +844,9 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       fatal: false
     }
     expect(s.events).toEqual([refusal, { type: 'state_change', state: 'ended' }])
-    // Kept in the past too, for a pane that subscribes after it was said.
-    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([refusal])
+    // Said live alone: the session's timeline keeps it for a pane that binds
+    // after it was said, and a copy in the past stood twice (PRDCT-4664).
+    expect(s.adapter.history(s.handle)).toEqual([])
   })
 
   it('a Pi that prints a line and exits 1 before it speaks: that line and the status, never its environment', async () => {
@@ -888,9 +889,7 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       'Pi could not start: Error: --provider requires --model (key ‹hidden›) (exit status 1)'
     expect(notices(events)).toEqual([message])
     expect(JSON.stringify(events)).not.toContain(secret)
-    expect(adapter.history(handle).map((item) => item.event)).toEqual([
-      { type: 'error', message, fatal: false }
-    ])
+    expect(adapter.history(handle)).toEqual([])
   })
 
   it('no model: the notice at spawn, and a prompt that fails with a notice', async () => {

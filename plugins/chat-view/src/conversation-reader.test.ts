@@ -837,6 +837,33 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.timeline).toHaveBeenCalledOnce()
     expect(h.entries()).toHaveLength(2)
   })
+  it('takes an event with no position as the host’s current state whatever its type, and never fails on it', async () => {
+    // PRDCT-4664. The reader held a list of the types a host may send without
+    // a position. A type the list lacked (the model, at a Claude chat's
+    // ready: v3.0.0-beta.25) failed the snapshot for good, and the pane's
+    // Retry with it, since the frame stayed in the handoff and refused every
+    // later snapshot. `effort` stands for the next word a host tells a view
+    // that binds late.
+    vi.useFakeTimers()
+    const stray: SessionStream = { kind: 'event', event: { type: 'effort', effort: 'high' } }
+    const h = setup()
+    h.reader.stream(stray)
+    h.reader.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    h.reader.stream(stray)
+    h.reader.stream(frame(2, 'next'))
+    h.reader.stream(frame(3, 'and after'))
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.timeline).toHaveBeenCalledOnce()
+    expect(h.entries().flatMap((entry) => (entry.kind === 'user' ? [entry.text] : []))).toEqual([
+      'same',
+      'next',
+      'and after'
+    ])
+    expect(h.event.mock.calls.filter(([item]) => item.event === stray.event)).toHaveLength(2)
+  })
   it('starts after subscription and buffers meanwhile; snapshot-covered events occur once', async () => {
     const h = setup()
     h.reader.stream(frame(1))
@@ -1075,6 +1102,54 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.entries()).toHaveLength(1)
     expect(h.reader.source().truncated).toBe(true)
     expect(h.snapshot.mock.calls[0][2]).toBe(true)
+  })
+  it('keeps the host’s current state through a handoff overflow, and the covering snapshot commits', async () => {
+    // PRDCT-4664. The frame that overflowed the handoff, when it carried no
+    // position (the state a subscriber is told, a request still open), was
+    // counted as lost transcript of a server that orders nothing, and every
+    // snapshot was refused from then on.
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => answer.promise)
+        .mockResolvedValue(page([HANDOFF_MAX_ITEMS]))
+    )
+    h.reader.start()
+    for (let n = 1; n <= HANDOFF_MAX_ITEMS; n++) h.reader.stream(frame(n))
+    const told: SessionStream = {
+      kind: 'event',
+      event: { type: 'state_change', state: 'done', run: 4 }
+    }
+    h.reader.stream(told)
+    answer.resolve(page([HANDOFF_MAX_ITEMS]))
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    // The state it was told survived the overflow.
+    expect(h.state().state).toBe('done')
+  })
+  it('does not refuse a new generation’s snapshot for positions let go under the one before it', async () => {
+    // PRDCT-4664. The handoff overflows under one process, which is replaced
+    // (a Resume, a move to another account) before a snapshot lands, and the
+    // new one says nothing yet: its snapshot answers for its own generation.
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => answer.promise)
+        .mockResolvedValue(page([1], 1, 'new'))
+    )
+    h.reader.start()
+    for (let n = 1; n <= HANDOFF_MAX_ITEMS + 1; n++) h.reader.stream(frame(n))
+    answer.resolve(page([1], 1, 'new'))
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    h.reader.stream(frame(2, 'from the new process', 'new'))
+    expect(h.entries().at(-1)).toMatchObject({ text: 'from the new process' })
   })
   it.each([1, 2])(
     'keeps the highest discarded position across %i late-low overflows',
