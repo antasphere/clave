@@ -66,6 +66,10 @@ export function stoppedSession(record: SessionRecord): Session {
  *  most, per tab (PRDCT-4321). */
 export const OBSERVE_EVERY_MS = 5_000
 
+/** How many stopped tabs keep their read timeline (and its open file) at
+ *  once (PRDCT-4666). */
+export const STOPPED_TIMELINES_MAX = 32
+
 export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   host: SessionHostService
   close: () => void
@@ -129,12 +133,19 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   }
   const stoppedTimeline = (id: string): Timeline => {
     let saved = stoppedTimelines.get(id)
-    if (!saved) {
-      // The last run's file, whole; else the legacy checkpoint, bounded and
-      // with no durable ordering generation.
-      saved = stoppedRun(id) ?? new SessionTimeline(() => history.read(id).items, true)
+    if (saved) {
+      // The most recently read goes last: the oldest is the first dropped.
+      stoppedTimelines.delete(id)
       stoppedTimelines.set(id, saved)
+      return saved
     }
+    // The last run's file, whole; else the legacy checkpoint, bounded and
+    // with no durable ordering generation.
+    saved = stoppedRun(id) ?? new SessionTimeline(() => history.read(id).items, true)
+    stoppedTimelines.set(id, saved)
+    // Each one holds its file open: a few dozen at most, the oldest let go.
+    while (stoppedTimelines.size > STOPPED_TIMELINES_MAX)
+      dropStopped(stoppedTimelines.keys().next().value!)
     return saved
   }
   const bindings = new Map<string, Set<() => void>>()

@@ -1030,6 +1030,50 @@ describe('stopped conversation timeline', () => {
       error.mockRestore()
     }
   })
+  it('keeps 32 stopped tabs’ timelines at most, letting the oldest go', () => {
+    const dataDir = directory()
+    const files = journals(dataDir)
+    const ids = Array.from({ length: 33 }, (_, n) => `stopped-${n}`)
+    for (const id of ids) finishedRun(files.dir, id, run)
+    const closed: string[] = []
+    const opened: string[] = []
+    const f = fixture(dataDir, {
+      timelines: {
+        stopped: (id) => {
+          const timeline = files.stopped(id)!
+          opened.push(id)
+          return {
+            ...timeline,
+            close: () => {
+              closed.push(id)
+              timeline.close()
+            }
+          }
+        },
+        forget: files.forget
+      }
+    })
+    f.base.listAdoptableRecords = () => ids.map((id) => ({ ...record, id }))
+    for (const id of ids.slice(0, 32)) f.host.timeline!(id)
+    // A hit makes the first the newest: the second is now the oldest.
+    f.host.timeline!(ids[0])
+    expect(closed).toEqual([])
+    f.host.timeline!(ids[32])
+    expect(closed).toEqual([ids[1]])
+    f.host.timeline!(ids[1])
+    expect(closed).toEqual([ids[1], ids[2]])
+    // Read again, it is whole.
+    const items: unknown[] = []
+    let before: number | null | undefined
+    do {
+      const page = f.host.timeline!(ids[1], before ?? undefined, 200)
+      items.unshift(...page.items.map(({ event }) => ({ event })))
+      before = page.before
+    } while (before !== null)
+    expect(items).toEqual(run)
+    expect(opened.filter((id) => id === ids[1])).toHaveLength(2)
+    f.close()
+  })
   it('forgets a discarded or closed tab’s run file', async () => {
     const dataDir = directory()
     const timelines = journals(dataDir)
