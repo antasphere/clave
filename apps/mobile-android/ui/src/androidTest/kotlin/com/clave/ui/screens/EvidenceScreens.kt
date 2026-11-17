@@ -69,7 +69,7 @@ private fun Painted(which: Screen, theme: ThemeName, onLink: (String) -> Unit, c
         Screen.Accounts -> AccountsScreen(Samples.accounts(), onRefresh = {}, onBack = {})
         Screen.Machines -> MachinesScreen(
             state = Samples.machines(),
-            onSignIn = {}, onSignOut = {}, onRelayUrlChange = {}, onConnectRelay = {}, onRefresh = {},
+            onSignIn = {}, onSignOut = {}, onAddAddress = { _, _, _ -> }, onRenameAddress = { _, _ -> }, onRemoveAddress = {}, onRefresh = {},
             onOpen = {}, onPair = {}, onMakeMain = {}, onForget = null, onAppearance = {},
         )
         Screen.Pairing -> PairingScreen(
