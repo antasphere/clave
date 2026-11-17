@@ -326,4 +326,23 @@ describe('a streamed message with other events between its deltas (PRDCT-4666)',
       expect(windowed.items).toEqual(reference.items)
     }
   })
+
+  /** A turn whose message streams, then `closer`, then a new streamed message:
+   *  the page of 10 at the turn's end begins after the closer. */
+  const closes = (closer: SessionEvent): void => {
+    const items: HistoryItem[] = [
+      item({ type: 'user_message', text: 'q' }),
+      ...Array.from({ length: 20 }, (_, n) => delta(n)),
+      item(closer),
+      ...Array.from({ length: 20 }, (_, n) => delta(n + 20)),
+      item({ type: 'assistant_text', delta: ' end', final: true })
+    ]
+    const at = items.findIndex(({ event }) => event === closer)
+    const page = pageHistory(items, undefined, 10)
+    expect(page.before).toBe(at + 1)
+    expect(pageWindow(asFile(items), items.length, 10).start).toBe(at + 1)
+  }
+  it('takes a top-level error as the end of the message it interrupts', () => {
+    closes({ type: 'error', message: 'a passing failure', fatal: false })
+  })
 })
