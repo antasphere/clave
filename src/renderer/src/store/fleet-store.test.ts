@@ -312,6 +312,82 @@ describe('the servers’ versions (issue #266)', () => {
   })
 })
 
+describe('a snapshot catches up on what happened while the desktop was away (PRDCT-4668)', () => {
+  type WireState = FleetSnapshot['sessions'][number]['state']
+  const at = (owner: string, state: WireState): FleetSnapshot => {
+    const base = snapshot(owner)
+    return { ...base, sessions: [{ ...base.sessions[0], state }] }
+  }
+  const tab = (owner: string): Session =>
+    store.useSessionStore
+      .getState()
+      .sessions.find((s) => s.id === resourceKey('session', owner, 'same'))!
+
+  it('marks unread a known tab that went from working to done, out of view', () => {
+    const owner = `away-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'working'))
+    expect(tab(owner)).toMatchObject({ agentState: 'working', hasUnseenActivity: false })
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner)).toMatchObject({ agentState: 'done', hasUnseenActivity: true })
+  })
+
+  it('does not mark the tab in view', () => {
+    const owner = `seen-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'working'))
+    store.useSessionStore.setState({ selectedSessionIds: [resourceKey('session', owner, 'same')] })
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner)).toMatchObject({ agentState: 'done', hasUnseenActivity: false })
+  })
+
+  it('leaves the mark as it was when the state did not change', () => {
+    const owner = `same-${serial}`
+    const id = resourceKey('session', owner, 'same')
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner).hasUnseenActivity).toBe(false)
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner).hasUnseenActivity).toBe(false)
+    store.useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((s) => (s.id === id ? { ...s, hasUnseenActivity: true } : s))
+    }))
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner).hasUnseenActivity).toBe(true)
+  })
+
+  it('a first sight of a session at rest is not news', () => {
+    const owner = `first-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner).hasUnseenActivity).toBe(false)
+  })
+
+  it('keeps the prompt this desktop derived from the stream', () => {
+    const owner = `prompt-${serial}`
+    const id = resourceKey('session', owner, 'same')
+    fleet.applyFleetSnapshot(at(owner, 'blocked'))
+    store.useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((s) => (s.id === id ? { ...s, promptWaiting: 'Allow?' } : s))
+    }))
+    fleet.applyFleetSnapshot(at(owner, 'blocked'))
+    expect(tab(owner).promptWaiting).toBe('Allow?')
+  })
+
+  it('a cached snapshot lists the sessions with no agent state, and a live one sets it', () => {
+    const owner = `cached-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'working'), { cached: true })
+    expect(tab(owner)).toMatchObject({ agentState: undefined, hasUnseenActivity: false })
+    // The live read says the turn ended meanwhile: not news, since the
+    // desktop never saw it running.
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner)).toMatchObject({ agentState: 'done', hasUnseenActivity: false })
+  })
+
+  it('a cached snapshot is not written back over the stored one', () => {
+    const owner = `cached-store-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'working'), { cached: true })
+    const saved = JSON.parse(memory.get('clave-fleet-snapshots') ?? '{}')
+    expect(saved[owner]).toBeUndefined()
+  })
+})
+
 describe('who opened a server tab, named as this window names it (PRDCT-4193)', () => {
   // The reach rule compares keys: a server record names its opener by the raw
   // id of its own store, so the window must wrap it in that server's key, or

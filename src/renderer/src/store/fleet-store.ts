@@ -12,6 +12,7 @@ import type { FleetSnapshot } from '../../../preload/fleet-types'
 import { useSessionStore } from './session-store'
 import type { Session, SessionGroup } from './session-types'
 import { ownerOf, partitionLayout } from '../lib/fleet-identity'
+import { finishesTurn } from '../lib/tab-status'
 import { createSavePipeline, type SavePipeline } from '../lib/sidebar-save-pipeline'
 import { mergeLayouts } from '@clave/contract/sidebar/ops'
 
@@ -119,14 +120,29 @@ function pipeline(serverId: string): SavePipeline<LayoutSnapshot> {
   pipelines.set(serverId, p)
   return p
 }
-export function applyFleetSnapshot(snapshot: FleetSnapshot): void {
-  try {
-    const saved = JSON.parse(localStorage.getItem('clave-fleet-snapshots') ?? '{}')
-    saved[snapshot.serverId] = snapshot
-    localStorage.setItem('clave-fleet-snapshots', JSON.stringify(saved))
-  } catch {
-    /* unavailable browser storage does not block live discovery */
-  }
+/**
+ * A server's sessions as a snapshot lists them. A snapshot is read at every
+ * connection (the catch-up after a socket died) and at every `session.*`
+ * event, so it may be the first this desktop hears of a turn that ended while
+ * it was away: a tab it knew as working, now at rest and not in view, is
+ * marked unread here as `setAgentState` would have (PRDCT-4668).
+ * `cached` is the boot path that applies the snapshot kept in localStorage:
+ * its sessions are listed, but what ran then is not what runs now, so they
+ * carry no agent state until the first live snapshot says.
+ */
+export function applyFleetSnapshot(
+  snapshot: FleetSnapshot,
+  options?: { readonly cached?: boolean }
+): void {
+  const cached = options?.cached === true
+  if (!cached)
+    try {
+      const saved = JSON.parse(localStorage.getItem('clave-fleet-snapshots') ?? '{}')
+      saved[snapshot.serverId] = snapshot
+      localStorage.setItem('clave-fleet-snapshots', JSON.stringify(saved))
+    } catch {
+      /* unavailable browser storage does not block live discovery */
+    }
   const serverId = snapshot.serverId
   const stateById = new Map(snapshot.sessions.map((s) => [s.id, s]))
   const records = new Map(snapshot.records.map((r) => [r.id, r]))
@@ -138,6 +154,12 @@ export function applyFleetSnapshot(snapshot: FleetSnapshot): void {
       const record = records.get(id)
       const old = previous.get(id)
       const cwd = record?.cwd ?? wire?.cwd ?? old?.cwd ?? '/'
+      const agentState = cached || wire?.state === 'ended' ? undefined : wire?.state
+      const unread =
+        !cached &&
+        old !== undefined &&
+        finishesTurn(old.agentState, agentState) &&
+        !state.selectedSessionIds.includes(id)
       return {
         ...old,
         id,
@@ -153,9 +175,11 @@ export function applyFleetSnapshot(snapshot: FleetSnapshot): void {
             ? (old.restartEpoch ?? 0) + 1
             : old?.restartEpoch,
         activityStatus: old?.activityStatus ?? 'idle',
-        promptWaiting: null,
-        hasUnseenActivity: old?.hasUnseenActivity ?? false,
-        agentState: wire?.state === 'ended' ? undefined : wire?.state,
+        // Derived from the stream on this desktop, never from a snapshot: one
+        // runs at every `session.*` event and must not wipe a prompt shown.
+        promptWaiting: old?.promptWaiting ?? null,
+        hasUnseenActivity: unread || (old?.hasUnseenActivity ?? false),
+        agentState,
         claudeMode: record?.claudeMode ?? wire?.provider === 'claude',
         antigravityMode: record?.antigravityMode ?? wire?.provider === 'antigravity',
         codexMode: record?.codexMode ?? wire?.provider === 'codex',
@@ -251,7 +275,8 @@ export function startDesktopFleet(): void {
       >
       for (const id of Object.keys(saved)) if (!retained.has(id)) delete saved[id]
       localStorage.setItem('clave-fleet-snapshots', JSON.stringify(saved))
-      for (const id of retained) if (!bases.has(id) && saved[id]) applyFleetSnapshot(saved[id])
+      for (const id of retained)
+        if (!bases.has(id) && saved[id]) applyFleetSnapshot(saved[id], { cached: true })
     } catch {
       /* live reads remain authoritative */
     }
