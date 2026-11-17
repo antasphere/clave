@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { HistoryItem, SessionEvent } from '../../shared/session-model'
+import type { HistoryItem, HistoryPage, SessionEvent } from '../../shared/session-model'
 import type { TimelinePage } from '@clave/contract/timeline'
+import { readHistoryLines } from '../../shared/history-read'
+import { historyLines } from '../../shared/history-text'
 import { HISTORY_PAGE_MAX, historyPageOf, pageHistory, pageWindow } from './history'
 
 const item = (event: SessionEvent): HistoryItem => ({ event })
@@ -240,4 +242,63 @@ describe('a timeline page answered as history (PRDCT-4666)', () => {
     })
     expect(historyPageOf({ ...page, before: null }).before).toBeNull()
   })
+})
+
+describe('a streamed message with other events between its deltas (PRDCT-4666)', () => {
+  const between: Record<string, SessionEvent> = {
+    context_usage: { type: 'context_usage', used: 10, window: 100 },
+    waiting_messages: { type: 'waiting_messages', messages: [], takes: 'turn' },
+    'a subagent’s final text': { type: 'assistant_text', delta: 'sub', final: true, parent: 'task' }
+  }
+  /** The verifier's shape: earlier turns, then a message started at 12 whose
+   *  deltas each have `other` after them, ending past a page of 10. */
+  const conversation = (other: SessionEvent): HistoryItem[] => [
+    ...Array.from({ length: 6 }, (_, n) => turn(n)).flat(),
+    ...Array.from({ length: 15 }, (_, n) => [
+      item({ type: 'assistant_text', delta: ` a${n}`, final: false }),
+      item(other)
+    ]).flat(),
+    item({ type: 'assistant_text', delta: ' end', final: true })
+  ]
+  /** Where the message begins and ends in `items`. */
+  const message = (items: HistoryItem[]): [number, number] => [
+    items.findIndex(({ event }) => event.type === 'assistant_text' && event.delta === ' a0'),
+    items.findIndex(({ event }) => event.type === 'assistant_text' && event.delta === ' end')
+  ]
+  const startsInside = (items: HistoryItem[], starts: number[]): boolean => {
+    const [first, last] = message(items)
+    return starts.some((start) => start > first && start <= last)
+  }
+  for (const [name, other] of Object.entries(between))
+    it(`never begins a page inside it with ${name} between`, async () => {
+      const items = conversation(other)
+      for (const limit of [3, 5, 10]) {
+        const starts: number[] = []
+        let before: number | null | undefined
+        do {
+          before = pageHistory(items, before ?? undefined, limit).before
+          if (before !== null) starts.push(before)
+        } while (before !== null)
+        expect(startsInside(items, starts)).toBe(false)
+        const windowStarts: number[] = []
+        for (let end = items.length; end > 0; ) {
+          const page = pageWindow(asFile(items), end, limit)
+          windowStarts.push(page.start)
+          end = page.start
+        }
+        expect(startsInside(items, windowStarts)).toBe(false)
+      }
+      // The oldest line a read hands an agent is whole.
+      const read = (before?: number, limit?: number): HistoryPage =>
+        pageHistory(items, before, limit)
+      const lines = await readHistoryLines(read, 1)
+      expect(lines.at(-1)).toBe(
+        `Agent: ${Array.from({ length: 15 }, (_, n) => `a${n}`).join(' ')} end`
+      )
+      for (const limit of [5, 10]) {
+        const page = pageHistory(items, undefined, limit)
+        const text = historyLines(page.items)
+        expect(text.at(-1)?.startsWith('Agent: a0')).toBe(true)
+      }
+    })
 })

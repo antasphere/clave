@@ -49,15 +49,32 @@ function boundaries(items: HistoryItem[], windowed = false): { turn: boolean[]; 
   })
   const turn: boolean[] = []
   const step: boolean[] = []
+  // `open`: a top-level streamed message has begun and not ended. A page
+  // that began inside it would show the message cut in two (PRDCT-4666),
+  // whatever else (usage, a waiting list, a subagent's words) lands between
+  // its deltas. The closers are `historyLines`'. Before a window, unknown.
+  let open = windowed
   items.forEach(({ event }, i) => {
     const toolSafe = reach < i
+    const topLevel = !('parent' in event && event.parent)
     turn[i] = toolSafe && event.type === 'user_message'
-    // A streamed message is one event per delta: a page that began between
-    // two of them would show the message cut in two (PRDCT-4666).
-    const previous = items[i - 1]?.event
-    const streaming = previous?.type === 'assistant_text' && previous.final !== true
+    // Inside an open message nothing is a step, but a top-level tool call,
+    // which ends that message itself.
+    const closesHere = topLevel && event.type === 'tool_call'
     step[i] =
-      toolSafe && ((event.type === 'assistant_text' && !streaming) || event.type === 'tool_call')
+      toolSafe &&
+      (event.type === 'assistant_text' || event.type === 'tool_call') &&
+      (!open || closesHere)
+    if (topLevel) {
+      if (event.type === 'assistant_text') open = event.final !== true
+      else if (
+        event.type === 'user_message' ||
+        event.type === 'tool_call' ||
+        event.type === 'error' ||
+        event.type === 'permission_request'
+      )
+        open = false
+    }
     if (event.type === 'tool_call' || event.type === 'tool_result')
       reach = Math.max(reach, last.get(event.id) ?? i)
   })
