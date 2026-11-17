@@ -1377,4 +1377,66 @@ describe('Codex reasoning effort', () => {
     expect(bad.turns()[0]).not.toHaveProperty('effort')
     await bad.adapter.kill(next)
   })
+
+  const modesOf = (seen: unknown[]): string[] =>
+    seen.flatMap((s) => {
+      const event = (s as { kind: string; event?: SessionEvent }).event
+      return event?.type === 'permission_mode' ? [event.mode] : []
+    })
+
+  it('names the mode the thread runs in before any message, from its start answer', async () => {
+    const { adapter } = effortFake({
+      sandbox: { type: 'workspaceWrite' },
+      approvalPolicy: 'on-request'
+    })
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.ready?.(handle)
+    await settle()
+    expect(modesOf(seen)).toEqual(['workspace-write'])
+    const event = seen
+      .map((s) => (s as { event?: SessionEvent }).event)
+      .find((e) => e?.type === 'permission_mode')
+    expect(event).toMatchObject({
+      modes: [{ id: 'read-only' }, { id: 'workspace-write' }, { id: 'danger-full-access' }]
+    })
+    await adapter.kill(handle)
+  })
+
+  it('carries a picked mode on the next turn only, and refuses a mode Codex does not offer', async () => {
+    const { adapter, turns, complete } = effortFake({ sandbox: { type: 'workspaceWrite' } })
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.ready?.(handle)
+    await settle()
+    adapter.write(handle, { type: 'set_permission_mode', mode: 'danger-full-access' })
+    expect(modesOf(seen)).toEqual(['workspace-write', 'danger-full-access'])
+    expect(() =>
+      adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+    ).toThrow(/does not offer/)
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).toMatchObject({
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'dangerFullAccess' }
+    })
+    // Codex keeps it: the turn after carries no override.
+    complete()
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).not.toHaveProperty('sandboxPolicy')
+    expect(turns()[1]).not.toHaveProperty('approvalPolicy')
+    // Back to read only, which asks again.
+    complete()
+    adapter.write(handle, { type: 'set_permission_mode', mode: 'read-only' })
+    adapter.write(handle, { type: 'user_message', text: 'three' })
+    await settle()
+    expect(turns()[2]).toMatchObject({
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'readOnly' }
+    })
+    await adapter.kill(handle)
+  })
 })

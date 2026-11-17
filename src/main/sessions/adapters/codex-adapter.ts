@@ -10,6 +10,8 @@ import { replayCodexHistory } from './codex-history'
 import {
   codexProfilePolicy,
   codexRungPolicy,
+  isCodexRung,
+  type CodexSandboxMode,
   type LaunchProfile
 } from '../../../shared/agent-launch'
 import {
@@ -23,6 +25,7 @@ import {
   type HistoryItem,
   type ModelOption,
   type CommandOption,
+  type PermissionModeOption,
   flattenAnswers
 } from '../../../shared/session-model'
 import type {
@@ -664,6 +667,12 @@ interface HandleState {
   mcpConfig?: McpConfigPort
   /** A model chosen after launch; every later turn/start carries it. */
   model?: string | null
+  /** The permission mode the thread runs in (a Codex rung), as its start
+   *  answer said it or as last picked. */
+  mode?: CodexSandboxMode
+  /** A mode picked from the menu: the next turn/start carries its policy
+   *  (Codex keeps it for the turns after), then this is cleared. */
+  pickedMode?: CodexSandboxMode
   /** The effort chosen at launch or since; every later turn/start carries it
    *  while the turn's model takes it. */
   effort?: string
@@ -692,6 +701,29 @@ interface HandleState {
   orderedInputs: number
   ended: boolean
   closing: boolean
+}
+/** The modes a Codex chat's menu offers: Codex's own three presets, the
+ *  rungs of `codexRungPolicy` (read only and workspace ask on request, full
+ *  access never asks). */
+export const CODEX_PERMISSION_MODES: PermissionModeOption[] = [
+  { id: 'read-only', label: 'Read only' },
+  { id: 'workspace-write', label: 'Workspace' },
+  { id: 'danger-full-access', label: 'Full access (YOLO)' }
+]
+/** A rung as the app-server's `sandboxPolicy` (turn/start), and back. */
+const SANDBOX_POLICY: Record<CodexSandboxMode, string> = {
+  'read-only': 'readOnly',
+  'workspace-write': 'workspaceWrite',
+  'danger-full-access': 'dangerFullAccess'
+}
+/** The mode a thread runs in, from its thread/start or thread/resume answer
+ *  (its `sandbox` policy); null when the answer names none Clave offers. */
+export function codexThreadMode(result: unknown): CodexSandboxMode | null {
+  const type = text(object(object(result).sandbox).type)
+  const found = (Object.keys(SANDBOX_POLICY) as CodexSandboxMode[]).find(
+    (rung) => SANDBOX_POLICY[rung] === type
+  )
+  return found ?? null
 }
 /** The menu's rows from the app-server's model/list rows: the visible
  *  models, each with its gloss, its efforts and its default level. */
@@ -871,8 +903,16 @@ export class CodexAdapter implements SessionAdapter {
       this.announce(state, value.effort)
       return
     }
-    if (value.type === 'set_permission_mode')
-      throw new Error('Codex chat does not offer permission modes')
+    if (value.type === 'set_permission_mode') {
+      // Per turn, like the model: recorded and announced now, carried by the
+      // next turn/start (turn/steer takes no policy), kept by Codex after it.
+      if (!isCodexRung(value.mode))
+        throw new Error(`Codex chat does not offer the permission mode ${value.mode}`)
+      state.mode = value.mode
+      state.pickedMode = value.mode
+      this.announceMode(state)
+      return
+    }
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
     // The person's typing into a form is the host's (request-aware-host.ts),
     // never a provider's (PRDCT-4210).
@@ -1042,6 +1082,13 @@ export class CodexAdapter implements SessionAdapter {
     this.announce(state, (row && text(row.defaultReasoningEffort)) || state.translator.threadEffort)
     return undefined
   }
+  private announceMode(state: HandleState): void {
+    if (!state.mode) return
+    state.emitter.emit('stream', {
+      kind: 'event',
+      event: { type: 'permission_mode', mode: state.mode, modes: CODEX_PERMISSION_MODES }
+    })
+  }
   private announce(state: HandleState, effort: string | null): void {
     if (state.announced === effort) return
     state.announced = effort
@@ -1115,12 +1162,22 @@ export class CodexAdapter implements SessionAdapter {
       }
       return true
     }
+    const picked = state.pickedMode
+    const policy = picked ? codexRungPolicy(picked) : undefined
     const result = await state.connection!.request('turn/start', {
       threadId: state.translator.threadId,
       input,
       ...(state.model ? { model: state.model } : {}),
-      ...(effort ? { effort } : {})
+      ...(effort ? { effort } : {}),
+      ...(picked && policy
+        ? {
+            approvalPolicy: policy.approvalPolicy,
+            sandboxPolicy: { type: SANDBOX_POLICY[picked] }
+          }
+        : {})
     })
+    // Codex keeps a turn's policy for the turns after it.
+    if (picked && state.pickedMode === picked) state.pickedMode = undefined
     const turn = object(object(result).turn)
     if (
       !state.translator.turnId &&
@@ -1244,6 +1301,11 @@ export class CodexAdapter implements SessionAdapter {
       })
       state.translator.metadata(result)
       if (!state.translator.threadId) throw new Error('Codex returned no thread id')
+      // The mode it runs in, as the answer says it (the config's when the
+      // launch named no sandbox), else the launch's: shown before any turn.
+      state.mode ??=
+        codexThreadMode(result) ?? (isCodexRung(sandbox) ? sandbox : undefined) ?? undefined
+      this.announceMode(state)
       // A launch effort (the one last picked) is the next turn's; announced
       // as a switch is, the thread's own word following at that turn.
       if (state.effort) this.announce(state, state.effort)

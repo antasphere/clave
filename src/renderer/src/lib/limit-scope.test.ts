@@ -147,7 +147,7 @@ describe('modelRungFor', () => {
   it('descends: Fable out offers Opus 5.5, Opus out offers Sonnet 5.5, Sonnet out offers Haiku', () => {
     expect(modelRungFor('Fable', account('Fable'))).toBe('claude-opus-5-5')
     expect(modelRungFor('Opus', account('Opus'))).toBe('claude-sonnet-5-5')
-    expect(modelRungFor('Sonnet', account('Sonnet'))).toBe('claude-haiku-4-5-20251001')
+    expect(modelRungFor('Sonnet', account('Sonnet'))).toBe('claude-haiku-5-5')
   })
 
   it('never steps up: Opus out with Fable open still offers Sonnet', () => {
@@ -158,7 +158,7 @@ describe('modelRungFor', () => {
   it('skips a family whose cap the account read shows out, and a family the read does not name is open', () => {
     expect(modelRungFor('Fable', account('Fable', 'Opus'))).toBe('claude-sonnet-5-5')
     expect(modelRungFor('Fable', account('Fable', 'Opus', 'Sonnet'))).toBe(
-      'claude-haiku-4-5-20251001'
+      'claude-haiku-5-5'
     )
     // No read yet: the next family down.
     expect(modelRungFor('Fable', undefined)).toBe('claude-opus-5-5')

@@ -39,7 +39,11 @@ import {
 } from '../../../../shared/launch-models'
 import { HARNESSES, HARNESS_BY_ID, type Harness, type HarnessId } from '../../../../shared/harness'
 import { firstPoolOf, isAccountPoolId } from '../../../../shared/connection'
-import { CLAUDE_MODELS, claudeModelName } from '../../../../shared/claude-models'
+import {
+  claudeLaunchModels,
+  claudeModelName,
+  tableLaunchModels
+} from '../../../../shared/claude-models'
 import { isChatProfileRef } from '../../../../shared/open-session-modes'
 import type { ModelOption } from '../../../../shared/session-model'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
@@ -186,6 +190,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
    *  no static list): undefined until the answer, `failed` when it could not
    *  be read (the row then offers its default alone). */
   const [codexModels, setCodexModels] = useState<ModelOption[] | 'failed' | undefined>(undefined)
+  /** Claude's models, asked of its CLI when the menu first opens, so a
+   *  version that ships shows without a Clave release; the table stands in
+   *  until the answer, and when it could not be read. */
+  const [claudeModels, setClaudeModels] = useState<ModelOption[] | 'failed' | undefined>(undefined)
   const caretRef = useRef<HTMLButtonElement | null>(null)
   const agentButtonRef = useRef<HTMLButtonElement | null>(null)
   const agents = useAgentStore((s) => s.agents)
@@ -355,6 +363,15 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
         for (const serverId of serversKey.split('\u0000'))
           if (serverSettings[serverId]?.status !== 'ready') void loadServerSettings(serverId)
       }
+      if (open && (claudeModels === undefined || claudeModels === 'failed')) {
+        const cwd = getWorkspaceById(activeWorkspaceId)?.rootDir ?? '/'
+        const read = window.electronAPI?.adaptersModels?.('claude-chat', cwd)
+        if (!read) setClaudeModels('failed')
+        else
+          void read
+            .then((models) => setClaudeModels(models.length > 0 ? models : 'failed'))
+            .catch(() => setClaudeModels('failed'))
+      }
       if (open && (codexModels === undefined || codexModels === 'failed')) {
         const cwd = getWorkspaceById(activeWorkspaceId)?.rootDir ?? '/'
         const read = window.electronAPI?.adaptersModels?.('codex-chat', cwd)
@@ -366,7 +383,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       }
       setMenuOpen(open)
     },
-    [serversKey, serverSettings, codexModels, activeWorkspaceId]
+    [serversKey, serverSettings, codexModels, claudeModels, activeWorkspaceId]
   )
 
   // What the menu's Pi and OpenCode rows need of each machine it draws
@@ -464,11 +481,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   ): LauncherModel[] | 'loading' | null => {
     if (!harness.takesModel) return null
     if (harness.id === 'claude')
-      return CLAUDE_MODELS.map((model) => ({
-        id: model.id,
-        label: model.name,
-        family: model.alias.charAt(0).toUpperCase() + model.alias.slice(1)
-      }))
+      return Array.isArray(claudeModels) ? claudeLaunchModels(claudeModels) : tableLaunchModels()
     if (harness.id === 'codex') {
       if (codexModels === undefined) return 'loading'
       if (codexModels === 'failed' || codexModels.length === 0) return [DEFAULT_MODEL]

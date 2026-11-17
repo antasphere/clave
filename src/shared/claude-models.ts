@@ -22,11 +22,63 @@ export interface ClaudeModel {
 }
 export const CLAUDE_MODELS: readonly ClaudeModel[] = [
   { id: 'claude-opus-5-5', name: 'Opus 5.5', alias: 'opus', window: 1_000_000 },
+  { id: 'claude-fable-5-2[1m]', name: 'Fable 5.2', alias: 'fable', window: 1_000_000 },
   { id: 'claude-fable-5-1[1m]', name: 'Fable 5.1', alias: 'fable', window: 1_000_000 },
   { id: 'claude-fable-5[1m]', name: 'Fable 5', alias: 'fable', window: 1_000_000 },
   { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', alias: 'sonnet', window: 1_000_000 },
+  // Measured off a turn's context_usage, 2026-11-17.
+  { id: 'claude-haiku-5-5', name: 'Haiku 5.5', alias: 'haiku', window: 1_000_000 },
   { id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', alias: 'haiku', window: 200_000 }
 ]
+
+/** A model as the launcher offers it: its id (what `--model` takes), its
+ *  name, and its family's word for the credit hint ("Fable"). */
+export interface ClaudeLaunchModel {
+  id: string
+  label: string
+  family: string
+}
+
+/** The table as launcher rows: the list offered while the CLI's own is not
+ *  in, or could not be read. */
+export function tableLaunchModels(): ClaudeLaunchModel[] {
+  return CLAUDE_MODELS.map((model) => ({
+    id: model.id,
+    label: model.name,
+    family: model.alias.charAt(0).toUpperCase() + model.alias.slice(1)
+  }))
+}
+
+/**
+ * The launcher's rows from the CLI's own list (`claudeModelOptions`, asked of
+ * the installed CLI): every model it offers as the newest of its family, so a
+ * version that ships (Fable 5.2) shows without a release of Clave, plus the
+ * earlier versions this table names on purpose (Fable 5 beside Fable 5.1).
+ * An empty list answers the table.
+ */
+export function claudeLaunchModels(
+  options: readonly { id: string; label: string; resolved?: string }[]
+): ClaudeLaunchModel[] {
+  if (!options.length) return tableLaunchModels()
+  const keyOf = (option: { id: string; resolved?: string }): string => option.resolved ?? option.id
+  const earlier = earlierClaudeIds(options.map(keyOf))
+  const named = new Set(CLAUDE_MODELS.map((model) => bare(model.id)))
+  const rows: ClaudeLaunchModel[] = []
+  const seen = new Set<string>()
+  for (const option of options) {
+    const key = bare(keyOf(option))
+    if (seen.has(key)) continue
+    if (earlier.has(keyOf(option)) && !named.has(key)) continue
+    seen.add(key)
+    const family = claudeVersion(keyOf(option))?.family ?? findClaudeModel(key)?.alias
+    rows.push({
+      id: option.id,
+      label: option.label,
+      family: family ? family.charAt(0).toUpperCase() + family.slice(1) : option.label
+    })
+  }
+  return rows
+}
 
 const bare = (id: string): string => id.replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '')
 const FAMILY = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?$/
