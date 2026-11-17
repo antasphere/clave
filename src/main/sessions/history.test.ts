@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HistoryItem, SessionEvent } from '../../shared/session-model'
-import { HISTORY_PAGE_MAX, pageHistory, pageWindow } from './history'
+import type { TimelinePage } from '@clave/contract/timeline'
+import { HISTORY_PAGE_MAX, historyPageOf, pageHistory, pageWindow } from './history'
 
 const item = (event: SessionEvent): HistoryItem => ({ event })
 /** A turn: the reader's message, an answer, and `tools` calls each answered. */
@@ -203,5 +204,40 @@ describe('conversation history pages read from a file by window (PRDCT-4666)', (
       expect(pages.flat()).toEqual(items)
       for (const page of pages) expect(splitsAPair(page)).toBe(false)
     }
+  })
+})
+
+describe('a timeline page answered as history (PRDCT-4666)', () => {
+  const at = (sequence: number, event: SessionEvent): TimelinePage['items'][number] => ({
+    event,
+    at: sequence * 10,
+    position: { generation: 'g', sequence }
+  })
+  it('keeps the past in order, drops the live state, and maps the cursor', () => {
+    const page: TimelinePage = {
+      items: [
+        at(5, { type: 'user_message', text: 'q' }),
+        at(6, { type: 'state_change', state: 'working' }),
+        at(7, { type: 'background_tasks', tasks: [] }),
+        at(8, { type: 'waiting_messages', messages: [], takes: 'turn' }),
+        at(9, { type: 'assistant_text', delta: 'a', final: true })
+      ],
+      before: 5,
+      cursor: { generation: 'g', sequence: 9 },
+      truncated: false
+    }
+    expect(historyPageOf(page)).toEqual({
+      items: [
+        { event: { type: 'user_message', text: 'q' }, at: 50 },
+        { event: { type: 'assistant_text', delta: 'a', final: true }, at: 90 }
+      ],
+      before: 4
+    })
+    // Only live state on the page: empty, and still an older page to read.
+    expect(historyPageOf({ ...page, items: page.items.slice(1, 4) })).toEqual({
+      items: [],
+      before: 4
+    })
+    expect(historyPageOf({ ...page, before: null }).before).toBeNull()
   })
 })

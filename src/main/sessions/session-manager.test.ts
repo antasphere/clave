@@ -541,6 +541,34 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
     expect(() => new SessionManager().forgetTimeline('a')).not.toThrow()
   })
 
+  it('answers the past alone in history, while the timeline keeps the live state', async () => {
+    for (const keep of [true, false]) {
+      const { manager, adapter } = keep
+        ? kept()
+        : (() => {
+            const manager = new SessionManager()
+            const adapter = new ResumedEcho()
+            manager.registerAdapter(adapter)
+            return { manager, adapter }
+          })()
+      adapter.replay = [{ event: { type: 'user_message', text: 'saved' } }]
+      await manager.create(session('a'))
+      manager.ready('a')
+      await manager.write('a', { type: 'user_message', text: 'now' })
+      adapter.inject('a', {
+        kind: 'event',
+        event: { type: 'waiting_messages', messages: [{ id: 'w1', text: 'next' }], takes: 'turn' }
+      })
+      const live = ['state_change', 'background_tasks', 'waiting_messages']
+      const timelineTypes = manager.timeline('a').items.map(({ event }) => event.type)
+      expect(timelineTypes).toContain('state_change')
+      expect(timelineTypes).toContain('waiting_messages')
+      const history = manager.history('a').items
+      expect(history.some(({ event }) => live.includes(event.type))).toBe(false)
+      expect(texts(history)).toEqual(['saved', 'now', 'now'])
+    }
+  })
+
   it('never sweeps a live session’s file, and sweeps a gone one', async () => {
     const { manager, dir } = kept()
     await manager.create(session('a'))

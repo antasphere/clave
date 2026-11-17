@@ -17,7 +17,7 @@ import {
   type BackgroundTask
 } from '../../shared/session-model'
 import type { SessionEvent as ContractSessionEvent } from '@clave/contract/sessions'
-import { pageHistory } from './history'
+import { historyPageOf, pageHistory } from './history'
 import type { SessionAdapter, SessionHandle, SpawnSpec, Unsubscribe } from './adapter'
 
 type Listener<T> = { callback: (value: T) => void; windowKey?: string }
@@ -298,15 +298,10 @@ export class SessionManager {
   history(id: string, before?: number, limit?: number): HistoryPage {
     const entry = this.require(id)
     if (entry.session.transport === 'events') {
-      const page = entry.timeline.read(before === undefined ? undefined : before + 1, limit)
-      return {
-        // The contract's event and the model's are one shape (see publishHostEvent).
-        items: page.items.map(({ event, at }) => ({
-          event: event as SessionEvent,
-          ...(at !== undefined && { at })
-        })),
-        before: page.before === null ? null : page.before - 1
-      }
+      // The past alone: the live state the timeline also holds stays out.
+      return historyPageOf(
+        entry.timeline.read(before === undefined ? undefined : before + 1, limit)
+      )
     }
     return pageHistory(entry.adapter.history?.(entry.handle) ?? [], before, limit)
   }

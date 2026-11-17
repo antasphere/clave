@@ -51,6 +51,21 @@ describe('a chat read as lines (PRDCT-4666)', () => {
     expect(read.mock.calls[0]).toEqual([undefined, 200])
   })
 
+  it('reads on past a page left empty, as long as an older one is there', async () => {
+    // A history page drops the live state, so a page can be empty with more before it.
+    const read = vi.fn(
+      (before?: number): ReadableHistoryPage =>
+        before === undefined
+          ? { items: [], before: 400 }
+          : { items: [{ event: { type: 'user_message', text: 'older' } }], before: null }
+    )
+    expect(await readHistoryLines(read, 5)).toEqual(['You: older'])
+    expect(read.mock.calls).toEqual([
+      [undefined, 200],
+      [400, 200]
+    ])
+  })
+
   it('stops at the start of the conversation, and after 25 pages at most', async () => {
     const short = pager([{ type: 'user_message', text: 'only' }], 200)
     expect(await readHistoryLines(short, 50)).toEqual(['You: only'])

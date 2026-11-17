@@ -6,6 +6,7 @@ import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import type { RestartedSession, Session, SessionRecord } from '@clave/contract/sessions'
 import type { SessionManager } from './session-manager'
 import { serverHistory } from './server-history'
+import { historyPageOf } from './history'
 import { resumeOptions } from './resume-options'
 import { providerSwitchOptions } from './provider-switch'
 import type { PtySpawnOptions } from './adapters/pty-backend'
@@ -289,11 +290,9 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       if (!get(id)) throw new Error(`Unknown session: ${id}`)
       if (base.get(id)) return base.history(id, before, limit)
       // A stopped tab: its last run's file, or its legacy checkpoint.
-      const page = stoppedTimeline(id).read(before === undefined ? undefined : before + 1, limit)
-      return {
-        items: page.items.map(({ event, at }) => ({ event, ...(at !== undefined && { at }) })),
-        before: page.before === null ? null : page.before - 1
-      }
+      return historyPageOf(
+        stoppedTimeline(id).read(before === undefined ? undefined : before + 1, limit)
+      )
     },
     timeline: (id, before, limit) => {
       if (!get(id)) throw new Error(`Unknown session: ${id}`)

@@ -1,5 +1,27 @@
 import type { HistoryItem, HistoryPage } from '../../shared/session-model'
+import type { TimelinePage } from '@clave/contract/timeline'
 import type { TimelineFile } from './timeline-store'
+
+/** Live state, never the conversation's past: a page that held what waits
+ *  for the agent would hand its messages back again (PRDCT-4566). */
+const LIVE_STATE = new Set(['state_change', 'background_tasks', 'waiting_messages'])
+
+/** A timeline page as a history page (PRDCT-4666): the past alone, without
+ *  positions, the cursor one below the sequence. Dropping items never moves
+ *  the cursor, so a page may be shorter than asked, or empty with an older
+ *  page still to read. */
+export function historyPageOf(page: TimelinePage): HistoryPage {
+  return {
+    items: page.items
+      .filter(({ event }) => !LIVE_STATE.has(event.type))
+      .map(({ event, at }) => ({
+        // The contract's event and the model's are one shape.
+        event: event as HistoryItem['event'],
+        ...(at !== undefined && { at })
+      })),
+    before: page.before === null ? null : page.before - 1
+  }
+}
 
 /** How much of a conversation's past a view gets per ask, in events: about a
  *  screen and a half of turns once tool runs have folded into their rows. */
