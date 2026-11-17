@@ -55,6 +55,14 @@ export const KEYMAP_ACTION_IDS = [
 export type KeymapActionId = (typeof KEYMAP_ACTION_IDS)[number]
 export type KeymapScope = 'global' | 'app'
 
+/** The action that starts one tab of a harness without permission prompts,
+ *  by harness id: what the launcher's "Skip permissions" entry and the
+ *  Permissions setting name as its shortcut (PRDCT-4659). */
+export const SKIP_PERMISSIONS_ACTIONS: Readonly<Partial<Record<string, KeymapActionId>>> = {
+  claude: 'newDangerousClaude',
+  codex: 'newYoloCodex'
+}
+
 export interface KeymapActionDefinition {
   id: KeymapActionId
   label: string

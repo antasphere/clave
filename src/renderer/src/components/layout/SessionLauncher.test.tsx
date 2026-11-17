@@ -9,7 +9,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 
-type Handlers = { onSelect?: () => void; onClick?: () => void; disabled?: boolean }
+type Handlers = {
+  onSelect?: (event?: { preventDefault(): void }) => void
+  onClick?: () => void
+  onCheckedChange?: (on: boolean) => void
+  checked?: boolean
+  disabled?: boolean
+}
 
 const { select } = vi.hoisted(() => ({
   select:
@@ -25,7 +31,7 @@ const g = vi.hoisted(() => ({
   openSettings: vi.fn(),
   installed: {} as Record<string, boolean>,
   interactionMode: 'chat' as string,
-  harnesses: {} as Record<string, { preferredModel?: string }>,
+  harnesses: {} as Record<string, { preferredModel?: string; permissionDefault?: string }>,
   accounts: {
     claude: [
       { id: 'work', label: 'Work', title: 'Work', headroom: null },
@@ -53,13 +59,20 @@ vi.mock('@clave/ui/components', () => {
   ): ReactNode => {
     g.items.push({
       attrs: dataOf(props),
-      handlers: { onSelect: props.onSelect, onClick: props.onClick, disabled: props.disabled }
+      handlers: {
+        onSelect: props.onSelect,
+        onClick: props.onClick,
+        onCheckedChange: props.onCheckedChange,
+        checked: props.checked,
+        disabled: props.disabled
+      }
     })
     return (
       <div
         role="menuitem"
         {...dataOf(props)}
         data-disabled={props.disabled ? 'true' : undefined}
+        data-checked={props.checked ? 'true' : undefined}
         title={props.title as string | undefined}
       >
         {props.children}
@@ -71,6 +84,7 @@ vi.mock('@clave/ui/components', () => {
     DropdownMenuTrigger: Box,
     DropdownMenuContent: Box,
     DropdownMenuItem: Item,
+    DropdownMenuCheckboxItem: Item,
     DropdownMenuLabel: Box,
     DropdownMenuSeparator: () => <hr />,
     DropdownMenuShortcut: ({ children }: { children?: ReactNode }) => (
@@ -412,6 +426,54 @@ describe('Pi and OpenCode on a stored provider connection (PRDCT-4496)', () => {
     expect(
       g.items.filter((i) => i.attrs['data-harness-model'] === 'loading').length
     ).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('Skip permissions, a switch under each harness that can skip (PRDCT-4659)', () => {
+  // The switch arms the launches picked after it; the real menu proves that
+  // flow end to end (tests/e2e/launcher-submenu-aim.spec.mjs), since this
+  // static render keeps no state between two clicks.
+  const switches = (): { id: string; handlers: Handlers }[] =>
+    g.items
+      .filter((i) => typeof i.attrs['data-harness-skip-permissions'] === 'string')
+      .map((i) => ({
+        id: i.attrs['data-harness-skip-permissions'] as string,
+        handlers: i.handlers
+      }))
+  const titleOf = (html: string, id: string): string =>
+    new RegExp(`data-harness-skip-permissions="${id}"[^>]*title="([^"]*)"`).exec(html)?.[1] ?? ''
+
+  it('sits under the harnesses whose CLI can start without prompts, off, naming the shortcut', () => {
+    const html = render()
+    expect(switches().map((s) => s.id)).toEqual(['claude', 'codex', 'opencode'])
+    expect(switches().every((s) => !s.handlers.checked && !s.handlers.disabled)).toBe(true)
+    expect(titleOf(html, 'claude')).toContain(
+      '⌘newDangerousClaude starts one on the default model.'
+    )
+    expect(titleOf(html, 'codex')).toContain('⌘newYoloCodex starts one on the default model.')
+    expect(titleOf(html, 'opencode')).not.toContain('starts one')
+  })
+
+  it('keeps the menu open when turned on, so a model or a connection is picked next', () => {
+    render()
+    const preventDefault = vi.fn()
+    switches()[0].handlers.onSelect!({ preventDefault })
+    expect(preventDefault).toHaveBeenCalled()
+    expect(switches()[0].handlers.onCheckedChange).toBeTypeOf('function')
+  })
+
+  it('is on and fixed when the default rung already skips, and the row says so', () => {
+    expect(render()).not.toContain('data-harness-skips-permissions')
+    g.harnesses = { claude: { permissionDefault: 'bypassPermissions' } }
+    const html = render()
+    expect(html).toContain('data-harness-skips-permissions="claude"')
+    expect(html).not.toContain('data-harness-skips-permissions="codex"')
+    const claude = switches().find((s) => s.id === 'claude')!
+    expect(claude.handlers.checked).toBe(true)
+    expect(claude.handlers.disabled).toBe(true)
+    // Another rung is not a skip.
+    g.harnesses = { codex: { permissionDefault: 'workspace-write' } }
+    expect(render()).not.toContain('data-harness-skips-permissions')
   })
 })
 
