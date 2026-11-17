@@ -1,5 +1,7 @@
 import type { TimelinePage } from '@clave/contract/timeline'
-import { SessionTimeline } from './timeline'
+import { SessionTimeline, type Timeline } from './timeline'
+import { JournalTimeline } from './journal-timeline'
+import { removeTimelineFile, writeTimelineFile } from './timeline-store'
 import {
   SessionSchema,
   type AgentState,
@@ -10,6 +12,7 @@ import {
   type ModelOption,
   type CommandOption,
   type SessionControl,
+  type HistoryItem,
   type HistoryPage,
   type BackgroundTask
 } from '../../shared/session-model'
@@ -31,7 +34,7 @@ interface Entry {
    *  turn. Held here, not only in a pane's log, so a pane that subscribes late
    *  reads the live list and a process that goes away takes its list with it. */
   background: BackgroundTask[]
-  timeline: SessionTimeline
+  timeline: Timeline
   /** The provider's last `session_meta`: the model it said it runs on. Held
    *  the way `background` is, so a pane that subscribes after the adapter
    *  said it (OpenCode and Pi say it once, at the handshake) still names the
@@ -61,6 +64,31 @@ export class SessionManager {
   private removed = new Set<(id: string) => void>()
   private all = new Set<(id: string, stream: SessionStream) => void>()
   private added = new Set<(session: Session, meta: AdoptMeta) => void>()
+  /** Where each chat's run is kept whole (PRDCT-4666); none, the bounded
+   *  in-memory timeline (the unit tests, the in-process dev mode). */
+  private timelineDir: string | undefined
+
+  /** From now on, a chat (`events`) session keeps its run whole, one file
+   *  per session in `directory`, read by every late reader. */
+  keepTimelines(directory: string): void {
+    this.timelineDir = directory
+  }
+
+  /** Closes a live session's run file and removes it: the tab is gone for good. */
+  forgetTimeline(id: string): void {
+    const directory = this.timelineDir
+    if (directory === undefined) return
+    this.entries.get(id)?.timeline.close()
+    // A key that is no session id (a terminal's record name) has no file.
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return
+    removeTimelineFile(directory, id)
+  }
+
+  private timelineOf(session: Session, past: () => readonly HistoryItem[]): Timeline {
+    const directory = this.timelineDir
+    if (directory === undefined || session.transport !== 'events') return new SessionTimeline(past)
+    return new JournalTimeline(past, () => writeTimelineFile(directory, session.id))
+  }
 
   registerAdapter(adapter: SessionAdapter): void {
     const previous = this.adapters.get(adapter.id)
@@ -119,7 +147,7 @@ export class SessionManager {
       exited: false,
       ready: false,
       background: [],
-      timeline: new SessionTimeline(() => adapter.history?.(handle) ?? []),
+      timeline: this.timelineOf(parsed, () => adapter.history?.(handle) ?? []),
       meta: null,
       waiting: null
     }
@@ -185,7 +213,12 @@ export class SessionManager {
     this.clearBackground(entry)
     entry.waiting = null
     entry.handle = handle
-    entry.timeline = new SessionTimeline(() => entry.adapter.history?.(entry.handle) ?? [])
+    // The new run truncates the file the previous one still holds open.
+    entry.timeline.close()
+    entry.timeline = this.timelineOf(
+      entry.session,
+      () => entry.adapter.history?.(entry.handle) ?? []
+    )
     entry.exited = false
     this.bind(entry)
     return handle
@@ -246,9 +279,18 @@ export class SessionManager {
   }
 
   /** The page of the session's past that ends at `before` (its end when
-   *  absent), about `limit` events long. */
+   *  absent), about `limit` events long. A chat kept whole is read from its
+   *  run's file, so it holds what happened since the launch replay too
+   *  (PRDCT-4666); without a directory, the adapter's launch replay, as before. */
   history(id: string, before?: number, limit?: number): HistoryPage {
     const entry = this.require(id)
+    if (entry.timeline instanceof JournalTimeline) {
+      const page = entry.timeline.read(before === undefined ? undefined : before + 1, limit)
+      return {
+        items: page.items.map(({ event, at }) => ({ event, ...(at !== undefined && { at }) })),
+        before: page.before === null ? null : page.before - 1
+      }
+    }
     return pageHistory(entry.adapter.history?.(entry.handle) ?? [], before, limit)
   }
 
@@ -406,6 +448,8 @@ export class SessionManager {
     for (const off of entry.off) off()
     entry.streams.clear()
     entry.exits.clear()
+    // The run's file stays: a stopped tab is read from it.
+    entry.timeline.close()
     this.entries.delete(id)
     for (const callback of this.removed) this.notify(() => callback(id))
   }
