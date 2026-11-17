@@ -750,7 +750,13 @@ it('lists the models by version, asking the CLI itself, starting a session that 
       hint: 'Default · Best for everyday, complex tasks',
       resolved: 'claude-opus-5-5'
     },
-    { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', resolved: 'claude-fable-5-1' },
+    { id: 'claude-fable-5-2[1m]', label: 'Fable 5.2', resolved: 'claude-fable-5-2' },
+    {
+      id: 'claude-fable-5-1[1m]',
+      label: 'Fable 5.1',
+      hint: 'Earlier version',
+      resolved: 'claude-fable-5-1'
+    },
     {
       id: 'claude-fable-5[1m]',
       label: 'Fable 5',
@@ -758,9 +764,11 @@ it('lists the models by version, asking the CLI itself, starting a session that 
       resolved: 'claude-fable-5'
     },
     { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', resolved: 'claude-sonnet-5-5' },
+    { id: 'claude-haiku-5-5', label: 'Haiku 5.5', resolved: 'claude-haiku-5-5' },
     {
       id: 'claude-haiku-4-5-20251001',
       label: 'Haiku 4.5',
+      hint: 'Earlier version',
       resolved: 'claude-haiku-4-5-20251001'
     },
     { id: 'claude-opus-6', label: 'Opus 6', hint: 'Opus 6 · Newer', resolved: 'claude-opus-6' }
@@ -2224,11 +2232,12 @@ describe('the default resolved at ready (PRDCT-4256)', () => {
     const { current, earlier } = foldModelOptions(options)
     expect(current.map((o) => o.label)).toEqual([
       'Opus 5.5',
-      'Fable 5.1',
+      'Fable 5.2',
       'Sonnet 5.5',
       'Haiku 5.5'
     ])
     expect(earlier.map((o) => o.label)).toEqual([
+      'Fable 5.1',
       'Fable 5',
       'Haiku 4.5',
       'Sonnet 5',

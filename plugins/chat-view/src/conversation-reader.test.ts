@@ -811,6 +811,32 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.entries()).toHaveLength(1)
     expect(h.history).not.toHaveBeenCalled()
   })
+  it('takes the host’s unpositioned model and waiting snapshots as overlays, before and after the snapshot', async () => {
+    // A Claude chat names its model at ready, so every later subscribe (a
+    // second view, a reconnect) is told it again without a position: that
+    // frame once failed the snapshot and left the conversation empty.
+    const meta: SessionStream = {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null }
+    }
+    const waiting: SessionStream = {
+      kind: 'event',
+      event: { type: 'waiting_messages', messages: [], takes: 'turn' }
+    }
+    const h = setup()
+    h.reader.stream(meta)
+    h.reader.stream(waiting)
+    h.reader.start()
+    await settle()
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    expect(h.entries()).toHaveLength(1)
+    h.reader.stream(meta)
+    h.reader.stream(frame(2, 'next'))
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.timeline).toHaveBeenCalledOnce()
+    expect(h.entries()).toHaveLength(2)
+  })
   it('starts after subscription and buffers meanwhile; snapshot-covered events occur once', async () => {
     const h = setup()
     h.reader.stream(frame(1))

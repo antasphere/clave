@@ -26,11 +26,16 @@ export type ConversationItem = HistoryItem & { current?: boolean }
 // The existing host wrappers send these current-state overlays at subscribe
 // time, outside the manager's positioned transcript. They are not message
 // identity and must not select legacy history or prevent a snapshot loading.
+// `session_meta` and `waiting_messages` are among them (host.ts subscribe): a
+// Claude chat names its model at ready, so every later subscribe repeated it
+// unpositioned and every Claude conversation failed to load.
 const overlay = (frame: Frame): boolean =>
   !frame.position &&
   [
     'state_change',
     'background_tasks',
+    'session_meta',
+    'waiting_messages',
     'permission_request',
     'permission_updated',
     'permission_withdrawn',
