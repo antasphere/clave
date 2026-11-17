@@ -33,6 +33,10 @@ export interface FleetClient {
   disconnect(serverId: ServerId): Promise<void>
   remove(serverId: ServerId): Promise<void>
   list(): ServerConnectionStatus[]
+  /** Asks the push socket of the named server, or of every server with a
+   *  transport, whether its server is still there (see `PushClient.probe`):
+   *  the desktop calls it on a wake, a network back, a window looked at. */
+  probe(serverId?: ServerId): void
   onStatus(listener: (status: ServerConnectionStatus) => void): () => void
   onEvent(listener: (event: Sourced<ServerEventEnvelope>) => void): () => void
   onRequest(listener: (request: Sourced<ViewRequest>) => void): () => void
@@ -287,6 +291,11 @@ export function createFleetClient(options: FleetClientOptions): FleetClient {
       if (entries.get(id) === entry) entries.delete(id)
     },
     list: () => [...entries.values()].map((entry) => ({ ...entry.status })),
+    probe: (id) => {
+      if (closed) return
+      const targets = id === undefined ? [...entries.values()] : [entries.get(id)]
+      for (const entry of targets) if (entry?.backing) safely(() => entry.backing!.push.probe())
+    },
     onStatus: (listener) => listen(statuses, listener),
     onEvent: (listener) => listen(events, listener),
     onRequest: (listener) => listen(requests, listener),
