@@ -17,8 +17,7 @@
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
 import { launchModeFields } from '../../shared/runtime-choices'
-import { historyLines } from '../../shared/history-text'
-import { recentConversation } from './chat-reading'
+import { readChat } from '../../shared/chat-reading'
 import { ownSessionRef } from '../../shared/own-session-ref'
 import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
@@ -220,15 +219,18 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   const requested = Math.min(Math.max(typeof p.lines === 'number' ? p.lines : 100, 1), 500)
   // A chat has no screen: its recent conversation, one line per thing said or
   // done, under the same envelope (PRDCT-4199), read where its views read it
-  // (`recentConversation`, PRDCT-4664).
+  // (`readChat`, PRDCT-4664).
   if (target.transport === 'events') {
-    const items = await recentConversation(
-      () => ctx.api.sessions.timeline(target.id, undefined, requested),
-      () => ctx.api.sessions.history(target.id, undefined, requested)
+    const chat = await readChat(
+      {
+        timeline: (limit) => ctx.api.sessions.timeline(target.id, undefined, limit),
+        history: (limit) => ctx.api.sessions.history(target.id, undefined, limit)
+      },
+      requested
     )
     return {
-      ...(readAnswer(host, target, historyLines(items)) as Record<string, unknown>),
-      history: items
+      ...(readAnswer(host, target, chat.lines) as Record<string, unknown>),
+      history: chat.history
     }
   }
   let screen: { lines: readonly string[] }

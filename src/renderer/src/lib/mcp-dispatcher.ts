@@ -50,7 +50,7 @@ import {
 } from './switch-account'
 import { sessionOwnAccount } from './session-accounts'
 import { pairedServerWorkspaces } from '../store/pairing-store'
-import { historyLines } from '../../../shared/history-text'
+import { readChat } from '../../../shared/chat-reading'
 import type { CodexAccount } from '../../../preload/index.d'
 import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -1633,17 +1633,23 @@ async function handleReadSession(payload: {
   // (PRDCT-4199; until then a server chat answered "no terminal buffer").
   const record = (await window.electronAPI.sessionsList()).find((s) => s.id === target.id)
   if (record?.transport === 'events') {
-    const page = await window.electronAPI.sessionsHistory(target.id, undefined, requested)
-    const text = historyLines(page.items)
+    // Read where the chat's views read it (`readChat`, PRDCT-4664).
+    const chat = await readChat(
+      {
+        timeline: (limit) => window.electronAPI.sessionsTimeline(target.id, undefined, limit),
+        history: (limit) => window.electronAPI.sessionsHistory(target.id, undefined, limit)
+      },
+      requested
+    )
     return {
       sessionId: target.id,
       name: target.name,
       mode: sessionMode(target),
       alive: target.alive,
       agentState: target.agentState ?? null,
-      lines: text.length,
-      text: text.join('\n'),
-      history: page.items
+      lines: chat.lines.length,
+      text: chat.lines.join('\n'),
+      history: chat.history
     }
   }
   if (ownerOf(target.id) !== LOCAL_SERVER_ID) {

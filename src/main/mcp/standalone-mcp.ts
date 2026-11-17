@@ -77,8 +77,7 @@ import type {
   SessionRecord,
   SpawnOptions
 } from '@clave/contract/sessions'
-import { historyLines } from '../../shared/history-text'
-import { recentConversation } from './chat-reading'
+import { readChat } from '../../shared/chat-reading'
 import {
   type TargetHost,
   readAnswer,
@@ -1114,14 +1113,17 @@ function buildServer(
       }
       // A chat has no screen: its recent conversation, one line per thing
       // said or done, under the same envelope (PRDCT-4199), read where its
-      // views read it (`recentConversation`, PRDCT-4664).
-      const items = await recentConversation(
-        () => sessions.timeline?.(target.id, undefined, args.lines),
-        () => sessions.history(target.id, undefined, args.lines)
+      // views read it (`readChat`, PRDCT-4664).
+      const chat = await readChat(
+        {
+          timeline: (limit) => sessions.timeline?.(target.id, undefined, limit),
+          history: (limit) => sessions.history(target.id, undefined, limit)
+        },
+        args.lines
       )
       return text({
-        ...(readAnswer(targetHost, target, historyLines(items)) as Record<string, unknown>),
-        history: items
+        ...(readAnswer(targetHost, target, chat.lines) as Record<string, unknown>),
+        history: chat.history
       })
     }
   )

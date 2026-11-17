@@ -242,6 +242,9 @@ describe('what the hosts tell a view that binds, read by the conversation reader
       'state_change',
       'waiting_messages'
     ])
+    // The one thing more reached the view itself, not only its listener: a
+    // reader that held a list of types would have let it go in silence.
+    expect(pane.shown).toContainEqual({ type: 'effort', effort: 'high' })
     // And the conversation goes on in it.
     s.say({ type: 'assistant_text', delta: ', done.', final: true })
     expect(pane.shown.at(-1)).toEqual({ type: 'assistant_text', delta: ', done.', final: true })

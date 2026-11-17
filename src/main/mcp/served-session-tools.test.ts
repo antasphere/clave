@@ -1675,7 +1675,9 @@ describe('a chat read through the served tools answers its history as lines (PRD
       text: 'You: ship it\nTool: Bash'
     })
     expect(out.history).toHaveLength(2)
-    expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 20]])
+    // Asked by events, the most a page holds: the twenty lines are counted
+    // once an answer's pieces are joined (`readChat`).
+    expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 2000]])
     expect(h.argsOf('sessions.screen')).toEqual([])
   })
 
@@ -1713,7 +1715,7 @@ describe('a chat read through the served tools answers its history as lines (PRD
     >
     expect(out.text).toBe('You: before the resume\nAgent: since the resume')
     expect(out.history).toEqual([before, since])
-    expect(h.argsOf('sessions.timeline')).toEqual([['chat', undefined, 20]])
+    expect(h.argsOf('sessions.timeline')).toEqual([['chat', undefined, 2000]])
     expect(h.argsOf('sessions.history')).toEqual([])
   })
 })

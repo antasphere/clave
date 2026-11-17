@@ -876,8 +876,29 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       ],
       before: null
     }))
+    // PRDCT-4664: the chat is read where its views read it, the session's
+    // timeline, which also holds what the legacy past stops before: what was
+    // said since the tab's process began.
+    const sessionsTimeline = vi.fn(async () => ({
+      items: [
+        {
+          event: { type: 'user_message', text: 'hello server' },
+          at: 1,
+          position: { generation: 'g', sequence: 1 }
+        },
+        {
+          event: { type: 'assistant_text', delta: 'stub heard: hello server', final: true },
+          at: 2,
+          position: { generation: 'g', sequence: 2 }
+        }
+      ],
+      before: null,
+      cursor: { generation: 'g', sequence: 2 },
+      truncated: false
+    }))
     Object.assign(globals.window.electronAPI, {
       sessionsList: vi.fn(async () => [{ id: remote, transport: 'events' }]),
+      sessionsTimeline,
       sessionsHistory,
       fleetScreen: vi.fn(async () => {
         throw new Error('no terminal screen')
@@ -898,8 +919,23 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       lines: 2,
       text: 'You: hello server\nAgent: stub heard: hello server'
     })
-    expect((answer.result as { history: unknown[] }).history).toHaveLength(2)
-    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 50)
+    expect((answer.result as { history: unknown[] }).history).toEqual([
+      { event: { type: 'user_message', text: 'hello server' }, at: 1 },
+      { event: { type: 'assistant_text', delta: 'stub heard: hello server', final: true }, at: 2 }
+    ])
+    // Asked by events, the most a page holds; the fifty lines are counted
+    // once an answer's pieces are joined (`readChat`).
+    expect(sessionsTimeline).toHaveBeenCalledWith(remote, undefined, 2000)
+    expect(sessionsHistory).not.toHaveBeenCalled()
+    // A server older than the timeline answers null: its past is read.
+    sessionsTimeline.mockResolvedValueOnce(null as never)
+    const older = await dispatchOnce('readSession', {
+      callerSessionId: 'rd-lead',
+      sessionId: remote,
+      lines: 50
+    })
+    expect(older.result).toMatchObject({ lines: 2 })
+    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 2000)
   })
 
   it('names the reachable tab when a Mac tab and a server tab share a name (round 3, C4)', async () => {

@@ -620,8 +620,7 @@ export class PiRpcAdapter implements SessionAdapter {
       // A name Pi does not have for that provider: Pi 1.5.2 keeps it as a
       // custom model id (a warning on its stderr alone) and `get_state`
       // names it as asked, so the chat would read as fine until the
-      // provider refuses the first message. Said once, kept in the past
-      // for a pane drawn after the handshake (PRDCT-4427).
+      // provider refuses the first message. Said once (PRDCT-4427).
       else if (wanted && state.model) await this.sayUnknownModel(state)
       // A chat on a connection never names it while Pi runs elsewhere (a
       // resumed session on another provider's model, PRDCT-4496).
