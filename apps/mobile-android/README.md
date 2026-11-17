@@ -133,9 +133,27 @@ the notification channel, Firebase's token, the content resolver), and `app` com
 Stop only your own device: `adb -s emulator-5562 emu kill`; delete only your own AVD:
 `avdmanager delete avd -n clave-native-b`.
 
+## Machine addresses
+
+The phone keeps an ordered list of machine addresses (Settings → Machines → Addresses). Each
+one is a server's own road (a Mac's or a Linux server's Clave address) or a relay; each
+answers `GET /machines` with the hub's access token and serves a machine at `/m/<id>/…`.
+
+- The single "Team relay address" of 0.2.0 and earlier moves into the list on the first read
+  after the upgrade, with its machine cache; no pairing changes.
+- Every address is read on its own. One out of reach shows its error on its own row, lends
+  its last list (machines offline) and never hides the others.
+- Machines are merged by id. A paired machine is always reached on the road its credential
+  was issued for, whichever address lists it, so a device session never goes elsewhere.
+- Removing an address forgets its unpaired machines. A paired machine stays, from its pairing
+  record, until "Forget this machine" on its row clears its notifications and its credential.
+
+`MultiAddressFlowTest` (connected) serves two stand-in machines at two loopback addresses,
+stops the first and chats on the second.
+
 ## The fixture environment (development and test only)
 
-The app's default configuration reaches Clave's real API through the team relay and the
+The app's default configuration reaches Clave's real API through its machine addresses and the
 Antasphere hub. The fixture is an explicit development configuration: this checkout's own
 server as a daemon with the Echo adapter, a local relay and the local OpenID Connect provider
 of `tests/e2e/fixtures/oidc-provider.mjs`, all on the Mac's loopback, reached from the
