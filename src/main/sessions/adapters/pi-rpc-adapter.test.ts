@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PiRpcAdapter, piModelOptions, type PiRpcSpawnOptions } from './pi-rpc-adapter'
-import type { SessionHandle } from '../adapter'
+import type { SessionAdapter, SessionHandle } from '../adapter'
+import { SessionManager } from '../session-manager'
 import type { SessionEvent } from '../../../shared/session-model'
 
 const STAND_IN = resolve(__dirname, '../../../../tests/e2e/fixtures/pi-rpc-agent.mjs')
@@ -833,6 +834,49 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     })
     // The past never reaches the live stream.
     expect(second.events.some((e) => e.type === 'user_message')).toBe(false)
+  })
+
+  // PRDCT-4664: said before any pane is bound, read by the pane that binds
+  // after in the session's timeline, where it stood twice while the adapter
+  // also kept it in its past.
+  it('a refusal stands once in the timeline a pane reads after it was said', async () => {
+    const state = tmp()
+    const adapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+    const id = `pi-${++sequence}`
+    adapter.configure(id, {
+      command: [
+        process.execPath,
+        STAND_IN,
+        '--mode',
+        'rpc',
+        '--session',
+        'nope',
+        '--session-dir',
+        state
+      ],
+      env: { ...process.env }
+    })
+    const manager = new SessionManager()
+    manager.registerAdapter(adapter as unknown as SessionAdapter)
+    await manager.create({
+      id,
+      provider: 'pi',
+      transport: 'events',
+      cwd: state,
+      windowKey: 'w',
+      state: 'idle',
+      createdAt: 0,
+      adapterId: 'pi-chat',
+      title: 'Pi',
+      options: { resume: 'nope' }
+    })
+    live.push({ adapter, handle: { id } })
+    manager.ready(id)
+    await expect.poll(() => manager.get(id)?.state).toBe('ended')
+    const notices = manager.timeline(id).items.filter((item) => item.event.type === 'error')
+    expect(notices.map((item) => item.event)).toEqual([
+      { type: 'error', message: expect.stringMatching(/Pi could not start/), fatal: false }
+    ])
   })
 
   it('a session Pi cannot open: the refusal in its own words, ended and exit 1', async () => {

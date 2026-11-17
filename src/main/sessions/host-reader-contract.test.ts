@@ -142,8 +142,19 @@ function stack(): {
     publish: (id, event) => manager.publishHostEvent(id, event),
     setState: (id, state) => manager.setState(id, state)
   })
+  // A host that tells a late view one thing more than today's do, of a type
+  // no list ever named: the reader must read it as it reads the others. With
+  // a list of types back in the reader, this is the frame that stops it.
+  const host: typeof aware.host = {
+    ...aware.host,
+    subscribe: (id, listener) => {
+      const off = aware.host.subscribe(id, listener)
+      listener({ kind: 'event', event: { type: 'effort', effort: 'high' } })
+      return off
+    }
+  }
   return {
-    host: aware.host,
+    host,
     manager,
     say,
     ask: () => {
@@ -225,6 +236,7 @@ describe('what the hosts tell a view that binds, read by the conversation reader
     // position at the bind. A host that tells one more is read the same way.
     expect(types(pane.told)).toEqual([
       'background_tasks',
+      'effort',
       'permission_request',
       'session_meta',
       'state_change',

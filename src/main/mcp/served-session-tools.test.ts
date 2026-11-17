@@ -1678,4 +1678,42 @@ describe('a chat read through the served tools answers its history as lines (PRD
     expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 20]])
     expect(h.argsOf('sessions.screen')).toEqual([])
   })
+
+  it('reads the chat where its views read it: what it said since a resume is there (PRDCT-4664)', async () => {
+    const h = setup({
+      layouts: [layout('wA', [])],
+      sessions: [session('caller')],
+      records: { caller: record('caller') },
+      parents: {}
+    })
+    h.w.sessions.push(
+      session('chat', { transport: 'events', provider: 'claude', state: 'working' })
+    )
+    h.w.records.chat = record('chat', { displayName: 'A chat' })
+    h.w.parents.chat = 'caller'
+    // The legacy past stops where this process began; the timeline goes on.
+    const before = { event: { type: 'user_message', text: 'before the resume' }, at: 1 }
+    const since = {
+      event: { type: 'assistant_text', delta: 'since the resume', final: true },
+      at: 2
+    }
+    h.impl['sessions.history'] = () => ({ items: [before], before: null })
+    h.impl['sessions.timeline'] = () => ({
+      items: [
+        { ...before, position: { generation: 'g', sequence: 1 } },
+        { ...since, position: { generation: 'g', sequence: 2 } }
+      ],
+      before: null,
+      cursor: { generation: 'g', sequence: 2 },
+      truncated: false
+    })
+    const out = (await run(h, 'readSession', { sessionId: 'chat', lines: 20 })) as Record<
+      string,
+      unknown
+    >
+    expect(out.text).toBe('You: before the resume\nAgent: since the resume')
+    expect(out.history).toEqual([before, since])
+    expect(h.argsOf('sessions.timeline')).toEqual([['chat', undefined, 20]])
+    expect(h.argsOf('sessions.history')).toEqual([])
+  })
 })

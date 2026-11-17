@@ -1151,6 +1151,67 @@ describe('the positioned snapshot/live handoff', () => {
     h.reader.stream(frame(2, 'from the new process', 'new'))
     expect(h.entries().at(-1)).toMatchObject({ text: 'from the new process' })
   })
+  it('refuses a past that cannot cover what an older server’s stream let go, after a reconnect too', async () => {
+    // A server older than the timeline orders nothing: its frames carry no
+    // position and its past is `history`. What the bounded handoff lets go
+    // of such a stream no past can give back, so the read is refused and the
+    // pane says so, rather than a conversation shown with a hole in it. A
+    // reconnect knows nothing of the server it comes back to: a reader that
+    // went on trusting the last one's ordering kept every such frame as
+    // current state and showed the conversation without its beginning
+    // (PRDCT-4664, the verifier's round 1).
+    for (const reconnects of [false, true]) {
+      vi.useFakeTimers()
+      const past = deferred<{ items: []; before: null }>()
+      const h = setup(
+        reconnects
+          ? vi
+              .fn()
+              .mockResolvedValueOnce(page([1]))
+              .mockResolvedValue(null)
+          : vi.fn(async () => null)
+      )
+      if (reconnects) {
+        h.reader.start()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(h.snapshot).toHaveBeenCalledOnce()
+      }
+      h.history.mockImplementationOnce(() => past.promise)
+      if (reconnects) h.reader.reconnect()
+      else h.reader.start()
+      await vi.advanceTimersByTimeAsync(0)
+      for (let n = 1; n <= HANDOFF_MAX_ITEMS + 1; n++)
+        h.reader.stream({ kind: 'event', event: { type: 'user_message', text: `said ${n}` } })
+      past.resolve({ items: [], before: null })
+      await vi.advanceTimersByTimeAsync(130_000)
+      expect(h.failed, reconnects ? 'after a reconnect' : 'from the start').toHaveBeenCalled()
+      expect(h.snapshot).toHaveBeenCalledTimes(reconnects ? 1 : 0)
+      h.reader.stop()
+      vi.useRealTimers()
+    }
+  })
+  it('bounds the current state it keeps through overflows to the newest words', async () => {
+    // PRDCT-4664: current state is kept through a handoff overflow, and is
+    // itself bounded, or a host telling its state in a loop would grow the
+    // handoff without end.
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(vi.fn(() => answer.promise))
+    h.reader.start()
+    h.reader.stream(frame(1))
+    const told = HANDOFF_MAX_ITEMS + 50
+    for (let n = 1; n <= told; n++)
+      h.reader.stream({
+        kind: 'event',
+        event: { type: 'session_meta', model: `model-${n}`, providerSessionId: null }
+      })
+    answer.resolve(page([1]))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    expect(h.event.mock.calls.length).toBeLessThanOrEqual(HANDOFF_MAX_ITEMS)
+    expect(h.state().model).toBe(`model-${told}`)
+  })
   it.each([1, 2])(
     'keeps the highest discarded position across %i late-low overflows',
     async (rounds) => {

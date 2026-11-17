@@ -625,7 +625,7 @@ export class PiRpcAdapter implements SessionAdapter {
       else if (wanted && state.model) await this.sayUnknownModel(state)
       // A chat on a connection never names it while Pi runs elsewhere (a
       // resumed session on another provider's model, PRDCT-4496).
-      await this.keepOnConnection(state, 'start')
+      await this.keepOnConnection(state)
       if (state.ended || state.closing) return
       if (state.options.resume) {
         try {
@@ -709,7 +709,7 @@ export class PiRpcAdapter implements SessionAdapter {
    *  connection's: the last it ran, the one the chat started on, else the
    *  first the connection's provider lists (PRDCT-4496). False when it could
    *  not be: the caller sends nothing, and the reader is told. */
-  private async keepOnConnection(state: HandleState, when: 'start' | 'send'): Promise<boolean> {
+  private async keepOnConnection(state: HandleState): Promise<boolean> {
     const provider = state.launch.connection?.provider
     const connection = state.connection
     if (!provider || !this.offConnection(state)) return true
@@ -749,14 +749,11 @@ export class PiRpcAdapter implements SessionAdapter {
       // PRDCT-4540: with the extension watching, said once a request has in
       // fact gone on the connection (the run's end reads its report).
       if (state.launch.connectionReportFile) state.pendingBack = said
-      else if (when === 'start') this.notice(state, said)
       else this.notice(state, said)
       this.emitMeta(state)
       return true
     }
-    const said = piOffConnection(this.label, foreign, provider)
-    if (when === 'start') this.notice(state, said)
-    else this.notice(state, said)
+    this.notice(state, piOffConnection(this.label, foreign, provider))
     return false
   }
 
@@ -1084,7 +1081,7 @@ export class PiRpcAdapter implements SessionAdapter {
       this.notice(state, `${this.label}: ${errorMessage(error)}`)
       return false
     }
-    return this.keepOnConnection(state, 'send')
+    return this.keepOnConnection(state)
   }
 
   /** Esc: the queue cleared first (an abort leaves queued messages to run),

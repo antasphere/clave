@@ -119,12 +119,16 @@ export function conversationReader(
     }
     buffered = state
     bytes = state.reduce((sum, pending) => sum + sizeOf(pending), 0)
-    // Current state alone past the bound: the newest words are the ones that hold.
+    // Current state alone past the bound: the newest words are the ones that
+    // hold. Said as let go all the same, so a past read from a server that
+    // turns out to order nothing never passes for whole.
     while (
       buffered.length > 1 &&
       (buffered.length > HANDOFF_MAX_ITEMS || bytes > HANDOFF_MAX_BYTES)
-    )
+    ) {
       bytes -= sizeOf(buffered.shift()!)
+      droppedUnordered = true
+    }
   }
   const ordered = (at: SessionPosition): Frame[] => {
     const pending = new Map<number, Frame>()
@@ -333,6 +337,10 @@ export function conversationReader(
       if (stopped) return
       cursor = null
       generation = null
+      // The server this comes back to may not be the one it left (another
+      // version, another machine under the same address): whether it orders
+      // its transcript is its next snapshot's word, or its next frame's.
+      mode = 'unknown'
       clear()
       if (!ready) refresh()
       else {

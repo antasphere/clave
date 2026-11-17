@@ -1490,6 +1490,45 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
     expect(read).toEqual(['stranger'])
   }, 15_000)
 
+  it('reads a chat where its views read it: what it said since a resume is there (PRDCT-4664)', async () => {
+    const before = { event: { type: 'user_message' as const, text: 'before the resume' }, at: 1 }
+    const since = {
+      event: { type: 'assistant_text' as const, delta: 'since the resume', final: true },
+      at: 2
+    }
+    let pastReads = 0
+    const past = (): { items: (typeof before)[]; before: null } => {
+      pastReads += 1
+      return { items: [before], before: null }
+    }
+    const { client, sessions } = await messagingFixture({
+      host: {
+        // The legacy past stops where this process began; the timeline goes on.
+        history: past,
+        timeline: () => ({
+          items: [
+            { ...before, position: { generation: 'g', sequence: 1 } },
+            { ...since, position: { generation: 'g', sequence: 2 } }
+          ],
+          before: null,
+          cursor: { generation: 'g', sequence: 2 },
+          truncated: false
+        })
+      }
+    })
+    sessions.set('stranger', tab('stranger'))
+    const answer = await client.callTool({
+      name: 'clave_read_session',
+      arguments: { sessionId: 'stranger' }
+    })
+    expect(answer.isError).not.toBe(true)
+    expect(payload(answer)).toMatchObject({
+      text: 'You: before the resume\nAgent: since the resume',
+      history: [before, since]
+    })
+    expect(pastReads).toBe(0)
+  }, 15_000)
+
   it('refuses a stopped plain terminal it opened even with resume: true, and restarts nothing', async () => {
     const { client, sessions, restarted, typed } = await messagingFixture({
       records: [
