@@ -70,6 +70,30 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
     expect(bounded.read().truncated).toBe(true)
   })
 
+  it('leaves a provider’s own frame of the replay out of the file and the read', () => {
+    const dir = scratch()
+    const timeline = new JournalTimeline(
+      () => [
+        { event: { type: 'user_message', text: 'q' } },
+        { event: { type: 'provider_event', provider: 'claude', payload: { raw: true } } },
+        { event: { type: 'assistant_text', delta: 'a', final: true } }
+      ],
+      () => writeTimelineFile(dir, 'tab-1')
+    )
+    timeline.initialize()
+    expect(timeline.read().items.map((item) => item.event.type)).toEqual([
+      'user_message',
+      'assistant_text'
+    ])
+    timeline.close()
+    const file = readTimelineFile(dir, 'tab-1')!
+    expect(file.slice(0, file.length).map((item) => item.event.type)).toEqual([
+      'user_message',
+      'assistant_text'
+    ])
+    file.close()
+  })
+
   it('puts a capture made during the seed after the prefix', () => {
     const dir = scratch()
     const positions: SessionPosition[] = []
