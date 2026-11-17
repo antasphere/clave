@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AcpAdapter, acpModelOptions, retryNotice, type AcpSpawnOptions } from './acp-adapter'
-import type { SessionHandle } from '../adapter'
+import type { SessionAdapter, SessionHandle } from '../adapter'
+import { SessionManager } from '../session-manager'
 import type { SessionEvent } from '../../../shared/session-model'
 
 const STAND_IN = resolve(__dirname, '../../../../tests/e2e/fixtures/acp-agent.mjs')
@@ -474,7 +475,7 @@ describe('AcpAdapter against the stand-in agent', () => {
 
   // PRDCT-4427: OpenCode 2.3.0 opens on a model of its own when its
   // configuration names one it does not have, and says nothing.
-  it('a configured model the agent opened another in place of: said once, naming both, kept in the past', async () => {
+  it('a configured model the agent opened another in place of: said once, naming both, and live alone', async () => {
     const s = await open(
       { model: 'deepseek/no-such-model-zz' },
       {
@@ -493,8 +494,9 @@ describe('AcpAdapter against the stand-in agent', () => {
       fatal: false
     }
     expect(s.events.filter((e) => e.type === 'error')).toEqual([said])
-    // A pane drawn after the handshake reads the past: it is there too.
-    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([said])
+    // Said live alone: the session's timeline keeps it for a pane that binds
+    // after it was said, and a copy in the past stood twice (PRDCT-4664).
+    expect(s.adapter.history(s.handle)).toEqual([])
     expect(frames(s.state).some((f) => f.method === 'session/set_config_option')).toBe(false)
     // The model it was asked for, when it is the one it opened on: nothing said.
     const asked = await open(
@@ -614,8 +616,49 @@ describe('AcpAdapter against the stand-in agent', () => {
       { type: 'state_change', state: 'ended' }
     ])
     expect(alive(s.pid)).toBe(false)
-    // Kept in the past too, for a pane that subscribes after it was said.
-    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([s.events[0]])
+    // Said live alone: the session's timeline keeps it for a pane that binds
+    // after it was said, and a copy in the past stood twice (PRDCT-4664).
+    expect(s.adapter.history(s.handle)).toEqual([])
+  })
+
+  // PRDCT-4664: the notice is said before any pane is bound (the separate
+  // server makes a session ready at its start), and the pane that binds after
+  // reads the session's timeline. While the adapter also kept the notice in
+  // its past, the timeline froze that past as its prefix and then ordered the
+  // live copy behind it: every such conversation showed the notice twice.
+  it('a refusal stands once in the timeline a pane reads after it was said', async () => {
+    const state = tmp()
+    const adapter = new AcpAdapter({ id: 'opencode-chat', provider: 'opencode', label: 'OpenCode' })
+    const id = `acp-${++sequence}`
+    adapter.configure(id, {
+      command: [process.execPath, STAND_IN, 'acp'],
+      env: { ...process.env, ACP_STAND_IN_STATE: state, ACP_STAND_IN_REFUSE: 'auth' }
+    })
+    const manager = new SessionManager()
+    manager.registerAdapter(adapter as unknown as SessionAdapter)
+    await manager.create({
+      id,
+      provider: 'opencode',
+      transport: 'events',
+      cwd: state,
+      windowKey: 'w',
+      state: 'idle',
+      createdAt: 0,
+      adapterId: 'opencode-chat',
+      title: 'OpenCode',
+      options: {}
+    })
+    live.push({ adapter, handle: { id } })
+    manager.ready(id)
+    await expect.poll(() => manager.get(id)?.state).toBe('ended')
+    const notices = manager.timeline(id).items.filter((item) => item.event.type === 'error')
+    expect(notices.map((item) => item.event)).toEqual([
+      {
+        type: 'error',
+        message: expect.stringMatching(/Not signed in/),
+        fatal: false
+      }
+    ])
   })
 
   it('an agent that prints a line and exits 1 before it speaks: that line and the status, never its environment', async () => {
@@ -659,7 +702,7 @@ describe('AcpAdapter against the stand-in agent', () => {
     }
     expect(events).toEqual([refusal, { type: 'state_change', state: 'ended' }])
     expect(JSON.stringify(events)).not.toContain(secret)
-    expect(adapter.history(handle).map((item) => item.event)).toEqual([refusal])
+    expect(adapter.history(handle)).toEqual([])
   })
 
   it('kill ends the child', async () => {

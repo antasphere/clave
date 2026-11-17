@@ -19,6 +19,14 @@ const expectedGates = new Map([
   ['Gate, the server spec with the server attached', 'node tests/e2e/run.mjs server-boot'],
   ['Gate, the server spec with the server separate', 'node tests/e2e/run.mjs server-boot'],
   [
+    'Gate, a chat shows its first message with the server in-process',
+    'node tests/e2e/run.mjs chat-shows-first-message'
+  ],
+  [
+    'Gate, a chat shows its first message with the server separate',
+    'node tests/e2e/run.mjs chat-shows-first-message'
+  ],
+  [
     'Gate, the Antasphere sign-in on the three servers',
     'node tests/e2e/run.mjs antasphere-account'
   ],
@@ -39,6 +47,8 @@ const gatePartitions = new Map([
   ['Gate, the server spec with the server in-process', '2'],
   ['Gate, the server spec with the server attached', '4'],
   ['Gate, the server spec with the server separate', '3'],
+  ['Gate, a chat shows its first message with the server in-process', '1'],
+  ['Gate, a chat shows its first message with the server separate', '3'],
   ['Gate, the Antasphere sign-in on the three servers', '4'],
   ["Gate, connected servers follow the app's version", '5'],
   ['Gate, full Markdown client, native lifecycle and responsiveness', '1'],
@@ -66,8 +76,13 @@ describe('the required CI check cannot silently lose execution', () => {
     const expression = jobs['e2e-run'].strategy.matrix.task
     const normal = JSON.parse([...expression.matchAll(/fromJSON\('([^']+)'\)/g)][1][1])
     expect(normal).toEqual(['1', '2', '3', '4', '5'])
+    // Two gates a host, and a third on the two that hold the chat's own
+    // (PRDCT-4664), each about twenty seconds.
+    const gatesOn = { 1: 3, 2: 2, 3: 3, 4: 2, 5: 2 }
     for (const host of normal)
-      expect([...gatePartitions.values()].filter((task) => task === host)).toHaveLength(2)
+      expect([...gatePartitions.values()].filter((task) => task === host)).toHaveLength(
+        gatesOn[host]
+      )
   })
   it('schedules every existing gate exactly once in the normal matrix', () => {
     const job = jobs['e2e-run']
@@ -96,6 +111,9 @@ describe('the required CI check cannot silently lose execution', () => {
     expect(mode('in-process')).toBeUndefined()
     expect(mode('attached')).toBe('attached')
     expect(mode('separate')).toBe('separate')
+    // The chat's gate runs both ways: the two differ where it broke.
+    const chat = gates.filter((g) => g.run === 'node tests/e2e/run.mjs chat-shows-first-message')
+    expect(chat.map((g) => g.env?.CLAVE_E2E_SERVER)).toEqual([undefined, 'separate'])
   })
   it('runs the aggregate even after failure and never swallows its checks', () => {
     const aggregate = jobs.e2e

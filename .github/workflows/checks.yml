@@ -225,6 +225,23 @@ jobs:
         env:
           CLAVE_E2E_SERVER: separate
 
+      # A chat shows its first message and its answer (PRDCT-4664). Every
+      # Claude chat of v3.0.0-beta.25 stayed empty and no step failed: the
+      # report above read 48 failed checks against 17 on the parent commit
+      # and reports only. Run both ways because the two differ where it
+      # broke: the separate server makes a session ready before any view
+      # binds, in-process the first view binds first. On the reader of that
+      # release the separate run is red and the in-process one green.
+      - name: Gate, a chat shows its first message with the server in-process
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '1' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs chat-shows-first-message
+
+      - name: Gate, a chat shows its first message with the server separate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (matrix.task == '3' || matrix.task == 'baseline') }}
+        run: node tests/e2e/run.mjs chat-shows-first-message
+        env:
+          CLAVE_E2E_SERVER: separate
+
       # The Antasphere sign-in through the real app on each of the three
       # servers (PRDCT-3259): in-process, attached to a server of the spec's
       # own, and separate, the packaged default, where the installed app never
