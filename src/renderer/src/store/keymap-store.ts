@@ -97,8 +97,11 @@ export function shortcutLabel(actionId: KeymapActionId): string | null {
   return binding ? formatKeyBinding(binding, config.masterKey) : null
 }
 
-export function useShortcutLabel(actionId: KeymapActionId): string | null {
+/** The label of an action's first binding; null when it has none, or when no
+ *  action is named. */
+export function useShortcutLabel(actionId: KeymapActionId | null): string | null {
   return useKeymapStore((state) => {
+    if (!actionId) return null
     const binding = state.config.bindings[actionId][0]
     return binding ? formatKeyBinding(binding, state.config.masterKey) : null
   })

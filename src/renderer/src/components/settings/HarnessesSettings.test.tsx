@@ -88,6 +88,9 @@ vi.mock('../../store/workspace-store', () => ({
   useWorkspaceStore: { getState: () => ({ workspaces: [], activeWorkspaceId: null }) }
 }))
 vi.mock('./AgentsSettings', () => ({ LaunchProfilesFamily: () => null }))
+vi.mock('../../store/keymap-store', () => ({
+  useShortcutLabel: (id: string | null) => (id ? `⌘${id}` : null)
+}))
 vi.mock('../../store/launch-profile-store', () => ({
   useLaunchProfileStore: (select: (s: Record<string, unknown>) => unknown) =>
     select({ preferences: { customProfiles: [] } })
@@ -252,6 +255,22 @@ describe('the permissions', () => {
     h.agents = [agent('pi', true)]
     render()
     expect(select('harness-permission-pi')).toBeUndefined()
+  })
+
+  it("names each harness's own way to skip the prompts once, and none where there is none (PRDCT-4659)", () => {
+    h.agents = ['claude', 'codex', 'antigravity'].map((id) => agent(id, true))
+    const html = render()
+    const card = (id: string): string => {
+      const at = html.indexOf(`data-harness="${id}"`)
+      return html.slice(at, html.indexOf('</section>', at))
+    }
+    expect(card('claude')).toContain(
+      'One launch can still skip every prompt: Skip permissions in the launcher, or ⌘newDangerousClaude.'
+    )
+    expect(card('codex')).toContain('Skip permissions in the launcher, or ⌘newYoloCodex.')
+    expect(card('claude')).not.toContain('newYoloCodex')
+    expect(card('antigravity')).toContain('What a new session may do without asking.')
+    expect(card('antigravity')).not.toContain('One launch')
   })
 })
 
