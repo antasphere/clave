@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { claudeLaunchModels, findClaudeModel, tableLaunchModels } from './claude-models'
-import { claudeModelOptions } from '../main/sessions/adapters/claude-adapter'
+import {
+  claudeLaunchModels,
+  findClaudeModel,
+  tableLaunchModels
+} from '../../../shared/claude-models'
+import { claudeModelOptions } from './claude-adapter'
 
 // The CLI's own list as Claude Code 2.1.326 answered `initialize`, 2026-11-17,
 // plus a version no table knows yet, standing for the next one to ship.
