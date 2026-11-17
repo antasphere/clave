@@ -345,4 +345,7 @@ describe('a streamed message with other events between its deltas (PRDCT-4666)',
   it('takes a top-level error as the end of the message it interrupts', () => {
     closes({ type: 'error', message: 'a passing failure', fatal: false })
   })
+  it('takes a top-level permission request as the end of the message before it', () => {
+    closes({ type: 'permission_request', id: 'p', description: 'Run a command', options: [] })
+  })
 })
