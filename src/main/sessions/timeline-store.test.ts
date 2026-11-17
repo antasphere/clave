@@ -1,9 +1,22 @@
-import { appendFileSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { HistoryItem } from '../../shared/session-model'
-import { readTimelineFile, removeTimelineFile, writeTimelineFile } from './timeline-store'
+import {
+  readTimelineFile,
+  removeTimelineFile,
+  sweepTimelineFiles,
+  writeTimelineFile
+} from './timeline-store'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -75,6 +88,30 @@ describe('a chat run kept on disk, one item per line (PRDCT-4666)', () => {
     expect(() => writeTimelineFile(dir, '../escape')).toThrow()
     expect(() => readTimelineFile(dir, 'a/b')).toThrow()
     expect(() => removeTimelineFile(dir, '')).toThrow()
+  })
+
+  it('sweeps the run files of sessions that are gone, and nothing else', () => {
+    const dir = scratch()
+    for (const id of ['kept', 'gone-1', 'gone-2']) writeTimelineFile(dir, id).close()
+    writeFileSync(join(dir, 'notes.txt'), 'not a run')
+    writeFileSync(join(dir, 'not an id.jsonl'), '')
+    mkdirSync(join(dir, 'folder.jsonl'))
+    expect(sweepTimelineFiles(dir, new Set()).length).toBe(0)
+    expect(readdirSync(dir).sort()).toEqual(
+      [
+        'folder.jsonl',
+        'gone-1.jsonl',
+        'gone-2.jsonl',
+        'kept.jsonl',
+        'not an id.jsonl',
+        'notes.txt'
+      ].sort()
+    )
+    expect(sweepTimelineFiles(dir, new Set(['kept'])).sort()).toEqual(['gone-1', 'gone-2'])
+    expect(readdirSync(dir).sort()).toEqual(
+      ['folder.jsonl', 'kept.jsonl', 'not an id.jsonl', 'notes.txt'].sort()
+    )
+    expect(sweepTimelineFiles(join(dir, 'missing'), new Set(['kept']))).toEqual([])
   })
 
   it('keeps the file and its directory private', () => {

@@ -540,4 +540,17 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
     // Without a directory there is nothing to forget.
     expect(() => new SessionManager().forgetTimeline('a')).not.toThrow()
   })
+
+  it('never sweeps a live session’s file, and sweeps a gone one', async () => {
+    const { manager, dir } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    await manager.create(session('b'))
+    manager.ready('b')
+    manager.forget('b')
+    manager.sweepTimelines(new Set(['some-recorded-tab']))
+    expect(existsSync(join(dir, 'a.jsonl'))).toBe(true)
+    expect(existsSync(join(dir, 'b.jsonl'))).toBe(false)
+    expect(() => new SessionManager().sweepTimelines(new Set(['a']))).not.toThrow()
+  })
 })

@@ -15,8 +15,10 @@ export interface TimelineFile {
   close(): void
 }
 
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/
+
 function fileOf(directory: string, sessionId: string): string {
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('Invalid timeline session id')
+  if (!SESSION_ID.test(sessionId)) throw new Error('Invalid timeline session id')
   return join(directory, `${sessionId}.jsonl`)
 }
 
@@ -127,4 +129,30 @@ export function readTimelineFile(directory: string, sessionId: string): Timeline
 
 export function removeTimelineFile(directory: string, sessionId: string): void {
   fs.rmSync(fileOf(directory, sessionId), { force: true })
+}
+
+/** Removes the run file of every session not in `keep`, and answers the ids
+ *  removed: a tab closed by a road that never told the manager leaves its
+ *  file, and the next start takes it. Only regular `<session id>.jsonl` files
+ *  are candidates; anything else in the directory stays. An empty `keep`
+ *  removes nothing: a records folder that could not be read must never
+ *  empty the directory. */
+export function sweepTimelineFiles(directory: string, keep: ReadonlySet<string>): string[] {
+  if (keep.size === 0) return []
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  const removed: string[] = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+    const id = entry.name.slice(0, -'.jsonl'.length)
+    if (!SESSION_ID.test(id) || keep.has(id)) continue
+    fs.rmSync(join(directory, entry.name), { force: true })
+    removed.push(id)
+  }
+  return removed
 }

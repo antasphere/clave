@@ -1,7 +1,7 @@
 import type { TimelinePage } from '@clave/contract/timeline'
 import { SessionTimeline, type Timeline } from './timeline'
 import { JournalTimeline } from './journal-timeline'
-import { removeTimelineFile, writeTimelineFile } from './timeline-store'
+import { removeTimelineFile, sweepTimelineFiles, writeTimelineFile } from './timeline-store'
 import {
   SessionSchema,
   type AgentState,
@@ -82,6 +82,15 @@ export class SessionManager {
     // A key that is no session id (a terminal's record name) has no file.
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return
     removeTimelineFile(directory, id)
+  }
+
+  /** Removes the run file of every chat neither in `keep` (the ids with a
+   *  record) nor live here: a running session's file is never swept. */
+  sweepTimelines(keep: ReadonlySet<string>): void {
+    const directory = this.timelineDir
+    // No record at all may be a records folder that could not be read: sweep nothing.
+    if (directory === undefined || keep.size === 0) return
+    sweepTimelineFiles(directory, new Set([...keep, ...this.entries.keys()]))
   }
 
   private timelineOf(session: Session, past: () => readonly HistoryItem[]): Timeline {

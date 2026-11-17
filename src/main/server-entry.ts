@@ -337,6 +337,9 @@ async function main(): Promise<void> {
     terminals,
     resourcesDir: RESOURCES_DIR
   })
+  // PRDCT-4666: a tab that is gone has no record, so its run file goes at the
+  // next start (the records are read from --data-dir once the host above installed its storage).
+  sessionManager.sweepTimelines(new Set(ptyManager.recordedSessionIds()))
   const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
   // The phone's overview of the sidebar: a daemon's own layouts, else the
   // app's layout files when the app named its folder, else nothing to show.
