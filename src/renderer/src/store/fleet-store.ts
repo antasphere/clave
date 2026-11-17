@@ -130,11 +130,31 @@ function pipeline(serverId: string): SavePipeline<LayoutSnapshot> {
  * its sessions are listed, but what ran then is not what runs now, so they
  * carry no agent state until the first live snapshot says.
  */
+/**
+ * What the cached snapshot said each session was doing when the app last ran,
+ * kept out of sight: the first live snapshot of that server compares with it
+ * when the tab carries no state, so a turn that ended while the app was quit
+ * is still marked unread. Read once, then forgotten for that server.
+ */
+const cachedStates = new Map<string, Session['agentState']>()
+
 export function applyFleetSnapshot(
   snapshot: FleetSnapshot,
   options?: { readonly cached?: boolean }
 ): void {
   const cached = options?.cached === true
+  const owner = snapshot.serverId
+  if (cached)
+    for (const s of snapshot.sessions)
+      cachedStates.set(s.id, s.state === 'ended' ? undefined : s.state)
+  // The live apply takes this server's cached states, once.
+  const remembered = new Map<string, Session['agentState']>()
+  if (!cached)
+    for (const [id, value] of cachedStates)
+      if (ownerOf(id) === owner) {
+        remembered.set(id, value)
+        cachedStates.delete(id)
+      }
   if (!cached)
     try {
       const saved = JSON.parse(localStorage.getItem('clave-fleet-snapshots') ?? '{}')
@@ -155,10 +175,11 @@ export function applyFleetSnapshot(
       const old = previous.get(id)
       const cwd = record?.cwd ?? wire?.cwd ?? old?.cwd ?? '/'
       const agentState = cached || wire?.state === 'ended' ? undefined : wire?.state
+      const before = old?.agentState ?? remembered.get(id)
       const unread =
         !cached &&
         old !== undefined &&
-        finishesTurn(old.agentState, agentState) &&
+        finishesTurn(before, agentState) &&
         !state.selectedSessionIds.includes(id)
       return {
         ...old,

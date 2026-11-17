@@ -374,10 +374,36 @@ describe('a snapshot catches up on what happened while the desktop was away (PRD
     const owner = `cached-${serial}`
     fleet.applyFleetSnapshot(at(owner, 'working'), { cached: true })
     expect(tab(owner)).toMatchObject({ agentState: undefined, hasUnseenActivity: false })
-    // The live read says the turn ended meanwhile: not news, since the
-    // desktop never saw it running.
+    fleet.applyFleetSnapshot(at(owner, 'working'))
+    expect(tab(owner)).toMatchObject({ agentState: 'working', hasUnseenActivity: false })
+  })
+
+  it('a turn that ended while the app was quit is marked unread at the first live snapshot', () => {
+    const owner = `quit-working-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'working'), { cached: true })
+    expect(tab(owner).agentState).toBeUndefined()
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner)).toMatchObject({ agentState: 'done', hasUnseenActivity: true })
+  })
+
+  it('a tab the cache already knew at rest gets no mark', () => {
+    const owner = `quit-done-${serial}`
+    fleet.applyFleetSnapshot(at(owner, 'done'), { cached: true })
     fleet.applyFleetSnapshot(at(owner, 'done'))
     expect(tab(owner)).toMatchObject({ agentState: 'done', hasUnseenActivity: false })
+  })
+
+  it('the cached state is the base of the first live snapshot only', () => {
+    const owner = `quit-once-${serial}`
+    const id = resourceKey('session', owner, 'same')
+    fleet.applyFleetSnapshot(at(owner, 'working'), { cached: true })
+    // The first live snapshot says the session has no state to tell (ended).
+    fleet.applyFleetSnapshot(at(owner, 'ended'))
+    expect(tab(owner)).toMatchObject({ agentState: undefined, hasUnseenActivity: false })
+    // The second compares with the live state, not the cache's `working`.
+    fleet.applyFleetSnapshot(at(owner, 'done'))
+    expect(tab(owner)).toMatchObject({ agentState: 'done', hasUnseenActivity: false })
+    expect(id).toBe(tab(owner).id)
   })
 
   it('a cached snapshot is not written back over the stored one', () => {
