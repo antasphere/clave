@@ -569,6 +569,30 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
     }
   })
 
+  it('gives a run file up once a write to it failed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { manager, dir } = kept()
+      await manager.create(session('a'))
+      manager.ready('a')
+      const file = join(dir, 'a.jsonl')
+      expect(existsSync(file)).toBe(true)
+      // The run's file stops taking writes, as a full disk does.
+      const entry = (
+        manager as unknown as {
+          entries: Map<string, { timeline: { file?: { close(): void } } }>
+        }
+      ).entries.get('a')!
+      entry.timeline.file!.close()
+      await manager.write('a', { type: 'user_message', text: 'after the failure' })
+      expect(existsSync(file)).toBe(false)
+      expect(texts(manager.history('a').items)).toContain('after the failure')
+      expect(error).toHaveBeenCalledTimes(1)
+    } finally {
+      error.mockRestore()
+    }
+  })
+
   it('never sweeps a live session’s file, and sweeps a gone one', async () => {
     const { manager, dir } = kept()
     await manager.create(session('a'))

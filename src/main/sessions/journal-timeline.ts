@@ -32,11 +32,13 @@ export class JournalTimeline implements Timeline {
   private fallback: SessionTimeline | undefined
   private readonly pending: Pending[] = []
 
-  /** `name`: what names the run's file in the one error a failure logs. */
+  /** `name`: what names the run's file in the one error a failure logs.
+   *  `discard`: gives a failed run's file up, so a stopped read never takes
+   *  its head for the whole run. */
   constructor(
     private readonly past: () => readonly HistoryItem[],
     private readonly open: () => TimelineFile,
-    private readonly name = 'a chat timeline file'
+    private readonly options: { name?: string; discard?: () => void } = {}
   ) {}
 
   /** A read-only timeline over a finished run: a stopped tab's whole past. */
@@ -131,7 +133,7 @@ export class JournalTimeline implements Timeline {
   /** The rest of the run in memory, its file released, said once. */
   private toMemory(error: unknown, past: () => readonly HistoryItem[], incomplete = false): void {
     console.error(
-      `Keeping ${this.name} in memory for the rest of this run:`,
+      `Keeping ${this.options.name ?? 'a chat timeline file'} in memory for the rest of this run:`,
       error instanceof Error ? error.message : String(error)
     )
     try {
@@ -140,6 +142,14 @@ export class JournalTimeline implements Timeline {
       // Released already, or never opened: nothing more to free.
     }
     this.file = undefined
+    // The file holds a head of the run at most: given up, a stopped read
+    // answers the checkpoint, marked incomplete, and a Resume replays the
+    // provider's own transcript.
+    try {
+      this.options.discard?.()
+    } catch {
+      // Nothing to give up, or no way to: the run goes on regardless.
+    }
     this.fallback = new SessionTimeline(past, incomplete)
     this.fallback.initialize()
   }

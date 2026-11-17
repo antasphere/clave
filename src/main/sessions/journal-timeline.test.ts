@@ -112,12 +112,14 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
 
   it('goes on in memory when its file cannot be opened', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const discard = vi.fn()
     try {
       const timeline = new JournalTimeline(
         () => [{ event: { type: 'user_message', text: 'replayed' } }],
         () => {
           throw new Error('no space left on device')
-        }
+        },
+        { discard }
       )
       const positions: SessionPosition[] = []
       for (let n = 0; n < 3; n++) timeline.capture(eventAt(n), (p) => positions.push(p))
@@ -132,7 +134,46 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
       ])
       expect(page.items.slice(1).map((item) => item.position)).toEqual(positions)
       expect(error).toHaveBeenCalledTimes(1)
+      expect(discard).toHaveBeenCalledTimes(1)
       timeline.close()
+    } finally {
+      error.mockRestore()
+    }
+  })
+
+  /** A file whose nth append fails, as a disk that fills up does. */
+  const failingFile = (n: number): TimelineFile => {
+    const items: HistoryItem[] = []
+    let appends = 0
+    return {
+      get length() {
+        return items.length
+      },
+      append(item) {
+        if (++appends === n) throw new Error('no space left on device')
+        items.push(item)
+      },
+      slice: (start, end) => items.slice(start, end),
+      close: vi.fn()
+    }
+  }
+
+  it('goes on even when giving the failed file up fails too', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const discard = vi.fn(() => {
+        throw new Error('cannot remove')
+      })
+      const timeline = new JournalTimeline(
+        () => [],
+        () => failingFile(2),
+        { discard }
+      )
+      const delivered: number[] = []
+      for (let n = 0; n < 3; n++) timeline.capture(eventAt(n), () => delivered.push(n))
+      expect(delivered).toEqual([0, 1, 2])
+      expect(discard).toHaveBeenCalledTimes(1)
+      expect(timeline.read().items.map((item) => item.event)).toEqual([eventAt(1), eventAt(2)])
     } finally {
       error.mockRestore()
     }
@@ -141,23 +182,12 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
   it('goes on in memory when a write fails mid-run, delivering every event once', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      // A file whose fourth append fails, as a disk that fills up does.
-      const items: HistoryItem[] = []
-      let appends = 0
-      const file: TimelineFile = {
-        get length() {
-          return items.length
-        },
-        append(item) {
-          if (++appends === 4) throw new Error('no space left on device')
-          items.push(item)
-        },
-        slice: (start, end) => items.slice(start, end),
-        close: vi.fn()
-      }
+      const file = failingFile(4)
+      const discard = vi.fn()
       const timeline = new JournalTimeline(
         () => [],
-        () => file
+        () => file,
+        { discard }
       )
       const delivered: [number, SessionPosition][] = []
       for (let n = 0; n < 3; n++) timeline.capture(eventAt(n), (p) => delivered.push([n, p]))
@@ -172,6 +202,11 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
       expect(page.cursor.generation).not.toBe(before)
       expect(file.close).toHaveBeenCalledTimes(1)
       expect(error).toHaveBeenCalledTimes(1)
+      expect(discard).toHaveBeenCalledTimes(1)
+      // The file was closed before it was given up.
+      expect((file.close as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+        discard.mock.invocationCallOrder[0]
+      )
       timeline.close()
     } finally {
       error.mockRestore()
