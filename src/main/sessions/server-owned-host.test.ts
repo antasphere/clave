@@ -1074,6 +1074,24 @@ describe('stopped conversation timeline', () => {
     expect(opened.filter((id) => id === ids[1])).toHaveLength(2)
     f.close()
   })
+  it('answers an evicted stopped tab with the generation it had, so a reader pages on', () => {
+    const dataDir = directory()
+    const files = journals(dataDir)
+    const ids = Array.from({ length: 33 }, (_, n) => `paged-${n}`)
+    for (const id of ids) finishedRun(files.dir, id, run)
+    const f = fixture(dataDir, { timelines: files })
+    Object.assign(f.base, {
+      listAdoptableRecords: () => ids.map((id) => ({ ...record, id }))
+    })
+    const newest = f.host.timeline!(ids[0], undefined, 200)
+    expect(newest.before).not.toBeNull()
+    // 32 other stopped tabs are read: the first one's timeline is let go.
+    for (const id of ids.slice(1)) f.host.timeline!(id)
+    const older = f.host.timeline!(ids[0], newest.before!, 200)
+    expect(older.cursor.generation).toBe(newest.cursor.generation)
+    expect(older.items.at(-1)!.position.sequence).toBe(newest.items[0].position.sequence - 1)
+    f.close()
+  })
   it('forgets a discarded or closed tab’s run file', async () => {
     const dataDir = directory()
     const timelines = journals(dataDir)

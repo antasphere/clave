@@ -22,7 +22,7 @@ interface Pending {
  *  session or its views: the rest of the run goes on in memory, in a bounded
  *  `SessionTimeline`, as a manager with no directory keeps it. */
 export class JournalTimeline implements Timeline {
-  private readonly generation = randomUUID()
+  private generation: string = randomUUID()
   private seeded = false
   private seeding = false
   private draining = false
@@ -49,6 +49,10 @@ export class JournalTimeline implements Timeline {
     )
     timeline.file = file
     timeline.seeded = true
+    // A finished run does not change: its generation is the file's own, so a
+    // re-opening (the cache let it go) answers the same one to a reader.
+    if (file.identity !== undefined) timeline.generation = file.identity
+
     return {
       initialize: () => {},
       capture: () => {

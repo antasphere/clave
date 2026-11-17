@@ -237,6 +237,31 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
     }
   })
 
+  it('answers a finished run’s own generation, the same at every opening of the unchanged file', () => {
+    const dir = scratch()
+    const run = (count: number): void => {
+      const live = new JournalTimeline(
+        () => [],
+        () => writeTimelineFile(dir, 'tab-1')
+      )
+      live.initialize()
+      for (let n = 0; n < count; n++) live.capture(eventAt(n), ignore)
+      live.close()
+    }
+    const generation = (): string => {
+      const stopped = JournalTimeline.stopped(readTimelineFile(dir, 'tab-1')!)
+      const value = stopped.read().cursor.generation
+      stopped.close()
+      return value
+    }
+    run(3)
+    const first = generation()
+    expect(generation()).toBe(first)
+    // A new run rewrites the file, then stops: another run, another generation.
+    run(5)
+    expect(generation()).not.toBe(first)
+  })
+
   it('reads a finished run whole when stopped, and takes no capture', () => {
     const dir = scratch()
     const live = new JournalTimeline(

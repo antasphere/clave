@@ -13,6 +13,11 @@ export interface TimelineFile {
   /** Items [start, end), oldest first. */
   slice(start: number, end: number): HistoryItem[]
   close(): void
+  /** A finished run's identity, the same for as long as the file does not
+   *  change (its inode, size and modification time): what a stopped tab's
+   *  timeline takes as its generation, so a reader paging back across a
+   *  re-opening goes on. Absent on a run being written. */
+  readonly identity?: string
 }
 
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/
@@ -24,9 +29,15 @@ function fileOf(directory: string, sessionId: string): string {
 
 /** The file's lines, by byte offset: `offsets[i]` is where line i begins and
  *  `offsets[length]` where the next one will. */
-function timelineFile(fd: number, offsets: number[], writable: boolean): TimelineFile {
+function timelineFile(
+  fd: number,
+  offsets: number[],
+  writable: boolean,
+  identity?: string
+): TimelineFile {
   let open = true
   return {
+    ...(identity !== undefined && { identity }),
     get length() {
       return offsets.length - 1
     },
@@ -123,7 +134,7 @@ export function readTimelineFile(directory: string, sessionId: string): Timeline
       for (let i = 0; i < n; i++) if (chunk[i] === 0x0a) offsets.push(position + i + 1)
       position += n
     }
-    return timelineFile(fd, offsets, false)
+    return timelineFile(fd, offsets, false, `${stat.ino}-${stat.size}-${stat.mtimeMs}`)
   } catch (error) {
     fs.closeSync(fd)
     throw error
