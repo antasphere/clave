@@ -4,8 +4,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -57,6 +59,49 @@ describe('a chat run kept on disk, one item per line (PRDCT-4666)', () => {
     expect(() => read.append(message(9))).toThrow()
     read.close()
     expect(readTimelineFile(dir, 'missing')).toBeUndefined()
+  })
+
+  // A finished run's identity is a stopped tab's generation: a reader paging
+  // back trusts it to name one content. Each of its three parts tells two
+  // runs apart that the other two cannot (the verifier's P2, P3 and P4).
+  it('names a finished run by its file, its size and its last write, so two runs never share a name', () => {
+    const dir = scratch()
+    const path = join(dir, 'tab-1.jsonl')
+    const run = (directory: string, n: number): void => {
+      const file = writeTimelineFile(directory, 'tab-1')
+      file.append(message(n))
+      file.close()
+    }
+    const identity = (): string | undefined => {
+      const read = readTimelineFile(dir, 'tab-1')!
+      const value = read.identity
+      read.close()
+      return value
+    }
+    const at = (ms: number): void => utimesSync(path, new Date(ms), new Date(ms))
+    run(dir, 1)
+    at(1_800_000_000_000)
+    const first = identity()
+    expect(first).toBeDefined()
+    expect(identity()).toBe(first)
+    // A resume rewrites the same file to the same size: only the time differs.
+    run(dir, 2)
+    at(1_800_000_001_000)
+    const resumed = identity()
+    expect(resumed).not.toBe(first)
+    // The same file and the same time, another size.
+    run(dir, 22)
+    at(1_800_000_001_000)
+    expect(identity()).not.toBe(resumed)
+    // Another file of the same size and time put in its place.
+    run(dir, 3)
+    at(1_800_000_002_000)
+    const before = identity()
+    const other = scratch()
+    run(other, 4)
+    renameSync(join(other, 'tab-1.jsonl'), path)
+    at(1_800_000_002_000)
+    expect(identity()).not.toBe(before)
   })
 
   it('ignores a trailing partial line, as a crash mid-write leaves', () => {
