@@ -164,6 +164,19 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     lastReported.set(status.serverId, line)
     void ports.invoke(FLEET_IPC.status, status).catch(noop)
   })
+  // A socket can die without closing: the machine slept, the network went and
+  // came back. These are the moments the window knows of, so it asks every
+  // server's socket at once whether its server is still there; a silent one
+  // is replaced, and the welcome that follows brings the re-read below
+  // (PRDCT-4668). Tests load this module without a DOM: no globals, no hook.
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    const probe = (): void => fleet.probe()
+    window.addEventListener('online', probe)
+    window.addEventListener('focus', probe)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') probe()
+    })
+  }
   const scopeRecord = (serverId: string, record: SessionRecord): SessionRecord => ({
     ...record,
     id: key(serverId, record.id),
