@@ -3,8 +3,11 @@
  * across drops. It says hello with the token, subscribes to sessions on
  * behalf of its listeners, and when the socket goes it reconnects with a
  * jittered backoff and subscribes every session again, so a view that was
- * listening keeps listening without knowing the socket changed. A refusal
- * of the token is final: the client stops and says so.
+ * listening keeps listening without knowing the socket changed. A socket
+ * can also die without closing (a sleep, a network gone and back): a ping
+ * on a beat, and `probe()` at the moments the desktop knows are risky, find
+ * it silent and replace it. A refusal of the token is final: the client
+ * stops and says so.
  */
 import {
   CLOSE_UNAUTHORIZED,
@@ -36,6 +39,9 @@ export interface PushSocketLike {
   onerror: ((event: unknown) => void) | null
   send(data: string): void
   close(code?: number, reason?: string): void
+  /** Drops the connection without a closing handshake. The Node `ws` socket
+   *  has one; a browser socket does not, and `close()` stands in for it. */
+  terminate?(): void
   readonly readyState: number
 }
 export type PushSocketConstructor = new (url: string) => PushSocketLike
@@ -48,6 +54,20 @@ export interface PushClientOptions {
   /** How the client names itself in its hello. */
   readonly client?: string
   readonly backoff?: { readonly baseMs?: number; readonly maxMs?: number }
+  /**
+   * The check that the open socket still reaches the server. Every
+   * `intervalMs` the client sends a ping and waits `timeoutMs` for any frame;
+   * a tick that comes late (the machine slept, the timers were throttled)
+   * waits only `wakeTimeoutMs`. Defaults: 15000, 10000, 5000. `false` turns
+   * the beat off; `probe()` still works.
+   */
+  readonly heartbeat?:
+    | false
+    | {
+        readonly intervalMs?: number
+        readonly timeoutMs?: number
+        readonly wakeTimeoutMs?: number
+      }
 }
 
 export type Unsubscribe = () => void
@@ -55,8 +75,9 @@ export type Unsubscribe = () => void
 interface Subscription {
   readonly streams: Set<(stream: SessionStream) => void>
   readonly exits: Set<(code: number) => void>
-  /** The server said the session exited: there is nothing to subscribe to
-   *  again after a reconnect, and the listeners stay until their views leave. */
+  /** The server said the session exited. The listeners stay until their views
+   *  leave, and the next welcome asks again: the session may have been resumed
+   *  since, by this desktop or another one (PRDCT-4200). */
   ended: boolean
   /** The record the server answered the subscribe with, null until it does
    *  (and again after a reconnect, until the new answer). */
@@ -104,9 +125,22 @@ export class PushClient {
   // ── Lane D (wave 3): the view requests ──
   private readonly requestListeners = new Set<(request: ViewRequest) => void>()
   private openWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
+  // The heartbeat: the interval that probes, when it last ticked, and the
+  // deadline a probe armed (with the moment it ends).
+  private beat: ReturnType<typeof setInterval> | null = null
+  private lastTick = 0
+  private deadline: ReturnType<typeof setTimeout> | null = null
+  private deadlineAt = 0
+  private readonly intervalMs: number
+  private readonly timeoutMs: number
+  private readonly wakeTimeoutMs: number
 
   constructor(private readonly options: PushClientOptions) {
     this.url = pushUrlOf(options.url)
+    const heartbeat = options.heartbeat || {}
+    this.intervalMs = heartbeat.intervalMs ?? 15_000
+    this.timeoutMs = heartbeat.timeoutMs ?? 10_000
+    this.wakeTimeoutMs = heartbeat.wakeTimeoutMs ?? 5_000
   }
 
   get status(): PushStatus {
@@ -137,6 +171,7 @@ export class PushClient {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    this.stopBeat()
     const socket = this.socket
     this.socket = null
     try {
@@ -149,6 +184,37 @@ export class PushClient {
     this.subscriptions.clear()
     this.setStatus('closed', { final: 'closed' })
     this.failWaiters(new Error('This push client was closed'))
+  }
+
+  /**
+   * Asks whether the server is still there, now. On an open socket it sends a
+   * ping and gives the server `deadlineMs` to send any frame back; silence
+   * means the socket is dead, and the client drops it and reconnects. While
+   * the client waits on its backoff to reconnect, it opens at once instead.
+   * The desktop calls it when the machine wakes, the network comes back or
+   * the window is looked at again, the moments a socket is most likely to
+   * have died without a word. A closed client does nothing.
+   */
+  probe(deadlineMs: number = this.wakeTimeoutMs): void {
+    if (this.stopped) return
+    if (this.status_ === 'reconnecting') {
+      if (!this.timer) return
+      clearTimeout(this.timer)
+      this.timer = null
+      this.open('reconnecting')
+      return
+    }
+    if (this.status_ !== 'open' || !this.socket) return
+    this.send({ _tag: 'ping' })
+    const endsAt = Date.now() + deadlineMs
+    // A deadline already armed that ends sooner stays: a probe only shortens.
+    if (this.deadline && this.deadlineAt <= endsAt) return
+    this.clearDeadline()
+    this.deadlineAt = endsAt
+    this.deadline = setTimeout(() => {
+      this.deadline = null
+      this.dropSilentSocket()
+    }, deadlineMs)
   }
 
   /** Frames of one session, exit included, for as long as the handle lives;
@@ -261,6 +327,8 @@ export class PushClient {
     }
     socket.onmessage = (event) => {
       if (this.socket !== socket) return
+      // Any frame, decodable or not, says the server is there.
+      this.clearDeadline()
       this.receive(textOf(event.data))
     }
     socket.onerror = () => {
@@ -269,6 +337,7 @@ export class PushClient {
     socket.onclose = (event) => {
       if (this.socket !== socket) return
       this.socket = null
+      this.stopBeat()
       if (this.stopped) return
       if (event.code === CLOSE_UNAUTHORIZED) {
         this.stopped = true
@@ -292,6 +361,50 @@ export class PushClient {
     }, delay)
   }
 
+  /** The beat runs while a welcomed socket is the client's: it starts at
+   *  each welcome and stops when that socket goes. */
+  private startBeat(): void {
+    this.stopBeat()
+    if (this.options.heartbeat === false) return
+    this.lastTick = Date.now()
+    this.beat = setInterval(() => {
+      const now = Date.now()
+      // A tick this late means the timers did not run: the machine slept or
+      // throttled them, and a socket across that gap is the likeliest dead.
+      const late = now - this.lastTick > 2 * this.intervalMs
+      this.lastTick = now
+      this.probe(late ? this.wakeTimeoutMs : this.timeoutMs)
+    }, this.intervalMs)
+  }
+
+  private stopBeat(): void {
+    if (this.beat) clearInterval(this.beat)
+    this.beat = null
+    this.clearDeadline()
+  }
+
+  private clearDeadline(): void {
+    if (this.deadline) clearTimeout(this.deadline)
+    this.deadline = null
+  }
+
+  /** No frame came back in time: the socket is dead even if it still says
+   *  open. It is detached first, so its own late close is ignored, then
+   *  dropped, and the client reconnects at once. */
+  private dropSilentSocket(): void {
+    const socket = this.socket
+    if (!socket || this.stopped) return
+    this.socket = null
+    this.stopBeat()
+    try {
+      if (socket.terminate) socket.terminate()
+      else socket.close()
+    } catch {
+      /* already gone */
+    }
+    this.scheduleReconnect(0, 'no answer to a ping')
+  }
+
   private receive(text: string): void {
     const decoded = decodeServerFrame(text)
     if (Either.isLeft(decoded)) {
@@ -304,12 +417,16 @@ export class PushClient {
       case 'welcome': {
         this.attempts = 0
         this.setStatus('open', {})
-        for (const [sessionId, subscription] of this.subscriptions)
-          if (!subscription.ended) {
-            // The new socket answers the subscription anew.
-            subscription.acked = null
-            this.send({ _tag: 'subscribe', sessionId })
-          }
+        this.startBeat()
+        // The new socket answers every subscription anew, the ended ones
+        // too: another desktop may have resumed the session while this one
+        // was away (PRDCT-4200). A stopped record answers with its state, a
+        // session that no longer exists with an error frame.
+        for (const [sessionId, subscription] of this.subscriptions) {
+          subscription.ended = false
+          subscription.acked = null
+          this.send({ _tag: 'subscribe', sessionId })
+        }
         const waiters = this.openWaiters
         this.openWaiters = []
         for (const waiter of waiters) waiter.resolve()
