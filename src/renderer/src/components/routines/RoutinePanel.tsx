@@ -40,6 +40,7 @@ import type { RoutineSurface } from './routine-servers'
 import { rememberTab, rememberedTab, type PanelTab } from './panel-tab'
 import { adoptServerStartedSessions } from '../../lib/adopt-record'
 import { describeCron } from '../../../../main/routines/cron'
+import { HOLDS_WINDOW_DRAG } from '@clave/ui/primitives/window-drag'
 
 type Tab = PanelTab
 
@@ -347,7 +348,11 @@ export function RoutinePanel({
             <EllipsisHorizontalIcon className="w-4 h-4" />
           </IconButton>
           {menuOpen && (
-            <div className="routine-menu menu-surface menu-pop-mount" role="menu">
+            <div
+              {...HOLDS_WINDOW_DRAG}
+              className="routine-menu menu-surface menu-pop-mount"
+              role="menu"
+            >
               <button
                 role="menuitem"
                 className="menu-item"

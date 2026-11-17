@@ -105,25 +105,22 @@ export function WordmarkStrip(): React.ReactElement {
   const trafficLights = useTrafficLights()
   return (
     <div
-      className="wordmark-strip flex-shrink-0 flex items-center"
+      className="window-drag wordmark-strip flex-shrink-0 flex items-center"
       data-wordmark-strip
       data-traffic-lights={trafficLights ? 'true' : 'false'}
-      style={
-        {
-          height: 'var(--content-top-offset)',
-          paddingLeft: trafficLights ? '90px' : '16px',
-          // Optical, not geometric. The lockup's box is 905 frame units deep
-          // against Clave's 761 of ink — the rest is descender room the
-          // attribution's y and p need and the name never uses — so the ink's
-          // mass sits 1.3px above the middle of its own box. Centre the box
-          // and you centre the wrong thing: the mark read high in the strip
-          // for as long as it has existed. 3px of top padding buys the
-          // descender back and lands Clave's ink centre on 25px, the middle
-          // of the 50px band the launcher panel starts under.
-          paddingTop: '3px',
-          WebkitAppRegion: 'drag'
-        } as React.CSSProperties
-      }
+      style={{
+        height: 'var(--content-top-offset)',
+        paddingLeft: trafficLights ? '90px' : '16px',
+        // Optical, not geometric. The lockup's box is 905 frame units deep
+        // against Clave's 761 of ink — the rest is descender room the
+        // attribution's y and p need and the name never uses — so the ink's
+        // mass sits 1.3px above the middle of its own box. Centre the box
+        // and you centre the wrong thing: the mark read high in the strip
+        // for as long as it has existed. 3px of top padding buys the
+        // descender back and lands Clave's ink centre on 25px, the middle
+        // of the 50px band the launcher panel starts under.
+        paddingTop: '3px'
+      }}
     >
       <span className="wordmark-lockup" style={{ pointerEvents: 'none' }}>
         <Wordmark />
