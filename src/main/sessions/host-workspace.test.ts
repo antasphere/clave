@@ -123,6 +123,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('a discarded chat record (PRDCT-4666)', () => {
+  it('takes its run file with it', () => {
+    const f = fixture()
+    const forget = vi.spyOn(f.manager, 'forgetTimeline')
+    f.host.discardRecord('gone')
+    expect(forget).toHaveBeenCalledWith('gone')
+  })
+})
+
 describe('current workspace stamps on live sessions', () => {
   it('reads exact IDs even for unlisted records at the same cwd, and selects only workspaceId', () => {
     const f = fixture()

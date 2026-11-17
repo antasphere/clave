@@ -1,11 +1,10 @@
 import { CapabilityUnavailable } from '@clave/contract/errors'
-import { SessionTimeline } from './timeline'
+import { SessionTimeline, type Timeline } from './timeline'
 import type { SessionHostService } from '@clave/server'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import type { RestartedSession, Session, SessionRecord } from '@clave/contract/sessions'
 import type { SessionManager } from './session-manager'
-import { pageHistory } from './history'
 import { serverHistory } from './server-history'
 import { resumeOptions } from './resume-options'
 import { providerSwitchOptions } from './provider-switch'
@@ -27,6 +26,13 @@ export interface ServerOwnedHostOptions {
    *  it changes, and its last word before its record goes, so a deleted tab's
    *  conversation stays listed and resumable. Absent, nothing is kept. */
   conversations?: ServerConversations
+  /** Each chat's run kept whole on disk (PRDCT-4666): a stopped tab's
+   *  timeline read from its last run's file, and the file removed when the
+   *  tab goes for good. Absent, a stopped tab answers its bounded checkpoint. */
+  timelines?: {
+    stopped(id: string): Timeline | undefined
+    forget(id: string): void
+  }
 }
 
 /** Recover a tab's identity, never its process. Only restart is Resume. */
@@ -70,7 +76,9 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   /** When each tab was last observed at a turn's end. */
   const observedAt = new Map<string, number>()
   const stopHistory = options.subscribeAll((id, stream) => {
-    history.record(id, stream)
+    // A terminal's screen only: a chat's events are kept whole in its run's
+    // file by the manager (PRDCT-4666), never rewritten here at every event.
+    if (stream.kind === 'pty') history.record(id, stream)
     // A turn's end is where a tab's conversation shows a change: the first
     // idle after its start, a new conversation after `/clear`. A terminal
     // ends a turn `idle`, a chat `done` (the Claude and Codex adapters), and
@@ -93,7 +101,23 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       }
     }
   })
-  const stoppedTimelines = new Map<string, SessionTimeline>()
+  const stoppedTimelines = new Map<string, Timeline>()
+  /** Drops a stopped tab's cached timeline, releasing its file. */
+  const dropStopped = (id: string): void => {
+    stoppedTimelines.get(id)?.close()
+    stoppedTimelines.delete(id)
+  }
+  const stoppedTimeline = (id: string): Timeline => {
+    let saved = stoppedTimelines.get(id)
+    if (!saved) {
+      // The last run's file, whole; else the legacy checkpoint, bounded and
+      // with no durable ordering generation.
+      saved =
+        options.timelines?.stopped(id) ?? new SessionTimeline(() => history.read(id).items, true)
+      stoppedTimelines.set(id, saved)
+    }
+    return saved
+  }
   const bindings = new Map<string, Set<() => void>>()
   const unsubscriptions = new Set<() => void>()
   const bind = (id: string): void => {
@@ -121,6 +145,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
   const close = (): void => {
     stopHistory()
     for (const off of [...unsubscriptions]) off()
+    for (const id of [...stoppedTimelines.keys()]) dropStopped(id)
   }
   const pending = new Map<string, Promise<RestartedSession>>()
   const closing = new Set<string>()
@@ -190,8 +215,9 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
         if (last) conversations?.closing(last)
         if (record) base.discardRecord(record.tmuxName ?? record.id)
         history.remove(id)
+        options.timelines?.forget(id)
         observedAt.delete(id)
-        stoppedTimelines.delete(id)
+        dropStopped(id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, id)
       } finally {
         closing.delete(id)
@@ -204,8 +230,9 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
       base.discardRecord(key)
       if (record) {
         history.remove(record.id)
+        options.timelines?.forget(record.id)
         observedAt.delete(record.id)
-        stoppedTimelines.delete(record.id)
+        dropStopped(record.id)
         sidebar.removeSession(SERVER_LAYOUT_KEY, record.id)
       }
     },
@@ -242,18 +269,13 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     },
     history: (id, before, limit) => {
       if (!get(id)) throw new Error(`Unknown session: ${id}`)
-      if (base.get(id)) {
-        const page = base.history(id, before, limit)
-        if (page.items.length || page.before !== null) return page
-        // An empty older page can mean the adapter cursor reached its start,
-        // rather than that the adapter has no transcript. Never mix those offsets.
-        if (before !== undefined) {
-          const latest = base.history(id)
-          if (latest.items.length || latest.before !== null) return page
-        }
+      if (base.get(id)) return base.history(id, before, limit)
+      // A stopped tab: its last run's file, or its legacy checkpoint.
+      const page = stoppedTimeline(id).read(before === undefined ? undefined : before + 1, limit)
+      return {
+        items: page.items.map(({ event, at }) => ({ event, ...(at !== undefined && { at }) })),
+        before: page.before === null ? null : page.before - 1
       }
-      // Adapters without available history still have the daemon's captured stream.
-      return pageHistory(history.read(id).items, before, limit)
     },
     timeline: (id, before, limit) => {
       if (!get(id)) throw new Error(`Unknown session: ${id}`)
@@ -265,13 +287,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
           })
         return base.timeline(id, before, limit)
       }
-      let saved = stoppedTimelines.get(id)
-      if (!saved) {
-        // A checkpoint is bounded and has no durable ordering generation.
-        saved = new SessionTimeline(() => history.read(id).items, true)
-        stoppedTimelines.set(id, saved)
-      }
-      return saved.read(before, limit)
+      return stoppedTimeline(id).read(before, limit)
     },
     write: async (id, input) => {
       requireLive(id)
@@ -338,7 +354,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
           const result = await base.restart(id, account, resendRejected, undefined, provider)
           bind(id)
           if (base.get(id)?.transport === 'events') options.ready(id)
-          stoppedTimelines.delete(id)
+          dropStopped(id)
           return result
         }
         const record = recordOf(id)
@@ -371,7 +387,7 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
           record.link?.kind === 'group-terminal' ? record.link.groupId : null
         )
         bind(id)
-        stoppedTimelines.delete(id)
+        dropStopped(id)
         if (base.get(id)?.transport === 'events') options.ready(id)
         return { ...result, resumed: !!spawn.resumeSessionId }
       }

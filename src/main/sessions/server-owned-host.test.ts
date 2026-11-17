@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionHost, type SessionHostService, type StartInput } from '@clave/server'
@@ -9,9 +9,12 @@ import type {
   SessionInfo,
   SessionStream as WireStream
 } from '@clave/contract/sessions'
-import type { SessionStream } from '../../shared/session-model'
+import type { HistoryItem, SessionStream } from '../../shared/session-model'
 import { standaloneSidebar } from '../server/standalone-sidebar'
 import { OBSERVE_EVERY_MS, serverOwnedSessionHost, stoppedSession } from './server-owned-host'
+import { JournalTimeline } from './journal-timeline'
+import type { Timeline } from './timeline'
+import { readTimelineFile, removeTimelineFile, writeTimelineFile } from './timeline-store'
 import { resumeOptions } from './resume-options'
 import type { ServerConversations } from '../session-history/server-conversations'
 
@@ -69,6 +72,7 @@ function fixture(
   extra: {
     currentState?: (id: string) => WireStateFrame | undefined
     conversations?: ServerConversations
+    timelines?: { stopped(id: string): Timeline | undefined; forget(id: string): void }
   } = {}
 ): {
   host: SessionHostService
@@ -135,6 +139,7 @@ function fixture(
     ready,
     ...(extra.currentState ? { currentState: extra.currentState } : {}),
     ...(extra.conversations ? { conversations: extra.conversations } : {}),
+    ...(extra.timelines ? { timelines: extra.timelines } : {}),
     subscribeAll: (fn) => {
       stream = fn
       return () => {
@@ -153,6 +158,37 @@ function fixture(
     ready,
     emit: (id: string, value: SessionStream) => stream?.(id, value)
   }
+}
+
+/** Where the server keeps each chat's run (PRDCT-4666), as `server-entry.ts` wires it. */
+const journals = (
+  dataDir: string
+): {
+  dir: string
+  stopped(id: string): Timeline | undefined
+  forget: ReturnType<typeof vi.fn<(id: string) => void>>
+} => {
+  const dir = join(dataDir, 'session-timelines')
+  return {
+    dir,
+    stopped: (id) => {
+      const file = readTimelineFile(dir, id)
+      return file && JournalTimeline.stopped(file)
+    },
+    forget: vi.fn((id: string) => removeTimelineFile(dir, id))
+  }
+}
+/** A finished run of a chat, as the manager leaves it on disk. */
+const finishedRun = (dir: string, id: string, items: HistoryItem[]): void => {
+  const file = writeTimelineFile(dir, id)
+  for (const item of items) file.append(item)
+  file.close()
+}
+/** A chat checkpoint as a server before PRDCT-4666 wrote it. */
+const legacyCheckpoint = (dataDir: string, id: string, items: HistoryItem[]): void => {
+  const dir = join(dataDir, 'server-history')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(dir, `${id}.json`), JSON.stringify({ items, terminal: '' }), { mode: 0o600 })
 }
 
 describe('server-owned stopped recovery', () => {
@@ -244,13 +280,13 @@ describe('server-owned stopped recovery', () => {
 
   it('retains chat history and terminal bytes across restart with no provider start', () => {
     const f = fixture()
-    f.emit(record.id, {
-      kind: 'event',
-      event: { type: 'assistant_text', delta: 'persisted answer', final: true }
-    })
+    // The chat's run, as the manager keeps it (PRDCT-4666); the screen, as the host does.
+    finishedRun(journals(f.dataDir).dir, record.id, [
+      { event: { type: 'assistant_text', delta: 'persisted answer', final: true } }
+    ])
     f.emit(record.id, { kind: 'pty', data: Buffer.from('terminal scrollback') })
     f.close()
-    const restarted = fixture(f.dataDir)
+    const restarted = fixture(f.dataDir, { timelines: journals(f.dataDir) })
     expect(restarted.host.history(record.id).items).toContainEqual(
       expect.objectContaining({
         event: { type: 'assistant_text', delta: 'persisted answer', final: true }
@@ -320,74 +356,41 @@ it('closes the actual process when close arrives during an in-flight Resume', as
 })
 
 describe('live server-retained history', () => {
-  it('serves a captured live reply when the adapter has no available history', () => {
+  it('writes no checkpoint for a chat event, and still keeps a terminal screen (PRDCT-4666)', () => {
     const f = fixture()
     f.live.set(record.id, session)
+    const checkpoint = join(f.dataDir, 'server-history', `${record.id}.json`)
     try {
       f.emit(record.id, {
         kind: 'event',
-        event: {
-          type: 'assistant_text',
-          delta: 'real live reply',
-          final: true
-        }
+        event: { type: 'assistant_text', delta: 'real live reply', final: true }
       })
-      expect(
-        readFileSync(join(f.dataDir, 'server-history', `${record.id}.json`), 'utf8')
-      ).toContain('real live reply')
-      expect(f.host.history(record.id).items).toContainEqual(
-        expect.objectContaining({
-          event: { type: 'assistant_text', delta: 'real live reply', final: true }
-        })
-      )
-      expect(f.start).not.toHaveBeenCalled()
+      expect(existsSync(checkpoint)).toBe(false)
+      f.emit(record.id, { kind: 'pty', data: Buffer.from('a screen') })
+      expect(existsSync(checkpoint)).toBe(true)
+      expect(readFileSync(checkpoint, 'utf8')).not.toContain('real live reply')
     } finally {
       f.close()
     }
   })
 
-  it('pages retained live turns using before and limit without leaking another owner', () => {
-    const a = fixture()
-    const b = fixture()
-    a.live.set(record.id, session)
-    b.live.set(record.id, session)
+  it('answers a live session from its host alone, an empty page included (PRDCT-4666)', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    legacyCheckpoint(f.dataDir, record.id, [
+      { event: { type: 'assistant_text', delta: 'checkpoint only', final: true } }
+    ])
+    const empty = { items: [], before: null }
+    const history = vi.spyOn(f.base, 'history').mockReturnValue(empty)
     try {
-      for (let i = 0; i < 3; i++) {
-        a.emit(record.id, { kind: 'event', event: { type: 'user_message', text: `q${i}` } })
-        a.emit(record.id, {
-          kind: 'event',
-          event: {
-            type: 'assistant_text',
-            delta: `a${i}`,
-            final: true
-          }
-        })
-      }
-      const newest = a.host.history(record.id, undefined, 2)
-      expect(newest.before).toBe(4)
-      expect(newest.items.map(({ event }) => event)).toEqual([
-        { type: 'user_message', text: 'q2' },
-        { type: 'assistant_text', delta: 'a2', final: true }
+      expect(f.host.history(record.id, 4, 2)).toBe(empty)
+      expect(f.host.history(record.id)).toBe(empty)
+      expect(history.mock.calls).toEqual([
+        [record.id, 4, 2],
+        [record.id, undefined, undefined]
       ])
-      const middle = a.host.history(record.id, newest.before!, 2)
-      expect(middle.before).toBe(2)
-      expect(middle.items.map(({ event }) => event)).toEqual([
-        { type: 'user_message', text: 'q1' },
-        { type: 'assistant_text', delta: 'a1', final: true }
-      ])
-      const oldest = a.host.history(record.id, middle.before!, 2)
-      expect(oldest.before).toBeNull()
-      expect(oldest.items.map(({ event }) => event)).toEqual([
-        { type: 'user_message', text: 'q0' },
-        { type: 'assistant_text', delta: 'a0', final: true }
-      ])
-      expect(a.host.history(record.id, 0, 2)).toEqual({ items: [], before: null })
-      expect(b.host.history(record.id)).toEqual({ items: [], before: null })
-      expect(a.start).not.toHaveBeenCalled()
-      expect(b.start).not.toHaveBeenCalled()
     } finally {
-      a.close()
-      b.close()
+      f.close()
     }
   })
 
@@ -463,38 +466,6 @@ describe('live server-retained history', () => {
     vi.spyOn(f.base, 'history').mockReturnValue(page)
     try {
       expect(f.host.history(record.id, 6, 2)).toBe(page)
-    } finally {
-      f.close()
-    }
-  })
-
-  it('uses adapter history when it becomes available instead of merging checkpoint offsets', () => {
-    const f = fixture()
-    f.live.set(record.id, session)
-    try {
-      f.emit(record.id, {
-        kind: 'event',
-        event: {
-          type: 'assistant_text',
-          delta: 'retained',
-          final: true
-        }
-      })
-      expect(f.host.history(record.id).items).toHaveLength(1)
-      const page = {
-        items: [
-          {
-            event: {
-              type: 'assistant_text' as const,
-              delta: 'complete provider transcript',
-              final: true
-            }
-          }
-        ],
-        before: null
-      }
-      vi.spyOn(f.base, 'history').mockReturnValue(page)
-      expect(f.host.history(record.id)).toBe(page)
     } finally {
       f.close()
     }
@@ -979,7 +950,7 @@ describe('the server’s own History is told what its tabs run (PRDCT-4321)', ()
 describe('stopped conversation timeline', () => {
   it('reads bounded checkpoints without starting a provider and resets generation across server restart', () => {
     const f = fixture()
-    f.emit(record.id, { kind: 'event', event: { type: 'user_message', text: 'kept' } })
+    legacyCheckpoint(f.dataDir, record.id, [{ event: { type: 'user_message', text: 'kept' } }])
     const first = f.host.timeline!(record.id)
     expect(first.items.map(({ event }) => event.type)).toEqual(['user_message'])
     expect(first.truncated).toBe(true)
@@ -992,6 +963,68 @@ describe('stopped conversation timeline', () => {
     expect(restarted.host.timeline!(record.id).items[0].event).toEqual(first.items[0].event)
     expect(() => restarted.host.timeline!('unknown')).toThrow('Unknown session')
     restarted.close()
+  })
+  const run = Array.from({ length: 1000 }, (_, n) => ({
+    event:
+      n % 2 === 0
+        ? { type: 'user_message' as const, text: `q${n}` }
+        : { type: 'assistant_text' as const, delta: `a${n}`, final: true }
+  }))
+  it('reads a stopped tab whole from its last run’s file (PRDCT-4666)', () => {
+    const dataDir = directory()
+    const timelines = journals(dataDir)
+    finishedRun(timelines.dir, record.id, run)
+    // An older checkpoint is there too: the run's file wins.
+    legacyCheckpoint(dataDir, record.id, [{ event: { type: 'user_message', text: 'old' } }])
+    const f = fixture(dataDir, { timelines })
+    const timelineItems: HistoryItem[] = []
+    let before: number | null | undefined
+    do {
+      const page = f.host.timeline!(record.id, before ?? undefined, 200)
+      expect(page.truncated).toBe(false)
+      timelineItems.unshift(...page.items.map(({ event }) => ({ event })))
+      before = page.before
+    } while (before !== null)
+    expect(timelineItems).toEqual(run)
+    const historyItems: HistoryItem[] = []
+    let older: number | null | undefined
+    do {
+      const page = f.host.history(record.id, older ?? undefined, 200)
+      historyItems.unshift(...page.items)
+      older = page.before
+    } while (older !== null)
+    expect(historyItems).toEqual(run)
+    expect(f.start).not.toHaveBeenCalled()
+    f.close()
+  })
+  it('falls back to the legacy checkpoint when a stopped tab has no run file', () => {
+    const dataDir = directory()
+    legacyCheckpoint(dataDir, record.id, [{ event: { type: 'user_message', text: 'kept' } }])
+    const f = fixture(dataDir, { timelines: journals(dataDir) })
+    const page = f.host.timeline!(record.id)
+    expect(page.items.map(({ event }) => event)).toEqual([{ type: 'user_message', text: 'kept' }])
+    expect(page.truncated).toBe(true)
+    expect(f.host.history(record.id).items.map(({ event }) => event)).toEqual([
+      { type: 'user_message', text: 'kept' }
+    ])
+    f.close()
+  })
+  it('forgets a discarded or closed tab’s run file', async () => {
+    const dataDir = directory()
+    const timelines = journals(dataDir)
+    finishedRun(timelines.dir, record.id, run)
+    const f = fixture(dataDir, { timelines })
+    f.host.timeline!(record.id)
+    f.host.discardRecord(record.id)
+    expect(timelines.forget).toHaveBeenCalledWith(record.id)
+    expect(existsSync(join(timelines.dir, `${record.id}.jsonl`))).toBe(false)
+    f.close()
+    const g = fixture(directory(), { timelines })
+    finishedRun(timelines.dir, record.id, run)
+    await g.host.stop(record.id)
+    expect(timelines.forget).toHaveBeenCalledTimes(2)
+    expect(existsSync(join(timelines.dir, `${record.id}.jsonl`))).toBe(false)
+    g.close()
   })
   it('delegates live timeline reads and rebinds subscriptions after a live restart', async () => {
     const f = fixture()
