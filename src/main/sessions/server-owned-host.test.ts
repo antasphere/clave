@@ -1009,6 +1009,27 @@ describe('stopped conversation timeline', () => {
     ])
     f.close()
   })
+  it('answers the checkpoint when a stopped tab’s run file cannot be read', () => {
+    const dataDir = directory()
+    legacyCheckpoint(dataDir, record.id, [{ event: { type: 'user_message', text: 'kept' } }])
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const stopped = vi.fn((): Timeline | undefined => {
+      throw new Error('A timeline file must be owned by this user with mode 0600')
+    })
+    try {
+      const f = fixture(dataDir, { timelines: { stopped, forget: vi.fn() } })
+      const page = f.host.timeline!(record.id)
+      expect(page.truncated).toBe(true)
+      expect(page.items.map(({ event }) => event)).toEqual([{ type: 'user_message', text: 'kept' }])
+      expect(f.host.history(record.id).items.map(({ event }) => event)).toEqual([
+        { type: 'user_message', text: 'kept' }
+      ])
+      expect(error).toHaveBeenCalledTimes(1)
+      f.close()
+    } finally {
+      error.mockRestore()
+    }
+  })
   it('forgets a discarded or closed tab’s run file', async () => {
     const dataDir = directory()
     const timelines = journals(dataDir)

@@ -107,13 +107,31 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     stoppedTimelines.get(id)?.close()
     stoppedTimelines.delete(id)
   }
+  /** Tabs whose run file could not be read, said once each. */
+  const unreadable = new Set<string>()
+  /** A stopped tab's last run, when its file can be read: a file that cannot
+   *  (a data directory restored without its modes) never breaks the tab, it
+   *  answers the checkpoint as a tab with no file does. */
+  const stoppedRun = (id: string): Timeline | undefined => {
+    try {
+      return options.timelines?.stopped(id)
+    } catch (error) {
+      if (!unreadable.has(id)) {
+        unreadable.add(id)
+        console.error(
+          `The run file of session ${id} cannot be read; answering its checkpoint:`,
+          error instanceof Error ? error.message : String(error)
+        )
+      }
+      return undefined
+    }
+  }
   const stoppedTimeline = (id: string): Timeline => {
     let saved = stoppedTimelines.get(id)
     if (!saved) {
       // The last run's file, whole; else the legacy checkpoint, bounded and
       // with no durable ordering generation.
-      saved =
-        options.timelines?.stopped(id) ?? new SessionTimeline(() => history.read(id).items, true)
+      saved = stoppedRun(id) ?? new SessionTimeline(() => history.read(id).items, true)
       stoppedTimelines.set(id, saved)
     }
     return saved
