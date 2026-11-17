@@ -7,6 +7,7 @@ import type { HistoryItem, Session, SessionStream } from '../../shared/session-m
 import type { SessionAdapter, SessionAdapterEvents } from './adapter'
 import { EchoAdapter } from './adapters/echo-adapter'
 import { SessionManager } from './session-manager'
+import { JournalTimeline } from './journal-timeline'
 
 const session = (id: string, windowKey = 'first'): Session => ({
   id,
@@ -566,6 +567,19 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
       const history = manager.history('a').items
       expect(history.some(({ event }) => live.includes(event.type))).toBe(false)
       expect(texts(history)).toEqual(['saved', 'now', 'now'])
+    }
+  })
+
+  it('closes the previous run’s timeline once at a restart', async () => {
+    const { manager } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    const close = vi.spyOn(JournalTimeline.prototype, 'close')
+    try {
+      await manager.attach('a')
+      expect(close).toHaveBeenCalledTimes(1)
+    } finally {
+      close.mockRestore()
     }
   })
 
