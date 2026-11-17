@@ -130,8 +130,11 @@ describe('a chat run kept on disk, one item per line (PRDCT-4666)', () => {
   it('refuses a run file others can write', () => {
     const dir = scratch()
     writeTimelineFile(dir, 'tab-1').close()
-    chmodSync(join(dir, 'tab-1.jsonl'), 0o666)
-    expect(() => readTimelineFile(dir, 'tab-1')).toThrow()
+    // Writable by the group, by others, or by both.
+    for (const mode of [0o666, 0o664, 0o646]) {
+      chmodSync(join(dir, 'tab-1.jsonl'), mode)
+      expect(() => readTimelineFile(dir, 'tab-1')).toThrow()
+    }
   })
 
   it('makes an existing loose file private when a new run opens it', () => {
