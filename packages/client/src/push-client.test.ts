@@ -226,7 +226,11 @@ describe('the push client against the server', () => {
     await server.stop()
     await until(() => client!.status === 'reconnecting')
     await sleep(100)
-    server = await startEmbedded({ ports: { sessions: new FakeSource() }, port, token: server.token })
+    server = await startEmbedded({
+      ports: { sessions: new FakeSource() },
+      port,
+      token: server.token
+    })
     await client.whenOpen()
     await until(() => errors.length === 1)
     expect(errors[0]).toBe('Unknown session')
