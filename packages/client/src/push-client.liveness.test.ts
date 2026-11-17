@@ -13,7 +13,7 @@ import { aSession, sleep } from '@clave/server/test-support'
 import { Either } from 'effect'
 import { PushClient, type PushSocketConstructor } from './push-client'
 
-const until = async (check: () => boolean, ms = 3000): Promise<void> => {
+const until = async (check: () => boolean, ms = 8000): Promise<void> => {
   const end = Date.now() + ms
   while (!check()) {
     if (Date.now() > end) throw new Error('Condition not met in time')
@@ -81,7 +81,10 @@ describe('the heartbeat on a real socket', () => {
       token: 't',
       WebSocket: WebSocket as unknown as PushSocketConstructor,
       backoff: { baseMs: 10, maxMs: 50 },
-      heartbeat: { intervalMs: 50, timeoutMs: 100, wakeTimeoutMs: 100 }
+      // The limit is a second, far above a loaded machine's stalls: at a
+      // tenth of one, a pong held up by a busy worker read as a dead server
+      // and the last check below saw a third connection.
+      heartbeat: { intervalMs: 50, timeoutMs: 1000, wakeTimeoutMs: 1000 }
     })
     client.subscribe('s1', () => {})
     client.connect()
