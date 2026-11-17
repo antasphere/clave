@@ -123,6 +123,7 @@ export class SessionTimeline implements Timeline {
     }
   }
 
-  /** Nothing to release: the buffer goes with the timeline. */
-  close(): void {}
+  close(): void {
+    // Nothing to release: the buffer goes with the timeline.
+  }
 }

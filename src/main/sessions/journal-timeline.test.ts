@@ -73,14 +73,13 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
   it('puts a capture made during the seed after the prefix', () => {
     const dir = scratch()
     const positions: SessionPosition[] = []
-    let timeline: JournalTimeline
     const past = (): HistoryItem[] => {
       timeline.capture({ type: 'assistant_text', delta: 'during', final: true }, (p) =>
         positions.push(p)
       )
       return [{ event: { type: 'user_message', text: 'past' }, at: 1 }]
     }
-    timeline = new JournalTimeline(past, () => writeTimelineFile(dir, 'tab-1'))
+    const timeline = new JournalTimeline(past, () => writeTimelineFile(dir, 'tab-1'))
     timeline.initialize()
     const page = timeline.read()
     expect(page.items.map((item) => item.event.type)).toEqual(['user_message', 'assistant_text'])

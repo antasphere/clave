@@ -35,8 +35,7 @@ function boundaries(items: HistoryItem[], windowed = false): { turn: boolean[]; 
     const previous = items[i - 1]?.event
     const streaming = previous?.type === 'assistant_text' && previous.final !== true
     step[i] =
-      toolSafe &&
-      ((event.type === 'assistant_text' && !streaming) || event.type === 'tool_call')
+      toolSafe && ((event.type === 'assistant_text' && !streaming) || event.type === 'tool_call')
     if (event.type === 'tool_call' || event.type === 'tool_result')
       reach = Math.max(reach, last.get(event.id) ?? i)
   })
@@ -83,8 +82,7 @@ function pickStart(
   size: number,
   floor = 0
 ): number | undefined {
-  for (let i = target; i > floor && i >= target - size; i--)
-    if (turn[i - offset]) return i
+  for (let i = target; i > floor && i >= target - size; i--) if (turn[i - offset]) return i
   for (let i = target; i > floor; i--) if (step[i - offset]) return i
   return undefined
 }

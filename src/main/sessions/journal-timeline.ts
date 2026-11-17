@@ -156,8 +156,7 @@ export class JournalTimeline implements Timeline {
     if (this.fallback) return (this.fallback as SessionTimeline).read(before, limit)
     if (this.seedError !== undefined) throw this.seedError
     const file = this.file!
-    const end =
-      before === undefined ? file.length : Math.max(0, Math.min(before - 1, file.length))
+    const end = before === undefined ? file.length : Math.max(0, Math.min(before - 1, file.length))
     const page = pageWindow(file, end, limit)
     return {
       items: page.items.map((item, i) => ({
