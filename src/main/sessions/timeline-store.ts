@@ -107,10 +107,13 @@ export function readTimelineFile(directory: string, sessionId: string): Timeline
     if (
       !stat.isFile() ||
       stat.nlink !== 1 ||
-      (stat.mode & 0o077) !== 0 ||
+      (stat.mode & 0o022) !== 0 ||
       (process.getuid && stat.uid !== process.getuid())
     )
-      throw new Error('A timeline file must be owned by this user with mode 0600')
+      throw new Error('A timeline file must be owned by this user, writable by no one else')
+    // Readable by others only (a data directory restored without its modes):
+    // made private again, then read.
+    if ((stat.mode & 0o077) !== 0) fs.fchmodSync(fd, 0o600)
     const offsets = [0]
     const chunk = Buffer.alloc(1024 * 1024)
     let position = 0

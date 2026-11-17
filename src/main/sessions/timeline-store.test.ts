@@ -1,5 +1,6 @@
 import {
   appendFileSync,
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -112,6 +113,33 @@ describe('a chat run kept on disk, one item per line (PRDCT-4666)', () => {
       ['folder.jsonl', 'kept.jsonl', 'not an id.jsonl', 'notes.txt'].sort()
     )
     expect(sweepTimelineFiles(join(dir, 'missing'), new Set(['kept']))).toEqual([])
+  })
+
+  it('reads a run file left readable by others, and makes it private again', () => {
+    const dir = scratch()
+    const file = writeTimelineFile(dir, 'tab-1')
+    file.append(message(0))
+    file.close()
+    chmodSync(join(dir, 'tab-1.jsonl'), 0o644)
+    const read = readTimelineFile(dir, 'tab-1')!
+    expect(read.slice(0, 1)).toEqual([message(0)])
+    read.close()
+    expect(statSync(join(dir, 'tab-1.jsonl')).mode & 0o777).toBe(0o600)
+  })
+
+  it('refuses a run file others can write', () => {
+    const dir = scratch()
+    writeTimelineFile(dir, 'tab-1').close()
+    chmodSync(join(dir, 'tab-1.jsonl'), 0o666)
+    expect(() => readTimelineFile(dir, 'tab-1')).toThrow()
+  })
+
+  it('makes an existing loose file private when a new run opens it', () => {
+    const dir = scratch()
+    writeTimelineFile(dir, 'tab-1').close()
+    chmodSync(join(dir, 'tab-1.jsonl'), 0o644)
+    writeTimelineFile(dir, 'tab-1').close()
+    expect(statSync(join(dir, 'tab-1.jsonl')).mode & 0o777).toBe(0o600)
   })
 
   it('keeps the file and its directory private', () => {
