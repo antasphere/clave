@@ -77,7 +77,7 @@ import type {
   SessionRecord,
   SpawnOptions
 } from '@clave/contract/sessions'
-import { historyLines } from '../../shared/history-text'
+import { readHistoryLines } from '../../shared/history-read'
 import {
   type TargetHost,
   readAnswer,
@@ -1112,12 +1112,13 @@ function buildServer(
         return text(readAnswer(targetHost, target, screen.lines))
       }
       // A chat has no screen: its recent history, one line per thing said
-      // or done, under the same envelope (PRDCT-4199).
-      const page = sessions.history(target.id, undefined, args.lines)
-      return text({
-        ...(readAnswer(targetHost, target, historyLines(page.items)) as Record<string, unknown>),
-        history: page.items
-      })
+      // or done, under the same envelope (PRDCT-4199); counted in lines, not
+      // events, and without the raw events (PRDCT-4666).
+      const lines = await readHistoryLines(
+        (before, limit) => sessions.history(target.id, before, limit),
+        args.lines
+      )
+      return text(readAnswer(targetHost, target, lines))
     }
   )
   server.registerTool(

@@ -50,7 +50,7 @@ import {
 } from './switch-account'
 import { sessionOwnAccount } from './session-accounts'
 import { pairedServerWorkspaces } from '../store/pairing-store'
-import { historyLines } from '../../../shared/history-text'
+import { readHistoryLines } from '../../../shared/history-read'
 import type { CodexAccount } from '../../../preload/index.d'
 import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -1633,8 +1633,11 @@ async function handleReadSession(payload: {
   // (PRDCT-4199; until then a server chat answered "no terminal buffer").
   const record = (await window.electronAPI.sessionsList()).find((s) => s.id === target.id)
   if (record?.transport === 'events') {
-    const page = await window.electronAPI.sessionsHistory(target.id, undefined, requested)
-    const text = historyLines(page.items)
+    // Counted in lines, not events, and without the raw events (PRDCT-4666).
+    const text = await readHistoryLines(
+      (before, limit) => window.electronAPI.sessionsHistory(target.id, before, limit),
+      requested
+    )
     return {
       sessionId: target.id,
       name: target.name,
@@ -1642,8 +1645,7 @@ async function handleReadSession(payload: {
       alive: target.alive,
       agentState: target.agentState ?? null,
       lines: text.length,
-      text: text.join('\n'),
-      history: page.items
+      text: text.join('\n')
     }
   }
   if (ownerOf(target.id) !== LOCAL_SERVER_ID) {
