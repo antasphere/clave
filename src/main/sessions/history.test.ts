@@ -301,4 +301,29 @@ describe('a streamed message with other events between its deltas (PRDCT-4666)',
         expect(text.at(-1)?.startsWith('Agent: a0')).toBe(true)
       }
     })
+
+  const delta = (n: number): HistoryItem =>
+    item({ type: 'assistant_text', delta: ` d${n}`, final: false })
+
+  it('reads a window that starts inside a long message as pageHistory does', () => {
+    // One top-level message of 900 deltas, usage reported every third one:
+    // a window of the last 800 items begins inside it.
+    const items: HistoryItem[] = [
+      ...turn(0),
+      item({ type: 'user_message', text: 'a long answer' }),
+      ...Array.from({ length: 900 }, (_, n) =>
+        n % 3 === 2
+          ? [delta(n), item({ type: 'context_usage', used: n, window: 1000 })]
+          : [delta(n)]
+      ).flat(),
+      item({ type: 'assistant_text', delta: ' end', final: true })
+    ]
+    expect(items.length).toBeGreaterThan(800 + 20)
+    for (let end = 0; end <= items.length; end++) {
+      const reference = pageHistory(items, end, 20)
+      const windowed = pageWindow(asFile(items), end, 20)
+      expect(windowed.start).toBe(reference.before ?? 0)
+      expect(windowed.items).toEqual(reference.items)
+    }
+  })
 })
