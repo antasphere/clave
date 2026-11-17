@@ -1053,7 +1053,7 @@ describe('stopped conversation timeline', () => {
         forget: files.forget
       }
     })
-    f.base.listAdoptableRecords = () => ids.map((id) => ({ ...record, id }))
+    Object.assign(f.base, { listAdoptableRecords: () => ids.map((id) => ({ ...record, id })) })
     for (const id of ids.slice(0, 32)) f.host.timeline!(id)
     // A hit makes the first the newest: the second is now the oldest.
     f.host.timeline!(ids[0])
