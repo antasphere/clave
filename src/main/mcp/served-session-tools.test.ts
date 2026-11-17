@@ -1657,7 +1657,11 @@ describe('a chat read through the served tools answers its history as lines (PRD
       return {
         items: [
           { event: { type: 'user_message', text: 'ship it' }, at: 1 },
-          { event: { type: 'tool_call', id: 't', name: 'Bash', input: {} }, at: 2 }
+          { event: { type: 'tool_call', id: 't', name: 'Bash', input: {} }, at: 2 },
+          // A streamed answer, one event per delta (PRDCT-4666).
+          { event: { type: 'assistant_text', delta: 'Shi', final: false }, at: 3 },
+          { event: { type: 'assistant_text', delta: 'pped', final: false }, at: 4 },
+          { event: { type: 'assistant_text', delta: '.', final: true }, at: 5 }
         ].slice(0, limit),
         before: null
       }
@@ -1671,11 +1675,12 @@ describe('a chat read through the served tools answers its history as lines (PRD
       name: 'A chat',
       alive: true,
       agentState: 'working',
-      lines: 2,
-      text: 'You: ship it\nTool: Bash'
+      lines: 3,
+      text: 'You: ship it\nTool: Bash\nAgent: Shipped.'
     })
-    expect(out.history).toHaveLength(2)
-    expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 20]])
+    // The raw events stay out of an agent's context (PRDCT-4666).
+    expect(out).not.toHaveProperty('history')
+    expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 200]])
     expect(h.argsOf('sessions.screen')).toEqual([])
   })
 })

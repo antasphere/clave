@@ -19,7 +19,16 @@ interface Pending {
  * emissions during that read queue behind the historical prefix. Neither text
  * nor timestamps identify an event. Launch history is an immutable prefix;
  * only subsequent live events need the bounded process-local buffer. */
-export class SessionTimeline {
+/** What the manager keeps of a session's ordered past: bounded in memory
+ *  (`SessionTimeline`) or whole on disk (`JournalTimeline`, PRDCT-4666). */
+export interface Timeline {
+  initialize(): void
+  capture(event: SessionEvent, deliver: (position: SessionPosition) => void): void
+  read(before?: number, limit?: number): TimelinePage
+  close(): void
+}
+
+export class SessionTimeline implements Timeline {
   private readonly generation = randomUUID()
   private sequence = 0
   private seeded = false
@@ -112,5 +121,9 @@ export class SessionTimeline {
       cursor: { generation: this.generation, sequence: this.sequence },
       truncated: this.truncated
     }
+  }
+
+  close(): void {
+    // Nothing to release: the buffer goes with the timeline.
   }
 }

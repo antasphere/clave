@@ -872,7 +872,9 @@ describe('round 1: the window road refuses before resuming, and places by the pa
     const sessionsHistory = vi.fn(async () => ({
       items: [
         { event: { type: 'user_message', text: 'hello server' }, at: 1 },
-        { event: { type: 'assistant_text', delta: 'stub heard: hello server', final: true }, at: 2 }
+        // A streamed answer, one event per delta (PRDCT-4666).
+        { event: { type: 'assistant_text', delta: 'stub heard: ', final: false }, at: 2 },
+        { event: { type: 'assistant_text', delta: 'hello server', final: true }, at: 3 }
       ],
       before: null
     }))
@@ -898,8 +900,9 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       lines: 2,
       text: 'You: hello server\nAgent: stub heard: hello server'
     })
-    expect((answer.result as { history: unknown[] }).history).toHaveLength(2)
-    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 50)
+    // The raw events stay out of an agent's context (PRDCT-4666).
+    expect(answer.result).not.toHaveProperty('history')
+    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 200)
   })
 
   it('names the reachable tab when a Mac tab and a server tab share a name (round 3, C4)', async () => {

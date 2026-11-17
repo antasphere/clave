@@ -227,7 +227,12 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     timeline: (id, before, limit) => manager.timeline(id, before, limit),
     // ── Wave 4, lane C: the session records (PRDCT-3376) ──
     listAdoptableRecords: (ids) => records.listAdoptableRecords(ids),
-    discardRecord: (key) => records.discardRecord(key),
+    // A chat's record is keyed by its id, which also names its run's file
+    // (PRDCT-4666); a terminal's key is its tmux name, which names none.
+    discardRecord: (key) => {
+      records.discardRecord(key)
+      manager.forgetTimeline(key)
+    },
     release: (ids, fallbackWindowKey) => records.release(ids, fallbackWindowKey),
     // ── Wave 4, lane D: the last agent tools (PRDCT-3377) ──
     rename: (id, name) => {
