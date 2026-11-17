@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { ChevronDownIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
+import { HOLDS_WINDOW_DRAG } from '@clave/ui/primitives/window-drag'
 import { useSessionStore } from '../../store/session-store'
 import type { PullStrategy } from './git-status-utils'
 
@@ -62,6 +63,7 @@ export function PullButton({
       </div>
       {menuOpen && (
         <div
+          {...HOLDS_WINDOW_DRAG}
           className="menu-surface menu-pop-mount absolute bottom-full right-0 mb-1 z-50 min-w-[160px] p-1"
           // Opens upward from the bar, so it grows from its bottom edge.
           style={{ transformOrigin: '100% 100%' }}

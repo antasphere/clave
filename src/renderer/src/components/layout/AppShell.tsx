@@ -926,10 +926,7 @@ export function AppShell(): React.JSX.Element {
   return (
     <div className="flex h-screen w-screen bg-surface-50 overflow-hidden transition-colors duration-200">
       {/* Title bar drag region — covers the full background area */}
-      <div
-        className="absolute inset-x-0 top-0 h-12 z-0"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-      />
+      <div className="window-drag absolute inset-x-0 top-0 h-12 z-0" />
 
       {/* Left sidebar */}
       <AnimatePresence initial={false}>
@@ -990,7 +987,7 @@ export function AppShell(): React.JSX.Element {
           <div
             data-toolbar-row
             className={cn(
-              'h-[var(--toolbar-row-h)] flex items-center justify-between px-[var(--frame-inset)] flex-shrink-0',
+              'window-drag h-[var(--toolbar-row-h)] flex items-center justify-between px-[var(--frame-inset)] flex-shrink-0',
               // With the sidebar closed the toolbar is what runs under the
               // traffic lights, so it holds their width open. Whenever they are
               // not there — macOS fullscreen, or any Windows or Linux window,
@@ -1000,7 +997,6 @@ export function AppShell(): React.JSX.Element {
               // toolbar control does.
               !sidebarOpen && trafficLights && 'pl-[4.75rem]'
             )}
-            style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
           >
             {/* Left — sidebar toggle */}
             <div

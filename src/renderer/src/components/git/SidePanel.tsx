@@ -30,6 +30,7 @@ import { useGitStatus } from '../../hooks/use-git-status'
 import { shortenPath } from '../../lib/utils'
 import { HelpPanel } from '../help/HelpPanel'
 import { Tooltip, TooltipTrigger, TooltipContent, IconButton } from '@clave/ui/components'
+import { HOLDS_WINDOW_DRAG } from '@clave/ui/primitives/window-drag'
 import {
   InformationCircleIcon,
   ChevronLeftIcon,
@@ -559,10 +560,7 @@ function SidePanelBody(): React.JSX.Element {
           to land on the terminal card's top edge (--content-top-offset), the
           way the sidebar's launcher does across the other divide. At 4px it
           started four pixels above the card and read as misaligned. */}
-      <div
-        className="flex flex-col gap-2 px-2 pt-2 pb-1 flex-shrink-0"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-      >
+      <div className="window-drag flex flex-col gap-2 px-2 pt-2 pb-1 flex-shrink-0">
         {/* Row 1 — which tab, and nothing else. The controls that used to sit
             out here (the folder picker, collapse-all, help) have gone: the first
             two belong to WHERE the panel is pointed, which is the row below, and
@@ -693,8 +691,7 @@ function SidePanelBody(): React.JSX.Element {
               // A flex row so the path's 16px line box is centred in the bar
               // like the root chip's glyph beside it; as inline content in a
               // 24px line it sat on that line's baseline, 1.5px low.
-              className="flex-1 min-w-0 px-0.5 flex items-center"
-              style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+              className="window-drag flex-1 min-w-0 px-0.5 flex items-center"
             >
               {/* The panel follows the focused tab's machine; when that is a
                   server, the chip says which (PRDCT-4151). */}
@@ -795,6 +792,7 @@ function SidePanelBody(): React.JSX.Element {
             {scopeMenuOpen && (
               <div
                 ref={scopeMenuRef}
+                {...HOLDS_WINDOW_DRAG}
                 className="menu-surface menu-pop-mount fixed z-50 w-[220px] p-1"
                 data-panel-scope-menu
                 style={{
@@ -861,6 +859,7 @@ function SidePanelBody(): React.JSX.Element {
             {pathMenuOpen && parentPaths.length > 0 && (
               <div
                 ref={pathMenuRef}
+                {...HOLDS_WINDOW_DRAG}
                 className="menu-surface menu-pop-mount fixed z-50 min-w-[180px] max-w-[320px] p-1"
                 style={{
                   top: (pathButtonRef.current?.getBoundingClientRect().bottom ?? 0) + 4,

@@ -250,7 +250,8 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
       })
       expect((await api.requests.list()).pending).toEqual([])
       expect(
-        await readFile(join(dataDir, 'server-history', `${providerSession.id}.json`), 'utf8')
+        // A chat's past is kept in its run's file (PRDCT-4666).
+        await readFile(join(dataDir, 'session-timelines', `${providerSession.id}.jsonl`), 'utf8')
       ).not.toContain(privateValue)
     } finally {
       await anotherClient.dispose()

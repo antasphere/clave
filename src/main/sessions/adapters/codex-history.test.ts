@@ -421,7 +421,9 @@ describe('an ended Codex chat keeps its past until its tab closes (PRDCT-3526)',
     callbacks.exit(1)
     await new Promise((resolve) => setImmediate(resolve))
     expect(manager.get('tab')?.state).toBe('ended')
-    expect(texts()).toEqual(['Before the end', 'Kept'])
+    // The manager's history is the chat's timeline (PRDCT-4666): the run's
+    // message follows the past it resumed on.
+    expect(texts()).toEqual(['Before the end', 'Kept', 'hello'])
     // The tab closed for real: the past goes with it.
     await manager.kill('tab')
     expect(() => adapter.history({ id: 'tab' })).toThrow()

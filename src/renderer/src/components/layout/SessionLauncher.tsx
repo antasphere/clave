@@ -44,7 +44,8 @@ import {
   claudeModelName,
   tableLaunchModels
 } from '../../../../shared/claude-models'
-import { isChatProfileRef } from '../../../../shared/open-session-modes'
+import { DANGEROUS_MODE_FAMILIES, isChatProfileRef } from '../../../../shared/open-session-modes'
+import { SKIP_PERMISSIONS_ACTIONS } from '../../../../shared/keymaps'
 import type { ModelOption } from '../../../../shared/session-model'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
 import { harnessPresent } from '../../lib/harness-presence'
@@ -72,6 +73,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
@@ -186,6 +188,9 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [menuAlignOffset, setMenuAlignOffset] = useState(0)
+  /** The harnesses whose Skip permissions switch is on in the open menu, by
+   *  machine and harness; every opening starts with none (PRDCT-4659). */
+  const [skipArmed, setSkipArmed] = useState<ReadonlySet<string>>(() => new Set())
   /** Codex's models, asked of its CLI when the menu first opens (there is
    *  no static list): undefined until the answer, `failed` when it could not
    *  be read (the row then offers its default alone). */
@@ -247,6 +252,13 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     antigravity: antigravityShortcut,
     pi: piShortcut,
     opencode: opencodeShortcut
+  }
+  // The shortcuts that start one tab without permission prompts (PRDCT-4659).
+  const skipClaudeShortcut = useShortcutLabel(SKIP_PERMISSIONS_ACTIONS.claude ?? null)
+  const skipCodexShortcut = useShortcutLabel(SKIP_PERMISSIONS_ACTIONS.codex ?? null)
+  const SKIP_SHORTCUTS: Partial<Record<HarnessId, string | null>> = {
+    claude: skipClaudeShortcut,
+    codex: skipCodexShortcut
   }
   const harnessSettings = useLaunchSettingsStore((s) => s.harnesses)
   const agentStatuses = useAgentUpdatesStore((s) => s.agents)
@@ -354,6 +366,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
    *  not the caret's — see MENU_ICON_INSET. */
   const openMenu = useCallback(
     (open: boolean) => {
+      if (open) setSkipArmed(new Set())
       if (open && agentButtonRef.current && caretRef.current) {
         const button = agentButtonRef.current.getBoundingClientRect()
         const caret = caretRef.current.getBoundingClientRect()
@@ -574,6 +587,9 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     const preferredModel = harnessSettings[harness.id]?.preferredModel
     const pool = firstPoolOf(harness)
     const providerHarness = harness.id === 'pi' || harness.id === 'opencode'
+    // Skip permissions turned on in this harness's submenu (PRDCT-4659).
+    const armKey = `${source.serverId}\u0000${harness.id}`
+    const armed = DANGEROUS_MODE_FAMILIES.has(harness.id) && skipArmed.has(armKey)
     const go = (choice: {
       model?: string
       accountId?: string
@@ -584,7 +600,9 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       launch(
         {
           kind: harness.id,
-          dangerousMode: false,
+          // Skip permissions turned on in this harness's submenu: whatever is
+          // picked under it starts without prompts (PRDCT-4659).
+          dangerousMode: armed,
           // A plain row names no profile: the launch road derives the transport
           // from the interaction mode (`transportProfileFor`), the same way
           // the agent button and the shortcuts do. An Advanced pick names its.
@@ -610,8 +628,29 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       .filter((profile) => !isChatProfileRef(harness.id, profile.id))
     const hasAdvanced = advanced.length > 1
     const isClaude = harness.id === 'claude'
+    // PRDCT-4659: a harness whose CLI can start without permission prompts
+    // has a Skip permissions switch in its submenu, for the launches picked
+    // under it; a bolt on its row says when they skip them, by that switch or
+    // by the default rung of Settings → Harnesses.
+    const canSkip = DANGEROUS_MODE_FAMILIES.has(harness.id)
+    const skipShortcut = options.shortcuts ? (SKIP_SHORTCUTS[harness.id] ?? undefined) : undefined
+    const bypass = harness.permissionRungs.find((rung) => rung.id === harness.bypassRung)
+    const skipsByDefault =
+      bypass !== undefined && harnessSettings[harness.id]?.permissionDefault === bypass.id
+    const skipsMark =
+      skipsByDefault || armed ? (
+        <BoltIcon
+          className="w-3 h-3 flex-shrink-0 text-text-tertiary"
+          title={
+            armed
+              ? 'Starts without permission prompts'
+              : 'Starts without permission prompts (Settings → Harnesses)'
+          }
+          data-harness-skips-permissions={harness.id}
+        />
+      ) : null
 
-    if (!models && !hasAdvanced && !isClaude) {
+    if (!models && !hasAdvanced && !isClaude && !canSkip) {
       return (
         <DropdownMenuItem
           key={harness.id}
@@ -621,6 +660,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
         >
           <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
           <span className="flex-1">{harness.name}</span>
+          {skipsMark}
           {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
         </DropdownMenuItem>
       )
@@ -778,6 +818,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
         >
           <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
           <span className="flex-1">{harness.name}</span>
+          {skipsMark}
           {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
           <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
         </DropdownMenuSubTrigger>
@@ -790,7 +831,38 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           ) : (
             models?.map(modelRow)
           )}
-          {(hasAdvanced || isClaude) && models && <DropdownMenuSeparator />}
+          {(hasAdvanced || isClaude || canSkip) && models && <DropdownMenuSeparator />}
+          {/* A switch, not a launch: the menu stays open, and the model or the
+              connection picked next starts without prompts, which the
+              "(skip permissions)" and "(YOLO)" rows did before PRDCT-4423 for
+              the default model alone (PRDCT-4659). On and fixed when the
+              default rung already skips them. */}
+          {canSkip && (
+            <DropdownMenuCheckboxItem
+              data-harness-skip-permissions={harness.id}
+              checked={skipsByDefault || armed}
+              disabled={skipsByDefault}
+              title={
+                skipsByDefault
+                  ? 'Every launch skips them: Settings → Harnesses'
+                  : `${bypass?.hint ?? 'Never asks before it acts.'}${skipShortcut ? ` ${skipShortcut} starts one on the default model.` : ''}`
+              }
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(on) =>
+                setSkipArmed((current) => {
+                  const next = new Set(current)
+                  if (on) next.add(armKey)
+                  else next.delete(armKey)
+                  return next
+                })
+              }
+            >
+              <span className="flex-1">Skip permissions</span>
+              {(skipsByDefault || armed) && (
+                <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+              )}
+            </DropdownMenuCheckboxItem>
+          )}
           {hasAdvanced && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger data-harness-advanced={harness.id}>

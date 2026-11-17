@@ -17,6 +17,8 @@ import { useSessionStore } from '../../store/session-store'
 import { connectionsForModel } from '../../lib/switch-account'
 import { harnessPresent } from '../../lib/harness-presence'
 import { useLaunchProfileStore } from '../../store/launch-profile-store'
+import { useShortcutLabel } from '../../store/keymap-store'
+import { SKIP_PERMISSIONS_ACTIONS } from '../../../../shared/keymaps'
 import { CONNECTION_COMPANY_BY_POOL } from './connection-companies'
 import { AgentRow } from './AgentUpdatesSection'
 import { LaunchProfilesFamily } from './AgentsSettings'
@@ -149,14 +151,21 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
 function PermissionsRow({ harness }: { harness: Harness }): React.JSX.Element | null {
   const value = useLaunchSettingsStore((s) => s.harnesses[harness.id]?.permissionDefault ?? '')
   const setHarness = useLaunchSettingsStore((s) => s.setHarness)
+  const skipShortcut = useShortcutLabel(SKIP_PERMISSIONS_ACTIONS[harness.id] ?? null)
   if (harness.permissionRungs.length === 0) return null
   const own = harness.defaultRung
     ? harness.permissionRungs.find((rung) => rung.id === harness.defaultRung)?.label
     : null
+  // The one-launch way past the prompts, for a harness that has one: the
+  // launcher's entry and this harness's own shortcut (PRDCT-4659; the text
+  // said Cmd+Y on every card, Codex's shortcut).
+  const oneLaunch = harness.bypassRung
+    ? ` One launch can still skip every prompt: Skip permissions in the launcher${skipShortcut ? `, or ${skipShortcut}` : ''}.`
+    : ''
   return (
     <SettingsRow
       label="Permissions"
-      description="What a new session may do without asking. One launch can still skip every prompt (Cmd+Y)."
+      description={`What a new session may do without asking.${oneLaunch}`}
     >
       <SettingsSelect<string>
         value={value || DEFAULT}

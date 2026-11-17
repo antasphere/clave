@@ -4,6 +4,7 @@ import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
 import { useSessionStore } from '../../store/session-store'
 import { cn, POPOVER_EDGE_GAP } from '@clave/ui/components'
+import { HOLDS_WINDOW_DRAG } from '@clave/ui/primitives/window-drag'
 import { CheckIcon } from '@heroicons/react/24/outline'
 
 const statusColors: Record<string, string> = {
@@ -130,6 +131,7 @@ export function AgentPickerPopover({
     return createPortal(
       <div
         ref={menuRef}
+        {...HOLDS_WINDOW_DRAG}
         className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] py-3 px-3"
         style={position}
       >
@@ -146,6 +148,7 @@ export function AgentPickerPopover({
   return createPortal(
     <div
       ref={menuRef}
+      {...HOLDS_WINDOW_DRAG}
       className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] flex flex-col p-1"
       style={position}
     >

@@ -1476,7 +1476,15 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
       host: {
         history: (id) => {
           read.push(id)
-          return { items: [], before: null }
+          return {
+            items: [
+              { event: { type: 'user_message', text: 'hi' } },
+              // A streamed answer, one event per delta (PRDCT-4666).
+              { event: { type: 'assistant_text', delta: 'he', final: false } },
+              { event: { type: 'assistant_text', delta: 'llo', final: true } }
+            ],
+            before: null
+          }
         }
       }
     })
@@ -1486,7 +1494,13 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
       arguments: { sessionId: 'stranger' }
     })
     expect(answer.isError).not.toBe(true)
-    expect(payload(answer)).toMatchObject({ sessionId: 'stranger', history: [] })
+    expect(payload(answer)).toMatchObject({
+      sessionId: 'stranger',
+      lines: 2,
+      text: 'You: hi\nAgent: hello'
+    })
+    // The raw events stay out of an agent's context (PRDCT-4666).
+    expect(payload(answer)).not.toHaveProperty('history')
     expect(read).toEqual(['stranger'])
   }, 15_000)
 
