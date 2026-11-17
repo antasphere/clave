@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SessionPosition, TimelinePage } from '@clave/contract/timeline'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HistoryItem, SessionEvent } from '../../shared/session-model'
 import { JournalTimeline } from './journal-timeline'
 import { SessionTimeline, type Timeline } from './timeline'
-import { readTimelineFile, writeTimelineFile } from './timeline-store'
+import { readTimelineFile, writeTimelineFile, type TimelineFile } from './timeline-store'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -109,6 +109,74 @@ describe('a chat kept whole on disk (PRDCT-4666)', () => {
     ])
     expect(page.items[0].position.generation).not.toBe(firstGeneration)
     second.close()
+  })
+
+  it('goes on in memory when its file cannot be opened', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const timeline = new JournalTimeline(
+        () => [{ event: { type: 'user_message', text: 'replayed' } }],
+        () => {
+          throw new Error('no space left on device')
+        }
+      )
+      const positions: SessionPosition[] = []
+      for (let n = 0; n < 3; n++) timeline.capture(eventAt(n), (p) => positions.push(p))
+      expect(positions).toHaveLength(3)
+      expect(positions.every((p) => p.sequence > 0)).toBe(true)
+      const page = timeline.read()
+      expect(page.items.map((item) => item.event)).toEqual([
+        { type: 'user_message', text: 'replayed' },
+        eventAt(0),
+        eventAt(1),
+        eventAt(2)
+      ])
+      expect(page.items.slice(1).map((item) => item.position)).toEqual(positions)
+      expect(error).toHaveBeenCalledTimes(1)
+      timeline.close()
+    } finally {
+      error.mockRestore()
+    }
+  })
+
+  it('goes on in memory when a write fails mid-run, delivering every event once', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // A file whose fourth append fails, as a disk that fills up does.
+      const items: HistoryItem[] = []
+      let appends = 0
+      const file: TimelineFile = {
+        get length() {
+          return items.length
+        },
+        append(item) {
+          if (++appends === 4) throw new Error('no space left on device')
+          items.push(item)
+        },
+        slice: (start, end) => items.slice(start, end),
+        close: vi.fn()
+      }
+      const timeline = new JournalTimeline(
+        () => [],
+        () => file
+      )
+      const delivered: [number, SessionPosition][] = []
+      for (let n = 0; n < 3; n++) timeline.capture(eventAt(n), (p) => delivered.push([n, p]))
+      const before = timeline.read().cursor.generation
+      for (let n = 3; n < 6; n++) timeline.capture(eventAt(n), (p) => delivered.push([n, p]))
+      expect(delivered.map(([n]) => n)).toEqual([0, 1, 2, 3, 4, 5])
+      expect(delivered.every(([, p]) => p.sequence > 0)).toBe(true)
+      const page = timeline.read()
+      expect(page.truncated).toBe(true)
+      expect(page.items.map((item) => item.event)).toEqual([eventAt(3), eventAt(4), eventAt(5)])
+      expect(page.items.map((item) => item.position)).toEqual(delivered.slice(3).map(([, p]) => p))
+      expect(page.cursor.generation).not.toBe(before)
+      expect(file.close).toHaveBeenCalledTimes(1)
+      expect(error).toHaveBeenCalledTimes(1)
+      timeline.close()
+    } finally {
+      error.mockRestore()
+    }
   })
 
   it('reads a finished run whole when stopped, and takes no capture', () => {

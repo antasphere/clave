@@ -87,7 +87,11 @@ export class SessionManager {
   private timelineOf(session: Session, past: () => readonly HistoryItem[]): Timeline {
     const directory = this.timelineDir
     if (directory === undefined || session.transport !== 'events') return new SessionTimeline(past)
-    return new JournalTimeline(past, () => writeTimelineFile(directory, session.id))
+    return new JournalTimeline(
+      past,
+      () => writeTimelineFile(directory, session.id),
+      `the timeline file of session ${session.id}`
+    )
   }
 
   registerAdapter(adapter: SessionAdapter): void {
