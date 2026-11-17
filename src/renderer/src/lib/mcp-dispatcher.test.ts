@@ -923,9 +923,9 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       { event: { type: 'user_message', text: 'hello server' }, at: 1 },
       { event: { type: 'assistant_text', delta: 'stub heard: hello server', final: true }, at: 2 }
     ])
-    // Asked by events, the most a page holds; the fifty lines are counted
-    // once an answer's pieces are joined (`readChat`).
-    expect(sessionsTimeline).toHaveBeenCalledWith(remote, undefined, 2000)
+    // One read of the lines asked for: a conversation at rest needs no more
+    // (`readChat` goes back further only while an answer's pieces hide them).
+    expect(sessionsTimeline).toHaveBeenCalledWith(remote, undefined, 50)
     expect(sessionsHistory).not.toHaveBeenCalled()
     // A server older than the timeline answers null: its past is read.
     sessionsTimeline.mockResolvedValueOnce(null as never)
@@ -935,7 +935,7 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       lines: 50
     })
     expect(older.result).toMatchObject({ lines: 2 })
-    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 2000)
+    expect(sessionsHistory).toHaveBeenCalledWith(remote, undefined, 50)
   })
 
   it('names the reachable tab when a Mac tab and a server tab share a name (round 3, C4)', async () => {

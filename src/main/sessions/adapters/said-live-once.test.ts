@@ -20,11 +20,16 @@ import { describe, expect, it } from 'vitest'
  */
 const read = (file: string): string => readFileSync(join(__dirname, file), 'utf8')
 
-/** A line that writes the list an adapter's `history()` answers. */
+/** A line that writes the list an adapter's `history()` answers, or takes it
+ *  under another name to write it from there (the verifier's round 3: a
+ *  `const past = state.history` followed by `past.push` passed a guard that
+ *  only knew the list by its own name). */
 const WRITES = [
   /\bhistory\s*=(?!=)/,
   /\bhistory(?:\[[^\]]*\])+[\w.]*\s*=(?!=)/,
-  /\bhistory\.(?:push|unshift|splice|pop|shift|fill|sort|reverse|copyWithin)\(/
+  /\bhistory\.(?:push|unshift|splice|pop|shift|fill|sort|reverse|copyWithin)\(/,
+  /\bhistory\.length\s*=(?!=)/,
+  /=\s*(?:[\w.()]+\.)?history\s*;?$/
 ]
 
 /** Every such line of `source`, with where it sits, comments left out. */

@@ -77,6 +77,7 @@ import type {
   SessionRecord,
   SpawnOptions
 } from '@clave/contract/sessions'
+import { CapabilityUnavailable } from '@clave/contract/errors'
 import { readChat } from '../../shared/chat-reading'
 import {
   type TargetHost,
@@ -1116,8 +1117,17 @@ function buildServer(
       // views read it (`readChat`, PRDCT-4664).
       const chat = await readChat(
         {
-          timeline: (limit) => sessions.timeline?.(target.id, undefined, limit),
-          history: (limit) => sessions.history(target.id, undefined, limit)
+          // This tool asks the host itself, not a client that would turn a
+          // host with no timeline into null: said here, so the past is kept.
+          timeline: (before, limit) => {
+            try {
+              return sessions.timeline?.(target.id, before, limit)
+            } catch (error) {
+              if (error instanceof CapabilityUnavailable) return null
+              throw error
+            }
+          },
+          history: (before, limit) => sessions.history(target.id, before, limit)
         },
         args.lines
       )

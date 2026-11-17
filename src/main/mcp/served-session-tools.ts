@@ -223,8 +223,8 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   if (target.transport === 'events') {
     const chat = await readChat(
       {
-        timeline: (limit) => ctx.api.sessions.timeline(target.id, undefined, limit),
-        history: (limit) => ctx.api.sessions.history(target.id, undefined, limit)
+        timeline: (before, limit) => ctx.api.sessions.timeline(target.id, before, limit),
+        history: (before, limit) => ctx.api.sessions.history(target.id, before, limit)
       },
       requested
     )

@@ -1,4 +1,5 @@
 import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
+import { CapabilityUnavailable } from '@clave/contract/errors'
 import { codexConnection, type ConnectionPoolId } from '../../shared/connection'
 import { HARNESS_BY_ID } from '../../shared/harness'
 import { asPoolRow } from '../routines/facts'
@@ -1527,6 +1528,30 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
       history: [before, since]
     })
     expect(pastReads).toBe(0)
+  }, 15_000)
+
+  it('keeps the past of a host that has no timeline to read (PRDCT-4664)', async () => {
+    // This tool asks the host itself: a host without the capability says so
+    // by throwing, where a client would have answered null.
+    const said = { event: { type: 'user_message' as const, text: 'the past' }, at: 1 }
+    const { client, sessions } = await messagingFixture({
+      host: {
+        history: () => ({ items: [said], before: null }),
+        timeline: () => {
+          throw new CapabilityUnavailable({
+            capability: 'session timeline',
+            message: 'This host does not provide ordered conversation history.'
+          })
+        }
+      }
+    })
+    sessions.set('stranger', tab('stranger'))
+    const answer = await client.callTool({
+      name: 'clave_read_session',
+      arguments: { sessionId: 'stranger' }
+    })
+    expect(answer.isError).not.toBe(true)
+    expect(payload(answer)).toMatchObject({ text: 'You: the past', history: [said] })
   }, 15_000)
 
   it('refuses a stopped plain terminal it opened even with resume: true, and restarts nothing', async () => {

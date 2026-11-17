@@ -1636,8 +1636,8 @@ async function handleReadSession(payload: {
     // Read where the chat's views read it (`readChat`, PRDCT-4664).
     const chat = await readChat(
       {
-        timeline: (limit) => window.electronAPI.sessionsTimeline(target.id, undefined, limit),
-        history: (limit) => window.electronAPI.sessionsHistory(target.id, undefined, limit)
+        timeline: (before, limit) => window.electronAPI.sessionsTimeline(target.id, before, limit),
+        history: (before, limit) => window.electronAPI.sessionsHistory(target.id, before, limit)
       },
       requested
     )
