@@ -84,8 +84,9 @@ const PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'plan', label: 'Plan' },
   { id: 'auto', label: 'Auto' }
 ]
-/** Bypass is only reachable in a session LAUNCHED on it: the CLI refuses the
- *  switch otherwise, as the TUI leaves it out of its cycle. */
+/** Bypass is only reachable in a session launched with
+ *  `--allow-dangerously-skip-permissions` (the CLI refuses the switch
+ *  otherwise), which every chat is. */
 const BYPASS_MODE: PermissionModeOption = { id: 'bypassPermissions', label: 'Bypass permissions' }
 const runningMode = (mode: string): string => (mode === 'manual' ? 'default' : mode)
 /** The tokens a call's context held: what it read, cached or not, and wrote. */
@@ -1177,9 +1178,10 @@ export class ClaudeAdapter implements SessionAdapter {
           'stdio'
         )
         if (options.permissionMode) argv.push('--permission-mode', options.permissionMode)
-        // A chat resumed in another mode keeps bypass reachable when its
-        // launch had it: the CLI offers the switch without starting in it.
-        if (options.allowDangerous && options.permissionMode !== 'bypassPermissions')
+        // Every chat can reach bypass from its mode menu: the flag only makes
+        // the switch possible (the CLI refuses it otherwise, `bypass_not_launched`)
+        // and never starts the session in it.
+        if (options.permissionMode !== 'bypassPermissions')
           argv.push('--allow-dangerously-skip-permissions')
         // A model that takes no effort (Haiku) runs at none whatever this says.
         if (options.effort) argv.push('--effort', options.effort)
@@ -1246,12 +1248,8 @@ export class ClaudeAdapter implements SessionAdapter {
         return child
       }
     }
-    if (
-      launchMode === 'bypassPermissions' ||
-      profilePermissions.bypassAvailable ||
-      options.allowDangerous === true
-    )
-      live.translator.modes = [...PERMISSION_MODES, BYPASS_MODE]
+    // Offered in every chat: the launch always makes it reachable (above).
+    live.translator.modes = [...PERMISSION_MODES, BYPASS_MODE]
     live.translator.requestSettings = () => {
       if (!live.process || live.ended) return
       const requestId = randomUUID()
