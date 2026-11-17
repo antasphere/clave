@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HistoryItem, SessionEvent } from '../../shared/session-model'
-import { HISTORY_PAGE_MAX, pageHistory } from './history'
+import { HISTORY_PAGE_MAX, pageHistory, pageWindow } from './history'
 
 const item = (event: SessionEvent): HistoryItem => ({ event })
 /** A turn: the reader's message, an answer, and `tools` calls each answered. */
@@ -106,5 +106,102 @@ describe('conversation history pages', () => {
       HISTORY_PAGE_MAX * 2
     )
     expect(pageHistory(items, items.length + 50, 10).items.at(-1)).toBe(items.at(-1))
+  })
+  it('never begins a page inside a streamed message (PRDCT-4666)', () => {
+    const streamed = [
+      item({ type: 'user_message', text: 'q' }),
+      ...['a', 'b', 'c', 'd'].map((delta) => item({ type: 'assistant_text', delta, final: false })),
+      item({ type: 'assistant_text', delta: '', final: true })
+    ]
+    // One long turn: only steps can begin a page, and a limit of 2 lands on a delta.
+    const items = [...turn(0), ...streamed, ...streamed.slice(1), ...streamed.slice(1)]
+    for (const limit of [1, 2, 3, 4])
+      for (const page of allPages(items, limit)) {
+        const first = page[0].event
+        const index = items.indexOf(page[0])
+        const previous = items[index - 1]?.event
+        if (first.type === 'assistant_text' && previous?.type === 'assistant_text')
+          expect(previous.final).toBe(true)
+      }
+  })
+})
+
+/** A conversation as a file of items, for `pageWindow`. */
+const asFile = (items: HistoryItem[]): { length: number; slice: typeof items.slice } => ({
+  length: items.length,
+  slice: (start, end) => items.slice(start, end)
+})
+/** Every page from the newest back, through `pageWindow`. */
+function allWindowPages(items: HistoryItem[], limit: number): HistoryItem[][] {
+  const pages: HistoryItem[][] = []
+  let end = items.length
+  for (let guard = 0; guard < items.length + 1; guard++) {
+    const page = pageWindow(asFile(items), end, limit)
+    pages.unshift(page.items)
+    if (page.start === 0) return pages
+    expect(page.start).toBeLessThan(end)
+    end = page.start
+  }
+  throw new Error('pageWindow did not terminate')
+}
+
+describe('conversation history pages read from a file by window (PRDCT-4666)', () => {
+  const longTurn = (n: number, steps: number): HistoryItem[] => [
+    item({ type: 'user_message', text: `long ${n}` }),
+    ...Array.from({ length: steps }, (_, i) => [
+      item({ type: 'assistant_text', delta: `step ${i}`, final: true }),
+      item({ type: 'tool_call', id: `l${n}-${i}`, name: 'Edit', input: {} }),
+      item({ type: 'tool_result', id: `l${n}-${i}`, output: 'ok' })
+    ]).flat()
+  ]
+  const conversations: Record<string, HistoryItem[]> = {
+    'short turns': Array.from({ length: 50 }, (_, n) => turn(n, n % 3)).flat(),
+    'a tool pair astride the target': [
+      ...turn(0),
+      item({ type: 'tool_call', id: 'slow', name: 'Bash', input: {} }),
+      ...turn(1, 3),
+      ...turn(2, 3),
+      item({ type: 'tool_result', id: 'slow', output: 'done' }),
+      ...Array.from({ length: 10 }, (_, n) => turn(n + 3, 2)).flat()
+    ],
+    'an interrupted turn': [
+      ...turn(0),
+      item({ type: 'user_message', text: 'stopped' }),
+      ...Array.from({ length: 40 }, (_, i) =>
+        item({ type: 'assistant_text', delta: `step ${i}`, final: true })
+      ),
+      item({ type: 'turn_interrupted' }),
+      ...turn(1)
+    ],
+    'one long turn paged by its steps': [...turn(0), ...longTurn(1, 120)]
+  }
+  for (const [name, items] of Object.entries(conversations))
+    it(`answers what pageHistory does on ${name}`, () => {
+      for (const limit of [3, 7, 13, 30])
+        for (let end = 0; end <= items.length; end++) {
+          const reference = pageHistory(items, end, limit)
+          const windowed = pageWindow(asFile(items), end, limit)
+          expect(windowed.items).toEqual(reference.items)
+          expect(windowed.start).toBe(reference.before ?? 0)
+        }
+    })
+  it('never separates a call from its result across windows, and terminates', () => {
+    const items = [
+      ...turn(0),
+      item({ type: 'tool_call', id: 'far', name: 'Bash', input: {} }),
+      ...Array.from({ length: 1000 }, (_, i) =>
+        item({ type: 'assistant_text', delta: `step ${i}`, final: true })
+      ),
+      item({ type: 'tool_result', id: 'far', output: 'done' }),
+      ...longTurn(1, 400),
+      ...Array.from({ length: 30 }, (_, n) => turn(n + 2, 2)).flat()
+    ]
+    // Several windows long, and the far pair wider than one window.
+    expect(items.length).toBeGreaterThan(2 * 800)
+    for (const limit of [5, 40]) {
+      const pages = allWindowPages(items, limit)
+      expect(pages.flat()).toEqual(items)
+      for (const page of pages) expect(splitsAPair(page)).toBe(false)
+    }
   })
 })
