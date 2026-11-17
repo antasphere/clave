@@ -48,7 +48,13 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  // Never the machine's own Claude login: the boot's read of the Default
+  // account would go to the keychain and the usage endpoint, and, on a slow
+  // boot, land in the recorder below as a probe no paste made.
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage']
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
