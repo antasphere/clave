@@ -19,6 +19,7 @@ function fakeBacking(): Backing & {
     status: 'idle',
     connect: vi.fn(),
     close: vi.fn(),
+    probe: vi.fn(),
     onStatus: (fn: typeof statuses extends Set<infer T> ? T : never) => {
       statuses.add(fn)
       return () => statuses.delete(fn)
@@ -116,6 +117,28 @@ describe('independent fleet backings', () => {
     expect(requests).toEqual([{ serverId: 'b', value: { requestId: 'same' } }])
     expect(a.push.subscribe).toHaveBeenCalledWith('same', expect.any(Function), undefined)
     await expect(client.backing('missing')).rejects.toThrow()
+  })
+  it('probes every backing, or only the named one, and skips a server with none (PRDCT-4668)', async () => {
+    const a = fakeBacking(),
+      b = fakeBacking()
+    const client = make({
+      resolve: async (id) => (id === 'none' ? null : { url: `http://${id}`, token: 't' }),
+      connect: (_endpoint, id) => (id === 'a' ? a : b)
+    })
+    await client.connect('a')
+    await client.connect('b')
+    await client.connect('none').catch(() => {})
+    expect(client.list().map((status) => status.serverId)).toEqual(['a', 'b', 'none'])
+    client.probe()
+    expect(a.push.probe).toHaveBeenCalledTimes(1)
+    expect(b.push.probe).toHaveBeenCalledTimes(1)
+    client.probe('b')
+    expect(a.push.probe).toHaveBeenCalledTimes(1)
+    expect(b.push.probe).toHaveBeenCalledTimes(2)
+    client.probe('none')
+    client.probe('unknown')
+    expect(a.push.probe).toHaveBeenCalledTimes(1)
+    expect(b.push.probe).toHaveBeenCalledTimes(2)
   })
   it('isolates acquisition failures and never includes arbitrary error/secret text in status', async () => {
     const b = fakeBacking()
