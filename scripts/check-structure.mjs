@@ -16,7 +16,6 @@ const required = [
   'apps/terminals/src/probe.ts',
   'apps/pi-state/index.js',
   'apps/plugin-runner/src/main.ts',
-  'apps/relay/src/main.ts',
   'apps/channel/bin/clave-channel.js',
   'apps/plugins/analytics/src/main.ts',
   'apps/native/secure-files/main.c',
@@ -110,6 +109,12 @@ const obsoleteHomes = [
   // mobile-react-native-baseline-20261109, never to come back here.
   'apps/mobile',
   'packages/server/src/relay/main.ts',
+  // The relay server moved to its own tool, antasphere/relay (#409); the tests
+  // run the mobile branch's relay as a fixture under tests/e2e/fixtures/relay.
+  'apps/relay',
+  'packages/server/src/relay/relay.ts',
+  'packages/server/src/relay/auth.ts',
+  'packages/server/src/relay/registry.ts',
   'packages/clave-channel/bin'
 ]
 // A generated path that covered a whole obsolete home would let any source
@@ -135,6 +140,24 @@ for (const home of obsoleteHomes) {
       `Obsolete source home: ${path.relative(root, file)}`
     )
   }
+}
+
+// The packaged app takes the repository root minus electron-builder's `files`
+// exclusions. Source homes and the tests must stay out of it: the tests carry
+// fixtures such as the relay the client tests run (#409), which must never
+// ship. Read the `files` list of electron-builder.yml line by line.
+{
+  const builder = readFileSync(path.join(root, 'electron-builder.yml'), 'utf8').split('\n')
+  const start = builder.indexOf('files:')
+  assert(start >= 0, 'electron-builder.yml has no top-level files: list')
+  const excluded = []
+  for (const line of builder.slice(start + 1)) {
+    if (/^\S/.test(line)) break
+    const entry = /^\s+-\s+'?(.*?)'?\s*$/.exec(line)
+    if (entry) excluded.push(entry[1])
+  }
+  for (const home of ['!apps', '!packages', '!tests'])
+    assert(excluded.includes(home), `electron-builder.yml files must exclude ${home.slice(1)}/`)
 }
 
 // Workspace names and the renderer alias resolve to app source too.

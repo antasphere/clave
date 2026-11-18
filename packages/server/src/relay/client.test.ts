@@ -20,7 +20,11 @@ import {
   type OidcProvider
 } from '../../../../tests/e2e/fixtures/oidc-provider.mjs'
 import { sleep } from '../test-support'
-import { startRelay, type Relay, type RelayOptions } from './relay'
+import {
+  startRelay,
+  type Relay,
+  type RelayOptions
+} from '../../../../tests/e2e/fixtures/relay/relay'
 import {
   startRelayClient,
   type RelayClient,

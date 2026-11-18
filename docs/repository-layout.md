@@ -12,7 +12,6 @@ apps/
   server/           Standalone server bootstrap
   terminals/        Node process that owns terminal PTYs
   plugin-runner/    Isolated plugin process bootstrap
-  relay/            Relay bootstrap, Dockerfile and runtime lock projection
   channel/          Published OpenClaw channel and clave-channel command
   plugins/          Bundled plugins, including Analytics and GitHub
   native/           C and Swift helper programs
@@ -82,9 +81,10 @@ installs the binary explicitly. Existing root commands remain available.
 Electron build configuration stays at the root because it builds several
 processes together. Its output remains `out/main/`, `out/preload/` and
 `out/renderer/`, including the standalone server and worker bundles. Those
-runtime paths are independent of the source layout. Signing, release
-promotion and relay deployment still use their existing documented
-procedures; the phone apps' builds are in their own READMEs.
+runtime paths are independent of the source layout. Signing and release
+promotion still use their existing documented procedures; the relay is its
+own tool, antasphere/relay, deployed from there (`docs/mobile-relay.md`); the
+phone apps' builds are in their own READMEs.
 
 ## Existing checkouts
 
