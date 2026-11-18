@@ -117,7 +117,7 @@ fun machinesState(
         now = now,
         addresses = addresses.map { a ->
             val listing = listings[a.url]
-            AddressRow(a, listing?.machineIds?.size ?: 0, listing?.error, listing?.fromCache ?: false)
+            AddressRow(a, listing?.machineIds?.size ?: 0, listing?.error, listing?.fromCache ?: false, listing?.pending ?: false)
         },
         addressError = addressError,
         adding = adding,

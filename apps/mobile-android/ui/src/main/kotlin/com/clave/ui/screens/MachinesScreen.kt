@@ -69,7 +69,8 @@ data class AccountState(
 /**
  * One machine address as its row shows it: how many machines it listed the last time, and
  * the sentence of its failure when it could not be read. [fromCache] says the machines it
- * lends are the last ones it listed, every one offline.
+ * lends are the last ones it listed, every one offline. [pending] says it is still being
+ * asked while the others already answered.
  */
 @Immutable
 data class AddressRow(
@@ -77,6 +78,7 @@ data class AddressRow(
     val machineCount: Int,
     val error: String?,
     val fromCache: Boolean,
+    val pending: Boolean = false,
 )
 
 /**
@@ -443,6 +445,7 @@ private fun AddressListRow(row: AddressRow, onMore: () -> Unit) {
         val line = when {
             error != null && row.fromCache -> "Showing its last list. $error"
             error != null -> error
+            row.pending -> "Asking…"
             row.machineCount == 1 -> "1 machine"
             else -> "${row.machineCount} machines"
         }

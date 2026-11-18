@@ -32,6 +32,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
@@ -606,7 +607,7 @@ class StoreTest {
                         build = BuildKind.Development,
                         credentials = credentials,
                         relaySource = object : MachineDirectory {
-                            override suspend fun listing(): MachineListing = next()
+                            override suspend fun listing(progress: suspend (MachineListing) -> Unit): MachineListing = next()
                         },
                         developerSource = null,
                         kv = kv,
@@ -629,6 +630,72 @@ class StoreTest {
                 assertEquals(emptyList<AddressListing>(), store.state.value.addresses)
                 assertEquals(emptyList<Machine>(), store.state.value.machines)
                 assertEquals("The account changed.", store.state.value.machinesError)
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a listing is published as each address answers, and an older load never writes over a newer one`() {
+        val http = OkHttpClient()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val kv = SyncKv()
+        fun mac(id: String, address: String) =
+            Machine(id, "Mac $id", MachinePlatform.Macos, "2.4.0", true, null, "$address/m/$id", "$address/m/$id/push", address)
+        val quick = MachineAddress("https://quick.example")
+        val slow = MachineAddress("https://slow.example")
+        val partial = MachineListing(
+            listOf(mac("q1", quick.url)),
+            listOf(AddressListing(slow, emptyList(), null, fromCache = false, pending = true), AddressListing(quick, listOf("q1"), null, fromCache = false)),
+        )
+        val stale = MachineListing(
+            listOf(mac("gone", slow.url), mac("q1", quick.url)),
+            listOf(AddressListing(slow, listOf("gone"), null, fromCache = false), AddressListing(quick, listOf("q1"), null, fromCache = false)),
+        )
+        val fresh = MachineListing(listOf(mac("q1", quick.url)), listOf(AddressListing(quick, listOf("q1"), null, fromCache = false)))
+        val heldOpen = CompletableDeferred<Unit>()
+        val firstAsked = CompletableDeferred<Unit>()
+        var calls = 0
+        try {
+            runBlocking {
+                val store = ClaveStore(
+                    Services(
+                        build = BuildKind.Development,
+                        credentials = SecureCredentialStore(SyncSecure()),
+                        relaySource = object : MachineDirectory {
+                            override suspend fun listing(progress: suspend (MachineListing) -> Unit): MachineListing {
+                                calls += 1
+                                if (calls > 1) return fresh
+                                progress(partial)
+                                firstAsked.complete(Unit)
+                                heldOpen.await()
+                                return stale
+                            }
+                        },
+                        developerSource = null,
+                        kv = kv,
+                        drafts = com.clave.core.chat.Drafts(kv),
+                        http = OkHttpPort(http),
+                        sockets = OkHttpWebSocketFactory(http),
+                        scope = scope,
+                    ),
+                )
+                val older = async(Dispatchers.Default) { store.loadMachines() }
+                firstAsked.await()
+                // The quick address is on screen while the slow one is still asked.
+                assertEquals(listOf("q1"), store.state.value.machines.map { it.id })
+                assertEquals(partial.addresses, store.state.value.addresses)
+                assertTrue(store.state.value.machinesLoading)
+
+                // A newer load (an address removed, a pull to refresh) settles first.
+                store.loadMachines()
+                assertEquals(fresh.addresses, store.state.value.addresses)
+                heldOpen.complete(Unit)
+                older.await()
+                assertEquals(listOf("q1"), store.state.value.machines.map { it.id })
+                assertEquals(fresh.addresses, store.state.value.addresses)
+                assertFalse(store.state.value.machinesLoading)
             }
         } finally {
             scope.cancel()

@@ -64,22 +64,25 @@ public fun decodeMachineAddresses(raw: String): List<MachineAddress> {
  * What one address gave in a listing: the ids of the machines it listed, in its order
  * (also those another address listed first), and the sentence of its failure when it
  * could not be read. [fromCache] says its machines are the last ones it listed, all
- * offline, because it is out of reach right now.
+ * offline, because it is out of reach right now. [pending] says it has not answered yet:
+ * a listing published before every address answered.
  */
 public data class AddressListing(
     val address: MachineAddress,
     val machineIds: List<String>,
     val error: String?,
     val fromCache: Boolean,
+    val pending: Boolean = false,
 )
 
 /** Every machine the phone may reach, one row per id, and how each address answered. */
 public data class MachineListing(val machines: List<Machine>, val addresses: List<AddressListing>)
 
 /** A machine source read across several addresses: [listing] says what each one gave, and
- *  one address that fails never hides the machines of the others. */
+ *  one address that fails, or is slow, never hides the machines of the others: [progress]
+ *  hears the listing again each time one more address answers, before the last one does. */
 public interface MachineDirectory : MachineSource {
-    public suspend fun listing(): MachineListing
+    public suspend fun listing(progress: suspend (MachineListing) -> Unit = {}): MachineListing
 
     override suspend fun list(): List<Machine> = listing().machines
 }

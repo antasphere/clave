@@ -694,6 +694,87 @@ class OwnerTest {
         }
     }
 
+    /** [server] lists [ids] on `/machines` only once [release] opens (at most ten seconds). */
+    private fun listsWhenReleased(server: FakeMachine, release: java.util.concurrent.CountDownLatch, vararg ids: String) {
+        server.handler = { call ->
+            if (call.rawPath == "/machines") {
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                answer(200, machinesJson(*ids))
+            } else answer(404, "{}")
+        }
+    }
+
+    private suspend fun waitFor(what: String, check: () -> Boolean) {
+        try {
+            kotlinx.coroutines.withTimeout(5_000) { while (!check()) delay(20) }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            throw AssertionError("waited 5 s for $what", e)
+        }
+    }
+
+    @Test
+    fun `a slow address holds back no other, the one that answered is heard while the slow one is still asked`() = runBlocking {
+        val other = FakeMachine()
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            val auth = signedIn("sub-a")
+            val servicesA = services(auth, storesOf(auth), defaultRelay = "")
+            listsWhenReleased(machine, release, "a1")
+            lists(other, "b1")
+            servicesA.addAddress(machine.base, "Slow")
+            servicesA.addAddress(other.base, "Quick")
+            val heard = java.util.concurrent.CopyOnWriteArrayList<MachineListing>()
+            val reading = async(Dispatchers.Default) { servicesA.source.listing { heard += it } }
+
+            // Both addresses are asked at once: the quick one while the slow one still holds its answer.
+            waitFor("the slow address to be asked") { machine.calls.any { it.rawPath == "/machines" } }
+            waitFor("the quick address to be asked while the slow one holds") { other.calls.any { it.rawPath == "/machines" } }
+            waitFor("a listing with the quick address's machine") { heard.any { l -> l.machines.any { it.id == "b1" } } }
+            val partial = heard.first { l -> l.machines.any { it.id == "b1" } }
+            assertEquals(listOf("b1"), partial.machines.map { it.id })
+            assertEquals(listOf(true, false), partial.addresses.map { it.pending })
+            assertFalse("the slow address has not answered yet", reading.isCompleted)
+
+            release.countDown()
+            val listing = reading.await()
+            assertEquals(listOf("a1", "b1"), listing.machines.map { it.id })
+            assertEquals(listOf(false, false), listing.addresses.map { it.pending })
+        } finally {
+            release.countDown()
+            other.close()
+        }
+    }
+
+    @Test
+    fun `an address removed while its read is under way gives no row and writes no cache back`() = runBlocking {
+        val other = FakeMachine()
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            val auth = signedIn("sub-a")
+            val a = storesOf(auth)
+            val servicesA = services(auth, a, defaultRelay = "")
+            listsWhenReleased(machine, release, "gone")
+            lists(other, "kept")
+            servicesA.addAddress(machine.base, "Removed")
+            servicesA.addAddress(other.base, "Kept")
+            val reading = async(Dispatchers.Default) { servicesA.source.listing() }
+            waitFor("the address to be asked") { machine.calls.any { it.rawPath == "/machines" } }
+
+            servicesA.removeAddress(machine.base)
+            assertEquals(listOf("kept"), servicesA.source.listing().machines.map { it.id })
+            release.countDown()
+            val older = reading.await()
+
+            assertEquals(listOf("kept"), older.machines.map { it.id })
+            assertEquals(listOf(other.base), older.addresses.map { it.address.url })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(listOf("kept"), servicesA.source.listing().machines.map { it.id })
+        } finally {
+            release.countDown()
+            other.close()
+        }
+    }
+
     @Test
     fun `an address answering 5xx lends its cache and says why beside the one that answers, and a refusal is never papered over`() = runBlocking {
         val other = FakeMachine()

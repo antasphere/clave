@@ -205,20 +205,24 @@ class MappingTest {
         val relay = MachineAddress("https://relay.example", "Team relay")
         val home = MachineAddress("https://home.example")
         val fresh = MachineAddress("https://fresh.example", "Not read yet")
+        val slow = MachineAddress("https://slow.example", "Still asked")
         val store = StoreState(
             machines = listOf(machine("a", address = relay.url), machine("b", online = false, address = home.url)),
             // The listing comes in another order and with the name it had then.
             addresses = listOf(
                 AddressListing(home, listOf("b"), error = "The address could not be reached.", fromCache = true),
                 AddressListing(relay.copy(name = null), listOf("a"), error = null, fromCache = false),
+                AddressListing(slow, emptyList(), error = null, fromCache = false, pending = true),
             ),
         )
-        val state = machinesState(store, signedIn, emptySet(), listOf(relay, home, fresh), false, now)
+        val state = machinesState(store, signedIn, emptySet(), listOf(relay, home, fresh, slow), false, now)
         assertEquals(
             listOf(
                 AddressRow(relay, machineCount = 1, error = null, fromCache = false),
                 AddressRow(home, machineCount = 1, error = "The address could not be reached.", fromCache = true),
                 AddressRow(fresh, machineCount = 0, error = null, fromCache = false),
+                // Still asked while the others answered: said as such, never as "0 machines".
+                AddressRow(slow, machineCount = 0, error = null, fromCache = false, pending = true),
             ),
             state.addresses,
         )

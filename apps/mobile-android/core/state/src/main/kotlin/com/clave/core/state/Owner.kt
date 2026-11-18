@@ -66,6 +66,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -168,7 +169,7 @@ public class OwnerServices(
     public val records: EnrollmentRecords = EnrollmentRecords(kv)
     public val delivery: DeliveryController = DeliveryController(UnknownSends(kv), DeliveryMarks(kv), drafts, kv, clock, sleep)
     public val source: MachineDirectory = object : MachineDirectory {
-        override suspend fun listing(): MachineListing = machines()
+        override suspend fun listing(progress: suspend (MachineListing) -> Unit): MachineListing = machines(progress)
     }
 
     @Volatile private var closing = false
@@ -325,16 +326,57 @@ public class OwnerServices(
      * why; a refusal is never papered over by the cache. A machine two addresses list is one
      * row, the first address's, but a paired machine is always reached at the road it was
      * paired through. A paired machine no address lists stays, offline, from its record.
+     *
+     * A slow address holds back no other: [progress] hears the merged listing each time one
+     * more address answers, the ones still waiting marked pending. An address removed while
+     * its read was under way gives nothing, neither rows nor a cache: the road generation
+     * the read started on has moved.
      */
-    private suspend fun machines(): MachineListing {
+    private suspend fun machines(progress: suspend (MachineListing) -> Unit = {}): MachineListing {
         if (auth.status().account == null) return MachineListing(emptyList(), emptyList())
         assertOwner()
         val addresses = addresses()
         assertOwner()
-        val reads = coroutineScope { addresses.map { address -> async { readAddress(address) } }.awaitAll() }
+        val generation = pushWork.roadGeneration
+        val done = arrayOfNulls<Pair<List<Machine>, AddressListing>>(addresses.size)
+        val publishing = Mutex()
+        coroutineScope {
+            addresses.mapIndexed { index, address ->
+                async {
+                    val read = readAddress(address, generation)
+                    publishing.withLock {
+                        done[index] = read
+                        if (done.any { it == null }) progress(merge(addresses, done.toList(), generation))
+                    }
+                }
+            }.awaitAll()
+        }
+        val listing = merge(addresses, done.toList(), generation)
         assertOwner()
+        return listing
+    }
+
+    /** The listing of the reads done so far, in address order: those still waiting are
+     *  pending rows, and an address taken out of the list since [generation] is left out. */
+    private suspend fun merge(
+        addresses: List<MachineAddress>,
+        reads: List<Pair<List<Machine>, AddressListing>?>,
+        generation: Int,
+    ): MachineListing {
+        assertOwner()
+        val kept = if (generation == pushWork.roadGeneration) null else addresses().map { it.url }.toSet()
         val rows = LinkedHashMap<String, Machine>()
-        for ((machines, _) in reads) for (m in machines) rows.putIfAbsent(m.id, m)
+        val listed = mutableListOf<AddressListing>()
+        for ((index, address) in addresses.withIndex()) {
+            if (kept != null && address.url !in kept) continue
+            val read = reads[index]
+            if (read == null) {
+                listed += AddressListing(address, emptyList(), null, fromCache = false, pending = true)
+                continue
+            }
+            for (m in read.first) rows.putIfAbsent(m.id, m)
+            listed += read.second
+        }
         val result = mutableListOf<Machine>()
         for (m in rows.values) {
             val credential = credentials.get(m.id)
@@ -355,12 +397,12 @@ public class OwnerServices(
             ).also { result += it }
         }
         assertOwner()
-        return MachineListing(result, reads.map { it.second })
+        return MachineListing(result, listed)
     }
 
     /** One address's machines and its row. Nothing but a cancellation and the account
      *  changing escapes it: every other failure becomes the row's sentence. */
-    private suspend fun readAddress(address: MachineAddress): Pair<List<Machine>, AddressListing> {
+    private suspend fun readAddress(address: MachineAddress, generation: Int): Pair<List<Machine>, AddressListing> {
         val url = address.url
         try {
             val listed = RelayMachineSource(
@@ -374,7 +416,11 @@ public class OwnerServices(
             ).list()
             assertOwner()
             try {
-                kv.set(machinesCacheKey(url), encodeMachines(listed))
+                // Under the push lock, which a removal holds: once the address is removed,
+                // an answer still on its way writes no cache back.
+                pushWork.lock.withLock {
+                    if (generation == pushWork.roadGeneration) kv.set(machinesCacheKey(url), encodeMachines(listed))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
