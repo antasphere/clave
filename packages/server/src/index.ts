@@ -137,6 +137,17 @@ export {
   type PushTarget,
   type PushTargets
 } from './devices'
+// ── Issue #407: the relay client in the server (the relay itself lives in antasphere/relay) ──
+export {
+  insecureRelayAddress,
+  startRelayClient,
+  type RelayClient,
+  type RelayClientOptions,
+  type RelayClientState,
+  type RelayClientStatus,
+  type RelayCredential,
+  type RelayCredentialStore
+} from './relay/client'
 // ── The mobile wave, lane B: the write ledger ──
 export {
   SessionWrites,

@@ -12,6 +12,9 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!plugin'
+  # The e2e suite and its fixtures (a copy of the old relay server among
+  # them, issue #407) never ship; scripts/check-packaged-excludes.mjs checks it.
+  - '!tests'
   - '!plugins'
   - '!.claude-plugin'
 extraResources:

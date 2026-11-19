@@ -10,6 +10,7 @@
  */
 import { Context, Layer } from 'effect'
 import type { DevicePlatform } from '@clave/contract/devices'
+import type { RelayClientStatus } from '../relay/client'
 
 export type Awaitable<T> = T | Promise<T>
 
@@ -22,13 +23,17 @@ export interface DeviceDocumentStorage {
   write(text: string): void
 }
 
-/** The relay address preference (`mobileRelayUrl` on the mobile branch),
- *  stored here and read by the relay client; the server validates it as an
- *  http(s) origin before it lands. Absent, the address is unavailable on
- *  this server, as it is on this branch, which carries no relay client. */
+/** The relay address preference (`mobileRelayUrl`, issue #407), stored here
+ *  and read by the relay client at every attempt; the server validates it
+ *  before it lands (an https origin, plain http only to a loopback address).
+ *  Absent, the address and the client's state are unavailable on this
+ *  server. */
 export interface RelayAddressPreference {
   get(): string
+  /** Keeps the address; the entry also tells its running client to read it now. */
   set(url: string): void
+  /** The running client's state, or null when this server runs none. */
+  status?(): RelayClientStatus | null
 }
 
 export interface DevicesPortService {

@@ -39,7 +39,8 @@ describe('the devices contract', () => {
         'requestPairing',
         'revoke',
         'setPushToken',
-        'setRelay'
+        'setRelay',
+        'readRelayStatus'
       ].sort()
     )
   })
