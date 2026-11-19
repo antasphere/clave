@@ -138,6 +138,11 @@ function pipeline(serverId: string): SavePipeline<LayoutSnapshot> {
  */
 const cachedStates = new Map<string, Session['agentState']>()
 
+/** A server's session as this window names it: a raw id of that server's
+ *  record wrapped in its owner's key, a key already scoped kept as it is. */
+const tabKey = (serverId: string, id: string | undefined): string | undefined =>
+  !id ? undefined : id.startsWith('clave-owner:') ? id : resourceKey('session', serverId, id)
+
 export function applyFleetSnapshot(
   snapshot: FleetSnapshot,
   options?: { readonly cached?: boolean }
@@ -224,10 +229,10 @@ export function applyFleetSnapshot(
         // Who opened it on its server, as this window names that server's
         // tabs (PRDCT-4193): the name tie-break compares keys, so a raw id of
         // the server's record is wrapped in its owner's key here.
-        spawnedBy: record?.spawnedBy
-          ? resourceKey('session', serverId, record.spawnedBy)
-          : undefined,
-        openedBy: record?.openedBy ? resourceKey('session', serverId, record.openedBy) : undefined,
+        // The preload scopes `spawnedBy` already (`scopeRecord`), so only a raw
+        // id is wrapped: wrapping a key again named no tab (#423).
+        spawnedBy: tabKey(serverId, record?.spawnedBy),
+        openedBy: tabKey(serverId, record?.openedBy),
         userRenamed: record?.userRenamed ?? false,
         planFilePath: old?.planFilePath ?? null,
         // A remote localhost page cannot be interpreted as a Mac-local preview.

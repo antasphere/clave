@@ -105,9 +105,10 @@ function resolveWorkspace(ref: string): Workspace {
   return ws
 }
 
+/** A workspace's name, a server's included (#423): a server tab lists its
+ *  server workspace by name, as a tab of this Mac does. */
 function workspaceNameOf(id: string | null | undefined): string | null {
-  if (!id) return null
-  return useWorkspaceStore.getState().workspaces.find((w) => w.id === id)?.name ?? null
+  return getWorkspaceById(id)?.name ?? null
 }
 
 /** Workspace to stamp on something an agent creates: an explicit `workspace`

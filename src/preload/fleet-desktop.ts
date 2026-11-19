@@ -112,6 +112,10 @@ export function wireLayout(serverId: string, layout: WindowLayout): WindowLayout
   }
 }
 
+/** A failed snapshot's first retry, doubled at each failure up to the cap (#423). */
+const SNAPSHOT_RETRY_FIRST_MS = 2_000
+const SNAPSHOT_RETRY_MAX_MS = 60_000
+
 /** Preserve the existing local bridge; remote IDs can only reach their exact backing. */
 export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): ElectronAPI {
   const snapshotListeners = new Set<(snapshot: FleetSnapshot) => void>()
@@ -129,7 +133,32 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const chains = new Map<string, Promise<void>>()
   const attachmentSessions = new Map<string, string>()
   const generations = new Map<string, number>()
+  // Issue #423: a snapshot whose read failed is read again by itself, sooner
+  // first and then up to once a minute, until one lands. Nothing else would
+  // read it: the next read waits on the server's next event, and a server
+  // whose sessions have all gone quiet sends none, so the desktop went on
+  // showing sessions missing and turns long over. A server let go, or a
+  // connection replaced (which reads it again itself), drops the timer.
+  const retries = new Map<string, { attempts: number; timer?: ReturnType<typeof setTimeout> }>()
+  const settleRetry = (serverId: string): void => {
+    const retry = retries.get(serverId)
+    if (retry?.timer !== undefined) clearTimeout(retry.timer)
+    retries.delete(serverId)
+  }
+  const retryLater = (serverId: string): void => {
+    if (!connections.some((c) => c.id === serverId && c.enabled)) return settleRetry(serverId)
+    const retry = retries.get(serverId) ?? { attempts: 0 }
+    if (retry.timer !== undefined) return
+    const delay = Math.min(SNAPSHOT_RETRY_MAX_MS, SNAPSHOT_RETRY_FIRST_MS * 2 ** retry.attempts)
+    retry.attempts += 1
+    retry.timer = setTimeout(() => {
+      retry.timer = undefined
+      refresh(serverId)
+    }, delay)
+    retries.set(serverId, retry)
+  }
   const invalidate = (serverId: string): void => {
+    settleRetry(serverId)
     generations.set(serverId, (generations.get(serverId) ?? 0) + 1)
     pendingSnapshots.delete(serverId)
     queuedSnapshots.delete(serverId)
@@ -271,10 +300,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       )
         throw new Error('Server discovery was cancelled.')
       lastSnapshots.set(serverId, result)
+      settleRetry(serverId)
       for (const listener of snapshotListeners) listener(result)
       return result
     })()
     pendingSnapshots.set(serverId, read)
+    // A read the server failed is tried again; one cancelled because the
+    // connection was replaced or let go is not: its replacement reads anew.
+    read.catch(() => {
+      if (generation === (generations.get(serverId) ?? 0)) retryLater(serverId)
+    })
     void read
       .finally(() => {
         if (pendingSnapshots.get(serverId) !== read) return
