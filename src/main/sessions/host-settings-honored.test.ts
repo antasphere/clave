@@ -202,6 +202,21 @@ describe('a composer pick is remembered once the provider took it (#423)', () =>
     expect(rememberChatModel).toHaveBeenCalledWith('claude-chat', null)
   })
 
+  // Verifier round 2, V10: an error ends the wait; a matching word after it
+  // is not this pick's answer.
+  it('remembers nothing of a pick refused first, even if its name comes back later', async () => {
+    const { manager, emit } = setup()
+    const h = host(manager)
+    await h.write('a', { type: 'set_model', model: 'claude-opus-9' })
+    emit({ type: 'error', message: 'Claude refused to switch to claude-opus-9', fatal: false })
+    emit({ type: 'session_meta', model: 'claude-opus-9', providerSessionId: null })
+    await h.write('a', { type: 'set_effort', effort: 'max' })
+    emit({ type: 'error', message: 'Claude refused the Max effort', fatal: false })
+    emit({ type: 'effort', effort: 'max' })
+    expect(rememberChatModel).not.toHaveBeenCalled()
+    expect(rememberChatEffort).not.toHaveBeenCalled()
+  })
+
   it('keeps a pick the policy makes at a cap the tab’s own (PRDCT-4302)', async () => {
     const { manager, emit } = setup()
     await host(manager).write('a', { type: 'set_model', model: 'claude-opus-5-5', remember: false })

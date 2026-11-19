@@ -705,3 +705,43 @@ describe('the model a profile names (#423, verifier V3)', () => {
     expect(profileModel(profile('codex', ['codex', '-c', 'model="$(rm -rf ~)"']))).toBeUndefined()
   })
 })
+
+// Verifier round 2, V7: the other spellings a saved profile may use.
+describe('the model and effort a profile names in its other spellings (#423, verifier V7)', () => {
+  const profile = (
+    family: LaunchProfile['family'],
+    command: string[],
+    additionalArgs: string[] = []
+  ): LaunchProfile => ({ id: 'p', name: 'P', family, command, additionalArgs })
+  it("reads Claude's environment in the command, which the CLI reads too", () => {
+    const claude = profile('claude', [
+      'env',
+      'ANTHROPIC_MODEL=haiku',
+      'CLAUDE_CODE_EFFORT_LEVEL=low',
+      'claude'
+    ])
+    expect(profileModel(claude)).toBe('haiku')
+    expect(profileEffort(claude)).toBe('low')
+  })
+  it("lets Claude's effort variable win over its --effort, as the CLI does", () => {
+    expect(
+      profileEffort(
+        profile('claude', ['env', 'CLAUDE_CODE_EFFORT_LEVEL=low', 'claude'], ['--effort', 'max'])
+      )
+    ).toBe('low')
+  })
+  it("reads Codex's attached -c spellings", () => {
+    expect(profileModel(profile('codex', ['codex', '-cmodel="gpt-a"']))).toBe('gpt-a')
+    expect(profileModel(profile('codex', ['codex', '-c=model="gpt-a"']))).toBe('gpt-a')
+    expect(profileEffort(profile('codex', ['codex', '-cmodel_reasoning_effort="low"']))).toBe('low')
+    expect(profileEffort(profile('codex', ['codex', '-c=model_reasoning_effort=high']))).toBe(
+      'high'
+    )
+  })
+  it("reads no variable after the program, nor another family's", () => {
+    expect(profileModel(profile('claude', ['claude'], ['ANTHROPIC_MODEL=haiku']))).toBeUndefined()
+    expect(
+      profileModel(profile('codex', ['env', 'ANTHROPIC_MODEL=haiku', 'codex']))
+    ).toBeUndefined()
+  })
+})

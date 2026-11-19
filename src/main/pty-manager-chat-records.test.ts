@@ -582,8 +582,14 @@ describe('a new chat starts on the model last picked in a composer', () => {
 // picked applies only to a profile naming none. A Claude or Codex profile
 // cannot carry `--model` at all (a Clave-managed flag).
 describe("a profile's own model (#423, verifier V3)", () => {
-  const optionsOf = (adapter: { spawn: { mock: { calls: unknown[][] } } }): { model?: string } =>
-    (adapter.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { model?: string } }).options
+  const optionsOf = (adapter: {
+    spawn: { mock: { calls: unknown[][] } }
+  }): { model?: string; effort?: string } =>
+    (
+      adapter.spawn.mock.calls.at(-1)?.[0] as unknown as {
+        options: { model?: string; effort?: string }
+      }
+    ).options
   afterEach(() => {
     mocks.resolvedProfile = null
   })
@@ -614,6 +620,23 @@ describe("a profile's own model (#423, verifier V3)", () => {
       model: 'gpt-explicit'
     })
     expect(optionsOf(codex).model).toBe('gpt-explicit')
+  })
+  it("wins over the model last picked, in Claude's environment and Codex's attached -c (verifier V7)", async () => {
+    mocks.remembered.mockReturnValue('opus')
+    mocks.rememberedEffort.mockReturnValue('high')
+    mocks.resolvedProfile = {
+      id: 'claude-chat',
+      name: 'Claude',
+      family: 'claude',
+      command: ['env', 'ANTHROPIC_MODEL=haiku', 'CLAUDE_CODE_EFFORT_LEVEL=low', 'claude'],
+      additionalArgs: []
+    }
+    mocks.manager.getAdapter.mockReturnValue(mocks.claude)
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(optionsOf(mocks.claude)).toMatchObject({ model: 'haiku', effort: 'low' })
+    const codex = codexWith(['-cmodel="gpt-a"', '-c=model_reasoning_effort=low'])
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', codexMode: true })
+    expect(optionsOf(codex)).toMatchObject({ model: 'gpt-a', effort: 'low' })
   })
   it('leaves the model last picked to a profile naming none', async () => {
     mocks.remembered.mockReturnValue('gpt-remembered')

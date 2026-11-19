@@ -681,6 +681,12 @@ interface HandleState {
   /** A model/list that failed or timed out: not asked again at every turn,
    *  only by the picker, whose answer fills the listing again. */
   listingFailed?: boolean
+  /** A model picked that the list did not name, carried by the next turn and
+   *  said once the app-server accepts that turn (#423, verifier V8). */
+  unannouncedModel?: boolean
+  /** An effort picked that no list vouched for yet: the turn that checks it
+   *  says what runs (#423, verifier V6). */
+  unvouchedEffort?: boolean
   /** The last effort the view was told, so that what a turn carries is said
    *  whenever it changes, and said once. Undefined until anything was. */
   announced?: string | null
@@ -878,44 +884,49 @@ export class CodexAdapter implements SessionAdapter {
       return
     }
     if (value.type === 'set_model') {
-      // A model the chat's own list does not name is refused here (#423): the
-      // API would fail the next turn on it, and an announced name would be
-      // taken for one the session runs on. An unread list refuses nothing.
-      if (value.model && state.listing?.length && !this.listedRow(state, value.model))
-        throw new Error(`Codex does not list the model ${value.model}`)
-      // Codex takes the model per turn, so the switch is recorded here and
-      // announced now; the next turn/start is what actually carries it.
+      // Codex takes the model per turn, so the switch is recorded here; the
+      // next turn/start is what actually carries it. The app-server says
+      // nothing back, so a pick is said to run (#423, verifier V2/V8) once
+      // something vouches for it: the chat's own model list naming it, said
+      // now, or else the turn the app-server accepts with it, said then. A
+      // name the list does not hold (a hidden model, a later page) is never
+      // refused: it goes out with the next turn.
       state.model = value.model
-      state.emitter.emit('stream', {
-        kind: 'event',
-        event: {
-          type: 'session_meta',
-          model: value.model ?? state.translator.model,
-          providerSessionId: state.translator.threadId || null
-        }
-      })
+      const vouched = !value.model || !!this.listedRow(state, value.model)
+      state.unannouncedModel = !vouched
+      if (vouched) this.announceModel(state, value.model ?? state.translator.model)
       return
     }
     if (value.type === 'set_effort') {
-      // Per turn, like the model: recorded and announced now, carried by the
-      // next turn/start. The app-server says nothing back (0.159 sends no
-      // settings notification for it), so what the view shows after a pick
-      // is this record; a level the model refuses is kept off the turn below.
-      // When the list already says the chat's model does not take the level,
-      // the turn's rule applies now (#423): the chat runs at its model's own,
-      // which is what the view is told, and the pick is not the session's.
-      const row = this.listedRow(state, state.model ?? state.translator.model)
+      // Per turn, like the model: recorded here, carried by the next
+      // turn/start. The app-server says nothing back (0.159 sends no settings
+      // notification for it), so a level is said to run (#423, verifier V6)
+      // only when the chat's own list says its model takes it; one the list
+      // has not been read for is checked by the turn, which says what it
+      // carries (turnEffort).
+      const model = state.model ?? state.translator.model
+      const row = this.listedRow(state, model)
       if (row && !codexEfforts(row).some((e) => e.id === value.effort)) {
-        state.effort = undefined
-        state.announced = undefined
-        this.announce(state, text(row.defaultReasoningEffort) || state.translator.threadEffort)
+        // A level the model does not take is refused, as Claude refuses one
+        // (verifier V9): the chat keeps the level it runs at, and the view
+        // keeps showing it.
+        this.error(
+          state,
+          new Error(`${model} does not take the ${effortLabel(value.effort)} effort`),
+          false
+        )
+        // With no level of its own chosen, it runs at its model's default.
+        if (state.effort === undefined)
+          this.announce(state, text(row.defaultReasoningEffort) || null)
         return
       }
       state.effort = value.effort
-      // Always said, even when it is the level last announced: a pick is the
-      // reader's, and a view that bound after that announcement catches up.
+      state.unvouchedEffort = !row
+      // Always said once vouched for, even when it is the level last
+      // announced: a pick is the reader's, and a view that bound after that
+      // announcement catches up. Unvouched, the turn says it.
       state.announced = undefined
-      this.announce(state, value.effort)
+      if (row) this.announce(state, value.effort)
       return
     }
     if (value.type === 'set_permission_mode') {
@@ -1106,6 +1117,16 @@ export class CodexAdapter implements SessionAdapter {
     this.announce(state, (row && text(row.defaultReasoningEffort)) || state.translator.threadEffort)
     return undefined
   }
+  private announceModel(state: HandleState, model: string | null): void {
+    state.emitter.emit('stream', {
+      kind: 'event',
+      event: {
+        type: 'session_meta',
+        model,
+        providerSessionId: state.translator.threadId || null
+      }
+    })
+  }
   private announceMode(state: HandleState): void {
     if (!state.mode) return
     state.emitter.emit('stream', {
@@ -1202,6 +1223,12 @@ export class CodexAdapter implements SessionAdapter {
     })
     // Codex keeps a turn's policy for the turns after it.
     if (picked && state.pickedMode === picked) state.pickedMode = undefined
+    // The app-server took a turn on a model its list did not name: now it
+    // is said to run (#423, verifier V8).
+    if (state.unannouncedModel && state.model) {
+      state.unannouncedModel = false
+      this.announceModel(state, state.model)
+    }
     const turn = object(object(result).turn)
     if (
       !state.translator.turnId &&
@@ -1331,8 +1358,10 @@ export class CodexAdapter implements SessionAdapter {
         codexThreadMode(result) ?? (isCodexRung(sandbox) ? sandbox : undefined) ?? undefined
       this.announceMode(state)
       // A launch effort (the one last picked) is the next turn's; announced
-      // as a switch is, the thread's own word following at that turn.
-      if (state.effort) this.announce(state, state.effort)
+      // as a switch is, the thread's own word following at that turn. A pick
+      // made since that no list vouched for is the turn's to say (#423,
+      // verifier V6).
+      if (state.effort && !state.unvouchedEffort) this.announce(state, state.effort)
     })().catch(async (error) => {
       this.error(state, error, true)
       if (state.connection) await state.connection.close()

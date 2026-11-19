@@ -479,15 +479,31 @@ function codexConfigValue(tokens: readonly string[], key: string): string | unde
   let value: string | undefined
   const pattern = new RegExp(`^${key}\\s*=\\s*(.*)$`)
   tokens.forEach((token, index) => {
+    // Every spelling the CLI takes (verifier V7): `-c k=v`, `--config k=v`,
+    // `--config=k=v`, and the attached `-ck=v` and `-c=k=v`.
     const setting =
       token === '-c' || token === '--config'
         ? tokens[index + 1]
         : token.startsWith('--config=')
           ? token.slice('--config='.length)
-          : undefined
+          : token.startsWith('-c=')
+            ? token.slice('-c='.length)
+            : token.startsWith('-c') && !token.startsWith('--')
+              ? token.slice('-c'.length)
+              : undefined
     const match = setting?.match(pattern)
     if (match) value = match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
   })
+  return value
+}
+
+/** A variable a wrapper in the profile's command sets for the program it
+ *  runs (`env NAME=value claude`), the later winning; the program itself is
+ *  the command's last word, and what follows it are its arguments. */
+function commandVariable(profile: LaunchProfile, name: string): string | undefined {
+  let value: string | undefined
+  for (const token of profile.command.slice(0, -1))
+    if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1)
   return value
 }
 
@@ -500,12 +516,16 @@ function codexConfigValue(tokens: readonly string[], key: string): string | unde
  */
 export function profileModel(profile: LaunchProfile | undefined): string | undefined {
   if (!profile) return undefined
+  // Claude reads ANTHROPIC_MODEL from the environment a wrapper in the
+  // command sets (verifier V7); its `--model` is a Clave-managed flag.
   const value =
     profile.family === 'codex'
       ? codexConfigValue([...profile.command, ...profile.additionalArgs], 'model')
       : profile.family === 'pi'
         ? profile.pi?.model
-        : undefined
+        : profile.family === 'claude'
+          ? commandVariable(profile, 'ANTHROPIC_MODEL')
+          : undefined
   return value && isValidModelName(value) ? value : undefined
 }
 
@@ -532,6 +552,12 @@ export function profileEffort(profile: LaunchProfile | undefined): string | unde
   if (profile.family === 'codex') {
     const value = codexConfigValue(tokens, 'model_reasoning_effort')
     return value !== undefined && isValidEffort(value) ? value : undefined
+  }
+  // Claude's CLAUDE_CODE_EFFORT_LEVEL, set by a wrapper in the command, wins
+  // over its --effort (verifier V7), as the CLI reads them.
+  if (profile.family === 'claude') {
+    const variable = commandVariable(profile, 'CLAUDE_CODE_EFFORT_LEVEL')
+    if (variable !== undefined) return isValidEffort(variable) ? variable : undefined
   }
   return effort
 }
