@@ -542,8 +542,12 @@ it('remembers a composer model pick for the next chat, only once the session too
   sessionManager.adopt(session, adapter.prepare(session), adapter)
   const event = { sender: { id: 102 } }
   mocks.rememberChatModel.mockClear()
+  // A model the session runs on once switched (#423): echo answers a name it
+  // does not list with its first model, which is not the pick.
   mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'opus' })
-  expect(mocks.rememberChatModel).toHaveBeenCalledWith('echo', 'opus')
+  expect(mocks.rememberChatModel).not.toHaveBeenCalled()
+  mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'echo-1' })
+  expect(mocks.rememberChatModel).toHaveBeenCalledWith('echo', 'echo-1')
   mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: null })
   expect(mocks.rememberChatModel).toHaveBeenLastCalledWith('echo', null)
   mocks.rememberChatModel.mockClear()

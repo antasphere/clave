@@ -26,7 +26,7 @@ import type {
   SessionStream,
   SessionWrite
 } from '@clave/contract/sessions'
-import type { SessionInput } from '../../shared/session-model'
+import type { SessionEvent, SessionInput } from '../../shared/session-model'
 import {
   applyWorkChange,
   takeoverRenames,
@@ -136,7 +136,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     id: string,
     value: SessionInput,
     confirmedBy: 'session_meta' | 'effort',
-    remember: (() => void) | undefined
+    remember: (() => void) | undefined,
+    confirms: (event: SessionEvent) => boolean = () => true
   ): Promise<void> => {
     // A newer pick of the same kind on the same chat replaces one still
     // waiting: the provider's next word answers the newer.
@@ -156,7 +157,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     timer.unref?.()
     off = manager.subscribe(id, (stream) => {
       if (settled || stream.kind !== 'event') return
+      // The provider's word on THIS pick (verifier V1): the value it names
+      // is the one picked. Another word of the kind (the settings read after
+      // a turn, an older pick's answer) waits on; an error first refuses it.
       if (stream.event.type === confirmedBy) {
+        if (!confirms(stream.event)) return
         settle()
         remember()
       } else if (stream.event.type === 'error') settle()
@@ -229,7 +234,9 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
           'session_meta',
           adapterId && !own && value.remember !== false
             ? () => rememberChatModel(adapterId, model)
-            : undefined
+            : undefined,
+          // A pick of the CLI's default names no model to compare.
+          (event) => model === null || (event.type === 'session_meta' && event.model === model)
         )
       }
       if (value.type === 'set_effort') {
@@ -239,7 +246,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
           id,
           value,
           'effort',
-          adapterId ? () => rememberChatEffort(adapterId, effort) : undefined
+          adapterId ? () => rememberChatEffort(adapterId, effort) : undefined,
+          (event) => event.type === 'effort' && event.effort === effort
         )
       }
       if (value.type !== 'user_message') return manager.write(id, value)

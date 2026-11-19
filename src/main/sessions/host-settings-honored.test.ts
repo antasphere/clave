@@ -164,6 +164,44 @@ describe('a composer pick is remembered once the provider took it (#423)', () =>
     expect(rememberChatEffort).not.toHaveBeenCalled()
   })
 
+  // Verifier V1: a word of the kind about another value is not this pick's.
+  it('does not take a meta naming another model for the pick, nor remember it after a refusal', async () => {
+    const { manager, emit } = setup()
+    await host(manager).write('a', { type: 'set_model', model: 'claude-opus-9' })
+    emit({ type: 'session_meta', model: 'claude-sonnet-5-5', providerSessionId: null })
+    emit({ type: 'error', message: 'Claude refused to switch to claude-opus-9', fatal: false })
+    expect(rememberChatModel).not.toHaveBeenCalled()
+  })
+
+  it("does not take an older pick's answer for the newer pick", async () => {
+    const { manager, emit } = setup()
+    const h = host(manager)
+    await h.write('a', { type: 'set_effort', effort: 'low' })
+    await h.write('a', { type: 'set_effort', effort: 'max' })
+    emit({ type: 'effort', effort: 'low' })
+    emit({ type: 'error', message: 'Claude refused the Max effort', fatal: false })
+    expect(rememberChatEffort).not.toHaveBeenCalled()
+  })
+
+  // Verifier V5: a newer pick replaces the one still waiting; only the newer
+  // is remembered, even when both are answered.
+  it('remembers only the newer of two picks both answered', async () => {
+    const { manager, emit } = setup()
+    const h = host(manager)
+    await h.write('a', { type: 'set_effort', effort: 'low' })
+    await h.write('a', { type: 'set_effort', effort: 'max' })
+    emit({ type: 'effort', effort: 'low' })
+    emit({ type: 'effort', effort: 'max' })
+    expect(vi.mocked(rememberChatEffort).mock.calls).toEqual([['claude-chat', 'max']])
+  })
+
+  it('confirms a pick of the CLI default by any word of the model', async () => {
+    const { manager, emit } = setup()
+    await host(manager).write('a', { type: 'set_model', model: null })
+    emit({ type: 'session_meta', model: 'claude-fable-5-1', providerSessionId: null })
+    expect(rememberChatModel).toHaveBeenCalledWith('claude-chat', null)
+  })
+
   it('keeps a pick the policy makes at a cap the tab’s own (PRDCT-4302)', async () => {
     const { manager, emit } = setup()
     await host(manager).write('a', { type: 'set_model', model: 'claude-opus-5-5', remember: false })

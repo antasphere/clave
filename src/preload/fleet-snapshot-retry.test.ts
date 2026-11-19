@@ -35,8 +35,10 @@ function server(failures: number): {
   api: ElectronAPI
   snapshots: FleetSnapshot[]
   reads: () => number
+  asked: () => number
 } {
   let reads = 0
+  let asked = 0
   let enabled = true
   const snapshots: FleetSnapshot[] = []
   const b = {
@@ -78,13 +80,14 @@ function server(failures: number): {
         enabled = false
         return
       }
+      asked++
       return { url: 'http://owner-a', token: 'test-only' }
     },
     connect: async () => b,
     changed: () => () => {}
   })
   api.onFleetSnapshot((snapshot) => snapshots.push(snapshot))
-  return { api, snapshots, reads: () => reads }
+  return { api, snapshots, reads: () => reads, asked: () => asked }
 }
 
 describe('a server snapshot that fails is read again (#423)', () => {
@@ -129,15 +132,20 @@ describe('a server snapshot that fails is read again (#423)', () => {
     }
   })
 
-  it('does not read a server again once it is disconnected', async () => {
+  it('does not read a server again once it is disconnected, nor keep a timer for it', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const h = server(100)
     await h.api.fleetList()
     await flush()
     expect(h.reads()).toBe(1)
     await h.api.fleetDisconnect('a')
+    const asked = h.asked()
+    // A retry left armed would wake and ask for the server once more
+    // (verifier V4): nothing may reach for it after the disconnect.
+    expect(vi.getTimerCount()).toBe(0)
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await flush()
+    expect(h.asked()).toBe(asked)
     expect(h.reads()).toBe(1)
     expect(h.snapshots).toEqual([])
   })

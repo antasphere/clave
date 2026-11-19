@@ -1225,7 +1225,41 @@ describe('Codex reasoning effort', () => {
     adapter.write(handle, { type: 'user_message', text: 'three' })
     await settle()
     expect(turns()[2]).not.toHaveProperty('effort')
-    expect(effortsOf(seen)).toEqual(['ultra', 'medium', 'high', null])
+    // The list is read by now: a level gpt-c does not take is never announced
+    // as if it ran (#423, verifier V2); the view is told none at once.
+    expect(effortsOf(seen)).toEqual(['ultra', 'medium', null])
+    await adapter.kill(handle)
+  })
+
+  // Issue #423, verifier V2: once the chat's own list was read (the composer
+  // reads it to offer its models), a pick the list says the model does not
+  // take is not announced as if it ran: the view is told the level the chat
+  // runs at, and a model the list does not name is refused.
+  it('answers a level the listed model does not take with the one it runs at, and refuses an unlisted model', async () => {
+    const { adapter, turns, complete } = effortFake()
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    await adapter.models(handle)
+    await settle()
+    adapter.write(handle, { type: 'set_model', model: 'gpt-b' })
+    adapter.write(handle, { type: 'set_effort', effort: 'ultra' })
+    expect(announced(seen).at(-1)).toBe('medium')
+    expect(announced(seen)).not.toContain('ultra')
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).not.toHaveProperty('effort')
+    complete()
+    // A level the listed model takes is announced and carried as before.
+    adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(announced(seen).at(-1)).toBe('high')
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).toMatchObject({ effort: 'high' })
+    expect(() => adapter.write(handle, { type: 'set_model', model: 'gpt-nowhere' })).toThrow(
+      'Codex does not list the model gpt-nowhere'
+    )
     await adapter.kill(handle)
   })
 

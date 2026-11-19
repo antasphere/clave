@@ -878,6 +878,11 @@ export class CodexAdapter implements SessionAdapter {
       return
     }
     if (value.type === 'set_model') {
+      // A model the chat's own list does not name is refused here (#423): the
+      // API would fail the next turn on it, and an announced name would be
+      // taken for one the session runs on. An unread list refuses nothing.
+      if (value.model && state.listing?.length && !this.listedRow(state, value.model))
+        throw new Error(`Codex does not list the model ${value.model}`)
       // Codex takes the model per turn, so the switch is recorded here and
       // announced now; the next turn/start is what actually carries it.
       state.model = value.model
@@ -896,6 +901,16 @@ export class CodexAdapter implements SessionAdapter {
       // next turn/start. The app-server says nothing back (0.159 sends no
       // settings notification for it), so what the view shows after a pick
       // is this record; a level the model refuses is kept off the turn below.
+      // When the list already says the chat's model does not take the level,
+      // the turn's rule applies now (#423): the chat runs at its model's own,
+      // which is what the view is told, and the pick is not the session's.
+      const row = this.listedRow(state, state.model ?? state.translator.model)
+      if (row && !codexEfforts(row).some((e) => e.id === value.effort)) {
+        state.effort = undefined
+        state.announced = undefined
+        this.announce(state, text(row.defaultReasoningEffort) || state.translator.threadEffort)
+        return
+      }
       state.effort = value.effort
       // Always said, even when it is the level last announced: a pick is the
       // reader's, and a view that bound after that announcement catches up.
@@ -1054,6 +1069,15 @@ export class CodexAdapter implements SessionAdapter {
     } finally {
       clearTimeout(timer)
     }
+  }
+  /** The model/list row of a model, from the list already read; undefined
+   *  when it was not read or does not name the model. */
+  private listedRow(
+    state: HandleState,
+    model: string | null | undefined
+  ): Record<string, unknown> | undefined {
+    if (!model) return undefined
+    return state.listing?.map(object).find((r) => (text(r.model) || text(r.id)) === model)
   }
   /** The effort this turn carries: the chosen one, only once the model list
    *  says the turn's model takes it. The app-server forwards any level to the
