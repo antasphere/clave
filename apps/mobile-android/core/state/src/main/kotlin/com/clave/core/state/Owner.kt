@@ -362,9 +362,10 @@ public class OwnerServices(
     private suspend fun machines(progress: suspend (MachineListing) -> Unit = {}): MachineListing {
         if (auth.status().account == null) return MachineListing(emptyList(), emptyList())
         assertOwner()
-        // Noted before the list is read: an address removed from here on gives nothing.
-        val start = addressWork.epoch.get()
-        val addresses = addresses()
+        // The epoch and the list are read together, under the lock every removal holds whole:
+        // the list is the one that epoch saw, and an address removed from here on gives
+        // nothing. The lock is never held across the network.
+        val (start, addresses) = addressWork.lock.withLock { addressWork.epoch.get() to addressesLocked() }
         assertOwner()
         val done = arrayOfNulls<Pair<List<Machine>, AddressListing>>(addresses.size)
         val publishing = Mutex()

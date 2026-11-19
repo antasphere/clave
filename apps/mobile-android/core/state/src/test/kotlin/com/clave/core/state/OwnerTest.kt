@@ -786,10 +786,20 @@ class OwnerTest {
             lists(other, "kept")
             servicesA.addAddress(machine.base, "Removed")
             servicesA.addAddress(other.base, "Kept")
-            // The listing has read the list with both addresses; the removal lands before any read.
+            // The listing has read the list with both addresses and starts a removal at once; the
+            // removal waits for the listing's snapshot and lands before the answers do.
             val removing = java.util.concurrent.atomic.AtomicBoolean(true)
+            var removal: kotlinx.coroutines.Deferred<Unit>? = null
             rawKv.afterRead = { key, _ ->
-                if (key.endsWith(MACHINE_ADDRESSES_KEY) && removing.getAndSet(false)) servicesA.removeAddress(machine.base)
+                if (key.endsWith(MACHINE_ADDRESSES_KEY) && removing.getAndSet(false)) {
+                    removal = scope.async { servicesA.removeAddress(machine.base) }
+                }
+            }
+            machine.handler = { call ->
+                if (call.rawPath == "/machines") {
+                    runBlocking { removal?.await() }
+                    answer(200, machinesJson("gone"))
+                } else answer(404, "{}")
             }
             val listing = servicesA.source.listing()
             rawKv.afterRead = null
@@ -800,6 +810,74 @@ class OwnerTest {
         } finally {
             rawKv.afterRead = null
             other.close()
+        }
+    }
+
+    @Test
+    fun `a listing that starts while a removal is being written sees the list before or after it, never a mix`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        lists(machine, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        // The removal has noted its epoch and holds before the shorter list is written.
+        val writing = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        rawKv.beforeWrite = { key, value ->
+            if (key.endsWith(MACHINE_ADDRESSES_KEY) && value == "[]") {
+                writing.complete(Unit)
+                finish.await()
+            }
+        }
+        try {
+            val removing = scope.async { servicesA.removeAddress(machine.base) }
+            awaitGate("the removal to hold its write", writing)
+            val reading = scope.async { servicesA.source.listing() }
+            delay(200)
+            finish.complete(Unit)
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            finish.complete(Unit)
+            rawKv.beforeWrite = null
+        }
+    }
+
+    @Test
+    fun `an answer from before an address was removed and added again never stands for the new one`() = runBlocking {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val asked = java.util.concurrent.atomic.AtomicInteger(0)
+        try {
+            val auth = signedIn("sub-a")
+            val a = storesOf(auth)
+            val servicesA = services(auth, a, defaultRelay = "")
+            machine.handler = { call ->
+                if (call.rawPath == "/machines") {
+                    if (asked.incrementAndGet() == 1) {
+                        release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                        answer(200, machinesJson("old-incarnation"))
+                    } else answer(200, machinesJson("new-incarnation"))
+                } else answer(404, "{}")
+            }
+            servicesA.addAddress(machine.base, "Again")
+            val older = async(Dispatchers.Default) { servicesA.source.listing() }
+            waitFor("the first answer to be held") { asked.get() == 1 }
+
+            servicesA.removeAddress(machine.base)
+            servicesA.addAddress(machine.base, "Again")
+            assertEquals(listOf("new-incarnation"), servicesA.source.listing().machines.map { it.id })
+            val cacheOfTheNewOne = a.kv.get(machinesCacheKey(machine.base))
+            release.countDown()
+            val old = older.await()
+
+            assertEquals(emptyList<String>(), old.machines.map { it.id })
+            assertEquals("the old answer writes no cache over the new one", cacheOfTheNewOne, a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(listOf("new-incarnation"), servicesA.source.listing().machines.map { it.id })
+        } finally {
+            release.countDown()
         }
     }
 
@@ -864,13 +942,15 @@ class OwnerTest {
         val authA = signedIn("sub-a")
         val a = storesOf(authA)
         val servicesA = services(authA, a, defaultRelay = "")
-        lists(machine, "a1")
         servicesA.addAddress(machine.base)
-        servicesA.addressWork.lock.lock()
+        machine.handler = { call -> if (call.rawPath == "/machines") machine.hold(call) else answer(404, "{}") }
         val listing = scope.async { runCatching { servicesA.source.listing() } }
+        // The listing has taken its snapshot and asked; the lock is held when its answer lands.
+        until(what = "the address to be asked") { machine.held.size == 1 }
+        servicesA.addressWork.lock.lock()
         try {
-            waitFor("the address to answer") { machine.calls.any { it.rawPath == "/machines" } }
-            delay(200)
+            machine.respond(0, answer(200, machinesJson("a1")))
+            delay(300)
             authA.signOut()
         } finally {
             servicesA.addressWork.lock.unlock()

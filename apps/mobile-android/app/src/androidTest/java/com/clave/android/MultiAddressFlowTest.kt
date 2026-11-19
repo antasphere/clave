@@ -142,13 +142,13 @@ class MultiAddressFlowTest {
         rule.onAllNodesWithText("Stand-in Mac").assertCountEquals(1)
         rule.onAllNodesWithText("Showing its last list.", substring = true).assertCountEquals(1)
         // The server's row comes from its own address's listing, not from its pairing record alone.
-        assertTrue("the server's address was asked with the hub token", server.requests.any { it.path == "/machines" && it.authorization == "Bearer $HUB_TOKEN" })
         // A partial listing may show the server from its pairing record while its address is
         // still being asked; once the address has answered, its own listing names it.
         rule.waitUntil(WAIT_MS) {
             rule.onAllNodesWithText("Asking…").fetchSemanticsNodes().isEmpty() &&
                 rule.onAllNodesWithText("Paired, not listed by any address", substring = true).fetchSemanticsNodes().isEmpty()
         }
+        assertTrue("the server's address was asked with the hub token", server.requests.any { it.path == "/machines" && it.authorization == "Bearer $HUB_TOKEN" })
 
         // 4. The server opens on a tap, its chat reads its past and a send goes through.
         rule.onNodeWithText("Stand-in server").performScrollTo().performClick()
