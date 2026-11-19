@@ -71,6 +71,26 @@ body,
   text-autospace: no-autospace;
 }
 
+/* The window's title areas: a press on one moves the window, as a native
+   title bar does. A drag area takes this class rather than an inline
+   `-webkit-app-region`, so the rule under it reaches every one.
+
+   While a menu or a popover is open (`data-holds-window-drag`, set by the
+   Radix primitives and the hand-rolled popovers, `primitives/window-drag.ts`),
+   the areas stop moving the window. macOS takes a press on a drag area for
+   itself and never hands it to the page, so a surface that closes on a press
+   outside it never heard one on the title bar and stayed open (PRDCT-4667).
+   With the areas off, the first press closes the menu and the next one moves
+   the window, as a native menu does. Chromium lays the page out again when
+   `app-region` changes and recomputes the window's drag areas after every
+   layout, so the switch reaches macOS at once. */
+.window-drag {
+  -webkit-app-region: drag;
+}
+html:has([data-holds-window-drag]) .window-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

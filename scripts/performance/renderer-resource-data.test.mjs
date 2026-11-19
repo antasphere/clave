@@ -98,7 +98,10 @@ async function liveSeedFixture() {
     expect(listeners.size).toBe(0)
     expect(disposed).toBe(100)
     expect(history).not.toHaveBeenCalled()
-    expect(manager.history('seed-0')).toEqual({ items: [], before: null })
+    // The production Echo replays nothing: the seed was observed live. The
+    // manager's history of a chat is its timeline since PRDCT-4666, so it
+    // holds that live seed; the adapter's own replay is what stays empty.
+    expect(adapter.history).toBeUndefined()
     return { workload, sessions: manager.list() }
   } finally {
     vi.unstubAllGlobals()

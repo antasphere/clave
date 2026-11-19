@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PiRpcAdapter, piModelOptions, type PiRpcSpawnOptions } from './pi-rpc-adapter'
-import type { SessionHandle } from '../adapter'
+import type { SessionAdapter, SessionHandle } from '../adapter'
+import { SessionManager } from '../session-manager'
 import type { SessionEvent } from '../../../shared/session-model'
 
 const STAND_IN = resolve(__dirname, '../../../../tests/e2e/fixtures/pi-rpc-agent.mjs')
@@ -482,7 +483,7 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
 
   // PRDCT-4427: Pi 1.5.2 keeps a name it does not have as a custom model id
   // and get_state names it as asked: only its list tells.
-  it('a model name Pi keeps as a custom id: said once, kept in the past', async () => {
+  it('a model name Pi keeps as a custom id: said once, and live alone', async () => {
     const s = await open(
       { model: 'no-such-model-zz' },
       {
@@ -500,9 +501,9 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     const said =
       'Pi does not know the model no-such-model-zz of kimi-coding: it sends that name to the provider as it is, and the provider may refuse it.'
     await expect.poll(() => notices(s.events)).toEqual([said])
-    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([
-      { type: 'error', message: said, fatal: false }
-    ])
+    // Said live alone: the session's timeline keeps it for a pane that binds
+    // after it was said, and a copy in the past stood twice (PRDCT-4664).
+    expect(s.adapter.history(s.handle)).toEqual([])
     // A model Pi lists for that provider: nothing said.
     const known = await open(
       { model: 'k-first' },
@@ -835,6 +836,49 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
     expect(second.events.some((e) => e.type === 'user_message')).toBe(false)
   })
 
+  // PRDCT-4664: said before any pane is bound, read by the pane that binds
+  // after in the session's timeline, where it stood twice while the adapter
+  // also kept it in its past.
+  it('a refusal stands once in the timeline a pane reads after it was said', async () => {
+    const state = tmp()
+    const adapter = new PiRpcAdapter({ id: 'pi-chat', provider: 'pi', label: 'Pi' })
+    const id = `pi-${++sequence}`
+    adapter.configure(id, {
+      command: [
+        process.execPath,
+        STAND_IN,
+        '--mode',
+        'rpc',
+        '--session',
+        'nope',
+        '--session-dir',
+        state
+      ],
+      env: { ...process.env }
+    })
+    const manager = new SessionManager()
+    manager.registerAdapter(adapter as unknown as SessionAdapter)
+    await manager.create({
+      id,
+      provider: 'pi',
+      transport: 'events',
+      cwd: state,
+      windowKey: 'w',
+      state: 'idle',
+      createdAt: 0,
+      adapterId: 'pi-chat',
+      title: 'Pi',
+      options: { resume: 'nope' }
+    })
+    live.push({ adapter, handle: { id } })
+    manager.ready(id)
+    await expect.poll(() => manager.get(id)?.state).toBe('ended')
+    const notices = manager.timeline(id).items.filter((item) => item.event.type === 'error')
+    expect(notices.map((item) => item.event)).toEqual([
+      { type: 'error', message: expect.stringMatching(/Pi could not start/), fatal: false }
+    ])
+  })
+
   it('a session Pi cannot open: the refusal in its own words, ended and exit 1', async () => {
     const s = await open({ resume: 'nope' }, { session: ['--session', 'nope'] })
     await expect.poll(() => s.exits).toEqual([1])
@@ -844,8 +888,9 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       fatal: false
     }
     expect(s.events).toEqual([refusal, { type: 'state_change', state: 'ended' }])
-    // Kept in the past too, for a pane that subscribes after it was said.
-    expect(s.adapter.history(s.handle).map((item) => item.event)).toEqual([refusal])
+    // Said live alone: the session's timeline keeps it for a pane that binds
+    // after it was said, and a copy in the past stood twice (PRDCT-4664).
+    expect(s.adapter.history(s.handle)).toEqual([])
   })
 
   it('a Pi that prints a line and exits 1 before it speaks: that line and the status, never its environment', async () => {
@@ -888,9 +933,7 @@ describe('PiRpcAdapter against the stand-in Pi', () => {
       'Pi could not start: Error: --provider requires --model (key ‹hidden›) (exit status 1)'
     expect(notices(events)).toEqual([message])
     expect(JSON.stringify(events)).not.toContain(secret)
-    expect(adapter.history(handle).map((item) => item.event)).toEqual([
-      { type: 'error', message, fatal: false }
-    ])
+    expect(adapter.history(handle)).toEqual([])
   })
 
   it('no model: the notice at spawn, and a prompt that fails with a notice', async () => {

@@ -1,9 +1,13 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
-import type { Session, SessionStream } from '../../shared/session-model'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { HistoryItem, Session, SessionStream } from '../../shared/session-model'
 import type { SessionAdapter, SessionAdapterEvents } from './adapter'
 import { EchoAdapter } from './adapters/echo-adapter'
 import { SessionManager } from './session-manager'
+import { JournalTimeline } from './journal-timeline'
 
 const session = (id: string, windowKey = 'first'): Session => ({
   id,
@@ -450,5 +454,169 @@ describe('an identified write waits for its provider (PRDCT-4448)', () => {
     })
     refuse(new Error('the provider did not confirm whether the message arrived'))
     await expect(unconfirmed).rejects.toThrow('did not confirm')
+  })
+})
+
+describe('a chat kept whole on disk (PRDCT-4666)', () => {
+  const dirs: string[] = []
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+  /** An Echo resumed on a saved conversation: its replay is what the
+   *  provider had at the launch and never grows, as a resumed chat's does. */
+  class ResumedEcho extends EchoAdapter {
+    replay: HistoryItem[] = Array.from({ length: 600 }, (_, n) => ({
+      event:
+        n % 2 === 0
+          ? { type: 'user_message', text: `saved question ${n}` }
+          : { type: 'assistant_text', delta: `saved answer ${n}`, final: true }
+    }))
+    history(): HistoryItem[] {
+      return this.replay
+    }
+  }
+  function kept(): { manager: SessionManager; adapter: ResumedEcho; dir: string } {
+    const root = mkdtempSync(join(tmpdir(), 'session-manager-timelines-'))
+    dirs.push(root)
+    const dir = join(root, 'session-timelines')
+    const manager = new SessionManager()
+    const adapter = new ResumedEcho()
+    manager.registerAdapter(adapter)
+    manager.keepTimelines(dir)
+    return { manager, adapter, dir }
+  }
+  const texts = (items: HistoryItem[]): string[] =>
+    items.flatMap(({ event }) =>
+      event.type === 'user_message'
+        ? [event.text]
+        : event.type === 'assistant_text'
+          ? [event.delta]
+          : []
+    )
+  function readAll(manager: SessionManager, id: string): HistoryItem[] {
+    const items: HistoryItem[] = []
+    let before: number | null | undefined
+    for (let guard = 0; guard < 100; guard++) {
+      const page = manager.history(id, before ?? undefined, 50)
+      items.unshift(...page.items)
+      before = page.before
+      if (before === null) return items
+    }
+    throw new Error('The history never reached its start')
+  }
+
+  it('answers the turn made after the resume, and pages back to the first item', async () => {
+    const { manager, adapter } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    await manager.write('a', { type: 'user_message', text: 'after the resume' })
+    const latest = manager.history('a', undefined, 50)
+    expect(texts(latest.items).slice(-2)).toEqual(['after the resume', 'after the resume'])
+    expect(latest.before).not.toBeNull()
+    const all = readAll(manager, 'a')
+    expect(all[0]).toEqual(adapter.replay[0])
+    expect(texts(all)).toEqual([...texts(adapter.replay), 'after the resume', 'after the resume'])
+  })
+
+  it('starts a new run of the tab from its replay, without the previous run', async () => {
+    const { manager, adapter } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    await manager.write('a', { type: 'user_message', text: 'the old run' })
+    adapter.replay = [{ event: { type: 'user_message', text: 'another conversation' } }]
+    await manager.attach('a')
+    expect(texts(manager.history('a').items)).toEqual(['another conversation'])
+  })
+
+  it('keeps the file past the entry, and forgetTimeline removes it', async () => {
+    const { manager, dir } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    const file = join(dir, 'a.jsonl')
+    expect(existsSync(file)).toBe(true)
+    manager.forget('a')
+    expect(existsSync(file)).toBe(true)
+    manager.forgetTimeline('a')
+    expect(existsSync(file)).toBe(false)
+    // Without a directory there is nothing to forget.
+    expect(() => new SessionManager().forgetTimeline('a')).not.toThrow()
+  })
+
+  it('answers the past alone in history, while the timeline keeps the live state', async () => {
+    for (const keep of [true, false]) {
+      const { manager, adapter } = keep
+        ? kept()
+        : (() => {
+            const manager = new SessionManager()
+            const adapter = new ResumedEcho()
+            manager.registerAdapter(adapter)
+            return { manager, adapter }
+          })()
+      adapter.replay = [{ event: { type: 'user_message', text: 'saved' } }]
+      await manager.create(session('a'))
+      manager.ready('a')
+      await manager.write('a', { type: 'user_message', text: 'now' })
+      adapter.inject('a', {
+        kind: 'event',
+        event: { type: 'waiting_messages', messages: [{ id: 'w1', text: 'next' }], takes: 'turn' }
+      })
+      const live = ['state_change', 'background_tasks', 'waiting_messages']
+      const timelineTypes = manager.timeline('a').items.map(({ event }) => event.type)
+      expect(timelineTypes).toContain('state_change')
+      expect(timelineTypes).toContain('waiting_messages')
+      const history = manager.history('a').items
+      expect(history.some(({ event }) => live.includes(event.type))).toBe(false)
+      expect(texts(history)).toEqual(['saved', 'now', 'now'])
+    }
+  })
+
+  it('closes the previous run’s timeline once at a restart', async () => {
+    const { manager } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    const close = vi.spyOn(JournalTimeline.prototype, 'close')
+    try {
+      await manager.attach('a')
+      expect(close).toHaveBeenCalledTimes(1)
+    } finally {
+      close.mockRestore()
+    }
+  })
+
+  it('gives a run file up once a write to it failed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { manager, dir } = kept()
+      await manager.create(session('a'))
+      manager.ready('a')
+      const file = join(dir, 'a.jsonl')
+      expect(existsSync(file)).toBe(true)
+      // The run's file stops taking writes, as a full disk does.
+      const entry = (
+        manager as unknown as {
+          entries: Map<string, { timeline: { file?: { close(): void } } }>
+        }
+      ).entries.get('a')!
+      entry.timeline.file!.close()
+      await manager.write('a', { type: 'user_message', text: 'after the failure' })
+      expect(existsSync(file)).toBe(false)
+      expect(texts(manager.history('a').items)).toContain('after the failure')
+      expect(error).toHaveBeenCalledTimes(1)
+    } finally {
+      error.mockRestore()
+    }
+  })
+
+  it('never sweeps a live session’s file, and sweeps a gone one', async () => {
+    const { manager, dir } = kept()
+    await manager.create(session('a'))
+    manager.ready('a')
+    await manager.create(session('b'))
+    manager.ready('b')
+    manager.forget('b')
+    manager.sweepTimelines(new Set(['some-recorded-tab']))
+    expect(existsSync(join(dir, 'a.jsonl'))).toBe(true)
+    expect(existsSync(join(dir, 'b.jsonl'))).toBe(false)
+    expect(() => new SessionManager().sweepTimelines(new Set(['a']))).not.toThrow()
   })
 })

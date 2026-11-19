@@ -811,6 +811,59 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.entries()).toHaveLength(1)
     expect(h.history).not.toHaveBeenCalled()
   })
+  it('takes the host’s unpositioned model and waiting snapshots as overlays, before and after the snapshot', async () => {
+    // A Claude chat names its model at ready, so every later subscribe (a
+    // second view, a reconnect) is told it again without a position: that
+    // frame once failed the snapshot and left the conversation empty.
+    const meta: SessionStream = {
+      kind: 'event',
+      event: { type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null }
+    }
+    const waiting: SessionStream = {
+      kind: 'event',
+      event: { type: 'waiting_messages', messages: [], takes: 'turn' }
+    }
+    const h = setup()
+    h.reader.stream(meta)
+    h.reader.stream(waiting)
+    h.reader.start()
+    await settle()
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    expect(h.entries()).toHaveLength(1)
+    h.reader.stream(meta)
+    h.reader.stream(frame(2, 'next'))
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.timeline).toHaveBeenCalledOnce()
+    expect(h.entries()).toHaveLength(2)
+  })
+  it('takes an event with no position as the host’s current state whatever its type, and never fails on it', async () => {
+    // PRDCT-4664. The reader held a list of the types a host may send without
+    // a position. A type the list lacked (the model, at a Claude chat's
+    // ready: v3.0.0-beta.25) failed the snapshot for good, and the pane's
+    // Retry with it, since the frame stayed in the handoff and refused every
+    // later snapshot. `effort` stands for the next word a host tells a view
+    // that binds late.
+    vi.useFakeTimers()
+    const stray: SessionStream = { kind: 'event', event: { type: 'effort', effort: 'high' } }
+    const h = setup()
+    h.reader.stream(stray)
+    h.reader.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    h.reader.stream(stray)
+    h.reader.stream(frame(2, 'next'))
+    h.reader.stream(frame(3, 'and after'))
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.timeline).toHaveBeenCalledOnce()
+    expect(h.entries().flatMap((entry) => (entry.kind === 'user' ? [entry.text] : []))).toEqual([
+      'same',
+      'next',
+      'and after'
+    ])
+    expect(h.event.mock.calls.filter(([item]) => item.event === stray.event)).toHaveLength(2)
+  })
   it('starts after subscription and buffers meanwhile; snapshot-covered events occur once', async () => {
     const h = setup()
     h.reader.stream(frame(1))
@@ -1049,6 +1102,115 @@ describe('the positioned snapshot/live handoff', () => {
     expect(h.entries()).toHaveLength(1)
     expect(h.reader.source().truncated).toBe(true)
     expect(h.snapshot.mock.calls[0][2]).toBe(true)
+  })
+  it('keeps the host’s current state through a handoff overflow, and the covering snapshot commits', async () => {
+    // PRDCT-4664. The frame that overflowed the handoff, when it carried no
+    // position (the state a subscriber is told, a request still open), was
+    // counted as lost transcript of a server that orders nothing, and every
+    // snapshot was refused from then on.
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => answer.promise)
+        .mockResolvedValue(page([HANDOFF_MAX_ITEMS]))
+    )
+    h.reader.start()
+    for (let n = 1; n <= HANDOFF_MAX_ITEMS; n++) h.reader.stream(frame(n))
+    const told: SessionStream = {
+      kind: 'event',
+      event: { type: 'state_change', state: 'done', run: 4 }
+    }
+    h.reader.stream(told)
+    answer.resolve(page([HANDOFF_MAX_ITEMS]))
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    // The state it was told survived the overflow.
+    expect(h.state().state).toBe('done')
+  })
+  it('does not refuse a new generation’s snapshot for positions let go under the one before it', async () => {
+    // PRDCT-4664. The handoff overflows under one process, which is replaced
+    // (a Resume, a move to another account) before a snapshot lands, and the
+    // new one says nothing yet: its snapshot answers for its own generation.
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(
+      vi
+        .fn()
+        .mockImplementationOnce(() => answer.promise)
+        .mockResolvedValue(page([1], 1, 'new'))
+    )
+    h.reader.start()
+    for (let n = 1; n <= HANDOFF_MAX_ITEMS + 1; n++) h.reader.stream(frame(n))
+    answer.resolve(page([1], 1, 'new'))
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    h.reader.stream(frame(2, 'from the new process', 'new'))
+    expect(h.entries().at(-1)).toMatchObject({ text: 'from the new process' })
+  })
+  it('refuses a past that cannot cover what an older server’s stream let go, after a reconnect too', async () => {
+    // A server older than the timeline orders nothing: its frames carry no
+    // position and its past is `history`. What the bounded handoff lets go
+    // of such a stream no past can give back, so the read is refused and the
+    // pane says so, rather than a conversation shown with a hole in it. A
+    // reconnect knows nothing of the server it comes back to: a reader that
+    // went on trusting the last one's ordering kept every such frame as
+    // current state and showed the conversation without its beginning
+    // (PRDCT-4664, the verifier's round 1).
+    for (const reconnects of [false, true]) {
+      vi.useFakeTimers()
+      const past = deferred<{ items: []; before: null }>()
+      const h = setup(
+        reconnects
+          ? vi
+              .fn()
+              .mockResolvedValueOnce(page([1]))
+              .mockResolvedValue(null)
+          : vi.fn(async () => null)
+      )
+      if (reconnects) {
+        h.reader.start()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(h.snapshot).toHaveBeenCalledOnce()
+      }
+      h.history.mockImplementationOnce(() => past.promise)
+      if (reconnects) h.reader.reconnect()
+      else h.reader.start()
+      await vi.advanceTimersByTimeAsync(0)
+      for (let n = 1; n <= HANDOFF_MAX_ITEMS + 1; n++)
+        h.reader.stream({ kind: 'event', event: { type: 'user_message', text: `said ${n}` } })
+      past.resolve({ items: [], before: null })
+      await vi.advanceTimersByTimeAsync(130_000)
+      expect(h.failed, reconnects ? 'after a reconnect' : 'from the start').toHaveBeenCalled()
+      expect(h.snapshot).toHaveBeenCalledTimes(reconnects ? 1 : 0)
+      h.reader.stop()
+      vi.useRealTimers()
+    }
+  })
+  it('bounds the current state it keeps through overflows to the newest words', async () => {
+    // PRDCT-4664: current state is kept through a handoff overflow, and is
+    // itself bounded, or a host telling its state in a loop would grow the
+    // handoff without end.
+    vi.useFakeTimers()
+    const answer = deferred<TimelinePage | null>()
+    const h = setup(vi.fn(() => answer.promise))
+    h.reader.start()
+    h.reader.stream(frame(1))
+    const told = HANDOFF_MAX_ITEMS + 50
+    for (let n = 1; n <= told; n++)
+      h.reader.stream({
+        kind: 'event',
+        event: { type: 'session_meta', model: `model-${n}`, providerSessionId: null }
+      })
+    answer.resolve(page([1]))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.failed).not.toHaveBeenCalled()
+    expect(h.snapshot).toHaveBeenCalledOnce()
+    expect(h.event.mock.calls.length).toBeLessThanOrEqual(HANDOFF_MAX_ITEMS)
+    expect(h.state().model).toBe(`model-${told}`)
   })
   it.each([1, 2])(
     'keeps the highest discarded position across %i late-low overflows',

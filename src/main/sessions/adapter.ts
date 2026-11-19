@@ -37,8 +37,12 @@ export interface SessionAdapter {
   write(handle: SessionHandle, input: Uint8Array | SessionInput): void | Promise<void>
   /** The models this session may switch to; absent when the provider has none to offer. */
   models?(handle: SessionHandle): Promise<ModelOption[]>
-  /** A resumed conversation's past, oldest first, which the manager hands to a
-   *  view a page at a time; absent when the adapter replays nothing. */
+  /** A resumed conversation's past, oldest first: what was said BEFORE this
+   *  process, and nothing the adapter says itself. The session's timeline
+   *  freezes it as its prefix when the session is made ready and orders every
+   *  event emitted after it, heard by a view or not, so an event kept here AND
+   *  said live stands twice in the conversation (a start notice did,
+   *  PRDCT-4664). Absent when the adapter replays nothing. */
   history?(handle: SessionHandle): HistoryItem[]
   /** The commands the composer offers under "/"; absent when the provider has none. */
   commands?(handle: SessionHandle): Promise<CommandOption[]>

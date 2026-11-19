@@ -750,7 +750,13 @@ it('lists the models by version, asking the CLI itself, starting a session that 
       hint: 'Default · Best for everyday, complex tasks',
       resolved: 'claude-opus-5-5'
     },
-    { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', resolved: 'claude-fable-5-1' },
+    { id: 'claude-fable-5-2[1m]', label: 'Fable 5.2', resolved: 'claude-fable-5-2' },
+    {
+      id: 'claude-fable-5-1[1m]',
+      label: 'Fable 5.1',
+      hint: 'Earlier version',
+      resolved: 'claude-fable-5-1'
+    },
     {
       id: 'claude-fable-5[1m]',
       label: 'Fable 5',
@@ -758,9 +764,11 @@ it('lists the models by version, asking the CLI itself, starting a session that 
       resolved: 'claude-fable-5'
     },
     { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', resolved: 'claude-sonnet-5-5' },
+    { id: 'claude-haiku-5-5', label: 'Haiku 5.5', resolved: 'claude-haiku-5-5' },
     {
       id: 'claude-haiku-4-5-20251001',
       label: 'Haiku 4.5',
+      hint: 'Earlier version',
       resolved: 'claude-haiku-4-5-20251001'
     },
     { id: 'claude-opus-6', label: 'Opus 6', hint: 'Opus 6 · Newer', resolved: 'claude-opus-6' }
@@ -971,8 +979,8 @@ it('switches the permission mode the way Shift+Tab does, and says why the CLI re
   adapter.ready(handle)
   // The default's resolution went out at ready (PRDCT-4256); the rest is the test's.
   expect(JSON.parse(written(child)!)).toMatchObject({ request: { subtype: 'initialize' } })
-  // The launch's `manual` is the running `default`, and bypass is not offered
-  // to a session that was not launched on it.
+  // The launch's `manual` is the running `default`, and bypass is offered:
+  // every chat is launched able to switch to it.
   const offered = events.find((e) => e.type === 'permission_mode')
   expect(offered).toEqual({
     type: 'permission_mode',
@@ -981,12 +989,13 @@ it('switches the permission mode the way Shift+Tab does, and says why the CLI re
       { id: 'default', label: 'Manual' },
       { id: 'acceptEdits', label: 'Accept edits' },
       { id: 'plan', label: 'Plan' },
-      { id: 'auto', label: 'Auto' }
+      { id: 'auto', label: 'Auto' },
+      { id: 'bypassPermissions', label: 'Bypass permissions' }
     ]
   })
-  expect(() =>
-    adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
-  ).toThrow(/Unknown permission mode/)
+  expect(() => adapter.write(handle, { type: 'set_permission_mode', mode: 'yolo' })).toThrow(
+    /Unknown permission mode/
+  )
   adapter.write(handle, { type: 'set_permission_mode', mode: 'plan' })
   const request = JSON.parse(written(child)!)
   expect(request).toMatchObject({
@@ -2224,11 +2233,12 @@ describe('the default resolved at ready (PRDCT-4256)', () => {
     const { current, earlier } = foldModelOptions(options)
     expect(current.map((o) => o.label)).toEqual([
       'Opus 5.5',
-      'Fable 5.1',
+      'Fable 5.2',
       'Sonnet 5.5',
       'Haiku 5.5'
     ])
     expect(earlier.map((o) => o.label)).toEqual([
+      'Fable 5.1',
       'Fable 5',
       'Haiku 4.5',
       'Sonnet 5',
@@ -2986,7 +2996,8 @@ it('keeps bypass reachable to a chat resumed in another mode when its launch had
     expect(offered.mode).toBe('plan')
     expect(offered.modes.map((m) => m.id)).toContain('bypassPermissions')
   }
-  // Without the allowance, the flag is not passed and bypass is not offered.
+  // Without the allowance, the flag is passed all the same and bypass offered:
+  // every chat can switch to it (the CLI refuses otherwise, bypass_not_launched).
   mock.spawn.mockClear()
   const plain = new ClaudeAdapter()
   const plainEvents: SessionEvent[] = []
@@ -2999,10 +3010,14 @@ it('keeps bypass reachable to a chat resumed in another mode when its launch had
     if (s.kind === 'event') plainEvents.push(s.event)
   })
   plain.ready(plainHandle)
-  expect(mock.spawn.mock.calls[0][1][2]).not.toContain('--allow-dangerously-skip-permissions')
+  expect(mock.spawn.mock.calls[0][1][2]).toContain("'--allow-dangerously-skip-permissions'")
+  expect(mock.spawn.mock.calls[0][1][2]).not.toContain("'--permission-mode' 'bypassPermissions'")
   const plainOffer = plainEvents.find((e) => e.type === 'permission_mode')
-  if (plainOffer?.type === 'permission_mode')
-    expect(plainOffer.modes.map((m) => m.id)).not.toContain('bypassPermissions')
+  expect(plainOffer?.type).toBe('permission_mode')
+  if (plainOffer?.type === 'permission_mode') {
+    expect(plainOffer.mode).toBe('plan')
+    expect(plainOffer.modes.map((m) => m.id)).toContain('bypassPermissions')
+  }
 })
 it('an identified Claude message is evidence only after stdin acknowledges it', async () => {
   const child = Object.assign(new EventEmitter(), {
