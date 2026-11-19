@@ -1,6 +1,7 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
 import { HARNESS_BY_ID } from './harness'
 import { isValidEffort } from './effort'
+import { isValidModelName } from './model-name'
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 export type AgentKind = LauncherFamily | 'claude-agents'
@@ -472,6 +473,42 @@ export function codexProfilePolicy(profile: LaunchProfile): CodexThreadPolicy {
   return policy
 }
 
+/** A Codex `-c key=value` (or `--config`) override of one key, the later
+ *  winning, its value unquoted; undefined when the profile sets none. */
+function codexConfigValue(tokens: readonly string[], key: string): string | undefined {
+  let value: string | undefined
+  const pattern = new RegExp(`^${key}\\s*=\\s*(.*)$`)
+  tokens.forEach((token, index) => {
+    const setting =
+      token === '-c' || token === '--config'
+        ? tokens[index + 1]
+        : token.startsWith('--config=')
+          ? token.slice('--config='.length)
+          : undefined
+    const match = setting?.match(pattern)
+    if (match) value = match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
+  })
+  return value
+}
+
+/**
+ * The model a profile's own settings start the agent on (#423, verifier V3):
+ * Codex's config override `-c model=<name>`, a Pi profile's own model. A
+ * Claude or Codex profile cannot carry `--model` (a Clave-managed flag). A
+ * saved profile is a deliberate choice: an explicit pick overrides it, the
+ * model last picked does not. A value that is not a model name is none.
+ */
+export function profileModel(profile: LaunchProfile | undefined): string | undefined {
+  if (!profile) return undefined
+  const value =
+    profile.family === 'codex'
+      ? codexConfigValue([...profile.command, ...profile.additionalArgs], 'model')
+      : profile.family === 'pi'
+        ? profile.pi?.model
+        : undefined
+  return value && isValidModelName(value) ? value : undefined
+}
+
 /**
  * The reasoning effort a profile's own flags start the agent on (#423):
  * Claude's `--effort <level>` (or `--effort=<level>`), Codex's config
@@ -489,18 +526,13 @@ export function profileEffort(profile: LaunchProfile | undefined): string | unde
     if (profile.family === 'claude') {
       if (token === '--effort') value = tokens[index + 1]
       else if (token.startsWith('--effort=')) value = token.slice('--effort='.length)
-    } else if (profile.family === 'codex') {
-      const setting =
-        token === '-c' || token === '--config'
-          ? tokens[index + 1]
-          : token.startsWith('--config=')
-            ? token.slice('--config='.length)
-            : undefined
-      const match = setting?.match(/^model_reasoning_effort\s*=\s*(.*)$/)
-      if (match) value = match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
     }
     if (value !== undefined) effort = isValidEffort(value) ? value : undefined
   })
+  if (profile.family === 'codex') {
+    const value = codexConfigValue(tokens, 'model_reasoning_effort')
+    return value !== undefined && isValidEffort(value) ? value : undefined
+  }
   return effort
 }
 

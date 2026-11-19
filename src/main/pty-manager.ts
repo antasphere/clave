@@ -4,6 +4,7 @@ import {
   buildAgentArgv,
   isCodexRung,
   profileEffort,
+  profileModel,
   profileSetsPermissions,
   sanitizeCarriedLaunchProfile,
   type LauncherFamily
@@ -376,6 +377,14 @@ class PtyManager {
     // another provider.
     const onConnection =
       !!options?.connectionId && (adapter.id === 'pi-chat' || adapter.id === 'opencode-chat')
+    // A profile that names its own model (Codex's `-c model=`, a Pi
+    // profile's) starts on it, the way it names its effort (#423, verifier
+    // V3): handed over as the launch's, so the thread and the record carry it.
+    const ownModel =
+      events && !options?.model && !options?.adoptSessionId && !options?.resumeSessionId
+        ? profileModel(ownProfile)
+        : undefined
+    if (ownModel) options = { ...options, model: ownModel }
     const remembered =
       events &&
       !onConnection &&

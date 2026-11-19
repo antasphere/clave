@@ -577,6 +577,52 @@ describe('a new chat starts on the model last picked in a composer', () => {
   })
 })
 
+// Issue #423, verifier V3: a model the profile names (Codex's `-c model=`,
+// a Pi profile's own) is applied; an explicit pick beats it; the model last
+// picked applies only to a profile naming none. A Claude or Codex profile
+// cannot carry `--model` at all (a Clave-managed flag).
+describe("a profile's own model (#423, verifier V3)", () => {
+  const optionsOf = (adapter: { spawn: { mock: { calls: unknown[][] } } }): { model?: string } =>
+    (adapter.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { model?: string } }).options
+  afterEach(() => {
+    mocks.resolvedProfile = null
+  })
+  const codexWith = (args: string[]): { spawn: { mock: { calls: unknown[][] } } } => {
+    mocks.resolvedProfile = {
+      id: 'codex-chat',
+      name: 'Codex',
+      family: 'codex',
+      command: ['codex'],
+      additionalArgs: args
+    }
+    const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }
+    mocks.manager.getAdapter.mockReturnValue(codex)
+    return codex
+  }
+  it("wins over the model last picked, on Codex's -c model=", async () => {
+    mocks.remembered.mockReturnValue('gpt-remembered')
+    const codex = codexWith(['-c', 'model="gpt-a"'])
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', codexMode: true })
+    expect(optionsOf(codex).model).toBe('gpt-a')
+  })
+  it('gives way to a model the launch names', async () => {
+    mocks.remembered.mockReturnValue('gpt-remembered')
+    const codex = codexWith(['--config', 'model=gpt-a'])
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'codex-chat',
+      codexMode: true,
+      model: 'gpt-explicit'
+    })
+    expect(optionsOf(codex).model).toBe('gpt-explicit')
+  })
+  it('leaves the model last picked to a profile naming none', async () => {
+    mocks.remembered.mockReturnValue('gpt-remembered')
+    const codex = codexWith(['-c', 'model_reasoning_effort=high'])
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', codexMode: true })
+    expect(optionsOf(codex).model).toBe('gpt-remembered')
+  })
+})
+
 describe("a chat tab's dangerous mode reaches its agent", () => {
   it('asks Codex for full access, not only for no approvals', async () => {
     const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }

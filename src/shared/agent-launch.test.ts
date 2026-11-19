@@ -9,6 +9,7 @@ import {
   codexProfilePolicy,
   codexRungPolicy,
   profileEffort,
+  profileModel,
   resolveLaunchProfile,
   sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
@@ -667,5 +668,40 @@ describe('the effort a profile names (#423)', () => {
     expect(profileEffort(profile('claude', ['claude', '--effort']))).toBeUndefined()
     // Another family's spelling is not read.
     expect(profileEffort(profile('codex', ['codex', '--effort', 'high']))).toBeUndefined()
+  })
+})
+
+describe('the model a profile names (#423, verifier V3)', () => {
+  const profile = (
+    family: LaunchProfile['family'],
+    command: string[],
+    additionalArgs: string[] = [],
+    pi?: LaunchProfile['pi']
+  ): LaunchProfile => ({
+    id: 'p',
+    name: 'P',
+    family,
+    command,
+    additionalArgs,
+    ...(pi ? { pi } : {})
+  })
+  it("reads Codex's model override, quoted or not, short or long, the later winning", () => {
+    expect(profileModel(profile('codex', ['codex', '-c', 'model="gpt-a"']))).toBe('gpt-a')
+    expect(profileModel(profile('codex', ['codex'], ['--config=model=gpt-b']))).toBe('gpt-b')
+    expect(
+      profileModel(profile('codex', ['codex', '-c', "model='gpt-a'"], ['--config', 'model=gpt-c']))
+    ).toBe('gpt-c')
+  })
+  it("reads a Pi profile's own model", () => {
+    expect(profileModel(profile('pi', ['pi'], [], { model: 'pi-model' }))).toBe('pi-model')
+  })
+  it('names none for another key, a Claude profile, or a value that is no model name', () => {
+    expect(profileModel(undefined)).toBeUndefined()
+    expect(
+      profileModel(profile('codex', ['codex', '-c', 'model_reasoning_effort=high']))
+    ).toBeUndefined()
+    expect(profileModel(profile('codex', ['codex', '-c', 'model_provider=oss']))).toBeUndefined()
+    expect(profileModel(profile('claude', ['claude', '--verbose']))).toBeUndefined()
+    expect(profileModel(profile('codex', ['codex', '-c', 'model="$(rm -rf ~)"']))).toBeUndefined()
   })
 })
