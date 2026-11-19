@@ -1,5 +1,6 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
 import { HARNESS_BY_ID } from './harness'
+import { isValidEffort } from './effort'
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 export type AgentKind = LauncherFamily | 'claude-agents'
@@ -469,6 +470,38 @@ export function codexProfilePolicy(profile: LaunchProfile): CodexThreadPolicy {
       policy.approvalPolicy = approval as CodexApprovalPolicy
   })
   return policy
+}
+
+/**
+ * The reasoning effort a profile's own flags start the agent on (#423):
+ * Claude's `--effort <level>` (or `--effort=<level>`), Codex's config
+ * override `-c model_reasoning_effort=<level>` (or `--config`, the value
+ * quoted or not). The later one wins, as on the command line; a value that
+ * is not a level is no effort at all. A saved profile is a deliberate
+ * choice: an explicit pick overrides it, the effort last picked does not.
+ */
+export function profileEffort(profile: LaunchProfile | undefined): string | undefined {
+  if (!profile) return undefined
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  let effort: string | undefined
+  tokens.forEach((token, index) => {
+    let value: string | undefined
+    if (profile.family === 'claude') {
+      if (token === '--effort') value = tokens[index + 1]
+      else if (token.startsWith('--effort=')) value = token.slice('--effort='.length)
+    } else if (profile.family === 'codex') {
+      const setting =
+        token === '-c' || token === '--config'
+          ? tokens[index + 1]
+          : token.startsWith('--config=')
+            ? token.slice('--config='.length)
+            : undefined
+      const match = setting?.match(/^model_reasoning_effort\s*=\s*(.*)$/)
+      if (match) value = match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
+    }
+    if (value !== undefined) effort = isValidEffort(value) ? value : undefined
+  })
+  return effort
 }
 
 /**

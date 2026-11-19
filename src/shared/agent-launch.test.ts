@@ -8,6 +8,7 @@ import {
   chatProfileSource,
   codexProfilePolicy,
   codexRungPolicy,
+  profileEffort,
   resolveLaunchProfile,
   sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
@@ -629,5 +630,42 @@ describe('capturesExchange', () => {
     expect(exchangeCaptureRefusal('opencode')).toBe(
       'OpenCode exchange capture is not supported yet'
     )
+  })
+})
+
+// Issue #423: a profile's own effort is applied, an explicit pick overrides
+// it, and the effort last picked applies only to a profile that names none.
+describe('the effort a profile names (#423)', () => {
+  const profile = (
+    family: LaunchProfile['family'],
+    command: string[],
+    additionalArgs: string[] = []
+  ): LaunchProfile => ({ id: 'p', name: 'P', family, command, additionalArgs })
+  it("reads Claude's --effort in both spellings, the later winning", () => {
+    expect(profileEffort(profile('claude', ['claude', '--effort', 'low']))).toBe('low')
+    expect(profileEffort(profile('claude', ['claude'], ['--effort=max']))).toBe('max')
+    expect(profileEffort(profile('claude', ['claude', '--effort', 'low'], ['--effort=high']))).toBe(
+      'high'
+    )
+  })
+  it("reads Codex's model_reasoning_effort override, quoted or not, short or long", () => {
+    expect(profileEffort(profile('codex', ['codex', '-c', 'model_reasoning_effort=xhigh']))).toBe(
+      'xhigh'
+    )
+    expect(
+      profileEffort(profile('codex', ['codex'], ['--config', 'model_reasoning_effort="low"']))
+    ).toBe('low')
+    expect(
+      profileEffort(profile('codex', ['codex', "--config=model_reasoning_effort='medium'"]))
+    ).toBe('medium')
+  })
+  it('names none for a profile without one, another config key, or a value that is no level', () => {
+    expect(profileEffort(undefined)).toBeUndefined()
+    expect(profileEffort(profile('claude', ['claude', '--verbose']))).toBeUndefined()
+    expect(profileEffort(profile('codex', ['codex', '-c', 'model="gpt-5"']))).toBeUndefined()
+    expect(profileEffort(profile('claude', ['claude', '--effort', '$(rm -rf ~)']))).toBeUndefined()
+    expect(profileEffort(profile('claude', ['claude', '--effort']))).toBeUndefined()
+    // Another family's spelling is not read.
+    expect(profileEffort(profile('codex', ['codex', '--effort', 'high']))).toBeUndefined()
   })
 })

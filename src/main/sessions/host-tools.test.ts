@@ -52,11 +52,19 @@ import { rememberChatModel } from './chat-model-default'
 
 const sessions = new Map<string, { id: string; transport: string; title: string }>()
 const writes: unknown[] = []
+const listeners = new Set<(stream: unknown) => void>()
 const manager = {
   get: (id: string) => sessions.get(id),
   write: (id: string, input: unknown) => void writes.push([id, input]),
+  subscribe: (_id: string, listener: (stream: unknown) => void) => {
+    listeners.add(listener)
+    return () => listeners.delete(listener)
+  },
   capabilities: () => ({ images: false })
 } as unknown as SessionManager
+const said = (event: unknown): void => {
+  for (const listener of [...listeners]) listener({ kind: 'event', event })
+}
 const host = createSessionHost({
   manager,
   lifecycle: {
@@ -71,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   sessions.clear()
   writes.length = 0
+  listeners.clear()
   sessions.set('t1', { id: 't1', transport: 'pty', title: 'app' })
   sessions.set('c1', { id: 'c1', transport: 'events', title: 'chat' })
 })
@@ -161,7 +170,7 @@ describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () 
 })
 
 describe('a model switch through the host (PRDCT-4302)', () => {
-  it("the composer's pick is written and remembered as the next chat's default", async () => {
+  it("the composer's pick is written, and remembered as the next chat's default once the session took it (#423)", async () => {
     sessions.set('c2', {
       id: 'c2',
       transport: 'events',
@@ -170,6 +179,8 @@ describe('a model switch through the host (PRDCT-4302)', () => {
     } as never)
     await host.write('c2', { type: 'set_model', model: 'claude-opus-5-5' })
     expect(writes).toEqual([['c2', { type: 'set_model', model: 'claude-opus-5-5' }]])
+    expect(rememberChatModel).not.toHaveBeenCalled()
+    said({ type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null })
     expect(rememberChatModel).toHaveBeenCalledWith('claude-chat', 'claude-opus-5-5')
   })
   it("the policy's move at a cap is written and NOT remembered (remember: false)", async () => {
@@ -183,6 +194,7 @@ describe('a model switch through the host (PRDCT-4302)', () => {
     expect(writes).toEqual([
       ['c2', { type: 'set_model', model: 'claude-opus-5-5', remember: false }]
     ])
+    said({ type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null })
     expect(rememberChatModel).not.toHaveBeenCalled()
   })
 })

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // A chat tab has no PTY, so nothing wrote it a session record and it was gone
 // at the next launch. These pin the facade's half of the fix: the record is
@@ -114,7 +114,16 @@ vi.mock('./launch-profile-manager', () => ({
   eventsProfile: (id?: string) =>
     id === 'claude-chat' || id === 'codex-chat' ? { id, adapterId: id } : undefined,
   isEchoLaunchProfile: () => false,
-  launchProfileManager: { resolve: () => mocks.resolvedProfile ?? { id: 'claude-chat' } }
+  launchProfileManager: {
+    resolve: () =>
+      mocks.resolvedProfile ?? {
+        id: 'claude-chat',
+        name: 'Claude (chat)',
+        family: 'claude',
+        command: ['claude'],
+        additionalArgs: []
+      }
+  }
 }))
 
 import { ptyManager } from './pty-manager'
@@ -685,6 +694,59 @@ describe('a chat starts on the effort last picked in a composer', () => {
   it('starts on the CLI default when nothing was picked', async () => {
     await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     expect(launched()).toBeUndefined()
+  })
+
+  // Issue #423: the profile's own effort is applied; an explicit pick
+  // overrides it; the effort last picked applies to a profile naming none.
+  describe("a profile's own effort (#423)", () => {
+    const withEffort = (family: 'claude' | 'codex', args: string[]): void => {
+      mocks.resolvedProfile = {
+        id: `${family}-chat`,
+        name: family,
+        family,
+        command: [family],
+        additionalArgs: args
+      }
+    }
+    afterEach(() => {
+      mocks.resolvedProfile = null
+    })
+    it("wins over the effort last picked, on Claude's --effort", async () => {
+      mocks.rememberedEffort.mockReturnValue('xhigh')
+      withEffort('claude', ['--effort', 'low'])
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+      expect(launched()).toBe('low')
+    })
+    it("wins over the effort last picked, on Codex's model_reasoning_effort", async () => {
+      mocks.rememberedEffort.mockReturnValue('xhigh')
+      withEffort('codex', ['-c', 'model_reasoning_effort="medium"'])
+      const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }
+      mocks.manager.getAdapter.mockReturnValue(codex)
+      await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', codexMode: true })
+      const options = (
+        codex.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { effort?: string } }
+      ).options
+      expect(options.effort).toBe('medium')
+    })
+    it('gives way to an effort the launch names', async () => {
+      mocks.rememberedEffort.mockReturnValue('xhigh')
+      withEffort('claude', ['--effort', 'low'])
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', effort: 'max' })
+      expect(launched()).toBe('max')
+    })
+    it('leaves the effort last picked to a profile that names none', async () => {
+      mocks.rememberedEffort.mockReturnValue('xhigh')
+      withEffort('claude', ['--verbose'])
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+      expect(launched()).toBe('xhigh')
+    })
+    it('writes the effort the chat starts on to its record, the remembered one included', async () => {
+      mocks.rememberedEffort.mockReturnValue('xhigh')
+      await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+      expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+        expect.objectContaining({ effort: 'xhigh' })
+      )
+    })
   })
 })
 
