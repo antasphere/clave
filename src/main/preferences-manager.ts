@@ -65,6 +65,13 @@ export interface Preferences {
    * them is a first install.
    */
   onboarding: 'pending' | 'done'
+  /**
+   * The relay a phone reaches this machine through (issue #407, Settings →
+   * Mobile): an https origin, plain http only to this machine, or empty for
+   * none. Written through the devices domain (`SetMobileRelay`), read by the
+   * relay client (`server/relay-wiring.ts`) at every attempt.
+   */
+  mobileRelayUrl: string
 }
 
 const PREFERENCES_FILE = 'preferences.json'
@@ -85,7 +92,8 @@ const DEFAULTS: Preferences = {
   chatView: null,
   interactionMode: DEFAULT_INTERACTION_MODE,
   harnessSettings: {},
-  onboarding: 'pending'
+  onboarding: 'pending',
+  mobileRelayUrl: ''
 }
 
 /** The files an install of Clave leaves behind once it has run: any of them

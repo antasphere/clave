@@ -18,6 +18,7 @@ import {
   ListDevices,
   ReadDevicePairing,
   ReadMobileRelay,
+  ReadMobileRelayStatus,
   ReadOwnDevice,
   RefuseDevicePairing,
   RelayAddressInvalid,
@@ -143,6 +144,12 @@ export const deviceHandlers = [
   CommandHandler.make(SetMobileRelay, (p) =>
     Effect.flatMap(DeviceSessions, (devices) =>
       attempt(relayFailures, () => ({ url: devices.relay.set(p.url) }))
+    )
+  ),
+  // ── Issue #407: where the relay client stands, for Settings → Mobile ──
+  QueryHandler.make(ReadMobileRelayStatus, () =>
+    Effect.flatMap(DeviceSessions, (devices) =>
+      attempt([CapabilityUnavailable], () => devices.relay.status())
     )
   )
 ] as const

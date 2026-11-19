@@ -44,6 +44,7 @@
     "./routines": "./src/routines/index.ts",
     "./routines/model": "./src/routines/model.ts",
     "./devices": "./src/devices.ts",
+    "./relay": "./src/relay.ts",
     "./timeline": "./src/timeline.ts",
     "./session-write-error": "./src/session-write-error.ts",
     "./settings/provider-catalogue": "./src/settings/provider-catalogue.ts",

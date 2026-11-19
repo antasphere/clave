@@ -30,6 +30,7 @@ export interface OidcProviderState {
     { client_id: string; redirect_uri: string; scope: string; nonce: string; used: boolean }
   >
   refreshTokens: Map<string, { sub: string; client_id: string; scope: string }>
+  accessTokens: Map<string, { sub: string; exp: number }>
   tamper: OidcProviderTamper | null
   denyNext: boolean
   tokenDelayMs: number
@@ -59,6 +60,12 @@ export interface OidcProvider {
   port: number
   state: OidcProviderState
   browse(authorizationUrl: URL | string): Promise<{ location: string; response: Response }>
+  mintAccessToken(options?: {
+    sub?: string
+    jwt?: boolean
+    expiresInSec?: number
+    iss?: string | null
+  }): string
   close(): Promise<void>
 }
 
@@ -68,4 +75,6 @@ export function startOidcProvider(options?: {
   idTokenTtlSec?: number
   accessTokenTtlSec?: number
   registrationStatus?: number
+  /** The loopback port to bind; 0, the default, takes a free one. */
+  port?: number
 }): Promise<OidcProvider>
