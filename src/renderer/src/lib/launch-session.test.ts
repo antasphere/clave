@@ -477,6 +477,24 @@ describe('launches in a server workspace (#241)', () => {
     expect(f.remember).toHaveBeenCalledWith(serverWorkspace, setup)
   })
 
+  // Issue #423: a server applies its own permission default and its own
+  // profile's permissions (pty-manager); the Mac's rung, judged against the
+  // Mac's profile, used to travel as an explicit mode and override them.
+  it('sends no rung of this Mac to a server, only the model picked', async () => {
+    withServer()
+    useLaunchSettingsStore.setState({
+      harnesses: { claude: { permissionDefault: 'acceptEdits' } }
+    })
+    await launchSession({
+      setup: { kind: 'claude', dangerousMode: false, model: 'claude-sonnet-5-5' },
+      cwd: { kind: 'workspace-root' },
+      throwOnError: true
+    })
+    const options = f.fleetStart.mock.calls[0][2]
+    expect(options).not.toHaveProperty('permissionMode')
+    expect(options).toMatchObject({ model: 'claude-sonnet-5-5' })
+  })
+
   it('sends the server’s own profile definition and account when the setup names them, reading the server first when it was not read yet (PRDCT-4162)', async () => {
     withServer()
     // The modes rule is mocked to Codex above, so the pick exercised is a Codex one.

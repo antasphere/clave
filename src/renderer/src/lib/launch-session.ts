@@ -311,7 +311,12 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
       ...modes,
       dangerousMode,
-      ...setupSpawnFlags(req.setup, launchProfileId, workspaceId),
+      // The model picked, never this Mac's permission rung (#423): the server
+      // applies its own default and keeps a profile of its own that sets its
+      // permissions, as it does for a launch from the phone.
+      ...(req.setup && req.setup.kind !== 'claude-agents' && req.setup.model
+        ? { model: req.setup.model }
+        : {}),
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(launchProfileId ? { launchProfileId } : {}),
       ...(serverProfile ? { launchProfile: serverProfile } : {}),
