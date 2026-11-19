@@ -1315,7 +1315,9 @@ describe('Codex reasoning effort', () => {
     const accepted = new Promise<unknown>((resolve) => {
       accept = resolve
     })
-    const { adapter, turns } = effortFake({}, undefined, () => {
+    let held = true
+    const { adapter, turns, complete } = effortFake({}, undefined, () => {
+      if (!held) return Promise.resolve({ turn: { id: 'turn-2', status: 'inProgress' } })
       awaitingReply = true
       return accepted
     })
@@ -1337,6 +1339,14 @@ describe('Codex reasoning effort', () => {
     accept({ turn: { id: 'turn', status: 'inProgress' } })
     await settle()
     expect(models()).toEqual(['gpt-hidden-a'])
+    // The newer pick still waits for its own turn, and is said once that
+    // turn is accepted (verifier V13).
+    held = false
+    complete()
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).toMatchObject({ model: 'gpt-hidden-b' })
+    expect(models()).toEqual(['gpt-hidden-a', 'gpt-hidden-b'])
     await adapter.kill(handle)
   })
 

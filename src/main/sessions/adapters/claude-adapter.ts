@@ -1200,12 +1200,21 @@ export class ClaudeAdapter implements SessionAdapter {
           }),
           CLAVE_SESSION_ID: spec.id
         }
+        // Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort (#423, verifier
+        // V14): the effort passed (the explicit one, else the profile's own,
+        // else the last pick) must not lose to the variable inherited from
+        // the login environment, nor to one a login profile exports again.
+        if (options.effort) delete env.CLAUDE_CODE_EFFORT_LEVEL
+        const unsetEffort = options.effort ? 'unset CLAUDE_CODE_EFFORT_LEVEL; ' : ''
         // The binary found on the login environment's own PATH starts directly;
         // the login-shell wrapper is only for a command that PATH cannot place.
         const executable = findExecutable(argv[0], env.PATH)
         const launch = executable
           ? { file: executable, args: argv.slice(1) }
-          : resolvePosixShellLaunch(getUserShell(), `exec ${argv.map(shellSingleQuote).join(' ')}`)
+          : resolvePosixShellLaunch(
+              getUserShell(),
+              `${unsetEffort}exec ${argv.map(shellSingleQuote).join(' ')}`
+            )
         const child = spawn(launch.file, launch.args, {
           cwd: spec.cwd,
           env,

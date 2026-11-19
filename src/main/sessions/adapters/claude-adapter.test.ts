@@ -3119,3 +3119,73 @@ it('tells an identified initialInput that stdin refuses as one non-fatal error, 
     child.emit('exit', 0)
   }
 })
+
+// Verifier round 4, V14: Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort.
+// The effort Clave passes (the explicit one, else the profile's own, else
+// the last pick) must not lose to the same variable inherited from the
+// login environment, nor to one a login profile exports again: the child's
+// environment drops it and the shell command unsets it.
+it('passes its effort past an inherited effort variable (#423, verifier V14)', async () => {
+  const backend = await import('./pty-backend')
+  const login = vi
+    .spyOn(backend, 'getLoginShellEnv')
+    .mockReturnValue({ PATH: '/test/bin', CLAUDE_CODE_EFFORT_LEVEL: 'low' })
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  try {
+    const adapter = new ClaudeAdapter()
+    adapter.configure(spec.id, {
+      launchProfile: {
+        id: 'env-effort',
+        name: 'Env effort',
+        family: 'claude',
+        command: ['env', 'CLAUDE_CODE_EFFORT_LEVEL=low', 'claude'],
+        additionalArgs: []
+      }
+    })
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'max' } })
+    adapter.write(handle, { type: 'user_message', text: 'Hello' })
+    const command = mock.spawn.mock.calls.at(-1)![1][2] as string
+    const env = mock.spawn.mock.calls.at(-1)![2].env as Record<string, string>
+    expect(command).not.toContain('CLAUDE_CODE_EFFORT_LEVEL=')
+    expect(command.startsWith('unset CLAUDE_CODE_EFFORT_LEVEL; ')).toBe(true)
+    expect(command).toContain("'--effort' 'max'")
+    expect(env).not.toHaveProperty('CLAUDE_CODE_EFFORT_LEVEL')
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  } finally {
+    login.mockRestore()
+  }
+})
+
+it('leaves an inherited effort variable alone when it passes no effort', async () => {
+  const backend = await import('./pty-backend')
+  const login = vi
+    .spyOn(backend, 'getLoginShellEnv')
+    .mockReturnValue({ PATH: '/test/bin', CLAUDE_CODE_EFFORT_LEVEL: 'low' })
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  try {
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    adapter.write(handle, { type: 'user_message', text: 'Hello' })
+    const command = mock.spawn.mock.calls.at(-1)![1][2] as string
+    const env = mock.spawn.mock.calls.at(-1)![2].env as Record<string, string>
+    expect(command).not.toContain('unset CLAUDE_CODE_EFFORT_LEVEL')
+    expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBe('low')
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  } finally {
+    login.mockRestore()
+  }
+})

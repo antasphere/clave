@@ -235,3 +235,18 @@ describe('a Pi terminal on a connection is watched by name (PRDCT-4540)', () => 
     expect(command).not.toContain('CLAVE_CONNECTION_')
   })
 })
+
+// Issue #423, verifier V14: a Claude terminal given an effort (a routine's own)
+// unsets CLAUDE_CODE_EFFORT_LEVEL after the login profile, which may export
+// it and which Claude would prefer to --effort; one given none keeps it.
+describe('a Claude terminal given an effort runs at it (#423, verifier V14)', () => {
+  it('unsets the effort variable before the agent when it passes an effort', () => {
+    const { command } = start({ claudeMode: true, effort: 'max' })
+    expect(command).toContain('unset CLAUDE_CODE_EFFORT_LEVEL; ')
+    expect(command).toContain("'--effort' 'max'")
+  })
+  it('leaves it to the person when it passes none', () => {
+    const { command } = start({ claudeMode: true })
+    expect(command).not.toContain('CLAUDE_CODE_EFFORT_LEVEL')
+  })
+})
