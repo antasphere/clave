@@ -1083,7 +1083,8 @@ describe('Codex reasoning effort', () => {
   /** The lifecycle fake, with a model list and a thread reply of the case's choosing. */
   function effortFake(
     thread: Record<string, unknown> = {},
-    list: () => Promise<unknown> = async () => ({ data: LISTING })
+    list: () => Promise<unknown> = async () => ({ data: LISTING }),
+    turnStart?: () => Promise<unknown>
   ): {
     adapter: CodexAdapter
     turns: () => Record<string, unknown>[]
@@ -1095,6 +1096,7 @@ describe('Codex reasoning effort', () => {
       if (method === 'thread/start' || method === 'thread/resume')
         return { thread: { id: 'thread' }, model: 'gpt-a', ...thread }
       if (method === 'model/list') return list()
+      if (method === 'turn/start' && turnStart) return turnStart()
       if (method === 'turn/start') {
         callbacks.notification({ method: 'turn/started', params: { turn: { id: 'turn' } } })
         return { turn: { id: 'turn', status: 'inProgress' } }
@@ -1302,6 +1304,39 @@ describe('Codex reasoning effort', () => {
     await settle()
     expect(turns()[0]).toMatchObject({ model: 'gpt-hidden-elsewhere' })
     expect(models()).toEqual(['gpt-b', 'gpt-hidden-elsewhere'])
+    await adapter.kill(handle)
+  })
+
+  // Verifier round 3, V11: a turn's acceptance vouches for the model that
+  // turn carried, never for one picked while its reply was on the way.
+  it('says the model a turn carried once accepted, not one picked since', async () => {
+    let awaitingReply = false
+    let accept!: (value: unknown) => void
+    const accepted = new Promise<unknown>((resolve) => {
+      accept = resolve
+    })
+    const { adapter, turns } = effortFake({}, undefined, () => {
+      awaitingReply = true
+      return accepted
+    })
+    const handle = await adapter.spawn(spec)
+    await adapter.models(handle)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    const models = (): (string | null)[] =>
+      seen.flatMap((s) => {
+        const event = (s as { event?: SessionEvent }).event
+        return event?.type === 'session_meta' ? [event.model] : []
+      })
+    adapter.write(handle, { type: 'set_model', model: 'gpt-hidden-a' })
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(awaitingReply).toBe(true)
+    expect(turns()[0]).toMatchObject({ model: 'gpt-hidden-a' })
+    adapter.write(handle, { type: 'set_model', model: 'gpt-hidden-b' })
+    accept({ turn: { id: 'turn', status: 'inProgress' } })
+    await settle()
+    expect(models()).toEqual(['gpt-hidden-a'])
     await adapter.kill(handle)
   })
 

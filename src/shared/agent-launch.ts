@@ -314,7 +314,14 @@ export function buildAgentArgv(input: {
   ) {
     throw new Error('Launch profile contains a Clave-managed flag')
   }
-  const argv = [...input.profile.command, ...input.profile.additionalArgs]
+  // Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort (verifier V12): an
+  // effort Clave passes, already the explicit one, else the profile's own,
+  // else the last pick, replaces a variable the profile's wrapper sets.
+  const command =
+    input.kind === 'claude' && input.effort
+      ? withoutCommandVariable(input.profile.command, 'CLAUDE_CODE_EFFORT_LEVEL')
+      : input.profile.command
+  const argv = [...command, ...input.profile.additionalArgs]
   if (input.kind === 'claude-agents') return [...argv, 'agents']
   // Bypass is the skip flag, never a mode passed as such: a rung of
   // `bypassPermissions` launches as `dangerousMode` does.
@@ -505,6 +512,14 @@ function commandVariable(profile: LaunchProfile, name: string): string | undefin
   for (const token of profile.command.slice(0, -1))
     if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1)
   return value
+}
+
+/** The command without a variable its wrapper sets (`NAME=value` before the
+ *  program, its last word). */
+function withoutCommandVariable(command: readonly string[], name: string): string[] {
+  return command.filter(
+    (token, index) => index === command.length - 1 || !token.startsWith(`${name}=`)
+  )
 }
 
 /**

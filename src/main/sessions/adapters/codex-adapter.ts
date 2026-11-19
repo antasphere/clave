@@ -1209,6 +1209,11 @@ export class CodexAdapter implements SessionAdapter {
     }
     const picked = state.pickedMode
     const policy = picked ? codexRungPolicy(picked) : undefined
+    // The model this turn carries, and whether it still waits to be said:
+    // the acceptance vouches for it alone, never for a model picked while
+    // the reply was on the way (verifier V11).
+    const carried = state.model
+    const carriedUnannounced = state.unannouncedModel === true
     const result = await state.connection!.request('turn/start', {
       threadId: state.translator.threadId,
       input,
@@ -1225,9 +1230,9 @@ export class CodexAdapter implements SessionAdapter {
     if (picked && state.pickedMode === picked) state.pickedMode = undefined
     // The app-server took a turn on a model its list did not name: now it
     // is said to run (#423, verifier V8).
-    if (state.unannouncedModel && state.model) {
-      state.unannouncedModel = false
-      this.announceModel(state, state.model)
+    if (carriedUnannounced && carried) {
+      if (state.model === carried) state.unannouncedModel = false
+      this.announceModel(state, carried)
     }
     const turn = object(object(result).turn)
     if (

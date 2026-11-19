@@ -745,3 +745,29 @@ describe('the model and effort a profile names in its other spellings (#423, ver
     ).toBeUndefined()
   })
 })
+
+// Verifier round 3, V12: Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort,
+// so a profile's variable would beat an explicit pick. The effort Clave hands
+// over is already the explicit one, else the profile's, else the last pick;
+// it replaces the variable, which then cannot override it.
+describe("the effort Clave passes replaces a profile's effort variable (#423, verifier V12)", () => {
+  const profile: LaunchProfile = {
+    id: 'p',
+    name: 'P',
+    family: 'claude',
+    command: ['env', 'ANTHROPIC_MODEL=haiku', 'CLAUDE_CODE_EFFORT_LEVEL=low', 'claude'],
+    additionalArgs: []
+  }
+  it('drops the variable and passes --effort when an effort is given', () => {
+    const argv = buildAgentArgv({ kind: 'claude', profile, effort: 'max' })
+    expect(argv).not.toContain('CLAUDE_CODE_EFFORT_LEVEL=low')
+    expect(argv.slice(0, 3)).toEqual(['env', 'ANTHROPIC_MODEL=haiku', 'claude'])
+    expect(argv.slice(argv.indexOf('--effort'), argv.indexOf('--effort') + 2)).toEqual([
+      '--effort',
+      'max'
+    ])
+  })
+  it('keeps the variable when no effort is given (a terminal)', () => {
+    expect(buildAgentArgv({ kind: 'claude', profile })).toContain('CLAUDE_CODE_EFFORT_LEVEL=low')
+  })
+})

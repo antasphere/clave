@@ -1161,6 +1161,9 @@ export class ClaudeAdapter implements SessionAdapter {
           sessionId,
           resumeSessionId: options.resume,
           model: options.model,
+          // The argv builder places it, replacing a profile's effort
+          // variable the CLI would prefer (#423, verifier V12).
+          effort: options.effort,
           claudeSettings: buildClaudeHookSettingsArg(spec.id) ?? undefined,
           mcpConfigPath: mcpConfigPath ?? undefined
         })
@@ -1183,8 +1186,8 @@ export class ClaudeAdapter implements SessionAdapter {
         // and never starts the session in it.
         if (options.permissionMode !== 'bypassPermissions')
           argv.push('--allow-dangerously-skip-permissions')
-        // A model that takes no effort (Haiku) runs at none whatever this says.
-        if (options.effort) argv.push('--effort', options.effort)
+        // A model that takes no effort (Haiku) runs at none whatever the
+        // effort passed above says.
         // ADR 0004: a routine run's contract skill and its one-line system
         // prompt, from the spawn's own context; a tab's launch carries none.
         if (context.pluginDir) argv.push('--plugin-dir', context.pluginDir)
