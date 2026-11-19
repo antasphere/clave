@@ -776,6 +776,111 @@ class OwnerTest {
     }
 
     @Test
+    fun `an address removed right after a listing read the list gives that listing no row and no cache`() = runBlocking {
+        val other = FakeMachine()
+        try {
+            val auth = signedIn("sub-a")
+            val a = storesOf(auth)
+            val servicesA = services(auth, a, defaultRelay = "")
+            lists(machine, "gone")
+            lists(other, "kept")
+            servicesA.addAddress(machine.base, "Removed")
+            servicesA.addAddress(other.base, "Kept")
+            // The listing has read the list with both addresses; the removal lands before any read.
+            val removing = java.util.concurrent.atomic.AtomicBoolean(true)
+            rawKv.afterRead = { key, _ ->
+                if (key.endsWith(MACHINE_ADDRESSES_KEY) && removing.getAndSet(false)) servicesA.removeAddress(machine.base)
+            }
+            val listing = servicesA.source.listing()
+            rawKv.afterRead = null
+            assertEquals(listOf("kept"), listing.machines.map { it.id })
+            assertEquals(listOf(other.base), listing.addresses.map { it.address.url })
+            assertNull(a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(listOf(MachineAddress(other.base, "Kept")), servicesA.addresses())
+        } finally {
+            rawKv.afterRead = null
+            other.close()
+        }
+    }
+
+    @Test
+    fun `a listing never waits for the push lock a push registration holds across the network`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        lists(machine, "a1")
+        servicesA.addAddress(machine.base)
+        servicesA.pushWork.lock.lock()
+        try {
+            val listing = kotlinx.coroutines.withTimeout(5_000) { servicesA.source.listing() }
+            assertEquals(listOf("a1"), listing.machines.map { it.id })
+            assertTrue("the cache is written under the address lock alone", a.kv.get(machinesCacheKey(machine.base)) != null)
+        } finally {
+            servicesA.pushWork.lock.unlock()
+        }
+    }
+
+    @Test
+    fun `removing one address while another is still asked keeps the other's cache`() = runBlocking {
+        val other = FakeMachine()
+        val releaseRemoved = java.util.concurrent.CountDownLatch(1)
+        val releaseKept = java.util.concurrent.CountDownLatch(1)
+        try {
+            val auth = signedIn("sub-a")
+            val a = storesOf(auth)
+            val servicesA = services(auth, a, defaultRelay = "")
+            listsWhenReleased(machine, releaseRemoved, "gone")
+            listsWhenReleased(other, releaseKept, "kept")
+            servicesA.addAddress(machine.base, "Removed")
+            servicesA.addAddress(other.base, "Kept")
+            val reading = async(Dispatchers.Default) { servicesA.source.listing() }
+            waitFor("both addresses to be asked") {
+                machine.calls.any { it.rawPath == "/machines" } && other.calls.any { it.rawPath == "/machines" }
+            }
+
+            servicesA.removeAddress(machine.base)
+            releaseKept.countDown()
+            releaseRemoved.countDown()
+            val listing = reading.await()
+            assertEquals(listOf("kept"), listing.machines.map { it.id })
+            assertTrue("the kept address's answer is its cache", a.kv.get(machinesCacheKey(other.base)) != null)
+            assertNull(a.kv.get(machinesCacheKey(machine.base)))
+
+            // Its next read fails: its last list stands in, offline.
+            lists(other, "kept") { 503 }
+            val later = servicesA.source.listing()
+            assertEquals(listOf("kept"), later.machines.map { it.id })
+            assertFalse(later.machines.single().online)
+            assertTrue(later.addresses.single().fromCache)
+        } finally {
+            releaseRemoved.countDown()
+            releaseKept.countDown()
+            other.close()
+        }
+    }
+
+    @Test
+    fun `a listing that waits for the address lock while the account changes writes no cache`() = runBlocking {
+        val authA = signedIn("sub-a")
+        val a = storesOf(authA)
+        val servicesA = services(authA, a, defaultRelay = "")
+        lists(machine, "a1")
+        servicesA.addAddress(machine.base)
+        servicesA.addressWork.lock.lock()
+        val listing = scope.async { runCatching { servicesA.source.listing() } }
+        try {
+            waitFor("the address to answer") { machine.calls.any { it.rawPath == "/machines" } }
+            delay(200)
+            authA.signOut()
+        } finally {
+            servicesA.addressWork.lock.unlock()
+        }
+        val outcome = awaitGate("the listing to end", listing)
+        assertTrue("the old owner's listing is refused: $outcome", outcome.isFailure)
+        assertNull(a.kv.get(machinesCacheKey(machine.base)))
+    }
+
+    @Test
     fun `an address answering 5xx lends its cache and says why beside the one that answers, and a refusal is never papered over`() = runBlocking {
         val other = FakeMachine()
         try {

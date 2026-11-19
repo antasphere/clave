@@ -99,6 +99,24 @@ public class OwnerStores(
  *  rebuilt, a boot after a sign-in) still queue on one lock and share one road generation. */
 private val ownerPushWork = ConcurrentHashMap<String, OwnerPushWork>()
 
+/**
+ * The address work of one owner, process-wide like its push work: the lock every change of
+ * the address list and every machine cache write takes (never the push lock, which a push
+ * registration holds across the network), and when each address was last removed. A
+ * listing notes [epoch] before it reads the list; an address removed after that point gives
+ * it neither a row nor a cache, and every other address keeps both.
+ */
+public class OwnerAddressWork {
+    public val lock: Mutex = Mutex()
+    public val epoch: java.util.concurrent.atomic.AtomicLong = java.util.concurrent.atomic.AtomicLong(0)
+    public val removedAt: ConcurrentHashMap<String, Long> = ConcurrentHashMap()
+
+    /** Whether [url] was removed after a listing that started at [start]. */
+    public fun removedSince(url: String, start: Long): Boolean = (removedAt[url] ?: Long.MIN_VALUE) > start
+}
+
+private val ownerAddressWork = ConcurrentHashMap<String, OwnerAddressWork>()
+
 public suspend fun ownerStores(
     issuer: String,
     subject: String?,
@@ -165,6 +183,7 @@ public class OwnerServices(
     public val kv: KeyValueStore = stores.kv
     public val credentials: SecureCredentialStore = stores.credentials
     public val pushWork: OwnerPushWork = stores.pushWork
+    internal val addressWork: OwnerAddressWork = ownerAddressWork.computeIfAbsent(stores.namespace) { OwnerAddressWork() }
     public val drafts: Drafts = Drafts(kv)
     public val records: EnrollmentRecords = EnrollmentRecords(kv)
     public val delivery: DeliveryController = DeliveryController(UnknownSends(kv), DeliveryMarks(kv), drafts, kv, clock, sleep)
@@ -208,10 +227,10 @@ public class OwnerServices(
         val raw = kv.get(MACHINE_ADDRESSES_KEY)
         assertOwner()
         if (raw != null) return decodeMachineAddresses(raw)
-        return pushWork.lock.withLock { addressesLocked() }
+        return addressWork.lock.withLock { addressesLocked() }
     }
 
-    /** The list, under the push lock; the one move from the single relay when there is none
+    /** The list, under the address lock; the one move from the single relay when there is none
      *  yet. A second first read finds the list the first one wrote. */
     private suspend fun addressesLocked(): List<MachineAddress> {
         assertOwner()
@@ -237,10 +256,10 @@ public class OwnerServices(
         return addresses
     }
 
-    /** One write of the list, under the push lock, refused once the account signs out or
+    /** One write of the list, under the address lock, refused once the account signs out or
      *  changed. [change] gets the current list and returns the next, or null to write nothing. */
     private suspend fun <T> changeAddresses(change: suspend (List<MachineAddress>) -> Pair<List<MachineAddress>?, T>): T =
-        pushWork.lock.withLock {
+        addressWork.lock.withLock {
             if (closing) throw signingOutError()
             assertOwner()
             val current = addressesLocked()
@@ -286,11 +305,19 @@ public class OwnerServices(
      * [forgetMachine], a choice of its own.
      */
     public suspend fun removeAddress(url: String) {
+        if (addresses().none { it.url == url }) return
+        // The road moves first: a pairing that lands before this point landed before the
+        // removal; one still waiting is cancelled.
+        pushWork.lock.withLock {
+            if (closing) throw signingOutError()
+            assertOwner()
+            pushWork.roadGeneration++
+        }
         changeAddresses { current ->
             if (current.none { it.url == url }) {
                 null to Unit
             } else {
-                pushWork.roadGeneration++
+                addressWork.removedAt[url] = addressWork.epoch.incrementAndGet()
                 assertOwner()
                 kv.remove(machinesCacheKey(url))
                 current.filter { it.url != url } to Unit
@@ -329,46 +356,46 @@ public class OwnerServices(
      *
      * A slow address holds back no other: [progress] hears the merged listing each time one
      * more address answers, the ones still waiting marked pending. An address removed while
-     * its read was under way gives nothing, neither rows nor a cache: the road generation
-     * the read started on has moved.
+     * its read was under way gives nothing, neither rows nor a cache; the other addresses
+     * keep theirs. No listing waits for the push lock.
      */
     private suspend fun machines(progress: suspend (MachineListing) -> Unit = {}): MachineListing {
         if (auth.status().account == null) return MachineListing(emptyList(), emptyList())
         assertOwner()
+        // Noted before the list is read: an address removed from here on gives nothing.
+        val start = addressWork.epoch.get()
         val addresses = addresses()
         assertOwner()
-        val generation = pushWork.roadGeneration
         val done = arrayOfNulls<Pair<List<Machine>, AddressListing>>(addresses.size)
         val publishing = Mutex()
         coroutineScope {
             addresses.mapIndexed { index, address ->
                 async {
-                    val read = readAddress(address, generation)
+                    val read = readAddress(address, start)
                     publishing.withLock {
                         done[index] = read
-                        if (done.any { it == null }) progress(merge(addresses, done.toList(), generation))
+                        if (done.any { it == null }) progress(merge(addresses, done.toList(), start))
                     }
                 }
             }.awaitAll()
         }
-        val listing = merge(addresses, done.toList(), generation)
+        val listing = merge(addresses, done.toList(), start)
         assertOwner()
         return listing
     }
 
     /** The listing of the reads done so far, in address order: those still waiting are
-     *  pending rows, and an address taken out of the list since [generation] is left out. */
+     *  pending rows, and an address removed since the listing's [start] is left out. */
     private suspend fun merge(
         addresses: List<MachineAddress>,
         reads: List<Pair<List<Machine>, AddressListing>?>,
-        generation: Int,
+        start: Long,
     ): MachineListing {
         assertOwner()
-        val kept = if (generation == pushWork.roadGeneration) null else addresses().map { it.url }.toSet()
         val rows = LinkedHashMap<String, Machine>()
         val listed = mutableListOf<AddressListing>()
         for ((index, address) in addresses.withIndex()) {
-            if (kept != null && address.url !in kept) continue
+            if (addressWork.removedSince(address.url, start)) continue
             val read = reads[index]
             if (read == null) {
                 listed += AddressListing(address, emptyList(), null, fromCache = false, pending = true)
@@ -402,7 +429,7 @@ public class OwnerServices(
 
     /** One address's machines and its row. Nothing but a cancellation and the account
      *  changing escapes it: every other failure becomes the row's sentence. */
-    private suspend fun readAddress(address: MachineAddress, generation: Int): Pair<List<Machine>, AddressListing> {
+    private suspend fun readAddress(address: MachineAddress, start: Long): Pair<List<Machine>, AddressListing> {
         val url = address.url
         try {
             val listed = RelayMachineSource(
@@ -416,10 +443,12 @@ public class OwnerServices(
             ).list()
             assertOwner()
             try {
-                // Under the push lock, which a removal holds: once the address is removed,
-                // an answer still on its way writes no cache back.
-                pushWork.lock.withLock {
-                    if (generation == pushWork.roadGeneration) kv.set(machinesCacheKey(url), encodeMachines(listed))
+                // Under the address lock, which a removal holds: once this address is removed,
+                // an answer still on its way writes no cache back; another address's removal
+                // changes nothing here. The owner is checked again once the lock is held.
+                addressWork.lock.withLock {
+                    assertOwner()
+                    if (!closing && !addressWork.removedSince(url, start)) kv.set(machinesCacheKey(url), encodeMachines(listed))
                 }
             } catch (e: CancellationException) {
                 throw e

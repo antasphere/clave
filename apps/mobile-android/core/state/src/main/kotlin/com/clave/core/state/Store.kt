@@ -338,9 +338,9 @@ public class ClaveStore(private val services: Services) {
             try {
                 if (source is MachineDirectory) {
                     val listing = source.listing { partial ->
-                        if (latest()) {
-                            _state.update { it.copy(machines = partial.machines + developer, addresses = partial.addresses) }
-                        }
+                        // Checked inside the update: a retried update of an older load sees
+                        // the newer load and leaves the state as that one left it.
+                        _state.update { if (latest()) it.copy(machines = partial.machines + developer, addresses = partial.addresses) else it }
                     }
                     found += listing.machines
                     addresses = listing.addresses
@@ -355,15 +355,18 @@ public class ClaveStore(private val services: Services) {
         }
         found += developer
         val main = services.credentials.mainMachineId()
-        if (!latest()) return
         _state.update {
-            it.copy(
-                machines = found.toList(),
-                machinesLoading = false,
-                machinesError = if (problems.isEmpty()) null else problems.joinToString(" "),
-                addresses = addresses,
-                mainMachineId = main ?: found.firstOrNull()?.id,
-            )
+            if (!latest()) {
+                it
+            } else {
+                it.copy(
+                    machines = found.toList(),
+                    machinesLoading = false,
+                    machinesError = if (problems.isEmpty()) null else problems.joinToString(" "),
+                    addresses = addresses,
+                    mainMachineId = main ?: found.firstOrNull()?.id,
+                )
+            }
         }
     }
 
