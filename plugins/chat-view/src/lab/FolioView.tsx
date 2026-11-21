@@ -85,7 +85,7 @@ import {
 } from './pages'
 import { useReadAloud, type Reading } from './read-aloud'
 import { registerVoice, useUpdatesStore } from '../../../../src/renderer/src/store/updates-store'
-import { turnEndAction, turnRunning } from './turn-end'
+import { turnEndAction } from './turn-end'
 import { fallbackLine, useSpokenRenderings } from './spoken'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
@@ -539,13 +539,6 @@ function PageView({
   )
 }
 
-/** The ordinal of the conversation's last question, or null. */
-function lastQuestion(conversation: { entries: Entry[]; first: number }): number | null {
-  for (let i = conversation.entries.length - 1; i >= 0; i--)
-    if (conversation.entries[i].kind === 'user') return conversation.first + i
-  return null
-}
-
 /** Answer length as a tick's height: a log scale, so a one-line answer and
  *  a long report both read, between a floor and the spine's height. */
 const tickHeight = (page: Page): number =>
@@ -761,7 +754,8 @@ export function FolioView({
     before,
     history,
     truncated,
-    imagesSupported
+    imagesSupported,
+    turnEnds
   } = useConversation(session.id, session.state)
   const presentation = usePresentation(conversation, visible)
   const work = useMemo(() => shownWork(status.agents), [status.agents])
@@ -893,25 +887,16 @@ export function FolioView({
   // page it wrote built once, at that moment, from the live entries.
   const atRest = useRef({ conversation, presentation, pages, visible, active, autoRead, titleOf })
   atRest.current = { conversation, presentation, pages, visible, active, autoRead, titleOf }
-  const turning = useRef(false)
-  // The last question at the last rest: a turn whose running state was never
-  // rendered (its events landing in one batch) is still a turn when a new
-  // question stands at rest.
-  const restedOn = useRef<number | null | undefined>(undefined)
+  // One run per turn of the LIVE stream (`turnEnds`, counted where the
+  // stream is read): the past arriving, or a reconnect's replace, is never a
+  // turn. Runs after the batch is reduced, so the page is whole.
+  const seenEnds = useRef(turnEnds)
   const { read } = voice
   useEffect(() => {
-    if (turnRunning(state)) {
-      turning.current = true
-      return
-    }
-    const asked = lastQuestion(conversation)
-    const known = restedOn.current
-    restedOn.current = asked
-    if (known === undefined && !turning.current) return
-    const wasRunning = turning.current || asked !== known
-    turning.current = false
+    if (turnEnds === seenEnds.current) return
+    seenEnds.current = turnEnds
     const now = atRest.current
-    if (!wasRunning || !now.autoRead) return
+    if (!now.autoRead) return
     let last: Page | undefined
     if (now.visible && now.presentation === now.conversation) last = now.pages.at(-1)
     else {
@@ -926,12 +911,13 @@ export function FolioView({
       last = buildPages(entries, (entry) => ordinal.get(entry), live.state).at(-1)
     }
     const action = turnEndAction({
-      wasRunning,
-      state,
+      wasRunning: true,
+      state: now.conversation.state,
       page: last,
       visible: now.visible,
       active: now.active,
-      on: now.autoRead
+      on: now.autoRead,
+      busy: useUpdatesStore.getState().current !== null
     })
     if (!last || action === 'nothing') return
     if (action === 'read') read(last.key, last.spoken)
@@ -943,7 +929,7 @@ export function FolioView({
         title: now.titleOf(last),
         at: Date.now()
       })
-  }, [state, conversation, read, session.id])
+  }, [turnEnds, read, session.id])
   // The pane's voice, while the pane is the tab's chosen view: the chip, the
   // card and the key drive it from anywhere in the window.
   const voiceNow = useRef(voice)
