@@ -542,7 +542,8 @@ function PageView({
 const tickHeight = (page: Page): number =>
   Math.round(25 + Math.min(75, Math.log10(1 + page.answer.length + page.tools * 40) * 22))
 
-/** The book's spine: one tick per page, the way to turn, and the contents. */
+/** The book's spine: the way to turn (Previous and Next, together), one tick
+ *  per page, the count, and the contents. */
 function Spine({
   pages,
   current,
@@ -592,6 +593,16 @@ function Spine({
       >
         <ChevronLeftIcon />
       </button>
+      <button
+        type="button"
+        className="folio-turn"
+        aria-label="Next page"
+        title="Next page (→)"
+        disabled={at >= pages.length - 1}
+        onClick={() => onTurn(pages[at + 1].key)}
+      >
+        <ChevronRightIcon />
+      </button>
       <div className="folio-ticks" ref={strip}>
         {more && (
           <button
@@ -624,16 +635,6 @@ function Spine({
         {current.number}
         <span>/{pages.length}</span>
       </span>
-      <button
-        type="button"
-        className="folio-turn"
-        aria-label="Next page"
-        title="Next page (→)"
-        disabled={at >= pages.length - 1}
-        onClick={() => onTurn(pages[at + 1].key)}
-      >
-        <ChevronRightIcon />
-      </button>
       <button
         type="button"
         className="folio-turn"
