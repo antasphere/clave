@@ -6,6 +6,7 @@ import {
   type MachineIntegrations
 } from '../../../../src/renderer/src/store/integrations-store'
 import { ownerOf } from '../../../../src/renderer/src/lib/fleet-identity'
+import { useUpdatesStore, type SayResult } from '../../../../src/renderer/src/store/updates-store'
 import type { DigestFailure } from '../digest'
 import { AudioQueue, PartCache, blockParts, partKey, type SpeechPart } from './audio'
 import { partFor, partPlace, partTicks } from './progress'
@@ -121,29 +122,19 @@ interface Active {
 export interface ReadSource {
   sessionId: string
   launch: DigestLaunch
+  /** A reading ended: read to its end (`heard`, a failure part way
+   *  included) or cut (`stopped`: Stop, Cancel, another reading taking the
+   *  voice). The updates tell them apart (PRDCT-4832, rule 7). */
+  onEnd?: (key: string, how: 'heard' | 'stopped') => void
 }
 
-const PREF = 'clave.folio.read-aloud'
-
-/** Whether new answers are read aloud as they finish: the reader's own
- *  choice, kept on this machine. */
+/** Whether new answers are read aloud as they finish (the play mode,
+ *  PRDCT-4832): the reader's own choice, kept on this machine, ONE switch for
+ *  the whole app, live in every pane at once (`useUpdatesStore`'s `on`). */
 export function useAutoRead(): [boolean, (on: boolean) => void] {
-  const [on, setOn] = useState(() => {
-    try {
-      return localStorage.getItem(PREF) === 'on'
-    } catch {
-      return false
-    }
-  })
-  const set = useCallback((value: boolean): void => {
-    setOn(value)
-    try {
-      localStorage.setItem(PREF, value ? 'on' : 'off')
-    } catch {
-      /* a private store: the choice lasts the view's life */
-    }
-  }, [])
-  return [on, set]
+  const on = useUpdatesStore((s) => s.on)
+  const setOn = useUpdatesStore((s) => s.setOn)
+  return [on, setOn]
 }
 
 /** Why the system voice reads a page rather than the server's ElevenLabs
@@ -280,6 +271,11 @@ export function useReadAloud(source: ReadSource): {
    *  of the next block with words). */
   seekBlock: (n: number) => void
   stop: () => void
+  /** Say one short line (an update's announcement, PRDCT-4832) in the voice
+   *  a reading of this tab would use: `busy` when any pane holds the voice,
+   *  `said` once it was said (or a reading cut it), `failed` when nothing
+   *  could speak. Never a reading: `reading` is not set. */
+  say: (text: string) => Promise<SayResult>
 } {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
   const systemVoice = !!synth && typeof SpeechSynthesisUtterance !== 'undefined'
@@ -343,13 +339,17 @@ export function useReadAloud(source: ReadSource): {
       ownerStop = null
     }
   }, [])
+  // The line being said, if any: a reading started here cuts it.
+  const saying = useRef<(() => void) | null>(null)
   const stop = useCallback((): void => {
+    const was = active.current
     generation.current += 1
     active.current = null
     queue.current?.stop()
     if (voiceOwner === me.current) synth?.cancel()
     release()
     setReading(null)
+    if (was) sourceRef.current.onEnd?.(was.key, 'stopped')
   }, [synth, release])
   const stopRef = useRef(stop)
   stopRef.current = stop
@@ -357,8 +357,13 @@ export function useReadAloud(source: ReadSource): {
   const read = useCallback(
     (key: string, markdown: string, from?: number): void => {
       if (!supported) return
-      // Whatever another pane was reading stops first: one voice at a time.
+      // A line being said here stops first; whatever another pane was
+      // reading (or saying) stops too: one voice at a time.
+      saying.current?.()
       if (voiceOwner && voiceOwner !== me.current) ownerStop?.()
+      // A reading of this pane already going is replaced: it ends, cut.
+      const replaced = active.current
+      if (replaced) sourceRef.current.onEnd?.(replaced.key, 'stopped')
       synth?.cancel()
       queue.current?.stop()
       const mine = ++generation.current
@@ -393,6 +398,7 @@ export function useReadAloud(source: ReadSource): {
         release()
         setReading(null)
         setHeardPages((now) => (now[key] ? now : { ...now, [key]: true }))
+        sourceRef.current.onEnd?.(key, 'heard')
       }
 
       const speakSystem = (
@@ -577,6 +583,69 @@ export function useReadAloud(source: ReadSource): {
     },
     [synth, supported, systemVoice, audioVoice, note, release, speakCached]
   )
+  const say = useCallback(
+    (text: string): Promise<SayResult> =>
+      new Promise<SayResult>((resolve) => {
+        if (!supported) return resolve('failed')
+        if (voiceOwner !== null) return resolve('busy')
+        const { sessionId } = sourceRef.current
+        let settled = false
+        const finish = (result: SayResult): void => {
+          if (settled) return
+          settled = true
+          if (saying.current === cut) saying.current = null
+          if (voiceOwner === me.current && ownerStop === cut) {
+            voiceOwner = null
+            ownerStop = null
+          }
+          resolve(result)
+        }
+        // Cut by a reading (ours or another pane's): the line counts as said.
+        const cut = (): void => {
+          if (settled) return
+          queue.current?.stop()
+          synth?.cancel()
+          finish('said')
+        }
+        voiceOwner = me.current
+        ownerStop = cut
+        saying.current = cut
+        const system = (why: VoiceWhy): void => {
+          if (settled) return
+          setHeard({ voice: 'system', why })
+          if (!synth || !systemVoice) return finish('failed')
+          const utterance = new SpeechSynthesisUtterance(text)
+          utterance.lang = document.documentElement.lang || navigator.language
+          utterance.rate = 1.04
+          utterance.onend = () => finish('said')
+          utterance.onerror = () => finish('said')
+          synth.speak(utterance)
+        }
+        const remembered = rememberedVoiceReason(unset.current.get(sessionId), Date.now())
+        if (remembered) return system(voiceWhy(remembered))
+        if (!audioVoice) return system({ kind: 'unset', words: 'this app plays no audio' })
+        const first = speakCached(sessionId, text)
+        void first.then((spoken) => {
+          if (settled) return
+          if (!spoken.ok) {
+            if (spoken.reason && rememberedReasons.has(spoken.reason))
+              unset.current.set(sessionId, { reason: spoken.reason, at: Date.now() })
+            return system(voiceWhy(spoken.reason))
+          }
+          setHeard({ voice: 'elevenlabs' })
+          const player = (queue.current ??= new AudioQueue())
+          player.play({
+            parts: [{ block: 0, text }],
+            first,
+            source: (part) => speakCached(sessionId, part),
+            onEnd: () => finish('said'),
+            // The audio would not play: the Mac's voice says it instead.
+            onError: (_n, failure) => system(voiceWhy(failure.reason))
+          })
+        })
+      }),
+    [supported, synth, systemVoice, audioVoice, speakCached]
+  )
   const seekBlock = useCallback((n: number): void => {
     const run = active.current
     if (!run || run.mine !== generation.current) return
@@ -630,7 +699,8 @@ export function useReadAloud(source: ReadSource): {
     pause,
     resume,
     seekBlock,
-    stop
+    stop,
+    say
   }
 }
 
