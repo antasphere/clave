@@ -17,8 +17,8 @@
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  max-width: calc(var(--control-h-md) + 26ch);
   height: var(--control-h-md);
+  font-size: var(--control-text);
   border-radius: var(--control-radius);
   background-color: color-mix(in srgb, var(--color-accent) 9%, transparent);
   color: var(--text-primary);
@@ -50,6 +50,7 @@
 }
 .update-chip-name {
   min-width: 0;
+  max-width: 24ch;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -97,6 +98,9 @@
   line-height: 1.45;
   transform-origin: top right;
   cursor: default;
+  /* The voice card's bar reads its ink from the Folio pane; the card lives
+     in the toolbar, so it names the same ink. */
+  --folio-ink: var(--text-primary);
 }
 .update-card-head {
   display: flex;
