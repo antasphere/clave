@@ -63,7 +63,9 @@ export function useKeymapManager(
 ): CommandHud | null {
   const config = useKeymapStore((state) => state.config)
   const availableRef = useRef(available)
-  availableRef.current = available
+  useEffect(() => {
+    availableRef.current = available
+  }, [available])
   const matcherRef = useRef(new KeymapMatcher(config))
   const commandActiveRef = useRef(false)
   const deadlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)

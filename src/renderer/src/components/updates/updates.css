@@ -93,7 +93,6 @@
   flex-direction: column;
   gap: calc(var(--spacing) * 2);
   width: min(calc(var(--spacing) * 85), calc(100vw - var(--spacing) * 4));
-  padding: calc(var(--spacing) * 3);
   font-size: var(--text-xs);
   line-height: 1.45;
   transform-origin: top right;

@@ -75,7 +75,7 @@ export function UpdateCard({
   return (
     <div
       ref={card}
-      className="menu-surface menu-pop-mount update-card"
+      className="menu-surface menu-pop-mount update-card p-3"
       data-testid="update-card"
       data-open={mode}
       data-voice-state={voiceState}
