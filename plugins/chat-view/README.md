@@ -296,13 +296,19 @@ or the composer moves by a pixel when work starts, changes or ends. Closed, it
 is a pill of paper holding one mark per running thing (the first four in the
 strip's order, then `+N`), no words: the marks are the drawings' own focal
 points (`WorkMark` beside `WorkDrawing`, from the same coordinates), an agent's
-head and a command's prompt, breathing at the strip's pace and out of phase;
-an agent quiet for a minute stills and its dot takes the warning colour. On
+head and a command's prompt, and they show the work running: the dot
+breathes at the strip's pace, an agent's head sends out a ring every other
+breath, a command's line is typed under a cursor that rides its end, each mark
+a step out of phase with its neighbour (transforms and opacity only, in the
+dock only: the strip's drawings stay still but for their breath); an agent
+quiet for a minute stills and its dot takes the warning colour. On
 approach it grows a card from its corner (a clip-path, never a width laid out
 again): the count in the Terminal view's words (`runningLabel` in
 `terminal-status.ts`: "2 agents · 1 command"), then a row per running thing
-with its full drawing, the type and the task, the last step or the command,
-and the figures; the rows rise in once per opening, and many scroll inside a
+with its full drawing (the same motion: the line on an agent's paper written
+again and again under its pulsing head), the type and the task, the last step
+or the command, and the figures (the model only once it is known, where the
+strip says "…"); the rows rise in once per opening, and many scroll inside a
 card held under 60% of the desk. A row opens the same window as the strip's
 card (`SubAgentPeek`, `ShellPeek`), with the same relaunch and its
 confirmation, and the card stays open under them. When it opens and closes is
