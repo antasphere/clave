@@ -162,5 +162,7 @@ describe('conversationIdOf', () => {
     expect(conversationIdOf({ opencodeSessionId: 'ses_1' })).toBe('ses_1')
     expect(conversationIdOf({ piSessionId: 'p1', opencodeSessionId: 'ses_1' })).toBe('p1')
     expect(conversationIdOf({ opencodeSessionId: null })).toBeUndefined()
+    expect(conversationIdOf({ antigravitySessionId: 'a1' })).toBe('a1')
+    expect(conversationIdOf({ antigravitySessionId: null })).toBeUndefined()
   })
 })

@@ -21,6 +21,9 @@
 // as OpenCode does under a provider's 429; one containing `ask permission`
 // asks the client first and echoes the option. `OPENCODE_CONFIG_CONTENT`,
 // when set, chooses the models as OpenCode's own (below).
+// `ACP_STAND_IN_MODES=1` adds a `mode` config option with Antigravity's ladder
+// (`agy acp` 1.5: default, accept-edits, auto, plan), set by
+// session/set_config_option as the model is.
 import {
   appendFileSync,
   existsSync,
@@ -216,7 +219,9 @@ const known = (id) =>
 const readMeta = (id) => JSON.parse(readFileSync(metaFile(id), 'utf8'))
 const writeMeta = (id, meta) => writeFileSync(metaFile(id), JSON.stringify(meta))
 const record = (id, turn) => appendFileSync(turnsFile(id), `${JSON.stringify(turn)}\n`)
-const configOptions = (model) => [
+const MODES = process.env.ACP_STAND_IN_MODES === '1'
+const MODE_VALUES = ['default', 'accept-edits', 'auto', 'plan']
+const configOptions = (model, mode = 'default') => [
   {
     id: 'model',
     name: 'Model',
@@ -224,7 +229,19 @@ const configOptions = (model) => [
     type: 'select',
     currentValue: model,
     options: MODELS
-  }
+  },
+  ...(MODES
+    ? [
+        {
+          id: 'mode',
+          name: 'Mode',
+          category: 'mode',
+          type: 'select',
+          currentValue: mode,
+          options: MODE_VALUES.map((value) => ({ value, name: value }))
+        }
+      ]
+    : [])
 ]
 
 /** The running prompt of each session: its cancel, and the permission it waits on. */
@@ -515,7 +532,8 @@ function load(id, params) {
       })
     }
   }
-  answer(id, { configOptions: configOptions(readMeta(sessionId).model) })
+  const meta = readMeta(sessionId)
+  answer(id, { configOptions: configOptions(meta.model, meta.mode) })
 }
 
 function list(id, params) {
@@ -603,10 +621,15 @@ function handle(frame) {
     case 'session/set_config_option': {
       const sessionId = params?.sessionId
       if (!known(sessionId)) return refuseFrame(id, -32602, 'Unknown session')
+      const meta = readMeta(sessionId)
+      if (MODES && params.configId === 'mode' && MODE_VALUES.includes(params.value)) {
+        writeMeta(sessionId, { ...meta, mode: params.value })
+        return answer(id, { configOptions: configOptions(meta.model, params.value) })
+      }
       if (params.configId !== 'model' || !MODELS.some((m) => m.value === params.value))
         return refuseFrame(id, -32602, 'Unknown config value')
-      writeMeta(sessionId, { ...readMeta(sessionId), model: params.value })
-      return answer(id, { configOptions: configOptions(params.value) })
+      writeMeta(sessionId, { ...meta, model: params.value })
+      return answer(id, { configOptions: configOptions(params.value, meta.mode) })
     }
     case 'session/list':
       return list(id, params)

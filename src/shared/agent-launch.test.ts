@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  antigravityProfileMode,
   BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
@@ -80,7 +81,8 @@ describe('a carried launch profile', () => {
     expect(sanitizeCarriedLaunchProfile(opencode)).toEqual(opencode)
     expect(sanitizeCarriedLaunchProfile({ ...opencode, family: 'codex' })).toBeNull()
     expect(chatProfileSource('chat:opencode:x')).toEqual({ family: 'opencode', id: 'x' })
-    expect(chatProfileSource('chat:antigravity:x')).toBeUndefined()
+    expect(chatProfileSource('chat:antigravity:x')).toEqual({ family: 'antigravity', id: 'x' })
+    expect(chatProfileSource('chat:terminal:x')).toBeUndefined()
   })
 
   // Lane D (PRDCT-4427): Pi's saved profiles have a chat form too.
@@ -593,6 +595,27 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     expect(
       buildAgentArgv({ kind: 'antigravity', profile: agy, permissionMode: 'read-only' })
     ).toEqual(['agy'])
+  })
+
+  it('antigravity: resumes a conversation with --conversation, the id its ACP server opened', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'antigravity',
+        profile: agy,
+        permissionMode: 'plan',
+        resumeSessionId: '70ec1049-f3e9-46a9-bd24-382267964044'
+      })
+    ).toEqual(['agy', '--mode', 'plan', '--conversation', '70ec1049-f3e9-46a9-bd24-382267964044'])
+  })
+
+  it("antigravity: a saved profile's own --mode is the rung its chat starts on", () => {
+    expect(antigravityProfileMode({ ...agy, additionalArgs: ['--mode', 'plan'] })).toBe('plan')
+    expect(antigravityProfileMode({ ...agy, additionalArgs: ['--mode=accept-edits'] })).toBe(
+      'accept-edits'
+    )
+    expect(antigravityProfileMode({ ...agy, additionalArgs: ['--mode', 'yolo'] })).toBeUndefined()
+    expect(antigravityProfileMode({ ...agy, additionalArgs: ['--mode'] })).toBeUndefined()
+    expect(antigravityProfileMode(agy)).toBeUndefined()
   })
 
   it('pi: ignores it', () => {

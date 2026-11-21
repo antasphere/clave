@@ -845,6 +845,9 @@ export const SessionRecord = Schema.Struct({
   /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes (PRDCT-4427),
    *  the id `opencode --session` takes in a terminal. */
   opencodeSessionId: Schema.optional(Schema.String),
+  /** The Antigravity conversation a chat tab resumes, the id
+   *  `agy --conversation` takes in a terminal. */
+  antigravitySessionId: Schema.optional(Schema.String),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean),
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.

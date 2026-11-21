@@ -84,6 +84,9 @@ export function resolveSpawnModes(payload: {
 export const CHAT_PROFILE_IDS: Partial<Record<OpenSessionMode, string>> = {
   claude: 'claude-chat',
   codex: 'codex-chat',
+  // Antigravity's chat, over the Agent Client Protocol (`agy acp`). The
+  // retired `gemini` mode reaches it through `chatModeOf`.
+  antigravity: 'antigravity-chat',
   // Lane D (PRDCT-4427): OpenCode's chat, over the Agent Client Protocol.
   opencode: 'opencode-chat',
   // Lane D (PRDCT-4427): Pi's chat, over Pi's own rpc mode.
@@ -91,12 +94,21 @@ export const CHAT_PROFILE_IDS: Partial<Record<OpenSessionMode, string>> = {
 }
 
 /** The families with a chat view, the ones `CHAT_PROFILE_IDS` names: Claude,
- *  Codex, OpenCode and Pi (lane D, PRDCT-4427). */
-type ChatFamily = 'claude' | 'codex' | 'opencode' | 'pi'
+ *  Codex, Antigravity, OpenCode and Pi (lane D, PRDCT-4427). */
+type ChatFamily = 'claude' | 'codex' | 'antigravity' | 'opencode' | 'pi'
 const chatFamilyOf = (family: LauncherFamily): ChatFamily | undefined =>
-  family === 'claude' || family === 'codex' || family === 'opencode' || family === 'pi'
+  family === 'claude' ||
+  family === 'codex' ||
+  family === 'antigravity' ||
+  family === 'opencode' ||
+  family === 'pi'
     ? family
     : undefined
+
+/** The mode a chat is looked up under: `gemini`, the retired CLI's name, is
+ *  Antigravity's. */
+const chatModeOf = (mode: OpenSessionMode | undefined): OpenSessionMode =>
+  mode === 'gemini' ? 'antigravity' : (mode ?? 'claude')
 
 /** Is this id a chat profile of the family: its built-in chat profile, or the
  *  chat form of one of its saved profiles (`chat:<family>:<id>`, the id the
@@ -157,7 +169,7 @@ export function chatOfInteractionMode(
 ): boolean | undefined {
   if (payload.chat !== undefined) return payload.chat
   if (payload.profile) return undefined
-  if (!CHAT_PROFILE_IDS[payload.mode ?? 'claude']) return undefined
+  if (!CHAT_PROFILE_IDS[chatModeOf(payload.mode)]) return undefined
   return interactionMode !== 'terminal'
 }
 
@@ -195,7 +207,7 @@ export function resolveProfileRef(
   chatDefault?: string,
   interactionMode: InteractionMode = 'terminal'
 ): string | undefined {
-  const mode = payload.mode ?? 'claude'
+  const mode = chatModeOf(payload.mode)
   const chatProfile = CHAT_PROFILE_IDS[mode]
   if (payload.chat === undefined && !payload.profile) {
     if (!chatProfile || interactionMode === 'terminal') return undefined

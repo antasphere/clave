@@ -108,18 +108,21 @@ export function launchModeFields(input: {
 
 /** The conversation a record holds, by its provider id, in the order the
  *  spawn resumes it (`resume-options.ts`): a Codex thread, a Claude session,
- *  a Pi session, an OpenCode session (lane D, PRDCT-4427). */
+ *  a Pi session, an OpenCode session (lane D, PRDCT-4427), an Antigravity
+ *  conversation. */
 export function conversationIdOf(record: {
   readonly codexThreadId?: string | null | undefined
   readonly claudeSessionId?: string | null | undefined
   readonly piSessionId?: string | null | undefined
   readonly opencodeSessionId?: string | null | undefined
+  readonly antigravitySessionId?: string | null | undefined
 }): string | undefined {
   return (
     record.codexThreadId ??
     record.claudeSessionId ??
     record.piSessionId ??
     record.opencodeSessionId ??
+    record.antigravitySessionId ??
     undefined
   )
 }
