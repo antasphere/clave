@@ -631,8 +631,8 @@ one machine without a file to edit is created on that machine instead (an agent'
 
 **The launch parameters**, every one optional, exactly the choices a person makes when
 opening a tab, resolved the way `clave_open_session` resolves them: `agent` (`claude`,
-`codex`, `pi`, `antigravity`; default `claude`), `form` (`chat` or `terminal`; a Claude or
-Codex routine runs in the chat view by default, the others in a terminal), `model`, `effort`
+`codex`, `pi`, `antigravity`; default `claude`), `form` (`chat` or `terminal`; a routine
+runs in the chat view by default, whichever its agent), `model`, `effort`
 (Claude's reasoning effort), `thinking` and `provider` (Pi's), `profile` (a launch profile by
 id or name), `account` (an id, a label, or `any` for the pool), `dangerousMode` (permissions
 off; the brief's `dangerous` is read the same), `permissionMode` (`default`, `acceptEdits` or

@@ -326,7 +326,11 @@ async function spawnFromRecord(
               : // Lane D (PRDCT-4427): an OpenCode chat resumes its session.
                 s.opencodeMode && s.opencodeSessionId
                 ? { resumeSessionId: s.opencodeSessionId }
-                : {}),
+                : // An Antigravity chat (or a terminal one moved to) resumes
+                  // its conversation.
+                  s.antigravityMode && s.antigravitySessionId
+                  ? { resumeSessionId: s.antigravitySessionId }
+                  : {}),
       launchProfileId: s.launchProfileId,
       piProvider: s.piProvider,
       piThinking: s.piThinking,

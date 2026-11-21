@@ -197,6 +197,37 @@ describe("the restart's spawn rebuilt for another adapter (PRDCT-4300)", () => {
     expect(options.codexAccountId).toBeUndefined()
     expect(options.codexAccountLabel).toBeUndefined()
   })
+  it('a move onto Antigravity names its chat profile, its flag, and no account of either kind', () => {
+    const options = providerSwitchOptions(
+      {
+        ...previous,
+        claudeProfileId: 'p1',
+        claudeProfileLabel: 'Work',
+        configDir: '/cfg',
+        codexAccountId: 'c1',
+        codexAccountLabel: 'Codex 1'
+      },
+      { adapterId: 'antigravity-chat', firstMessage: 'handoff' }
+    )
+    expect(options).toMatchObject({
+      claudeMode: false,
+      codexMode: false,
+      antigravityMode: true,
+      launchProfileId: 'antigravity-chat',
+      initialPrompt: 'handoff'
+    })
+    for (const key of [
+      'claudeProfileId',
+      'claudeProfileLabel',
+      'configDir',
+      'codexAccountId',
+      'codexAccountLabel'
+    ] as const)
+      expect(options[key], key).toBeUndefined()
+    expect(providerOf('antigravity-chat')).toBe('antigravity')
+    expect(launchProfileFor('antigravity-chat')).toBe('antigravity-chat')
+    expect(PROVIDER_LABELS.antigravity).toBe('Antigravity')
+  })
   it('the echo fixture is reached by its development profile', () => {
     expect(providerSwitchOptions(previous, { adapterId: 'echo', firstMessage: 'x' })).toMatchObject(
       {
@@ -427,6 +458,18 @@ describe('the transport switch: the same harness, chat to terminal and back (lan
     expect(transportTarget({ adapterId: 'pty' }, 'c', 'claude', () => false)).toEqual({
       adapterId: 'pty',
       sessionId: 'c'
+    })
+  })
+  it('always resumes an Antigravity conversation in the terminal: agy finds it by its id', () => {
+    expect(transportTarget({ adapterId: 'pty' }, 'a1', 'antigravity', () => false)).toEqual({
+      adapterId: 'pty',
+      resume: 'a1'
+    })
+    expect(
+      transportTarget({ adapterId: 'antigravity-chat' }, 'a1', 'antigravity', () => false)
+    ).toEqual({
+      adapterId: 'antigravity-chat',
+      resume: 'a1'
     })
   })
   // Lane D (PRDCT-4427, verifier round 1 Major 2 and Minor 4): the guard of every family.

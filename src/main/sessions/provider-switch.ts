@@ -44,6 +44,8 @@ import { CHAT_PROFILE_IDS } from '../../shared/open-session-modes'
 const BUILT_IN_PROFILES: Record<string, string> = {
   'claude-chat': 'claude-chat',
   'codex-chat': 'codex-chat',
+  // Antigravity's chat over the Agent Client Protocol (`agy acp`).
+  'antigravity-chat': 'antigravity-chat',
   // Lane D (PRDCT-4427): OpenCode's chat over the Agent Client Protocol.
   'opencode-chat': 'opencode-chat',
   // Lane D (PRDCT-4427): Pi's chat over its own rpc mode.
@@ -59,6 +61,7 @@ export function launchProfileFor(adapterId: string): string {
 export const PROVIDER_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
+  antigravity: 'Antigravity',
   // Lane D (PRDCT-4427).
   opencode: 'OpenCode',
   pi: 'Pi',
@@ -113,6 +116,7 @@ export function switchRoad(facts: {
 export function providerOf(adapterId: string): string {
   if (adapterId === 'claude-chat') return 'claude'
   if (adapterId === 'codex-chat') return 'codex'
+  if (adapterId === 'antigravity-chat') return 'antigravity'
   // Lane D (PRDCT-4427): `pi-chat` is the next piece's, named here already.
   if (adapterId === 'opencode-chat') return 'opencode'
   if (adapterId === 'pi-chat') return 'pi'
@@ -136,14 +140,15 @@ export function providerSwitchOptions(
   const claude = target.adapterId === 'claude-chat'
   const opencode = target.adapterId === 'opencode-chat'
   const pi = target.adapterId === 'pi-chat'
+  const antigravity = target.adapterId === 'antigravity-chat'
   // A target with no account of either kind keeps neither's.
-  const unpooled = opencode || pi
+  const unpooled = opencode || pi || antigravity
   return {
     ...previous,
-    claudeMode: !codex && !opencode && !pi,
+    claudeMode: !codex && !opencode && !pi && !antigravity,
     codexMode: codex,
     claudeAgentsMode: false,
-    antigravityMode: false,
+    antigravityMode: antigravity,
     piMode: pi,
     opencodeMode: opencode,
     launchProfileId: launchProfileFor(target.adapterId),
@@ -301,8 +306,8 @@ export const NO_CONVERSATION_TO_CARRY =
  *  the rule stays pure. When it has none: Claude and Pi start their terminal
  *  under the same id (`--session-id`, amendment 2), a Codex terminal starts
  *  fresh (its CLI takes no id of ours, and a thread with no rollout cannot be
- *  resumed), and OpenCode always resumes (its TUI finds the session by id in
- *  its own storage; no file to check). */
+ *  resumed), and OpenCode and Antigravity always resume (their CLI finds the
+ *  session by id in its own storage; no file to check). */
 export function transportTarget(
   target: { adapterId: string; viewId?: string; model?: string },
   conversationId: string | undefined,
@@ -314,7 +319,7 @@ export function transportTarget(
     return { ...target, resume: conversationId }
   }
   if (!conversationId) return target
-  if (family === 'opencode' || hasConversation(conversationId))
+  if (family === 'opencode' || family === 'antigravity' || hasConversation(conversationId))
     return { ...target, resume: conversationId }
   if (family === 'claude' || family === 'pi') return { ...target, sessionId: conversationId }
   return target

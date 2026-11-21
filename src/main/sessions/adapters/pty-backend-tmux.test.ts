@@ -142,4 +142,49 @@ describe.skipIf(!isTmuxAvailable())('a tmux-backed terminal', () => {
     expect(processes[0].spec.args).toContain('-A')
     expect(backend.getSessionRecord(back.id)?.displayName).toBe('Kept across windows')
   })
+
+  // An Antigravity terminal a chat moved to: the conversation is on its
+  // command line and its record, and a live reattach (which resumes nothing)
+  // keeps it, so the tab can still go back to its chat.
+  it('an Antigravity terminal resumes its conversation and keeps it across a live reattach', () => {
+    const conversation = '70ec1049-f3e9-46a9-bd24-382267964044'
+    const first = backend.spawn(cwd, {
+      claudeMode: false,
+      antigravityMode: true,
+      tmuxMode: true,
+      resumeSessionId: conversation
+    })
+    backend.start(first.id, 80, 24)
+    expect(processes[0].spec.args.join(' ')).toContain(`'--conversation' '${conversation}'`)
+    expect(backend.getSessionRecord(first.id)?.antigravitySessionId).toBe(conversation)
+    backend.kill(first.id, false)
+    backend.spawn(cwd, {
+      claudeMode: false,
+      antigravityMode: true,
+      tmuxMode: true,
+      adoptTmuxName: first.tmuxName,
+      adoptSessionId: first.id
+    })
+    expect(backend.getSessionRecord(first.id)?.antigravitySessionId).toBe(conversation)
+  })
+
+  it('an OpenCode terminal keeps its session across a live reattach too', () => {
+    // No tool server: the tab starts without Clave's tools.
+    installTerminalPorts({ mcpConfig: { write: () => null, remove: () => {} } })
+    const first = backend.spawn(cwd, {
+      claudeMode: false,
+      opencodeMode: true,
+      tmuxMode: true,
+      resumeSessionId: 'ses_0123456789abcdef'
+    })
+    backend.kill(first.id, false)
+    backend.spawn(cwd, {
+      claudeMode: false,
+      opencodeMode: true,
+      tmuxMode: true,
+      adoptTmuxName: first.tmuxName,
+      adoptSessionId: first.id
+    })
+    expect(backend.getSessionRecord(first.id)?.opencodeSessionId).toBe('ses_0123456789abcdef')
+  })
 })

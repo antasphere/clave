@@ -44,6 +44,17 @@ const CHAT_PROFILES: EventsLaunchProfile[] = [
     viewId: 'clave.chat-view/chat',
     builtIn: true
   },
+  // Antigravity in the chat view, through `agy acp`.
+  {
+    id: 'antigravity-chat',
+    name: 'Antigravity (chat)',
+    family: 'antigravity',
+    command: ['agy'],
+    additionalArgs: [],
+    adapterId: 'antigravity-chat',
+    viewId: 'clave.chat-view/chat',
+    builtIn: true
+  },
   // Lane D (PRDCT-4427): OpenCode in the chat view, through `opencode acp`.
   {
     id: 'opencode-chat',

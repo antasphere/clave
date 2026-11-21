@@ -618,6 +618,10 @@ export interface SessionRecord {
    *  `opencode --session` takes in a terminal; from the tab's first
    *  `session_meta`. */
   opencodeSessionId?: string
+  /** The Antigravity conversation a chat tab resumes (`session/load`), the id
+   *  `agy --conversation` takes in a terminal; from the chat's first
+   *  `session_meta`, or the one a terminal resumed. */
+  antigravitySessionId?: string
   /** When the process was first started, carried across adoption: what a
    *  Codex terminal's thread is found by (the rollout it wrote after this). */
   startedAt?: number
@@ -1253,7 +1257,13 @@ export class PtyBackend {
       } else if (useOpencodeMode) {
         throw new Error('OpenCode sessions are supported on macOS only')
       } else if (useAntigravityMode) {
-        shellArgs = ['/c', 'agy']
+        // The conversation a chat moved here carries, as on macOS, checked
+        // against the safe alphabet before it reaches cmd.exe.
+        if (options?.resumeSessionId && !isValidClaudeSessionId(options.resumeSessionId))
+          throw new Error('Invalid resume session id')
+        shellArgs = options?.resumeSessionId
+          ? ['/c', 'agy', '--conversation', options.resumeSessionId]
+          : ['/c', 'agy']
       } else if (useCodexMode) {
         const parts = ['codex']
         if (options?.resumeSessionId) {
@@ -1301,7 +1311,7 @@ export class PtyBackend {
       if (kind) {
         const profile = launchProfile!
         if (
-          (kind === 'claude' || kind === 'pi' || kind === 'codex') &&
+          (kind === 'claude' || kind === 'pi' || kind === 'codex' || kind === 'antigravity') &&
           options?.resumeSessionId &&
           !isValidClaudeSessionId(options.resumeSessionId)
         ) {
@@ -1477,7 +1487,18 @@ export class PtyBackend {
       // A fresh terminal's Clave-named session (PRDCT-4551) is on its command
       // line and the ledger alone: until it ran a turn it is no conversation
       // a move into a chat or a Resume could take up.
-      opencodeSessionId: options?.opencodeMode ? options.resumeSessionId : undefined,
+      // A live tmux session taken back resumes nothing: it keeps the session
+      // its record held.
+      opencodeSessionId: options?.opencodeMode
+        ? (options.resumeSessionId ??
+          (options.adoptTmuxName ? previous?.opencodeSessionId : undefined))
+        : undefined,
+      // The Antigravity conversation the terminal resumed (a chat moved here),
+      // kept the same way across a live reattach.
+      antigravitySessionId: options?.antigravityMode
+        ? (options.resumeSessionId ??
+          (options.adoptTmuxName ? previous?.antigravitySessionId : undefined))
+        : undefined,
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,
@@ -1914,6 +1935,17 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta || meta.opencodeSessionId === sessionId) return
     writeSessionRecord({ ...meta, opencodeSessionId: sessionId })
+  }
+
+  /** The conversation an Antigravity chat tab resumes, from its
+   *  `session_meta`. Mirrors setSessionOpencodeSessionId. */
+  setSessionAntigravitySessionId(id: string, sessionId: string): void {
+    if (!isValidClaudeSessionId(sessionId)) return
+    const key = this.recordKeyForSession(id)
+    if (!key) return
+    const meta = readSessionRecord(key)
+    if (!meta || meta.antigravitySessionId === sessionId) return
+    writeSessionRecord({ ...meta, antigravitySessionId: sessionId })
   }
 
   /** PRDCT-4540: what the tab's process reported of its connection, on its
