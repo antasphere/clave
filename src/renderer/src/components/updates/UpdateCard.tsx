@@ -134,6 +134,19 @@ export function UpdateCard({
             >
               <StopIcon className="w-4 h-4" />
             </button>
+            <button
+              type="button"
+              className="btn-icon btn-icon-md"
+              data-testid="update-card-open"
+              aria-label="Open its page"
+              title="Open its page"
+              onClick={() => {
+                useUpdatesStore.getState().closeCard()
+                openTab(offScreen.sessionId)
+              }}
+            >
+              <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+            </button>
             <span className="update-card-block">
               {reading.state === 'preparing'
                 ? reading.step === 'creating'

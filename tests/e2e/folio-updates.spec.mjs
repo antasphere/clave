@@ -28,7 +28,13 @@ import { callMcp, until } from './harness.mjs'
       an update waits or plays, and `press()` plays; with the preference off
       the list stays empty and the in-app key still works;
    9. with the play mode off, an answer finished off the page files nothing
-      and says nothing.
+      and says nothing;
+   and the lane review's: the update key with nothing waiting is left to the
+   composer (never default-prevented), taken while an update waits; Open
+   from the card, over Settings, lands on the reading's page. That a tab's
+   past arriving is never a turn is pinned in `lab/use-conversation.test.ts`:
+   the harness cannot mount a Folio pane again over a finished conversation
+   (a reload drops the echo tabs).
    The key is never registered with the OS under the harness
    (`--test-no-activate`); every name and every answer here is invented. */
 
@@ -159,6 +165,25 @@ export async function run(t) {
     )
     t.equal('no update, no chip', await chip.count(), 0)
     t.check('the key is held by nobody yet', (await registered()).length === 0, await registered())
+    // With nothing to do, the chord reaches the field: never default-prevented.
+    await win.evaluate(() => {
+      window.__keyPrevented = []
+      window.addEventListener(
+        'keydown',
+        (event) => {
+          if (event.code === 'Space' && event.ctrlKey && event.shiftKey)
+            window.__keyPrevented.push(event.defaultPrevented)
+        },
+        true
+      )
+    })
+    await pane(A).locator('textarea[aria-label="Message"]').click()
+    await win.keyboard.press('Control+Shift+Space')
+    t.equal(
+      'with nothing waiting, the update key in the composer is left to the composer',
+      JSON.stringify(await win.evaluate(() => window.__keyPrevented)),
+      '[false]'
+    )
 
     // ── 1. An answer finished off the page is announced ──
     const composerA = pane(A).locator('textarea[aria-label="Message"]')
@@ -200,6 +225,11 @@ export async function run(t) {
     // ── 2. The key reads it, without selecting the tab ──
     await win.evaluate(() => (window.__chip = []))
     await win.keyboard.press('Control+Shift+Space')
+    t.equal(
+      'with an update waiting, the key is taken',
+      JSON.stringify(await win.evaluate(() => window.__keyPrevented)),
+      '[false,true]'
+    )
     t.check(
       'the chip goes playing',
       !!(await waitChip('playing')),
@@ -329,7 +359,7 @@ export async function run(t) {
     // ── 5. Settings over the tabs: the same announcement, the same key ──
     await win.keyboard.press('Meta+,')
     await win.locator('.settings-page-header').first().waitFor()
-    await write(A, answer('Golf', 3))
+    await write(A, answer('Golf', 6))
     t.check(
       'with Settings open, the selected tab’s answer is announced',
       !!(await waitSaid(atlasLine, 5)),
@@ -349,14 +379,33 @@ export async function run(t) {
     // The key again pauses it.
     await win.keyboard.press('Control+Shift+Space')
     t.check('the key pauses the reading', !!(await waitChip('paused')), await chipState())
+    // Open from the card lands on the reading's page, over Settings.
     await openCard()
-    await win.locator('[data-testid="update-card-stop"]').click()
+    await win.locator('[data-testid="update-card-open"]').click()
+    const cardA = pane(A).locator('[data-testid="folio-voice-card"]')
+    t.check(
+      "Open from the card lands on the tab's page, the reading on it",
+      !!(await until(async () =>
+        (await pane(A).isVisible()) &&
+        ['playing', 'paused'].includes(await cardA.getAttribute('data-voice-state'))
+          ? true
+          : null
+      )),
+      await cardA.getAttribute('data-voice-state')
+    )
+    t.check(
+      'and Settings closed',
+      !(await win.locator('.settings-page-header').first().isVisible())
+    )
+    await cardA.locator('[data-testid="folio-stop"]').click()
     t.check(
       'Stop ends it',
-      !!(await until(async () => ((await chipState()) === 'none' ? true : null))),
-      await chipState()
+      !!(await until(async () =>
+        (await cardA.getAttribute('data-voice-state')) === 'idle' ? true : null
+      )),
+      await cardA.getAttribute('data-voice-state')
     )
-    await focus(A)
+    t.equal('nothing waits or plays: no chip', await chipState(), 'none')
 
     // ── 8. The system-wide key, its routing and its preference ──
     t.equal('nothing waits: nothing held', (await registered()).length, 0)
