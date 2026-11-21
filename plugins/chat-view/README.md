@@ -240,8 +240,13 @@ rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
 markdown, no code read out, the lists said as sentences, filed so a page read
 before is spoken at once), and speaks it; when none comes, it reads the page as
 written (`speech.ts` takes the markdown out and cuts the utterances) and the
-voice card says why. The speaker toggle in the composer's footer reads each new
-answer as it finishes.
+voice card says why. The speaker toggle in the composer's footer is the play
+mode: one switch for the whole app on this Mac, live in every Folio pane at once
+(`useUpdatesStore`'s `on`, kept in `localStorage['clave.folio.read-aloud']`).
+On the page, a new answer is read as it finishes; off the page, it becomes an
+update (below). A reading goes on when its page leaves the screen: another tab,
+another workspace, Settings or the terminal over it; going back shows the same
+reading in place, the voice card playing and the block lit.
 
 The VOICE CARD (`src/lab/VoiceCard.tsx`, its words in `voice-card.ts`,
 PRDCT-4430) is the one place a person reads and drives the reading: in the
@@ -289,3 +294,52 @@ rows. Its stylesheet is its own (`src/lab/folio.css`, imported by the view).
 Pages and speech are pure and tested (`src/lab/*.test.ts`). Not yet: the slash
 menu and the host's /resume, /mcp and /plugin panels (a typed command goes to
 the agent as text), and the pane's Find, which searches no page here.
+
+### The updates (PRDCT-4832)
+
+An **update** is a finished answer of a Folio tab the person was not on the page
+for. The rules, and where each lives:
+
+1. **A turn ends on the live stream only.** `useConversation` counts the turns
+   of the live stream (`turnEnds`, through `trackTurn` in `src/lab/turn-end.ts`:
+   a turn runs on a state change to working or blocked, or a main-thread text
+   or call; it ends on done or idle, `finishesTurn`'s rule). A tab's past
+   arriving, or a reconnect's replace, is never a turn. Only an answer that
+   ends `done` with words counts.
+2. **On the page, read; off the page, filed; never over a reading.**
+   `turnEndAction` decides: the pane on screen and the voice free → read at
+   once; the pane the tab's chosen view (`active`) otherwise, or on screen while
+   a reading holds the voice → filed as an update (one per tab, the newest:
+   `fileUpdate` in `src/renderer/src/lib/updates.ts`); else nothing. A hidden
+   pane builds the page once, at that moment, from the live conversation.
+3. **One voice at a time, one sentence.** The announcer
+   (`src/renderer/src/lib/updates-voice.ts`, started once by `AppShell`) says
+   nothing while a reading is in progress, paused included, and says ONE line
+   for every update not yet announced, in the oldest one's voice
+   (`announcementFor`: "I have an update for you on Atlas.", "I have 3
+   updates for you on Atlas.", "I have updates for you on Atlas and Harbor.").
+   The name is the tab's sidebar group, else the tab's own name, read live.
+   A line a reading cuts (`say` resolves `cut`) is said again once the voice
+   is free; a line nothing could say is not repeated. When a reading an update
+   started is heard to its end and updates still wait, they are all said
+   again. The pane's voice is `useReadAloud`'s `say`, which never sets the
+   reading.
+4. **An update leaves** when its reading starts (Stop does not put it back),
+   it is dismissed, a newer answer of its tab replaces it, its tab is closed,
+   or the pane comes on screen. Updates live in memory only; only the switch
+   is kept.
+5. **The chip, the card and the key.** The chip (`components/updates/`) is in
+   the toolbar's right cluster while an update waits or a reading plays off
+   screen; it never takes the focus. The card under it shows the reading in
+   progress (Play/Pause, Stop, Open, the voice card's bar) and the waiting
+   updates (Play, Open, Dismiss). The key `playUpdate` (`Ctrl+Shift+Space`)
+   plays the oldest update or pauses and resumes the reading; with nothing to
+   do it is left to the field or the terminal under it. Main routes it to the
+   window it concerns and holds it system-wide only while an update waits or
+   plays (`src/main/updates-key.ts`, Settings → Keymaps → "The update key
+   works in every app").
+
+The store is `src/renderer/src/store/updates-store.ts`; each pane registers its
+voice there while it is the chosen view. The specs: `tests/e2e/folio-updates.spec.mjs`
+(the real app, the echo adapter, the voice stubbed), the unit tests beside each
+file, and `tests/e2e/look/folio-updates.spec.mjs` for eyes.

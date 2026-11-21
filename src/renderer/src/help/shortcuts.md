@@ -31,6 +31,7 @@ The master key is a **Cmd** chord on purpose: Clave reads the key before the ter
 | Cmd+1–9 | Switch to session by index |
 | Cmd+Shift+] | Next session |
 | Cmd+Shift+[ | Previous session |
+| Ctrl+Shift+Space | Play or pause the update (Folio's read-aloud): held system-wide only while an update waits or a reading plays |
 
 ## Navigation
 
