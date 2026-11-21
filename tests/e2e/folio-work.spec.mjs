@@ -416,9 +416,7 @@ export async function run(t) {
       othersBreathe: await win
         .locator(`${dockSel} [data-testid="folio-work-mark"]:not([data-quiet])`)
         .first()
-        .evaluate(
-          (el) => el.getAnimations({ subtree: true }).filter((a) => a.animationName).length
-        )
+        .evaluate((el) => el.getAnimations({ subtree: true }).filter((a) => a.animationName).length)
     }
     t.check(
       'a quiet agent: its mark and its row carry data-quiet, the row says quiet, the mark is still',
@@ -441,7 +439,9 @@ export async function run(t) {
       return list.find((s) => s.adapterId === 'echo' && s.id !== record.id) ?? null
     })
     await win
-      .locator(`section.chat-host[data-session-id="${second?.id}"] [data-testid="folio-view"] textarea:not(:disabled)`)
+      .locator(
+        `section.chat-host[data-session-id="${second?.id}"] [data-testid="folio-view"] textarea:not(:disabled)`
+      )
       .first()
       .waitFor()
     await until(async () =>
