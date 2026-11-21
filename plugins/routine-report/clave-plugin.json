@@ -3,7 +3,7 @@
   "name": "Routine report",
   "version": "1.0.0",
   "kind": "plugin",
-  "engines": { "clave": ">=2.4.0 <3.0.0" },
+  "engines": { "clave": ">=2.4.0 <4.0.0" },
   "ui": "native",
   "main": "main.mjs",
   "contributes": {
