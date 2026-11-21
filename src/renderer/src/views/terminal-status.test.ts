@@ -5,6 +5,7 @@ import {
   emptyStatus,
   reduceStatus,
   relaunchRequest,
+  runningLabel,
   shownWork,
   type TerminalStatus
 } from '../../../../plugins/chat-view/src/terminal-status'
@@ -713,4 +714,17 @@ it('names a Claude Bash card by the title its call gives, else by the command sh
   expect(untitled.agents.map((a) => [a.description, a.command])).toEqual([
     ['npm run dev in clave-app', command]
   ])
+})
+
+it('counts the agents and the commands apart, each by its own word', () => {
+  const work = run([
+    call('a1', 'Agent', { subagent_type: 'Explore', description: 'Map it' }),
+    call('a2', 'Agent', { subagent_type: 'Plan', description: 'Plan it' }),
+    call('b1', 'Bash', { command: 'npm run serve', run_in_background: true })
+  ]).agents
+  expect(runningLabel(shownWork(work))).toBe('2 agents · 1 command')
+  expect(runningLabel(shownWork(work).slice(0, 1))).toBe('1 agent')
+  expect(runningLabel(shownWork(work).slice(2))).toBe('1 command')
+  expect(runningLabel(shownWork(work), ', ')).toBe('2 agents, 1 command')
+  expect(runningLabel([])).toBe('')
 })
