@@ -539,6 +539,13 @@ function PageView({
   )
 }
 
+/** The ordinal of the conversation's last question, or null. */
+function lastQuestion(conversation: { entries: Entry[]; first: number }): number | null {
+  for (let i = conversation.entries.length - 1; i >= 0; i--)
+    if (conversation.entries[i].kind === 'user') return conversation.first + i
+  return null
+}
+
 /** Answer length as a tick's height: a log scale, so a one-line answer and
  *  a long report both read, between a floor and the spine's height. */
 const tickHeight = (page: Page): number =>
@@ -887,13 +894,21 @@ export function FolioView({
   const atRest = useRef({ conversation, presentation, pages, visible, active, autoRead, titleOf })
   atRest.current = { conversation, presentation, pages, visible, active, autoRead, titleOf }
   const turning = useRef(false)
+  // The last question at the last rest: a turn whose running state was never
+  // rendered (its events landing in one batch) is still a turn when a new
+  // question stands at rest.
+  const restedOn = useRef<number | null | undefined>(undefined)
   const { read } = voice
   useEffect(() => {
     if (turnRunning(state)) {
       turning.current = true
       return
     }
-    const wasRunning = turning.current
+    const asked = lastQuestion(conversation)
+    const known = restedOn.current
+    restedOn.current = asked
+    if (known === undefined && !turning.current) return
+    const wasRunning = turning.current || asked !== known
     turning.current = false
     const now = atRest.current
     if (!wasRunning || !now.autoRead) return
@@ -928,7 +943,7 @@ export function FolioView({
         title: now.titleOf(last),
         at: Date.now()
       })
-  }, [state, read, session.id])
+  }, [state, conversation, read, session.id])
   // The pane's voice, while the pane is the tab's chosen view: the chip, the
   // card and the key drive it from anywhere in the window.
   const voiceNow = useRef(voice)
