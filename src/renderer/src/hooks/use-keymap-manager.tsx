@@ -54,8 +54,16 @@ function localKeyContext(target: EventTarget | null): boolean {
   )
 }
 
-export function useKeymapManager(actions: KeymapActionHandlers): CommandHud | null {
+export function useKeymapManager(
+  actions: KeymapActionHandlers,
+  /** Whether an action has something to do now. A direct chord whose action
+   *  has not is left alone, never default-prevented, so the key reaches the
+   *  field or the terminal under it (Folio's update key, PRDCT-4832). */
+  available?: (actionId: KeymapActionId) => boolean
+): CommandHud | null {
   const config = useKeymapStore((state) => state.config)
+  const availableRef = useRef(available)
+  availableRef.current = available
   const matcherRef = useRef(new KeymapMatcher(config))
   const commandActiveRef = useRef(false)
   const deadlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -127,6 +135,7 @@ export function useKeymapManager(actions: KeymapActionHandlers): CommandHud | nu
       if (result.kind === 'matched') {
         const definition = ACTIONS_BY_ID.get(result.actionId)
         if (definition?.scope === 'app' && editableTarget(event.target)) return
+        if (!wasCommand && availableRef.current && !availableRef.current(result.actionId)) return
       }
 
       event.preventDefault()

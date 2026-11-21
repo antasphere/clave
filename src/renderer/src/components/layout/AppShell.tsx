@@ -98,6 +98,7 @@ import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store
 import { ConfirmDialog } from '@clave/ui/components'
 import { requestArchiveAndKill } from '../../lib/archive-session'
 import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-keymap-manager'
+import type { KeymapActionId } from '../../../../shared/keymaps'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
 import { connectKeymapStore, useShortcutLabel } from '../../store/keymap-store'
 
@@ -742,7 +743,14 @@ export function AppShell(): React.JSX.Element {
     } satisfies KeymapActionHandlers
     return actions
   }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
-  const commandHud = useKeymapManager(keymapActions)
+  // Folio's update key has something to do only while an update waits or a
+  // reading plays (PRDCT-4832); otherwise the chord reaches what is under it.
+  const keymapAvailable = useCallback((actionId: KeymapActionId): boolean => {
+    if (actionId !== 'playUpdate') return true
+    const { updates, current } = useUpdatesStore.getState()
+    return updates.length > 0 || current !== null
+  }, [])
+  const commandHud = useKeymapManager(keymapActions, keymapAvailable)
 
   useEffect(() => initializeSkins(), [])
 
