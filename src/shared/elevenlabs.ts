@@ -58,6 +58,11 @@ export interface ElevenLabsVoice {
   previewUrl: string | null
 }
 
+/** How a refusal that carries ElevenLabs' own reason starts (PRDCT-4831):
+ *  the host writes it (`refusedSentence`), the Settings page knows a
+ *  sentence that starts so is meant for the person. */
+export const ELEVENLABS_REFUSED_PREFIX = 'ElevenLabs refused the key: '
+
 /** Every integration a machine holds; one today. */
 export interface IntegrationsStatus {
   elevenLabs: ElevenLabsStatus

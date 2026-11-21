@@ -41,8 +41,9 @@ import { PlayingGlyph, VoiceDrawing } from './VoiceDrawing'
  * The Integrations page of the Agents group (PRDCT-4410): what a machine can
  * reach on the person's behalf, on the machine the picker names. Today one
  * card, ElevenLabs: a key pasted here is sealed on that machine by its own
- * secret port and checked against the account at once; the voice and the
- * model chosen are the ones the agents' speech uses. The field never shows a
+ * secret port and checked at once against what Folio uses, the voices and
+ * the speech (a refusal says ElevenLabs' own reason, PRDCT-4831); the voice
+ * and the model chosen are the ones the agents' speech uses. The field never shows a
  * stored key: the machine never sends one back. The same component serves
  * this Mac and a server (`ServerPages.tsx` wraps it with the server's notice).
  * The card carries its figure (`VoiceDrawing`): drawn in full beside the
@@ -92,7 +93,7 @@ function KeyField({
           spellCheck={false}
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          placeholder="xi-…"
+          placeholder="sk_…"
           aria-label="ElevenLabs API key"
           data-testid="elevenlabs-key-input"
           onKeyDown={(event) => {
@@ -137,6 +138,9 @@ function KeyRow({
   onReplace: () => void
 }): ReactElement {
   const figure = accountFigure(status)
+  // A key that passed with no plan and no credits may not read the account
+  // (PRDCT-4831): the check stays offered, for once the key is allowed to.
+  const noFigures = !!figure && !figure.tier && !figure.credits
   return (
     <div className="settings-row integration-row" data-elevenlabs-key="set">
       <VoiceDrawing quiet />
@@ -154,7 +158,7 @@ function KeyRow({
             {!figure ? (
               <span>Not checked yet.</span>
             ) : !figure.tier && !figure.credits ? (
-              <span>Checked: the account answered.</span>
+              <span>Checked: ElevenLabs accepted the key.</span>
             ) : (
               <>
                 {figure.tier && (
@@ -176,7 +180,7 @@ function KeyRow({
         )}
       </div>
       <div className="settings-row-controls">
-        {(status.lastError || status.checkedAt === null) && (
+        {(status.lastError || status.checkedAt === null || noFigures) && (
           <button
             type="button"
             className="btn-secondary"
@@ -420,7 +424,7 @@ export function IntegrationsList({
   }, [machine])
   const status = state.elevenLabs
   const checked = !!status?.configured && status.checkedAt !== null && !status.lastError
-  // The voices are read once the card shows a key the account accepted.
+  // The voices are read once the card shows a key ElevenLabs accepted.
   useEffect(() => {
     if (checked && state.voices.status === 'idle') void loadElevenLabsVoices(machine)
   }, [checked, machine, state.voices.status])

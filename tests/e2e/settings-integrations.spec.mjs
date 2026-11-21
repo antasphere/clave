@@ -6,7 +6,10 @@ import { launchApp, seedWorkspaces, userDataDir, fixturePath, until } from './ha
 // Settings → Integrations on this Mac (PRDCT-4410): a pasted ElevenLabs key
 // is sealed on the machine, checked against the account at once, and never
 // written in the clear; the voice chosen holds across a reload; Remove
-// forgets it; a refused key is kept and says so. ElevenLabs is a stub on a
+// forgets it; a refused key is kept and says so. The check is what Folio
+// uses (PRDCT-4831): a key that may not read the account is a good key,
+// shown without a plan, and a key that may not read the voices is refused in
+// ElevenLabs' own words. ElevenLabs is a stub on a
 // local port (`CLAVE_ELEVENLABS_BASE_URL`): nothing here reaches the
 // service, and every key is invented. The page is this Mac's, so the spec
 // runs in-process, where this Mac's settings are filed in the app's folder.
@@ -16,6 +19,20 @@ const ROOT = fixturePath('settings-integrations-root')
 const FILE = path.join(DIR, 'integrations.json')
 const GOOD = 'xi-test-good'
 const BAD = 'xi-bad'
+// Two keys restricted on the website: one to the voices and the speech, one
+// to the speech alone (the key the refusal was reproduced with).
+const RESTRICTED = 'sk_test_voices_and_speech'
+const SPEECH_ONLY = 'sk_test_speech_only'
+/** ElevenLabs' refusal of a key without one permission, verbatim. */
+const missing = (permission) => ({
+  detail: {
+    type: 'authentication_error',
+    code: 'unauthorized',
+    message: `The API key you used is missing the permission ${permission} to execute this operation.`,
+    status: 'missing_permissions',
+    request_id: 'stub'
+  }
+})
 const WS = {
   id: 'integrations-ws',
   name: 'Integrations',
@@ -41,8 +58,10 @@ const VOICES = [
   }
 ]
 
-/** The stub: the account for the good key, 401 for any other; two voices.
- *  While `held` is set, the account answers wait until `release()`. */
+/** The stub: the account for the good key, 401 for an unknown one; two
+ *  voices; speech on a voice no account has answered `voice_not_found`. The
+ *  restricted keys are refused what they lack, as ElevenLabs does. While
+ *  `held` is set, the account answers wait until `release()`. */
 function startStub() {
   const seen = []
   const waiting = []
@@ -53,7 +72,14 @@ function startStub() {
     seen.push({ pathname, key })
     const json = (status, body) =>
       res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
-    if (key !== GOOD) return json(401, { detail: { status: 'invalid_api_key' } })
+    const restricted = key === RESTRICTED || key === SPEECH_ONLY
+    if (key !== GOOD && !restricted) return json(401, { detail: { status: 'invalid_api_key' } })
+    if (req.method === 'POST' && pathname.startsWith('/v1/text-to-speech/'))
+      return json(404, {
+        detail: { type: 'not_found', status: 'voice_not_found', message: 'No such voice.' }
+      })
+    if (restricted && pathname === '/v1/user/subscription') return json(401, missing('user_read'))
+    if (key === SPEECH_ONLY && pathname === '/v2/voices') return json(401, missing('voices_read'))
     if (pathname === '/v1/user/subscription') {
       const answer = () =>
         json(200, {
@@ -157,6 +183,14 @@ export async function run(t) {
       stub.seen.some((r) => r.pathname === '/v1/user/subscription' && r.key === GOOD),
       stub.seen
     )
+    t.check(
+      'the check asked what Folio uses: the voices, and the speech on a voice no account has',
+      stub.seen.some((r) => r.pathname === '/v2/voices' && r.key === GOOD) &&
+        stub.seen.some(
+          (r) => r.pathname === '/v1/text-to-speech/clavekeycheck0000000' && r.key === GOOD
+        ),
+      stub.seen
+    )
     t.check('the document exists', existsSync(FILE), FILE)
     t.check('the stored document does not hold the key', !fileText().includes(GOOD))
     const status = await win.evaluate(() => window.electronAPI.integrationsRead())
@@ -235,6 +269,50 @@ export async function run(t) {
       'Replace is offered',
       await card.locator('[data-testid="elevenlabs-replace"]').count(),
       1
+    )
+
+    // ── A key restricted to the voices and the speech: a good key, no plan ──
+    await card.locator('[data-testid="elevenlabs-replace"]').click()
+    await paste(card, RESTRICTED)
+    const accepted = await until(async () =>
+      (await account.count()) ? (await textOf(account)) || null : null
+    )
+    t.equal(
+      'a key that may not read the account is accepted, with no plan and no credits',
+      accepted,
+      'Checked: ElevenLabs accepted the key.'
+    )
+    t.equal('no refusal is said', await refused.count(), 0)
+    const restrictedVoices = card.locator('[data-settings-select="elevenlabs-voice"]')
+    await restrictedVoices.waitFor()
+    await until(async () => !(await restrictedVoices.isDisabled()))
+    t.check('its voices are offered', !(await restrictedVoices.isDisabled()))
+    t.equal(
+      'the check stays offered, for once the key may read the account',
+      await card.locator('[data-testid="elevenlabs-check"]').count(),
+      1
+    )
+    t.check('the restricted key is not in the clear', !fileText().includes(RESTRICTED))
+
+    // ── A key restricted to the speech alone: refused in ElevenLabs' words ──
+    await card.locator('[data-testid="elevenlabs-replace"]').click()
+    await paste(card, SPEECH_ONLY)
+    const reason = await until(async () =>
+      (await refused.count()) ? (await textOf(refused)) || null : null
+    )
+    t.equal(
+      "the refusal says ElevenLabs' own reason, and where to fix it",
+      reason,
+      'ElevenLabs refused the key: The API key you used is missing the permission voices_read to execute this operation. Allow that permission for this key on elevenlabs.io, or paste a key that has it.'
+    )
+    t.equal('no voice is offered on a refused key', await restrictedVoices.count(), 0)
+    t.check('the key stays stored, sealed', JSON.parse(fileText()).elevenLabs?.sealed !== undefined)
+    t.check(
+      'neither the document nor what the window reads holds it',
+      !fileText().includes(SPEECH_ONLY) &&
+        !JSON.stringify(await win.evaluate(() => window.electronAPI.integrationsRead())).includes(
+          SPEECH_ONLY
+        )
     )
     t.check('no page error', errors.length === 0, errors)
   } finally {
