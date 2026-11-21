@@ -5,7 +5,9 @@
 //   (a) three running, one of them quiet, closed;
 //   (b) the same, open;
 //   (c) seven running, open (the +N on the pill, the card's scroll);
-//   (d) a narrow pane (about 520 px), closed and open, with the back pill.
+//   (d) a narrow pane (about 520 px), closed and open, with the back pill;
+//   and the motion: the pill and the open card in light and dark at three
+//   moments a second apart (a third of the marks' cycle).
 // It runs through the runner, from the specs folder (copy it beside the
 // specs for the run):
 //   npx electron-vite build
@@ -102,6 +104,23 @@ export async function run(t) {
     ])
     await until(async () => (await pill.count()) === 1)
     await win.waitForTimeout(1500)
+    /* The motion, which a still cannot show: the pill and the open card at
+       three moments a third of a cycle (two breaths) apart. */
+    for (const name of ['light', 'dark']) {
+      await theme(name)
+      await setOpen(false)
+      for (const at of [0, 1, 2]) {
+        await pill.screenshot({ path: path.join(out, `${name}-motion-pill-${at}.png`) })
+        await win.waitForTimeout(1000)
+      }
+      await setOpen(true)
+      const card = win.locator(`${shown} [data-testid="folio-work-card"]`)
+      for (const at of [0, 1, 2]) {
+        await card.screenshot({ path: path.join(out, `${name}-motion-card-${at}.png`) })
+        await win.waitForTimeout(1000)
+      }
+      await setOpen(false)
+    }
     for (const name of THEMES) {
       await theme(name)
       await setOpen(false)

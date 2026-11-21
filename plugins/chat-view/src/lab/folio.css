@@ -1305,6 +1305,13 @@
     scale: 0.4;
   }
 }
+/* An agent's mark has room around its head for the ring that leaves it
+   (the viewBox is 22 units for a 12-unit ring): the head reads at the
+   mark's size, the pulse grows into the margin, inside the pill. */
+.folio-work-mark[data-kind='agent'] {
+  inline-size: calc(var(--work-mark) * 22 / 15);
+  block-size: calc(var(--work-mark) * 22 / 15);
+}
 .folio-work-mark[data-kind='shell'] {
   inline-size: calc(var(--work-mark) * 2.25);
 }
@@ -1488,15 +1495,79 @@
   color: var(--text-tertiary);
 }
 
+/* The work, running (only in the dock: the strip's drawings stay as they
+   are). Three movements, each on the compositor (transform and opacity
+   alone), at the breath's pace or twice it, each mark and each row a step
+   behind its neighbour so several read as several at work, and none of it
+   on a quiet agent, a leaving row or under reduced motion:
+   - the breath: the accent dot, the strip's pulse-dot at ten durations;
+   - an agent: a second ring leaves the head and fades as it grows, every
+     other breath; on a row's drawing the accent line on its paper is
+     written left to right, held, and written again;
+   - a command: its accent line is typed from its left end, held, and typed
+     again, the cursor dot riding its end. */
+.folio-work {
+  --work-breath: calc(var(--default-transition-duration) * 10);
+  --work-step: calc(var(--default-transition-duration) * -3.7);
+}
+.folio-work .chat-drawing .ring--pulse {
+  animation: none;
+}
+.folio-work .work-line {
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+.folio-work .work-pulse {
+  transform-box: fill-box;
+}
 @media (prefers-reduced-motion: no-preference) {
-  /* The strip's breath (pulse-dot at ten default durations), each mark a
-     step behind the one before it, so several read as several at work. */
-  .work-mark[data-working] .work-pulse {
-    animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
-    animation-delay: calc(var(--mark-i, 0) * var(--default-transition-duration) * -3.7);
+  .folio-work-mark {
+    --work-delay: calc(var(--mark-i, 0) * var(--work-step));
   }
-  .folio-work-open .work-drawing[data-working] .work-pulse {
-    animation-delay: calc(var(--row-i, 0) * var(--default-transition-duration) * -3.7);
+  .folio-work-row {
+    --work-delay: calc(var(--row-i, 0) * var(--work-step));
+  }
+  .folio-work .chat-drawing[data-working] .work-pulse {
+    animation: pulse-dot var(--work-breath) ease-in-out infinite;
+    animation-delay: var(--work-delay);
+  }
+  .folio-work .chat-drawing[data-working] .work-ring {
+    animation: chat-drawing-pulse calc(var(--work-breath) * 2) var(--ease-out-expo) infinite;
+    animation-delay: var(--work-delay);
+  }
+  .folio-work .chat-drawing[data-working] .work-line {
+    animation: folio-work-type calc(var(--work-breath) * 2) ease-in-out infinite;
+    animation-delay: var(--work-delay);
+  }
+  .folio-work .chat-drawing[data-kind='shell'][data-working] .work-pulse {
+    animation:
+      pulse-dot var(--work-breath) ease-in-out infinite,
+      folio-work-cursor calc(var(--work-breath) * 2) ease-in-out infinite;
+    animation-delay: var(--work-delay);
+  }
+}
+@keyframes folio-work-type {
+  0% {
+    scale: 0 1;
+    opacity: 1;
+  }
+  45%,
+  85% {
+    scale: 1 1;
+    opacity: 1;
+  }
+  100% {
+    scale: 1 1;
+    opacity: 0;
+  }
+}
+@keyframes folio-work-cursor {
+  0% {
+    translate: calc(var(--work-type-run) * -1) 0;
+  }
+  45%,
+  100% {
+    translate: 0 0;
   }
 }
 /* Reduced motion: nothing breathes, nothing grows, nothing staggers; every
@@ -1524,7 +1595,7 @@
       inline-size: calc(var(--work-mark) * 2.25);
     }
   }
-  .folio-work-open .work-drawing .work-pulse {
+  .folio-work .chat-drawing :is(.work-pulse, .work-ring, .work-line) {
     animation: none;
   }
 }

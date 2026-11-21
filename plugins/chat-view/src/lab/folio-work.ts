@@ -1,4 +1,4 @@
-import type { WorkRow } from '../work'
+import type { WorkFigures, WorkRow } from '../work'
 
 /* Folio's work dock (FolioWork.tsx), its pure rules: which marks the closed
    pill shows, and when the dock opens and closes. The component feeds the
@@ -12,6 +12,12 @@ export function dockMarks(rows: WorkRow[], max = 4): { marks: WorkRow[]; overflo
     overflow: rows.slice(max).filter((row) => !row.gone).length
   }
 }
+
+/** The model a dock row names in its figures: the one it runs on once it
+ *  is known, else nothing. The strip's "…" read as a line cut short at the
+ *  end of a row of figures. */
+export const dockModel = (figures: WorkFigures): string | null =>
+  figures.modelKnown ? figures.model : null
 
 /** How long the pointer rests on the pill before the card opens, and how
  *  long after it has left both before the card closes, so the way from the

@@ -67,6 +67,7 @@ describe('workFigures', () => {
       ran: '3m 12s',
       quiet: false,
       model: 'Sonnet 5.5',
+      modelKnown: true,
       modelTitle: 'Launched on Sonnet 5.5'
     })
   })
@@ -84,6 +85,7 @@ describe('workFigures', () => {
   it('a model not named yet reads "…", and its title says when it will be', () => {
     const f = workFigures(agent('a'), T0)
     expect(f.model).toBe('…')
+    expect(f.modelKnown).toBe(false)
     expect(f.modelTitle).toBe('Its model is named at its first answer')
   })
   it('a command has its time alone', () => {

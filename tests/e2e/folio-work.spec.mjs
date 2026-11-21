@@ -413,6 +413,9 @@ export async function run(t) {
       animations: await quietMark.evaluate(
         (el) => el.getAnimations({ subtree: true }).filter((a) => a.animationName).length
       ),
+      rowAnimations: await quietRow.evaluate(
+        (el) => el.getAnimations({ subtree: true }).filter((a) => a.animationName).length
+      ),
       othersBreathe: await win
         .locator(`${dockSel} [data-testid="folio-work-mark"]:not([data-quiet])`)
         .first()
@@ -423,9 +426,45 @@ export async function run(t) {
       quiet.marks === 1 &&
         quiet.rows === 1 &&
         /quiet \d+m/.test(quiet.says) &&
+        !quiet.says.includes('…') &&
         quiet.animations === 0 &&
+        quiet.rowAnimations === 0 &&
         quiet.othersBreathe > 0,
       quiet
+    )
+    /* The running ones show it: names of the CSS animations under each. */
+    const names = (sel) =>
+      win
+        .locator(sel)
+        .first()
+        .evaluate((el) =>
+          [
+            ...new Set(
+              el
+                .getAnimations({ subtree: true })
+                .map((a) => a.animationName)
+                .filter(Boolean)
+            )
+          ].sort()
+        )
+    const motion = {
+      agentMark: await names(
+        `${dockSel} [data-testid="folio-work-mark"][data-kind="agent"]:not([data-quiet])`
+      ),
+      shellMark: await names(`${dockSel} [data-testid="folio-work-mark"][data-kind="shell"]`),
+      agentRow: await names(
+        `${dockSel} [data-testid="folio-work-row"][data-kind="agent"]:not([data-quiet])`
+      ),
+      shellRow: await names(`${dockSel} [data-testid="folio-work-row"][data-kind="shell"]`)
+    }
+    const has = (list, ...want) => want.every((name) => list.includes(name))
+    t.check(
+      "running work moves: an agent's head breathes and sends out its ring, its row's line is written; a command's line is typed under its riding cursor",
+      has(motion.agentMark, 'pulse-dot', 'chat-drawing-pulse') &&
+        has(motion.shellMark, 'pulse-dot', 'folio-work-type', 'folio-work-cursor') &&
+        has(motion.agentRow, 'pulse-dot', 'chat-drawing-pulse', 'folio-work-type') &&
+        has(motion.shellRow, 'pulse-dot', 'folio-work-type', 'folio-work-cursor'),
+      motion
     )
 
     /* 7. Another tab and back: nothing under the dock moves. The marks that
@@ -463,13 +502,18 @@ export async function run(t) {
     /* 8. Reduced motion: nothing moves under the dock, closed or open. */
     await win.emulateMedia({ reducedMotion: 'reduce' })
     await win.waitForTimeout(200)
-    const stillClosed = await dock.evaluate((el) => el.getAnimations({ subtree: true }).length)
+    const stillClosed = await dock.evaluate((el) =>
+      el.getAnimations({ subtree: true }).map((a) => a.animationName ?? a.transitionProperty)
+    )
     await pill.click()
-    const stillOpen = await dock.evaluate((el) => el.getAnimations({ subtree: true }).length)
+    await win.waitForTimeout(100)
+    const stillOpen = await dock.evaluate((el) =>
+      el.getAnimations({ subtree: true }).map((a) => a.animationName ?? a.transitionProperty)
+    )
     const openedAtOnce = await open()
     t.check(
-      'under reduced motion no animation runs under the dock, closed or open',
-      stillClosed === 0 && stillOpen === 0 && openedAtOnce === 'pinned',
+      'under reduced motion no animation runs under the dock, closed or open: no breath, no ring, no typing',
+      stillClosed.length === 0 && stillOpen.length === 0 && openedAtOnce === 'pinned',
       { stillClosed, stillOpen, openedAtOnce }
     )
     await pill.click()

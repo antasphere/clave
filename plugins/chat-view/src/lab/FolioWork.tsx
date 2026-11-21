@@ -7,7 +7,14 @@ import { ShellPeek } from '../ShellPeek'
 import { WorkDrawing, WorkMark } from '../WorkDrawing'
 import type { SubagentLogs } from '../subagents'
 import { isQuiet, useLeavingWork, useWorkClock, workFigures } from '../work'
-import { CLOSE_BEAT_MS, OPEN_BEAT_MS, closedDock, dockMarks, nextDock } from './folio-work'
+import {
+  CLOSE_BEAT_MS,
+  OPEN_BEAT_MS,
+  closedDock,
+  dockMarks,
+  dockModel,
+  nextDock
+} from './folio-work'
 
 /* Folio's work dock (PRDCT-4833): the work running now — the subagents and
    the commands left in the background — in the desk's bottom-right corner,
@@ -214,7 +221,7 @@ export function FolioWork({
                 className="folio-work-open"
                 aria-label={`Watch ${agent.description || agent.type}`}
               >
-                <WorkDrawing kind={shell ? 'shell' : 'agent'} working={!gone && !quiet} />
+                <WorkDrawing kind={shell ? 'shell' : 'agent'} working={!gone && !quiet} live />
                 <span className="folio-work-text">
                   <span className="folio-work-task">
                     {!shell && <span className="term-agent-type">{agent.type}</span>}{' '}
@@ -239,8 +246,8 @@ export function FolioWork({
                     ) : (
                       <span>{figures.ran}</span>
                     )}
-                    {figures.model !== null && (
-                      <span title={figures.modelTitle ?? undefined}>{figures.model}</span>
+                    {dockModel(figures) !== null && (
+                      <span title={figures.modelTitle ?? undefined}>{dockModel(figures)}</span>
                     )}
                   </span>
                 </span>

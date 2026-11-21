@@ -23,16 +23,29 @@
 
 /** The agent's head, over its desk. */
 const HEAD = { cx: 24, cy: 10, ring: 6, dot: 2.4 }
-/** The terminal's prompt, and its cursor at the end of the line typed. */
-const PROMPT = { d: 'M12,15 L17,19 L12,23', cx: 34.5, cy: 19, dot: 1.8 }
+/** The terminal's prompt, the line being typed, and its cursor at its end. */
+const PROMPT = { d: 'M12,15 L17,19 L12,23', x1: 21, x2: 31, y: 19, cx: 34.5, cy: 19, dot: 1.8 }
+/** How far a command's cursor rides back while its line is typed again (in
+ *  the drawing's own units), for the dock's motion (folio.css). */
+const typeRun = { '--work-type-run': `${PROMPT.x2 - PROMPT.x1}px` } as React.CSSProperties
+
+/** The ring that leaves the head and fades as it grows, once per breath:
+ *  drawn only where the motion is the point (Folio's dock), never on the
+ *  strip's cards. */
+const HeadPulse = (): React.JSX.Element => (
+  <circle className="ring ring--pulse work-ring" cx={HEAD.cx} cy={HEAD.cy} r={HEAD.ring} />
+)
 
 export function WorkDrawing({
   kind,
-  working
+  working,
+  live = false
 }: {
   kind: 'agent' | 'shell'
   /** Breathing: the agent has acted lately, the command still runs. */
   working: boolean
+  /** Folio's dock: the head's ring pulses, the line is written (folio.css). */
+  live?: boolean
 }): React.JSX.Element {
   return (
     <svg
@@ -40,6 +53,7 @@ export function WorkDrawing({
       className="chat-drawing work-drawing"
       data-kind={kind}
       data-working={working || undefined}
+      style={live && kind === 'shell' ? typeRun : undefined}
       aria-hidden="true"
     >
       {kind === 'agent' ? (
@@ -49,6 +63,7 @@ export function WorkDrawing({
           <line className="ln ln--thin" x1="16" y1="25" x2="32" y2="25" />
           <line className="ln ln--c work-line" x1="16" y1="30" x2="26" y2="30" />
           {/* the head, over the desk: the ringed dot that breathes */}
+          {live && <HeadPulse />}
           <circle className="ring" cx={HEAD.cx} cy={HEAD.cy} r={HEAD.ring} />
           <circle className="dot dot--c work-pulse" cx={HEAD.cx} cy={HEAD.cy} r={HEAD.dot} />
         </>
@@ -57,7 +72,13 @@ export function WorkDrawing({
           {/* the terminal box, its prompt and the line being typed */}
           <rect className="bx bx--front" x="6" y="8" width="36" height="24" rx="4" />
           <path className="head" d={PROMPT.d} />
-          <line className="ln ln--c work-line" x1="21" y1="19" x2="31" y2="19" />
+          <line
+            className="ln ln--c work-line"
+            x1={PROMPT.x1}
+            y1={PROMPT.y}
+            x2={PROMPT.x2}
+            y2={PROMPT.y}
+          />
           <circle className="dot dot--c work-pulse" cx={PROMPT.cx} cy={PROMPT.cy} r={PROMPT.dot} />
         </>
       )}
@@ -66,9 +87,10 @@ export function WorkDrawing({
 }
 
 /** The drawing's focal point alone, cropped from the same coordinates: the
- *  head of an agent (a square), the prompt of a command (the chevron, the
- *  line being typed and the cursor dot, read as one glyph: without the line,
- *  the chevron and the dot read as two marks in the pill). */
+ *  head of an agent with room around it for its ring's pulse, the prompt of
+ *  a command (the chevron, the line being typed and the cursor dot, read as
+ *  one glyph: without the line, the chevron and the dot read as two marks in
+ *  the pill). */
 export function WorkMark({
   kind,
   working
@@ -79,21 +101,29 @@ export function WorkMark({
 }): React.JSX.Element {
   return (
     <svg
-      viewBox={kind === 'agent' ? '16.5 2.5 15 15' : '10 13 27 12'}
+      viewBox={kind === 'agent' ? '13 -1 22 22' : '10 13 27 12'}
       className="chat-drawing work-mark"
       data-kind={kind}
       data-working={working || undefined}
+      style={kind === 'shell' ? typeRun : undefined}
       aria-hidden="true"
     >
       {kind === 'agent' ? (
         <>
+          <HeadPulse />
           <circle className="ring" cx={HEAD.cx} cy={HEAD.cy} r={HEAD.ring} />
           <circle className="dot dot--c work-pulse" cx={HEAD.cx} cy={HEAD.cy} r={HEAD.dot} />
         </>
       ) : (
         <>
           <path className="head" d={PROMPT.d} />
-          <line className="ln ln--c" x1="21" y1="19" x2="31" y2="19" />
+          <line
+            className="ln ln--c work-line"
+            x1={PROMPT.x1}
+            y1={PROMPT.y}
+            x2={PROMPT.x2}
+            y2={PROMPT.y}
+          />
           <circle className="dot dot--c work-pulse" cx={PROMPT.cx} cy={PROMPT.cy} r={PROMPT.dot} />
         </>
       )}

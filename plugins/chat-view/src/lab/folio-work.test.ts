@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { SubAgent } from '../terminal-status'
-import type { WorkRow } from '../work'
-import { closedDock, dockMarks, nextDock, type DockEvent, type DockState } from './folio-work'
+import { workFigures, type WorkRow } from '../work'
+import {
+  closedDock,
+  dockMarks,
+  dockModel,
+  nextDock,
+  type DockEvent,
+  type DockState
+} from './folio-work'
 
 const row = (id: string, gone = false): WorkRow => ({
   agent: { id, kind: 'agent' } as SubAgent,
@@ -28,6 +35,23 @@ describe('dockMarks', () => {
   })
   it('takes another maximum', () => {
     expect(dockMarks([row('a'), row('b')], 1)).toMatchObject({ overflow: 1 })
+  })
+})
+
+describe('dockModel', () => {
+  const base = { id: 'a', kind: 'agent', toolCount: 0, contextUsed: null } as const
+  it('names the model once it is known', () => {
+    const agent = { ...base, model: 'claude-sonnet-5-5', startedAt: 0, lastActiveAt: 0 }
+    expect(dockModel(workFigures(agent as unknown as SubAgent, 1000))).toBe('Sonnet 5.5')
+  })
+  it('says nothing, not "…", while it is not', () => {
+    const agent = { ...base, model: null, startedAt: 0, lastActiveAt: 0 }
+    expect(dockModel(workFigures(agent as unknown as SubAgent, 1000))).toBeNull()
+    expect(dockModel(workFigures(agent as unknown as SubAgent, 1000 + 120_000))).toBeNull()
+  })
+  it('a command names none', () => {
+    const shell = { ...base, kind: 'shell', model: null, startedAt: 0, lastActiveAt: 0 }
+    expect(dockModel(workFigures(shell as unknown as SubAgent, 1000))).toBeNull()
   })
 })
 

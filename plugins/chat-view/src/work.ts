@@ -48,6 +48,9 @@ export interface WorkFigures {
   /** The model by name, "…" until its first answer names it; null for a
    *  command. */
   model: string | null
+  /** Whether its model is named yet (the strip says "…" until it is; Folio's
+   *  dock says nothing). */
+  modelKnown: boolean
   /** The model's tooltip; null for a command. */
   modelTitle: string | null
 }
@@ -67,6 +70,7 @@ export function workFigures(agent: SubAgent, now: number): WorkFigures {
     ran,
     quiet,
     model: shell ? null : (named ?? '…'),
+    modelKnown: !shell && !!named,
     modelTitle: shell
       ? null
       : named
