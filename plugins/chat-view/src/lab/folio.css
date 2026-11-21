@@ -1505,7 +1505,7 @@
      other breath; on a row's drawing the accent line on its paper is
      written left to right, held, and written again;
    - a command: its accent line is typed from its left end, held, and typed
-     again, the cursor dot riding its end. */
+     again, the cursor dot riding its end (one group, one movement). */
 .folio-work {
   --work-breath: calc(var(--default-transition-duration) * 10);
   --work-step: calc(var(--default-transition-duration) * -3.7);
@@ -1539,10 +1539,15 @@
     animation: folio-work-type calc(var(--work-breath) * 2) ease-in-out infinite;
     animation-delay: var(--work-delay);
   }
-  .folio-work .chat-drawing[data-kind='shell'][data-working] .work-pulse {
-    animation:
-      pulse-dot var(--work-breath) ease-in-out infinite,
-      folio-work-cursor calc(var(--work-breath) * 2) ease-in-out infinite;
+  /* A command: the line and its cursor are one group sliding in under a
+     clip (WorkDrawing's TypedPrompt), so the dot rides the line's end by
+     construction; the line alone fades before it is typed again. */
+  .folio-work .chat-drawing[data-working] .work-type {
+    animation: folio-work-run calc(var(--work-breath) * 2) ease-in-out infinite;
+    animation-delay: var(--work-delay);
+  }
+  .folio-work .chat-drawing[data-kind='shell'][data-working] .work-line {
+    animation: folio-work-fade calc(var(--work-breath) * 2) ease-in-out infinite;
     animation-delay: var(--work-delay);
   }
 }
@@ -1561,13 +1566,22 @@
     opacity: 0;
   }
 }
-@keyframes folio-work-cursor {
+@keyframes folio-work-run {
   0% {
     translate: calc(var(--work-type-run) * -1) 0;
   }
   45%,
   100% {
     translate: 0 0;
+  }
+}
+@keyframes folio-work-fade {
+  0%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 /* Reduced motion: nothing breathes, nothing grows, nothing staggers; every
@@ -1595,7 +1609,7 @@
       inline-size: calc(var(--work-mark) * 2.25);
     }
   }
-  .folio-work .chat-drawing :is(.work-pulse, .work-ring, .work-line) {
+  .folio-work .chat-drawing :is(.work-pulse, .work-ring, .work-line, .work-type) {
     animation: none;
   }
 }

@@ -461,10 +461,71 @@ export async function run(t) {
     t.check(
       "running work moves: an agent's head breathes and sends out its ring, its row's line is written; a command's line is typed under its riding cursor",
       has(motion.agentMark, 'pulse-dot', 'chat-drawing-pulse') &&
-        has(motion.shellMark, 'pulse-dot', 'folio-work-type', 'folio-work-cursor') &&
+        has(motion.shellMark, 'pulse-dot', 'folio-work-run', 'folio-work-fade') &&
         has(motion.agentRow, 'pulse-dot', 'chat-drawing-pulse', 'folio-work-type') &&
-        has(motion.shellRow, 'pulse-dot', 'folio-work-type', 'folio-work-cursor'),
+        has(motion.shellRow, 'pulse-dot', 'folio-work-run', 'folio-work-fade'),
       motion
+    )
+
+    /* The cursor rides the end of its line: sampled live over a cycle and
+       a bit (eighteen samples a sixteenth of a cycle apart), at every
+       sample while the line is typed or held (not while it fades), the
+       distance from the line's visible end to the dot's centre stays the
+       distance at rest within one device pixel, and the line does grow
+       (its visible length, from where it starts at rest, goes from almost
+       nothing to whole), so a still drawing cannot pass. */
+    const ride = (sel) =>
+      win
+        .locator(sel)
+        .first()
+        .evaluate(async (svg) => {
+          const line = svg.querySelector('.work-line')
+          const dot = svg.querySelector('.work-pulse')
+          const run = svg
+            .querySelector('.work-type')
+            ?.getAnimations()
+            .find((a) => a.animationName === 'folio-work-run')
+          if (!run) return { missing: true }
+          const { duration } = run.effect.getComputedTiming()
+          const read = () => {
+            const l = line.getBoundingClientRect()
+            const d = dot.getBoundingClientRect()
+            return {
+              p: run.effect.getComputedTiming().progress,
+              right: l.right,
+              left: l.left,
+              gap: d.left + d.width / 2 - l.right
+            }
+          }
+          const samples = []
+          for (let i = 0; i < 18; i++) {
+            await new Promise((resolve) => setTimeout(resolve, duration / 16))
+            samples.push(read())
+          }
+          const rest = samples.find((x) => x.p > 0.5 && x.p < 0.85)
+          if (!rest) return { missing: 'no held sample' }
+          const typed = samples.filter((x) => x.p < 0.85)
+          const length = (x) => (x.right - rest.left) / (rest.right - rest.left)
+          return {
+            rest: +rest.gap.toFixed(2),
+            worst: Math.max(...typed.map((x) => Math.abs(x.gap - rest.gap))),
+            shortest: Math.min(...typed.map(length)),
+            pixel: 1 / devicePixelRatio,
+            samples: typed.map((x) => ({
+              p: +x.p.toFixed(2),
+              typed: +length(x).toFixed(2),
+              off: +(x.gap - rest.gap).toFixed(2)
+            }))
+          }
+        })
+    const rides = {
+      mark: await ride(`${dockSel} [data-testid="folio-work-mark"][data-kind="shell"] svg`),
+      row: await ride(`${dockSel} [data-testid="folio-work-row"][data-kind="shell"] svg`)
+    }
+    t.check(
+      "a command's cursor rides the end of its line, in the pill and in the card, within a device pixel",
+      [rides.mark, rides.row].every((r) => !r.missing && r.shortest < 0.3 && r.worst <= r.pixel),
+      rides
     )
 
     /* 7. Another tab and back: nothing under the dock moves. The marks that

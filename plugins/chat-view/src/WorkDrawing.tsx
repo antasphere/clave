@@ -1,3 +1,5 @@
+import { useId } from 'react'
+
 /* The drawings on the work cards, in the hand of the products' figures (the
    drop card's `DropDrawing`, the dialog and stat drawings of the tool
    template): ink at low opacity, a box filled with a breath of paper, the
@@ -28,6 +30,36 @@ const PROMPT = { d: 'M12,15 L17,19 L12,23', x1: 21, x2: 31, y: 19, cx: 34.5, cy:
 /** How far a command's cursor rides back while its line is typed again (in
  *  the drawing's own units), for the dock's motion (folio.css). */
 const typeRun = { '--work-type-run': `${PROMPT.x2 - PROMPT.x1}px` } as React.CSSProperties
+
+/** The line being typed and its cursor, as ONE moving group: the group
+ *  slides in from the left by the line's length, under a clip that hides
+ *  whatever of the line is still left of where it starts, so the line grows
+ *  from its left end and the dot rides its end by construction (two
+ *  animations, one on the line and one on the dot, came apart on screen).
+ *  Folio's dock only; the strip draws the line and the dot still. */
+function TypedPrompt(): React.JSX.Element {
+  const clip = `work-typed-${useId().replace(/:/g, '')}`
+  return (
+    <>
+      <clipPath id={clip}>
+        {/* from the line's start (less its round cap) to past the cursor */}
+        <rect x={PROMPT.x1 - 1} y={PROMPT.y - 4} width={PROMPT.cx - PROMPT.x1 + 6} height="8" />
+      </clipPath>
+      <g clipPath={`url(#${clip})`}>
+        <g className="work-type">
+          <line
+            className="ln ln--c work-line"
+            x1={PROMPT.x1}
+            y1={PROMPT.y}
+            x2={PROMPT.x2}
+            y2={PROMPT.y}
+          />
+          <circle className="dot dot--c work-pulse" cx={PROMPT.cx} cy={PROMPT.cy} r={PROMPT.dot} />
+        </g>
+      </g>
+    </>
+  )
+}
 
 /** The ring that leaves the head and fades as it grows, once per breath:
  *  drawn only where the motion is the point (Folio's dock), never on the
@@ -72,14 +104,25 @@ export function WorkDrawing({
           {/* the terminal box, its prompt and the line being typed */}
           <rect className="bx bx--front" x="6" y="8" width="36" height="24" rx="4" />
           <path className="head" d={PROMPT.d} />
-          <line
-            className="ln ln--c work-line"
-            x1={PROMPT.x1}
-            y1={PROMPT.y}
-            x2={PROMPT.x2}
-            y2={PROMPT.y}
-          />
-          <circle className="dot dot--c work-pulse" cx={PROMPT.cx} cy={PROMPT.cy} r={PROMPT.dot} />
+          {live ? (
+            <TypedPrompt />
+          ) : (
+            <>
+              <line
+                className="ln ln--c work-line"
+                x1={PROMPT.x1}
+                y1={PROMPT.y}
+                x2={PROMPT.x2}
+                y2={PROMPT.y}
+              />
+              <circle
+                className="dot dot--c work-pulse"
+                cx={PROMPT.cx}
+                cy={PROMPT.cy}
+                r={PROMPT.dot}
+              />
+            </>
+          )}
         </>
       )}
     </svg>
@@ -117,14 +160,7 @@ export function WorkMark({
       ) : (
         <>
           <path className="head" d={PROMPT.d} />
-          <line
-            className="ln ln--c work-line"
-            x1={PROMPT.x1}
-            y1={PROMPT.y}
-            x2={PROMPT.x2}
-            y2={PROMPT.y}
-          />
-          <circle className="dot dot--c work-pulse" cx={PROMPT.cx} cy={PROMPT.cy} r={PROMPT.dot} />
+          <TypedPrompt />
         </>
       )}
     </svg>
