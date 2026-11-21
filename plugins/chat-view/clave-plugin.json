@@ -3,7 +3,7 @@
   "name": "Chat",
   "version": "1.0.0",
   "kind": "plugin",
-  "engines": { "clave": ">=1.90.0 <3.0.0" },
+  "engines": { "clave": ">=1.90.0 <4.0.0" },
   "ui": "native",
   "main": "main.mjs",
   "contributes": {
