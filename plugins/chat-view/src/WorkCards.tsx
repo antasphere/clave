@@ -1,28 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ConfirmDialog } from '@clave/ui/components'
 import { claudeModelName } from '../../../src/shared/claude-models'
-import { compactTokens, type SubAgent } from './terminal-status'
+import type { SubAgent } from './terminal-status'
 import { SubAgentPeek } from './SubAgentPeek'
 import { ShellPeek } from './ShellPeek'
 import { WorkDrawing } from './WorkDrawing'
 import type { SubagentLogs } from './subagents'
-
-function elapsed(since: number, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - since) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  return minutes < 60
-    ? `${minutes}m ${seconds % 60}s`
-    : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-}
-
-/** How long a leaving card takes to fold away; the stylesheet's transition
- *  is twice the default duration, and this waits a little past it. */
-const LEAVE_MS = 340
-/** How long an agent may go without a call before its card says it is quiet.
- *  Quiet is not stuck — a long answer being written makes no call — so the
- *  card only says how long, and the reader judges. */
-const QUIET_MS = 60_000
+import { useLeavingWork, useWorkClock, workFigures } from './work'
 
 /** The work running now, as cards under the composer of both views: one per
  *  subagent and one per command left running (background work only,
@@ -52,31 +36,11 @@ export function WorkCards({
   /** Stop the agent and have the conversation launch it again on `alias`. */
   onRelaunch: (agent: SubAgent, alias: string) => void
 }): React.JSX.Element | null {
-  const [now, setNow] = useState(() => Date.now())
-  const [leaving, setLeaving] = useState<SubAgent[]>([])
-  const [previous, setPrevious] = useState(agents)
   const [asked, setAsked] = useState<{ agent: SubAgent; alias: string } | null>(null)
   // A card the props no longer list is kept, marked leaving, for the fold.
-  if (previous !== agents) {
-    const ids = new Set(agents.map((agent) => agent.id))
-    const gone = previous.filter((agent) => !ids.has(agent.id))
-    setPrevious(agents)
-    setLeaving((current) => [
-      ...current.filter((agent) => !ids.has(agent.id)),
-      ...gone.filter((agent) => !current.some((c) => c.id === agent.id))
-    ])
-  }
-  useEffect(() => {
-    if (!leaving.length) return
-    const timer = window.setTimeout(() => setLeaving([]), LEAVE_MS)
-    return () => window.clearTimeout(timer)
-  }, [leaving])
+  const rows = useLeavingWork(agents)
   const running = agents.length > 0
-  useEffect(() => {
-    if (!running) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [running])
+  const now = useWorkClock(running)
   const confirm = (
     <ConfirmDialog
       isOpen={asked !== null}
@@ -94,17 +58,14 @@ export function WorkCards({
       }}
     />
   )
-  if (!running && !leaving.length) return confirm
-  const rows = [
-    ...agents.map((agent) => ({ agent, gone: false })),
-    ...leaving.map((agent) => ({ agent, gone: true }))
-  ]
+  if (!rows.length) return confirm
   return (
     <div className="work-cards" data-empty={running ? undefined : 'true'}>
       <ul className="work-cards-list" aria-label="Running work">
         {rows.map(({ agent, gone }) => {
           const shell = agent.kind === 'shell'
-          const quiet = !gone && !shell && now - agent.lastActiveAt >= QUIET_MS
+          const figures = workFigures(agent, now)
+          const quiet = !gone && figures.quiet
           const card = (
             <button
               type="button"
@@ -125,35 +86,25 @@ export function WorkCards({
                   <span className="term-agent-description">{agent.description}</span>
                 </span>
                 <span className="work-card-meta">
-                  {agent.toolCount > 0 && (
-                    <span className="term-agent-steps">
-                      {`${agent.toolCount} step${agent.toolCount === 1 ? '' : 's'}`}
-                    </span>
-                  )}
-                  {agent.contextUsed !== null && (
-                    <span title="Tokens in this agent's own context">
-                      {compactTokens(agent.contextUsed)} ctx
-                    </span>
+                  {figures.steps && <span className="term-agent-steps">{figures.steps}</span>}
+                  {figures.context && (
+                    <span title="Tokens in this agent's own context">{figures.context}</span>
                   )}
                   {quiet ? (
                     <span className="term-agent-quiet" title="No step for a while">
-                      quiet {elapsed(agent.lastActiveAt, now)}
+                      {figures.time}
                     </span>
                   ) : (
-                    <span>{elapsed(agent.startedAt, now)}</span>
+                    <span>{figures.ran}</span>
                   )}
                   {/* The model it was launched on, said and not offered: a
                       relaunch is in the window the card opens. */}
-                  {!shell && (
+                  {figures.model !== null && (
                     <span
                       className="term-agent-model work-card-model"
-                      title={
-                        claudeModelName(agent.model) || agent.model
-                          ? `Launched on ${claudeModelName(agent.model) ?? agent.model}`
-                          : 'Its model is named at its first answer'
-                      }
+                      title={figures.modelTitle ?? undefined}
                     >
-                      {claudeModelName(agent.model) ?? agent.model ?? '…'}
+                      {figures.model}
                     </span>
                   )}
                 </span>
@@ -178,7 +129,9 @@ export function WorkCards({
                   <SubAgentPeek
                     agent={agent}
                     log={logs?.[agent.id]}
-                    onRelaunch={canRelaunch(agent) ? (alias) => setAsked({ agent, alias }) : undefined}
+                    onRelaunch={
+                      canRelaunch(agent) ? (alias) => setAsked({ agent, alias }) : undefined
+                    }
                   >
                     {card}
                   </SubAgentPeek>
