@@ -944,6 +944,165 @@ class OwnerTest {
     }
 
     @Test
+    fun `a listing queued on the address lock behind a removal sees the list after it`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        lists(machine, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        val generation = a.pushWork.roadGeneration
+        servicesA.addressWork.lock.lock()
+        var unlocked = false
+        try {
+            val removing = scope.async { servicesA.removeAddress(machine.base) }
+            waitFor("the removal to move the road") { a.pushWork.roadGeneration == generation + 1 }
+            delay(300)
+            val reading = scope.async { servicesA.source.listing() }
+            delay(300)
+            servicesA.addressWork.lock.unlock()
+            unlocked = true
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            if (!unlocked) servicesA.addressWork.lock.unlock()
+        }
+    }
+
+    @Test
+    fun `an answer that waits on the lock while a removal drops the cache writes no cache back`() = runBlocking {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        listsWhenReleased(machine, release, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        val writing = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        try {
+            val reading = scope.async { servicesA.source.listing() }
+            waitFor("the address to be asked") { machine.calls.any { it.rawPath == "/machines" } }
+            rawKv.beforeRemove = { key ->
+                if (key.endsWith(machinesCacheKey(machine.base))) {
+                    writing.complete(Unit)
+                    finish.await()
+                }
+            }
+            val removing = scope.async { servicesA.removeAddress(machine.base) }
+            awaitGate("the removal to hold its cache removal", writing)
+            release.countDown()
+            delay(300)
+            rawKv.beforeRemove = null
+            finish.complete(Unit)
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            release.countDown()
+            finish.complete(Unit)
+            rawKv.beforeRemove = null
+        }
+    }
+
+    @Test
+    fun `an answer that arrives before a removal stamps and waits on its lock writes no cache`() = runBlocking {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        listsWhenReleased(machine, release, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        val holding = CompletableDeferred<Unit>()
+        val go = CompletableDeferred<Unit>()
+        var pushUnlocked = false
+        try {
+            val reading = scope.async { servicesA.source.listing() }
+            waitFor("the address to be asked") { machine.calls.any { it.rawPath == "/machines" } }
+            servicesA.pushWork.lock.lock()
+            val removing = scope.async { servicesA.removeAddress(machine.base) }
+            delay(300)
+            // The removal's next list read is the one inside its locked write, before any stamp.
+            rawKv.afterRead = { key, _ ->
+                if (key.endsWith(MACHINE_ADDRESSES_KEY) && !holding.isCompleted) {
+                    holding.complete(Unit)
+                    go.await()
+                }
+            }
+            servicesA.pushWork.lock.unlock()
+            pushUnlocked = true
+            awaitGate("the removal to hold the address lock before its stamp", holding)
+            release.countDown()
+            delay(300)
+            rawKv.afterRead = null
+            go.complete(Unit)
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            release.countDown()
+            go.complete(Unit)
+            rawKv.afterRead = null
+            if (!pushUnlocked) servicesA.pushWork.lock.unlock()
+        }
+    }
+
+    @Test
+    fun `an answer that lands while a removal stamps writes no cache, wherever the stamp sits`() = runBlocking {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        listsWhenReleased(machine, release, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        val entered = CompletableDeferred<Unit>()
+        val writing = CompletableDeferred<Unit>()
+        val cacheDropped = CompletableDeferred<Unit>()
+        val work = servicesA.addressWork
+        val url = machine.base
+        work.beforeStamp = { stamped ->
+            if (stamped == url) {
+                work.beforeStamp = null
+                entered.complete(Unit)
+                // Held until a cache write starts, or 1.5 s (inside the lock nothing can start).
+                runBlocking { kotlinx.coroutines.withTimeoutOrNull(1_500) { writing.await() } }
+            }
+        }
+        try {
+            val reading = scope.async { servicesA.source.listing() }
+            waitFor("the address to be asked") { machine.calls.any { it.rawPath == "/machines" } }
+            rawKv.beforeRemove = { key -> if (key.endsWith(machinesCacheKey(url))) cacheDropped.complete(Unit) }
+            rawKv.beforeWrite = { key, _ ->
+                if (key.endsWith(machinesCacheKey(url))) {
+                    writing.complete(Unit)
+                    kotlinx.coroutines.withTimeoutOrNull(3_000) { cacheDropped.await() }
+                    delay(300)
+                }
+            }
+            val removing = scope.async { servicesA.removeAddress(url) }
+            awaitGate("the removal to stamp", entered)
+            release.countDown()
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            rawKv.beforeWrite = null
+            rawKv.beforeRemove = null
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(url)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            release.countDown()
+            rawKv.beforeWrite = null
+            rawKv.beforeRemove = null
+            work.beforeStamp = null
+        }
+    }
+
+    @Test
     fun `an answer from before an address was removed and added again never stands for the new one`() = runBlocking {
         val release = java.util.concurrent.CountDownLatch(1)
         val asked = java.util.concurrent.atomic.AtomicInteger(0)

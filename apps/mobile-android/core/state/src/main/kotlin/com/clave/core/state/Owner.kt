@@ -113,6 +113,16 @@ public class OwnerAddressWork {
 
     /** Whether [url] was removed after a listing that started at [start]. */
     public fun removedSince(url: String, start: Long): Boolean = (removedAt[url] ?: Long.MIN_VALUE) > start
+
+    /** Tests only: runs as a removal of the url records itself, its epoch taken, not yet visible. */
+    @Volatile internal var beforeStamp: ((String) -> Unit)? = null
+
+    /** Records that [url] is removed as of a new epoch. Called inside the removal's lock region. */
+    public fun stamp(url: String) {
+        val at = epoch.incrementAndGet()
+        beforeStamp?.invoke(url)
+        removedAt[url] = at
+    }
 }
 
 private val ownerAddressWork = ConcurrentHashMap<String, OwnerAddressWork>()
@@ -317,7 +327,7 @@ public class OwnerServices(
             if (current.none { it.url == url }) {
                 null to Unit
             } else {
-                addressWork.removedAt[url] = addressWork.epoch.incrementAndGet()
+                addressWork.stamp(url)
                 assertOwner()
                 kv.remove(machinesCacheKey(url))
                 current.filter { it.url != url } to Unit
