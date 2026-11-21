@@ -160,6 +160,37 @@ export function FolioWork({
         pill.current?.focus()
       }}
     >
+      <button
+        ref={pill}
+        type="button"
+        className="folio-work-pill"
+        data-testid="folio-work-pill"
+        aria-label={`Running now: ${runningLabel(agents, ', ') || 'nothing'}`}
+        aria-expanded={open}
+        aria-controls={cardId}
+        onClick={() => send('pill-click')}
+      >
+        {marks.map(({ agent, gone }, index) => {
+          const quiet = !gone && isQuiet(agent, now)
+          return (
+            <span
+              key={agent.id}
+              className="folio-work-mark"
+              data-testid="folio-work-mark"
+              data-kind={agent.kind}
+              data-quiet={quiet || undefined}
+              data-leaving={gone || undefined}
+              style={{ '--mark-i': index } as React.CSSProperties}
+            >
+              <WorkMark
+                kind={agent.kind === 'shell' ? 'shell' : 'agent'}
+                working={!gone && !quiet}
+              />
+            </span>
+          )
+        })}
+        {overflow > 0 && <span className="folio-work-more">+{overflow}</span>}
+      </button>
       <div
         id={cardId}
         className="folio-work-card"
@@ -248,37 +279,6 @@ export function FolioWork({
           })}
         </ul>
       </div>
-      <button
-        ref={pill}
-        type="button"
-        className="folio-work-pill"
-        data-testid="folio-work-pill"
-        aria-label={`Running now: ${runningLabel(agents, ', ') || 'nothing'}`}
-        aria-expanded={open}
-        aria-controls={cardId}
-        onClick={() => send('pill-click')}
-      >
-        {marks.map(({ agent, gone }, index) => {
-          const quiet = !gone && isQuiet(agent, now)
-          return (
-            <span
-              key={agent.id}
-              className="folio-work-mark"
-              data-testid="folio-work-mark"
-              data-kind={agent.kind}
-              data-quiet={quiet || undefined}
-              data-leaving={gone || undefined}
-              style={{ '--mark-i': index } as React.CSSProperties}
-            >
-              <WorkMark
-                kind={agent.kind === 'shell' ? 'shell' : 'agent'}
-                working={!gone && !quiet}
-              />
-            </span>
-          )
-        })}
-        {overflow > 0 && <span className="folio-work-more">+{overflow}</span>}
-      </button>
       {confirm}
     </div>
   )
