@@ -67,6 +67,7 @@ import { HelpersSettings } from './HelpersSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
+import { MobileSettings } from './MobileSettings'
 import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
 import {
   startSettingsMachineGuard,
@@ -256,6 +257,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'accounts' &&
           (server ? <ServerAccountsSettings serverId={server} /> : <AccountsSettings />)}
         {settingsSection === 'servers' && <ServersSettings />}
+        {settingsSection === 'mobile' && <MobileSettings />}
       </div>
     </div>
   )

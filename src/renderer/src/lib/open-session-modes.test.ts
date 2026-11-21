@@ -88,16 +88,23 @@ describe('clave_open_session chat view', () => {
     )
   })
   it('refuses chat where there is no chat view, rather than opening a terminal', () => {
-    // Pi has a chat view since lane D (PRDCT-4427).
-    for (const mode of ['antigravity', 'gemini', 'terminal'] as const) {
-      expect(() => resolveProfileRef({ mode, chat: true })).toThrow(/no chat view/)
-    }
+    // Every harness has a chat view since Antigravity's: a plain terminal is left.
+    expect(() => resolveProfileRef({ mode: 'terminal', chat: true })).toThrow(/no chat view/)
   })
   // Lane D (PRDCT-4427): the refusal names the families from the table itself.
   it('names every family with a chat view in its refusal', () => {
-    expect(() => resolveProfileRef({ mode: 'antigravity', chat: true })).toThrow(
-      'chat: true needs mode "claude", "codex", "opencode", "pi"; "antigravity" has no chat view'
+    expect(() => resolveProfileRef({ mode: 'terminal', chat: true })).toThrow(
+      'chat: true needs mode "claude", "codex", "antigravity", "opencode", "pi"; "terminal" has no chat view'
     )
+  })
+  it("opens Antigravity's chat, under its retired gemini name too", () => {
+    expect(resolveProfileRef({ mode: 'antigravity', chat: true })).toBe('antigravity-chat')
+    expect(resolveProfileRef({ mode: 'gemini', chat: true })).toBe('antigravity-chat')
+    expect(resolveProfileRef({ mode: 'gemini' }, undefined, 'chat')).toBe('antigravity-chat')
+    expect(resolveProfileRef({ mode: 'antigravity', chat: true }, 'chat:antigravity:mine')).toBe(
+      'chat:antigravity:mine'
+    )
+    expect(resolveProfileRef({ mode: 'antigravity' }, undefined, 'terminal')).toBeUndefined()
   })
   it('refuses chat beside a different profile', () => {
     expect(() => resolveProfileRef({ chat: true, profile: 'builtin-claude' })).toThrow(
@@ -155,8 +162,9 @@ describe('clave_open_session without chat follows the interaction mode', () => {
     expect(chatOfInteractionMode({ mode: 'codex', chat: false }, 'chat')).toBe(false)
     expect(chatOfInteractionMode({ mode: 'codex', chat: true }, 'terminal')).toBe(true)
     expect(chatOfInteractionMode({ mode: 'codex', profile: 'mine' }, 'chat')).toBeUndefined()
-    // Pi has a chat view since lane D (PRDCT-4427); Antigravity has none.
-    expect(chatOfInteractionMode({ mode: 'gemini' }, 'chat')).toBeUndefined()
+    // Antigravity has a chat view, `gemini` being its retired name.
+    expect(chatOfInteractionMode({ mode: 'gemini' }, 'chat')).toBe(true)
+    expect(chatOfInteractionMode({ mode: 'antigravity' }, 'terminal')).toBe(false)
     expect(chatOfInteractionMode({ mode: 'terminal' }, 'chat')).toBeUndefined()
   })
 })
@@ -252,8 +260,8 @@ describe('clave_open_session chat default', () => {
     expect(
       chatDefaultFor(prefs({ globalDefaults: { claude: 'plugin-agent' } }), 'claude', null)
     ).toBe(undefined)
-    // Pi has a chat view since lane D (PRDCT-4427).
-    expect(chatDefaultFor(prefs({}), 'antigravity', null)).toBeUndefined()
+    // Antigravity has a chat view: its built-in chat.
+    expect(chatDefaultFor(prefs({}), 'antigravity', null)).toBe('antigravity-chat')
   })
   it('survives a preferences object missing its default tables', () => {
     expect(

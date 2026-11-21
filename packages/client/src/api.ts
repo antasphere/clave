@@ -29,6 +29,7 @@ import { requestsClient, type RequestsClient } from './requests'
 import { gitClient, type GitClient } from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { serverInfoClient, type ServerInfoClient } from './server-info'
+import { devicesClient, type DevicesClient } from './devices'
 // ── PRDCT-4321: the conversations a server's tabs ran (aliased: `historyClient`
 // below is the derived client under the history deadline) ──
 import { historyClient as serverHistoryClient, type HistoryClient } from './history'
@@ -102,6 +103,8 @@ export interface ClaveApiClient {
   readonly speech: SpeechClient
   // ── PRDCT-4472: the artefacts (`./artefacts.ts`) ──
   readonly artefacts: ArtefactsClient
+  // ── Issue #407: the relay address and the relay client's state (`./devices.ts`) ──
+  readonly devices: DevicesClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -192,6 +195,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     speech: speechClient(call, patientCall),
     // ── PRDCT-4472: the artefacts ──
     artefacts: artefactsClient(call, patientCall),
+    // ── Issue #407: the relay address and the relay client's state ──
+    devices: devicesClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

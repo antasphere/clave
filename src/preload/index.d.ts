@@ -543,6 +543,8 @@ export interface SessionRecord {
   /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
    *  on relaunch. */
   opencodeSessionId?: string
+  /** The Antigravity conversation a chat tab resumes on relaunch. */
+  antigravitySessionId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string
@@ -1246,6 +1248,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
   artefacts: ArtefactsAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
+  // ── Issue #407: the relay address and the relay client's state (Settings → Mobile) ──
+  mobileRelayRead: () => Promise<string>
+  mobileRelaySet: (url: string) => Promise<string>
+  mobileRelayStatus: () => Promise<import('../shared/mobile-relay-types').MobileRelayStatus>
   routinesList: () => Promise<import('@clave/contract/routines/model').RoutinesListing>
   routinesRunNow: (key: string) => Promise<import('@clave/contract/routines/model').RoutineRun>
   routinesDismiss: (runId: string) => Promise<void>

@@ -43,7 +43,12 @@ export const PreferencesView = Schema.Struct({
   /** The reasoning effort last picked in a chat composer, by chat adapter id. */
   chatEfforts: Schema.Record({ key: Schema.String, value: Schema.String }),
   /** The view last picked in a chat pane (`<pluginId>/<viewId>`). */
-  chatView: Schema.NullOr(Schema.String)
+  chatView: Schema.NullOr(Schema.String),
+  /** The relay a phone reaches this machine through (issue #407): an https
+   *  origin (plain http only to this machine), or empty for none. Written
+   *  through the devices domain (`SetMobileRelay`, validated there), read by
+   *  the relay client at every attempt. */
+  mobileRelayUrl: Schema.String
 })
 
 // ---------------------------------------------------------------------------

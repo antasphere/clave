@@ -90,9 +90,11 @@ const THINKING_VALUES = new Set<PiThinkingLevel>([
 ])
 const TOKEN_MAX_LENGTH = 4_096
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-// Lane D (PRDCT-4427): OpenCode's and Pi's saved profiles have a chat form too.
-const CHAT_PROFILE_ID_RE = /^chat:(claude|codex|opencode|pi):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
-type ChatProfileFamily = 'claude' | 'codex' | 'opencode' | 'pi'
+// Lane D (PRDCT-4427): OpenCode's and Pi's saved profiles have a chat form too,
+// and Antigravity's since its chat (`agy acp`).
+const CHAT_PROFILE_ID_RE =
+  /^chat:(claude|codex|antigravity|opencode|pi):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
+type ChatProfileFamily = 'claude' | 'codex' | 'antigravity' | 'opencode' | 'pi'
 
 export function chatProfileSource(
   id?: string | null
@@ -373,6 +375,9 @@ export function buildAgentArgv(input: {
       !profileSetsPermissions(input.profile)
     )
       argv.push('--mode', input.permissionMode)
+    // The conversation a chat moved here carries (`--conversation <id>`, agy
+    // 1.5): the id its ACP server opened is the one the CLI resumes.
+    if (input.resumeSessionId) argv.push('--conversation', input.resumeSessionId)
     if (input.initialPrompt) argv.push('-i', input.initialPrompt)
     return argv
   } else if (input.kind === 'opencode') {
@@ -506,6 +511,22 @@ export function profileSetsPermissions(profile: LaunchProfile): boolean {
       (token) => token === '--mode' || token.startsWith('--mode=')
     )
   return false
+}
+
+/** The rung a saved Antigravity profile names with its own `--mode`
+ *  (`--mode plan`, `--mode=plan`), the one its chat form starts on too: one
+ *  saved definition, two forms. Undefined when it names none, or a value
+ *  that is not a rung of Antigravity's ladder. */
+export function antigravityProfileMode(profile: LaunchProfile): string | undefined {
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  let value: string | undefined
+  tokens.forEach((token, index) => {
+    if (token === '--mode') value = tokens[index + 1]
+    else if (token.startsWith('--mode=')) value = token.slice('--mode='.length)
+  })
+  return value && HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === value)
+    ? value
+    : undefined
 }
 
 /** Claude's `--permission-mode` values: the ladder's rungs and `dontAsk`

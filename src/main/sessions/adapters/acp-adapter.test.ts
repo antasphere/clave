@@ -243,6 +243,62 @@ describe('AcpAdapter against the stand-in agent', () => {
     })
   })
 
+  // Antigravity's ladder is its `mode` config option (`agy acp` 1.5): the
+  // launch's rung is set on it once the session is open.
+  describe("the rung a launch starts on, through the agent's mode option", () => {
+    const modeSets = (state: string): unknown[] =>
+      frames(state)
+        .filter((f) => f.method === 'session/set_config_option' && f.params?.configId === 'mode')
+        .map((f) => f.params?.value)
+
+    it('sets the rung asked for, before the first message goes', async () => {
+      const s = await open({ mode: 'plan' }, { env: { ACP_STAND_IN_MODES: '1' } })
+      expect(modeSets(s.state)).toEqual(['plan'])
+      s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+      await expect.poll(() => done(s.events)).toBe(true)
+      const methods = frames(s.state).map((f) => f.method)
+      expect(methods.indexOf('session/set_config_option')).toBeLessThan(
+        methods.indexOf('session/prompt')
+      )
+      expect(s.events.some((e) => e.type === 'error')).toBe(false)
+    })
+
+    it('sets the rung again on a resumed session', async () => {
+      const state = tmp()
+      const first = await open({}, { state, env: { ACP_STAND_IN_MODES: '1' } })
+      const sessionId = (
+        first.events.find((e) => e.type === 'session_meta') as { providerSessionId: string }
+      ).providerSessionId
+      await first.adapter.kill(first.handle)
+      await open(
+        { resume: sessionId, mode: 'accept-edits' },
+        { state, env: { ACP_STAND_IN_MODES: '1' } }
+      )
+      expect(modeSets(state)).toEqual(['accept-edits'])
+    })
+
+    it('sends nothing for the rung the session is already on, or for none', async () => {
+      const on = await open({ mode: 'default' }, { env: { ACP_STAND_IN_MODES: '1' } })
+      const none = await open({}, { env: { ACP_STAND_IN_MODES: '1' } })
+      expect(modeSets(on.state)).toEqual([])
+      expect(modeSets(none.state)).toEqual([])
+    })
+
+    it('says once that a rung is not offered, and the session opens on its own', async () => {
+      const unknown = await open({ mode: 'yolo' }, { env: { ACP_STAND_IN_MODES: '1' } })
+      const noLadder = await open({ mode: 'plan' })
+      for (const s of [unknown, noLadder]) {
+        expect(modeSets(s.state)).toEqual([])
+        expect(s.events.filter((e) => e.type === 'error')).toHaveLength(1)
+        expect(s.events.find((e) => e.type === 'session_meta')).toBeDefined()
+      }
+      expect(unknown.events.find((e) => e.type === 'error')).toMatchObject({
+        message: 'OpenCode has no mode yolo; the session starts in its own',
+        fatal: false
+      })
+    })
+  })
+
   it('turns a message into the stream Codex speaks, in order', async () => {
     const s = await open()
     s.events.length = 0

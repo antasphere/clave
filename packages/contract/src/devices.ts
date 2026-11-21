@@ -220,7 +220,43 @@ export const ReadMobileRelay = Query.define('ReadMobileRelay', {
   failure: CapabilityUnavailable
 })
 
-/** `POST /devices/relay`: the relay address, an http(s) origin; empty clears it. */
+/** Where the relay client of this server stands (issue #407), as Settings →
+ *  Mobile shows it: `off` (no address, or no client on this server),
+ *  `signed-out` (no Antasphere login), `claiming` a machine credential,
+ *  `connecting`, `connected`, `waiting` to try again after a failure, or
+ *  `refused` (the address is not https, or the relay refused the login).
+ *  `lastFailure` is the client's own sentence, never with a token in it. */
+export const MobileRelayState = Schema.Literal(
+  'off',
+  'signed-out',
+  'claiming',
+  'connecting',
+  'connected',
+  'waiting',
+  'refused'
+)
+export type MobileRelayState = typeof MobileRelayState.Type
+export const MobileRelayStatus = Schema.Struct({
+  state: MobileRelayState,
+  /** The address the client is using, or null. */
+  relay: Schema.NullOr(Schema.String),
+  /** The machine id the relay knows this server by, once claimed. */
+  machineId: Schema.NullOr(Schema.String),
+  /** Epoch milliseconds the state was entered. */
+  since: Schema.Number,
+  lastFailure: Schema.NullOr(Schema.String)
+})
+export type MobileRelayStatus = typeof MobileRelayStatus.Type
+
+/** `GET /devices/relay/status`: the relay client's state (issue #407); the owner's alone. */
+export const ReadMobileRelayStatus = Query.define('ReadMobileRelayStatus', {
+  payload: Schema.Struct({}),
+  success: MobileRelayStatus,
+  failure: CapabilityUnavailable
+})
+
+/** `POST /devices/relay`: the relay address, an https origin (plain http only
+ *  to a loopback address); empty clears it. */
 export const SetMobileRelay = Command.define('SetMobileRelay', {
   payload: Schema.Struct({ url: Schema.String.pipe(Schema.maxLength(2048)) }),
   success: Schema.Struct({ url: Schema.String }),
@@ -284,3 +320,4 @@ export const devicesGroup = ApiGroup.make('devices')
   )
   .add(HttpCqrs.queryEndpoint('readRelay', '/devices/relay', ReadMobileRelay))
   .add(HttpCqrs.commandEndpoint('setRelay', '/devices/relay', SetMobileRelay))
+  .add(HttpCqrs.queryEndpoint('readRelayStatus', '/devices/relay/status', ReadMobileRelayStatus))

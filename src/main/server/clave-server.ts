@@ -47,6 +47,12 @@ let running: EmbeddedServer | null = null
 /** PRDCT-4472: the artefacts of this server's sessions, stopped with it. */
 let artefactService: { stop(): Promise<void> } | null = null
 let starting: Promise<ClaveServerEndpoint> | null = null
+/** A stop under way (issue #407): a start asked meanwhile waits for it, so
+ *  the relay client of the server going away is stopped before the next
+ *  server's starts. */
+let stopping: Promise<void> | null = null
+/** Whether this process started a relay client (issue #407). */
+let mobileRelayStarted = false
 let stopStates: (() => void) | null = null
 // ── The mobile wave, lane B: the write ledger's evidence, while the server runs ──
 let stopWrites: (() => void) | null = null
@@ -83,6 +89,7 @@ export interface StartOptions {
 /** Start the server once; a second call, concurrent or later, answers the
  *  same address. */
 export function startClaveServer(options: StartOptions): Promise<ClaveServerEndpoint> {
+  if (stopping) return stopping.then(() => startClaveServer(options))
   const current = getClaveServerEndpoint()
   if (running && current) return Promise.resolve(current)
   if (!starting) {
@@ -168,6 +175,25 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
     server.writes.initialize,
     server.writes
   )
+  // ── Issue #407: the relay client, reaching the relay Settings → Mobile names ──
+  // Loaded on first use (`relay-wiring.ts`), so the boot reaches no Effect
+  // module through this file; the client waits on its own for an address
+  // and a login, and a failure here never stops the server. Inside Electron
+  // only: the shell's preferences and secrets come from the app's own ports,
+  // and the unit tests of this file run under plain Node with none.
+  if (!process.versions.electron) return endpoint
+  mobileRelayStarted = true
+  await Promise.all([import('./relay-wiring'), import('../settings/shell-source')])
+    .then(([wiring, shell]) =>
+      wiring.startMobileRelay({
+        local: { url: server.url },
+        version: options.appVersion ?? '0.0.0',
+        antasphere: shell.shellAntasphereAccount
+      })
+    )
+    .catch((error: unknown) => {
+      console.error('[mobile-relay] the relay client did not start', error)
+    })
   return endpoint
 }
 
@@ -253,7 +279,15 @@ async function inProcessArtefacts(
   return { service, forwards }
 }
 
-export async function stopClaveServer(): Promise<void> {
+export function stopClaveServer(): Promise<void> {
+  if (!stopping)
+    stopping = stop().finally(() => {
+      stopping = null
+    })
+  return stopping
+}
+
+async function stop(): Promise<void> {
   if (starting) await starting.catch(() => undefined)
   const server = running
   running = null
@@ -266,6 +300,12 @@ export async function stopClaveServer(): Promise<void> {
   const artefacts = artefactService
   artefactService = null
   await artefacts?.stop()
+  // ── Issue #407: off the relay before the listener stops (V1-F3), as the
+  // standalone entry does, so no forwarded request meets a closing listener ──
+  if (mobileRelayStarted) {
+    mobileRelayStarted = false
+    await import('./relay-wiring').then((wiring) => wiring.stopMobileRelay())
+  }
   if (!server) return
   // The stop's own figures, in the log (PRDCT-3375): what it answered, who it
   // told, what it had to destroy. A quit measured at ten seconds in wave 3

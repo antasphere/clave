@@ -63,6 +63,9 @@ export interface AcpLaunch {
 export interface AcpSpawnOptions {
   resume?: string
   model?: string
+  /** The rung of the agent's own ladder the session starts on, a value of
+   *  its `mode` config option (Antigravity's `accept-edits`, `plan`, …). */
+  mode?: string
   autoApprove?: boolean
   initialPrompt?: string
 }
@@ -369,6 +372,7 @@ export class AcpAdapter implements SessionAdapter {
       options: {
         ...(text(options.resume) ? { resume: text(options.resume) } : {}),
         ...(text(options.model) ? { model: text(options.model) } : {}),
+        ...(text(options.mode) ? { mode: text(options.mode) } : {}),
         ...(options.autoApprove === true ? { autoApprove: true } : {}),
         ...(text(options.initialPrompt) ? { initialPrompt: text(options.initialPrompt) } : {})
       },
@@ -651,6 +655,7 @@ export class AcpAdapter implements SessionAdapter {
         if (option?.values.includes(wanted)) await this.setModel(state, wanted)
         else this.notice(state, modelMismatch(this.label, wanted, option?.currentValue))
       }
+      await this.setStartMode(state)
     } catch (error) {
       if (state.ended || state.closing) return
       this.refuse(state, error)
@@ -669,6 +674,38 @@ export class AcpAdapter implements SessionAdapter {
     state.exitCode = 1
     if (state.connection && !state.connection.closed) void state.connection.close()
     else this.exited(state, 1)
+  }
+
+  /** The rung the launch asked for, set through the agent's `mode` config
+   *  option once the session is open. A rung the agent does not offer is
+   *  said once; the session stays on its own. */
+  private async setStartMode(state: HandleState): Promise<void> {
+    const wanted = state.options.mode
+    if (!wanted || !state.connection || !state.sessionId) return
+    const option = state.configOptions.find((entry) => entry.category === 'mode')
+    if (option?.currentValue === wanted) return
+    if (!option?.values.includes(wanted)) {
+      this.notice(state, `${this.label} has no mode ${wanted}; the session starts in its own`)
+      return
+    }
+    try {
+      const result = object(
+        await state.connection.request('session/set_config_option', {
+          sessionId: state.sessionId,
+          configId: option.id,
+          value: wanted
+        })
+      )
+      if (Array.isArray(result.configOptions))
+        state.configOptions = parseConfigOptions(result.configOptions)
+      else option.currentValue = wanted
+    } catch (error) {
+      if (!state.ended && !state.closing)
+        this.notice(
+          state,
+          `${this.label} could not start in mode ${wanted}: ${errorMessage(error)}`
+        )
+    }
   }
 
   private async setModel(state: HandleState, model: string): Promise<void> {

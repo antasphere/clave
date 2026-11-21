@@ -180,8 +180,8 @@ describe('serverLaunchOptionsInput', () => {
     expect(input.defaultProfileId('claude')).toBe('builtin-claude')
     expect(input.openProfileId('claude')).toBe('claude-chat')
     expect(input.openProfileId('codex')).toBe('codex-chat')
-    // No chat view: the default profile, whatever the mode.
-    expect(input.openProfileId('antigravity')).toBe('builtin-antigravity')
+    // Antigravity has a chat view too, over `agy acp`.
+    expect(input.openProfileId('antigravity')).toBe('antigravity-chat')
     const terminal = serverLaunchOptionsInput('srv', 'Studio box', settings, {
       ...facts,
       interactionMode: 'terminal'
@@ -419,8 +419,8 @@ describe('localLaunchOptionsInput', () => {
     // its chat form the built-in chat.
     const chat = localLaunchOptionsInput({ ...facts, agents: [], preferRecommended: false })
     expect(chat.openProfileId('claude')).toBe('claude-chat')
-    // Pi has a chat view since PRDCT-4427: Antigravity is the harness left without one.
-    expect(chat.openProfileId('antigravity')).toBe('builtin-antigravity')
+    // Every harness has a chat view since Antigravity's (`agy acp`).
+    expect(chat.openProfileId('antigravity')).toBe('antigravity-chat')
     const terminal = localLaunchOptionsInput({
       ...facts,
       interactionMode: 'terminal',
@@ -428,6 +428,7 @@ describe('localLaunchOptionsInput', () => {
       preferRecommended: false
     })
     expect(terminal.openProfileId('claude')).toBe('builtin-claude')
+    expect(terminal.openProfileId('antigravity')).toBe('builtin-antigravity')
   })
 })
 

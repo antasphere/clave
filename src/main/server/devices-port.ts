@@ -4,9 +4,9 @@
  * 0600, like `server-connections.json`), the owner read off the Antasphere
  * login of the process that owns the server (the shell's manager in-process,
  * the standalone server's own when it runs alone), the issuer override of
- * the environment and the machine's hostname as the server's name. No relay
- * address: a phone reaches this server directly (over a private network,
- * by its own HTTPS address), so the relay routes answer unavailable. One
+ * the environment and the machine's hostname as the server's name, and the relay
+ * address (`mobileRelayUrl` in this process's preferences, issue #407) with
+ * the state of the relay client this process runs. One
  * function for both entries; it imports no Electron and
  * loads nothing of the server package but its types, so the shell's server
  * file stays as light as it was.
@@ -16,6 +16,8 @@ import { randomBytes } from 'node:crypto'
 import type { DevicesPortService } from '@clave/server'
 import type { AntasphereAccountStatus } from '../../shared/antasphere-account-types'
 import { lazySettingsPorts } from '../ports/registry'
+import { preferencesManager } from '../preferences-manager'
+import { kickRunningRelayClient, runningRelayStatus } from './relay-state'
 
 /** The document the records live in, under the storage port's directory. */
 export const DEVICES_DOCUMENT = 'devices.json'
@@ -104,6 +106,17 @@ export function devicesPortFor(options: DevicesPortOptions): DevicesPortService 
     }),
     issuer: env[ISSUER_ENV],
     serverName: () => os.hostname(),
+    // ── Issue #407: the relay address Settings → Mobile writes, and the client's state ──
+    relay: {
+      get: () => preferencesManager.get('mobileRelayUrl'),
+      set: (url) => {
+        preferencesManager.set('mobileRelayUrl', url)
+        // The client reads the address at every attempt; this makes the next
+        // attempt now rather than after its idle wait.
+        kickRunningRelayClient()
+      },
+      status: () => runningRelayStatus()
+    },
     ...(options.version !== undefined && {
       road: {
         // Read once and kept for the process: the id never changes under a phone.

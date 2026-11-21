@@ -18,6 +18,7 @@ import {
   devicesPortFor,
   phoneRoadMachineId
 } from './devices-port'
+import { setRunningRelayClient } from './relay-state'
 
 let dir: string
 /** A signed-in login as the port reads it: the phase and the subject are all it uses. */
@@ -177,5 +178,35 @@ describe('the devices port over an Antasphere account (PRDCT-4448)', () => {
   it('puts the version on the road it builds, and builds none without one', () => {
     expect(accountDevicesPort(null, { version: '3.1.4' }).road?.version).toBe('3.1.4')
     expect(accountDevicesPort(null).road).toBeUndefined()
+  })
+})
+
+describe('the relay address and the relay client’s state (issue #407)', () => {
+  it('keeps the address in the preferences, nudges the running client, and reads its state', () => {
+    const port = devicesPortFor({ status: signedIn })
+    const kick = vi.fn()
+    const status = {
+      state: 'connected' as const,
+      relay: 'https://relay.example.com',
+      machineId: 'm_1',
+      since: 1,
+      attempt: 0,
+      lastFailure: null
+    }
+    setRunningRelayClient({ status: () => status, kick, stop: async () => {} })
+    try {
+      port.relay!.set('https://relay.example.com')
+      expect(kick).toHaveBeenCalledTimes(1)
+      expect(port.relay!.get()).toBe('https://relay.example.com')
+      const written = JSON.parse(readFileSync(join(dir, 'preferences.json'), 'utf8'))
+      expect(written.mobileRelayUrl).toBe('https://relay.example.com')
+      expect(port.relay!.status!()).toEqual(status)
+    } finally {
+      setRunningRelayClient(null)
+    }
+    expect(port.relay!.status!()).toBeNull()
+    // Without a running client the address is still kept.
+    port.relay!.set('')
+    expect(port.relay!.get()).toBe('')
   })
 })

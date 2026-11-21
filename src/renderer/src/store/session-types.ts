@@ -573,6 +573,7 @@ export type SettingsSection =
   | 'usage'
   | 'activity'
   | 'audio'
+  | 'mobile'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 
