@@ -19,6 +19,7 @@ import com.clave.core.contract.SessionEvent
 import com.clave.core.contract.Transport
 import com.clave.core.contract.WorkspaceView
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineAddress
 import com.clave.core.devices.PairingState
 import com.clave.ui.theme.Reachability
 import com.clave.ui.theme.SessionStatus
@@ -39,15 +40,16 @@ object Samples {
     fun machines() = MachinesScreenState(
         account = AccountState(
             signedIn = true, name = "Ada Lovelace", email = "ada@example.com", signingIn = false, signingOut = false,
-            relayUrl = "", lastFailure = null,
+            lastFailure = null,
         ),
         machines = listOf(
-            MachineRow(studio, paired = true, main = true, reachability = Reachability.Reachable),
-            MachineRow(buildBox, paired = false, main = false, reachability = null),
+            MachineRow(studio, paired = true, main = true, reachability = Reachability.Reachable, listedBy = "Team relay"),
+            MachineRow(buildBox, paired = false, main = false, reachability = null, listedBy = "Team relay"),
         ),
         loading = false,
         error = null,
         now = now,
+        addresses = listOf(AddressRow(MachineAddress("https://relay.example", "Team relay"), machineCount = 2, error = null, fromCache = false)),
     )
 
     /** Four minutes and five seconds left on the approval. */

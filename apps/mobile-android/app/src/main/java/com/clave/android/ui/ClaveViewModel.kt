@@ -15,6 +15,7 @@ import com.clave.core.contract.SessionInfo
 import com.clave.core.contract.WorkspaceView
 import com.clave.core.devices.EnrollmentFailure
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineAddress
 import com.clave.core.devices.PairingState
 import com.clave.core.notifications.PushCleanupResult
 import com.clave.core.notifications.TokenRegistration
@@ -63,8 +64,10 @@ private val NO_SIGN_IN = AuthStatus(
 )
 
 const val SETTLED_ELSEWHERE: String = "Answered elsewhere first: this request is settled."
-const val RELAY_CHANGED_PENDING: String =
-    "Some previous machines have not confirmed notification removal and may still send updates. Removal will retry when you reopen this account. You can revoke this phone in Settings → Mobile on those machines."
+const val FORGOTTEN_RETRY: String =
+    "Some machines have not confirmed notification removal and may still send updates. Removal will retry when you reopen this account. You can also revoke this phone in Settings → Mobile on those machines."
+const val FORGOTTEN_NO_RETRY: String =
+    "Some machines have not confirmed notification removal and may still send updates. Revoke this phone in Settings → Mobile on those machines."
 const val SIGNED_OUT_RETRY: String =
     "Some machines could not confirm notification removal and may still send updates. Removal will retry when you sign back in to this account. You can also revoke this phone in Settings → Mobile on the Mac."
 const val SIGNED_OUT_NO_RETRY: String =
@@ -75,7 +78,7 @@ const val PAIRING_FAILED: String = "Pairing could not complete. Try again."
 
 /**
  * The screens' one door to the services: the sign-in's status, the current owner's store and
- * the state the store does not hold (the relay address as typed, the requests being
+ * the state the store does not hold (the machine addresses, the requests being
  * resolved, the launch in progress, the pairing, one transient notice), and every action a
  * screen takes. Every action runs in the ViewModel's scope on the owner current when it was
  * taken; an owner change clears the per-owner state, so nothing of one account is shown under
@@ -101,22 +104,27 @@ class ClaveViewModel(private val services: AppServices) : ViewModel() {
     /** The machines a credential is kept for on this phone, for this owner. */
     val paired: StateFlow<Set<String>> = _paired.asStateFlow()
 
-    private val _relayUrl = MutableStateFlow("")
+    private val _addresses = MutableStateFlow<List<MachineAddress>>(emptyList())
 
-    /** The team relay's address as the field shows it: the stored one, then what is typed. */
-    val relayUrl: StateFlow<String> = _relayUrl.asStateFlow()
+    /** The addresses the phone asks for machines, in the person's order, as the owner keeps them. */
+    val addresses: StateFlow<List<MachineAddress>> = _addresses.asStateFlow()
 
-    private val _relayError = MutableStateFlow<String?>(null)
+    private val _addressError = MutableStateFlow<String?>(null)
 
-    /** A relay address the owner services refused, in their words. */
-    val relayError: StateFlow<String?> = _relayError.asStateFlow()
+    /** The last address change the owner services refused or could not make, in their words. */
+    val addressError: StateFlow<String?> = _addressError.asStateFlow()
+
+    private val _addingAddress = MutableStateFlow(false)
+
+    /** An address is being added. */
+    val addingAddress: StateFlow<Boolean> = _addingAddress.asStateFlow()
 
     private val _signingOut = MutableStateFlow(false)
     val signingOut: StateFlow<Boolean> = _signingOut.asStateFlow()
 
     private val _notice = MutableStateFlow<String?>(null)
 
-    /** One transient sentence for the person (a sign-out's or relay change's warning, a link's reason). */
+    /** One transient sentence for the person (a sign-out's or a forgetting's warning, a link's reason). */
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
     private val _busy = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
@@ -192,16 +200,22 @@ class ClaveViewModel(private val services: AppServices) : ViewModel() {
                 _requestNotices.value = emptyMap()
                 _starting.value = emptyMap()
                 _refusals.value = emptyMap()
-                _relayError.value = null
+                _addressError.value = null
+                _addingAddress.value = false
                 _prefs.value = emptyMap()
                 _composer.value = emptyMap()
                 shells.keys.retainAll { it === owner }
                 noFilesRoute.clear()
+                _addresses.value = emptyList()
                 if (owner != null) {
-                    _relayUrl.value = owner.services.relayUrl()
+                    try {
+                        _addresses.value = owner.services.addresses()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        _addressError.value = addressErrorOf(e)
+                    }
                     owner.store.loadMachines()
-                } else {
-                    _relayUrl.value = ""
                 }
             }
         }
@@ -291,35 +305,73 @@ class ClaveViewModel(private val services: AppServices) : ViewModel() {
         }
     }
 
-    /** The relay field's text as typed; nothing is saved until [connectRelay]. */
-    fun editRelayUrl(value: String) {
-        _relayUrl.value = value
-        _relayError.value = null
+    /**
+     * Adds an address at the end of the list: kept by the owner services as an origin this
+     * build sends a credential to (a refused one is [addressError]), then the list and the
+     * machines read again, and [onAdded] so the form clears.
+     */
+    fun addAddress(url: String, name: String, onAdded: () -> Unit = {}) {
+        val owner = services.owner.value ?: return
+        if (_addingAddress.value) return
+        _addingAddress.value = true
+        changeAddresses(owner, settled = { _addingAddress.value = false }) {
+            owner.services.addAddress(url, name)
+            onAdded()
+        }
     }
 
-    fun connectRelay() = setRelayUrl(_relayUrl.value)
+    /** Names the address [url]; a blank [name] takes its name away. */
+    fun renameAddress(url: String, name: String) {
+        val owner = services.owner.value ?: return
+        changeAddresses(owner) { owner.services.renameAddress(url, name) }
+    }
+
+    /** Takes the address [url] out of the list; the machines paired through it stay paired. */
+    fun removeAddress(url: String) {
+        val owner = services.owner.value ?: return
+        changeAddresses(owner) { owner.services.removeAddress(url) }
+    }
 
     /**
-     * Saves the team relay: every machine disconnected first, the address checked and kept by
-     * the owner services (a refused one is the Machines error), then the machines listed again.
+     * One change of the list on [owner]: [change], then the list as the owner keeps it and the
+     * machines listed again. A failure is [addressError] and lists nothing again; [settled]
+     * runs either way.
      */
-    fun setRelayUrl(value: String) {
-        val owner = services.owner.value ?: return
-        _relayError.value = null
-        owner.store.disconnectAll()
+    private fun changeAddresses(owner: OwnerSession, settled: () -> Unit = {}, change: suspend () -> Unit) {
+        _addressError.value = null
         viewModelScope.launch {
             try {
-                val cleanup = owner.services.setRelayUrl(value)
-                if (cleanup.pending != 0) _notice.value = RELAY_CHANGED_PENDING
-                _relayUrl.value = owner.services.relayUrl()
+                change()
+                val kept = owner.services.addresses()
+                if (services.owner.value === owner) _addresses.value = kept
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _relayError.value = relayErrorOf(e)
+                if (services.owner.value === owner) _addressError.value = addressErrorOf(e)
                 return@launch
+            } finally {
+                settled()
             }
             owner.store.loadMachines()
         }
+    }
+
+    /**
+     * Forgets the pairing of [machine]: its connection closed, its shell's reads dropped, the
+     * cold launch no longer opening on it, then its push registration cleared on the machine
+     * and its credential and record gone, and the machines listed again. A clear still owed,
+     * this machine's or an earlier one's (an unknown count included), is said as a notice, the
+     * way the sign-out says it.
+     */
+    fun forgetMachine(machine: Machine) = withOwner { owner ->
+        val id = machine.id
+        owner.store.disconnect(id)
+        shellOf(owner).forget(id)
+        if (owner.kv.get(LAST_MACHINE_KEY) == id) owner.kv.remove(LAST_MACHINE_KEY)
+        val cleanup = owner.services.forgetMachine(id)
+        if (cleanup.pending != 0) _notice.value = if (cleanup.retryRecorded) FORGOTTEN_RETRY else FORGOTTEN_NO_RETRY
+        owner.store.loadMachines()
+        refreshPaired(owner)
     }
 
     fun setMainMachine(machineId: String) = withOwner { it.store.setMainMachine(machineId) }

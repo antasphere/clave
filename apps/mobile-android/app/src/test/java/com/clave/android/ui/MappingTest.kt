@@ -24,7 +24,9 @@ import com.clave.core.contract.Transport
 import com.clave.core.contract.WorkspaceView
 import com.clave.core.devices.BuildKind
 import com.clave.core.devices.Machine
-import com.clave.core.devices.assertCredentialMayTravelTo
+import com.clave.core.devices.AddressListing
+import com.clave.core.devices.MachineAddress
+import com.clave.core.devices.normalizeMachineAddress
 import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.initialLaunchState
 import com.clave.core.notifications.toUri
@@ -32,6 +34,7 @@ import com.clave.core.state.ConversationState
 import com.clave.core.state.RequestsState
 import com.clave.core.state.StoreState
 import com.clave.core.state.conversationKey
+import com.clave.ui.screens.AddressRow
 import com.clave.ui.theme.Reachability
 import com.clave.ui.theme.SessionStatus
 import org.junit.Assert.assertEquals
@@ -44,7 +47,7 @@ import org.junit.Test
 class MappingTest {
     private val now = 1_800_000_000_000L
 
-    private fun machine(id: String, name: String = id, online: Boolean = true) = Machine(
+    private fun machine(id: String, name: String = id, online: Boolean = true, address: String? = null) = Machine(
         id = id,
         name = name,
         platform = MachinePlatform.Macos,
@@ -53,6 +56,7 @@ class MappingTest {
         lastSeen = null,
         baseUrl = "https://relay.example/m/$id",
         pushUrl = "wss://relay.example/m/$id/push",
+        address = address,
     )
 
     private fun session(
@@ -89,6 +93,8 @@ class MappingTest {
         issuer = "https://account.antasphere.com",
         lastFailure = null,
     )
+
+    private val signedIn = signedOut.copy(phase = AuthPhase.SignedIn, account = StoredAccount("sub", "Ada", "ada@example.com", true))
 
     private fun request(id: String, sessionId: String, kind: RequestKind) =
         PendingRequest(id = id, sessionId = sessionId, kind = kind, description = "Run tests", createdAt = 0)
@@ -157,15 +163,14 @@ class MappingTest {
         )
         val account = StoredAccount("sub", "Ada", "ada@example.com", true)
         val auth = signedOut.copy(phase = AuthPhase.SignedIn, account = account)
-        val state = machinesState(store, auth, paired = setOf("a", "b"), relayUrl = "https://relay.example", signingOut = false, now = now)
+        val state = machinesState(store, auth, paired = setOf("a", "b"), addresses = emptyList(), signingOut = false, now = now)
         assertEquals(listOf(true, true, false), state.machines.map { it.paired })
         assertEquals(listOf(false, true, false), state.machines.map { it.main })
         assertEquals(listOf(Reachability.Reachable, null, Reachability.Refused), state.machines.map { it.reachability })
-        // Not tried yet: no reachability, so the screen reads the relay's flag off the machine.
+        // Not tried yet: no reachability, so the screen reads the address's flag off the machine.
         assertFalse(state.machines[1].machine.online)
         assertTrue(state.account.signedIn)
         assertEquals("Ada", state.account.name)
-        assertEquals("https://relay.example", state.account.relayUrl)
     }
 
     @Test
@@ -174,7 +179,7 @@ class MappingTest {
             StoreState(),
             signedOut.copy(phase = AuthPhase.SigningIn, lastFailure = AuthFailure.Network),
             emptySet(),
-            "",
+            emptyList(),
             signingOut = false,
             now = now,
         )
@@ -184,13 +189,66 @@ class MappingTest {
     }
 
     @Test
-    fun aRefusedRelayAddressIsTheMachinesErrorInTheCoresWords() {
-        val refused = runCatching { assertCredentialMayTravelTo("http://relay.example", BuildKind.Release) }.exceptionOrNull()!!
-        val sentence = relayErrorOf(refused)
+    fun aRefusedAddressIsTheAddressErrorInTheCoresWordsNeverTheMachinesError() {
+        val refused = runCatching { normalizeMachineAddress("http://relay.example", BuildKind.Release) }.exceptionOrNull()!!
+        val sentence = addressErrorOf(refused)
         assertEquals("A credential never travels over plain http (relay.example); only https is used.", sentence)
-        val store = StoreState(machinesError = "Enter the team relay address to see your machines.")
-        assertEquals(sentence, machinesState(store, signedOut, emptySet(), "http://relay.example", false, now, relayError = sentence).error)
-        assertEquals(store.machinesError, machinesState(store, signedOut, emptySet(), "", false, now).error)
+        val store = StoreState(machinesError = "The development server could not be read.")
+        val state = machinesState(store, signedOut, emptySet(), emptyList(), false, now, addressError = sentence)
+        assertEquals(sentence, state.addressError)
+        assertEquals(store.machinesError, state.error)
+        assertEquals("The address could not be saved.", addressErrorOf(IllegalStateException()))
+    }
+
+    @Test
+    fun addressRowsAreJoinedOnTheirUrlInTheListsOrderWithTheirOwnErrors() {
+        val relay = MachineAddress("https://relay.example", "Team relay")
+        val home = MachineAddress("https://home.example")
+        val fresh = MachineAddress("https://fresh.example", "Not read yet")
+        val slow = MachineAddress("https://slow.example", "Still asked")
+        val store = StoreState(
+            machines = listOf(machine("a", address = relay.url), machine("b", online = false, address = home.url)),
+            // The listing comes in another order and with the name it had then.
+            addresses = listOf(
+                AddressListing(home, listOf("b"), error = "The address could not be reached.", fromCache = true),
+                AddressListing(relay.copy(name = null), listOf("a"), error = null, fromCache = false),
+                AddressListing(slow, emptyList(), error = null, fromCache = false, pending = true),
+            ),
+        )
+        val state = machinesState(store, signedIn, emptySet(), listOf(relay, home, fresh, slow), false, now)
+        assertEquals(
+            listOf(
+                AddressRow(relay, machineCount = 1, error = null, fromCache = false),
+                AddressRow(home, machineCount = 1, error = "The address could not be reached.", fromCache = true),
+                AddressRow(fresh, machineCount = 0, error = null, fromCache = false),
+                // Still asked while the others answered: said as such, never as "0 machines".
+                AddressRow(slow, machineCount = 0, error = null, fromCache = false, pending = true),
+            ),
+            state.addresses,
+        )
+        // Each machine says the address that lists it by the name the person gave it now.
+        assertEquals(listOf("Team relay", "home.example"), state.machines.map { it.listedBy })
+        // An address's failure is on its row, never the screen's error.
+        assertNull(state.error)
+        assertNull(state.addressError)
+    }
+
+    @Test
+    fun aPairedMachineNoAddressListsSaysSoAndADeveloperMachineSaysNothing() {
+        val store = StoreState(
+            machines = listOf(
+                machine("relay:gone", online = false),
+                machine("dev:box"),
+                machine("relay:unpaired"),
+                machine("relay:removed", address = "https://removed.example"),
+            ),
+        )
+        val state = machinesState(store, signedIn, paired = setOf("relay:gone", "dev:box"), addresses = emptyList(), false, now)
+        assertEquals(
+            listOf(PAIRED_NOT_LISTED, null, null, "removed.example"),
+            state.machines.map { it.listedBy },
+        )
+        assertEquals("Paired, not listed by any address", PAIRED_NOT_LISTED)
     }
 
     // ── launch ──

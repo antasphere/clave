@@ -37,6 +37,7 @@ import com.clave.core.contract.SessionEvent
 import com.clave.core.contract.Transport
 import com.clave.core.devices.EnrollmentFailure
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineAddress
 import com.clave.core.devices.PairingState
 import com.clave.ui.theme.Appearance
 import com.clave.ui.theme.ClaveTheme
@@ -59,7 +60,7 @@ class ScreensTest {
         Machine(id, name, platform, "1.2.3", online = true, lastSeen = now, baseUrl = "https://$id.example", pushUrl = "wss://$id.example")
 
     private val signedOut = AccountState(
-        signedIn = false, name = null, email = null, signingIn = false, signingOut = false, relayUrl = "", lastFailure = null,
+        signedIn = false, name = null, email = null, signingIn = false, signingOut = false, lastFailure = null,
     )
 
     private fun machinesScreen(
@@ -68,12 +69,14 @@ class ScreensTest {
         onOpen: (Machine) -> Unit = {},
         onPair: (Machine) -> Unit = {},
         onMakeMain: (Machine) -> Unit = {},
+        onForget: ((Machine) -> Unit)? = null,
     ) = rule.setContent {
         ClaveTheme(Appearance.Dark) {
             MachinesScreen(
                 state = state,
-                onSignIn = onSignIn, onSignOut = {}, onRelayUrlChange = {}, onConnectRelay = {}, onRefresh = {},
-                onOpen = onOpen, onPair = onPair, onMakeMain = onMakeMain, onForget = null, onAppearance = {},
+                onSignIn = onSignIn, onSignOut = {}, onAddAddress = { _, _, _ -> }, onRenameAddress = { _, _ -> },
+                onRemoveAddress = {}, onRefresh = {},
+                onOpen = onOpen, onPair = onPair, onMakeMain = onMakeMain, onForget = onForget, onAppearance = {},
             )
         }
     }
@@ -89,7 +92,7 @@ class ScreensTest {
     }
 
     @Test
-    fun signedInMachinesShowTheAccountTheRelayAndTheRows() {
+    fun signedInMachinesShowTheAccountTheAddressFormAndTheRows() {
         val studio = machine("relay:studio", "Studio")
         val build = machine("dev:build", "Build box", MachinePlatform.Linux)
         val opened = mutableListOf<Machine>()
@@ -111,9 +114,10 @@ class ScreensTest {
         rule.onNodeWithText("Ada Lovelace").assertIsDisplayed()
         rule.onNodeWithText("Signed in with Antasphere").assertIsDisplayed()
         rule.onNodeWithText("Sign out").assertIsDisplayed()
-        rule.onNodeWithText("Team relay address").assertIsDisplayed()
-        rule.onNodeWithText("https://your-team-relay.example", useUnmergedTree = true).assertIsDisplayed()
-        rule.onNodeWithText("Connect to team relay").assertIsDisplayed()
+        rule.onNodeWithText("Addresses").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Machine address").assertIsDisplayed()
+        rule.onNodeWithText("https://your-mac.example", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithText("Add address").assertIsDisplayed()
         rule.onNodeWithText("Reachable", useUnmergedTree = true).assertIsDisplayed()
         rule.onNodeWithText("Main", useUnmergedTree = true).assertIsDisplayed()
         rule.onNodeWithText("Online", useUnmergedTree = true).assertIsDisplayed()
@@ -124,6 +128,37 @@ class ScreensTest {
             assertEquals(listOf(studio), opened)
             assertEquals(listOf(build), paired)
         }
+    }
+
+    @Test
+    fun twoAddressesSayTheirOwnStateAndAPairedMachineCanBeForgotten() {
+        val studio = machine("relay:studio", "Studio")
+        val forgotten = mutableListOf<Machine>()
+        machinesScreen(
+            MachinesScreenState(
+                account = signedOut.copy(signedIn = true, name = "Ada Lovelace"),
+                machines = listOf(MachineRow(studio, paired = true, main = false, reachability = null, listedBy = "Team relay")),
+                loading = false,
+                error = null,
+                now = now,
+                addresses = listOf(
+                    AddressRow(MachineAddress("https://relay.example", "Team relay"), machineCount = 1, error = null, fromCache = false),
+                    AddressRow(MachineAddress("https://home.example"), machineCount = 0, error = "The address could not be reached.", fromCache = true),
+                ),
+            ),
+            onForget = { forgotten += it },
+        )
+        rule.onNodeWithText("Team relay").assertIsDisplayed()
+        rule.onNodeWithText("1 machine", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithText("home.example").assertIsDisplayed()
+        rule.onNodeWithText("Showing its last list. The address could not be reached.", useUnmergedTree = true).assertIsDisplayed()
+        // The error is said on its own row only, never as the screen's error.
+        rule.onAllNodesWithText("The address could not be reached.", substring = true, useUnmergedTree = true).assertCountEquals(1)
+        rule.onNodeWithText("Add address").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("macOS · Clave 1.2.3 · online\nTeam relay", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithContentDescription("More about Studio").performScrollTo().performClick()
+        rule.onNodeWithText("Forget this machine").performClick()
+        rule.runOnIdle { assertEquals(listOf(studio), forgotten) }
     }
 
     @Test
