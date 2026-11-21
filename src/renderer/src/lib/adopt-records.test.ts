@@ -920,3 +920,35 @@ describe('the restore spawn resumes an OpenCode chat’s session', () => {
     expect(options).not.toHaveProperty('resumeSessionId')
   })
 })
+
+// An Antigravity chat comes back on the conversation its record keeps
+// (`session/load` over `agy acp`).
+describe('the restore spawn resumes an Antigravity chat’s conversation', () => {
+  const spawnOf = async (over: Partial<SessionRecord>): Promise<Record<string, unknown>> => {
+    const { attached } = placeRecords([{ ...record('r'), ...over } as SessionRecord], null)
+    await flush()
+    const options = spawnOptions.get('r') ?? {}
+    for (const answer of [...pending.values()]) answer(true)
+    await attached
+    return options
+  }
+
+  it('passes the record’s Antigravity conversation as the resume', async () => {
+    const options = await spawnOf({
+      transport: 'events',
+      claudeMode: false,
+      antigravityMode: true,
+      launchProfileId: 'antigravity-chat',
+      antigravitySessionId: '70ec1049-f3e9-46a9-bd24-382267964044'
+    })
+    expect(options).toMatchObject({
+      antigravityMode: true,
+      resumeSessionId: '70ec1049-f3e9-46a9-bd24-382267964044'
+    })
+  })
+
+  it('resumes nothing for an Antigravity record with no conversation yet', async () => {
+    const options = await spawnOf({ claudeMode: false, antigravityMode: true })
+    expect(options).not.toHaveProperty('resumeSessionId')
+  })
+})

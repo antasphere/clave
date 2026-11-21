@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
+  antigravityProfileMode,
   buildAgentArgv,
   isCodexRung,
   profileSetsPermissions,
@@ -136,6 +137,15 @@ const opencodeChatAdapter = new AcpAdapter({
   claveTools: 'opencode'
 })
 sessionManager.registerAdapter(opencodeChatAdapter)
+// Antigravity in the chat view, over the Agent Client Protocol server its own
+// binary ships (`agy acp`). Its ladder (ask, accept edits, plan, auto) is the
+// session's `mode` config option, set from the launch's rung.
+const antigravityChatAdapter = new AcpAdapter({
+  id: 'antigravity-chat',
+  provider: 'antigravity',
+  label: 'Antigravity'
+})
+sessionManager.registerAdapter(antigravityChatAdapter)
 // Lane D (PRDCT-4427): Pi in the chat view, over Pi's own rpc mode
 // (`pi --mode rpc`).
 // PRDCT-4507: Clave's own tools, through Clave's Pi extension.
@@ -161,13 +171,25 @@ setConnectionReportListener((id, leftFor, at) => {
 })
 
 /** The chat adapters whose tab keeps a session record (lane D, PRDCT-4427). */
-type ChatRecordAdapter = 'claude-chat' | 'codex-chat' | 'opencode-chat' | 'pi-chat'
+type ChatRecordAdapter =
+  | 'claude-chat'
+  | 'codex-chat'
+  | 'antigravity-chat'
+  | 'opencode-chat'
+  | 'pi-chat'
 const CHAT_RECORD_ADAPTERS = new Set<string>([
   'claude-chat',
   'codex-chat',
+  'antigravity-chat',
   'opencode-chat',
   'pi-chat'
 ])
+
+/** A rung of Antigravity's own ladder (`harness.ts`), what its chat's `mode`
+ *  option takes. */
+const isAntigravityRung = (mode: unknown): mode is string =>
+  typeof mode === 'string' &&
+  HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === mode)
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -235,6 +257,9 @@ class PtyManager {
   /** An OpenCode chat session's id, from the ACP agent's own meta (lane D,
    *  PRDCT-4427). */
   private opencodeSessions = new Map<string, string>()
+  /** An Antigravity chat's conversation, from the ACP agent's own meta: the
+   *  id `session/load` and `agy --conversation` resume. */
+  private antigravitySessions = new Map<string, string>()
   /** The provider a Pi or OpenCode chat on a connection names its models
    *  under, so the model it reports reaches the record bare (PRDCT-4427). */
   private chatModelProviders = new Map<string, string>()
@@ -560,6 +585,23 @@ class PtyManager {
           : {})
       })
     }
+    // `agy acp` alone: a saved profile's `additionalArgs` are the TUI's words,
+    // and the rung reaches the session over the protocol (below).
+    // The rung: the launch's, else the saved profile's own `--mode`, which a
+    // terminal on the same profile runs in.
+    let antigravityMode: string | undefined
+    if (isEvents && adapter.id === 'antigravity-chat') {
+      const antigravityProfile =
+        carried ?? launchProfileManager.resolve('antigravity', options?.workspaceId, profileId)
+      antigravityMode = isAntigravityRung(options?.permissionMode)
+        ? options.permissionMode
+        : antigravityProfileMode(antigravityProfile)
+      antigravityChatAdapter.configure(session.id, {
+        command: [antigravityProfile.command[0] ?? 'agy', 'acp'],
+        env: buildSpawnEnv(getLoginShellEnv(), {}),
+        initialPrompt: options?.initialPrompt
+      })
+    }
     // Lane D (PRDCT-4427): Pi's chat runs Pi's own command line, built as the
     // terminal's is (`buildAgentArgv`), in rpc mode. The session id is
     // Clave's: resumed (`--session`) when Pi wrote its file, else started
@@ -625,6 +667,8 @@ class PtyManager {
             // the protocol; a launch that skips them answers allow itself.
             autoApprove:
               adapter.id === 'opencode-chat' && options?.dangerousMode === true ? true : undefined,
+            // Antigravity's rung (PRDCT-4424), the value of its `mode` option.
+            mode: antigravityMode,
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
@@ -712,6 +756,7 @@ class PtyManager {
     // a Claude chat alone (an OpenCode chat has no account of either kind).
     const claude = adapterId === 'claude-chat'
     const opencode = adapterId === 'opencode-chat'
+    const antigravity = adapterId === 'antigravity-chat'
     const pi = adapterId === 'pi-chat'
     // A restored tab rewrites the record it was restored from: the name lives
     // only there, so it must be carried over or the tab survives one restart
@@ -724,6 +769,7 @@ class PtyManager {
       claudeSessionId: claude ? session.claudeSessionId : undefined,
       codexThreadId: codex ? resume : undefined,
       opencodeSessionId: opencode ? resume : undefined,
+      antigravitySessionId: antigravity ? resume : undefined,
       // Lane D (PRDCT-4427): a Pi chat's session, Clave's own id from the
       // start, and the provider and thinking it was launched on.
       piSessionId: pi ? session.piSessionId : undefined,
@@ -738,7 +784,7 @@ class PtyManager {
       displayName: previous?.displayName,
       userRenamed: previous?.userRenamed,
       claudeMode: claude,
-      antigravityMode: false,
+      antigravityMode: antigravity,
       codexMode: codex,
       piMode: pi,
       opencodeMode: opencode,
@@ -814,6 +860,14 @@ class PtyManager {
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
           this.codexThreads.set(id, stream.event.providerSessionId)
           ptyBackend.setSessionCodexThreadId(id, stream.event.providerSessionId)
+        }
+        // The Antigravity conversation the ACP agent opened.
+        if (
+          sessionManager.get(id)?.adapterId === 'antigravity-chat' &&
+          stream.event.providerSessionId
+        ) {
+          this.antigravitySessions.set(id, stream.event.providerSessionId)
+          ptyBackend.setSessionAntigravitySessionId(id, stream.event.providerSessionId)
         }
         // Lane D (PRDCT-4427): the OpenCode session the ACP agent opened.
         if (
@@ -931,6 +985,7 @@ class PtyManager {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
       this.opencodeSessions.delete(id)
+      this.antigravitySessions.delete(id)
       this.chatModelProviders.delete(id)
       this.rejected.delete(id)
       this.openReports.delete(id)
@@ -997,7 +1052,9 @@ class PtyManager {
     if (family === 'pi')
       return piSessionWritten(conversationId, cwd, piSessionLookupEnv(connectionId))
     if (family === 'codex') return hasCodexRollout(conversationId, codexRoot(getLoginShellEnv()))
-    return family === 'opencode'
+    // OpenCode and Antigravity find a session by its id in their own
+    // storage: no file of theirs to check.
+    return family === 'opencode' || family === 'antigravity'
   }
 
   /** Whether the person still has a saved profile `id` for the family (lane
@@ -1025,7 +1082,17 @@ class PtyManager {
     // Lane D (PRDCT-4427): an OpenCode chat's session.
     const opencodeSession = this.opencodeSessions.get(id)
     if (opencodeSession) return opencodeSession
+    const antigravitySession = this.antigravitySessions.get(id)
+    if (antigravitySession) return antigravitySession
     const spawn = this.spawns.get(id)
+    // An Antigravity terminal's conversation: the one it resumed, else the
+    // one its record kept (a chat moved to the terminal carries it there).
+    if (spawn?.options?.antigravityMode)
+      return (
+        spawn.options.resumeSessionId ??
+        ptyBackend.getSessionRecord(id)?.antigravitySessionId ??
+        null
+      )
     // Lane D (PRDCT-4427, verifier round 1 Major 1): an OpenCode terminal's
     // session, the one it was started on (`--session <id>`), else the one its
     // record kept; the chat's map entry went with the chat's kill.

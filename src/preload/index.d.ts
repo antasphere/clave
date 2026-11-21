@@ -543,6 +543,8 @@ export interface SessionRecord {
   /** Lane D (PRDCT-4427): the OpenCode session an OpenCode chat tab resumes
    *  on relaunch. */
   opencodeSessionId?: string
+  /** The Antigravity conversation a chat tab resumes on relaunch. */
+  antigravitySessionId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string
