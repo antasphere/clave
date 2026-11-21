@@ -59,12 +59,16 @@ back rather than one of them staying unanswerable for the session's life. Transc
 mounted view's lifetime; disabling the plugin releases its subscription.
 
 The WORK RUNNING NOW — the subagents, and the commands left running in the
-background — is a strip of cards under the composer of both views
-(`src/WorkCards.tsx`): one card each, with a drawing of what it is
+background — is a strip of cards under the composer of the Chat and Terminal
+views (`src/WorkCards.tsx`; Folio draws the same work in its desk's corner,
+below): one card each, with a drawing of what it is
 (`src/WorkDrawing.tsx`, in the hand of the drop card's drawings, breathing
 while the work goes on), the type and the task or the command's title, and
 the figures (steps, the agent's own context, how long it has run, or how long
-it has been quiet). The cards are the one place that says it: the pane
+it has been quiet). What the strip and Folio's dock share — the time
+read, the quiet rule (`QUIET_MS`, a minute with no step), the fold
+(`LEAVE_MS`), a row's figures as data, the leaving rows and the one-second
+clock — is `src/work.ts`, tested. The cards are the one place that says it: the pane
 header's "in background" chip and the Terminal view's status-line count are
 gone (6 November 2026). Clicking a card opens a window onto its work: an
 agent's (`src/SubAgentPeek.tsx`) shows what it was asked, what it says and
@@ -231,9 +235,11 @@ and the agent's answer is written on the page as a
 document, and what the agent did on the way (calls, approvals) sits in the
 margin beside the paragraph it led to; a call in the margin opens to the
 transcript's own `ToolPanel`. A message sent before any answer joins the
-question it follows. The spine at the top has one tick per page, its height the
-length of the answer; the arrows (or Option and the arrows from an empty
-composer), the ticks and the contents turn pages, and the page being written is
+question it follows. The spine at the top holds, in order, Previous page and
+Next page side by side (PRDCT-4834), one tick per page, its height the length
+of the answer, the count and the contents; the arrows (or Option and the arrows
+from an empty composer), the two turn buttons, the ticks and the contents turn
+pages, and the page being written is
 followed until the reader turns away, with a way back while they are elsewhere.
 A finished page can be read aloud: the reading first asks for the page's spoken
 rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
@@ -281,9 +287,41 @@ on a block reads from it, and the card's bar has one tick per block, a click
 or a drag (or the arrows) going to a block, with the time once known
 (`progress.ts`). A rendering filed before the blocks plays whole, nothing lit.
 
+The WORK DOCK (`src/lab/FolioWork.tsx`, PRDCT-4833) is the work running now
+in Folio, in the desk's bottom-right corner at the foot of the margin column
+whose head holds the voice card; in a book of pages the strip under the
+composer read as a second composer and pushed the page up each time an agent
+started. It is laid over the desk like the back pill, so nothing of the page
+or the composer moves by a pixel when work starts, changes or ends. Closed, it
+is a pill of paper holding one mark per running thing (the first four in the
+strip's order, then `+N`), no words: the marks are the drawings' own focal
+points (`WorkMark` beside `WorkDrawing`, from the same coordinates), an agent's
+head and a command's prompt, breathing at the strip's pace and out of phase;
+an agent quiet for a minute stills and its dot takes the warning colour. On
+approach it grows a card from its corner (a clip-path, never a width laid out
+again): the count in the Terminal view's words (`runningLabel` in
+`terminal-status.ts`: "2 agents · 1 command"), then a row per running thing
+with its full drawing, the type and the task, the last step or the command,
+and the figures; the rows rise in once per opening, and many scroll inside a
+card held under 60% of the desk. A row opens the same window as the strip's
+card (`SubAgentPeek`, `ShellPeek`), with the same relaunch and its
+confirmation, and the card stays open under them. When it opens and closes is
+one reducer (`nextDock` in `src/lab/folio-work.ts`, with `dockMarks`, both
+tested): the pointer opens it after a beat and closes it a little after it has
+left; the keyboard's focus opens it; a click on the pill pins it and a second
+unpins it; Escape or a click elsewhere closes it, Escape giving the focus back
+to the pill; it never takes the focus by itself. Under reduced motion every
+state is simply there. The DOM carries `data-testid="folio-work"` with
+`data-open` (hover, focus, pinned), the pill, each mark (`data-kind`,
+`data-quiet`, `data-leaving`), the card and its rows, for
+`tests/e2e/folio-work.spec.mjs`, which holds all of it on the real app (the
+page and the composer measured to the pixel, the tab chosen again under the
+frame sampler of `chat-work-cards-reveal`, reduced motion, the spine's turn
+buttons); `tests/e2e/look/folio-work.spec.mjs` shoots it in the four themes.
+
 It keeps the same reducer, subscription order and composer as the Chat view
-(`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,
-menus and work cards are the shared components) and renders only the page on
+(`src/lab/use-conversation.ts` mirrors its effect; the prompt dock,
+attachments, menus and the windows onto the work are the shared components) and renders only the page on
 screen, so the copy mounted hidden behind another view costs a reducer and no
 rows. Its stylesheet is its own (`src/lab/folio.css`, imported by the view).
 Pages and speech are pure and tested (`src/lab/*.test.ts`). Not yet: the slash
