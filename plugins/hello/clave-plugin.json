@@ -3,7 +3,7 @@
   "name": "Hello Clave",
   "version": "1.0.0",
   "kind": "plugin",
-  "engines": { "clave": ">=1.90.0 <3.0.0" },
+  "engines": { "clave": ">=1.90.0 <4.0.0" },
   "ui": "surface",
   "main": "main.mjs",
   "uiEntry": "ui/index.html",
