@@ -8,6 +8,8 @@ import {
   chatProfileSource,
   codexProfilePolicy,
   codexRungPolicy,
+  profileEffort,
+  profileModel,
   resolveLaunchProfile,
   sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
@@ -629,5 +631,143 @@ describe('capturesExchange', () => {
     expect(exchangeCaptureRefusal('opencode')).toBe(
       'OpenCode exchange capture is not supported yet'
     )
+  })
+})
+
+// Issue #423: a profile's own effort is applied, an explicit pick overrides
+// it, and the effort last picked applies only to a profile that names none.
+describe('the effort a profile names (#423)', () => {
+  const profile = (
+    family: LaunchProfile['family'],
+    command: string[],
+    additionalArgs: string[] = []
+  ): LaunchProfile => ({ id: 'p', name: 'P', family, command, additionalArgs })
+  it("reads Claude's --effort in both spellings, the later winning", () => {
+    expect(profileEffort(profile('claude', ['claude', '--effort', 'low']))).toBe('low')
+    expect(profileEffort(profile('claude', ['claude'], ['--effort=max']))).toBe('max')
+    expect(profileEffort(profile('claude', ['claude', '--effort', 'low'], ['--effort=high']))).toBe(
+      'high'
+    )
+  })
+  it("reads Codex's model_reasoning_effort override, quoted or not, short or long", () => {
+    expect(profileEffort(profile('codex', ['codex', '-c', 'model_reasoning_effort=xhigh']))).toBe(
+      'xhigh'
+    )
+    expect(
+      profileEffort(profile('codex', ['codex'], ['--config', 'model_reasoning_effort="low"']))
+    ).toBe('low')
+    expect(
+      profileEffort(profile('codex', ['codex', "--config=model_reasoning_effort='medium'"]))
+    ).toBe('medium')
+  })
+  it('names none for a profile without one, another config key, or a value that is no level', () => {
+    expect(profileEffort(undefined)).toBeUndefined()
+    expect(profileEffort(profile('claude', ['claude', '--verbose']))).toBeUndefined()
+    expect(profileEffort(profile('codex', ['codex', '-c', 'model="gpt-5"']))).toBeUndefined()
+    expect(profileEffort(profile('claude', ['claude', '--effort', '$(rm -rf ~)']))).toBeUndefined()
+    expect(profileEffort(profile('claude', ['claude', '--effort']))).toBeUndefined()
+    // Another family's spelling is not read.
+    expect(profileEffort(profile('codex', ['codex', '--effort', 'high']))).toBeUndefined()
+  })
+})
+
+describe('the model a profile names (#423, verifier V3)', () => {
+  const profile = (
+    family: LaunchProfile['family'],
+    command: string[],
+    additionalArgs: string[] = [],
+    pi?: LaunchProfile['pi']
+  ): LaunchProfile => ({
+    id: 'p',
+    name: 'P',
+    family,
+    command,
+    additionalArgs,
+    ...(pi ? { pi } : {})
+  })
+  it("reads Codex's model override, quoted or not, short or long, the later winning", () => {
+    expect(profileModel(profile('codex', ['codex', '-c', 'model="gpt-a"']))).toBe('gpt-a')
+    expect(profileModel(profile('codex', ['codex'], ['--config=model=gpt-b']))).toBe('gpt-b')
+    expect(
+      profileModel(profile('codex', ['codex', '-c', "model='gpt-a'"], ['--config', 'model=gpt-c']))
+    ).toBe('gpt-c')
+  })
+  it("reads a Pi profile's own model", () => {
+    expect(profileModel(profile('pi', ['pi'], [], { model: 'pi-model' }))).toBe('pi-model')
+  })
+  it('names none for another key, a Claude profile, or a value that is no model name', () => {
+    expect(profileModel(undefined)).toBeUndefined()
+    expect(
+      profileModel(profile('codex', ['codex', '-c', 'model_reasoning_effort=high']))
+    ).toBeUndefined()
+    expect(profileModel(profile('codex', ['codex', '-c', 'model_provider=oss']))).toBeUndefined()
+    expect(profileModel(profile('claude', ['claude', '--verbose']))).toBeUndefined()
+    expect(profileModel(profile('codex', ['codex', '-c', 'model="$(rm -rf ~)"']))).toBeUndefined()
+  })
+})
+
+// Verifier round 2, V7: the other spellings a saved profile may use.
+describe('the model and effort a profile names in its other spellings (#423, verifier V7)', () => {
+  const profile = (
+    family: LaunchProfile['family'],
+    command: string[],
+    additionalArgs: string[] = []
+  ): LaunchProfile => ({ id: 'p', name: 'P', family, command, additionalArgs })
+  it("reads Claude's environment in the command, which the CLI reads too", () => {
+    const claude = profile('claude', [
+      'env',
+      'ANTHROPIC_MODEL=haiku',
+      'CLAUDE_CODE_EFFORT_LEVEL=low',
+      'claude'
+    ])
+    expect(profileModel(claude)).toBe('haiku')
+    expect(profileEffort(claude)).toBe('low')
+  })
+  it("lets Claude's effort variable win over its --effort, as the CLI does", () => {
+    expect(
+      profileEffort(
+        profile('claude', ['env', 'CLAUDE_CODE_EFFORT_LEVEL=low', 'claude'], ['--effort', 'max'])
+      )
+    ).toBe('low')
+  })
+  it("reads Codex's attached -c spellings", () => {
+    expect(profileModel(profile('codex', ['codex', '-cmodel="gpt-a"']))).toBe('gpt-a')
+    expect(profileModel(profile('codex', ['codex', '-c=model="gpt-a"']))).toBe('gpt-a')
+    expect(profileEffort(profile('codex', ['codex', '-cmodel_reasoning_effort="low"']))).toBe('low')
+    expect(profileEffort(profile('codex', ['codex', '-c=model_reasoning_effort=high']))).toBe(
+      'high'
+    )
+  })
+  it("reads no variable after the program, nor another family's", () => {
+    expect(profileModel(profile('claude', ['claude'], ['ANTHROPIC_MODEL=haiku']))).toBeUndefined()
+    expect(
+      profileModel(profile('codex', ['env', 'ANTHROPIC_MODEL=haiku', 'codex']))
+    ).toBeUndefined()
+  })
+})
+
+// Verifier round 3, V12: Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort,
+// so a profile's variable would beat an explicit pick. The effort Clave hands
+// over is already the explicit one, else the profile's, else the last pick;
+// it replaces the variable, which then cannot override it.
+describe("the effort Clave passes replaces a profile's effort variable (#423, verifier V12)", () => {
+  const profile: LaunchProfile = {
+    id: 'p',
+    name: 'P',
+    family: 'claude',
+    command: ['env', 'ANTHROPIC_MODEL=haiku', 'CLAUDE_CODE_EFFORT_LEVEL=low', 'claude'],
+    additionalArgs: []
+  }
+  it('drops the variable and passes --effort when an effort is given', () => {
+    const argv = buildAgentArgv({ kind: 'claude', profile, effort: 'max' })
+    expect(argv).not.toContain('CLAUDE_CODE_EFFORT_LEVEL=low')
+    expect(argv.slice(0, 3)).toEqual(['env', 'ANTHROPIC_MODEL=haiku', 'claude'])
+    expect(argv.slice(argv.indexOf('--effort'), argv.indexOf('--effort') + 2)).toEqual([
+      '--effort',
+      'max'
+    ])
+  })
+  it('keeps the variable when no effort is given (a terminal)', () => {
+    expect(buildAgentArgv({ kind: 'claude', profile })).toContain('CLAUDE_CODE_EFFORT_LEVEL=low')
   })
 })

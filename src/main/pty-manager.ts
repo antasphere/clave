@@ -3,6 +3,8 @@ import path from 'node:path'
 import {
   buildAgentArgv,
   isCodexRung,
+  profileEffort,
+  profileModel,
   profileSetsPermissions,
   sanitizeCarriedLaunchProfile,
   type LauncherFamily
@@ -375,6 +377,14 @@ class PtyManager {
     // another provider.
     const onConnection =
       !!options?.connectionId && (adapter.id === 'pi-chat' || adapter.id === 'opencode-chat')
+    // A profile that names its own model (Codex's `-c model=`, a Pi
+    // profile's) starts on it, the way it names its effort (#423, verifier
+    // V3): handed over as the launch's, so the thread and the record carry it.
+    const ownModel =
+      events && !options?.model && !options?.adoptSessionId && !options?.resumeSessionId
+        ? profileModel(ownProfile)
+        : undefined
+    if (ownModel) options = { ...options, model: ownModel }
     const remembered =
       events &&
       !onConnection &&
@@ -388,7 +398,15 @@ class PtyManager {
     // the record does not keep the one a tab ran at, and the last pick is
     // what the reader would pick again.
     // A launch that names an effort (a routine, ADR 0004) gets exactly that.
-    const effort = isEvents ? (options?.effort ?? rememberedChatEffort(adapter.id)) : undefined
+    // A profile that names its own (Claude's `--effort`, Codex's
+    // `model_reasoning_effort`) starts on it: a saved profile is a deliberate
+    // choice, which the last pick never overrides (#423).
+    const effort = isEvents
+      ? (options?.effort ?? profileEffort(ownProfile) ?? rememberedChatEffort(adapter.id))
+      : undefined
+    // The record says what the chat starts on from its first frame, the
+    // effort last picked included; the provider's own word overwrites it.
+    if (effort !== undefined && options?.effort === undefined) options = { ...options, effort }
     const session: PtySession = isEvents
       ? {
           // A restored chat tab keeps its id, as a restored terminal does: the

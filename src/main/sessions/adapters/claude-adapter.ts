@@ -1161,6 +1161,9 @@ export class ClaudeAdapter implements SessionAdapter {
           sessionId,
           resumeSessionId: options.resume,
           model: options.model,
+          // The argv builder places it, replacing a profile's effort
+          // variable the CLI would prefer (#423, verifier V12).
+          effort: options.effort,
           claudeSettings: buildClaudeHookSettingsArg(spec.id) ?? undefined,
           mcpConfigPath: mcpConfigPath ?? undefined
         })
@@ -1183,8 +1186,8 @@ export class ClaudeAdapter implements SessionAdapter {
         // and never starts the session in it.
         if (options.permissionMode !== 'bypassPermissions')
           argv.push('--allow-dangerously-skip-permissions')
-        // A model that takes no effort (Haiku) runs at none whatever this says.
-        if (options.effort) argv.push('--effort', options.effort)
+        // A model that takes no effort (Haiku) runs at none whatever the
+        // effort passed above says.
         // ADR 0004: a routine run's contract skill and its one-line system
         // prompt, from the spawn's own context; a tab's launch carries none.
         if (context.pluginDir) argv.push('--plugin-dir', context.pluginDir)
@@ -1197,12 +1200,21 @@ export class ClaudeAdapter implements SessionAdapter {
           }),
           CLAVE_SESSION_ID: spec.id
         }
+        // Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort (#423, verifier
+        // V14): the effort passed (the explicit one, else the profile's own,
+        // else the last pick) must not lose to the variable inherited from
+        // the login environment, nor to one a login profile exports again.
+        if (options.effort) delete env.CLAUDE_CODE_EFFORT_LEVEL
+        const unsetEffort = options.effort ? 'unset CLAUDE_CODE_EFFORT_LEVEL; ' : ''
         // The binary found on the login environment's own PATH starts directly;
         // the login-shell wrapper is only for a command that PATH cannot place.
         const executable = findExecutable(argv[0], env.PATH)
         const launch = executable
           ? { file: executable, args: argv.slice(1) }
-          : resolvePosixShellLaunch(getUserShell(), `exec ${argv.map(shellSingleQuote).join(' ')}`)
+          : resolvePosixShellLaunch(
+              getUserShell(),
+              `${unsetEffort}exec ${argv.map(shellSingleQuote).join(' ')}`
+            )
         const child = spawn(launch.file, launch.args, {
           cwd: spec.cwd,
           env,

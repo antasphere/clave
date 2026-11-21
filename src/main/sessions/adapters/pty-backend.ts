@@ -1423,7 +1423,12 @@ export class PtyBackend {
           handover = carried.command
           handoverEnv = carried.env
         }
-        const rendered = `${handover}${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
+        // A Claude terminal given an effort (a routine's own, ADR 0004): the
+        // login profile may export CLAUDE_CODE_EFFORT_LEVEL, which Claude
+        // prefers to --effort (#423, verifier V14), so it is unset after it.
+        const unsetEffort =
+          kind === 'claude' && options?.effort ? 'unset CLAUDE_CODE_EFFORT_LEVEL; ' : ''
+        const rendered = `${unsetEffort}${handover}${assignments.join(' ')} ${argv.map(shellSingleQuote).join(' ')}`
         const failure = `__clave_status=$?; if [ $__clave_status -ne 0 ]; then printf '\\r\\n[Clave] Agent command exited with status %d\\r\\nCommand: %s\\r\\n' $__clave_status ${shellSingleQuote(argv.map(shellSingleQuote).join(' '))}; fi; exit $__clave_status`
         posixAgentCommand = `${rendered}; ${failure}`
       }

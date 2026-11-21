@@ -542,8 +542,12 @@ it('remembers a composer model pick for the next chat, only once the session too
   sessionManager.adopt(session, adapter.prepare(session), adapter)
   const event = { sender: { id: 102 } }
   mocks.rememberChatModel.mockClear()
+  // A model the session runs on once switched (#423): echo answers a name it
+  // does not list with its first model, which is not the pick.
   mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'opus' })
-  expect(mocks.rememberChatModel).toHaveBeenCalledWith('echo', 'opus')
+  expect(mocks.rememberChatModel).not.toHaveBeenCalled()
+  mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'echo-1' })
+  expect(mocks.rememberChatModel).toHaveBeenCalledWith('echo', 'echo-1')
   mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: null })
   expect(mocks.rememberChatModel).toHaveBeenLastCalledWith('echo', null)
   mocks.rememberChatModel.mockClear()
@@ -576,12 +580,18 @@ it('remembers a composer effort pick for the next chat, only once the session to
   const event = { sender: { id: 103 } }
   mocks.rememberChatEffort.mockClear()
   const order: string[] = []
-  const write = vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
+  // A write the session never answers is not remembered (#423): the
+  // session's own word that it runs at the level is what is waited for.
+  const write = vi.spyOn(adapter, 'write')
+  write.mockImplementationOnce(() => {
     order.push('write')
   })
   mocks.rememberChatEffort.mockImplementationOnce(() => order.push('remember'))
   await mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
   expect(write).toHaveBeenCalledWith(expect.anything(), { type: 'set_effort', effort: 'high' })
+  expect(mocks.rememberChatEffort).not.toHaveBeenCalled()
+  write.mockRestore()
+  await mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
   expect(mocks.rememberChatEffort).toHaveBeenCalledWith('echo', 'high')
   expect(order).toEqual(['write', 'remember'])
   // A level the session refuses is not remembered, nor one the schema refuses.
