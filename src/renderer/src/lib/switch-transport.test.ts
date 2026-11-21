@@ -77,15 +77,17 @@ describe('the tiles of « View as » (lane D, PRDCT-4427)', () => {
     )
     expect(tiles.filter((t) => t.adapterId === 'codex-chat')).toHaveLength(3)
   })
-  it('an Antigravity terminal and a plain terminal get no tile; a chat of no harness keeps its views', () => {
-    expect(
-      transportTiles(
-        session({ transport: 'pty', adapterId: 'pty', provider: 'antigravity' }),
-        { claudeMode: false, codexMode: false },
-        [],
-        chatViews
-      )
-    ).toEqual([])
+  it('an Antigravity terminal moves to its chat; a plain terminal gets no tile; a chat of no harness keeps its views', () => {
+    const antigravity = transportTiles(
+      session({ transport: 'pty', adapterId: 'pty', provider: 'antigravity' }),
+      { claudeMode: false, codexMode: false },
+      [],
+      chatViews
+    )
+    expect(antigravity.map((tile) => tile.adapterId)).toEqual([
+      ...chatViews.map(() => 'antigravity-chat'),
+      'pty'
+    ])
     expect(
       transportTiles(
         session({ transport: 'pty', adapterId: 'pty', provider: 'terminal' }),

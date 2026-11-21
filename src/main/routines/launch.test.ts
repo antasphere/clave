@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LaunchProfilePreferences } from '../../shared/agent-launch'
 import { type LaunchFacts, REPORTING_AGENTS, cannotReportReason, resolveLaunch } from './launch'
-import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
+import { HARNESS_BY_ID } from '../../shared/harness'
 import type { ConnectionPoolId } from '../../shared/connection'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 
@@ -182,15 +182,23 @@ describe('resolveLaunch', () => {
       form: 'chat',
       spawn: { piMode: true, piThinking: 'high', piProvider: 'anthropic' }
     })
+    // Antigravity has a chat view too (`agy acp`): a routine naming no form runs in it.
     const agy = resolveLaunch(routine({ agent: 'antigravity' }), facts())
-    expect(agy.ok && agy).toMatchObject({ form: 'terminal', spawn: { antigravityMode: true } })
+    expect(agy.ok && agy).toMatchObject({
+      form: 'chat',
+      spawn: { antigravityMode: true, launchProfileId: 'antigravity-chat' }
+    })
+    const agyTerminal = resolveLaunch(routine({ agent: 'antigravity', form: 'terminal' }), facts())
+    expect(agyTerminal.ok && agyTerminal).toMatchObject({
+      form: 'terminal',
+      spawn: { antigravityMode: true }
+    })
   })
 
   it('fails the run on an invalid value, naming it, never a silent fallback', () => {
     const reasons = [
       resolveLaunch(routine({ agent: 'gemini' }), facts()),
       resolveLaunch(routine({ form: 'window' }), facts()),
-      resolveLaunch(routine({ agent: 'antigravity', form: 'chat' }), facts()),
       resolveLaunch(routine({ agent: 'pi', dangerousMode: true }), facts()),
       resolveLaunch(routine({ agent: 'codex', permissionMode: 'plan' }), facts()),
       resolveLaunch(routine({ effort: 'Very High' }), facts()),
@@ -204,11 +212,6 @@ describe('resolveLaunch', () => {
     expect(reasons.map((r) => (r.ok ? '' : r.reason))).toEqual([
       'agent "gemini" is not one of claude, codex, antigravity, pi, opencode',
       'form "window" is not chat or terminal',
-      `form "chat" needs a harness with a chat view (${HARNESSES.filter(
-        (h) => h.chatAdapterId !== null
-      )
-        .map((h) => h.name)
-        .join(', ')}); Antigravity has none`,
       'dangerousMode is for Claude Code, Codex, OpenCode; pi has no such flag',
       'permissionMode is for claude; codex takes none',
       'effort "Very High" is not a level Claude knows',

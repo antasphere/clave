@@ -210,12 +210,14 @@ it('lists event profiles only with registered adapters and hides Claude chat on 
       expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
         'claude-chat',
         'codex-chat',
+        'antigravity-chat',
         'opencode-chat',
         'pi-chat'
       ])
       Object.defineProperty(process, 'platform', { value: 'win32' })
       expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
         'codex-chat',
+        'antigravity-chat',
         'opencode-chat',
         'pi-chat'
       ])
