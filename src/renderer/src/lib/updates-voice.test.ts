@@ -249,11 +249,86 @@ describe('the re-announcement (rule 7)', () => {
   it('toAnnounceAgain: only a heard reading from an update with updates waiting', () => {
     const u = { ...filed('b', 'p2'), id: 'b|p2', announced: true }
     const end = { sessionId: 'a', pageKey: 'p1', at: 1 }
-    expect(toAnnounceAgain({ ...end, how: 'heard', fromUpdate: true }, [u])).toBe(u)
-    expect(toAnnounceAgain({ ...end, how: 'stopped', fromUpdate: true }, [u])).toBeNull()
-    expect(toAnnounceAgain({ ...end, how: 'heard', fromUpdate: false }, [u])).toBeNull()
-    expect(toAnnounceAgain({ ...end, how: 'heard', fromUpdate: true }, [])).toBeNull()
-    expect(toAnnounceAgain(null, [u])).toBeNull()
+    expect(toAnnounceAgain({ ...end, how: 'heard', fromUpdate: true }, [u])).toBe(true)
+    expect(toAnnounceAgain({ ...end, how: 'stopped', fromUpdate: true }, [u])).toBe(false)
+    expect(toAnnounceAgain({ ...end, how: 'heard', fromUpdate: false }, [u])).toBe(false)
+    expect(toAnnounceAgain({ ...end, how: 'heard', fromUpdate: true }, [])).toBe(false)
+    expect(toAnnounceAgain(null, [u])).toBe(false)
+  })
+
+  it('after a heard reading, ALL waiting updates are said again, in one line', async () => {
+    const a = voice(['said', 'said'])
+    const b = voice(['said', 'said'])
+    registerVoice('a', a)
+    registerVoice('b', b)
+    registerVoice('c', voice(['said', 'said']))
+    NAMES.c = { group: null, tab: 'Cedar' }
+    store().file(filed('a', 'p1'))
+    await flush()
+    store().file(filed('b', 'p2'))
+    await flush()
+    store().file(filed('c', 'p3'))
+    await flush()
+    // The person plays the oldest (a); it is heard to its end.
+    store().play('a|p1')
+    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: null, reading, onScreen: false })
+    store().ended('a', 'p1', 'heard')
+    await flush()
+    expect(b.said.at(-1)).toBe('I have updates for you on Harbor and Cedar.')
+    expect(store().updates.every((u) => u.announced)).toBe(true)
+    delete NAMES.c
+  })
+})
+
+describe('one sentence, a cut line', () => {
+  it('several updates not yet announced are said in ONE line, in the oldest voice', async () => {
+    const a = voice(['said'])
+    const b = voice(['said'])
+    registerVoice('a', a)
+    registerVoice('b', b)
+    // Both filed while a reading holds the voice.
+    store().publish('x', { sessionId: 'x', pageKey: 'p', title: 'x', reading, onScreen: false })
+    store().file(filed('a', 'p1'))
+    store().file(filed('b', 'p2'))
+    await flush()
+    store().ended('x', 'p', 'stopped')
+    await flush()
+    expect(a.said).toEqual(['I have updates for you on Atlas and Harbor.'])
+    expect(b.said).toEqual([])
+    expect(store().updates.every((u) => u.announced)).toBe(true)
+  })
+
+  it('a line cut by a reading is not marked, and is said once the voice is free', async () => {
+    const a = voice(['cut', 'said'])
+    registerVoice('a', a)
+    store().file(filed('a', 'p1'))
+    await flush()
+    expect(store().updates[0].announced).toBe(false)
+    // The reading that cut it plays, then ends.
+    store().publish('x', { sessionId: 'x', pageKey: 'p', title: 'x', reading, onScreen: false })
+    vi.advanceTimersByTime(BUSY_RETRY_MS * 3)
+    await flush()
+    expect(a.said).toHaveLength(1)
+    store().ended('x', 'p', 'heard')
+    await flush()
+    expect(a.said).toHaveLength(2)
+    expect(store().updates[0].announced).toBe(true)
+  })
+
+  it('a paused reading is never polled: no line, no retry while it holds', async () => {
+    const a = voice(['busy', 'said'])
+    registerVoice('a', a)
+    store().publish('x', {
+      sessionId: 'x',
+      pageKey: 'p',
+      title: 'x',
+      reading: { ...reading, state: 'paused' } as Reading,
+      onScreen: false
+    })
+    store().file(filed('a', 'p1'))
+    vi.advanceTimersByTime(BUSY_RETRY_MS * 10)
+    await flush()
+    expect(a.said).toEqual([])
   })
 })
 

@@ -523,7 +523,7 @@ describe('say: one short line, never over a reading (PRDCT-4832)', () => {
     expect(spoken).toEqual([])
   })
 
-  it('a reading started while a line is said cuts the line: the say resolves said', async () => {
+  it('a reading started while a line is said cuts the line: the say resolves cut', async () => {
     // The voice never ends an utterance by itself: only the reading can end the say.
     window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
     const announcer = usePane()
@@ -532,7 +532,7 @@ describe('say: one short line, never over a reading (PRDCT-4832)', () => {
     expect(spoken).toEqual(['I have an update for you on Atlas.'])
     const reader = useReadAloud({ sessionId: 's2', launch: {} as never })
     reader.read('p', 'Page one.')
-    expect(await said).toBe('said')
+    expect(await said).toBe('cut')
     // The voice is the reading's now: another line is refused.
     expect(await announcer.say('Again.')).toBe('busy')
   })
@@ -543,7 +543,7 @@ describe('say: one short line, never over a reading (PRDCT-4832)', () => {
     const said = voice.say('I have an update for you on Atlas.')
     await flush()
     voice.read('p', 'Page one.')
-    expect(await said).toBe('said')
+    expect(await said).toBe('cut')
   })
 
   it('fails when nothing can speak', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   announcement,
+  announcementFor,
   blockLabel,
   chipShown,
   fileUpdate,
@@ -132,5 +133,34 @@ describe('blockLabel', () => {
     expect(blockLabel({ tick: 0, blocks: 4 })).toBe('Block 1 of 4')
     expect(blockLabel({ tick: 3, blocks: 4 })).toBe('Block 4 of 4')
     expect(blockLabel({ tick: 9, blocks: 4 })).toBe('Block 4 of 4')
+  })
+})
+
+describe('announcementFor: several updates, one sentence', () => {
+  it('one update, one name', () => {
+    expect(announcementFor(['Atlas'], 1)).toBe('I have an update for you on Atlas.')
+  })
+  it('one name, several updates', () => {
+    expect(announcementFor(['Atlas'], 3)).toBe('I have 3 updates for you on Atlas.')
+  })
+  it('two names', () => {
+    expect(announcementFor(['Atlas', 'Harbor'], 2)).toBe(
+      'I have updates for you on Atlas and Harbor.'
+    )
+  })
+  it('three names', () => {
+    expect(announcementFor(['Atlas', 'Harbor', 'Cedar'], 3)).toBe(
+      'I have updates for you on Atlas, Harbor and Cedar.'
+    )
+  })
+  it('more: the first two and how many others', () => {
+    expect(announcementFor(['Atlas', 'Harbor', 'Cedar', 'Delta'], 5)).toBe(
+      'I have updates for you on Atlas, Harbor and 2 more.'
+    )
+  })
+  it('names keep one final period', () => {
+    expect(announcementFor(['Atlas.', 'Harbor!'], 2)).toBe(
+      'I have updates for you on Atlas and Harbor.'
+    )
   })
 })

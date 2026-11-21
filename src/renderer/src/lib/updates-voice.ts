@@ -1,6 +1,6 @@
 import { useSessionStore } from '../store/session-store'
 import { useUpdatesStore, voiceOf, type ReadingEnd } from '../store/updates-store'
-import { announcement, nextToAnnounce, spokenName, updateName, type Update } from './updates'
+import { announcementFor, nextToAnnounce, spokenName, updateName, type Update } from './updates'
 
 /* The announcer of Folio's updates (PRDCT-4832), started once per window by
    AppShell. One voice at a time: while a reading is in progress, or a line is
@@ -36,12 +36,31 @@ export function updatesStatus(state: {
   }
 }
 
-/** The update to say again after a reading ended, or null (rule 7): only a
- *  reading started from an update, heard to its end, with updates waiting.
- *  Pure. */
-export function toAnnounceAgain(end: ReadingEnd | null, updates: Update[]): Update | null {
-  if (!end || end.how !== 'heard' || !end.fromUpdate) return null
-  return updates[0] ?? null
+/** Whether the waiting updates are said again after a reading ended (rule
+ *  7): only a reading started from an update, heard to its end, with updates
+ *  waiting. Pure. */
+export function toAnnounceAgain(end: ReadingEnd | null, updates: Update[]): boolean {
+  return !!end && end.how === 'heard' && end.fromUpdate && updates.length > 0
+}
+
+/** The one line for every update not yet announced, and which they are:
+ *  their distinct names oldest first, in the oldest one's voice. Pure. */
+export function lineFor(
+  updates: Update[],
+  nameOf: (sessionId: string) => string
+): { ids: string[]; sessionId: string; text: string } | null {
+  const waiting = updates.filter((u) => !u.announced)
+  if (!waiting.length) return null
+  const names: string[] = []
+  for (const update of waiting) {
+    const name = nameOf(update.sessionId)
+    if (!names.includes(name)) names.push(name)
+  }
+  return {
+    ids: waiting.map((u) => u.id),
+    sessionId: waiting[0].sessionId,
+    text: announcementFor(names, waiting.length)
+  }
 }
 
 let pointerOver = false
@@ -110,37 +129,45 @@ export function startUpdatesVoice(deps: UpdatesVoiceDeps = {}): () => void {
   const pump = (): void => {
     if (stopped || saying) return
     const state = store.getState()
+    // A reading in progress, paused included, holds the voice: its end (the
+    // store's change to `current: null`) pumps again, so nothing polls here.
     if (state.current !== null || !state.on) return
-    const next = nextToAnnounce(state.updates)
-    if (!next) return
-    const voice = voiceOf(next.sessionId)
+    const oldest = nextToAnnounce(state.updates)
+    if (!oldest) return
+    const voice = voiceOf(oldest.sessionId)
     if (!voice) {
       // Its pane is gone: so is the update.
-      state.dismiss(next.id)
+      state.dismiss(oldest.id)
       return
     }
+    const line = lineFor(state.updates, (id) => spokenName(nameOf(id)))
+    if (!line) return
     saying = true
     void voice
-      .say(announcement(spokenName(nameOf(next.sessionId))))
+      .say(line.text)
       .catch(() => 'failed' as const)
       .then((result) => {
-        saying = false
         if (stopped) return
-        if (result === 'busy') {
-          if (retry) clearTimeout(retry)
-          retry = setTimeout(() => {
-            retry = null
-            pump()
-          }, BUSY_RETRY_MS)
+        if (result === 'busy' || result === 'cut') {
+          saying = false
+          // Not heard: said once the voice is free. A reading took it (the
+          // store's `current` pumps at its end); else a short wait.
+          if (result === 'busy' && store.getState().current === null) {
+            if (retry) clearTimeout(retry)
+            retry = setTimeout(() => {
+              retry = null
+              pump()
+            }, BUSY_RETRY_MS)
+          }
           return
         }
-        // Said, or nothing could say it: either way it is not said again in
-        // a loop.
-        const still = store.getState().updates.find((u) => u.id === next.id)
-        if (still) {
-          store.getState().markAnnounced(next.id, true)
-          openBanner()
-        }
+        // Said, or nothing could say it: either way not said again in a loop.
+        // Every update of the line is marked before the next pump.
+        const now = store.getState()
+        const still = line.ids.filter((id) => now.updates.some((u) => u.id === id))
+        for (const id of still) now.markAnnounced(id, true)
+        saying = false
+        if (still.length) openBanner()
         pump()
       })
   }
@@ -155,8 +182,7 @@ export function startUpdatesVoice(deps: UpdatesVoiceDeps = {}): () => void {
 
   const unsubscribe = store.subscribe((state, previous) => {
     if (state.lastEnd !== previous.lastEnd) {
-      const again = toAnnounceAgain(state.lastEnd, state.updates)
-      if (again) state.markAnnounced(again.id, false)
+      if (toAnnounceAgain(state.lastEnd, state.updates)) state.announceAgain()
     }
     send()
     pump()

@@ -14,7 +14,9 @@ import { fileUpdate, withoutSession, withoutUpdate, type Update } from '../lib/u
 
 export const PLAY_MODE_KEY = 'clave.folio.read-aloud'
 
-export type SayResult = 'said' | 'busy' | 'failed'
+/** How a line went: heard to its end, refused (the voice is busy), nothing
+ *  could speak it, or a reading took the voice from it part way. */
+export type SayResult = 'said' | 'busy' | 'failed' | 'cut'
 
 /** A Folio pane's voice, as the commands drive it. */
 export interface VoiceControls {
@@ -59,6 +61,8 @@ interface UpdatesState {
   dismiss: (id: string) => void
   clearSession: (sessionId: string) => void
   markAnnounced: (id: string, announced: boolean) => void
+  /** Every waiting update to be said again (rule 7). */
+  announceAgain: () => void
   /** A pane publishes its reading (null once it ends). `fromUpdate` and the
    *  title of a reading the store's `play` started are the store's own. */
   publish: (
@@ -135,6 +139,12 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => ({
       if (!s.updates.some((u) => u.id === id && u.announced !== announced)) return s
       return { updates: s.updates.map((u) => (u.id === id ? { ...u, announced } : u)) }
     }),
+  announceAgain: () =>
+    set((s) =>
+      s.updates.some((u) => u.announced)
+        ? { updates: s.updates.map((u) => (u.announced ? { ...u, announced: false } : u)) }
+        : s
+    ),
   publish: (sessionId, current) => {
     const now = get().current
     if (!current) {

@@ -48,12 +48,34 @@ export function nextToAnnounce(list: Update[]): Update | null {
   return list.find((u) => !u.announced) ?? null
 }
 
+const cleanName = (name: string): string => name.trim().replace(/[\s.!?…,;:]+$/u, '') || 'a tab'
+
 /** What the voice says of an update: `I have an update for you on <name>.`
  *  The name trimmed; a name ending in punctuation keeps one final period
  *  only. Pure. */
 export function announcement(name: string): string {
-  const trimmed = name.trim().replace(/[\s.!?…,;:]+$/u, '')
-  return `I have an update for you on ${trimmed || 'a tab'}.`
+  return `I have an update for you on ${cleanName(name)}.`
+}
+
+/** ONE line for every update not yet announced: `names` their distinct
+ *  spoken names, oldest first, `count` how many updates. One name: `an
+ *  update` or `<n> updates`; two: `A and B`; three: `A, B and C`; more: the
+ *  first two and how many other names. Pure. */
+export function announcementFor(names: string[], count: number): string {
+  const shown = names.map(cleanName)
+  if (shown.length <= 1) {
+    const name = shown[0] ?? 'a tab'
+    return count > 1
+      ? `I have ${count} updates for you on ${name}.`
+      : `I have an update for you on ${name}.`
+  }
+  const list =
+    shown.length === 2
+      ? `${shown[0]} and ${shown[1]}`
+      : shown.length === 3
+        ? `${shown[0]}, ${shown[1]} and ${shown[2]}`
+        : `${shown[0]}, ${shown[1]} and ${shown.length - 2} more`
+  return `I have updates for you on ${list}.`
 }
 
 /** The names an update is shown and said by, read live: the sidebar group

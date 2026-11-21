@@ -273,8 +273,9 @@ export function useReadAloud(source: ReadSource): {
   stop: () => void
   /** Say one short line (an update's announcement, PRDCT-4832) in the voice
    *  a reading of this tab would use: `busy` when any pane holds the voice,
-   *  `said` once it was said (or a reading cut it), `failed` when nothing
-   *  could speak. Never a reading: `reading` is not set. */
+   *  `said` once it was heard to its end, `cut` when a reading took the voice
+   *  from it, `failed` when nothing could speak. Never a reading: `reading`
+   *  is not set. */
   say: (text: string) => Promise<SayResult>
 } {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
@@ -600,12 +601,13 @@ export function useReadAloud(source: ReadSource): {
           }
           resolve(result)
         }
-        // Cut by a reading (ours or another pane's): the line counts as said.
+        // Cut by a reading (ours or another pane's): not heard, to be said
+        // again once the voice is free.
         const cut = (): void => {
           if (settled) return
           queue.current?.stop()
           synth?.cancel()
-          finish('said')
+          finish('cut')
         }
         voiceOwner = me.current
         ownerStop = cut
