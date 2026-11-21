@@ -65,7 +65,6 @@ import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
 import { digestIdOf, usePageTitles, usePageTitleStore } from '../digest'
 import { EffortMenu } from '../EffortMenu'
 import { ContextMeter } from '../TerminalStatus'
-import { WorkCards } from '../WorkCards'
 import { relaunchRequest, shownWork } from '../terminal-status'
 import { DropDrawing } from '../DropDrawing'
 import { PastFailed, PastTruncated } from '../EarlierLoading'
@@ -89,6 +88,7 @@ import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
 import { VoiceCard } from './VoiceCard'
+import { FolioWork } from './FolioWork'
 import { LAB_VIEW } from './meta'
 
 /* Folio: the conversation as a book of pages, one per question. The reader's
@@ -1161,6 +1161,20 @@ export function FolioView({
             <ChevronRightIcon aria-hidden="true" />
           </button>
         )}
+        {/* The work running now, in the desk's corner, out of the flow
+            (PRDCT-4833): the Chat view's strip under the composer, drawn
+            for a book. */}
+        <FolioWork
+          agents={work}
+          logs={subagents}
+          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
+          onRelaunch={(agent, alias) => {
+            if (!agent.taskId) return
+            void write({ type: 'stop_task', taskId: agent.taskId })
+              .then(() => write({ type: 'user_message', text: relaunchRequest(agent, alias) }))
+              .catch(report)
+          }}
+        />
       </div>
       <div className="chat-composer-wrap folio-composer">
         {providerSwitch.state && (
@@ -1379,17 +1393,6 @@ export function FolioView({
             />
           </div>
         </div>
-        <WorkCards
-          agents={work}
-          logs={subagents}
-          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
-          onRelaunch={(agent, alias) => {
-            if (!agent.taskId) return
-            void write({ type: 'stop_task', taskId: agent.taskId })
-              .then(() => write({ type: 'user_message', text: relaunchRequest(agent, alias) }))
-              .catch(report)
-          }}
-        />
       </div>
     </div>
   )

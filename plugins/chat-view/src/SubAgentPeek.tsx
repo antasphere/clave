@@ -24,6 +24,7 @@ export function SubAgentPeek({
   agent,
   log,
   onRelaunch,
+  onOpenChange,
   children
 }: {
   agent: SubAgent
@@ -31,12 +32,20 @@ export function SubAgentPeek({
   log: Conversation | undefined
   /** Relaunch the agent on another model, when it can be (asks first). */
   onRelaunch?: (alias: string) => void
+  /** Told when the window opens and closes (Folio's dock stays open under it). */
+  onOpenChange?: (open: boolean) => void
   /** The row, which is the trigger. */
   children: ReactNode
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        onOpenChange?.(next)
+      }}
+    >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent
         side="top"
