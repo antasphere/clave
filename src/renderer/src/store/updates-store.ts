@@ -63,7 +63,7 @@ interface UpdatesState {
    *  title of a reading the store's `play` started are the store's own. */
   publish: (
     sessionId: string,
-    current: Omit<CurrentReading, 'fromUpdate' | 'title'> & { title: string | null } | null
+    current: (Omit<CurrentReading, 'fromUpdate' | 'title'> & { title: string | null }) | null
   ) => void
   /** A pane's reading ended: by itself or by a Stop. */
   ended: (sessionId: string, pageKey: string, how: 'heard' | 'stopped') => void

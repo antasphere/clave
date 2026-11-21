@@ -24,7 +24,11 @@ import {
 } from './updates-voice'
 
 const store = useUpdatesStore.getState
-const filed = (sessionId: string, pageKey: string, at = 1) => ({
+const filed = (
+  sessionId: string,
+  pageKey: string,
+  at = 1
+): { sessionId: string; pageKey: string; markdown: string; title: string; at: number } => ({
   sessionId,
   pageKey,
   markdown: `Answer ${pageKey}`,

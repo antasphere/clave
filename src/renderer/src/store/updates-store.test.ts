@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Reading } from '../../../../plugins/chat-view/src/lab/read-aloud'
-import {
-  registerVoice,
-  resetUpdates,
-  useUpdatesStore,
-  type VoiceControls
-} from './updates-store'
+import { registerVoice, resetUpdates, useUpdatesStore, type VoiceControls } from './updates-store'
 
 const store = useUpdatesStore.getState
-const filed = (sessionId: string, pageKey: string, at = 1) => ({
+const filed = (
+  sessionId: string,
+  pageKey: string,
+  at = 1
+): { sessionId: string; pageKey: string; markdown: string; title: string; at: number } => ({
   sessionId,
   pageKey,
   markdown: `Answer ${sessionId} ${pageKey}`,
@@ -90,10 +89,22 @@ describe('the commands', () => {
     registerVoice('a', a)
     registerVoice('b', b)
     store().file(filed('b', 'p2'))
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: 'One', reading: reading('playing'), onScreen: false })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: 'One',
+      reading: reading('playing'),
+      onScreen: false
+    })
     expect(store().toggle()).toBe(true)
     expect(a.calls).toEqual(['pause'])
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: 'One', reading: reading('paused'), onScreen: false })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: 'One',
+      reading: reading('paused'),
+      onScreen: false
+    })
     store().toggle()
     expect(a.calls).toEqual(['pause', 'resume'])
     expect(b.calls).toEqual([])
@@ -108,10 +119,22 @@ describe('the commands', () => {
     registerVoice('a', fakeVoice())
     store().file(filed('a', 'p1'))
     store().play('a|p1')
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: null, reading: reading('preparing'), onScreen: false })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: null,
+      reading: reading('preparing'),
+      onScreen: false
+    })
     expect(store().current).toMatchObject({ fromUpdate: true, title: 'Title p1' })
     // It stays so as it plays on.
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: null, reading: reading('playing'), onScreen: true })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: null,
+      reading: reading('playing'),
+      onScreen: true
+    })
     expect(store().current).toMatchObject({ fromUpdate: true, title: 'Title p1', onScreen: true })
     store().ended('a', 'p1', 'heard')
     expect(store().current).toBeNull()
@@ -119,7 +142,13 @@ describe('the commands', () => {
   })
 
   it('a reading the person started on the page is not from an update', () => {
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: 'One', reading: reading('playing'), onScreen: true })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: 'One',
+      reading: reading('playing'),
+      onScreen: true
+    })
     expect(store().current?.fromUpdate).toBe(false)
     store().ended('a', 'p1', 'stopped')
     expect(store().lastEnd).toMatchObject({ how: 'stopped', fromUpdate: false })
@@ -130,7 +159,13 @@ describe('the commands', () => {
     registerVoice('a', a)
     store().file(filed('a', 'p1'))
     store().play('a|p1')
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: null, reading: reading('playing'), onScreen: false })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: null,
+      reading: reading('playing'),
+      onScreen: false
+    })
     store().stop()
     expect(a.calls.at(-1)).toBe('stop')
     store().ended('a', 'p1', 'stopped')
@@ -140,7 +175,13 @@ describe('the commands', () => {
   it('seek goes to the block of the tick', () => {
     const a = fakeVoice()
     registerVoice('a', a)
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: 'One', reading: reading('playing', [2, 4, 6]), onScreen: false })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: 'One',
+      reading: reading('playing', [2, 4, 6]),
+      onScreen: false
+    })
     store().seek(1)
     expect(a.calls).toEqual(['seek 4'])
     store().seek(9)
@@ -167,7 +208,13 @@ describe('the commands', () => {
   })
 
   it('publishing null from another tab leaves the current reading', () => {
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: 'One', reading: reading('playing'), onScreen: false })
+    store().publish('a', {
+      sessionId: 'a',
+      pageKey: 'p1',
+      title: 'One',
+      reading: reading('playing'),
+      onScreen: false
+    })
     store().publish('b', null)
     expect(store().current?.sessionId).toBe('a')
     store().publish('a', null)

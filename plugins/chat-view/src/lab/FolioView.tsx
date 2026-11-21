@@ -83,7 +83,9 @@ import {
   type Page,
   type PageRow
 } from './pages'
-import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
+import { useReadAloud, type Reading } from './read-aloud'
+import { registerVoice, useUpdatesStore } from '../../../../src/renderer/src/store/updates-store'
+import { turnEndAction, turnRunning } from './turn-end'
 import { fallbackLine, useSpokenRenderings } from './spoken'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
@@ -864,32 +866,104 @@ export function FolioView({
     [titleStates, session.id]
   )
 
-  // Reading aloud: on the reader's ask, and, when they asked for it, each new
-  // answer as it is finished while this pane is on screen, from its spoken
-  // rendering (PRDCT-4409), as written when none can be had.
+  // Reading aloud: on the reader's ask, and, when the play mode is on, each
+  // new answer as it is finished, from its spoken rendering (PRDCT-4409), as
+  // written when none can be had. Off the page, a finished answer is filed as
+  // an update instead (PRDCT-4832, the store's `file`), announced and played
+  // on the person's ask from the chip, the card or the key.
   useSpokenRenderings(session.id)
-  const voice = useReadAloud({ sessionId: session.id, launch })
-  const [autoRead, setAutoRead] = useAutoRead()
-  // Switched to another view, the pane stops reading: a voice nobody can see
-  // the source of, or stop, is not a reading.
-  const stopVoice = voice.stop
-  useEffect(() => {
-    if (!visible) stopVoice()
-  }, [visible, stopVoice])
+  const onVoiceEnd = useCallback(
+    (key: string, how: 'heard' | 'stopped'): void =>
+      useUpdatesStore.getState().ended(session.id, key, how),
+    [session.id]
+  )
+  const voice = useReadAloud({ sessionId: session.id, launch, onEnd: onVoiceEnd })
+  const autoRead = useUpdatesStore((s) => s.on)
+  const setAutoRead = useUpdatesStore((s) => s.setOn)
   const latest = pages.at(-1)
-  const writing = useRef<string | null>(null)
+  // The turn, on the LIVE conversation state: a hidden pane's pages are
+  // frozen (`usePresentation`), so the end of a turn is read here, and the
+  // page it wrote built once, at that moment, from the live entries.
+  const atRest = useRef({ conversation, presentation, pages, visible, active, autoRead, titleOf })
+  atRest.current = { conversation, presentation, pages, visible, active, autoRead, titleOf }
+  const turning = useRef(false)
   const { read } = voice
   useEffect(() => {
-    if (!latest) return
-    if (latest.status === 'writing' || latest.status === 'working') {
-      writing.current = latest.key
+    if (turnRunning(state)) {
+      turning.current = true
       return
     }
-    if (writing.current !== latest.key) return
-    writing.current = null
-    if (latest.status === 'done' && autoRead && visible && latest.answer)
-      read(latest.key, latest.spoken)
-  }, [latest, autoRead, visible, read])
+    const wasRunning = turning.current
+    turning.current = false
+    const now = atRest.current
+    if (!wasRunning || !now.autoRead) return
+    let last: Page | undefined
+    if (now.visible && now.presentation === now.conversation) last = now.pages.at(-1)
+    else {
+      const live = now.conversation
+      const entries = withServerPending(
+        live.entries,
+        useFleetStore.getState().requests[ownerOf(session.id)],
+        session.id
+      )
+      const ordinal = new Map<Entry, number>()
+      entries.forEach((entry, i) => ordinal.set(entry, live.first + i))
+      last = buildPages(entries, (entry) => ordinal.get(entry), live.state).at(-1)
+    }
+    const action = turnEndAction({
+      wasRunning,
+      state,
+      page: last,
+      visible: now.visible,
+      active: now.active,
+      on: now.autoRead
+    })
+    if (!last || action === 'nothing') return
+    if (action === 'read') read(last.key, last.spoken)
+    else
+      useUpdatesStore.getState().file({
+        sessionId: session.id,
+        pageKey: last.key,
+        markdown: last.spoken,
+        title: now.titleOf(last),
+        at: Date.now()
+      })
+  }, [state, read, session.id])
+  // The pane's voice, while the pane is the tab's chosen view: the chip, the
+  // card and the key drive it from anywhere in the window.
+  const voiceNow = useRef(voice)
+  voiceNow.current = voice
+  useEffect(() => {
+    if (!active) return
+    return registerVoice(session.id, {
+      read: (key, markdown) => voiceNow.current.read(key, markdown),
+      pause: () => voiceNow.current.pause(),
+      resume: () => voiceNow.current.resume(),
+      stop: () => voiceNow.current.stop(),
+      seekBlock: (n) => voiceNow.current.seekBlock(n),
+      say: (text) => voiceNow.current.say(text)
+    })
+  }, [active, session.id])
+  // The person is on the page: its update has been seen.
+  useEffect(() => {
+    if (visible) useUpdatesStore.getState().clearSession(session.id)
+  }, [visible, session.id])
+  // The reading in progress, published for the chip and the card; a reading
+  // keeps going when its page leaves the screen (PRDCT-4832, rule 6).
+  const readingPage = voice.reading ? pages.find((p) => p.key === voice.reading!.key) : undefined
+  const readingTitle = readingPage ? titleOf(readingPage) : null
+  useEffect(() => {
+    const { publish } = useUpdatesStore.getState()
+    if (!voice.reading) return publish(session.id, null)
+    publish(session.id, {
+      sessionId: session.id,
+      pageKey: voice.reading.key,
+      title: readingTitle,
+      reading: voice.reading,
+      onScreen: visible
+    })
+  }, [voice.reading, visible, readingTitle, session.id])
+  useEffect(() => () => useUpdatesStore.getState().publish(session.id, null), [session.id])
 
   const pane = useRef<HTMLDivElement>(null)
   const {

@@ -10,7 +10,11 @@ import {
   type Update
 } from './updates'
 
-const filed = (sessionId: string, pageKey: string, at: number): Omit<Update, 'id' | 'announced'> => ({
+const filed = (
+  sessionId: string,
+  pageKey: string,
+  at: number
+): Omit<Update, 'id' | 'announced'> => ({
   sessionId,
   pageKey,
   markdown: `Answer of ${sessionId} ${pageKey}`,
