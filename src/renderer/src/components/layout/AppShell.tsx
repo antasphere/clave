@@ -83,6 +83,9 @@ import { initCopyOfferStore } from '../../store/copy-offer-store'
 // ── ADR 0004: the routines in the toolbar ──
 import { initRoutinesStore } from '../../store/routines-store'
 import { RoutineToolbar } from '../routines/RoutineToolbar'
+import { UpdateChip } from '../updates/UpdateChip'
+import { useUpdatesStore } from '../../store/updates-store'
+import { startUpdatesVoice } from '../../lib/updates-voice'
 import { ToolbarSecretPopover } from './ToolbarSecretPopover'
 import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
@@ -729,13 +732,26 @@ export function AppShell(): React.JSX.Element {
         const state = useSessionStore.getState()
         if (state.sidebarUndoStack.length > 0) state.undoSidebar()
       },
-      newWindow: () => void window.electronAPI.windowOpen()
+      newWindow: () => void window.electronAPI.windowOpen(),
+      // Folio's update key (PRDCT-4832): main routes it to the window it
+      // concerns, which may be another one.
+      playUpdate: () => {
+        if (window.electronAPI?.updatesToggle) void window.electronAPI.updatesToggle()
+        else useUpdatesStore.getState().toggle()
+      }
     } satisfies KeymapActionHandlers
     return actions
   }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
   const commandHud = useKeymapManager(keymapActions)
 
   useEffect(() => initializeSkins(), [])
+
+  // Folio's updates (PRDCT-4832): the announcer, and the key main routes here.
+  useEffect(() => startUpdatesVoice(), [])
+  useEffect(
+    () => window.electronAPI?.onUpdatesToggle?.(() => void useUpdatesStore.getState().toggle()),
+    []
+  )
 
   // The weight of every tree's row rules, as a multiplier on the theme's own
   // --rule-alpha. One property on the root element is the whole mechanism: the
@@ -1023,6 +1039,9 @@ export function AppShell(): React.JSX.Element {
               <ToolbarQuickActions />
               {/* The routines of the active workspace (ADR 0004): one button per
                   routine with its badge, the floating report panel on a click. */}
+              {/* Folio's updates (PRDCT-4832): present only while an update
+                  waits or a reading plays off screen. */}
+              <UpdateChip />
               <RoutineToolbar />
               <ToolbarSecretPopover />
               {/* Plugin contributions sit with the app's own toolbar controls, left of the

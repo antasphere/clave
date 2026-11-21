@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   announcement,
+  blockLabel,
+  chipShown,
   fileUpdate,
   nextToAnnounce,
   spokenName,
@@ -96,5 +98,39 @@ describe('updateName', () => {
   it('reads live: a rename shows at once', () => {
     const renamed = [{ name: 'Harbor', sessionIds: ['a'] }]
     expect(updateName('a', sessions, renamed).group).toBe('Harbor')
+  })
+})
+
+describe('chipShown', () => {
+  const list = fileUpdate(fileUpdate([], filed('a', 'p1', 1)), filed('b', 'p2', 2))
+  it('is absent with nothing waiting and nothing read off screen', () => {
+    expect(chipShown([], null)).toBeNull()
+    expect(
+      chipShown([], { sessionId: 'a', onScreen: true, reading: { state: 'playing' } })
+    ).toBeNull()
+  })
+  it('waiting names the oldest, with how many more', () => {
+    expect(chipShown(list, null)).toEqual({ state: 'waiting', sessionId: 'a', more: 1 })
+  })
+  it('an off-screen reading comes first, in its own state', () => {
+    for (const state of ['preparing', 'playing', 'paused'] as const)
+      expect(chipShown(list, { sessionId: 'c', onScreen: false, reading: { state } })).toEqual({
+        state,
+        sessionId: 'c',
+        more: 2
+      })
+  })
+  it('a reading on screen leaves the chip to the updates', () => {
+    expect(
+      chipShown(list, { sessionId: 'c', onScreen: true, reading: { state: 'playing' } })?.state
+    ).toBe('waiting')
+  })
+})
+
+describe('blockLabel', () => {
+  it('counts from one and never past the last block', () => {
+    expect(blockLabel({ tick: 0, blocks: 4 })).toBe('Block 1 of 4')
+    expect(blockLabel({ tick: 3, blocks: 4 })).toBe('Block 4 of 4')
+    expect(blockLabel({ tick: 9, blocks: 4 })).toBe('Block 4 of 4')
   })
 })

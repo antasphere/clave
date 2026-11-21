@@ -72,3 +72,28 @@ export function updateName(
 export function spokenName(name: { group: string | null; tab: string }): string {
   return name.group ?? name.tab
 }
+
+export type ChipState = 'waiting' | 'preparing' | 'playing' | 'paused'
+
+/** What the update chip shows, or null when it is not there: a reading in
+ *  progress whose page is not on screen first, else the oldest waiting
+ *  update and how many more wait. Pure. */
+export function chipShown(
+  updates: Update[],
+  current: {
+    sessionId: string
+    onScreen: boolean
+    reading: { state: 'preparing' | 'playing' | 'paused' }
+  } | null
+): { state: ChipState; sessionId: string; more: number } | null {
+  if (current && !current.onScreen)
+    return { state: current.reading.state, sessionId: current.sessionId, more: updates.length }
+  const oldest = updates[0]
+  return oldest ? { state: 'waiting', sessionId: oldest.sessionId, more: updates.length - 1 } : null
+}
+
+/** "Block n of m" for a reading's tick. Pure. */
+export function blockLabel(reading: { tick: number; blocks: number }): string {
+  const of = Math.max(1, reading.blocks)
+  return `Block ${Math.min(Math.max(0, reading.tick), of - 1) + 1} of ${of}`
+}
