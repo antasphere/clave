@@ -847,6 +847,65 @@ class OwnerTest {
     }
 
     @Test
+    fun `a listing that starts while a removal drops its cache sees the list from before or after it, never a mix`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        lists(machine, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        val writing = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        rawKv.beforeRemove = { key ->
+            if (key.endsWith(machinesCacheKey(machine.base))) {
+                writing.complete(Unit)
+                finish.await()
+            }
+        }
+        try {
+            val removing = scope.async { servicesA.removeAddress(machine.base) }
+            awaitGate("the removal to hold its cache removal", writing)
+            val reading = scope.async { servicesA.source.listing() }
+            delay(200)
+            rawKv.beforeRemove = null
+            finish.complete(Unit)
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            finish.complete(Unit)
+            rawKv.beforeRemove = null
+        }
+    }
+
+    @Test
+    fun `a listing queued on the address lock ahead of a removal is filtered by that removal`() = runBlocking {
+        val auth = signedIn("sub-a")
+        val a = storesOf(auth)
+        val servicesA = services(auth, a, defaultRelay = "")
+        lists(machine, "removed")
+        servicesA.addAddress(machine.base, "Removed")
+        servicesA.addressWork.lock.lock()
+        var unlocked = false
+        try {
+            val reading = scope.async { servicesA.source.listing() }
+            delay(300)
+            val removing = scope.async { servicesA.removeAddress(machine.base) }
+            delay(300)
+            servicesA.addressWork.lock.unlock()
+            unlocked = true
+            awaitGate("the removal to end", removing)
+            val listing = awaitGate("the listing to end", reading)
+            assertEquals(emptyList<String>(), listing.machines.map { it.id })
+            assertNull("no cache comes back for the removed address", a.kv.get(machinesCacheKey(machine.base)))
+            assertEquals(emptyList<MachineAddress>(), servicesA.addresses())
+        } finally {
+            if (!unlocked) servicesA.addressWork.lock.unlock()
+        }
+    }
+
+    @Test
     fun `an answer from before an address was removed and added again never stands for the new one`() = runBlocking {
         val release = java.util.concurrent.CountDownLatch(1)
         val asked = java.util.concurrent.atomic.AtomicInteger(0)
