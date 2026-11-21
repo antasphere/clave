@@ -18,7 +18,7 @@
 
    The mark (`WorkMark`) is the drawing's focal point alone, drawn from the
    same coordinates, for Folio's work dock: an agent's head (the ring and
-   the accent dot), a command's prompt (the chevron and the accent cursor
+   the accent dot), a command's prompt (the chevron, the line and the cursor
    dot). Closed and open, the dock shows one drawing at two sizes. */
 
 /** The agent's head, over its desk. */
@@ -66,8 +66,9 @@ export function WorkDrawing({
 }
 
 /** The drawing's focal point alone, cropped from the same coordinates: the
- *  head of an agent (a square), the prompt of a command (a short line: the
- *  chevron, a breath of space, the cursor dot). */
+ *  head of an agent (a square), the prompt of a command (the chevron, the
+ *  line being typed and the cursor dot, read as one glyph: without the line,
+ *  the chevron and the dot read as two marks in the pill). */
 export function WorkMark({
   kind,
   working
@@ -92,6 +93,7 @@ export function WorkMark({
       ) : (
         <>
           <path className="head" d={PROMPT.d} />
+          <line className="ln ln--c" x1="21" y1="19" x2="31" y2="19" />
           <circle className="dot dot--c work-pulse" cx={PROMPT.cx} cy={PROMPT.cy} r={PROMPT.dot} />
         </>
       )}
