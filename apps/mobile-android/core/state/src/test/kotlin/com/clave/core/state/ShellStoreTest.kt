@@ -105,7 +105,11 @@ class ShellStoreTest {
     fun anOlderMacIsUnsupportedAndItsEventsAskNothing() = runBlocking {
         older = true
         shell.refresh("m1")
-        until { m().overview is ShellRead.Unsupported && m().claudeUsage is ShellRead.Unsupported && m().serverInfo is ShellRead.Unsupported }
+        // Every part answered first: a read still on its way would be counted after the snapshot.
+        until {
+            listOf(m().overview, m().claudeAccounts, m().codexAccounts, m().claudeUsage, m().codexUsage, m().serverInfo)
+                .all { it is ShellRead.Unsupported }
+        }
         val asked = paths.size
         emit(ServerEvent.Unknown("usage.claude_read"))
         emit(ServerEvent.Unknown("sidebar.layout_changed"))
