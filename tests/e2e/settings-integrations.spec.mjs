@@ -165,6 +165,11 @@ export async function run(t) {
     const field = card.locator('[data-testid="elevenlabs-key-input"]')
     t.equal('the field is a password field', await field.getAttribute('type'), 'password')
     t.equal('nothing fills it in', await field.inputValue(), '')
+    // What the key must allow, said before one is pasted (PRDCT-4831).
+    const PERMISSIONS =
+      'On elevenlabs.io, the key needs Text to Speech and Voices: Read. User: Read is optional: with it, this card shows the plan and the credits.'
+    const permissions = card.locator('[data-testid="elevenlabs-key-permissions"]')
+    t.equal('the card says what the key must allow', await textOf(permissions), PERMISSIONS)
 
     // ── The good key: sealed, checked at once ──
     await paste(card, GOOD)
@@ -278,6 +283,11 @@ export async function run(t) {
 
     // ── A key restricted to the voices and the speech: a good key, no plan ──
     await card.locator('[data-testid="elevenlabs-replace"]').click()
+    t.equal(
+      'the field that replaces a key says it too',
+      await textOf(card.locator('[data-testid="elevenlabs-key-permissions"]')),
+      PERMISSIONS
+    )
     await paste(card, RESTRICTED)
     const accepted = await until(async () =>
       (await account.count()) ? (await textOf(account)) || null : null

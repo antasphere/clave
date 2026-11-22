@@ -9,6 +9,7 @@ import {
 import { SpeakerWaveIcon } from '@heroicons/react/24/outline'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
+  ELEVENLABS_KEY_PERMISSIONS,
   INTEGRATIONS_NEED_UPDATE,
   type ElevenLabsModelId,
   type ElevenLabsStatus
@@ -85,6 +86,9 @@ function KeyField({
           {onCancel
             ? `Takes the place of the key on ${machineName} once ElevenLabs accepts it.`
             : `Folio reads its pages aloud in the voice you choose. The key is sealed on ${machineName} and never shown again.`}
+        </p>
+        <p className="settings-row-description" data-testid="elevenlabs-key-permissions">
+          {ELEVENLABS_KEY_PERMISSIONS}
         </p>
         <input
           className="input-compact mt-2 w-full max-w-md"
