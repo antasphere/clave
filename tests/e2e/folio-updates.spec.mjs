@@ -162,7 +162,12 @@ export async function run(t) {
   }
   const waitSaid = (line, count = 1, tries = 200) =>
     until(async () => ((await said(win, line)) >= count ? true : null), { tries, gapMs: 50 })
-  const chipState = async () => ((await chip.count()) ? chip.getAttribute('data-state') : 'none')
+  // Read in one step: a chip leaving between a count and a read never hangs.
+  const chipState = () =>
+    win.evaluate(
+      () =>
+        document.querySelector('[data-testid="update-chip"]')?.getAttribute('data-state') ?? 'none'
+    )
   const waitChip = (state, tries = 200) =>
     until(async () => ((await chipState()) === state ? true : null), { tries, gapMs: 50 })
   const registered = () => app.evaluate(() => globalThis.__claveE2E.updatesKey.registered())
@@ -796,7 +801,7 @@ export async function run(t) {
       await w2.evaluate(
         ([sid, body]) =>
           window.electronAPI.sessionsWrite(sid, { type: 'user_message', text: body }),
-        [E, answer('Victor')]
+        [E, answer('Victor', 12)]
       )
       const chip2 = w2.locator('[data-testid="update-chip"]')
       await until(async () => ((await chip2.count()) ? true : null), { tries: 200 })
@@ -812,12 +817,13 @@ export async function run(t) {
 
       // A reading the person starts in window 2 stops window 1's.
       const n2 = await said(win, atlasLine)
-      await write(B, answer('Whiskey', 8))
+      await write(B, answer('Whiskey', 20))
       assert.ok(await waitSaid(atlasLine, n2 + 1), 'an update of B')
       // From window 1's own chip: the key would go to window 2, which holds
       // the oldest update.
       await chip.locator('.update-chip-play').click()
       t.check('window 1 reads', !!(await waitChip('playing')), await chipState())
+      const cancels1 = await win.evaluate(() => window.__cancels ?? 0)
       await chip2.locator('.update-chip-play').click()
       t.check(
         'window 2 reads',
@@ -828,13 +834,22 @@ export async function run(t) {
           }
         ))
       )
+      // Twenty blocks are far from their end: only the yield stops them now.
       t.check(
-        "and window 1's reading stops",
-        !!(await until(async () => ((await chipState()) === 'none' ? true : null))),
+        "and window 1's reading stops at once, its voice cancelled",
+        !!(await until(
+          async () =>
+            (await chipState()) === 'none' &&
+            (await win.evaluate(() => window.__cancels ?? 0)) > cancels1
+              ? true
+              : null,
+          { tries: 60, gapMs: 50 }
+        )),
         await chipState()
       )
       await w2.locator('[data-testid="update-chip"] .update-chip-text').click()
-      await w2.locator('[data-testid="update-card-stop"]').click()
+      if (await w2.locator('[data-testid="update-card-stop"]').count())
+        await w2.locator('[data-testid="update-card-stop"]').click()
       await until(async () => ((await chip2.count()) === 0 ? true : null))
 
       // Window 2 with an update, closed: the key is let go.
