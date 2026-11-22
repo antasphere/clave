@@ -22,7 +22,13 @@ import {
   type ResolvedKeymapConfig
 } from '../../../../shared/keymaps'
 import { saveKeymapOverrides, useKeymapStore } from '../../store/keymap-store'
-import { SettingsCallout, SettingsCard, SettingsPage, SettingsSection } from './primitives'
+import {
+  SettingsCallout,
+  SettingsCard,
+  SettingsPage,
+  SettingsSection,
+  ToggleRow
+} from './primitives'
 
 type EditorMode = 'actions' | 'json'
 
@@ -325,6 +331,8 @@ export function KeymapSettings(): React.JSX.Element {
         </SettingsCard>
       </SettingsSection>
 
+      <UpdateKeyEverywhere />
+
       <SettingsSection
         title="Bindings"
         description="A binding is keys or a mouse button: middle click, back or forward, with any modifiers. A session action bound to a mouse button acts on the sidebar row you click; bound to keys, on the focused session."
@@ -485,5 +493,39 @@ export function KeymapSettings(): React.JSX.Element {
         </button>
       </div>
     </SettingsPage>
+  )
+}
+
+/** Whether Folio's update key is held system-wide while an update waits or
+ *  plays (PRDCT-4832, `src/main/updates-key.ts`). */
+function UpdateKeyEverywhere(): React.JSX.Element | null {
+  const bridge = window.electronAPI?.updatesKeyEverywhere
+  const [on, setOn] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!bridge) return
+    let live = true
+    void bridge.get().then(
+      (value) => live && setOn(value),
+      () => live && setOn(true)
+    )
+    return () => {
+      live = false
+    }
+  }, [bridge])
+  if (!bridge || on === null) return null
+  return (
+    <SettingsSection title="Update key">
+      <SettingsCard>
+        <ToggleRow
+          label="The update key works in every app"
+          description="While an update waits or plays, its key is held system-wide, so it answers from any app. Off, it answers only inside Clave."
+          checked={on}
+          onChange={(value) => {
+            setOn(value)
+            void bridge.set(value).then(setOn, () => setOn(!value))
+          }}
+        />
+      </SettingsCard>
+    </SettingsSection>
   )
 }

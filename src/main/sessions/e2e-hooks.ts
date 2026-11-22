@@ -63,6 +63,9 @@ export interface E2eHooks {
   // Neither reaches the preload. ──
   forwards: ForwardRegistry
   openForward: (serverId: string, lease: string) => Promise<string>
+  // ── PRDCT-4832: the update key, never registered with the OS under test
+  // mode: the accelerators that would be held, and a press of the key. ──
+  updatesKey: { registered: () => string[]; press: () => boolean }
   // ── later lanes add theirs here ──
 }
 

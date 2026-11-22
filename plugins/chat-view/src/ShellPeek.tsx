@@ -17,14 +17,23 @@ const SLACK = 32
    end and leaves a reader who scrolled up where they are. */
 export function ShellPeek({
   agent,
+  onOpenChange,
   children
 }: {
   agent: SubAgent
+  /** Told when the window opens and closes (Folio's dock stays open under it). */
+  onOpenChange?: (open: boolean) => void
   children: ReactNode
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        onOpenChange?.(next)
+      }}
+    >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent
         side="top"

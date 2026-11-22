@@ -59,12 +59,16 @@ back rather than one of them staying unanswerable for the session's life. Transc
 mounted view's lifetime; disabling the plugin releases its subscription.
 
 The WORK RUNNING NOW — the subagents, and the commands left running in the
-background — is a strip of cards under the composer of both views
-(`src/WorkCards.tsx`): one card each, with a drawing of what it is
+background — is a strip of cards under the composer of the Chat and Terminal
+views (`src/WorkCards.tsx`; Folio draws the same work in its desk's corner,
+below): one card each, with a drawing of what it is
 (`src/WorkDrawing.tsx`, in the hand of the drop card's drawings, breathing
 while the work goes on), the type and the task or the command's title, and
 the figures (steps, the agent's own context, how long it has run, or how long
-it has been quiet). The cards are the one place that says it: the pane
+it has been quiet). What the strip and Folio's dock share — the time
+read, the quiet rule (`QUIET_MS`, a minute with no step), the fold
+(`LEAVE_MS`), a row's figures as data, the leaving rows and the one-second
+clock — is `src/work.ts`, tested. The cards are the one place that says it: the pane
 header's "in background" chip and the Terminal view's status-line count are
 gone (6 November 2026). Clicking a card opens a window onto its work: an
 agent's (`src/SubAgentPeek.tsx`) shows what it was asked, what it says and
@@ -231,17 +235,27 @@ and the agent's answer is written on the page as a
 document, and what the agent did on the way (calls, approvals) sits in the
 margin beside the paragraph it led to; a call in the margin opens to the
 transcript's own `ToolPanel`. A message sent before any answer joins the
-question it follows. The spine at the top has one tick per page, its height the
-length of the answer; the arrows (or Option and the arrows from an empty
-composer), the ticks and the contents turn pages, and the page being written is
+question it follows. The spine at the top holds, in order, Previous page and
+Next page side by side (PRDCT-4834), one tick per page, its height the length
+of the answer, the count and the contents; the arrows (or Option and the arrows
+from an empty composer), the two turn buttons, the ticks and the contents turn
+pages, and the page being written is
 followed until the reader turns away, with a way back while they are elsewhere.
 A finished page can be read aloud: the reading first asks for the page's spoken
 rendering, the answer rewritten by a helper to be heard (`spoken.ts`: no
 markdown, no code read out, the lists said as sentences, filed so a page read
 before is spoken at once), and speaks it; when none comes, it reads the page as
 written (`speech.ts` takes the markdown out and cuts the utterances) and the
-voice card says why. The speaker toggle in the composer's footer reads each new
-answer as it finishes.
+voice card says why. The speaker toggle in the composer's footer is the play
+mode: one switch for the whole app on this Mac, live in every Folio pane at once
+(`useUpdatesStore`'s `on`, kept in `localStorage['clave.folio.read-aloud']`).
+On the page, a new answer is read as it finishes; off the page, it becomes an
+update (below). A reading goes on when its page leaves the screen: another tab,
+another workspace, Settings or the terminal shown over it (the pane header's
+"Show terminal"); going back shows the same reading in place, the voice card
+playing and the block lit. A reading belongs to its Folio page, though: the
+tab's view switched to Chat or Terminal from the session menu, or the tab
+closed, stops it.
 
 The VOICE CARD (`src/lab/VoiceCard.tsx`, its words in `voice-card.ts`,
 PRDCT-4430) is the one place a person reads and drives the reading: in the
@@ -281,11 +295,114 @@ on a block reads from it, and the card's bar has one tick per block, a click
 or a drag (or the arrows) going to a block, with the time once known
 (`progress.ts`). A rendering filed before the blocks plays whole, nothing lit.
 
+The WORK DOCK (`src/lab/FolioWork.tsx`, PRDCT-4833) is the work running now
+in Folio, in the desk's bottom-right corner at the foot of the margin column
+whose head holds the voice card; in a book of pages the strip under the
+composer read as a second composer and pushed the page up each time an agent
+started. It is laid over the desk like the back pill, so nothing of the page
+or the composer moves by a pixel when work starts, changes or ends. Closed, it
+is a pill of paper holding one mark per running thing (the first four in the
+strip's order, then `+N`), no words: the marks are the drawings' own focal
+points (`WorkMark` beside `WorkDrawing`, from the same coordinates), an agent's
+head and a command's prompt, and they show the work running: the dot
+breathes at the strip's pace, an agent's head sends out a ring every other
+breath, a command's line is typed under a cursor that rides its end, each mark
+a step out of phase with its neighbour (transforms and opacity only, in the
+dock only: the strip's drawings stay still but for their breath); an agent
+quiet for a minute stills and its dot takes the warning colour. On
+approach it grows a card from its corner (a clip-path, never a width laid out
+again): the count in the Terminal view's words (`runningLabel` in
+`terminal-status.ts`: "2 agents · 1 command"), then a row per running thing
+with its full drawing (the same motion: the line on an agent's paper written
+again and again under its pulsing head), the type and the task, the last step
+or the command, and the figures (the model only once it is known, where the
+strip says "…"); the rows rise in once per opening, and many scroll inside a
+card held under 60% of the desk. A row opens the same window as the strip's
+card (`SubAgentPeek`, `ShellPeek`), with the same relaunch and its
+confirmation, and the card stays open under them. When it opens and closes is
+one reducer (`nextDock` in `src/lab/folio-work.ts`, with `dockMarks`, both
+tested): the pointer opens it after a beat and closes it a little after it has
+left; the keyboard's focus opens it; a click on the pill pins it and a second
+unpins it; Escape or a click elsewhere closes it, Escape giving the focus back
+to the pill; it never takes the focus by itself. Under reduced motion every
+state is simply there. The DOM carries `data-testid="folio-work"` with
+`data-open` (hover, focus, pinned), the pill, each mark (`data-kind`,
+`data-quiet`, `data-leaving`), the card and its rows, for
+`tests/e2e/folio-work.spec.mjs`, which holds all of it on the real app (the
+page and the composer measured to the pixel, the tab chosen again under the
+frame sampler of `chat-work-cards-reveal`, reduced motion, the spine's turn
+buttons); `tests/e2e/look/folio-work.spec.mjs` shoots it in the four themes.
+
 It keeps the same reducer, subscription order and composer as the Chat view
-(`src/lab/use-conversation.ts` mirrors its effect; the dock, attachments,
-menus and work cards are the shared components) and renders only the page on
+(`src/lab/use-conversation.ts` mirrors its effect; the prompt dock,
+attachments, menus and the windows onto the work are the shared components) and renders only the page on
 screen, so the copy mounted hidden behind another view costs a reducer and no
 rows. Its stylesheet is its own (`src/lab/folio.css`, imported by the view).
 Pages and speech are pure and tested (`src/lab/*.test.ts`). Not yet: the slash
 menu and the host's /resume, /mcp and /plugin panels (a typed command goes to
 the agent as text), and the pane's Find, which searches no page here.
+
+### The updates (PRDCT-4832)
+
+An **update** is a finished answer of a Folio tab the person was not on the page
+for. The rules, and where each lives:
+
+1. **A turn ends on the live stream only.** `useConversation` counts the turns
+   of the live stream (`turnEnds`, through `trackTurn` in `src/lab/turn-end.ts`:
+   a turn runs on a state change to working or blocked, or a main-thread text
+   or call; it ends on done or idle, `finishesTurn`'s rule). A tab's past
+   arriving, or a reconnect's replace, is never a turn. Only an answer that
+   ends `done` with words counts.
+2. **On the page, read; off the page, filed; never over a reading.**
+   `turnEndAction` decides: the pane on screen and the voice free (here and in
+   every other window) → read at once; the pane the tab's chosen view
+   (`active`) otherwise → filed as an update (one per tab, the newest:
+   `fileUpdate` in `src/renderer/src/lib/updates.ts`); else nothing. An answer
+   finished on its page while the voice is busy is filed `onPage`: once the
+   voice is free and its pane is still on screen, it is READ, never announced
+   to the person looking at it; if its pane has left the screen meanwhile, it
+   is an ordinary update. A hidden pane builds the page once, at that moment,
+   from the live conversation.
+3. **One voice at a time, across windows, one sentence.** The announcer
+   (`src/renderer/src/lib/updates-voice.ts`, started once by `AppShell`) says
+   nothing while a reading is in progress, paused included, or while another
+   window speaks (main tells each window, `updates:elsewhere`; a window's
+   status says `speaking` while it reads or says a line), and says ONE line
+   for every update not yet announced, in the oldest one's voice
+   (`announcementFor`: "I have an update for you on Atlas.", "I have 3
+   updates for you on Atlas.", "I have updates for you on Atlas and Harbor.").
+   The name is the tab's sidebar group, else the tab's own name, read live.
+   A line a reading cuts (`say` resolves `cut`) is said again once the voice
+   is free; a line nothing could say is not repeated. When a reading an update
+   started is heard to its end and updates still wait, they are all said
+   again. A reading the person starts in one window stops the reading of
+   any other (`updates:yield`). The pane's voice is `useReadAloud`'s `say`,
+   which never sets the reading.
+4. **An update leaves** when its reading starts (Stop does not put it back),
+   it is dismissed, a newer answer of its tab replaces it, its tab is closed,
+   the tab's view is switched away from Folio (no page is left to read or to
+   open), the pane comes on screen, or the play mode is switched off (the mode takes
+   its waiting updates with it; a reading in progress is the person's to
+   stop). Updates live in memory only; only the switch is kept, and another
+   window's change of it is followed (`followPlayMode`, on the `storage`
+   event).
+5. **The chip, the card and the key.** The chip (`components/updates/`) is in
+   the toolbar's right cluster while an update waits or a reading plays off
+   screen, FIRST in it: the cluster is laid out from the right, so the chip
+   arrives, grows and leaves at its left end and no other control moves under
+   the pointer. It never takes the focus. The card under it shows the reading in
+   progress (Play/Pause, Stop, Open, the voice card's bar) and the waiting
+   updates (Play, Open, Dismiss). The key `playUpdate` (`Ctrl+Shift+Space`)
+   plays the oldest update or pauses and resumes the reading; with nothing to
+   do it is left to the field or the terminal under it. Main routes it to the
+   window it concerns (the one playing, else the one holding the oldest
+   update) and holds it system-wide only while an update waits or plays,
+   following a keymap change at once and letting go when a window closes. Its
+   logic is a pure core with no Electron in it (`src/main/updates-key-core.ts`,
+   unit-tested), wired by `src/main/updates-key.ts`; Settings → Keymaps →
+   "The update key works in every app".
+
+The store is `src/renderer/src/store/updates-store.ts`; each pane registers its
+voice there while it is the chosen view. The specs: `tests/e2e/folio-updates.spec.mjs`
+(the real app, the echo adapter, the voice stubbed), the unit tests beside each
+file, and `tests/e2e/look/folio-updates.spec.mjs` for eyes.

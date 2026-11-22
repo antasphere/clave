@@ -27,7 +27,7 @@ import { macVoiceLine, stepSeconds, voiceCardState, voiceSource } from './voice-
  *  pen goes over the line while it is rewritten, the wave draws itself while
  *  the voice is created, and breathes while it plays; still otherwise, and
  *  still for a reader who asked for no motion. */
-function VoiceFigure(): React.JSX.Element {
+export function VoiceFigure(): React.JSX.Element {
   return (
     <svg viewBox="0 0 88 40" className="chat-drawing folio-voice-figure" aria-hidden="true">
       <line className="ln ln--thin" x1="1" y1="38" x2="87" y2="38" />
@@ -62,7 +62,7 @@ function VoiceFigure(): React.JSX.Element {
  *  light with the pointer and goes to the block it is let go on (one seek,
  *  one part asked: never one per tick crossed); the time read and the
  *  whole, once known. */
-function Scrub({
+export function Scrub({
   reading,
   pending,
   onSeek

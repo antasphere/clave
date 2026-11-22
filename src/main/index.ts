@@ -19,6 +19,7 @@ import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc-handlers'
+import { registerUpdatesKey, releaseUpdatesKey, updatesKeyBindingsChanged } from './updates-key'
 import { applyPersistedIcon } from './ipc-handlers/app-handlers'
 import { cleanupDroppedFiles } from './ipc-handlers/dropped-file-handlers'
 import {
@@ -698,7 +699,15 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  registerIpcHandlers({ onChanged: () => buildAppMenu({ openWindow }) })
+  registerIpcHandlers({
+    onChanged: () => {
+      buildAppMenu({ openWindow })
+      updatesKeyBindingsChanged()
+    }
+  })
+  // PRDCT-4832: the update key, held system-wide only while an update waits or plays.
+  registerUpdatesKey()
+  app.on('will-quit', () => releaseUpdatesKey())
   // Lane C of the harness wave (PRDCT-4496): the stored connections reach the spawn
   wireProviderConnections()
   registerWindowHandlers({ openWindow })
