@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { openChat } from './chat-view.spec.mjs'
-import { callMcp, seedWorkspaces, until } from './harness.mjs'
+import { openChat, selectChatView } from './chat-view.spec.mjs'
+import { callMcp, closeWindow, seedWorkspaces, until } from './harness.mjs'
 
 /* Folio's play mode and its updates (PRDCT-4832), on the real app with the
    echo adapter (the agent answers with the reader's own words) and the
@@ -38,6 +38,14 @@ import { callMcp, seedWorkspaces, until } from './harness.mjs'
    past arriving is never a turn is pinned in `lab/use-conversation.test.ts`:
    the harness cannot mount a Folio pane again over a finished conversation
    (a reload drops the echo tabs).
+   And the verifier's round 1: a click on the chip never moves the focus
+   (M7); a keymap change is held at once (M2); an answer that waited on its
+   page is read once the voice is free, never announced (F4); a reading and
+   an update leave with their Folio page when the tab's view is switched
+   (F1); a tab closed mid-reading takes the reading with it (M5); and with a
+   second window: the switch is one choice for both (F3), one voice at a
+   time across them, a reading the person starts in one stops the other's
+   (F2), and a closed window lets go of the key (M1).
    The key is never registered with the OS under the harness
    (`--test-no-activate`); every name and every answer here is invented. */
 
@@ -88,6 +96,7 @@ async function stubVoice(win) {
         )
       },
       cancel() {
+        window.__cancels = (window.__cancels ?? 0) + 1
         window.__cancelledBefore = window.__spoken.length
         window.__voiceFree = 0
       },
@@ -496,6 +505,163 @@ export async function run(t) {
     await until(async () => ((await chipState()) === 'none' ? true : null))
     await win.evaluate(() => window.electronAPI.updatesKeyEverywhere.set(true))
 
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const inComposer = (id) =>
+      win.evaluate(
+        (sid) =>
+          document.activeElement?.tagName === 'TEXTAREA' &&
+          !!document.activeElement.closest(`[data-session-id="${sid}"]`),
+        id
+      )
+    const stopAll = async () => {
+      if ((await chipState()) === 'none') return
+      await openCard()
+      if (await win.locator('[data-testid="update-card-stop"]').count())
+        await win.locator('[data-testid="update-card-stop"]').click()
+      for (let i = 0; i < 5 && (await rows.count()); i++)
+        await rows.locator('[data-testid="update-row-dismiss"]').first().click()
+      await until(async () => ((await chipState()) === 'none' ? true : null))
+    }
+
+    // ── 10. A click on the chip never moves the focus (M7) ──
+    {
+      const n = await said(win, atlasLine)
+      await composerA.click()
+      await write(B, answer('Lima', 3))
+      assert.ok(await waitSaid(atlasLine, n + 1), 'an update of B')
+      await chip.locator('.update-chip-play').click()
+      await waitChip('playing')
+      t.check('a click on the chip’s play leaves the focus in the composer', await inComposer(A))
+      await chip.locator('.update-chip-text').click()
+      t.check('a click on the chip’s words leaves the focus in the composer', await inComposer(A))
+      await stopAll()
+    }
+
+    // ── 11. A keymap change is held at once (M2) ──
+    {
+      const n = await said(win, atlasLine)
+      await write(B, answer('Mike'))
+      assert.ok(await waitSaid(atlasLine, n + 1), 'an update of B')
+      t.equal(
+        'held under the default',
+        JSON.stringify(await registered()),
+        JSON.stringify([ACCELERATOR])
+      )
+      await win.evaluate(() =>
+        window.electronAPI.keymapsSave({ version: 1, bindings: { playUpdate: ['Mod+Shift+L'] } })
+      )
+      t.equal(
+        'a new binding saved: the new accelerator is held at once, the old one gone',
+        JSON.stringify(await registered()),
+        '["Command+Shift+L"]'
+      )
+      await win.evaluate(() => window.electronAPI.keymapsSave({ version: 1 }))
+      t.equal(
+        'the default put back',
+        JSON.stringify(await registered()),
+        JSON.stringify([ACCELERATOR])
+      )
+      await stopAll()
+    }
+
+    // ── 12. An answer that waited on its page is read, never announced (F4) ──
+    {
+      await focus(A)
+      const n = await said(win, atlasLine)
+      await write(B, answer('November', 4))
+      assert.ok(await waitSaid(atlasLine, n + 1), 'an update of B')
+      await win.keyboard.press('Control+Shift+Space')
+      await waitChip('playing')
+      await write(A, answer('Oscar'))
+      const cardA = pane(A).locator('[data-testid="folio-voice-card"]')
+      t.check(
+        "once B's reading ends, A's answer, finished on its page meanwhile, is read",
+        !!(await until(
+          async () =>
+            (await spoken(win)).some((x) => x.includes('Oscar block 1')) &&
+            (await cardA.getAttribute('data-voice-state')) === 'playing'
+              ? true
+              : null,
+          { tries: 300, gapMs: 50 }
+        )),
+        await spoken(win)
+      )
+      const order = await spoken(win)
+      t.check(
+        "after B's last block",
+        order.findIndex((x) => x.includes('Oscar block 1')) >
+          order.findLastIndex((x) => x.includes('November block 4')),
+        order
+      )
+      t.equal("the line naming A's group was never said for it", await said(win, atlasLine), n + 1)
+      t.equal('no chip is left for A', await chipState(), 'none')
+      await cardA.locator('[data-testid="folio-stop"]').click()
+    }
+
+    // ── 13. A reading and an update leave with their Folio page (F1) ──
+    {
+      await focus(A)
+      const n = await said(win, atlasLine)
+      await write(B, answer('Papa', 10))
+      assert.ok(await waitSaid(atlasLine, n + 1), 'an update of B')
+      await win.keyboard.press('Control+Shift+Space')
+      await waitChip('playing')
+      const cancels = await win.evaluate(() => window.__cancels ?? 0)
+      await focus(B)
+      await selectChatView(win, B, 'chat')
+      await focus(A)
+      t.check(
+        "the tab's view switched to Chat mid-reading: the voice is cancelled",
+        !!(await until(async () =>
+          (await win.evaluate(() => window.__cancels ?? 0)) > cancels ? true : null
+        ))
+      )
+      t.equal('the chip is gone', await chipState(), 'none')
+      t.check(
+        'the key is let go',
+        !!(await until(async () => ((await registered()).length === 0 ? true : null))),
+        await registered()
+      )
+      await win.keyboard.press('Control+Shift+Space')
+      await sleep(800)
+      t.equal('and the key does nothing more', await chipState(), 'none')
+      await callMcp(app, 'focus', { sessionId: B })
+      await selectChatView(win, B, 'lab')
+      await pane(B).locator('textarea[aria-label="Message"]').waitFor({ state: 'visible' })
+
+      // An update waiting for a tab whose view is then switched leaves: B on
+      // screen while another reading holds the voice files one (F4), then
+      // B's view goes to Chat.
+      await focus(A)
+      const m = await said(win, harborLine)
+      await write(C, answer('Quebec', 8))
+      assert.ok(await waitSaid(harborLine, m + 1), 'an update of C')
+      await win.keyboard.press('Control+Shift+Space')
+      await waitChip('playing')
+      await focus(B)
+      await write(B, answer('Romeo'))
+      await openCard()
+      const rowB = win.locator(`[data-testid="update-row"][data-session-id="${B}"]`)
+      t.check(
+        'B on screen, the voice busy: its answer waits in the card',
+        !!(await until(async () => ((await rowB.count()) === 1 ? true : null), { tries: 200 }))
+      )
+      await chip.locator('.update-chip-text').click()
+      await until(async () => ((await card.count()) === 0 ? true : null))
+      await selectChatView(win, B, 'chat')
+      await openCard()
+      t.check(
+        "B's view switched to Chat: its update leaves",
+        !!(await until(async () => ((await rowB.count()) === 0 ? true : null)))
+      )
+      await chip.locator('.update-chip-text').click()
+      await until(async () => ((await card.count()) === 0 ? true : null))
+      await sleep(500)
+      await selectChatView(win, B, 'lab')
+      await focus(A)
+      await stopAll()
+    }
+
     // ── 9. The play mode off: its waiting update goes with it, then
     //       nothing is filed and nothing said ──
     await write(C, answer('India'))
@@ -526,6 +692,170 @@ export async function run(t) {
     await new Promise((resolve) => setTimeout(resolve, 4_000))
     t.equal('nothing was said', (await spoken(win)).length, before)
     t.equal('nothing was filed: no chip', await chipState(), 'none')
+
+    // ── 14. A tab closed mid-reading takes the reading with it (M5) ──
+    await toggle.click()
+    t.equal('the switch is on again', await toggle.getAttribute('aria-pressed'), 'true')
+    {
+      const m = await said(win, harborLine)
+      await write(C, answer('Sierra', 10))
+      assert.ok(await waitSaid(harborLine, m + 1), 'an update of C')
+      await win.keyboard.press('Control+Shift+Space')
+      await waitChip('playing')
+      await callMcp(app, 'closeSession', { sessionId: C })
+      t.check(
+        'C closed mid-reading: the chip is gone',
+        !!(await until(async () => ((await chipState()) === 'none' ? true : null))),
+        await chipState()
+      )
+      t.check(
+        'the key is let go',
+        !!(await until(async () => ((await registered()).length === 0 ? true : null))),
+        await registered()
+      )
+      const n = await said(win, atlasLine)
+      await write(B, answer('Tango'))
+      t.check('and the next update is still announced', !!(await waitSaid(atlasLine, n + 1)))
+      await stopAll()
+    }
+
+    // ── 15. A second window: one switch, one voice, a closed window (F3, F2, M1) ──
+    {
+      const before = app.windows().length
+      await win.evaluate(() => window.electronAPI.windowOpen())
+      const w2 = await until(
+        async () => (app.windows().length > before ? app.windows().at(-1) : null),
+        {
+          tries: 80,
+          gapMs: 250
+        }
+      )
+      assert.ok(w2, 'a second window opened')
+      await w2.waitForSelector('html[data-boot="complete"], html[data-boot="restore-prompt"]', {
+        timeout: 30_000
+      })
+      const w2id = await app.evaluate(({ BrowserWindow }) =>
+        Math.max(...BrowserWindow.getAllWindows().map((w) => w.id))
+      )
+      const open2 = async (known) => {
+        await w2.locator('.launcher-split .launcher-btn').click()
+        const next = await until(
+          async () =>
+            (await w2.evaluate(() => window.electronAPI.sessionsList())).find(
+              (x) => x.adapterId === 'echo' && !known.includes(x.id)
+            ),
+          { tries: 80, gapMs: 250 }
+        )
+        assert.ok(next, 'a tab in window 2')
+        await w2
+          .locator(
+            `[data-session-id="${next.id}"] [data-testid="folio-view"] textarea:not(:disabled)`
+          )
+          .waitFor({ timeout: 20_000 })
+        return next.id
+      }
+      const D = await open2([A, B, C])
+      const E = await open2([A, B, C, D])
+      await callMcp(app, 'rename', { target: 'session', id: E, name: 'Juniper' }, 10_000, w2id)
+      await callMcp(app, 'focus', { sessionId: D }, 10_000, w2id)
+      const pane2 = (id) => w2.locator(`[data-session-id="${id}"] [data-testid="folio-view"]`)
+      await pane2(D).locator('textarea[aria-label="Message"]').waitFor({ state: 'visible' })
+      await stubVoice(w2)
+      const toggle2 = pane2(D).locator('.folio-voice-toggle')
+      t.equal(
+        'window 2 opens with the switch on',
+        await toggle2.getAttribute('aria-pressed'),
+        'true'
+      )
+      await toggle.click()
+      t.check(
+        'the switch turned off in window 1 reads off in window 2',
+        !!(await until(async () =>
+          (await toggle2.getAttribute('aria-pressed')) === 'false' ? true : null
+        )),
+        await toggle2.getAttribute('aria-pressed')
+      )
+      await toggle.click()
+      t.check(
+        'and on again',
+        !!(await until(async () =>
+          (await toggle2.getAttribute('aria-pressed')) === 'true' ? true : null
+        )),
+        await toggle2.getAttribute('aria-pressed')
+      )
+
+      // Window 1 reads; window 2's update waits for it.
+      const n = await said(win, atlasLine)
+      await write(B, answer('Uniform', 6))
+      assert.ok(await waitSaid(atlasLine, n + 1), 'an update of B')
+      await win.keyboard.press('Control+Shift+Space')
+      await waitChip('playing')
+      const juniper = 'I have an update for you on Juniper.'
+      const w2said = () =>
+        w2.evaluate((l) => window.__spoken.filter((x) => x === l).length, juniper)
+      await w2.evaluate(
+        ([sid, body]) =>
+          window.electronAPI.sessionsWrite(sid, { type: 'user_message', text: body }),
+        [E, answer('Victor')]
+      )
+      const chip2 = w2.locator('[data-testid="update-chip"]')
+      await until(async () => ((await chip2.count()) ? true : null), { tries: 200 })
+      await sleep(UTTERANCE_MS * 2)
+      t.equal('nothing is said in window 2 while window 1 reads', await w2said(), 0)
+      t.equal('window 1 still reads', await chipState(), 'playing')
+      await stopAll()
+      t.check(
+        "window 1's reading over, window 2 says its line",
+        !!(await until(async () => ((await w2said()) >= 1 ? true : null), { tries: 200 })),
+        await w2.evaluate(() => window.__spoken)
+      )
+
+      // A reading the person starts in window 2 stops window 1's.
+      const n2 = await said(win, atlasLine)
+      await write(B, answer('Whiskey', 8))
+      assert.ok(await waitSaid(atlasLine, n2 + 1), 'an update of B')
+      // From window 1's own chip: the key would go to window 2, which holds
+      // the oldest update.
+      await chip.locator('.update-chip-play').click()
+      t.check('window 1 reads', !!(await waitChip('playing')), await chipState())
+      await chip2.locator('.update-chip-play').click()
+      t.check(
+        'window 2 reads',
+        !!(await until(
+          async () => ((await chip2.getAttribute('data-state')) === 'playing' ? true : null),
+          {
+            tries: 200
+          }
+        ))
+      )
+      t.check(
+        "and window 1's reading stops",
+        !!(await until(async () => ((await chipState()) === 'none' ? true : null))),
+        await chipState()
+      )
+      await w2.locator('[data-testid="update-chip"] .update-chip-text').click()
+      await w2.locator('[data-testid="update-card-stop"]').click()
+      await until(async () => ((await chip2.count()) === 0 ? true : null))
+
+      // Window 2 with an update, closed: the key is let go.
+      await w2.evaluate(
+        ([sid, body]) =>
+          window.electronAPI.sessionsWrite(sid, { type: 'user_message', text: body }),
+        [E, answer('Xray')]
+      )
+      await until(async () => ((await chip2.count()) ? true : null), { tries: 200 })
+      t.equal(
+        'window 2 holds an update: the key is held',
+        JSON.stringify(await registered()),
+        JSON.stringify([ACCELERATOR])
+      )
+      await closeWindow(app, w2)
+      t.check(
+        'window 2 closed: the key is let go',
+        !!(await until(async () => ((await registered()).length === 0 ? true : null))),
+        await registered()
+      )
+    }
   } finally {
     await chat.close()
   }
