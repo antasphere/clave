@@ -20,7 +20,15 @@ const saying: UpdatesStatus = { active: true, playing: false, speaking: true, ol
 const quiet: UpdatesStatus = { active: false, playing: false, speaking: false, oldestAt: null }
 
 /** The core over fakes: what the OS holds, and what each window was sent. */
-function harness(options: { everywhere?: boolean; gone?: number[] } = {}) {
+interface Harness {
+  key: ReturnType<typeof createUpdatesKey>
+  os: Set<string>
+  sent: { id: number; message: WindowMessage }[]
+  rebind: (bindings: string[]) => void
+  setEverywhere: (value: boolean) => boolean
+  to: (id: number, channel: WindowMessage['channel']) => WindowMessage[]
+}
+function harness(options: { everywhere?: boolean; gone?: number[] } = {}): Harness {
   const os = new Set<string>()
   const sent: { id: number; message: WindowMessage }[] = []
   let config: ResolvedKeymapConfig = resolveKeymapConfig()
