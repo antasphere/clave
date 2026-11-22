@@ -16,13 +16,15 @@ import {
 const filed = (
   sessionId: string,
   pageKey: string,
-  at: number
+  at: number,
+  onPage = false
 ): Omit<Update, 'id' | 'announced'> => ({
   sessionId,
   pageKey,
   markdown: `Answer of ${sessionId} ${pageKey}`,
   title: `Title ${pageKey}`,
-  at
+  at,
+  onPage
 })
 
 describe('fileUpdate', () => {
@@ -162,5 +164,15 @@ describe('announcementFor: several updates, one sentence', () => {
     expect(announcementFor(['Atlas.', 'Harbor!'], 2)).toBe(
       'I have updates for you on Atlas and Harbor.'
     )
+  })
+})
+
+describe('onPage (F4)', () => {
+  it('is kept as filed, and a replacement carries its own', () => {
+    let list = fileUpdate([], filed('a', 'p1', 1, true))
+    expect(list[0].onPage).toBe(true)
+    list = fileUpdate(list, filed('a', 'p2', 2, false))
+    expect(list).toHaveLength(1)
+    expect(list[0].onPage).toBe(false)
   })
 })

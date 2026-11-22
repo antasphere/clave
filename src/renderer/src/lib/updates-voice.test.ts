@@ -27,13 +27,22 @@ const store = useUpdatesStore.getState
 const filed = (
   sessionId: string,
   pageKey: string,
-  at = 1
-): { sessionId: string; pageKey: string; markdown: string; title: string; at: number } => ({
+  at = 1,
+  onPage = false
+): {
+  sessionId: string
+  pageKey: string
+  markdown: string
+  title: string
+  at: number
+  onPage: boolean
+} => ({
   sessionId,
   pageKey,
   markdown: `Answer ${pageKey}`,
   title: `Title ${pageKey}`,
-  at
+  at,
+  onPage
 })
 const NAMES: Record<string, { group: string | null; tab: string }> = {
   a: { group: 'Atlas', tab: 'Notes' },
@@ -55,6 +64,7 @@ function voice(answers: SayResult[] = []): VoiceControls & {
     resume: () => undefined,
     stop: () => undefined,
     seekBlock: () => undefined,
+    onScreen: () => false,
     say: (text) => {
       said.push(text)
       const next = answers.shift()
@@ -333,25 +343,100 @@ describe('one sentence, a cut line', () => {
 })
 
 describe('the status main is told', () => {
-  it('active while an update waits or a reading plays; the oldest time', async () => {
-    expect(reports.at(-1)).toEqual({ active: false, playing: false, oldestAt: null })
-    registerVoice('a', voice(['said']))
-    store().file(filed('a', 'p1', 42))
-    await flush()
-    expect(reports.at(-1)).toEqual({ active: true, playing: false, oldestAt: 42 })
-    store().play('a|p1')
-    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: null, reading, onScreen: false })
-    expect(reports.at(-1)).toEqual({ active: true, playing: true, oldestAt: null })
-    store().ended('a', 'p1', 'heard')
-    expect(reports.at(-1)).toEqual({ active: false, playing: false, oldestAt: null })
-  })
-
-  it('updatesStatus is pure', () => {
-    expect(updatesStatus({ updates: [], current: null })).toEqual({
+  it('active while an update waits or a reading plays; the oldest time; speaking', async () => {
+    expect(reports.at(-1)).toEqual({
       active: false,
       playing: false,
+      speaking: false,
       oldestAt: null
     })
+    const a = voice()
+    registerVoice('a', a)
+    store().file(filed('a', 'p1', 42))
+    await flush()
+    // The line is being said: speaking, not playing.
+    expect(reports.at(-1)).toEqual({ active: true, playing: false, speaking: true, oldestAt: 42 })
+    a.pending[0]('said')
+    await flush()
+    expect(reports.at(-1)).toEqual({ active: true, playing: false, speaking: false, oldestAt: 42 })
+    store().play('a|p1')
+    store().publish('a', { sessionId: 'a', pageKey: 'p1', title: null, reading, onScreen: false })
+    expect(reports.at(-1)).toEqual({ active: true, playing: true, speaking: true, oldestAt: null })
+    store().ended('a', 'p1', 'heard')
+    expect(reports.at(-1)).toEqual({
+      active: false,
+      playing: false,
+      speaking: false,
+      oldestAt: null
+    })
+  })
+
+  it('updatesStatus reports the OLDEST waiting update, which routes the key (M3)', () => {
+    const older = { ...filed('a', 'p1', 10), id: 'a|p1', announced: true }
+    const newer = { ...filed('b', 'p2', 30), id: 'b|p2', announced: true }
+    expect(updatesStatus({ updates: [older, newer], current: null })).toEqual({
+      active: true,
+      playing: false,
+      speaking: false,
+      oldestAt: 10
+    })
+    expect(updatesStatus({ updates: [], current: null }, true).speaking).toBe(true)
+  })
+})
+
+describe('an answer that waited on its page (F4)', () => {
+  const onPageVoice = (onScreen: boolean): ReturnType<typeof voice> & { reads: string[] } => {
+    const v = voice(['said'])
+    const reads: string[] = []
+    return { ...v, onScreen: () => onScreen, read: (key: string) => void reads.push(key), reads }
+  }
+
+  it('on screen and the voice free: read at once, nothing said', async () => {
+    const a = onPageVoice(true)
+    registerVoice('a', a)
+    store().publish('x', { sessionId: 'x', pageKey: 'p', title: 'x', reading, onScreen: false })
+    store().file(filed('a', 'p1', 1, true))
+    await flush()
+    expect(a.reads).toEqual([])
+    store().ended('x', 'p', 'heard')
+    await flush()
+    expect(a.reads).toEqual(['p1'])
+    expect(a.said).toEqual([])
+    expect(store().updates).toEqual([])
+  })
+
+  it('its pane gone off screen: an ordinary update, announced', async () => {
+    const a = onPageVoice(false)
+    registerVoice('a', a)
+    store().file(filed('a', 'p1', 1, true))
+    await flush()
+    expect(a.reads).toEqual([])
+    expect(a.said).toEqual(['I have an update for you on Atlas.'])
+  })
+
+  it('a reading in progress: neither read nor said', async () => {
+    const a = onPageVoice(true)
+    registerVoice('a', a)
+    store().publish('x', { sessionId: 'x', pageKey: 'p', title: 'x', reading, onScreen: false })
+    store().file(filed('a', 'p1', 1, true))
+    await flush()
+    expect(a.reads).toEqual([])
+    expect(a.said).toEqual([])
+  })
+})
+
+describe('another window speaking (F2)', () => {
+  it('nothing is said while it speaks; its end pumps', async () => {
+    const a = voice(['said'])
+    registerVoice('a', a)
+    store().setElsewhere(true)
+    store().file(filed('a', 'p1'))
+    vi.advanceTimersByTime(BUSY_RETRY_MS * 5)
+    await flush()
+    expect(a.said).toEqual([])
+    store().setElsewhere(false)
+    await flush()
+    expect(a.said).toEqual(['I have an update for you on Atlas.'])
   })
 })
 

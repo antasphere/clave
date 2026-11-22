@@ -21,18 +21,26 @@ export const BUSY_RETRY_MS = 1_000
 export interface UpdatesStatus {
   active: boolean
   playing: boolean
+  /** A reading is in progress or a line is being said: one voice at a time
+   *  across windows. */
+  speaking: boolean
   oldestAt: number | null
 }
 
-/** The status main is told. Pure. */
-export function updatesStatus(state: {
-  updates: Update[]
-  current: unknown | null
-}): UpdatesStatus {
+/** The status main is told: `oldestAt` the OLDEST waiting update's time (the
+ *  list keeps them oldest first), which routes the key. Pure. */
+export function updatesStatus(
+  state: { updates: Update[]; current: unknown | null },
+  saying = false
+): UpdatesStatus {
   return {
     active: state.updates.length > 0 || state.current !== null,
     playing: state.current !== null,
-    oldestAt: state.updates[0]?.at ?? null
+    speaking: state.current !== null || saying,
+    oldestAt: state.updates.reduce<number | null>(
+      (oldest, u) => (oldest === null || u.at < oldest ? u.at : oldest),
+      null
+    )
   }
 }
 
@@ -129,9 +137,17 @@ export function startUpdatesVoice(deps: UpdatesVoiceDeps = {}): () => void {
   const pump = (): void => {
     if (stopped || saying) return
     const state = store.getState()
-    // A reading in progress, paused included, holds the voice: its end (the
-    // store's change to `current: null`) pumps again, so nothing polls here.
-    if (state.current !== null || !state.on) return
+    // A reading in progress, paused included, holds the voice, and so does
+    // another window speaking: their end (the store's change to `current:
+    // null` or `elsewhere: false`) pumps again, so nothing polls here.
+    if (state.current !== null || state.elsewhere || !state.on) return
+    // An answer that waited on its page while the voice was busy is read now,
+    // never announced to the person looking at it.
+    const onPage = state.updates.find((u) => u.onPage && voiceOf(u.sessionId)?.onScreen())
+    if (onPage) {
+      state.play(onPage.id)
+      return
+    }
     const oldest = nextToAnnounce(state.updates)
     if (!oldest) return
     const voice = voiceOf(oldest.sessionId)
@@ -143,6 +159,7 @@ export function startUpdatesVoice(deps: UpdatesVoiceDeps = {}): () => void {
     const line = lineFor(state.updates, (id) => spokenName(nameOf(id)))
     if (!line) return
     saying = true
+    send()
     void voice
       .say(line.text)
       .catch(() => 'failed' as const)
@@ -150,6 +167,7 @@ export function startUpdatesVoice(deps: UpdatesVoiceDeps = {}): () => void {
         if (stopped) return
         if (result === 'busy' || result === 'cut') {
           saying = false
+          send()
           // Not heard: said once the voice is free. A reading took it (the
           // store's `current` pumps at its end); else a short wait.
           if (result === 'busy' && store.getState().current === null) {
@@ -167,13 +185,14 @@ export function startUpdatesVoice(deps: UpdatesVoiceDeps = {}): () => void {
         const still = line.ids.filter((id) => now.updates.some((u) => u.id === id))
         for (const id of still) now.markAnnounced(id, true)
         saying = false
+        send()
         if (still.length) openBanner()
         pump()
       })
   }
 
   const send = (): void => {
-    const status = updatesStatus(store.getState())
+    const status = updatesStatus(store.getState(), saying)
     const key = JSON.stringify(status)
     if (key === reported) return
     reported = key

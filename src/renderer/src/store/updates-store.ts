@@ -26,6 +26,8 @@ export interface VoiceControls {
   stop: () => void
   seekBlock: (n: number) => void
   say: (text: string) => Promise<SayResult>
+  /** The pane is on screen now. */
+  onScreen: () => boolean
 }
 
 /** The reading in progress in this window. */
@@ -56,6 +58,10 @@ interface UpdatesState {
   current: CurrentReading | null
   cardOpen: CardOpen
   lastEnd: ReadingEnd | null
+  /** Another window is speaking (a reading or a line): one voice at a time
+   *  across windows, told by main. */
+  elsewhere: boolean
+  setElsewhere: (elsewhere: boolean) => void
   setOn: (on: boolean) => void
   file: (next: Omit<Update, 'id' | 'announced'>) => void
   dismiss: (id: string) => void
@@ -115,6 +121,8 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => ({
   current: null,
   cardOpen: null,
   lastEnd: null,
+  elsewhere: false,
+  setElsewhere: (elsewhere) => set((s) => (s.elsewhere === elsewhere ? s : { elsewhere })),
   setOn: (on) => {
     // Switched off, the mode takes its waiting updates with it: nothing is
     // left to announce or to offer. A reading in progress is the person's
@@ -246,6 +254,7 @@ export function resetUpdates(): void {
     updates: [],
     current: null,
     cardOpen: null,
-    lastEnd: null
+    lastEnd: null,
+    elsewhere: false
   })
 }

@@ -12,13 +12,22 @@ const store = useUpdatesStore.getState
 const filed = (
   sessionId: string,
   pageKey: string,
-  at = 1
-): { sessionId: string; pageKey: string; markdown: string; title: string; at: number } => ({
+  at = 1,
+  onPage = false
+): {
+  sessionId: string
+  pageKey: string
+  markdown: string
+  title: string
+  at: number
+  onPage: boolean
+} => ({
   sessionId,
   pageKey,
   markdown: `Answer ${sessionId} ${pageKey}`,
   title: `Title ${pageKey}`,
-  at
+  at,
+  onPage
 })
 
 function fakeVoice(): VoiceControls & { calls: string[] } {
@@ -30,7 +39,8 @@ function fakeVoice(): VoiceControls & { calls: string[] } {
     resume: () => void calls.push('resume'),
     stop: () => void calls.push('stop'),
     seekBlock: (n) => void calls.push(`seek ${n}`),
-    say: async () => 'said'
+    say: async () => 'said',
+    onScreen: () => false
   }
 }
 

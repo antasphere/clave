@@ -760,6 +760,17 @@ export function AppShell(): React.JSX.Element {
     () => window.electronAPI?.onUpdatesToggle?.(() => void useUpdatesStore.getState().toggle()),
     []
   )
+  // One voice at a time across windows: main says whether another window is
+  // speaking, and asks this one to yield when the person starts a reading
+  // in another.
+  useEffect(
+    () =>
+      window.electronAPI?.onUpdatesElsewhere?.((speaking) =>
+        useUpdatesStore.getState().setElsewhere(speaking)
+      ),
+    []
+  )
+  useEffect(() => window.electronAPI?.onUpdatesYield?.(() => useUpdatesStore.getState().stop()), [])
 
   // The weight of every tree's row rules, as a multiplier on the theme's own
   // --rule-alpha. One property on the root element is the whole mechanism: the

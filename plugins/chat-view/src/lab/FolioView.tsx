@@ -918,7 +918,8 @@ export function FolioView({
       visible: now.visible,
       active: now.active,
       on: now.autoRead,
-      busy: useUpdatesStore.getState().current !== null
+      // The voice is busy here, or in another window: never read over it.
+      busy: useUpdatesStore.getState().current !== null || useUpdatesStore.getState().elsewhere
     })
     if (!last || action === 'nothing') return
     if (action === 'read') read(last.key, last.spoken)
@@ -928,16 +929,22 @@ export function FolioView({
         pageKey: last.key,
         markdown: last.spoken,
         title: now.titleOf(last),
-        at: Date.now()
+        at: Date.now(),
+        // On the page while the voice was busy: read once it is free, never
+        // announced to the person looking at it.
+        onPage: now.visible
       })
   }, [turnEnds, read, session.id])
   // The pane's voice, while the pane is the tab's chosen view: the chip, the
   // card and the key drive it from anywhere in the window.
   const voiceNow = useRef(voice)
   voiceNow.current = voice
+  const visibleNow = useRef(visible)
+  visibleNow.current = visible
   useEffect(() => {
     if (!active) return
     return registerVoice(session.id, {
+      onScreen: () => visibleNow.current,
       read: (key, markdown) => voiceNow.current.read(key, markdown),
       pause: () => voiceNow.current.pause(),
       resume: () => voiceNow.current.resume(),
@@ -945,6 +952,15 @@ export function FolioView({
       seekBlock: (n) => voiceNow.current.seekBlock(n),
       say: (text) => voiceNow.current.say(text)
     })
+  }, [active, session.id])
+  // A reading belongs to its Folio page: the tab's view switched away from
+  // Folio (Chat, Terminal), the reading stops and the update leaves, since
+  // there is no page left to read or to open. The pane header's "Show
+  // terminal" is not that: the view stays chosen and the reading goes on.
+  useEffect(() => {
+    if (active) return
+    voiceNow.current.stop()
+    useUpdatesStore.getState().clearSession(session.id)
   }, [active, session.id])
   // The person is on the page: its update has been seen.
   useEffect(() => {

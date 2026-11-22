@@ -17,6 +17,10 @@ export interface Update {
   title: string
   at: number
   announced: boolean
+  /** Its pane was on screen when it was filed (the voice was busy): read
+   *  once the voice is free while the pane is still on screen, never
+   *  announced to the person looking at it. */
+  onPage: boolean
 }
 
 export const updateId = (sessionId: string, pageKey: string): string => `${sessionId}|${pageKey}`
