@@ -159,6 +159,7 @@
     "overscroll-bounce.spec.mjs": 6,
     "pane-header-status.spec.mjs": 8,
     "panel-shared-expansion.spec.mjs": 44,
+    "pin-group.spec.mjs": 20,
     "plugin-context-windows.spec.mjs": 9,
     "plugin-provider.spec.mjs": 13,
     "plugin-surface-view.spec.mjs": 48,

@@ -22,7 +22,13 @@ import {
 interface GroupPickerDialogProps {
   onClose: () => void
   onContextMenu: (e: React.MouseEvent, pinnedId: string) => void
+  /** A pin to show rather than to pick: the dialog opened because a group was
+   *  pinned that already has this pin, and its card flashes into view. */
+  flashPinnedId?: string | null
 }
+
+/** How long a card stays marked: long enough to be found, then gone. */
+const FLASH_MS = 1500
 
 /**
  * The full-screen group picker: every group you can add, as cards, with search.
@@ -35,13 +41,25 @@ interface GroupPickerDialogProps {
  */
 export function GroupPickerDialog({
   onClose,
-  onContextMenu
+  onContextMenu,
+  flashPinnedId: shownPinnedId = null
 }: GroupPickerDialogProps): React.ReactPortal {
   const allPinnedGroups = usePinnedStore((s) => s.pinnedGroups)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const [query, setQuery] = useState('')
   const [isFileDragOver, setIsFileDragOver] = useState(false)
-  const [flashPinnedId, setFlashPinnedId] = useState<string | null>(null)
+  const [flashPinnedId, setFlashPinnedId] = useState<string | null>(shownPinnedId)
+
+  // The pin the dialog was opened to show: its card is brought into view, in a
+  // list that may be longer than the panel, and marked for a moment.
+  useEffect(() => {
+    if (!shownPinnedId) return
+    document
+      .querySelector(`[data-pinned-id="${CSS.escape(shownPinnedId)}"]`)
+      ?.scrollIntoView({ block: 'center' })
+    const timer = setTimeout(() => setFlashPinnedId(null), FLASH_MS)
+    return () => clearTimeout(timer)
+  }, [shownPinnedId])
 
   const templates = useMemo(
     () => allPinnedGroups.filter((pg) => !pg.toolbar && inActiveWorkspace(pg, activeWorkspaceId)),
@@ -112,7 +130,7 @@ export function GroupPickerDialog({
     })
     if (result?.alreadyExists) {
       setFlashPinnedId(result.pinnedId)
-      setTimeout(() => setFlashPinnedId(null), 1500)
+      setTimeout(() => setFlashPinnedId(null), FLASH_MS)
     }
   }, [])
 
@@ -232,6 +250,7 @@ function GroupCard({
     <button
       className={cn('group-picker-card')}
       data-flashing={flashing ? 'true' : undefined}
+      data-pinned-id={template.id}
       onClick={() => onPick(template.id)}
       onContextMenu={(e) => {
         e.preventDefault()

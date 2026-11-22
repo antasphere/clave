@@ -217,6 +217,19 @@ describe('groups', () => {
     expect(layout.groups.find((g) => g.id === 'g0')!.sessionIds).toEqual(['d'])
     expect(events.at(-1)).toMatchObject({ cause: 'command' })
   })
+  it('createGroup keeps the pin the group was launched from, on the group and in the layout', () => {
+    const { layouts } = setup({ w1: { groups: [], displayOrder: [] } })
+    const { group: created, layout } = layouts.createGroup('w1', {
+      name: 'Clave',
+      sessionIds: ['a'],
+      templateId: 'pin-1'
+    })
+    expect(created.templateId).toBe('pin-1')
+    expect(layout.groups[0].templateId).toBe('pin-1')
+    // A group made with no pin behind it carries none.
+    const { group: plain } = layouts.createGroup('w1', { name: 'Plain' })
+    expect(plain).not.toHaveProperty('templateId')
+  })
   it('createGroup with no member in the order is appended, under the id given', () => {
     const { layouts } = setup({ w1: { groups: [], displayOrder: ['a'] } })
     const { layout } = layouts.createGroup('w1', { id: 'mine', name: 'x' })
