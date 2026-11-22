@@ -97,6 +97,7 @@ import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapte
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { AcpAdapter } from './sessions/adapters/acp-adapter'
 import { PiRpcAdapter } from './sessions/adapters/pi-rpc-adapter'
+import { readAntigravityStartMode } from './antigravity-cli'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
@@ -139,11 +140,14 @@ const opencodeChatAdapter = new AcpAdapter({
 sessionManager.registerAdapter(opencodeChatAdapter)
 // Antigravity in the chat view, over the Agent Client Protocol server its own
 // binary ships (`agy acp`). Its ladder (ask, accept edits, plan, auto) is the
-// session's `mode` config option, set from the launch's rung.
+// session's `mode` config option, set from the launch's rung, else the mode
+// the CLI itself starts on (Auto): the chat shows and switches it, and the
+// model's level with it.
 const antigravityChatAdapter = new AcpAdapter({
   id: 'antigravity-chat',
   provider: 'antigravity',
-  label: 'Antigravity'
+  label: 'Antigravity',
+  sessionOptions: true
 })
 sessionManager.registerAdapter(antigravityChatAdapter)
 // Lane D (PRDCT-4427): Pi in the chat view, over Pi's own rpc mode
@@ -590,15 +594,20 @@ class PtyManager {
     // The rung: the launch's, else the saved profile's own `--mode`, which a
     // terminal on the same profile runs in.
     let antigravityMode: string | undefined
+    let antigravityStartMode: string | undefined
     if (isEvents && adapter.id === 'antigravity-chat') {
       const antigravityProfile =
         carried ?? launchProfileManager.resolve('antigravity', options?.workspaceId, profileId)
       antigravityMode = isAntigravityRung(options?.permissionMode)
         ? options.permissionMode
         : antigravityProfileMode(antigravityProfile)
+      const env = buildSpawnEnv(getLoginShellEnv(), {})
+      // `agy acp` opens, and reopens, every session on ask-for-everything,
+      // whatever the CLI's own default: the chat sets that default itself.
+      if (!antigravityMode) antigravityStartMode = readAntigravityStartMode(env)
       antigravityChatAdapter.configure(session.id, {
         command: [antigravityProfile.command[0] ?? 'agy', 'acp'],
-        env: buildSpawnEnv(getLoginShellEnv(), {}),
+        env,
         initialPrompt: options?.initialPrompt
       })
     }
@@ -669,6 +678,7 @@ class PtyManager {
               adapter.id === 'opencode-chat' && options?.dangerousMode === true ? true : undefined,
             // Antigravity's rung (PRDCT-4424), the value of its `mode` option.
             mode: antigravityMode,
+            defaultMode: antigravityStartMode,
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'

@@ -124,7 +124,7 @@ import {
   pathsFromDataTransfer
 } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
-import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import { PROVIDER_LOGOS } from './provider-logo'
 import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 
 export interface ChatViewProps {
@@ -190,14 +190,7 @@ function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
   // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
   // breathing logo. Same slot, same arrival and departure.
   const pack = useMarkPack()
-  const Logo =
-    provider === 'claude'
-      ? ClaudeLogo
-      : provider === 'codex'
-        ? CodexLogo
-        : provider === 'pi'
-          ? PiLogo
-          : null
+  const Logo = PROVIDER_LOGOS[provider]
   return (
     <div
       className="chat-provider-mark"

@@ -111,6 +111,7 @@ import {
   type InputSetArgs,
   type RequestInputArgs
 } from './request-input'
+import { antigravityLaunchModels } from '../../shared/antigravity'
 
 const MCP_PATH = '/mcp'
 
@@ -490,6 +491,10 @@ async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | '
     return models.length > 0
       ? models.map((model) => ({ id: model.id, label: model.label, family: model.label }))
       : 'unavailable'
+  }
+  if (harness === 'antigravity') {
+    const models = await providerModels('antigravity-chat', os.homedir()).catch(() => [])
+    return models.length > 0 ? antigravityLaunchModels(models) : 'unavailable'
   }
   return []
 }

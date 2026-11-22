@@ -608,6 +608,32 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     ).toEqual(['agy', '--mode', 'plan', '--conversation', '70ec1049-f3e9-46a9-bd24-382267964044'])
   })
 
+  it('antigravity: a model is --model and a level --effort, before the conversation', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'antigravity',
+        profile: agy,
+        model: 'claude-opus-5-5',
+        effort: 'low',
+        resumeSessionId: 'c1',
+        initialPrompt: 'hi'
+      })
+    ).toEqual([
+      'agy',
+      '--model',
+      'claude-opus-5-5',
+      '--effort',
+      'low',
+      '--conversation',
+      'c1',
+      '-i',
+      'hi'
+    ])
+    expect(buildAgentArgv({ kind: 'antigravity', profile: agy, effort: '--sandbox' })).toEqual([
+      'agy'
+    ])
+  })
+
   it("antigravity: a saved profile's own --mode is the rung its chat starts on", () => {
     expect(antigravityProfileMode({ ...agy, additionalArgs: ['--mode', 'plan'] })).toBe('plan')
     expect(antigravityProfileMode({ ...agy, additionalArgs: ['--mode=accept-edits'] })).toBe(

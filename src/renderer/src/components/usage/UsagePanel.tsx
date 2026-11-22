@@ -19,6 +19,8 @@ import {
   useClaudeAccountsUsage,
   useCodexAccountsUsage,
   refreshAllUsage,
+  summarize,
+  useAntigravityUsageStore,
   tightestWindow,
   isWeeklyWindow,
   formatResetAt,
@@ -96,7 +98,7 @@ export function ToolToggle({
 // and the 5-hour session block (a second, smaller chart). The accounts sit in
 // the same order in both charts: the soonest weekly reset first.
 
-export type QuotaProvider = 'claude' | 'codex'
+export type QuotaProvider = 'claude' | 'codex' | 'antigravity'
 
 /** One account as the overview needs it: who it is and what its read says. */
 interface AccountRead {
@@ -166,7 +168,9 @@ function AccountGroup({
   const accountAttr = primary
     ? provider === 'claude'
       ? { 'data-claude-account-usage': account.id }
-      : { 'data-codex-account-usage': account.id }
+      : provider === 'codex'
+        ? { 'data-codex-account-usage': account.id }
+        : { 'data-antigravity-account-usage': account.id }
     : {}
   const soonest = windows
     .filter(isWeeklyWindow)
@@ -421,6 +425,8 @@ function useCodexAccountList(): { id: string; label: string; auth: string }[] {
   }))
 }
 
+const ANTIGRAVITY_ACCOUNTS = [{ id: 'default', label: 'Antigravity', auth: 'CLI sign-in' }]
+
 /** The page's one Refresh, in its header: every account of the provider on
  *  screen read live, and whatever else has already been read (another
  *  provider's accounts, the Pi ranges) with it. A provider never looked at is
@@ -432,6 +438,7 @@ export function UsageRefresh(): ReactElement {
   const codex = useCodexAccountStore((s) => s.accounts)
   const claudeUsage = useClaudeAccountsUsage((s) => s.byAccount)
   const codexUsage = useCodexAccountsUsage((s) => s.byAccount)
+  const antigravity = useAntigravityUsageStore()
   const [busy, setBusy] = useState(false)
   const now = useNow(15_000)
 
@@ -441,7 +448,8 @@ export function UsageRefresh(): ReactElement {
     setBusy(true)
     void refreshAllUsage(
       claude.map((p) => p.id).filter((id) => tool === 'claude' || seen(claudeUsage, id)),
-      codex.map((a) => a.id).filter((id) => tool === 'codex' || seen(codexUsage, id))
+      codex.map((a) => a.id).filter((id) => tool === 'codex' || seen(codexUsage, id)),
+      tool === 'antigravity' || antigravity.status !== 'idle'
     ).finally(() => setBusy(false))
   }
 
@@ -450,7 +458,9 @@ export function UsageRefresh(): ReactElement {
       ? claude.map((p) => claudeUsage[p.id])
       : tool === 'codex'
         ? codex.map((a) => codexUsage[a.id])
-        : []
+        : tool === 'antigravity'
+          ? [summarize(antigravity)]
+          : []
   const reads = visible
     .map((s) => s?.fetchedAt)
     .filter((at): at is number => typeof at === 'number')
@@ -474,19 +484,6 @@ export function UsageRefresh(): ReactElement {
         <ArrowPathIcon className={`w-3.5 h-3.5 ${spinning ? 'animate-spin' : ''}`} />
         Refresh
       </button>
-    </div>
-  )
-}
-
-function ComingSoon({ label }: { label: string }): ReactElement {
-  return (
-    <div className="flex flex-col items-center gap-1.5 py-12 text-center">
-      <span className="text-control font-medium text-text-primary">
-        {label} usage isn’t available yet
-      </span>
-      <span className="text-xs text-text-tertiary">
-        We’re working on bringing usage limits to {label}.
-      </span>
     </div>
   )
 }
@@ -626,7 +623,12 @@ export function UsagePanel(): ReactElement {
   const codex = useCodexAccountList()
   const claudeByAccount = useClaudeAccountsUsage((s) => s.byAccount)
   const codexByAccount = useCodexAccountsUsage((s) => s.byAccount)
+  const antigravity = useAntigravityUsageStore()
   const retry = (provider: QuotaProvider): void => {
+    if (provider === 'antigravity') {
+      void antigravity.load({ force: true })
+      return
+    }
     void refreshAllUsage(
       provider === 'claude' ? claude.map((a) => a.id) : [],
       provider === 'codex' ? codex.map((a) => a.id) : []
@@ -652,15 +654,17 @@ export function UsagePanel(): ReactElement {
           load={(id) => void codexUsageStore(id).getState().load()}
           onRetry={() => retry('codex')}
         />
+      ) : tool === 'antigravity' ? (
+        <QuotaOverview
+          provider="antigravity"
+          accounts={ANTIGRAVITY_ACCOUNTS}
+          byAccount={{ default: summarize(antigravity) }}
+          load={() => void antigravity.load()}
+          onRetry={() => retry('antigravity')}
+        />
       ) : (
         <div className="settings-card">
-          {tool === 'pi' || tool === 'opencode' ? (
-            <HarnessUsagePage key={tool} harness={tool} />
-          ) : (
-            <div className="px-3.5 py-3">
-              {tool === 'antigravity' && <ComingSoon label="Antigravity" />}
-            </div>
-          )}
+          <HarnessUsagePage key={tool} harness={tool} />
         </div>
       )}
     </div>

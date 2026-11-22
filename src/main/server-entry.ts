@@ -480,6 +480,7 @@ async function main(): Promise<void> {
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     preferences: (key) => preferencesManager.get(key as keyof Preferences),
     codexModels: (cwd) => providerModels('codex-chat', cwd),
+    antigravityModels: (cwd) => providerModels('antigravity-chat', cwd),
     homeDir: os.homedir(),
     defaultProfile: (family) => launchProfileManager.resolve(family),
     catalog: (providerIds) => modelsCatalog.view({ providerIds }),

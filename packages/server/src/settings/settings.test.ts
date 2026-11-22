@@ -68,6 +68,8 @@ describe('the settings group of the HTTP API', () => {
     expect(fake.calls.at(-1)).toEqual({ method: 'usage.readClaude', args: ['a', true] })
     expect((await get('/usage/claude')).status).toBe(200)
     expect(fake.calls.at(-1)).toEqual({ method: 'usage.readClaude', args: [undefined, false] })
+    expect((await get('/usage/antigravity?force=true')).status).toBe(200)
+    expect(fake.calls.at(-1)).toEqual({ method: 'usage.readAntigravity', args: [true] })
     const pi = await get('/usage/pi?range=7d')
     expect(pi.status).toBe(200)
     expect(fake.calls.at(-1)).toEqual({ method: 'usage.readPi', args: ['7d'] })

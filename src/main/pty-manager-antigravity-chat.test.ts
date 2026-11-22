@@ -154,6 +154,8 @@ vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
 const ledger = vi.hoisted(() => ({ recordHarnessStart: vi.fn() }))
 vi.mock('./usage-ledger', () => ledger)
 vi.mock('./title-generator', () => mocks.title)
+const cli = vi.hoisted(() => ({ readAntigravityStartMode: vi.fn(() => 'auto') }))
+vi.mock('./antigravity-cli', () => cli)
 vi.mock('./launch-profile-manager', () => ({
   defaultViewFor: () => 'clave.chat-view/chat',
   eventsProfile: (id?: string) =>
@@ -243,7 +245,8 @@ describe('the Antigravity chat adapter is registered', () => {
     expect(mocks.acpSpecs).toContainEqual({
       id: 'antigravity-chat',
       provider: 'antigravity',
-      label: 'Antigravity'
+      label: 'Antigravity',
+      sessionOptions: true
     })
     expect(registeredAtImport).toContain(mocks.antigravity)
   })
@@ -328,6 +331,26 @@ describe('an Antigravity chat spawn', () => {
     mocks.preferences.harnessSettings = { antigravity: { permissionDefault: 'accept-edits' } }
     await openAntigravityChat()
     expect(spawnOptions().mode).toBe('accept-edits')
+  })
+  it("starts on the CLI's own mode, Auto, when nothing names one", async () => {
+    await openAntigravityChat()
+    expect(spawnOptions().defaultMode).toBe('auto')
+    expect(cli.readAntigravityStartMode).toHaveBeenCalledWith(
+      expect.objectContaining({ LOGIN_SHELL: 'yes' })
+    )
+    cli.readAntigravityStartMode.mockReturnValueOnce('plan')
+    await openAntigravityChat()
+    expect(spawnOptions().defaultMode).toBe('plan')
+  })
+  it('never reads that default over a mode that was named', async () => {
+    await openAntigravityChat({ permissionMode: 'default' })
+    expect(spawnOptions()).toMatchObject({ mode: 'default' })
+    expect(spawnOptions().defaultMode).toBeUndefined()
+    expect(cli.readAntigravityStartMode).not.toHaveBeenCalled()
+  })
+  it('hands the model and the level to the session', async () => {
+    await openAntigravityChat({ model: 'claude-opus-5-5', effort: 'low' })
+    expect(spawnOptions()).toMatchObject({ model: 'claude-opus-5-5', effort: 'low' })
   })
   it('keeps the conversation of its session_meta on the record, and conversationIdOf answers it', async () => {
     const session = await openAntigravityChat()

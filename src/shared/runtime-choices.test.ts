@@ -23,6 +23,23 @@ describe('runtimeChoices', () => {
       })
   })
 
+  it("brings back Antigravity's accept-edits, which no other road may name for Claude", () => {
+    expect(runtimeChoices({ permissionMode: 'accept-edits' })).toEqual({
+      dangerousMode: false,
+      permissionMode: 'accept-edits'
+    })
+    expect(
+      launchModeFields({
+        claudeMode: true,
+        codexMode: false,
+        dangerousMode: false,
+        permissionMode: 'accept-edits',
+        effort: undefined,
+        allowDangerous: undefined
+      })
+    ).toEqual({})
+  })
+
   it('keeps the launch flag when no mode was reported, or one it does not know', () => {
     expect(runtimeChoices({ dangerousMode: true })).toEqual({ dangerousMode: true })
     expect(runtimeChoices({})).toEqual({ dangerousMode: false })

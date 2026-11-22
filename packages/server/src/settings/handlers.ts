@@ -39,6 +39,7 @@ import {
   ReadClaudeUsage,
   ReadIntegrations,
   ReadClaudeUsageSnapshot,
+  ReadAntigravityUsage,
   ReadCodexUsage,
   ReadCodexUsageSnapshot,
   ReadPiUsage,
@@ -184,6 +185,9 @@ export const settingsHandlers = [
     ask((s) => s.usage.readCodex(p.accountId, p.force === true))
   ),
   QueryHandler.make(ReadCodexUsageSnapshot, () => ask((s) => s.usage.codexSnapshot())),
+  QueryHandler.make(ReadAntigravityUsage, (p) =>
+    ask((s) => s.usage.readAntigravity(p.force === true))
+  ),
   QueryHandler.make(ReadPiUsage, (p) => ask((s) => s.usage.readPi(p.range))),
   // Launch profiles
   QueryHandler.make(ListLaunchProfiles, () => ask((s) => s.launchProfiles.list())),

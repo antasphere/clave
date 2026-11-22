@@ -107,6 +107,8 @@ export interface SettingsSourceService {
     readonly claudeSnapshot: () => Awaitable<UsageSnapshot>
     readonly readCodex: (accountId: string | undefined, force: boolean) => Awaitable<UsageRead>
     readonly codexSnapshot: () => Awaitable<UsageSnapshot>
+    /** The Antigravity CLI's own sign-in: one account, no snapshot. */
+    readonly readAntigravity: (force: boolean) => Awaitable<UsageRead>
     readonly readPi: (range: PiUsageRange) => Awaitable<PiUsageTotals>
   }
   readonly launchProfiles: {
@@ -283,6 +285,7 @@ function noneSource(): SettingsSourceService {
       claudeSnapshot: refuse('usage'),
       readCodex: refuse('usage'),
       codexSnapshot: refuse('usage'),
+      readAntigravity: refuse('usage'),
       readPi: refuse('usage')
     },
     launchProfiles: {

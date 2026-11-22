@@ -12,6 +12,7 @@ import {
   type WaitingMessage
 } from '../../../shared/session-model'
 import { isFileAttachment } from '../../../shared/attachments'
+import { splitModelLevel } from '../../../shared/antigravity'
 import { findExecutable, resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import type {
   SessionAdapter,
@@ -50,6 +51,10 @@ export interface AcpAgentSpec {
   /** PRDCT-4507: hand every chat Clave's own tools in OpenCode's inline
    *  configuration (`opencode`, the app's OpenCode chat); none otherwise. */
   claveTools?: 'opencode'
+  /** The agent's `mode` option is its permission ladder and its
+   *  `thought_level` option the model's effort, as `agy acp`'s are: the chat
+   *  shows and switches both. Off for OpenCode, whose modes are its agents. */
+  sessionOptions?: boolean
 }
 export interface AcpLaunch {
   command: string[]
@@ -66,6 +71,11 @@ export interface AcpSpawnOptions {
   /** The rung of the agent's own ladder the session starts on, a value of
    *  its `mode` config option (Antigravity's `accept-edits`, `plan`, …). */
   mode?: string
+  /** The rung when the launch asks none: set where the agent offers it, left
+   *  in silence where it does not (no Auto on a business account). */
+  defaultMode?: string
+  /** The level of the model's `thought_level` to start on, where it takes it. */
+  effort?: string
   autoApprove?: boolean
   initialPrompt?: string
 }
@@ -137,6 +147,9 @@ interface HandleState {
   agentCapabilities: Record<string, unknown>
   authMethods: AuthMethod[]
   configOptions: ConfigOption[]
+  /** The mode and the level last said to the chat; unset until the handshake
+   *  settles, so the agent's opening values never read as a switch. */
+  said?: { mode?: string; effort: string | null }
   commands: CommandOption[]
   history: HistoryItem[]
   /** True while `session/load` replays the conversation into `history`. */
@@ -269,6 +282,10 @@ const modelOption = (state: HandleState): ConfigOption | undefined =>
 /** The models a `configOptions` answer offers, as the chat's menu lists them. */
 export const acpModelOptions = (configOptions: unknown): ModelOption[] =>
   modelChoices(findModelOption(parseConfigOptions(configOptions)))
+const modeOption = (state: HandleState): ConfigOption | undefined =>
+  state.configOptions.find((option) => option.category === 'mode')
+const levelOption = (state: HandleState): ConfigOption | undefined =>
+  state.configOptions.find((option) => option.category === 'thought_level')
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
@@ -345,12 +362,14 @@ export class AcpAdapter implements SessionAdapter {
   private launches = new Map<string, AcpLaunch>()
 
   private readonly claveTools: 'opencode' | undefined
+  private readonly sessionOptions: boolean
 
   constructor(spec: AcpAgentSpec) {
     this.id = spec.id
     this.provider = spec.provider
     this.label = spec.label
     this.claveTools = spec.claveTools
+    this.sessionOptions = spec.sessionOptions === true
   }
 
   /** The spawn's command and environment, handed by the manager before the
@@ -373,6 +392,8 @@ export class AcpAdapter implements SessionAdapter {
         ...(text(options.resume) ? { resume: text(options.resume) } : {}),
         ...(text(options.model) ? { model: text(options.model) } : {}),
         ...(text(options.mode) ? { mode: text(options.mode) } : {}),
+        ...(text(options.defaultMode) ? { defaultMode: text(options.defaultMode) } : {}),
+        ...(text(options.effort) ? { effort: text(options.effort) } : {}),
         ...(options.autoApprove === true ? { autoApprove: true } : {}),
         ...(text(options.initialPrompt) ? { initialPrompt: text(options.initialPrompt) } : {})
       },
@@ -491,9 +512,14 @@ export class AcpAdapter implements SessionAdapter {
         }
         void this.setModel(state, value.model)
         return
+      case 'set_permission_mode':
+        if (this.sessionOptions) void this.switchMode(state, value.mode)
+        return
+      case 'set_effort':
+        if (this.sessionOptions) void this.switchEffort(state, value.effort)
+        return
       default:
-        // set_effort, set_permission_mode, stop_task, permission_draft: the
-        // protocol carries none of them.
+        // stop_task, permission_draft: the protocol carries neither.
         return
     }
   }
@@ -511,7 +537,17 @@ export class AcpAdapter implements SessionAdapter {
   async models(handle: SessionHandle): Promise<ModelOption[]> {
     const state = this.require(handle)
     if (state.started) await state.started.catch(() => {})
-    return modelChoices(modelOption(state))
+    const option = modelOption(state)
+    const models = modelChoices(option)
+    if (!this.sessionOptions) return models
+    // The agent says the levels of the model the session is on, and no other's.
+    const efforts = (levelOption(state)?.choices ?? []).map((choice) => ({
+      id: choice.value,
+      label: choice.name || choice.value
+    }))
+    return models.map((model) =>
+      efforts.length && model.id === option?.currentValue ? { ...model, efforts } : model
+    )
   }
 
   async kill(handle: SessionHandle): Promise<void> {
@@ -649,13 +685,24 @@ export class AcpAdapter implements SessionAdapter {
       // one it does not have (2.3.0): said once, and kept in the past, since
       // a pane drawn after the handshake (a tab opened in the background, the
       // separate server's queue let go first) reads only that.
-      const wanted = state.options.model
+      const asked = state.options.model
       const option = modelOption(state)
+      const variant =
+        this.sessionOptions && asked && option && !option.values.includes(asked)
+          ? splitModelLevel(asked, option.values)
+          : null
+      const wanted = variant?.model ?? asked
       if (wanted && wanted !== option?.currentValue) {
         if (option?.values.includes(wanted)) await this.setModel(state, wanted)
         else this.notice(state, modelMismatch(this.label, wanted, option?.currentValue))
       }
+      // After the model, whose change puts the level back on that model's own.
+      if (this.sessionOptions) await this.setStartEffort(state, variant?.level)
       await this.setStartMode(state)
+      if (this.sessionOptions && !state.ended && !state.closing) {
+        state.said = { effort: null }
+        this.sayOptions(state, true)
+      }
     } catch (error) {
       if (state.ended || state.closing) return
       this.refuse(state, error)
@@ -676,35 +723,119 @@ export class AcpAdapter implements SessionAdapter {
     else this.exited(state, 1)
   }
 
-  /** The rung the launch asked for, set through the agent's `mode` config
-   *  option once the session is open. A rung the agent does not offer is
-   *  said once; the session stays on its own. */
+  /** The rung the launch asked for, else the default, set through the
+   *  agent's `mode` config option once the session is open and before any
+   *  prompt goes. A rung asked for that the agent does not offer is said
+   *  once; the session stays on its own. */
   private async setStartMode(state: HandleState): Promise<void> {
-    const wanted = state.options.mode
+    const { mode, defaultMode } = state.options
+    const wanted = mode ?? defaultMode
     if (!wanted || !state.connection || !state.sessionId) return
-    const option = state.configOptions.find((entry) => entry.category === 'mode')
+    const option = modeOption(state)
     if (option?.currentValue === wanted) return
     if (!option?.values.includes(wanted)) {
-      this.notice(state, `${this.label} has no mode ${wanted}; the session starts in its own`)
+      if (mode)
+        this.notice(state, `${this.label} has no mode ${mode}; the session starts in its own`)
       return
     }
     try {
-      const result = object(
-        await state.connection.request('session/set_config_option', {
-          sessionId: state.sessionId,
-          configId: option.id,
-          value: wanted
-        })
-      )
-      if (Array.isArray(result.configOptions))
-        state.configOptions = parseConfigOptions(result.configOptions)
-      else option.currentValue = wanted
+      await this.setOption(state, option, wanted)
     } catch (error) {
       if (!state.ended && !state.closing)
         this.notice(
           state,
           `${this.label} could not start in mode ${wanted}: ${errorMessage(error)}`
         )
+    }
+  }
+
+  /** The level to start on: the one the model's id named, else the one asked
+   *  or last picked. One the model does not take is dropped in silence, as
+   *  Codex drops it: the last pick was another model's. */
+  private async setStartEffort(state: HandleState, named?: string): Promise<void> {
+    const wanted = named ?? state.options.effort
+    const option = levelOption(state)
+    if (!wanted || !option?.values.includes(wanted) || option.currentValue === wanted) return
+    try {
+      await this.setOption(state, option, wanted)
+    } catch (error) {
+      if (!state.ended && !state.closing)
+        this.notice(state, `${this.label} could not start at ${wanted}: ${errorMessage(error)}`)
+    }
+  }
+
+  /** The chip's switch, mid-turn too. Whatever happens, the chat is told the
+   *  mode the session is really on. */
+  private async switchMode(state: HandleState, mode: string): Promise<void> {
+    await state.started?.catch(() => {})
+    if (state.ended || state.closing) return
+    const option = modeOption(state)
+    try {
+      if (!option?.values.includes(mode)) {
+        this.notice(
+          state,
+          `${this.label} has no mode ${mode}; the session stays on ${option?.currentValue || 'its own'}`
+        )
+      } else {
+        await this.setOption(state, option, mode)
+        this.sayOptions(state)
+        return
+      }
+    } catch (error) {
+      if (state.ended || state.closing) return
+      this.notice(state, `${this.label} could not switch to ${mode}: ${errorMessage(error)}`)
+    }
+    this.sayOptions(state, true)
+  }
+
+  private async switchEffort(state: HandleState, effort: string): Promise<void> {
+    await state.started?.catch(() => {})
+    if (state.ended || state.closing) return
+    const option = levelOption(state)
+    try {
+      if (option?.values.includes(effort)) await this.setOption(state, option, effort)
+      else this.notice(state, `${this.label} does not run this model at ${effort}`)
+    } catch (error) {
+      if (state.ended || state.closing) return
+      this.notice(state, `${this.label} could not switch to ${effort}: ${errorMessage(error)}`)
+    }
+    this.sayOptions(state)
+  }
+
+  private async setOption(state: HandleState, option: ConfigOption, value: string): Promise<void> {
+    const result = object(
+      await state.connection!.request('session/set_config_option', {
+        sessionId: state.sessionId,
+        configId: option.id,
+        value
+      })
+    )
+    if (Array.isArray(result.configOptions))
+      state.configOptions = parseConfigOptions(result.configOptions)
+    else option.currentValue = value
+  }
+
+  /** The mode, with the ladder the agent offers, and the level, as they now
+   *  stand: each only when it changed, or both when `force`. */
+  private sayOptions(state: HandleState, force = false): void {
+    const said = state.said
+    if (!said) return
+    const mode = modeOption(state)
+    if (mode && (force || said.mode !== mode.currentValue)) {
+      said.mode = mode.currentValue
+      this.emit(state, {
+        type: 'permission_mode',
+        mode: mode.currentValue,
+        modes: mode.choices.map((choice) => ({
+          id: choice.value,
+          label: choice.name || choice.value
+        }))
+      })
+    }
+    const effort = levelOption(state)?.currentValue || null
+    if (force || said.effort !== effort) {
+      said.effort = effort
+      this.emit(state, { type: 'effort', effort })
     }
   }
 
@@ -730,6 +861,7 @@ export class AcpAdapter implements SessionAdapter {
         state.configOptions = parseConfigOptions(result.configOptions)
       else option.currentValue = model
       this.emitMeta(state)
+      this.sayOptions(state)
     } catch (error) {
       if (!state.ended && !state.closing)
         this.notice(state, `${this.label} could not switch to ${model}: ${errorMessage(error)}`)
@@ -955,8 +1087,18 @@ export class AcpAdapter implements SessionAdapter {
           const before = modelOption(state)?.currentValue
           state.configOptions = parseConfigOptions(update.configOptions)
           if (modelOption(state)?.currentValue !== before) this.emitMeta(state)
+          this.sayOptions(state)
         }
         return
+      case 'current_mode_update': {
+        // The agent's own change (its plan step, `/plan`), and the echo of ours.
+        const option = modeOption(state)
+        const mode = text(update.currentModeId)
+        if (!option?.values.includes(mode)) return
+        option.currentValue = mode
+        this.sayOptions(state)
+        return
+      }
       case 'usage_update': {
         const used = update.used
         const size = update.size

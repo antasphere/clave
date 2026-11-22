@@ -10,17 +10,28 @@ import { ClaudeAdapter } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { launchProfileManager } from './launch-profile-manager'
+import { antigravityCommand, listAntigravityModels } from './antigravity-cli'
 
 /** One list per adapter per boot: the Claude list costs a process start,
  *  the Codex one an app-server start, and neither changes while the app
  *  runs. A list that failed is asked again next time. */
 const modelLists = new Map<string, Promise<ModelOption[]>>()
+/** Antigravity's list follows the plan and a CLI that updates itself under a
+ *  running app (a new Gemini arrives that way): good for five minutes. */
+const ANTIGRAVITY_LIST_MS = 5 * 60_000
+let antigravityListedAt = 0
 export function providerModels(adapterId: string, cwd: string): Promise<ModelOption[]> {
+  const antigravity = adapterId === 'antigravity-chat'
   const cached = modelLists.get(adapterId)
-  if (cached) return cached
+  if (cached && (!antigravity || Date.now() - antigravityListedAt < ANTIGRAVITY_LIST_MS))
+    return cached
+  if (antigravity) antigravityListedAt = Date.now()
   const adapter = sessionManager.getAdapter(adapterId)
-  const listing: Promise<ModelOption[]> =
-    adapter instanceof ClaudeAdapter
+  const listing: Promise<ModelOption[]> = antigravity
+    ? // `agy models`, never a throwaway session: each one would stay in the
+      // person's conversation list.
+      listAntigravityModels({ command: antigravityCommand() })
+    : adapter instanceof ClaudeAdapter
       ? adapter.listModels(cwd)
       : adapter instanceof CodexAdapter
         ? adapter.listModelsWithoutSession(

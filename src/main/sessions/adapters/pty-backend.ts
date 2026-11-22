@@ -897,7 +897,7 @@ export interface PtySpawnOptions {
   viewId?: string
   dangerousMode?: boolean
   /** Model the agent CLI starts on (alias like "opus" or a full model id).
-   *  claude → `--model`, codex → `-m`; ignored for antigravity/terminal.
+   *  claude and antigravity → `--model`, codex → `-m`; ignored for a plain terminal.
    *  Undefined = the CLI's own default. */
   model?: string
   claudeMode?: boolean
@@ -1261,9 +1261,13 @@ export class PtyBackend {
         // against the safe alphabet before it reaches cmd.exe.
         if (options?.resumeSessionId && !isValidClaudeSessionId(options.resumeSessionId))
           throw new Error('Invalid resume session id')
-        shellArgs = options?.resumeSessionId
-          ? ['/c', 'agy', '--conversation', options.resumeSessionId]
-          : ['/c', 'agy']
+        shellArgs = [
+          '/c',
+          'agy',
+          // The model's shape was checked above, as the other CLIs' is.
+          ...(model ? ['--model', model] : []),
+          ...(options?.resumeSessionId ? ['--conversation', options.resumeSessionId] : [])
+        ]
       } else if (useCodexMode) {
         const parts = ['codex']
         if (options?.resumeSessionId) {
@@ -1979,7 +1983,10 @@ export class PtyBackend {
     // The shape a launch accepts (`isValidModelName`): OpenCode and Pi report
     // `provider/model`, and a Resume relaunches on it (PRDCT-4427).
     if (patch.model !== undefined && isValidModelName(patch.model)) next.model = patch.model
-    if (patch.permissionMode !== undefined && /^[a-zA-Z]{1,32}$/.test(patch.permissionMode))
+    if (
+      patch.permissionMode !== undefined &&
+      /^[a-zA-Z][a-zA-Z-]{0,31}$/.test(patch.permissionMode)
+    )
       next.permissionMode = patch.permissionMode
     if (patch.effort === null) delete next.effort
     else if (patch.effort !== undefined && /^[a-z][a-z0-9_-]{0,31}$/.test(patch.effort))

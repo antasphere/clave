@@ -1811,6 +1811,11 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
   const codexModels: CodexModels = read
     ? await read.then((models) => models as CodexModels).catch(() => 'unavailable' as const)
     : 'unavailable'
+  const antigravityModels: CodexModels =
+    (await window.electronAPI
+      ?.adaptersModels?.('antigravity-chat', cwd)
+      ?.then((models) => models as CodexModels)
+      .catch(() => 'unavailable' as const)) ?? 'unavailable'
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
   // What each connection's Pi and OpenCode tabs used today (PRDCT-4551), on
   // the machine that runs them, as the launcher's rows say it.
@@ -1824,6 +1829,7 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
     harnessSettings: harnesses,
     interactionMode,
     codexModels,
+    antigravityModels,
     harnessUsage: harnessUsage ?? null,
     now: Date.now()
   }

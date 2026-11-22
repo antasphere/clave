@@ -12,7 +12,7 @@ import type { AgentUpdateStatus } from '../../../../shared/agent-updates'
 import type { InstallableAgentId, OnboardingInstallResult } from '../../../../shared/onboarding'
 import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
-import { useCodexModels } from './connection-models'
+import { useCliModels, useCodexModels } from './connection-models'
 import { useSessionStore } from '../../store/session-store'
 import { connectionsForModel } from '../../lib/switch-account'
 import { harnessPresent } from '../../lib/harness-presence'
@@ -69,11 +69,53 @@ function DefaultModelRow({ harness }: { harness: Harness }): React.JSX.Element |
   const connected =
     isAccountPoolId(pool) && connectionsForModel(pool, undefined).some((c) => c.usable)
   const codex = useCodexModels(harness.id === 'codex' && connected)
+  const antigravity = useCliModels('antigravity-chat', harness.id === 'antigravity')
   if (!harness.takesModel) return null
   const write = (model: string | null): void =>
     void setHarness(harness.id, { preferredModel: model })
   const label = 'Default model'
   const description = `What a click on ${harness.name} in the launcher runs; hovering the row offers the others.`
+
+  // Antigravity's sign-in lives in its CLI, which lists what that sign-in serves.
+  if (harness.id === 'antigravity') {
+    if (antigravity.failed)
+      return (
+        <SettingsRow
+          label={label}
+          description="Antigravity could not list its models from here; the launcher offers its default."
+        />
+      )
+    if (!antigravity.models)
+      return (
+        <SettingsRow label={label} description={description}>
+          <span className="settings-row-value" data-harness-models-loading>
+            Loading…
+          </span>
+        </SettingsRow>
+      )
+    const offered: SelectOption<string>[] = antigravity.models.map((model) => ({
+      value: model.id,
+      label: model.label,
+      hint: model.id
+    }))
+    return (
+      <SettingsRow label={label} description={description}>
+        <SettingsSelect<string>
+          value={value || DEFAULT}
+          options={[
+            { value: DEFAULT, label: 'Default', hint: "The harness's own" },
+            ...offered,
+            ...(!value || offered.some((option) => option.value === value)
+              ? []
+              : [{ value, label: value }])
+          ]}
+          onChange={(next) => write(next === DEFAULT ? null : next)}
+          ariaLabel={`Default model for ${harness.name}`}
+          testId="harness-model-antigravity"
+        />
+      </SettingsRow>
+    )
+  }
 
   // Pi and OpenCode run on a provider's stored key only when the launcher
   // names one (PRDCT-4496): their default is their own configuration's.

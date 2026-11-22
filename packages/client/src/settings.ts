@@ -141,6 +141,7 @@ export interface SettingsClient {
     readonly claudeSnapshot: () => Promise<UsageSnapshot>
     readonly readCodex: (accountId?: string, options?: { force?: boolean }) => Promise<UsageRead>
     readonly codexSnapshot: () => Promise<UsageSnapshot>
+    readonly readAntigravity: (options?: { force?: boolean }) => Promise<UsageRead>
     readonly readPi: (range: PiUsageRange) => Promise<PiUsageTotals>
   }
   readonly launchProfiles: {
@@ -309,6 +310,8 @@ export function settingsClient(callApi: Call): SettingsClient {
       readCodex: (accountId, options) =>
         call((g) => g.readCodexUsage({ payload: usageParams(accountId, options) })),
       codexSnapshot: () => call((g) => g.readCodexUsageSnapshot({ payload: {} })),
+      readAntigravity: (options) =>
+        call((g) => g.readAntigravityUsage({ payload: usageParams(undefined, options) })),
       readPi: (range) => call((g) => g.readPiUsage({ payload: { range } }))
     },
     launchProfiles: {

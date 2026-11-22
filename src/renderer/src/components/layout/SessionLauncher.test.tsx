@@ -294,9 +294,9 @@ describe('a click on a row launches at once', () => {
     expect(launched().setup).toEqual({ kind: 'codex', dangerousMode: false })
   })
 
-  it('a harness with no chat adapter launches the same way, with no profile named', async () => {
+  it('Antigravity’s row opens its models and still launches on a click', async () => {
     render()
-    item('data-harness-row', 'antigravity').handlers.onSelect!()
+    item('data-harness-row', 'antigravity').handlers.onClick!()
     await Promise.resolve()
     expect(launched().setup).toEqual({ kind: 'antigravity', dangerousMode: false })
   })

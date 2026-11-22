@@ -1499,6 +1499,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
     accountId?: string,
     options?: { force?: boolean }
   ) => Promise<UsageLimits | UsageError>
+  getAntigravityUsageLimits: (options?: { force?: boolean }) => Promise<UsageLimits | UsageError>
   getCodexUsageSnapshot: () => Promise<Record<string, UsageLimits | UsageError>>
   onCodexAccountUsage: (
     callback: (update: { accountId: string; result: UsageLimits | UsageError }) => void

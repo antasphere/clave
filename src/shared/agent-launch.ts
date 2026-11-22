@@ -1,5 +1,6 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
 import { HARNESS_BY_ID } from './harness'
+import { isValidEffort } from './effort'
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 export type AgentKind = LauncherFamily | 'claude-agents'
@@ -375,6 +376,10 @@ export function buildAgentArgv(input: {
       !profileSetsPermissions(input.profile)
     )
       argv.push('--mode', input.permissionMode)
+    // The model by its id, with or without its level (agy 1.5), and the level
+    // a chat moved here was running at.
+    if (input.model) argv.push('--model', input.model)
+    if (input.effort && isValidEffort(input.effort)) argv.push('--effort', input.effort)
     // The conversation a chat moved here carries (`--conversation <id>`, agy
     // 1.5): the id its ACP server opened is the one the CLI resumes.
     if (input.resumeSessionId) argv.push('--conversation', input.resumeSessionId)

@@ -24,6 +24,12 @@
 // `ACP_STAND_IN_MODES=1` adds a `mode` config option with Antigravity's ladder
 // (`agy acp` 1.5: default, accept-edits, auto, plan), set by
 // session/set_config_option as the model is.
+// `ACP_STAND_IN_AGY=1` is `agy acp` 1.5.14 as measured on 22 November 2026: the
+// modes, a `thought_level` per model that a model change resets, a session/load
+// that comes back on mode `default` whatever it was left on, and a
+// `current_mode_update` beside every mode change (a prompt containing `plan
+// mode` changes it on the agent's own). `ACP_STAND_IN_NO_AUTO=1` withholds
+// `auto`, as agy does for an account that has none.
 import {
   appendFileSync,
   existsSync,
@@ -219,9 +225,17 @@ const known = (id) =>
 const readMeta = (id) => JSON.parse(readFileSync(metaFile(id), 'utf8'))
 const writeMeta = (id, meta) => writeFileSync(metaFile(id), JSON.stringify(meta))
 const record = (id, turn) => appendFileSync(turnsFile(id), `${JSON.stringify(turn)}\n`)
-const MODES = process.env.ACP_STAND_IN_MODES === '1'
-const MODE_VALUES = ['default', 'accept-edits', 'auto', 'plan']
-const configOptions = (model, mode = 'default') => [
+const AGY = process.env.ACP_STAND_IN_AGY === '1'
+const MODES = AGY || process.env.ACP_STAND_IN_MODES === '1'
+const MODE_VALUES = ['default', 'accept-edits', 'auto', 'plan'].filter(
+  (value) => value !== 'auto' || process.env.ACP_STAND_IN_NO_AUTO !== '1'
+)
+/** Each model's levels, the first the one it starts on. */
+const LEVELS = {
+  'stand-in/one': ['high', 'low', 'medium'],
+  'stand-in/two': ['medium', 'low', 'high', 'xhigh']
+}
+const configOptions = (model, mode = 'default', level = LEVELS[model]?.[0]) => [
   {
     id: 'model',
     name: 'Model',
@@ -230,6 +244,18 @@ const configOptions = (model, mode = 'default') => [
     currentValue: model,
     options: MODELS
   },
+  ...(AGY && LEVELS[model]
+    ? [
+        {
+          id: 'thought_level',
+          name: 'Thinking Level',
+          category: 'thought_level',
+          type: 'select',
+          currentValue: level,
+          options: LEVELS[model].map((value) => ({ value, name: value }))
+        }
+      ]
+    : []),
   ...(MODES
     ? [
         {
@@ -289,6 +315,10 @@ async function prompt(id, params) {
   }
   await sleep(delayMs, turn)
   if (turn.cancelled) return finish('cancelled')
+  if (AGY && text.includes('plan mode')) {
+    writeMeta(sessionId, { ...readMeta(sessionId), mode: 'plan' })
+    update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: 'plan' })
+  }
   if (text.includes('slow')) {
     await sleep(20_000, turn)
     if (turn.cancelled) return finish('cancelled')
@@ -533,7 +563,9 @@ function load(id, params) {
     }
   }
   const meta = readMeta(sessionId)
-  answer(id, { configOptions: configOptions(meta.model, meta.mode) })
+  if (AGY) writeMeta(sessionId, { ...meta, mode: 'default' })
+  const mode = AGY ? 'default' : meta.mode
+  answer(id, { configOptions: configOptions(meta.model, mode, meta.level) })
 }
 
 function list(id, params) {
@@ -624,11 +656,20 @@ function handle(frame) {
       const meta = readMeta(sessionId)
       if (MODES && params.configId === 'mode' && MODE_VALUES.includes(params.value)) {
         writeMeta(sessionId, { ...meta, mode: params.value })
-        return answer(id, { configOptions: configOptions(meta.model, params.value) })
+        if (AGY)
+          update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: params.value })
+        return answer(id, { configOptions: configOptions(meta.model, params.value, meta.level) })
+      }
+      if (AGY && params.configId === 'thought_level') {
+        if (!LEVELS[meta.model]?.includes(params.value))
+          return refuseFrame(id, -32602, 'Thinking level not offered')
+        writeMeta(sessionId, { ...meta, level: params.value })
+        return answer(id, { configOptions: configOptions(meta.model, meta.mode, params.value) })
       }
       if (params.configId !== 'model' || !MODELS.some((m) => m.value === params.value))
         return refuseFrame(id, -32602, 'Unknown config value')
-      writeMeta(sessionId, { ...meta, model: params.value })
+      // A model change puts the level back on that model's own.
+      writeMeta(sessionId, { ...meta, model: params.value, level: undefined })
       return answer(id, { configOptions: configOptions(params.value, meta.mode) })
     }
     case 'session/list':

@@ -17,6 +17,10 @@
  *  `dangerousMode` (`@clave/contract/sessions` `SpawnOptions.permissionMode`). */
 export const SPAWN_PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'] as const
 const SPAWN_MODES: ReadonlySet<string> = new Set(SPAWN_PERMISSION_MODES)
+/** The modes a record brings back: a spawn's, and Antigravity's one rung
+ *  spelled its own way (the others share Claude's words). Never one
+ *  `launchModeFields` takes: that road names a mode for Claude alone. */
+const RECORDED_MODES: ReadonlySet<string> = new Set([...SPAWN_PERMISSION_MODES, 'accept-edits'])
 /** A level as a provider spells it (`src/shared/effort.ts`). */
 export const EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/
 const EFFORT = EFFORT_PATTERN
@@ -62,7 +66,7 @@ export function runtimeChoices(record: RuntimeRecord): RuntimeChoices {
   const out: RuntimeChoices = { dangerousMode: record.dangerousMode === true }
   if (record.model) out.model = record.model
   if (mode === 'bypassPermissions') out.dangerousMode = true
-  else if (mode && SPAWN_MODES.has(mode)) {
+  else if (mode && RECORDED_MODES.has(mode)) {
     out.dangerousMode = false
     out.permissionMode = mode as RuntimeChoices['permissionMode']
     // The person left bypass for this mode: the way back stays open.

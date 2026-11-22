@@ -123,6 +123,19 @@ export function codexUsageStore(accountId: string = DEFAULT_CODEX_ACCOUNT_ID): C
 
 /** The machine's own Codex home, the one every pre-account caller reads. */
 export const useCodexUsageStore = codexUsageStore(DEFAULT_CODEX_ACCOUNT_ID)
+/** Antigravity is one account, the CLI's own sign-in, read when a window looks. */
+export const useAntigravityUsageStore = createUsageResource(({ force }) =>
+  limits(window.electronAPI.getAntigravityUsageLimits({ force }))
+)
+
+/** A turn just ended: read again, at most once a minute (a read is two agy
+ *  processes). */
+export function refreshAntigravityUsageAfterTurn(now = Date.now()): void {
+  const { data, load } = useAntigravityUsageStore.getState()
+  if (data && now - data.fetchedAt < 60_000) return
+  void load({ force: true })
+}
+
 // Pi's and OpenCode's usage is per connection (PRDCT-4551): `harness-usage-store.ts`.
 export const quotaUsageStores = { claude: useUsageStore, codex: useCodexUsageStore }
 
@@ -173,7 +186,7 @@ export function accountUsageFieldsOf(
   return { ...split, tightest: tightestOf(windows.filter(isSharedWindow)), windows }
 }
 
-function summarize(state: UsageResource<UsageLimits>): AccountUsageSummary {
+export function summarize(state: UsageResource<UsageLimits>): AccountUsageSummary {
   return {
     status: state.status,
     ...(state.status === 'error'
@@ -297,9 +310,11 @@ export const claudeUsageForModel = usageForModel
  *  Refresh. Resolves when every read has landed, failed ones included. */
 export async function refreshAllUsage(
   claudeAccountIds: string[],
-  codexAccountIds: string[]
+  codexAccountIds: string[],
+  antigravity = false
 ): Promise<void> {
   await Promise.all([
+    ...(antigravity ? [useAntigravityUsageStore.getState().load({ force: true })] : []),
     ...claudeAccountIds.map((id) => claudeUsageStore(id).getState().load({ force: true })),
     ...codexAccountIds.map((id) => codexUsageStore(id).getState().load({ force: true })),
     refreshHarnessUsage()
@@ -325,7 +340,11 @@ export function formatReset(resetsAt: number | null): string | null {
 // resource here, whichever window it reaches.
 if (typeof window !== 'undefined') {
   const refresh = (): void => {
-    for (const store of [...claudeStores.values(), ...codexStores.values()]) {
+    for (const store of [
+      ...claudeStores.values(),
+      ...codexStores.values(),
+      useAntigravityUsageStore
+    ]) {
       if (store.getState().status !== 'idle') void store.getState().load()
     }
   }

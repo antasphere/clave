@@ -381,7 +381,8 @@ export function transportSwitchOptions(
       viewId: undefined,
       initialPrompt: undefined,
       initialInput: undefined,
-      effort: undefined,
+      // agy's TUI takes the chat's level (`--effort`); the others keep their own.
+      effort: family === 'antigravity' ? previous.effort : undefined,
       model: target.model ?? previous.model,
       permissionMode: rung ? previous.permissionMode : undefined
     }

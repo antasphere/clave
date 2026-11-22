@@ -459,6 +459,12 @@ describe('the session records', () => {
       permissionMode: 'bypassPermissions',
       effort: 'high'
     })
+    // Antigravity spells a rung with a dash, and it used to be dropped here.
+    backend.setSessionRuntime(id, { permissionMode: 'accept-edits' })
+    expect(readRecord(id)).toMatchObject({ permissionMode: 'accept-edits' })
+    backend.setSessionRuntime(id, { permissionMode: '--dangerously-skip-permissions' })
+    expect(readRecord(id)).toMatchObject({ permissionMode: 'accept-edits' })
+    backend.setSessionRuntime(id, { permissionMode: 'bypassPermissions' })
     // OpenCode's and Pi's word, `provider/model`, is kept as it is
     // (PRDCT-4427): a Resume relaunches on it.
     backend.setSessionRuntime(id, { model: 'kimi-coding/k3' })

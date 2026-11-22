@@ -77,6 +77,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   // Lane D (PRDCT-4427): OpenCode's and Pi's chats name their agent too.
   opencode: 'OpenCode',
   pi: 'Pi',
+  antigravity: 'Antigravity',
   echo: 'Echo'
 }
 export const providerLabel = (provider: string): string => PROVIDER_LABELS[provider] ?? provider
