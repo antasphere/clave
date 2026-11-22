@@ -94,6 +94,20 @@ describe('the machine the page names', () => {
       error: 'The key was refused by ElevenLabs.',
       voices: [{ voiceId: 'v1' }]
     })
+    // ElevenLabs' own reason is a sentence for the person, whatever it says (PRDCT-4831).
+    const reason =
+      'ElevenLabs refused the key: The API key you used is missing the permission voices_read to execute this operation. Allow that permission for this key on elevenlabs.io, or paste a key that has it.'
+    api.fleetElevenLabsVoices.mockRejectedValue(
+      new Error(`Error invoking remote method 'integrations:elevenlabs-voices': Error: ${reason}`)
+    )
+    await store.loadElevenLabsVoices('local')
+    expect(store.useIntegrationsStore.getState().byMachine.local.voices.error).toBe(reason)
+    expect(
+      store.sentenceOf(new Error(`Error: ElevenLabs refused the key: Error: nope.`), 'fallback')
+    ).toBe('ElevenLabs refused the key: Error: nope.')
+    expect(store.sentenceOf(new Error('Error: connect ECONNREFUSED 10.0.0.1'), 'fallback')).toBe(
+      'fallback'
+    )
   })
 
   it('a refused write keeps the status; an older server says it needs an update; a raw error is not shown', async () => {
@@ -135,6 +149,10 @@ describe('what the card says', () => {
       )
     ).toBe('creator · 1,200 of 100,000 characters this period')
     expect(store.accountLine(status({ configured: true, checkedAt: 1, lastError: 'x' }))).toBeNull()
+    // A key that may not read the account: checked, with nothing to count.
+    expect(store.accountLine(status({ configured: true, checkedAt: 1 }))).toBe(
+      'Checked: ElevenLabs accepted the key.'
+    )
     // The same account as the card draws it: the tier as a chip, the words,
     // and the share spent for the meter.
     expect(

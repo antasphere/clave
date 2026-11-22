@@ -44,7 +44,7 @@ function integration(
   const stub: SpeechIntegration = {
     openKey: async () => key,
     status: () => ({ voiceId, modelId: 'eleven_flash_v2_5' }),
-    check: async () => {
+    afterSpeak: async () => {
       checks += 1
     }
   }
@@ -138,6 +138,13 @@ describe('speak', () => {
     [400, '{"detail":{"status":"quota_exceeded","message":"x"}}', 'quota'],
     [401, '{"detail":{"status":"quota_exceeded"}}', 'quota'],
     [400, '{"detail":{"status":"invalid"}}', 'failed'],
+    // An invalid key is a 400 as ElevenLabs answers it today (PRDCT-4831).
+    [
+      400,
+      '{"detail":{"type":"authentication_error","status":"invalid_api_key","message":"API key is invalid."}}',
+      'refused'
+    ],
+    [404, '{"detail":{"type":"not_found","status":"voice_not_found","message":"x"}}', 'failed'],
     [500, 'boom', 'failed']
   ] as const)('answers %i (%s) as %s, never with the key', async (status, body, reason) => {
     answer = () => new Response(body, { status })
@@ -146,6 +153,72 @@ describe('speak', () => {
     expect(JSON.stringify(result)).not.toContain(KEY)
     if (reason === 'failed')
       expect(result).toMatchObject({ error: `ElevenLabs answered ${status}.` })
+  })
+
+  it("a refusal says ElevenLabs' own reason, on a speak and on a preview, the key cut out of it (PRDCT-4831)", async () => {
+    const refusal = (permission: string, extra = ''): string =>
+      JSON.stringify({
+        detail: {
+          type: 'authentication_error',
+          status: 'missing_permissions',
+          message: `The API key you used is missing the permission ${permission} to execute this operation.${extra}`
+        }
+      })
+    answer = () => new Response(refusal('text_to_speech'), { status: 401 })
+    expect(await host().speak({ sessionId: 's1', text: 'a' })).toEqual({
+      ok: false,
+      reason: 'refused',
+      error:
+        'ElevenLabs refused the key: The API key you used is missing the permission text_to_speech to execute this operation. Allow that permission for this key on elevenlabs.io, or paste a key that has it.'
+    })
+    answer = () => new Response(refusal('voices_read', ` (${KEY})`), { status: 401 })
+    const preview = await host().preview('voice-b')
+    expect(preview).toMatchObject({ ok: false, reason: 'refused' })
+    expect((preview as { error: string }).error).toContain('missing the permission voices_read')
+    expect(JSON.stringify(preview)).not.toContain(KEY)
+    const lines: string[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      await host().speak({ sessionId: 's1', text: 'a' })
+    } finally {
+      warn.mockRestore()
+    }
+    expect(lines.join('\n')).toContain('missing the permission voices_read')
+    expect(lines.join('\n')).not.toContain(KEY)
+  })
+
+  it('a key of no known shape, echoed by the service, is cut out of a speak and of a preview (verifier round 1)', async () => {
+    // Nothing but the key itself tells this one apart: the masks for
+    // key-shaped words do not see it.
+    const plain = '0123456789abcdef0123456789abcdef'
+    answer = () =>
+      new Response(JSON.stringify({ detail: { message: `The key ${plain} is not allowed.` } }), {
+        status: 401
+      })
+    const lines: string[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const spoken = await host({ key: plain }).speak({ sessionId: 's1', text: 'a' })
+      expect(spoken).toMatchObject({
+        ok: false,
+        reason: 'refused',
+        error: 'ElevenLabs refused the key: The key … is not allowed.'
+      })
+      const preview = await host({ key: plain }).preview('voice-b')
+      expect(preview).toMatchObject({
+        ok: false,
+        reason: 'refused',
+        error: 'ElevenLabs refused the key: The key … is not allowed.'
+      })
+    } finally {
+      warn.mockRestore()
+    }
+    expect(lines).toHaveLength(2)
+    expect(lines.join('\n')).not.toContain(plain)
   })
 
   it('a stored voice id that is not a voice id makes no request (verifier round 2, S02)', async () => {
@@ -168,7 +241,7 @@ describe('speak', () => {
     })
   })
 
-  it('reads the account again after a speak, once a minute at most', async () => {
+  it('tells the integration of a speak, once a minute at most', async () => {
     const speech = host()
     await speech.speak({ sessionId: 's1', text: 'a' })
     await speech.speak({ sessionId: 's1', text: 'b' })
@@ -283,6 +356,14 @@ describe('allowedPreviewUrl', () => {
 describe('speechRefusal', () => {
   it('says the credits for a spent account, the key for a refused one', () => {
     expect(speechRefusal(402, '')).toMatchObject({ reason: 'quota' })
-    expect(speechRefusal(401, 'nope')).toMatchObject({ reason: 'refused' })
+    expect(speechRefusal(401, 'nope')).toEqual({
+      ok: false,
+      reason: 'refused',
+      error: 'The key was refused by ElevenLabs.'
+    })
+    expect(speechRefusal(403, '{"detail":"Not allowed for sk_live"}', 'sk_live')).toMatchObject({
+      reason: 'refused',
+      error: 'ElevenLabs refused the key: Not allowed for …'
+    })
   })
 })
