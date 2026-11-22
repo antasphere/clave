@@ -565,6 +565,8 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   updatesReport: local,
   updatesToggle: local,
   onUpdatesToggle: local,
+  onUpdatesElsewhere: local,
+  onUpdatesYield: local,
   'updatesKeyEverywhere.get': local,
   'updatesKeyEverywhere.set': local,
   trustWorkspaceRoot: routed,

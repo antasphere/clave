@@ -2993,10 +2993,17 @@ const electronAPI = {
   onKeymapsChanged: (callback: (value: unknown) => void) =>
     createIpcListener<[unknown]>('keymaps:changed', callback),
   // Folio's updates (PRDCT-4832): this window's status, the key's routing.
-  updatesReport: (status: { active: boolean; playing: boolean; oldestAt: number | null }) =>
-    ipcRenderer.send('updates:status', status),
+  updatesReport: (status: {
+    active: boolean
+    playing: boolean
+    speaking: boolean
+    oldestAt: number | null
+  }) => ipcRenderer.send('updates:status', status),
   updatesToggle: () => ipcRenderer.invoke('updates:toggle') as Promise<boolean>,
   onUpdatesToggle: (callback: () => void) => createIpcListener<[]>('updates:toggle', callback),
+  onUpdatesElsewhere: (callback: (speaking: boolean) => void) =>
+    createIpcListener<[boolean]>('updates:elsewhere', callback),
+  onUpdatesYield: (callback: () => void) => createIpcListener<[]>('updates:yield', callback),
   updatesKeyEverywhere: {
     get: () => ipcRenderer.invoke('updates:key-everywhere:get') as Promise<boolean>,
     set: (value: boolean) =>
