@@ -30,8 +30,9 @@ describe('clave_open_session spawn modes', () => {
     // road builds from it (`providerInjection`); it used to be dropped here.
     expect(modes.model).toBe('x/y')
   })
-  it('drops a model only where there is nowhere to put it: Antigravity, a terminal', () => {
-    expect(resolveSpawnModes({ mode: 'antigravity', model: 'm' }).model).toBeUndefined()
+  it('drops a model only where there is nowhere to put it: a terminal', () => {
+    expect(resolveSpawnModes({ mode: 'antigravity', model: 'm' }).model).toBe('m')
+    expect(resolveSpawnModes({ mode: 'gemini', model: 'm' }).model).toBe('m')
     expect(resolveSpawnModes({ mode: 'terminal', model: 'm' }).model).toBeUndefined()
     for (const mode of ['claude', 'codex', 'pi', 'opencode'] as const)
       expect(resolveSpawnModes({ mode, model: 'm' }).model).toBe('m')
@@ -67,7 +68,7 @@ describe('clave_open_session spawn modes', () => {
   it('keeps the model for the agents that take one and drops it otherwise', () => {
     expect(resolveSpawnModes({ mode: 'codex', model: 'gpt-5.5' }).model).toBe('gpt-5.5')
     expect(resolveSpawnModes({ mode: 'pi', model: 'x' }).model).toBe('x')
-    expect(resolveSpawnModes({ mode: 'antigravity', model: 'x' }).model).toBeUndefined()
+    expect(resolveSpawnModes({ mode: 'antigravity', model: 'x' }).model).toBe('x')
     expect(resolveSpawnModes({ mode: 'terminal', model: 'x' }).model).toBeUndefined()
   })
 })

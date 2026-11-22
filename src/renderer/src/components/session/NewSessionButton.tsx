@@ -3,6 +3,7 @@ import { useSessionStore } from '../../store/session-store'
 import { getActiveWorkspaceId, workspaceServer } from '../../store/workspace-store'
 import { getLastAgentSetup } from '../../store/launch-prefs'
 import { launchSession } from '../../lib/launch-session'
+import { antigravitySettingField } from '../../lib/antigravity-setting-field'
 
 export function NewSessionButton(): React.JSX.Element {
   const addSession = useSessionStore((s) => s.addSession)
@@ -38,7 +39,8 @@ export function NewSessionButton(): React.JSX.Element {
         piMode: state.piMode,
         opencodeMode: state.opencodeMode,
         claudeAgentsMode: state.claudeAgentsMode,
-        dangerousMode: state.dangerousMode
+        dangerousMode: state.dangerousMode,
+        ...antigravitySettingField(state.antigravityMode)
       })
       addSession({
         id: sessionInfo.id,

@@ -72,7 +72,25 @@ vi.mock('../../store/usage-store', async (original) => {
   return {
     ...real,
     claudeUsageStore: () => () => read,
-    codexUsageStore: () => () => read
+    codexUsageStore: () => () => read,
+    useAntigravityUsageStore: () => ({
+      ...read,
+      data: {
+        windows: [
+          ['gemini-weekly', 'Gemini', 'weekly_scoped', 10],
+          ['gemini-5h', 'Gemini', 'session', 20],
+          ['3p-weekly', 'Claude/GPT', 'weekly_scoped', 100]
+        ].map(([key, scope, kind, usedPercentage]) => ({
+          key,
+          scope,
+          kind,
+          usedPercentage,
+          label: key,
+          resetsAt: null,
+          severity: null
+        }))
+      }
+    })
   }
 })
 // The usage per connection (PRDCT-4551), read live as the session store is.
@@ -262,4 +280,18 @@ it('a Pi tab on a connection shows that connection’s today, an OpenCode tab on
   } finally {
     useHarnessUsageStore.setState({ byKey: {} })
   }
+})
+
+it('an Antigravity tab shows the group of models its model draws on', () => {
+  const on = (model: string): string | null => {
+    useSessionStore.setState({
+      sessions: [
+        { id: 'tab', cwd: '/repo', sessionType: 'local', antigravityMode: true, model } as never
+      ],
+      focusedSessionId: 'tab'
+    })
+    return capShown()
+  }
+  expect(on('gemini-4-neon')).toBe('Gemini')
+  expect(on('claude-opus-5-5')).toBe('Claude/GPT')
 })

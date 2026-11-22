@@ -1660,6 +1660,7 @@ describe('the paired phone mobile boundary', () => {
       '/usage/claude/snapshot/x',
       '/usage/claude/snapshots',
       '/usage/pi',
+      '/usage/antigravity',
       '/sidebar/layout',
       '/sidebar/layout?windowKey=w1',
       '/sidebar/layouts',

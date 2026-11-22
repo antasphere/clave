@@ -450,6 +450,9 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   getCodexUsageLimits: localBecause(
     "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
+  getAntigravityUsageLimits: localBecause(
+    "this Mac's Antigravity sign-in and usage, on purpose, as Codex's: no server tab's foot reads it (PRDCT-4328)"
+  ),
   getCodexUsageSnapshot: localBecause(
     "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),

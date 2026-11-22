@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   antigravityProfileMode,
+  antigravityWindowsArgs,
   BUILT_IN_LAUNCH_PROFILES,
   AGENT_CAPABILITIES,
   buildAgentArgv,
@@ -574,13 +575,9 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     ).toEqual(['codex', '-c', TITLE])
   })
 
-  it("antigravity: a profile's own --mode wins over the default rung", () => {
+  it("antigravity: a profile's own --mode holds when no mode was resolved", () => {
     const own: LaunchProfile = { ...agy, additionalArgs: ['--mode', 'plan'] }
-    expect(buildAgentArgv({ kind: 'antigravity', profile: own, permissionMode: 'auto' })).toEqual([
-      'agy',
-      '--mode',
-      'plan'
-    ])
+    expect(buildAgentArgv({ kind: 'antigravity', profile: own })).toEqual(['agy', '--mode', 'plan'])
   })
 
   it('antigravity: a rung of its ladder is --mode, anything else is dropped', () => {
@@ -592,9 +589,42 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
         initialPrompt: 'hi'
       })
     ).toEqual(['agy', '--mode', 'plan', '-i', 'hi'])
+    // A mode that is no rung was still said: it asks, it never falls to Auto.
     expect(
       buildAgentArgv({ kind: 'antigravity', profile: agy, permissionMode: 'read-only' })
-    ).toEqual(['agy'])
+    ).toEqual(['agy', '--settings', '{"agentMode":""}'])
+  })
+
+  it('antigravity: Ask is never `--mode default`, the profile’s own included', () => {
+    const ask = ['agy', '--settings', '{"agentMode":""}']
+    expect(
+      buildAgentArgv({ kind: 'antigravity', profile: agy, permissionMode: 'default' })
+    ).toEqual(ask)
+    const own: LaunchProfile = { ...agy, additionalArgs: ['--mode', 'default'] }
+    expect(buildAgentArgv({ kind: 'antigravity', profile: own })).toEqual(ask)
+  })
+
+  it('antigravity: Windows follows the same rule', () => {
+    expect(antigravityWindowsArgs({ mode: 'plan', model: 'gemini-4-neon', effort: 'low' })).toEqual(
+      ['/c', 'agy', '--mode', 'plan', '--model', 'gemini-4-neon', '--effort', 'low']
+    )
+    expect(antigravityWindowsArgs({ mode: 'default', resumeSessionId: 'c1' })).toEqual([
+      '/c',
+      'agy',
+      '--settings',
+      '{"agentMode":""}',
+      '--conversation',
+      'c1'
+    ])
+  })
+
+  it('antigravity: the tab’s Plan wins over a profile’s Auto', () => {
+    const own: LaunchProfile = { ...agy, additionalArgs: ['--mode', 'auto'] }
+    expect(buildAgentArgv({ kind: 'antigravity', profile: own, permissionMode: 'plan' })).toEqual([
+      'agy',
+      '--mode',
+      'plan'
+    ])
   })
 
   it('antigravity: resumes a conversation with --conversation, the id its ACP server opened', () => {
@@ -606,6 +636,32 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
         resumeSessionId: '70ec1049-f3e9-46a9-bd24-382267964044'
       })
     ).toEqual(['agy', '--mode', 'plan', '--conversation', '70ec1049-f3e9-46a9-bd24-382267964044'])
+  })
+
+  it('antigravity: a model is --model and a level --effort, before the conversation', () => {
+    expect(
+      buildAgentArgv({
+        kind: 'antigravity',
+        profile: agy,
+        model: 'claude-opus-5-5',
+        effort: 'low',
+        resumeSessionId: 'c1',
+        initialPrompt: 'hi'
+      })
+    ).toEqual([
+      'agy',
+      '--model',
+      'claude-opus-5-5',
+      '--effort',
+      'low',
+      '--conversation',
+      'c1',
+      '-i',
+      'hi'
+    ])
+    expect(buildAgentArgv({ kind: 'antigravity', profile: agy, effort: '--sandbox' })).toEqual([
+      'agy'
+    ])
   })
 
   it("antigravity: a saved profile's own --mode is the rung its chat starts on", () => {

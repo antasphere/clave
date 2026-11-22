@@ -49,6 +49,7 @@ import {
   type AccountProvider,
   type AccountSources
 } from './session-accounts'
+import { antigravityLaunchModels } from '../../../shared/antigravity'
 
 /** The launcher's DEFAULT_MODEL: the harness's own default, no flag passed. */
 const DEFAULT_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
@@ -63,6 +64,8 @@ export interface WindowLaunchFacts {
   readonly harnessSettings: HarnessSettingsById
   readonly interactionMode: InteractionMode
   readonly codexModels: CodexModels
+  /** Antigravity's, as `agy models` lists them; absent, unread. */
+  readonly antigravityModels?: CodexModels
   /** What the machine's Pi and OpenCode tabs used today, per connection
    *  (PRDCT-4551); absent when it could not be read. */
   readonly harnessUsage?: Pick<HarnessUsageView, 'rows'> | null
@@ -77,7 +80,8 @@ export interface WindowLaunchFacts {
 export function launchModelsOf(
   source: Pick<LaunchSource, 'profilesFor' | 'catalog' | 'providerConnections'>,
   harness: HarnessId,
-  codexModels: CodexModels
+  codexModels: CodexModels,
+  antigravityModels: CodexModels = 'unavailable'
 ): readonly LaunchModel[] | 'unavailable' {
   if (harness === 'claude')
     return CLAUDE_MODELS.map((model) => ({
@@ -89,6 +93,10 @@ export function launchModelsOf(
     return codexModels === 'unavailable' || codexModels.length === 0
       ? 'unavailable'
       : codexModels.map((model) => ({ id: model.id, label: model.label, family: model.label }))
+  if (harness === 'antigravity')
+    return antigravityModels === 'unavailable' || antigravityModels.length === 0
+      ? 'unavailable'
+      : antigravityLaunchModels(antigravityModels)
   if (harness === 'pi' || harness === 'opencode') {
     const pinned =
       harness === 'pi'
@@ -188,7 +196,8 @@ export function serverLaunchOptionsInput(
       facts.interactionMode !== 'terminal' && HARNESS_BY_ID[family].chatAdapterId !== null
         ? source.chatProfileId(family)
         : source.selectedProfileId(family),
-    models: (harness) => launchModelsOf(source, harness, facts.codexModels),
+    models: (harness) =>
+      launchModelsOf(source, harness, facts.codexModels, facts.antigravityModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
     connections: (pool, harness) => poolConnections(sources, serverId, pool, harness),
@@ -243,7 +252,8 @@ export function localLaunchOptionsInput(
     profiles: (family) => source.profilesFor(family),
     defaultProfileId: (family) => source.selectedProfileId(family),
     openProfileId,
-    models: (harness) => launchModelsOf(source, harness, facts.codexModels),
+    models: (harness) =>
+      launchModelsOf(source, harness, facts.codexModels, facts.antigravityModels),
     harnessSettings: facts.harnessSettings,
     interactionMode: facts.interactionMode,
     connections: (pool, harness) => poolConnections(sources, LOCAL_SERVER_ID, pool, harness),

@@ -1,5 +1,7 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
 import { HARNESS_BY_ID } from './harness'
+import { isValidEffort } from './effort'
+import { antigravityModeArgv, antigravityProfileFlags } from './antigravity-mode'
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
 export type AgentKind = LauncherFamily | 'claude-agents'
@@ -304,6 +306,8 @@ export function buildAgentArgv(input: {
   /** OpenCode only (PRDCT-4496): run the TUI on its own server, so the
    *  tab's environment (its connection, its model) is the one read. */
   opencodeStandalone?: boolean
+  /** Antigravity only: the profile's settings file as Ask is handed it. */
+  antigravityAskSettings?: string
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -369,12 +373,19 @@ export function buildAgentArgv(input: {
     argv.push('-c', CODEX_TITLE_CONFIG)
     if (input.resumeSessionId) argv.push(input.resumeSessionId)
   } else if (input.kind === 'antigravity') {
-    if (
-      input.permissionMode &&
-      HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === input.permissionMode) &&
-      !profileSetsPermissions(input.profile)
+    // The stricter of the tab's mode and the profile's, in the words agy
+    // takes: `--mode default` is none of them and runs in Auto.
+    const [program, ...own] = argv
+    argv.splice(
+      0,
+      argv.length,
+      program,
+      ...antigravityModeArgv(own, input.permissionMode, input.antigravityAskSettings)
     )
-      argv.push('--mode', input.permissionMode)
+    // The model by its id, with or without its level (agy 1.5), and the level
+    // a chat moved here was running at.
+    if (input.model) argv.push('--model', input.model)
+    if (input.effort && isValidEffort(input.effort)) argv.push('--effort', input.effort)
     // The conversation a chat moved here carries (`--conversation <id>`, agy
     // 1.5): the id its ACP server opened is the one the CLI resumes.
     if (input.resumeSessionId) argv.push('--conversation', input.resumeSessionId)
@@ -507,8 +518,9 @@ export function profileSetsPermissions(profile: LaunchProfile): boolean {
   if (profile.family === 'claude') return claudeProfilePermissions(profile).mode !== undefined
   if (profile.family === 'codex') return Object.keys(codexProfilePolicy(profile)).length > 0
   if (profile.family === 'antigravity')
-    return [...profile.command, ...profile.additionalArgs].some(
-      (token) => token === '--mode' || token.startsWith('--mode=')
+    return (
+      antigravityProfileFlags([...profile.command.slice(1), ...profile.additionalArgs]).mode !==
+      undefined
     )
   return false
 }
@@ -518,12 +530,10 @@ export function profileSetsPermissions(profile: LaunchProfile): boolean {
  *  saved definition, two forms. Undefined when it names none, or a value
  *  that is not a rung of Antigravity's ladder. */
 export function antigravityProfileMode(profile: LaunchProfile): string | undefined {
-  const tokens = [...profile.command, ...profile.additionalArgs]
-  let value: string | undefined
-  tokens.forEach((token, index) => {
-    if (token === '--mode') value = tokens[index + 1]
-    else if (token.startsWith('--mode=')) value = token.slice('--mode='.length)
-  })
+  const value = antigravityProfileFlags([
+    ...profile.command.slice(1),
+    ...profile.additionalArgs
+  ]).mode
   return value && HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === value)
     ? value
     : undefined
@@ -575,4 +585,22 @@ export function capturesExchange(mode: string): boolean {
 export function exchangeCaptureRefusal(mode: string): string {
   const harness = HARNESS_BY_ID[harnessKeyOfMode(mode) as never] as { name: string } | undefined
   return `${harness?.name ?? 'This harness'} exchange capture is not supported yet`
+}
+
+/** `cmd.exe /c agy …` on Windows, by the POSIX argv's mode rule. Its values
+ *  are Clave's own constants or were shape-checked by the caller. */
+export function antigravityWindowsArgs(input: {
+  mode?: string
+  model?: string
+  effort?: string
+  resumeSessionId?: string
+}): string[] {
+  return [
+    '/c',
+    'agy',
+    ...antigravityModeArgv([], input.mode),
+    ...(input.model ? ['--model', input.model] : []),
+    ...(input.effort && isValidEffort(input.effort) ? ['--effort', input.effort] : []),
+    ...(input.resumeSessionId ? ['--conversation', input.resumeSessionId] : [])
+  ]
 }

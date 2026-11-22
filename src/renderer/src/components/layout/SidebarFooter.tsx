@@ -16,6 +16,8 @@ import { useFeedbackStore } from '../../store/feedback-store'
 import {
   claudeUsageStore,
   codexUsageStore,
+  useAntigravityUsageStore,
+  refreshAntigravityUsageAfterTurn,
   accountUsageFieldsOf,
   claudeUsageForModel,
   headroomWindow,
@@ -53,6 +55,8 @@ import { fieldAccent } from '../../lib/brand-field'
 import { sessionConnectionLeft, useSessionConnection } from '../../lib/session-connection'
 import { cn } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
+import { antigravityWindowsForModel } from '../../../../shared/antigravity'
+import { splitWindows } from '../../../../shared/usage-summary'
 
 /**
  * "There is an update" — one line, two buttons, and a mark on the icon for
@@ -164,7 +168,7 @@ function UsageLine({
   account
 }: {
   window: UsageWindow
-  provider: 'claude' | 'codex'
+  provider: 'claude' | 'codex' | 'antigravity'
   /** The Claude account's label, shown only once there is more than one. */
   account: string | null
 }): React.ReactElement {
@@ -220,7 +224,12 @@ function UsageLine({
         {out ? capOutLabel(w) : `${left}% left`}
       </span>
       <span className="text-[11px] text-text-tertiary truncate">
-        · {provider === 'codex' ? 'Codex' : (account ?? 'Claude')}
+        ·{' '}
+        {provider === 'codex'
+          ? 'Codex'
+          : provider === 'antigravity'
+            ? 'Antigravity'
+            : (account ?? 'Claude')}
         {out ? '' : ` · ${capName(w)}`}
       </span>
     </button>
@@ -235,15 +244,20 @@ function UsageLine({
  * would put it straight back.
  */
 /** PRDCT-4551: a Pi or OpenCode tab's turn ended (its state left `working`):
- *  the usage of its machine is read again, so every place shows the turn. */
+ *  the usage of its machine is read again, so every place shows the turn. A
+ *  turn of this Mac's Antigravity reads its limits again the same way. */
 function useRefreshUsageOnTurnEnd(): void {
   useEffect(() => {
     const working = new Set<string>()
     return useSessionStore.subscribe((state) => {
       for (const session of state.sessions) {
-        if (!session.piMode && !session.opencodeMode) continue
+        const antigravity = session.antigravityMode && !isRemoteKey(session.id)
+        if (!session.piMode && !session.opencodeMode && !antigravity) continue
         if (session.agentState === 'working') working.add(session.id)
-        else if (working.delete(session.id)) void refreshHarnessUsage(ownerOf(session.id))
+        else if (working.delete(session.id)) {
+          if (antigravity) refreshAntigravityUsageAfterTurn()
+          else void refreshHarnessUsage(ownerOf(session.id))
+        }
       }
     })
   }, [])
@@ -355,7 +369,10 @@ export function SidebarFooter(): React.ReactElement {
       : !account && sessionAccountRef
         ? (sessionLabel ?? 'Removed account')
         : null
-  const quota = provider === 'codex' ? codexUsageStore(accountId)() : claudeUsageStore(accountId)()
+  const antigravityQuota = useAntigravityUsageStore()
+  const accountQuota =
+    provider === 'codex' ? codexUsageStore(accountId)() : claudeUsageStore(accountId)()
+  const quota = provider === 'antigravity' ? antigravityQuota : accountQuota
   // A tab on a server: its OWN account on that server and that account's
   // read there (PRDCT-4328), the server's settings the chip and the row
   // already keep current. Never this Mac's account of the same id.
@@ -386,7 +403,8 @@ export function SidebarFooter(): React.ReactElement {
     if (harnessTabId) void ensureHarnessUsage(tabMachine, 'today')
   }, [harnessTabId, tabMachine])
   useRefreshUsageOnTurnEnd()
-  const loadUsage = provider === 'claude' || provider === 'codex' ? quota.load : null
+  const loadUsage =
+    provider === 'claude' || provider === 'codex' || provider === 'antigravity' ? quota.load : null
   const trackerEnabled = useWorkTrackerStore((s) => s.enabled)
   const trackerMinutes = useWorkTrackerStore((s) => s.todayTotalMinutes)
   const feedbackCollapsed = useFeedbackStore((s) => s.collapsed)
@@ -410,7 +428,8 @@ export function SidebarFooter(): React.ReactElement {
   // What the second line says, in order of what is worth knowing: the agent's
   // remaining headroom, else the hours worked, else nothing — and if that
   // leaves only the feedback icon, the row still carries it.
-  const quotaProvider = provider === 'claude' || provider === 'codex' ? provider : null
+  const quotaProvider =
+    provider === 'claude' || provider === 'codex' || provider === 'antigravity' ? provider : null
   // The cap governing the focused tab: the account's read seen for the tab's
   // model (its family cap and the shared caps; a Codex account has one cap
   // set), the tightest of those, a tie going to the all-models cap.
@@ -418,6 +437,15 @@ export function SidebarFooter(): React.ReactElement {
     quotaProvider && quota.status !== 'error'
       ? headroomWindow(
           (() => {
+            // Antigravity meters two groups of models, named by no model's
+            // own words: the group's windows are picked by the group's rule.
+            if (quotaProvider === 'antigravity') {
+              const own = antigravityWindowsForModel(
+                quota.data?.windows ?? [],
+                focusedSession?.model
+              )
+              return { ...splitWindows(own), windows: own }
+            }
             const read = {
               status: quota.status,
               error: null,

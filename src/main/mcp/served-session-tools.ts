@@ -524,6 +524,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...launchModeFields({
           claudeMode,
           codexMode,
+          antigravityMode,
           dangerousMode,
           permissionMode: p.permissionMode,
           effort: p.effort,

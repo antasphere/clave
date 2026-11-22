@@ -142,6 +142,7 @@ const UNREADABLE_NO_PLACE = new Set([
   'antasphereAccountGet',
   'antasphereAccountDismiss',
   'getCodexUsageLimits',
+  'getAntigravityUsageLimits',
   'getCodexUsageSnapshot',
   'getPiUsage',
   // ── Lane B (harness wave): provider connections ──
