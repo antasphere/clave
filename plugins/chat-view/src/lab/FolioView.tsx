@@ -65,7 +65,6 @@ import type { DigestLaunch } from '../../../../src/shared/exchange-digest'
 import { digestIdOf, usePageTitles, usePageTitleStore } from '../digest'
 import { EffortMenu } from '../EffortMenu'
 import { ContextMeter } from '../TerminalStatus'
-import { WorkCards } from '../WorkCards'
 import { relaunchRequest, shownWork } from '../terminal-status'
 import { DropDrawing } from '../DropDrawing'
 import { PastFailed, PastTruncated } from '../EarlierLoading'
@@ -83,12 +82,15 @@ import {
   type Page,
   type PageRow
 } from './pages'
-import { useAutoRead, useReadAloud, type Reading } from './read-aloud'
+import { useReadAloud, type Reading } from './read-aloud'
+import { registerVoice, useUpdatesStore } from '../../../../src/renderer/src/store/updates-store'
+import { turnEndAction } from './turn-end'
 import { fallbackLine, useSpokenRenderings } from './spoken'
 import { FolioLoader, PageTitle } from './PageTitle'
 import { shownTitle } from './title'
 import { useConversation } from './use-conversation'
 import { VoiceCard } from './VoiceCard'
+import { FolioWork } from './FolioWork'
 import { LAB_VIEW } from './meta'
 
 /* Folio: the conversation as a book of pages, one per question. The reader's
@@ -542,7 +544,8 @@ function PageView({
 const tickHeight = (page: Page): number =>
   Math.round(25 + Math.min(75, Math.log10(1 + page.answer.length + page.tools * 40) * 22))
 
-/** The book's spine: one tick per page, the way to turn, and the contents. */
+/** The book's spine: the way to turn (Previous and Next, together), one tick
+ *  per page, the count, and the contents. */
 function Spine({
   pages,
   current,
@@ -592,6 +595,16 @@ function Spine({
       >
         <ChevronLeftIcon />
       </button>
+      <button
+        type="button"
+        className="folio-turn"
+        aria-label="Next page"
+        title="Next page (→)"
+        disabled={at >= pages.length - 1}
+        onClick={() => onTurn(pages[at + 1].key)}
+      >
+        <ChevronRightIcon />
+      </button>
       <div className="folio-ticks" ref={strip}>
         {more && (
           <button
@@ -624,16 +637,6 @@ function Spine({
         {current.number}
         <span>/{pages.length}</span>
       </span>
-      <button
-        type="button"
-        className="folio-turn"
-        aria-label="Next page"
-        title="Next page (→)"
-        disabled={at >= pages.length - 1}
-        onClick={() => onTurn(pages[at + 1].key)}
-      >
-        <ChevronRightIcon />
-      </button>
       <button
         type="button"
         className="folio-turn"
@@ -752,7 +755,8 @@ export function FolioView({
     before,
     history,
     truncated,
-    imagesSupported
+    imagesSupported,
+    turnEnds
   } = useConversation(session.id, session.state)
   const presentation = usePresentation(conversation, visible)
   const work = useMemo(() => shownWork(status.agents), [status.agents])
@@ -864,32 +868,120 @@ export function FolioView({
     [titleStates, session.id]
   )
 
-  // Reading aloud: on the reader's ask, and, when they asked for it, each new
-  // answer as it is finished while this pane is on screen, from its spoken
-  // rendering (PRDCT-4409), as written when none can be had.
+  // Reading aloud: on the reader's ask, and, when the play mode is on, each
+  // new answer as it is finished, from its spoken rendering (PRDCT-4409), as
+  // written when none can be had. Off the page, a finished answer is filed as
+  // an update instead (PRDCT-4832, the store's `file`), announced and played
+  // on the person's ask from the chip, the card or the key.
   useSpokenRenderings(session.id)
-  const voice = useReadAloud({ sessionId: session.id, launch })
-  const [autoRead, setAutoRead] = useAutoRead()
-  // Switched to another view, the pane stops reading: a voice nobody can see
-  // the source of, or stop, is not a reading.
-  const stopVoice = voice.stop
-  useEffect(() => {
-    if (!visible) stopVoice()
-  }, [visible, stopVoice])
+  const onVoiceEnd = useCallback(
+    (key: string, how: 'heard' | 'stopped'): void =>
+      useUpdatesStore.getState().ended(session.id, key, how),
+    [session.id]
+  )
+  const voice = useReadAloud({ sessionId: session.id, launch, onEnd: onVoiceEnd })
+  const autoRead = useUpdatesStore((s) => s.on)
+  const setAutoRead = useUpdatesStore((s) => s.setOn)
   const latest = pages.at(-1)
-  const writing = useRef<string | null>(null)
+  // The turn, on the LIVE conversation state: a hidden pane's pages are
+  // frozen (`usePresentation`), so the end of a turn is read here, and the
+  // page it wrote built once, at that moment, from the live entries.
+  const atRest = useRef({ conversation, presentation, pages, visible, active, autoRead, titleOf })
+  atRest.current = { conversation, presentation, pages, visible, active, autoRead, titleOf }
+  // One run per turn of the LIVE stream (`turnEnds`, counted where the
+  // stream is read): the past arriving, or a reconnect's replace, is never a
+  // turn. Runs after the batch is reduced, so the page is whole.
+  const seenEnds = useRef(turnEnds)
   const { read } = voice
   useEffect(() => {
-    if (!latest) return
-    if (latest.status === 'writing' || latest.status === 'working') {
-      writing.current = latest.key
-      return
+    if (turnEnds === seenEnds.current) return
+    seenEnds.current = turnEnds
+    const now = atRest.current
+    if (!now.autoRead) return
+    let last: Page | undefined
+    if (now.visible && now.presentation === now.conversation) last = now.pages.at(-1)
+    else {
+      const live = now.conversation
+      const entries = withServerPending(
+        live.entries,
+        useFleetStore.getState().requests[ownerOf(session.id)],
+        session.id
+      )
+      const ordinal = new Map<Entry, number>()
+      entries.forEach((entry, i) => ordinal.set(entry, live.first + i))
+      last = buildPages(entries, (entry) => ordinal.get(entry), live.state).at(-1)
     }
-    if (writing.current !== latest.key) return
-    writing.current = null
-    if (latest.status === 'done' && autoRead && visible && latest.answer)
-      read(latest.key, latest.spoken)
-  }, [latest, autoRead, visible, read])
+    const action = turnEndAction({
+      wasRunning: true,
+      state: now.conversation.state,
+      page: last,
+      visible: now.visible,
+      active: now.active,
+      on: now.autoRead,
+      // The voice is busy here, or in another window: never read over it.
+      busy: useUpdatesStore.getState().current !== null || useUpdatesStore.getState().elsewhere
+    })
+    if (!last || action === 'nothing') return
+    if (action === 'read') read(last.key, last.spoken)
+    else
+      useUpdatesStore.getState().file({
+        sessionId: session.id,
+        pageKey: last.key,
+        markdown: last.spoken,
+        title: now.titleOf(last),
+        at: Date.now(),
+        // On the page while the voice was busy: read once it is free, never
+        // announced to the person looking at it.
+        onPage: now.visible
+      })
+  }, [turnEnds, read, session.id])
+  // The pane's voice, while the pane is the tab's chosen view: the chip, the
+  // card and the key drive it from anywhere in the window.
+  const voiceNow = useRef(voice)
+  voiceNow.current = voice
+  const visibleNow = useRef(visible)
+  visibleNow.current = visible
+  useEffect(() => {
+    if (!active) return
+    return registerVoice(session.id, {
+      onScreen: () => visibleNow.current,
+      read: (key, markdown) => voiceNow.current.read(key, markdown),
+      pause: () => voiceNow.current.pause(),
+      resume: () => voiceNow.current.resume(),
+      stop: () => voiceNow.current.stop(),
+      seekBlock: (n) => voiceNow.current.seekBlock(n),
+      say: (text) => voiceNow.current.say(text)
+    })
+  }, [active, session.id])
+  // A reading belongs to its Folio page: the tab's view switched away from
+  // Folio (Chat, Terminal), the reading stops and the update leaves, since
+  // there is no page left to read or to open. The pane header's "Show
+  // terminal" is not that: the view stays chosen and the reading goes on.
+  useEffect(() => {
+    if (active) return
+    voiceNow.current.stop()
+    useUpdatesStore.getState().clearSession(session.id)
+  }, [active, session.id])
+  // The person is on the page: its update has been seen.
+  useEffect(() => {
+    if (visible) useUpdatesStore.getState().clearSession(session.id)
+  }, [visible, session.id])
+  // The reading in progress, published for the chip and the card; a reading
+  // keeps going when its page leaves the screen (PRDCT-4832, rule 6).
+  const readingPage = voice.reading ? pages.find((p) => p.key === voice.reading!.key) : undefined
+  const readingTitle = readingPage ? titleOf(readingPage) : null
+  useEffect(() => {
+    const { publish } = useUpdatesStore.getState()
+    if (!voice.reading) return publish(session.id, null)
+    publish(session.id, {
+      sessionId: session.id,
+      pageKey: voice.reading.key,
+      title: readingTitle,
+      reading: voice.reading,
+      onScreen: visible
+    })
+  }, [voice.reading, visible, readingTitle, session.id])
+  useEffect(() => () => useUpdatesStore.getState().publish(session.id, null), [session.id])
 
   const pane = useRef<HTMLDivElement>(null)
   const {
@@ -1161,6 +1253,20 @@ export function FolioView({
             <ChevronRightIcon aria-hidden="true" />
           </button>
         )}
+        {/* The work running now, in the desk's corner, out of the flow
+            (PRDCT-4833): the Chat view's strip under the composer, drawn
+            for a book. */}
+        <FolioWork
+          agents={work}
+          logs={subagents}
+          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
+          onRelaunch={(agent, alias) => {
+            if (!agent.taskId) return
+            void write({ type: 'stop_task', taskId: agent.taskId })
+              .then(() => write({ type: 'user_message', text: relaunchRequest(agent, alias) }))
+              .catch(report)
+          }}
+        />
       </div>
       <div className="chat-composer-wrap folio-composer">
         {providerSwitch.state && (
@@ -1379,17 +1485,6 @@ export function FolioView({
             />
           </div>
         </div>
-        <WorkCards
-          agents={work}
-          logs={subagents}
-          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
-          onRelaunch={(agent, alias) => {
-            if (!agent.taskId) return
-            void write({ type: 'stop_task', taskId: agent.taskId })
-              .then(() => write({ type: 'user_message', text: relaunchRequest(agent, alias) }))
-              .catch(report)
-          }}
-        />
       </div>
     </div>
   )

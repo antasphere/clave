@@ -72,6 +72,12 @@ export interface Preferences {
    * relay client (`server/relay-wiring.ts`) at every attempt.
    */
   mobileRelayUrl: string
+  /**
+   * The update key of Folio's play mode works in every app (PRDCT-4832, on by
+   * default): while an update waits or plays, `updates-key.ts` holds it
+   * system-wide; off, it answers only inside Clave.
+   */
+  updatesKeyEverywhere: boolean
 }
 
 const PREFERENCES_FILE = 'preferences.json'
@@ -93,7 +99,8 @@ const DEFAULTS: Preferences = {
   interactionMode: DEFAULT_INTERACTION_MODE,
   harnessSettings: {},
   onboarding: 'pending',
-  mobileRelayUrl: ''
+  mobileRelayUrl: '',
+  updatesKeyEverywhere: true
 }
 
 /** The files an install of Clave leaves behind once it has run: any of them

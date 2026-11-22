@@ -1682,6 +1682,26 @@ export interface ElectronAPI extends FleetDesktopAPI {
   keymapsImport: () => Promise<string | null>
   keymapsExport: (json: string) => Promise<boolean>
   onKeymapsChanged: (callback: (value: unknown) => void) => () => void
+  /** Folio's updates (PRDCT-4832): this window's status, told to main, which
+   *  holds the update key system-wide while any window is active. */
+  updatesReport: (status: {
+    active: boolean
+    playing: boolean
+    speaking: boolean
+    oldestAt: number | null
+  }) => void
+  /** Route the update key to the window it concerns; whether one was. */
+  updatesToggle: () => Promise<boolean>
+  onUpdatesToggle: (callback: () => void) => () => void
+  /** Whether ANOTHER window is speaking (a reading or a line): one voice at a
+   *  time across windows. */
+  onUpdatesElsewhere: (callback: (speaking: boolean) => void) => () => void
+  /** The person started a reading in another window: stop this one's. */
+  onUpdatesYield: (callback: () => void) => () => void
+  updatesKeyEverywhere: {
+    get: () => Promise<boolean>
+    set: (value: boolean) => Promise<boolean>
+  }
   trustWorkspaceRoot: (root: string) => Promise<void>
   untrustWorkspaceRoot: (root: string) => Promise<void>
   listTrustedRoots: () => Promise<string[]>

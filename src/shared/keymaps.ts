@@ -49,7 +49,8 @@ export const KEYMAP_ACTION_IDS = [
   'ungroupSelectedSessions',
   'resetSessions',
   'undoSidebar',
-  'newWindow'
+  'newWindow',
+  'playUpdate'
 ] as const
 
 export type KeymapActionId = (typeof KEYMAP_ACTION_IDS)[number]
@@ -190,6 +191,9 @@ export const KEYMAP_ACTIONS: readonly KeymapActionDefinition[] = [
   action('archiveAndKillSession', 'Archive and kill session', 'Sessions', 'global', [], true),
   action('previousSession', 'Previous session', 'Sessions', 'global', ['Mod+Shift+[']),
   action('nextSession', 'Next session', 'Sessions', 'global', ['Mod+Shift+]']),
+  // Folio's updates (PRDCT-4832): held system-wide by main while an update
+  // waits or plays (`src/main/updates-key.ts`), so it answers from any app.
+  action('playUpdate', 'Play or pause the update', 'Sessions', 'global', ['Ctrl+Shift+Space']),
   action('selectSession1', 'Select session 1', 'Sessions', 'global', ['Mod+1']),
   action('selectSession2', 'Select session 2', 'Sessions', 'global', ['Mod+2']),
   action('selectSession3', 'Select session 3', 'Sessions', 'global', ['Mod+3']),
@@ -703,4 +707,55 @@ export class KeymapMatcher {
     this.deadline = 0
     this.pendingAction = null
   }
+}
+
+const ACCELERATOR_KEYS: Record<string, string> = {
+  Space: 'Space',
+  Enter: 'Return',
+  Escape: 'Esc',
+  Backspace: 'Backspace',
+  Delete: 'Delete',
+  Tab: 'Tab',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  Home: 'Home',
+  End: 'End',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
+  '+': 'Plus'
+}
+
+/** One chord of a binding as an Electron accelerator (for `globalShortcut`,
+ *  PRDCT-4832), or null for what the OS cannot hold: a mouse chord, a
+ *  `Master` sequence or anything multi-step. Pure. */
+export function chordToAccelerator(chord: string, platform: NodeJS.Platform): string | null {
+  const trimmed = chord.trim()
+  if (!trimmed || /\s/.test(trimmed)) return null
+  // The plus key itself: `Ctrl++` splits into an empty last token.
+  const plusKey = trimmed === '+' || trimmed.endsWith('++')
+  const tokens = (plusKey ? trimmed.slice(0, -1) : trimmed).split('+').filter(Boolean)
+  const key = plusKey ? '+' : tokens.pop()
+  if (!key || key.toLowerCase() === 'master' || isMouseChord(key)) return null
+  const modifiers: string[] = []
+  for (const token of tokens) {
+    const modifier = MODIFIER_ALIASES[token.toLowerCase()]
+    if (!modifier) return null
+    modifiers.push(
+      modifier === 'Mod'
+        ? platform === 'darwin'
+          ? 'Command'
+          : 'Super'
+        : modifier === 'Ctrl'
+          ? 'Control'
+          : modifier
+    )
+  }
+  let name: string
+  if (ACCELERATOR_KEYS[key]) name = ACCELERATOR_KEYS[key]
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(key)) name = key.toUpperCase()
+  else if (key.length === 1) name = /[a-z]/i.test(key) ? key.toUpperCase() : key
+  else return null
+  return [...modifiers, name].join('+')
 }

@@ -1,10 +1,12 @@
 import { UNKNOWN_SESSION_ERROR, type DigestRecordOf } from './exchange-digest'
 import {
-  ELEVENLABS_REFUSED,
   ELEVENLABS_UNREACHABLE,
   elevenLabsBaseUrl,
   elevenLabsBaseUrlOverride,
-  elevenLabsIntegration
+  elevenLabsIntegration,
+  keyRefused,
+  refusedSentence,
+  serviceDetail
 } from './integrations/elevenlabs'
 import { isElevenLabsModelId, type ElevenLabsModelId } from '../shared/elevenlabs'
 import { SPEECH_MAX_TEXT, type SpeakResult, type SpeechFailureReason } from '../shared/speech'
@@ -19,11 +21,13 @@ import { SPEECH_MAX_TEXT, type SpeakResult, type SpeechFailureReason } from '../
  *
  * The key is opened for one request and lives only in that call's frame; it
  * goes in one header, to the ElevenLabs base URL only, and never into an
- * answer, an error or a log. A voice's preview sample is fetched WITHOUT it.
+ * answer, an error or a log (a refusal carries ElevenLabs' own reason with
+ * the key cut out, `refusedSentence`). A voice's preview sample is fetched
+ * WITHOUT it.
  */
 
 const SPEAK_TIMEOUT_MS = 60_000
-/** The subscription count is read again after a speak at most this often. */
+/** The account's credits are read again after a speak at most this often. */
 const REFRESH_EVERY_MS = 60_000
 /** The largest preview sample read (a preview is a few seconds of mp3). */
 const PREVIEW_MAX_BYTES = 8 * 1024 * 1024
@@ -38,7 +42,9 @@ const answered = (status: number): string => `ElevenLabs answered ${status}.`
 export interface SpeechIntegration {
   openKey: () => Promise<string | null>
   status: () => { voiceId: string | null; modelId: ElevenLabsModelId }
-  check: () => Promise<unknown>
+  /** Once a page was spoken: the credits read again, or the whole check
+   *  when the key is shown with a failure (`ElevenLabsIntegration.afterSpeak`). */
+  afterSpeak: () => Promise<unknown>
 }
 
 export interface HostSpeechOptions {
@@ -103,15 +109,21 @@ function quotaExceeded(body: string): boolean {
   return body.includes('quota_exceeded')
 }
 
-/** A refusal of the service, in the person's words: never its own text,
- *  never the key. */
-export function speechRefusal(status: number, body: string): SpeakResult {
+/** A refusal of the service, in the person's words: a refused key says
+ *  ElevenLabs' own reason (a missing permission reads apart from an invalid
+ *  key), never the key itself, which is cut out of it when given. */
+export function speechRefusal(
+  status: number,
+  body: string,
+  key: string | null = null
+): SpeakResult {
   if (status === 402) return not('quota', SPEECH_QUOTA)
   // The service answers a spent account 401, 400 or 429 with
   // `quota_exceeded` in its detail: that is the credits, not the key.
   if ((status === 400 || status === 401 || status === 429) && quotaExceeded(body))
     return not('quota', SPEECH_QUOTA)
-  if (status === 401 || status === 403) return not('refused', ELEVENLABS_REFUSED)
+  const detail = serviceDetail(body)
+  if (keyRefused(status, detail)) return not('refused', refusedSentence(detail, key))
   return not('failed', answered(status))
 }
 
@@ -156,18 +168,20 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
     }
   }
   let refreshedAt = Number.NEGATIVE_INFINITY
-  /** The Integrations card shows the credits spent: the account is read
-   *  again after a speak, once a minute at most. */
+  /** The Integrations card shows the credits spent: the integration is told
+   *  of a speak, once a minute at most (it reads the account again, and
+   *  checks a key shown with a failure). */
   const refresh = (): void => {
     const at = now()
     if (at - refreshedAt < REFRESH_EVERY_MS) return
     refreshedAt = at
-    void integration.check().catch(() => undefined)
+    void integration.afterSpeak().catch(() => undefined)
   }
 
   const logged = (answer: SpeakResult): SpeakResult => {
     // Why a page fell to the system voice, in the main log: the reason and
-    // the words the control shows, never the key, never the service's body.
+    // the words the control shows (a refusal's are ElevenLabs' own sentence,
+    // the key cut out), never the key, never the service's whole body.
     if (!answer.ok)
       console.warn(`[speech] not spoken: ${answer.reason ?? 'failed'}: ${answer.error}`)
     return answer
@@ -205,7 +219,7 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
       } catch {
         return not('unreachable', ELEVENLABS_UNREACHABLE)
       }
-      if (!res.ok) return speechRefusal(res.status, textOf(res))
+      if (!res.ok) return speechRefusal(res.status, textOf(res), key)
       const { bytes } = res
       if (bytes.length === 0) return not('failed', 'ElevenLabs answered no audio.')
       refresh()
@@ -232,7 +246,7 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
       } catch {
         return not('unreachable', ELEVENLABS_UNREACHABLE)
       }
-      if (!voice.ok) return speechRefusal(voice.status, textOf(voice))
+      if (!voice.ok) return speechRefusal(voice.status, textOf(voice), key)
       let body: { preview_url?: unknown } | null = null
       try {
         body = JSON.parse(voice.bytes.toString('utf8')) as { preview_url?: unknown } | null

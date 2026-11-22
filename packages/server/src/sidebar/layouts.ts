@@ -188,6 +188,7 @@ export class SidebarLayouts {
     }
     if (group.prompt !== undefined) created.prompt = group.prompt
     if (group.rootSession !== undefined) created.rootSession = group.rootSession
+    if (group.templateId !== undefined) created.templateId = group.templateId
     if (group.color !== undefined) created.color = group.color
     if (group.view !== undefined) created.view = group.view === null ? null : { ...group.view }
     if (group.workspaceId !== undefined) created.workspaceId = group.workspaceId

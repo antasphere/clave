@@ -53,6 +53,7 @@ export interface NormalizedGroup {
   terminals: NormalizedTerminal[]
   prompt?: string | null
   rootSession?: boolean
+  templateId?: string
   color?: string | null
   view?: { url: string; title?: string; terminalId?: string | null } | null
   workspaceId?: string
@@ -95,6 +96,8 @@ export function normalizeLayout(data: unknown): NormalizedLayout {
     }
     if (typeof raw.prompt === 'string' || raw.prompt === null) group.prompt = raw.prompt
     if (raw.rootSession === true) group.rootSession = true
+    if (typeof raw.templateId === 'string' && raw.templateId.length > 0)
+      group.templateId = raw.templateId
     if (typeof raw.color === 'string' || raw.color === null) group.color = raw.color
     if (raw.view === null) group.view = null
     else if (isRecord(raw.view) && typeof raw.view.url === 'string') {

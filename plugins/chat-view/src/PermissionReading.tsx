@@ -11,7 +11,6 @@ import type { Permission } from './reducer'
 import {
   maySecrets,
   PermissionReadingContext,
-  readInPart,
   READING_GIVE_UP_MS,
   shownLevel
 } from './permission-reading-context'
@@ -23,7 +22,13 @@ import './permission-reading.css'
    applies (`shownLevel` in permission-risk.ts), held here too so an older
    host's word can never bring a level down: the reading raises a level the
    rules found, may give one to a request they could not tell, and never
-   says "reads only" by itself. */
+   says "reads only" by itself.
+
+   The sentence is a model's estimate and is shown as one, as it is, on every
+   card (PRDCT-4873): nothing here says what Clave's own rules could or could
+   not check. They prove little on purpose (a closed world: operands inside
+   the project, a short list of programs), so "could not check" stood on most
+   requests that reach outside it and read as a failure where nothing failed. */
 
 const MATCH_WORDS: Record<string, string> = {
   no: 'Not what you asked for'
@@ -62,9 +67,9 @@ function LevelPill({
  *  reading: the level the rules found (none when they could not tell) and
  *  "Reading what this does…". After: the level, raised by the reading or
  *  given by it to a request the rules could not tell, and the sentence; when
- *  no level is earned, one line that says Clave could not check it and that
- *  the sentence is a model's reading. A reading that failed says so in one
- *  quiet line. */
+ *  no level is earned (the rules cannot tell and the model says it only
+ *  reads), the sentence alone. With no reading at all, "Not verified" where
+ *  the rules have no level. A reading that failed says so in one quiet line. */
 export function PermissionReading({ request }: { request: Permission }): React.JSX.Element {
   const value = useContext(PermissionReadingContext)
   const reading = value?.explained[request.id]
@@ -78,43 +83,32 @@ export function PermissionReading({ request }: { request: Permission }): React.J
   }, [reading, read])
   const waiting = !!value && read && !reading && !gaveUp
   const failed = !!value && read && !reading?.sentence && (!!reading?.failed || gaveUp)
-  // The rules could neither prove nor detect a level: the model's sentence is
-  // all there is, and the card says so in words rather than in a faint pill
-  // beside a confident sentence.
-  // Read only in part (a part the rules could not read): until a model has
-  // read it, no level and one line that says so; then the model's level,
-  // never under what the readable parts reach, and the same words.
-  const partial = readInPart(request, value?.cwd)
-  const unverified = (level === null || partial) && !!reading?.sentence
-  // What Clave's own checks could vouch for, in the reader's words, then
-  // whose reading the sentence is (PRDCT-4489): "Not verified … a model
-  // reads it as" read as jargon on the card.
-  const unchecked = partial ? 'Clave could check only part of this' : 'Clave could not check this'
-  // The rules' note, beside the level or the "Not verified" line: what is
-  // read may hold a secret. A hint, in the same neutral ink as the level.
-  const secrets = maySecrets(request, value?.cwd) && (level !== null || unverified || partial)
+  const sentence = reading?.sentence
+  // The pill: a level when there is one. With none, nothing while the reading
+  // is on its way or once its sentence stands there (a model's "reads only" is
+  // a sentence, never a label), and "Not verified" when no reading came. A
+  // request the rules read only in part has no level until it is read, then
+  // the model's, never under what the readable parts reach (`shownLevel`).
+  const pill = level !== null || !(waiting || sentence)
+  // The rules' note, beside the pill or the sentence: what is read may hold a
+  // secret. A hint, in the same neutral ink as the level.
+  const secrets = maySecrets(request, value?.cwd) && (pill || !!sentence)
   return (
     <div
       className="chat-permission-reading"
       data-level={level ?? 'unverified'}
-      data-state={reading?.sentence ? 'read' : waiting ? 'reading' : failed ? 'failed' : 'none'}
+      data-state={sentence ? 'read' : waiting ? 'reading' : failed ? 'failed' : 'none'}
     >
-      {!(level === null && (waiting || unverified || partial)) && <LevelPill level={level} />}
+      {pill && <LevelPill level={level} />}
       {secrets && (
         <span className="chat-permission-secrets">
           <KeyIcon aria-hidden="true" />
           May show secrets
         </span>
       )}
-      {partial && !reading?.sentence && (
-        <p className="chat-permission-sentence" data-verified="false">
-          {unchecked}.
-        </p>
-      )}
-      {reading?.sentence ? (
-        <p className="chat-permission-sentence" data-verified={unverified ? 'false' : undefined}>
-          {unverified && `${unchecked}. A model's reading: `}
-          {reading.sentence}
+      {sentence ? (
+        <p className="chat-permission-sentence">
+          {sentence}
           {reading.asked && MATCH_WORDS[reading.asked] && (
             <span className="chat-permission-match" data-asked={reading.asked}>
               {MATCH_WORDS[reading.asked]}

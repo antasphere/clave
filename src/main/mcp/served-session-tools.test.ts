@@ -1554,6 +1554,8 @@ describe('launching a pinned group', () => {
       cwd: '/root/proj',
       prompt: 'The project at @project_path under @root_path',
       rootSession: true,
+      // The pin the group came from, so pinning it later shows that pin.
+      templateId: 'Clave',
       workspaceId: 'ws1',
       view: { url: 'http://x', title: 'Clave' }
     })

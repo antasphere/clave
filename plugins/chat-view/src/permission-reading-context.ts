@@ -50,13 +50,6 @@ export function shownLevel(
   return ruleShown(rules.level, model, rules.atLeast)
 }
 
-/** Whether the rules read the request only in part: a part they could not
- *  read, the others reaching a floor. */
-export function readInPart(request: Permission, cwd: string | undefined): boolean {
-  const rules = ruleReading({ toolName: request.toolName, input: request.input, cwd })
-  return rules.level === 'unknown' && !!rules.atLeast
-}
-
 /** Whether what the request reads may show a secret: the rules' note
  *  (R1), a hint beside any level; its absence claims nothing. */
 export function maySecrets(request: Permission, cwd: string | undefined): boolean {

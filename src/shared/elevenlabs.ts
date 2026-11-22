@@ -58,6 +58,18 @@ export interface ElevenLabsVoice {
   previewUrl: string | null
 }
 
+/** What a key made on elevenlabs.io must allow, said on the Integrations
+ *  card before one is pasted (PRDCT-4831): the check asks the voices and the
+ *  speech, and reads the account only when the key may. The names are the
+ *  website's own. */
+export const ELEVENLABS_KEY_PERMISSIONS =
+  'On elevenlabs.io, the key needs Text to Speech and Voices: Read. User: Read is optional: with it, this card shows the plan and the credits.'
+
+/** How a refusal that carries ElevenLabs' own reason starts (PRDCT-4831):
+ *  the host writes it (`refusedSentence`), the Settings page knows a
+ *  sentence that starts so is meant for the person. */
+export const ELEVENLABS_REFUSED_PREFIX = 'ElevenLabs refused the key: '
+
 /** Every integration a machine holds; one today. */
 export interface IntegrationsStatus {
   elevenLabs: ElevenLabsStatus

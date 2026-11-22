@@ -48,6 +48,8 @@ import {
   removePinnedGroupWithCleanup,
   resyncPinnedGroup,
   findPinnedByGroupId,
+  findPinOfGroup,
+  pinInPicker,
   isPinnedOutOfSync,
   getHiddenGroupIds,
   revealGroup,
@@ -323,15 +325,37 @@ export function Sidebar(): React.JSX.Element {
   // seam at the foot (see the rule under </ScrollArea>).
   const listOverflows = useOverflows(scrollContainerRef)
 
-  // Handle drop on pinned zone
-  const handlePinnedDrop = useCallback((groupId: string) => {
-    if (isRemoteKey(groupId)) return
-    const existing = findPinnedByGroupId(groupId)
-    if (!existing) {
-      pinGroupFromCurrent(groupId)
-    }
-    // If already pinned, do nothing (visual highlight was already shown)
+  // The group picker (anchored to the Sessions header's folder-plus icon), and
+  // the card it flashes when it opens to show a pin rather than to pick one.
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
+  const [groupPickerFlashId, setGroupPickerFlashId] = useState<string | null>(null)
+  const closeGroupPicker = useCallback(() => {
+    setGroupPickerOpen(false)
+    setGroupPickerFlashId(null)
   }, [])
+
+  /** Pin a group, or show the pin it already has. A group launched from a pin
+   *  used to get a second pin beside the first; now the picker opens on the one
+   *  it came from, flashing. A pin the picker does not list (a toolbar's) has
+   *  no card to show, and the gesture then does nothing, as it always did for
+   *  a group already pinned. */
+  const pinOrShowPin = useCallback((groupId: string) => {
+    const result = pinGroupFromCurrent(groupId)
+    if (!result || result.created) return
+    const pin = usePinnedStore.getState().pinnedGroups.find((p) => p.id === result.pinnedId)
+    if (!pin || !pinInPicker(pin, useWorkspaceStore.getState().activeWorkspaceId)) return
+    setGroupPickerFlashId(pin.id)
+    setGroupPickerOpen(true)
+  }, [])
+
+  // Handle drop on pinned zone
+  const handlePinnedDrop = useCallback(
+    (groupId: string) => {
+      if (isRemoteKey(groupId)) return
+      pinOrShowPin(groupId)
+    },
+    [pinOrShowPin]
+  )
 
   // Pointer-based DnD
   const { isDragging, draggedIds, dropIndicator, isOverPinnedZone, handlePointerDown } =
@@ -429,8 +453,6 @@ export function Sidebar(): React.JSX.Element {
   // cannot carry the brief, and the row has to say so rather than promise it.
   const groupPromptApplies = agentAcceptsPrompt(getLastAgentSetup(activeWorkspaceId))
 
-  // Templates launcher popover (anchored to the Sessions header's folder-plus icon)
-  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   // The group switcher's filter — which group the list is narrowed to, null = All.
   // Deliberately component state, not store state: it is a way of looking at
   // the list, not a property of the workspace, and it should not survive a
@@ -1551,6 +1573,8 @@ export function Sidebar(): React.JSX.Element {
       const group = useSessionStore.getState().groups.find((g) => g.id === groupId)
       const currentColor = group?.color ?? null
       const existingPin = findPinnedByGroupId(groupId)
+      // Not linked to a pin, yet it has one: the pin it was launched from.
+      const hasPin = !existingPin && !isRemoteKey(groupId) && findPinOfGroup(groupId) !== null
       const pluginItems = pluginActionMenuItems('group', groupId)
       setContextMenu({
         x: e.clientX,
@@ -1568,9 +1592,9 @@ export function Sidebar(): React.JSX.Element {
             : isRemoteKey(groupId)
               ? null
               : {
-                  label: 'Pin group',
+                  label: hasPin ? 'Show pin' : 'Pin group',
                   icon: <BookmarkIcon className="w-3.5 h-3.5" />,
-                  onClick: () => pinGroupFromCurrent(groupId)
+                  onClick: () => pinOrShowPin(groupId)
                 },
           {
             label: 'Rename',
@@ -1639,7 +1663,8 @@ export function Sidebar(): React.JSX.Element {
       setGroupView,
       setActiveGroupView,
       moveToWindowItems,
-      moveGroupToWindow
+      moveGroupToWindow,
+      pinOrShowPin
     ]
   )
 
@@ -1882,7 +1907,8 @@ export function Sidebar(): React.JSX.Element {
                 draggedGroupId={draggedGroupId}
                 isFileDragOver={isFileDragOverWindow}
                 groupPickerOpen={groupPickerOpen}
-                onCloseGroupPicker={() => setGroupPickerOpen(false)}
+                groupPickerFlashId={groupPickerFlashId}
+                onCloseGroupPicker={closeGroupPicker}
               />
             )}
             <div>
@@ -2575,6 +2601,7 @@ function PinnedSection({
   draggedGroupId,
   isFileDragOver,
   groupPickerOpen,
+  groupPickerFlashId,
   onCloseGroupPicker
 }: {
   setContextMenu: (menu: ContextMenuState | null) => void
@@ -2583,6 +2610,7 @@ function PinnedSection({
   draggedGroupId: string | null
   isFileDragOver: boolean
   groupPickerOpen: boolean
+  groupPickerFlashId: string | null
   onCloseGroupPicker: () => void
 }): React.JSX.Element {
   const [exportDialogPinnedId, setExportDialogPinnedId] = useState<string | null>(null)
@@ -2639,7 +2667,11 @@ function PinnedSection({
         />
       )}
       {groupPickerOpen && (
-        <GroupPickerDialog onClose={onCloseGroupPicker} onContextMenu={handleContextMenu} />
+        <GroupPickerDialog
+          onClose={onCloseGroupPicker}
+          onContextMenu={handleContextMenu}
+          flashPinnedId={groupPickerFlashId}
+        />
       )}
       <ExportClaveDialog
         isOpen={exportDialogPinnedId !== null}

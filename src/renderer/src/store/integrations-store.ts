@@ -10,6 +10,7 @@
 import { create } from 'zustand'
 import {
   ELEVENLABS_MODELS,
+  ELEVENLABS_REFUSED_PREFIX,
   INTEGRATIONS_NEED_UPDATE,
   type ElevenLabsModelId,
   type ElevenLabsStatus,
@@ -60,13 +61,18 @@ function patchMachine(
 /** The sentences a machine says that are meant for the person; anything
  *  else (a socket error, a stack) is said with the fallback. */
 const SENTENCES =
-  /^(Paste the API key first\.|This machine cannot store a secret\.|No ElevenLabs key on this machine\.|The key was refused by ElevenLabs\.|The server could not reach ElevenLabs\.|ElevenLabs answered \d{3}\.|That is not a voice\.|That is not an ElevenLabs model\.|This server has no integrations\.|The server did not answer)$/
+  /^(ElevenLabs refused the key: .{1,500}|Paste the API key first\.|This machine cannot store a secret\.|No ElevenLabs key on this machine\.|The key was refused by ElevenLabs\.|The server could not reach ElevenLabs\.|ElevenLabs answered \d{3}\.|That is not a voice\.|That is not an ElevenLabs model\.|This server has no integrations\.|The server did not answer)$/
 
 export function sentenceOf(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : ''
   if (message.includes(INTEGRATIONS_NEED_UPDATE)) return INTEGRATIONS_NEED_UPDATE
   // IPC wraps a refusal ("Error invoking remote method '…': Error: <sentence>").
-  const sentence = (message.split(/\bError: /).pop() ?? '').trim()
+  // A refusal in ElevenLabs' own words is read from where it starts: its
+  // reason may itself say "Error: ".
+  const refusedAt = message.indexOf(ELEVENLABS_REFUSED_PREFIX)
+  const sentence = (
+    refusedAt >= 0 ? message.slice(refusedAt) : (message.split(/\bError: /).pop() ?? '')
+  ).trim()
   return SENTENCES.test(sentence) ? sentence : fallback
 }
 
@@ -239,7 +245,7 @@ export function accountLine(status: ElevenLabsStatus): string | null {
   const figure = accountFigure(status)
   if (!figure) return null
   const parts = [figure.tier, figure.credits].filter((part): part is string => !!part)
-  return parts.length ? parts.join(' · ') : 'Checked: the account answered.'
+  return parts.length ? parts.join(' · ') : 'Checked: ElevenLabs accepted the key.'
 }
 
 export function setOnLine(setAt: number | null): string {
