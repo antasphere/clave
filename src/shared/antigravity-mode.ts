@@ -75,9 +75,13 @@ export function resolveAntigravityMode(input: {
   const { named, setting, profile, settingsStart, cap, cliDefault, routine } = input
   let mode: AntigravityMode | undefined
   if (named !== undefined)
-    mode = isAntigravityMode(named) ? named : stricterMode(setting, profile.mode, 'default')
+    mode = isAntigravityMode(named)
+      ? named
+      : stricterMode(setting, profile.mode, settingsStart, 'default')
   else if (profile.mode !== undefined)
-    mode = isAntigravityMode(profile.mode) ? profile.mode : stricterMode(setting, 'default')
+    mode = isAntigravityMode(profile.mode)
+      ? profile.mode
+      : stricterMode(setting, settingsStart, 'default')
   else mode = stricterMode(setting, settingsStart)
   if (!mode && routine) mode = 'default'
   if (cap !== undefined) mode = stricterMode(mode ?? cliDefault, cap)

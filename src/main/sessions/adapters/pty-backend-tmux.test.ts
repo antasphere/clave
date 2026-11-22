@@ -209,6 +209,25 @@ describe.skipIf(!isTmuxAvailable())('a tmux-backed terminal', () => {
     expect(backend.getSessionRecord(planned.id)?.permissionMode).toBe('plan')
   })
 
+  it('hands an Antigravity terminal in Ask the copy of its settings file', () => {
+    const asked = backend.spawn(cwd, {
+      claudeMode: false,
+      antigravityMode: true,
+      tmuxMode: true,
+      launchProfile: {
+        id: 'agy-file',
+        name: 'Agy file',
+        family: 'antigravity',
+        command: ['agy'],
+        additionalArgs: ['--settings', 'rules.json']
+      },
+      antigravityLaunchMode: 'default',
+      antigravityAskSettings: '/private/ask.json'
+    })
+    backend.start(asked.id, 80, 24)
+    expect(processes[0].spec.args.join(' ')).toContain(`'--settings' '/private/ask.json'`)
+  })
+
   it('an OpenCode terminal keeps its session across a live reattach too', () => {
     // No tool server: the tab starts without Clave's tools.
     installTerminalPorts({ mcpConfig: { write: () => null, remove: () => {} } })

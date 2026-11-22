@@ -624,6 +624,20 @@ describe('a mode somebody named never ends looser', () => {
     expect(spawnOptions().mode).toBe('plan')
     attached.served = false
   })
+  it('reads a mode marked as the setting as the setting, never a pick', async () => {
+    attached.served = true
+    const sent = { permissionMode: 'auto', permissionModeFromSetting: true }
+    mocks.agyArgs = ['--mode', 'plan']
+    await openAntigravityChat(sent)
+    expect(spawnOptions().mode).toBe('plan')
+    expect(writtenRecord().permissionMode).toBeUndefined()
+    mocks.agyArgs = []
+    await openAntigravityChat({ ...sent, permissionMode: 'plan' })
+    expect(spawnOptions().mode).toBe('plan')
+    expect(spawnOptions().pickedMode).toBeUndefined()
+    expect(writtenRecord().permissionDefault).toBe('plan')
+    attached.served = false
+  })
   it('hands a terminal the mode it runs in, apart from the one that was named', async () => {
     setting('default')
     await openTerminal()

@@ -1060,6 +1060,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
       connectionLabel?: string
       /** Antigravity's permission setting, a default and never a pick. */
       permissionDefault?: string
+      /** `permissionMode` repeats that setting, for an older server. */
+      permissionModeFromSetting?: boolean
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void

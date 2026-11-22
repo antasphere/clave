@@ -80,6 +80,10 @@ describe('resolveAntigravityMode: never looser than what was said', () => {
     expect(resolve({ settingsStart: 'auto', setting: 'default' })).toBe('default')
     expect(resolve({ settingsStart: 'plan', named: 'auto' })).toBe('auto')
   })
+  it("never loosens a profile's own Plan for a word it does not know", () => {
+    expect(resolve({ settingsStart: 'plan', named: 'acceptEdits' })).toBe('plan')
+    expect(resolve({ settingsStart: 'plan', profile: { mode: 'bogus', rest: [] } })).toBe('plan')
+  })
   it('caps everything, a pick too, by rules that must hold', () => {
     expect(resolve({ cap: 'default', named: 'auto' })).toBe('default')
     expect(resolve({ cap: 'default', named: 'plan' })).toBe('plan')

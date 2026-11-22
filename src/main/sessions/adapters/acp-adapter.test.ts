@@ -1361,3 +1361,48 @@ describe("Antigravity's switches, one after another", () => {
     expect(s.events.filter((e) => e.type === 'error')).toEqual([])
   })
 })
+
+describe('what the write-back records, at the moment it writes', () => {
+  const agent: AcpAgentSpec = {
+    id: 'antigravity-chat',
+    provider: 'antigravity',
+    label: 'Antigravity',
+    sessionOptions: true
+  }
+  /** pty-manager reads `chosenMode` as each `permission_mode` reaches it. */
+  async function recording(
+    options: AcpSpawnOptions,
+    env: Record<string, string>
+  ): Promise<{ s: Session; record: () => string | undefined }> {
+    const s = await open(options, { agent, env: { ACP_STAND_IN_AGY: '1', ...env } })
+    let written = options.pickedMode
+    s.adapter.on(s.handle, 'stream', (stream) => {
+      if (stream.kind === 'event' && stream.event.type === 'permission_mode')
+        written = s.adapter.chosenMode(s.handle.id)
+    })
+    return { s, record: () => written }
+  }
+
+  it.each([
+    ['plan', ['auto', 'plan']],
+    ['default', ['auto', 'default']],
+    ['auto', ['plan']],
+    ['auto', ['default']]
+  ])('from %s, %j is recorded when the update crosses the answer', async (mode, picks) => {
+    const { s, record } = await recording(
+      { mode, pickedMode: mode },
+      { ACP_STAND_IN_OPTIONS_FIRST: '1' }
+    )
+    for (const pick of picks) s.adapter.write(s.handle, { type: 'set_permission_mode', mode: pick })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(record()).toBe(picks.at(-1))
+  })
+  it('sends nothing a Stop took back while a switch was on its way', async () => {
+    const { s } = await recording({ mode: 'plan' }, { ACP_STAND_IN_SET_DELAY: '{"auto":250}' })
+    s.adapter.write(s.handle, { type: 'set_permission_mode', mode: 'auto' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+    s.adapter.write(s.handle, { type: 'interrupt' })
+    await expect.poll(() => done(s.events), { timeout: 3000 }).toBe(true)
+    expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(false)
+  })
+})

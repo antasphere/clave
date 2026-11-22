@@ -130,6 +130,7 @@ interface Outgoing {
   /** The switches written before it, and the failures known by then. */
   after: Promise<void>
   failedBefore: number
+  stopsBefore: number
 }
 /** Why messages that waited leave unsent. */
 type Returned = 'withdrawn' | 'stopped' | 'ended'
@@ -173,6 +174,8 @@ interface HandleState {
   /** Counts the stricter switches that failed: what was written behind one
    *  is not sent. */
   failedSwitches: number
+  /** Counts the stops: what was written before one, and not yet sent, stays. */
+  stops: number
   commands: CommandOption[]
   history: HistoryItem[]
   /** True while `session/load` replays the conversation into `history`. */
@@ -432,6 +435,7 @@ export class AcpAdapter implements SessionAdapter {
       turns: Promise.resolve(),
       switches: Promise.resolve(),
       failedSwitches: 0,
+      stops: 0,
       prompts: 0,
       waiting: [],
       written: 0,
@@ -505,7 +509,8 @@ export class AcpAdapter implements SessionAdapter {
           prompt,
           dropped: false,
           after: state.switches,
-          failedBefore: state.failedSwitches
+          failedBefore: state.failedSwitches,
+          stopsBefore: state.stops
         }
         // The agent runs one prompt at a time and takes a message only once
         // the turns before it are over: written while one runs, it waits
@@ -532,6 +537,8 @@ export class AcpAdapter implements SessionAdapter {
         // A stop starts nothing by itself: what waited goes back to the
         // composer, unsent (PRDCT-4566).
         this.handBack(state, 'stopped')
+        // A message held behind a switch is no turn to cancel yet.
+        if (this.sessionOptions) state.stops++
         this.cancel(state)
         return
       case 'set_model':
@@ -913,7 +920,13 @@ export class AcpAdapter implements SessionAdapter {
     } else return
     const now = modeOption(state)?.currentValue
     if (now && now !== before && state.said) {
-      if (now !== state.picking) {
+      if (now === state.picking) {
+        // The switch's own change, ahead of its answer (`config_option_update`
+        // is a late snapshot): chosen before it is said, or the write-back
+        // records the pick before it and is never corrected.
+        state.chosen = now
+        state.step = undefined
+      } else {
         const held = state.chosen ?? state.base
         state.step = held && now !== held && stricterMode(now, held) === now ? now : undefined
       }
@@ -1014,6 +1027,10 @@ export class AcpAdapter implements SessionAdapter {
       this.emitWaiting(state)
       this.emit(state, message.event)
       this.emit(state, { type: 'state_change', state: 'working' })
+    }
+    if (message.stopsBefore !== state.stops) {
+      this.endTurn(state, true)
+      return
     }
     if (message.failedBefore !== state.failedSwitches) {
       this.notice(

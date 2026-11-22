@@ -352,6 +352,15 @@ class PtyManager {
     let antigravityLaunchMode: string | undefined
     let antigravityAskSettings: string | undefined
     if (family === 'antigravity' && ownProfile) {
+      // A setting sent in both spellings, for a server older than
+      // `permissionDefault`: here it is the setting, never a pick.
+      if (options.permissionModeFromSetting)
+        options = {
+          ...options,
+          permissionMode: undefined,
+          permissionDefault: options.permissionDefault ?? options.permissionMode,
+          permissionModeFromSetting: undefined
+        }
       const flags = antigravityProfileFlags([
         ...ownProfile.command.slice(1),
         ...ownProfile.additionalArgs

@@ -725,6 +725,15 @@ describe("setupSpawnFlags and Antigravity's setting", () => {
     const setup = { kind: 'antigravity', dangerousMode: false } as const
     expect(setupSpawnFlags(setup, undefined, null)).toEqual({ permissionDefault: 'plan' })
   })
+  it('sends a server both, marked: one older than the field reads the mode alone', () => {
+    useLaunchSettingsStore.setState({ harnesses: { antigravity: { permissionDefault: 'plan' } } })
+    const setup = { kind: 'antigravity', dangerousMode: false } as const
+    expect(setupSpawnFlags(setup, undefined, null, true)).toEqual({
+      permissionDefault: 'plan',
+      permissionMode: 'plan',
+      permissionModeFromSetting: true
+    })
+  })
   it('never as a pick, skip permissions or not', () => {
     useLaunchSettingsStore.setState({ harnesses: { antigravity: { permissionDefault: 'plan' } } })
     const setup = { kind: 'antigravity', dangerousMode: true } as const

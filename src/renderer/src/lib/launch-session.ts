@@ -156,13 +156,31 @@ export async function withoutGoneConnection(
 export function setupSpawnFlags(
   setup: AgentSetup | null,
   launchProfileId?: string,
-  workspaceId: string | null = null
-): Pick<SpawnOptions, 'model' | 'permissionMode' | 'permissionDefault'> {
+  workspaceId: string | null = null,
+  toServer = false
+): Pick<
+  SpawnOptions,
+  'model' | 'permissionMode' | 'permissionDefault' | 'permissionModeFromSetting'
+> {
   if (!setup || setup.kind === 'claude-agents') return {}
   // Antigravity's goes as what it is, a setting: the machine that spawns
   // weighs it below the profile, which this one may not even see.
-  if (setup.kind === 'antigravity')
-    return { ...(setup.model ? { model: setup.model } : {}), ...antigravitySettingField(true) }
+  if (setup.kind === 'antigravity') {
+    const setting = antigravitySettingField(true)
+    return {
+      ...(setup.model ? { model: setup.model } : {}),
+      ...setting,
+      // A server upgrades on its own: one older than `permissionDefault`
+      // drops it and would run a saved Plan in Auto, so it gets the mode too,
+      // marked for a newer one as the setting it is.
+      ...(toServer && setting.permissionDefault
+        ? {
+            permissionMode: setting.permissionDefault as SpawnOptions['permissionMode'],
+            permissionModeFromSetting: true
+          }
+        : {})
+    }
+  }
   // A profile that sets its own permissions keeps them: no default rung
   // travels with it (verifier, round 2). The profile is the one named, else
   // the family's selected one.
@@ -316,7 +334,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
       ...modes,
       dangerousMode,
-      ...setupSpawnFlags(req.setup, launchProfileId, workspaceId),
+      ...setupSpawnFlags(req.setup, launchProfileId, workspaceId, true),
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(launchProfileId ? { launchProfileId } : {}),
       ...(serverProfile ? { launchProfile: serverProfile } : {}),

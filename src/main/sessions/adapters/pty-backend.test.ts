@@ -464,6 +464,9 @@ describe('the session records', () => {
     expect(readRecord(id)).toMatchObject({ permissionMode: 'accept-edits' })
     backend.setSessionRuntime(id, { permissionMode: '--dangerously-skip-permissions' })
     expect(readRecord(id)).toMatchObject({ permissionMode: 'accept-edits' })
+    // Nothing picked (an Antigravity step let go) takes the mode off the record.
+    backend.setSessionRuntime(id, { permissionMode: null })
+    expect(readRecord(id)).not.toHaveProperty('permissionMode')
     backend.setSessionRuntime(id, { permissionMode: 'bypassPermissions' })
     // OpenCode's and Pi's word, `provider/model`, is kept as it is
     // (PRDCT-4427): a Resume relaunches on it.

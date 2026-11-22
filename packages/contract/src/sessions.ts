@@ -584,7 +584,10 @@ export const SpawnOptions = Schema.Struct({
   /** Antigravity's permission setting in the app that asked (Settings →
    *  Harnesses): a default below the profile, never a pick, for a server that
    *  cannot read that app's. */
-  permissionDefault: Schema.optional(Schema.String.pipe(Schema.maxLength(64)))
+  permissionDefault: Schema.optional(Schema.String.pipe(Schema.maxLength(64))),
+  /** `permissionMode` repeats that setting, for a server older than
+   *  `permissionDefault`, which reads the mode alone: not a pick. */
+  permissionModeFromSetting: Schema.optional(Schema.Boolean)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 

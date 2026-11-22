@@ -947,6 +947,9 @@ export interface PtySpawnOptions {
   /** The Antigravity setting of the app that asked for the spawn (Settings →
    *  Harnesses): a default below the profile, never a pick. */
   permissionDefault?: string
+  /** `permissionMode` repeats that setting, for a server older than
+   *  `permissionDefault`: read as the setting, never a pick. */
+  permissionModeFromSetting?: boolean
   /** Bypass kept reachable to a Claude chat resumed in another mode when its
    *  launch had it (`--allow-dangerously-skip-permissions`, PRDCT-4191). */
   allowDangerous?: boolean

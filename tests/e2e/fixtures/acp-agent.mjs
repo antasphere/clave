@@ -37,7 +37,9 @@
 // is answered: agy handles overlapping requests at once, out of order
 // (measured: five sets answered 4, 7, 5, 3, 6). Its answer comes before its
 // notification. A prompt containing `plan then auto` is the agent's own step
-// into plan and out of it.
+// into plan and out of it. `ACP_STAND_IN_OPTIONS_FIRST=1` sends a mode's
+// `config_option_update` before that mode's answer: agy's is a late snapshot
+// and crosses the answer of a switch queued behind another.
 import {
   appendFileSync,
   existsSync,
@@ -693,6 +695,11 @@ function handle(frame) {
         const set = () => {
           const now = readMeta(sessionId)
           writeMeta(sessionId, { ...now, mode: params.value })
+          if (process.env.ACP_STAND_IN_OPTIONS_FIRST === '1')
+            update(sessionId, {
+              sessionUpdate: 'config_option_update',
+              configOptions: configOptions(now.model, params.value, now.level)
+            })
           answer(id, { configOptions: configOptions(now.model, params.value, now.level) })
           if (AGY)
             update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: params.value })
