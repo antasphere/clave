@@ -370,11 +370,16 @@ for. The rules, and where each lives:
    reading.
 4. **An update leaves** when its reading starts (Stop does not put it back),
    it is dismissed, a newer answer of its tab replaces it, its tab is closed,
-   or the pane comes on screen. Updates live in memory only; only the switch
-   is kept.
+   the pane comes on screen, or the play mode is switched off (the mode takes
+   its waiting updates with it; a reading in progress is the person's to
+   stop). Updates live in memory only; only the switch is kept, and another
+   window's change of it is followed (`followPlayMode`, on the `storage`
+   event).
 5. **The chip, the card and the key.** The chip (`components/updates/`) is in
    the toolbar's right cluster while an update waits or a reading plays off
-   screen; it never takes the focus. The card under it shows the reading in
+   screen, FIRST in it: the cluster is laid out from the right, so the chip
+   arrives, grows and leaves at its left end and no other control moves under
+   the pointer. It never takes the focus. The card under it shows the reading in
    progress (Play/Pause, Stop, Open, the voice card's bar) and the waiting
    updates (Play, Open, Dismiss). The key `playUpdate` (`Ctrl+Shift+Space`)
    plays the oldest update or pauses and resumes the reading; with nothing to

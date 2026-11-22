@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Reading } from '../../../../plugins/chat-view/src/lab/read-aloud'
-import { registerVoice, resetUpdates, useUpdatesStore, type VoiceControls } from './updates-store'
+import {
+  followPlayMode,
+  registerVoice,
+  resetUpdates,
+  useUpdatesStore,
+  type VoiceControls
+} from './updates-store'
 
 const store = useUpdatesStore.getState
 const filed = (
@@ -53,6 +59,30 @@ describe('the play mode switch', () => {
   it('starts from what was kept', () => {
     saved['clave.folio.read-aloud'] = 'on'
     resetUpdates()
+    expect(store().on).toBe(true)
+  })
+  it('switched off, takes its waiting updates and the open card with it', () => {
+    store().setOn(true)
+    store().file(filed('a', 'p1'))
+    store().file(filed('b', 'p2', 2))
+    store().openCard('pinned')
+    store().setOn(false)
+    expect(store().updates).toEqual([])
+    expect(store().cardOpen).toBeNull()
+    // Switched on again, nothing comes back.
+    store().setOn(true)
+    expect(store().updates).toEqual([])
+  })
+  it("follows another window's switch, and only the switch's own key", () => {
+    store().setOn(true)
+    store().file(filed('a', 'p1'))
+    followPlayMode({ key: 'some.other.key', newValue: 'off' })
+    expect(store().on).toBe(true)
+    expect(store().updates).toHaveLength(1)
+    followPlayMode({ key: 'clave.folio.read-aloud', newValue: 'off' })
+    expect(store().on).toBe(false)
+    expect(store().updates).toEqual([])
+    followPlayMode({ key: 'clave.folio.read-aloud', newValue: 'on' })
     expect(store().on).toBe(true)
   })
 })

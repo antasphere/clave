@@ -1044,12 +1044,15 @@ export function AppShell(): React.JSX.Element {
               className="flex items-center gap-0.5 min-w-0"
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
+              {/* Folio's updates (PRDCT-4832): present only while an update
+                  waits or a reading plays off screen. FIRST in the cluster,
+                  which is laid out from the right: the chip arrives, grows
+                  and leaves at the cluster's left end, so no other control
+                  of the toolbar moves under the pointer. */}
+              <UpdateChip />
               <ToolbarQuickActions />
               {/* The routines of the active workspace (ADR 0004): one button per
                   routine with its badge, the floating report panel on a click. */}
-              {/* Folio's updates (PRDCT-4832): present only while an update
-                  waits or a reading plays off screen. */}
-              <UpdateChip />
               <RoutineToolbar />
               <ToolbarSecretPopover />
               {/* Plugin contributions sit with the app's own toolbar controls, left of the

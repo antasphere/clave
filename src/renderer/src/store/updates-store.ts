@@ -116,7 +116,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => ({
   cardOpen: null,
   lastEnd: null,
   setOn: (on) => {
-    set({ on })
+    // Switched off, the mode takes its waiting updates with it: nothing is
+    // left to announce or to offer. A reading in progress is the person's
+    // to stop.
+    set(on ? { on } : { on, updates: [], cardOpen: null })
     try {
       localStorage.setItem(PLAY_MODE_KEY, on ? 'on' : 'off')
     } catch {
@@ -221,6 +224,18 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => ({
     if (block !== undefined) voices.get(current.sessionId)?.seekBlock(block)
   }
 }))
+
+/** The switch is one choice for the whole app: another window's change of it
+ *  reaches this one through the storage it is kept in (a `storage` event
+ *  fires in every other window of the app, never in the one that wrote). */
+export function followPlayMode(event: { key: string | null; newValue: string | null }): void {
+  if (event.key !== PLAY_MODE_KEY) return
+  const on = event.newValue === 'on'
+  const state = useUpdatesStore.getState()
+  if (state.on === on) return
+  useUpdatesStore.setState(on ? { on } : { on, updates: [], cardOpen: null })
+}
+if (typeof window !== 'undefined') window.addEventListener?.('storage', followPlayMode)
 
 /** Forget everything but the switch: a test's clean slate. */
 export function resetUpdates(): void {

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { openChat } from './chat-view.spec.mjs'
-import { callMcp, until } from './harness.mjs'
+import { callMcp, seedWorkspaces, until } from './harness.mjs'
 
 /* Folio's play mode and its updates (PRDCT-4832), on the real app with the
    echo adapter (the agent answers with the reader's own words) and the
@@ -27,7 +29,8 @@ import { callMcp, until } from './harness.mjs'
    8. `__claveE2E.updatesKey.registered()` lists the accelerator only while
       an update waits or plays, and `press()` plays; with the preference off
       the list stays empty and the in-app key still works;
-   9. with the play mode off, an answer finished off the page files nothing
+   9. switched off, the play mode takes its waiting update with it; then an
+      answer finished off the page files nothing
       and says nothing;
    and the lane review's: the update key with nothing waiting is left to the
    composer (never default-prevented), taken while an update waits; Open
@@ -104,7 +107,36 @@ const atlasLine = 'I have an update for you on Atlas.'
 const harborLine = 'I have an update for you on Harbor.'
 
 export async function run(t) {
-  const chat = await openChat('folio-updates', FOLIO, READY, {}, null, { server: 'in-process' })
+  // One quick-action button in the toolbar (a `toolbar` group of the
+  // workspace's own file): the control the update chip must not push when
+  // it arrives. Nothing runs until that button is clicked, and it never is.
+  const withToolbarButton = (dir) => {
+    const root = `${dir}-root`
+    const file = path.join(root, 'toolbar.clave')
+    writeFileSync(
+      file,
+      JSON.stringify({
+        $schema: 'clave/1.0',
+        groups: [
+          {
+            name: 'Quick',
+            cwd: '.',
+            toolbar: true,
+            sessions: [],
+            terminals: [{ command: 'true', color: 'teal', icon: 'eye', cwd: root }]
+          }
+        ]
+      })
+    )
+    seedWorkspaces(dir, {
+      workspaces: [{ id: 'chat', name: 'Chat', rootDir: root, profileFile: file, createdAt: 1 }],
+      activeWorkspaceId: 'chat',
+      fresh: true
+    })
+  }
+  const chat = await openChat('folio-updates', FOLIO, READY, {}, withToolbarButton, {
+    server: 'in-process'
+  })
   const { app, win, record } = chat
   const pane = (id) => win.locator(`[data-session-id="${id}"] [data-testid="folio-view"]`)
   const chip = win.locator('[data-testid="update-chip"]')
@@ -164,6 +196,20 @@ export async function run(t) {
       'true'
     )
     t.equal('no update, no chip', await chip.count(), 0)
+    // The other controls of the toolbar's right cluster, where they stand
+    // before any update: the chip must move none of them when it arrives.
+    const clusterLefts = () =>
+      win.evaluate(() =>
+        [...document.querySelector('[data-testid="fold-notes-toggle"]').parentElement.children]
+          .filter((el) => !el.classList.contains('update-chip-anchor'))
+          .map((el) => Math.round(el.getBoundingClientRect().left * 2) / 2)
+      )
+    const leftsAtRest = await clusterLefts()
+    t.check(
+      'the toolbar holds a quick-action button and its own controls to measure',
+      leftsAtRest.length >= 3,
+      leftsAtRest
+    )
     t.check('the key is held by nobody yet', (await registered()).length === 0, await registered())
     // With nothing to do, the chord reaches the field: never default-prevented.
     await win.evaluate(() => {
@@ -201,6 +247,12 @@ export async function run(t) {
       'Update on Atlas'
     )
     t.equal('the card opened as a banner', await card.getAttribute('data-open'), 'banner')
+    t.check(
+      'the chip arrived at the left end of its cluster: no other toolbar control moved',
+      leftsAtRest.length > 0 &&
+        JSON.stringify(await clusterLefts()) === JSON.stringify(leftsAtRest),
+      { rest: leftsAtRest, now: await clusterLefts() }
+    )
     t.check(
       "the selected tab's composer still holds the focus",
       await win.evaluate(
@@ -444,9 +496,23 @@ export async function run(t) {
     await until(async () => ((await chipState()) === 'none' ? true : null))
     await win.evaluate(() => window.electronAPI.updatesKeyEverywhere.set(true))
 
-    // ── 9. The play mode off: nothing filed, nothing said ──
+    // ── 9. The play mode off: its waiting update goes with it, then
+    //       nothing is filed and nothing said ──
+    await write(C, answer('India'))
+    t.check(
+      'an update waits before the switch goes off',
+      !!(await waitChip('waiting')),
+      await chipState()
+    )
     await toggle.click()
     t.equal('the switch is off', await toggle.getAttribute('aria-pressed'), 'false')
+    t.check(
+      'switched off, the mode took its waiting update with it: no chip, no card',
+      !!(await until(async () => ((await chipState()) === 'none' ? true : null))) &&
+        (await card.count()) === 0,
+      await chipState()
+    )
+    t.check('and the key is held by nobody', (await registered()).length === 0, await registered())
     const before = (await spoken(win)).length
     await write(B, answer('Juliet'))
     await focus(B)
