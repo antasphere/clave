@@ -122,7 +122,7 @@
   gap: calc(var(--spacing) * 1);
   min-width: 0;
   padding-bottom: calc(var(--spacing) * 2);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 .update-card-current:last-child {
   padding-bottom: 0;
