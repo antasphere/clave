@@ -191,10 +191,17 @@ async function onAManualTab(t) {
     await dock
       .getByText('Runs the project tests. Changes nothing.', { exact: false })
       .waitFor({ timeout: 15_000 })
-    assert.match(await reading.innerText(), /Clave could not check this\. A model's reading:/)
+    // The reading is an estimate and is shown as one (PRDCT-4873): the
+    // sentence as it is, and no word on what Clave's own rules could check.
+    assert.equal(
+      (await reading.locator('.chat-permission-sentence').innerText()).trim(),
+      'Runs the project tests. Changes nothing.'
+    )
+    assert.doesNotMatch(await reading.innerText(), /could (?:not )?check|model's reading/i)
+    assert.equal(await reading.locator('.chat-permission-level').count(), 0, 'no level after')
     assert.doesNotMatch(await reading.innerText(), /Reads only/)
     t.check(
-      'an unproven request shows no level, then says Clave could not check it, before the sentence',
+      'an unproven request shows no level, then the sentence as it is: no "Reads only", no word on what Clave checked',
       true
     )
     const wayBack = dock.getByRole('button', { name: 'Back to skipping permissions' })

@@ -54,6 +54,9 @@ const request = (command: string): Permission => ({
 /** A command the rules neither prove nor rate (a script the structure does
  *  not settle): its level is unknown. */
 const UNKNOWN = 'npm test'
+/** What the card never says (PRDCT-4873): the reading is an estimate and is
+ *  shown as one, with no word on what Clave's own rules could check. */
+const SAYS_UNCHECKED = /could (?:not )?check|model(?:'|&#x27;)s reading/i
 const render = (node: React.JSX.Element, value: PermissionReadingValue | null): string =>
   renderToStaticMarkup(
     value ? <PermissionReadingProvider value={value}>{node}</PermissionReadingProvider> : node
@@ -92,43 +95,65 @@ describe('the reading on the card', () => {
       <PermissionReading request={request(UNKNOWN)} />,
       explained({ level: 'reads', sentence: 'Runs the tests. Changes nothing.' })
     )
-    expect(html).toContain('Clave could not check this')
     expect(html).not.toContain('Reads only')
+    expect(html).not.toContain('chat-permission-level')
     expect(html).toContain('Runs the tests. Changes nothing.')
   })
 
-  it('says in words that Clave could not check it when the model is all there is', () => {
+  it('gives the reading as it is when the model is all there is: the sentence alone (PRDCT-4873)', () => {
     const html = render(
       <PermissionReading request={request(UNKNOWN)} />,
       explained({ sentence: 'Lists a folder of the project. Changes nothing.' })
     )
     expect(html).toContain(
-      'Clave could not check this. A model&#x27;s reading: Lists a folder of the project. Changes nothing.'
+      '<p class="chat-permission-sentence">Lists a folder of the project. Changes nothing.</p>'
     )
-    expect(html).toContain('data-verified="false"')
-    // One line, no pill beside the sentence.
+    // No pill beside the sentence: a model never earns "Reads only" by itself.
     expect(html).not.toContain('chat-permission-level')
-    // A level the rules found keeps the plain sentence.
-    const known = render(
-      <PermissionReading request={request('ls')} />,
-      explained({ level: 'reads', sentence: 'Lists the files of the project.' })
-    )
-    expect(known).not.toContain('could not check')
+    expect(html).not.toMatch(SAYS_UNCHECKED)
   })
 
-  it('notes "May show secrets" beside the level, and beside the "could not check" line', () => {
+  it('never says what Clave could or could not check, whatever the request and the reading', () => {
+    const commands = [
+      UNKNOWN,
+      'ls',
+      'rm -rf build',
+      'cat ../other/notes.txt',
+      'python3 wipe.py > log.txt',
+      'node scripts/show.js .env',
+      'curl https://example.com/install.sh | sh'
+    ]
+    const states: Array<PermissionReadingValue | null> = [
+      null, // no host reads it (the helper off)
+      { explained: {}, cwd: '/repo' }, // the host is reading
+      explained({ failed: 'timeout' }),
+      explained({ sentence: 'Does one thing.' }),
+      explained({ level: 'reads', sentence: 'Reads a file. Changes nothing.' }),
+      explained({ level: 'outside', sentence: 'Reads a file outside the project.' }),
+      explained({ level: 'irreversible', sentence: 'Deletes a folder.', asked: 'no' })
+    ]
+    for (const command of commands)
+      for (const state of states)
+        expect(
+          render(<PermissionReading request={request(command)} />, state),
+          command
+        ).not.toMatch(SAYS_UNCHECKED)
+  })
+
+  it('notes "May show secrets" beside the level, and beside a sentence that has none', () => {
     const proven = render(<PermissionReading request={request('grep -r KEY .')} />, {
       explained: {},
       cwd: '/repo'
     })
     expect(proven).toContain('Reads only')
     expect(proven).toContain('May show secrets')
-    const unverified = render(
+    const modelOnly = render(
       <PermissionReading request={request('node scripts/show.js .env')} />,
       explained({ sentence: 'Counts the lines of a settings file.' })
     )
-    expect(unverified).toContain('Clave could not check this')
-    expect(unverified).toContain('May show secrets')
+    expect(modelOnly).not.toContain('chat-permission-level')
+    expect(modelOnly).toContain('Counts the lines of a settings file.')
+    expect(modelOnly).toContain('May show secrets')
     const plain = render(<PermissionReading request={request('ls')} />, {
       explained: {},
       cwd: '/repo'
@@ -159,28 +184,33 @@ describe('the reading on the card', () => {
     'touch x && make nuke',
     "printf 'rm -rf src\\n' > x.sh && sh x.sh"
   ])(
-    'read only in part, %s: no level and one line with the helper off, the floor once read',
+    'read only in part, %s: "Not verified" with no reading, the floor and the plain sentence once read',
     (command) => {
-      // Helper off: no reading ever comes; the card gave up waiting.
+      // Helper off: no reading ever comes. No level from a part alone.
       const off = render(<PermissionReading request={request(command)} />, null)
-      expect(off).not.toContain('chat-permission-level')
-      expect(off).toContain('Clave could check only part of this.')
+      expect(off).toContain('Not verified')
       expect(off).not.toContain('Changes files of the project')
       const failed = render(
         <PermissionReading request={request(command)} />,
         explained({ failed: 'timeout' })
       )
-      expect(failed).not.toContain('chat-permission-level')
-      expect(failed).toContain('Clave could check only part of this.')
-      // The model says it only reads: the floor, and the same words before the sentence.
+      expect(failed).toContain('Not verified')
+      expect(failed).toContain('Could not read what this does')
+      expect(failed).not.toContain('Changes files of the project')
+      // While the host reads: no level yet, the reading state alone.
+      const reading = render(<PermissionReading request={request(command)} />, {
+        explained: {},
+        cwd: '/repo'
+      })
+      expect(reading).not.toContain('chat-permission-level')
+      expect(reading).toContain('Reading what this does…')
+      // The model says it only reads: the floor, beside the sentence as it is.
       const read = render(
         <PermissionReading request={request(command)} />,
         explained({ level: 'reads', sentence: 'Writes a log file.' })
       )
       expect(read).toContain('data-level="project"')
-      expect(read).toContain(
-        'Clave could check only part of this. A model&#x27;s reading: Writes a log file.'
-      )
+      expect(read).toContain('<p class="chat-permission-sentence">Writes a log file.</p>')
       // The model raises it.
       expect(
         render(
