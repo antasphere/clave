@@ -112,6 +112,7 @@ import {
   type RequestInputArgs
 } from './request-input'
 import { antigravityLaunchModels } from '../../shared/antigravity'
+import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../shared/within-budget'
 
 const MCP_PATH = '/mcp'
 
@@ -493,7 +494,11 @@ async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | '
       : 'unavailable'
   }
   if (harness === 'antigravity') {
-    const models = await providerModels('antigravity-chat', os.homedir()).catch(() => [])
+    const models = await withinBudget(
+      providerModels('antigravity-chat', os.homedir()),
+      ANTIGRAVITY_LISTING_BUDGET_MS,
+      []
+    )
     return models.length > 0 ? antigravityLaunchModels(models) : 'unavailable'
   }
   return []

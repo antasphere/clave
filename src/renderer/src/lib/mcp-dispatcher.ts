@@ -76,6 +76,7 @@ import {
   buildCheckpointProvenance,
   buildProvenanceHeader
 } from '../../../shared/exchange-provenance'
+import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../../shared/within-budget'
 
 /**
  * Renderer-side executor for the in-app MCP server. The sidebar state (groups,
@@ -629,6 +630,7 @@ export async function openSessionProgrammatically(payload: {
     ...launchModeFields({
       claudeMode,
       codexMode,
+      antigravityMode,
       dangerousMode,
       permissionMode: payload.permissionMode,
       effort: payload.effort,
@@ -1808,14 +1810,19 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
   // The launcher's own read (SessionLauncher.tsx): the active workspace's root, else '/'.
   const cwd = getWorkspaceById(useWorkspaceStore.getState().activeWorkspaceId)?.rootDir ?? '/'
   const read = window.electronAPI?.adaptersModels?.('codex-chat', cwd)
+  // Beside Codex's, never after it, and on a budget: this tool has ten seconds.
+  const antigravityRead = window.electronAPI?.adaptersModels?.('antigravity-chat', cwd)
+  const antigravityListing: Promise<CodexModels> = antigravityRead
+    ? withinBudget(
+        antigravityRead.then((models) => models as CodexModels),
+        ANTIGRAVITY_LISTING_BUDGET_MS,
+        'unavailable' as const
+      )
+    : Promise.resolve('unavailable' as const)
   const codexModels: CodexModels = read
     ? await read.then((models) => models as CodexModels).catch(() => 'unavailable' as const)
     : 'unavailable'
-  const antigravityModels: CodexModels =
-    (await window.electronAPI
-      ?.adaptersModels?.('antigravity-chat', cwd)
-      ?.then((models) => models as CodexModels)
-      .catch(() => 'unavailable' as const)) ?? 'unavailable'
+  const antigravityModels = await antigravityListing
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
   // What each connection's Pi and OpenCode tabs used today (PRDCT-4551), on
   // the machine that runs them, as the launcher's rows say it.

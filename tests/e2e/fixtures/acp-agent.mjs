@@ -29,7 +29,10 @@
 // that comes back on mode `default` whatever it was left on, and a
 // `current_mode_update` beside every mode change (a prompt containing `plan
 // mode` changes it on the agent's own). `ACP_STAND_IN_NO_AUTO=1` withholds
-// `auto`, as agy does for an account that has none.
+// `auto`, as agy does for an account that has none; `ACP_STAND_IN_NO_PLAN=1`
+// `plan`. `ACP_STAND_IN_REFUSE_MODE=<mode>` refuses that mode when it is set.
+// `ACP_STAND_IN_MODE_RACE=<mode>`: setting that mode is answered in ONE chunk
+// with a move to plan right behind the answer, as agy's frames share chunks.
 import {
   appendFileSync,
   existsSync,
@@ -228,7 +231,9 @@ const record = (id, turn) => appendFileSync(turnsFile(id), `${JSON.stringify(tur
 const AGY = process.env.ACP_STAND_IN_AGY === '1'
 const MODES = AGY || process.env.ACP_STAND_IN_MODES === '1'
 const MODE_VALUES = ['default', 'accept-edits', 'auto', 'plan'].filter(
-  (value) => value !== 'auto' || process.env.ACP_STAND_IN_NO_AUTO !== '1'
+  (value) =>
+    (value !== 'auto' || process.env.ACP_STAND_IN_NO_AUTO !== '1') &&
+    (value !== 'plan' || process.env.ACP_STAND_IN_NO_PLAN !== '1')
 )
 /** Each model's levels, the first the one it starts on. */
 const LEVELS = {
@@ -655,6 +660,25 @@ function handle(frame) {
       if (!known(sessionId)) return refuseFrame(id, -32602, 'Unknown session')
       const meta = readMeta(sessionId)
       if (MODES && params.configId === 'mode' && MODE_VALUES.includes(params.value)) {
+        if (process.env.ACP_STAND_IN_REFUSE_MODE === params.value)
+          return refuseFrame(id, -32602, 'Mode refused')
+        if (process.env.ACP_STAND_IN_MODE_RACE === params.value) {
+          writeMeta(sessionId, { ...meta, mode: 'plan' })
+          const result = { configOptions: configOptions(meta.model, params.value, meta.level) }
+          const moved = {
+            method: 'session/update',
+            params: {
+              sessionId,
+              update: { sessionUpdate: 'current_mode_update', currentModeId: 'plan' }
+            }
+          }
+          process.stdout.write(
+            [{ id, result }, moved]
+              .map((frame) => `${JSON.stringify({ jsonrpc: '2.0', ...frame })}\n`)
+              .join('')
+          )
+          return
+        }
         writeMeta(sessionId, { ...meta, mode: params.value })
         if (AGY)
           update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: params.value })

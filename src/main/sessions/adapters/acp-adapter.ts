@@ -13,6 +13,7 @@ import {
 } from '../../../shared/session-model'
 import { isFileAttachment } from '../../../shared/attachments'
 import { splitModelLevel } from '../../../shared/antigravity'
+import { isAntigravityMode, stricterMode } from '../../../shared/antigravity-mode'
 import { findExecutable, resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import type {
   SessionAdapter,
@@ -74,6 +75,9 @@ export interface AcpSpawnOptions {
   /** The rung when the launch asks none: set where the agent offers it, left
    *  in silence where it does not (no Auto on a business account). */
   defaultMode?: string
+  /** The rung somebody picked, when `mode` is one: what `chosenMode` starts
+   *  on. A default is never a pick. */
+  pickedMode?: string
   /** The level of the model's `thought_level` to start on, where it takes it. */
   effort?: string
   autoApprove?: boolean
@@ -150,6 +154,11 @@ interface HandleState {
   /** The mode and the level last said to the chat; unset until the handshake
    *  settles, so the agent's opening values never read as a switch. */
   said?: { mode?: string; effort: string | null }
+  /** The mode picked: the launch's, the chip's, or a stricter one the agent
+   *  moved to. Never the default. */
+  chosen?: string
+  /** The chip's switch on its way to the agent. */
+  picking?: string
   commands: CommandOption[]
   history: HistoryItem[]
   /** True while `session/load` replays the conversation into `history`. */
@@ -394,6 +403,7 @@ export class AcpAdapter implements SessionAdapter {
         ...(text(options.mode) ? { mode: text(options.mode) } : {}),
         ...(text(options.defaultMode) ? { defaultMode: text(options.defaultMode) } : {}),
         ...(text(options.effort) ? { effort: text(options.effort) } : {}),
+        ...(text(options.pickedMode) ? { pickedMode: text(options.pickedMode) } : {}),
         ...(options.autoApprove === true ? { autoApprove: true } : {}),
         ...(text(options.initialPrompt) ? { initialPrompt: text(options.initialPrompt) } : {})
       },
@@ -417,6 +427,7 @@ export class AcpAdapter implements SessionAdapter {
       ended: false,
       closing: false
     }
+    state.chosen = state.options.pickedMode
     state.initialPrompt = state.options.initialPrompt ?? launch.initialPrompt
     let child: ChildProcessWithoutNullStreams
     try {
@@ -522,6 +533,12 @@ export class AcpAdapter implements SessionAdapter {
         // stop_task, permission_draft: the protocol carries neither.
         return
     }
+  }
+
+  /** The mode picked in this chat, what its record keeps; undefined while it
+   *  runs on the default. */
+  chosenMode(id: string): string | undefined {
+    return this.handles.get(id)?.chosen
   }
 
   history(handle: SessionHandle): HistoryItem[] {
@@ -641,11 +658,11 @@ export class AcpAdapter implements SessionAdapter {
         state.loading = true
         try {
           opened = object(
-            await connection.request('session/load', {
-              sessionId: resume,
-              cwd: state.spec.cwd,
-              mcpServers: []
-            })
+            await connection.request(
+              'session/load',
+              { sessionId: resume, cwd: state.spec.cwd, mcpServers: [] },
+              { onResult: (result) => this.takeOptions(state, result) }
+            )
           )
           state.sessionId = resume
         } catch (error) {
@@ -665,7 +682,11 @@ export class AcpAdapter implements SessionAdapter {
       if (!opened) {
         try {
           opened = object(
-            await connection.request('session/new', { cwd: state.spec.cwd, mcpServers: [] })
+            await connection.request(
+              'session/new',
+              { cwd: state.spec.cwd, mcpServers: [] },
+              { onResult: (result) => this.takeOptions(state, result) }
+            )
           )
         } catch (error) {
           if (state.ended || state.closing) return
@@ -678,7 +699,6 @@ export class AcpAdapter implements SessionAdapter {
           return
         }
       }
-      state.configOptions = parseConfigOptions(opened.configOptions)
       this.emitMeta(state)
       // The model asked for against the one the session opened on. OpenCode
       // opens on a model of its own, silently, when its configuration names
@@ -699,6 +719,7 @@ export class AcpAdapter implements SessionAdapter {
       // After the model, whose change puts the level back on that model's own.
       if (this.sessionOptions) await this.setStartEffort(state, variant?.level)
       await this.setStartMode(state)
+      if (this.sessionOptions && !(await this.heldTheMode(state))) return
       if (this.sessionOptions && !state.ended && !state.closing) {
         state.said = { effort: null }
         this.sayOptions(state, true)
@@ -771,12 +792,19 @@ export class AcpAdapter implements SessionAdapter {
     if (state.ended || state.closing) return
     const option = modeOption(state)
     try {
+      if (option?.values.includes(mode) && option.currentValue === mode) {
+        // Already on it, by default: now it is a pick, and is said as one.
+        state.chosen = mode
+        this.sayOptions(state, true)
+        return
+      }
       if (!option?.values.includes(mode)) {
         this.notice(
           state,
           `${this.label} has no mode ${mode}; the session stays on ${option?.currentValue || 'its own'}`
         )
       } else {
+        state.picking = mode
         await this.setOption(state, option, mode)
         this.sayOptions(state)
         return
@@ -784,6 +812,8 @@ export class AcpAdapter implements SessionAdapter {
     } catch (error) {
       if (state.ended || state.closing) return
       this.notice(state, `${this.label} could not switch to ${mode}: ${errorMessage(error)}`)
+    } finally {
+      if (state.picking === mode) state.picking = undefined
     }
     this.sayOptions(state, true)
   }
@@ -803,16 +833,63 @@ export class AcpAdapter implements SessionAdapter {
   }
 
   private async setOption(state: HandleState, option: ConfigOption, value: string): Promise<void> {
-    const result = object(
-      await state.connection!.request('session/set_config_option', {
-        sessionId: state.sessionId,
-        configId: option.id,
-        value
-      })
+    await state.connection!.request(
+      'session/set_config_option',
+      { sessionId: state.sessionId, configId: option.id, value },
+      {
+        onResult: (answer) => {
+          const { configOptions } = object(answer)
+          if (Array.isArray(configOptions)) state.configOptions = parseConfigOptions(configOptions)
+          else option.currentValue = value
+          if (option.category !== 'mode') return
+          if (state.picking === value) state.chosen = value
+        }
+      }
     )
-    if (Array.isArray(result.configOptions))
-      state.configOptions = parseConfigOptions(result.configOptions)
-    else option.currentValue = value
+  }
+
+  /** The options a session opened with, taken in wire order. */
+  private takeOptions(state: HandleState, answer: unknown): void {
+    state.configOptions = parseConfigOptions(object(answer).configOptions)
+  }
+
+  /** An update of the agent's own options, live or behind a load's answer:
+   *  the pick follows the chip's switch, and a move of the agent's own only
+   *  toward asking more. */
+  private agentOptions(state: HandleState, update: Record<string, unknown>): void {
+    const before = modeOption(state)?.currentValue
+    if (update.sessionUpdate === 'current_mode_update') {
+      const option = modeOption(state)
+      const mode = text(update.currentModeId)
+      if (!option?.values.includes(mode)) return
+      option.currentValue = mode
+    } else if (Array.isArray(update.configOptions)) {
+      state.configOptions = parseConfigOptions(update.configOptions)
+    } else return
+    const now = modeOption(state)?.currentValue
+    if (now && now !== before && state.said) {
+      const held = state.chosen ?? before
+      if (now === state.picking) state.chosen = now
+      else if (held && now !== held && stricterMode(now, held) === now) state.chosen = now
+    }
+    this.sayOptions(state)
+  }
+
+  /** Whether the session is no looser than the mode it was to start in. One
+   *  that is ends before its first prompt: Plan asked and not set is never a
+   *  turn run in Ask. */
+  private async heldTheMode(state: HandleState): Promise<boolean> {
+    const wanted = state.options.mode ?? state.options.defaultMode
+    if (!isAntigravityMode(wanted) || state.ended || state.closing) return true
+    const current = modeOption(state)?.currentValue || 'default'
+    if (stricterMode(current, wanted) === current) return true
+    this.notice(
+      state,
+      `${this.label} could not start in ${wanted}, so nothing was sent: the chat will not run in a mode that asks less`
+    )
+    state.exitCode = 1
+    await state.connection?.close()
+    return false
   }
 
   /** The mode, with the ladder the agent offers, and the level, as they now
@@ -850,16 +927,18 @@ export class AcpAdapter implements SessionAdapter {
     }
     if (!state.connection || !state.sessionId) return
     try {
-      const result = object(
-        await state.connection.request('session/set_config_option', {
-          sessionId: state.sessionId,
-          configId: option.id,
-          value: model
-        })
+      await state.connection.request(
+        'session/set_config_option',
+        { sessionId: state.sessionId, configId: option.id, value: model },
+        {
+          onResult: (answer) => {
+            const { configOptions } = object(answer)
+            if (Array.isArray(configOptions))
+              state.configOptions = parseConfigOptions(configOptions)
+            else option.currentValue = model
+          }
+        }
       )
-      if (Array.isArray(result.configOptions))
-        state.configOptions = parseConfigOptions(result.configOptions)
-      else option.currentValue = model
       this.emitMeta(state)
       this.sayOptions(state)
     } catch (error) {
@@ -1085,20 +1164,15 @@ export class AcpAdapter implements SessionAdapter {
       case 'config_option_update':
         if (Array.isArray(update.configOptions)) {
           const before = modelOption(state)?.currentValue
-          state.configOptions = parseConfigOptions(update.configOptions)
+          if (this.sessionOptions) this.agentOptions(state, update)
+          else state.configOptions = parseConfigOptions(update.configOptions)
           if (modelOption(state)?.currentValue !== before) this.emitMeta(state)
-          this.sayOptions(state)
         }
         return
-      case 'current_mode_update': {
+      case 'current_mode_update':
         // The agent's own change (its plan step, `/plan`), and the echo of ours.
-        const option = modeOption(state)
-        const mode = text(update.currentModeId)
-        if (!option?.values.includes(mode)) return
-        option.currentValue = mode
-        this.sayOptions(state)
+        if (this.sessionOptions) this.agentOptions(state, update)
         return
-      }
       case 'usage_update': {
         const used = update.used
         const size = update.size
@@ -1240,6 +1314,8 @@ export class AcpAdapter implements SessionAdapter {
       return
     }
     if (kind === 'available_commands_update') this.storeCommands(state, update)
+    if (this.sessionOptions && (kind === 'current_mode_update' || kind === 'config_option_update'))
+      this.agentOptions(state, update)
   }
 
   /** The replayed message in progress is whole. */

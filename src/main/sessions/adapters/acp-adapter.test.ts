@@ -1235,3 +1235,57 @@ describe("Antigravity's session options: its ladder, its models and their levels
     expect(sets(s.state)).toEqual([])
   })
 })
+
+describe("Antigravity's mode, fail closed", () => {
+  const agent: AcpAgentSpec = {
+    id: 'antigravity-chat',
+    provider: 'antigravity',
+    label: 'Antigravity',
+    sessionOptions: true
+  }
+  const agy = (options: AcpSpawnOptions, env: Record<string, string> = {}): Promise<Session> =>
+    open(options, { agent, env: { ACP_STAND_IN_AGY: '1', ...env } })
+  const modes = (events: SessionEvent[]): string[] =>
+    events.flatMap((e) => (e.type === 'permission_mode' ? [e.mode] : []))
+
+  it('picks nothing by starting on the default', async () => {
+    const s = await agy({ defaultMode: 'auto' })
+    expect(s.adapter.chosenMode(s.handle.id)).toBeUndefined()
+  })
+  it('keeps what the launch picked, then what the chip picks', async () => {
+    const s = await agy({ mode: 'plan', pickedMode: 'plan' })
+    expect(s.adapter.chosenMode(s.handle.id)).toBe('plan')
+    s.adapter.write(s.handle, { type: 'set_permission_mode', mode: 'auto' })
+    await expect.poll(() => s.adapter.chosenMode(s.handle.id)).toBe('auto')
+  })
+  it("keeps the agent's own move to a stricter mode", async () => {
+    const s = await agy({ defaultMode: 'auto' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'go to plan mode' })
+    await expect.poll(() => s.adapter.chosenMode(s.handle.id)).toBe('plan')
+  })
+  it('keeps a response from overwriting the mode change that followed it', async () => {
+    const s = await agy({ mode: 'default' }, { ACP_STAND_IN_MODE_RACE: 'auto' })
+    s.adapter.write(s.handle, { type: 'set_permission_mode', mode: 'auto' })
+    await expect.poll(() => modes(s.events).at(-1)).toBe('plan')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(modes(s.events).at(-1)).toBe('plan')
+    expect(s.adapter.chosenMode(s.handle.id)).toBe('plan')
+  })
+  it('opens on no looser mode when the stricter one asked cannot be set', async () => {
+    const refusals: Record<string, string>[] = [
+      { ACP_STAND_IN_REFUSE_MODE: 'plan' },
+      { ACP_STAND_IN_NO_PLAN: '1' }
+    ]
+    for (const env of refusals) {
+      const s = await open(
+        { mode: 'plan', pickedMode: 'plan' },
+        { agent, env: { ACP_STAND_IN_AGY: '1', ...env }, initialPrompt: 'do it' }
+      )
+      await expect.poll(() => s.exits).toEqual([1])
+      expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(false)
+      expect(
+        s.events.some((e) => e.type === 'error' && /could not start in plan/i.test(e.message))
+      ).toBe(true)
+    }
+  })
+})

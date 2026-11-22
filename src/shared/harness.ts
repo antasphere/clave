@@ -194,8 +194,9 @@ export const HARNESSES: readonly Harness[] = [
         hint: 'Never asks inside its sandbox, deletions included; asks before a risky step outside it.'
       }
     ],
-    // agy's own since 1.5.7 (`agentMode`), where the account has it.
-    defaultRung: 'auto',
+    // The CLI decides: its saved `agentMode`, else Auto where the account
+    // has it (agy 1.5.7 on). The setting's "Default" names no rung.
+    defaultRung: null,
     bypassRung: null,
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     docsUrl: 'https://antigravity.google/docs/cli',

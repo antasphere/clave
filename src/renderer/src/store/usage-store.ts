@@ -131,8 +131,10 @@ export const useAntigravityUsageStore = createUsageResource(({ force }) =>
 /** A turn just ended: read again, at most once a minute (a read is two agy
  *  processes). */
 export function refreshAntigravityUsageAfterTurn(now = Date.now()): void {
-  const { data, load } = useAntigravityUsageStore.getState()
-  if (data && now - data.fetchedAt < 60_000) return
+  const { data, fetchedAt, load } = useAntigravityUsageStore.getState()
+  // A failed read counts: signed out, every turn would start two more processes.
+  const readAt = data?.fetchedAt ?? fetchedAt
+  if (readAt !== null && readAt !== undefined && now - readAt < 60_000) return
   void load({ force: true })
 }
 

@@ -19,6 +19,8 @@ const modelLists = new Map<string, Promise<ModelOption[]>>()
 /** Antigravity's list follows the plan and a CLI that updates itself under a
  *  running app (a new Gemini arrives that way): good for five minutes. */
 const ANTIGRAVITY_LIST_MS = 5 * 60_000
+/** And one that failed (signed out) for a minute: not a process per menu. */
+const ANTIGRAVITY_FAILED_MS = 60_000
 let antigravityListedAt = 0
 export function providerModels(adapterId: string, cwd: string): Promise<ModelOption[]> {
   const antigravity = adapterId === 'antigravity-chat'
@@ -43,6 +45,10 @@ export function providerModels(adapterId: string, cwd: string): Promise<ModelOpt
           ? adapter.models()
           : Promise.reject(new Error(`No model list without a session for ${adapterId}`))
   modelLists.set(adapterId, listing)
-  listing.catch(() => modelLists.delete(adapterId))
+  listing.catch(() => {
+    if (antigravity)
+      antigravityListedAt = Date.now() - (ANTIGRAVITY_LIST_MS - ANTIGRAVITY_FAILED_MS)
+    else modelLists.delete(adapterId)
+  })
   return listing
 }

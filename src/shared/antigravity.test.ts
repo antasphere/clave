@@ -68,6 +68,11 @@ describe('antigravityDefaultMode', () => {
     ['null', '{"agentMode":null}', 'default'],
     ['an unknown mode', '{"agentMode":"yolo"}', 'default'],
     ['strict', '{"agentMode":"auto","toolPermission":"strict"}', 'default'],
+    [
+      'strict beside plan, which is stricter',
+      '{"agentMode":"plan","toolPermission":"strict"}',
+      'plan'
+    ],
     ['a file that does not parse', '{"agentMode":', 'default'],
     ['an empty file', '', 'default'],
     ['a list', '[]', 'default']

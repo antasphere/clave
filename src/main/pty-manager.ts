@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
-  antigravityProfileMode,
   buildAgentArgv,
   isCodexRung,
   profileSetsPermissions,
@@ -97,7 +96,13 @@ import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapte
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { AcpAdapter } from './sessions/adapters/acp-adapter'
 import { PiRpcAdapter } from './sessions/adapters/pi-rpc-adapter'
-import { readAntigravityStartMode } from './antigravity-cli'
+import { readAntigravityStartMode, readProfileSettingsMode } from './antigravity-cli'
+import { personAntigravityRung } from './antigravity-setting'
+import {
+  antigravityProfileFlags,
+  isAntigravityMode,
+  resolveAntigravityMode
+} from '../shared/antigravity-mode'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
@@ -188,12 +193,6 @@ const CHAT_RECORD_ADAPTERS = new Set<string>([
   'opencode-chat',
   'pi-chat'
 ])
-
-/** A rung of Antigravity's own ladder (`harness.ts`), what its chat's `mode`
- *  option takes. */
-const isAntigravityRung = (mode: unknown): mode is string =>
-  typeof mode === 'string' &&
-  HARNESS_BY_ID.antigravity.permissionRungs.some((rung) => rung.id === mode)
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -341,7 +340,38 @@ class PtyManager {
       ? (carried ??
         launchProfileManager.resolve(family, options?.workspaceId, options?.launchProfileId))
       : undefined
-    if (
+    // Antigravity's mode is one rule (`shared/antigravity-mode.ts`), since
+    // "nothing said" runs in Auto there: what was said is kept apart from
+    // what it resolves to, so the record pins a pick and never a default,
+    // and each spawn resolves the default again. No skip-permissions flag:
+    // `dangerousMode` never takes the place of a setting.
+    let antigravityLaunchMode: string | undefined
+    if (family === 'antigravity' && ownProfile) {
+      const flags = antigravityProfileFlags([
+        ...ownProfile.command.slice(1),
+        ...ownProfile.additionalArgs
+      ])
+      const named = options.permissionMode ?? this.recordedAntigravityMode(options.adoptSessionId)
+      antigravityLaunchMode = resolveAntigravityMode({
+        named,
+        setting: personAntigravityRung(),
+        profile: flags,
+        settingsMode:
+          flags.settings === undefined
+            ? undefined
+            : readProfileSettingsMode(flags.settings, cwd, getLoginShellEnv()),
+        routine: options.link?.kind === 'routine'
+      })
+      options = {
+        ...options,
+        dangerousMode: false,
+        permissionMode: (named === undefined
+          ? undefined
+          : isAntigravityMode(named)
+            ? named
+            : antigravityLaunchMode) as PtySpawnOptions['permissionMode']
+      }
+    } else if (
       family &&
       !options.claudeAgentsMode &&
       !options.dangerousMode &&
@@ -435,6 +465,7 @@ class PtyManager {
         }
       : ptyAdapter.prepare(cwd, {
           ...options,
+          antigravityLaunchMode,
           // The account's token, decrypted here where the spawn is already
           // asynchronous, for the synchronous plan below (and only for a
           // Claude session: accountTokenForSpawn opens the store for no other).
@@ -598,9 +629,7 @@ class PtyManager {
     if (isEvents && adapter.id === 'antigravity-chat') {
       const antigravityProfile =
         carried ?? launchProfileManager.resolve('antigravity', options?.workspaceId, profileId)
-      antigravityMode = isAntigravityRung(options?.permissionMode)
-        ? options.permissionMode
-        : antigravityProfileMode(antigravityProfile)
+      antigravityMode = antigravityLaunchMode
       const env = buildSpawnEnv(getLoginShellEnv(), {})
       // `agy acp` opens, and reopens, every session on ask-for-everything,
       // whatever the CLI's own default: the chat sets that default itself.
@@ -679,6 +708,7 @@ class PtyManager {
             // Antigravity's rung (PRDCT-4424), the value of its `mode` option.
             mode: antigravityMode,
             defaultMode: antigravityStartMode,
+            pickedMode: adapter.id === 'antigravity-chat' ? options?.permissionMode : undefined,
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
@@ -900,9 +930,16 @@ class PtyManager {
       // The mode and the effort the chat runs at, as the provider says them
       // (PRDCT-4191): kept on the record, so the tab comes back in them.
       if (stream.kind === 'event' && this.eventSessions.has(id)) {
-        if (stream.event.type === 'permission_mode')
-          ptyBackend.setSessionRuntime(id, { permissionMode: stream.event.mode })
-        else if (stream.event.type === 'effort')
+        if (stream.event.type === 'permission_mode') {
+          // An Antigravity chat's record holds what was picked, never the
+          // mode its default gave: pinned, that Auto would outlive a change
+          // of the setting or of the CLI's own.
+          const mode =
+            sessionManager.get(id)?.adapterId === 'antigravity-chat'
+              ? antigravityChatAdapter.chosenMode(id)
+              : stream.event.mode
+          if (mode) ptyBackend.setSessionRuntime(id, { permissionMode: mode })
+        } else if (stream.event.type === 'effort')
           ptyBackend.setSessionRuntime(id, { effort: stream.event.effort })
       }
       if (stream.kind === 'event' && stream.event.type === 'provider_event') {
@@ -1065,6 +1102,17 @@ class PtyManager {
     // OpenCode and Antigravity find a session by its id in their own
     // storage: no file of theirs to check.
     return family === 'opencode' || family === 'antigravity'
+  }
+
+  /** The mode an Antigravity tab's own record holds, for a spawn that lost
+   *  it (an app older than its server drops `accept-edits`). Another
+   *  provider's record says nothing about this ladder. */
+  private recordedAntigravityMode(id: string | undefined): string | undefined {
+    if (!id) return undefined
+    const record =
+      ptyBackend.getSessionRecord(id) ??
+      ptyBackend.listAdoptableSessions().find((entry) => entry.id === id)
+    return record?.antigravityMode ? record.permissionMode : undefined
   }
 
   /** Whether the person still has a saved profile `id` for the family (lane

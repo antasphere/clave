@@ -71,12 +71,15 @@ export function antigravityDefaultMode(settings: string | null): string {
     const parsed: unknown = JSON.parse(settings.replace(/^\uFEFF/, ''))
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'default'
     const { agentMode, toolPermission } = parsed as Record<string, unknown>
-    // `strict` asks before every tool in every mode: the chip says so.
-    if (toolPermission === 'strict') return 'default'
-    if (agentMode === undefined) return 'auto'
-    return agentMode === 'auto' || agentMode === 'accept-edits' || agentMode === 'plan'
-      ? agentMode
-      : 'default'
+    const mode =
+      agentMode === undefined
+        ? 'auto'
+        : agentMode === 'auto' || agentMode === 'accept-edits' || agentMode === 'plan'
+          ? agentMode
+          : 'default'
+    // `strict` asks before every tool: it lowers what asks less, never Plan,
+    // which asks more (agy keeps plan with both set).
+    return toolPermission === 'strict' && mode !== 'plan' ? 'default' : mode
   } catch {
     return 'default'
   }

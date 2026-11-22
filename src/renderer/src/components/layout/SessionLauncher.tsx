@@ -399,18 +399,22 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
             .then((models) => setCodexModels(models.length > 0 ? models : 'failed'))
             .catch(() => setCodexModels('failed'))
       }
-      if (open && (antigravityModels === undefined || antigravityModels === 'failed')) {
+      // At every opening: main keeps the list five minutes, the rows on
+      // screen stay until the new ones land.
+      if (open) {
         const cwd = getWorkspaceById(activeWorkspaceId)?.rootDir ?? '/'
         const read = window.electronAPI?.adaptersModels?.('antigravity-chat', cwd)
-        if (!read) setAntigravityModels('failed')
+        const keep = (current: ModelOption[] | 'failed' | undefined): ModelOption[] | 'failed' =>
+          Array.isArray(current) ? current : 'failed'
+        if (!read) setAntigravityModels(keep)
         else
           void read
-            .then((models) => setAntigravityModels(models.length > 0 ? models : 'failed'))
-            .catch(() => setAntigravityModels('failed'))
+            .then((models) => setAntigravityModels(models.length > 0 ? models : keep))
+            .catch(() => setAntigravityModels(keep))
       }
       setMenuOpen(open)
     },
-    [serversKey, serverSettings, codexModels, claudeModels, antigravityModels, activeWorkspaceId]
+    [serversKey, serverSettings, codexModels, claudeModels, activeWorkspaceId]
   )
 
   // What the menu's Pi and OpenCode rows need of each machine it draws

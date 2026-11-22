@@ -155,9 +155,11 @@ export async function withoutGoneConnection(
 export function setupSpawnFlags(
   setup: AgentSetup | null,
   launchProfileId?: string,
-  workspaceId: string | null = null
+  workspaceId: string | null = null,
+  onThisMac = false
 ): Pick<SpawnOptions, 'model' | 'permissionMode'> {
   if (!setup || setup.kind === 'claude-agents') return {}
+  const antigravity = setup.kind === 'antigravity'
   // A profile that sets its own permissions keeps them: no default rung
   // travels with it (verifier, round 2). The profile is the one named, else
   // the family's selected one.
@@ -165,7 +167,11 @@ export function setupSpawnFlags(
     (launchProfileId && profilesFor(setup.kind).find((p) => p.id === launchProfileId)) ||
     selectedLaunchProfile(setup.kind, workspaceId)
   const rung =
-    setup.dangerousMode || (profile && profileSetsPermissions(profile))
+    // This Mac reads the Antigravity setting itself at every spawn: sent as
+    // a named mode it would be pinned on the tab past a change of the setting.
+    (antigravity && onThisMac) ||
+    (setup.dangerousMode && !antigravity) ||
+    (profile && profileSetsPermissions(profile))
       ? undefined
       : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
   return {
@@ -442,7 +448,7 @@ async function launchSessionNow(input: LaunchRequest): Promise<string | null> {
       dangerousMode,
       initialPrompt,
       launchProfileId,
-      ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId),
+      ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId, true),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields,
       ...connection

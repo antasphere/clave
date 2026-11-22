@@ -46,6 +46,7 @@ import {
   type LaunchProfile,
   type PiThinkingLevel
 } from '../../../shared/agent-launch'
+import { antigravityWindowsArgs } from '../../../shared/agent-launch'
 
 const isWindows = process.platform === 'win32'
 
@@ -933,6 +934,10 @@ export interface PtySpawnOptions {
   /** The mode a Claude session without `dangerousMode` asks under
    *  (`--permission-mode`); the skip flag wins when both are set. */
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+  /** The mode an Antigravity spawn resolved to (`shared/antigravity-mode.ts`),
+   *  main's alone and set at every spawn: `permissionMode` stays what was
+   *  said, which is all the record keeps. */
+  antigravityLaunchMode?: string
   /** Bypass kept reachable to a Claude chat resumed in another mode when its
    *  launch had it (`--allow-dangerously-skip-permissions`, PRDCT-4191). */
   allowDangerous?: boolean
@@ -1261,13 +1266,12 @@ export class PtyBackend {
         // against the safe alphabet before it reaches cmd.exe.
         if (options?.resumeSessionId && !isValidClaudeSessionId(options.resumeSessionId))
           throw new Error('Invalid resume session id')
-        shellArgs = [
-          '/c',
-          'agy',
-          // The model's shape was checked above, as the other CLIs' is.
-          ...(model ? ['--model', model] : []),
-          ...(options?.resumeSessionId ? ['--conversation', options.resumeSessionId] : [])
-        ]
+        shellArgs = antigravityWindowsArgs({
+          mode: options?.antigravityLaunchMode ?? options?.permissionMode,
+          model,
+          effort: options?.effort,
+          resumeSessionId: options?.resumeSessionId
+        })
       } else if (useCodexMode) {
         const parts = ['codex']
         if (options?.resumeSessionId) {
@@ -1391,7 +1395,10 @@ export class PtyBackend {
           piStateExtensionPath: piExtensionPath,
           // ── ADR 0004: a routine run's own flags (Claude only) ──
           effort: options?.effort,
-          permissionMode: options?.permissionMode,
+          permissionMode:
+            kind === 'antigravity'
+              ? (options?.antigravityLaunchMode ?? options?.permissionMode)
+              : options?.permissionMode,
           pluginDir: options?.pluginDir,
           appendSystemPrompt: options?.appendSystemPrompt,
           opencodeStandalone: options?.opencodeStandalone
@@ -1501,6 +1508,14 @@ export class PtyBackend {
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,
+      // An Antigravity terminal comes back in the mode that was said, and at
+      // its level; a live one taken back keeps what its record held.
+      ...(useAntigravityMode
+        ? {
+            permissionMode: options?.permissionMode ?? previous?.permissionMode,
+            effort: options?.effort ?? previous?.effort
+          }
+        : {}),
       launchProfileId: launchProfile?.id,
       launchProfile: options?.launchProfile,
       piProvider,
@@ -1985,7 +2000,7 @@ export class PtyBackend {
     if (patch.model !== undefined && isValidModelName(patch.model)) next.model = patch.model
     if (
       patch.permissionMode !== undefined &&
-      /^[a-zA-Z][a-zA-Z-]{0,31}$/.test(patch.permissionMode)
+      /^(?:[a-zA-Z]{1,32}|accept-edits)$/.test(patch.permissionMode)
     )
       next.permissionMode = patch.permissionMode
     if (patch.effort === null) delete next.effort

@@ -19,6 +19,7 @@ import {
   providerConnectionSpawnFields,
   resolveProviderConnection
 } from '../../../shared/provider-connection-pick'
+import { antigravityRemoteMode } from './antigravity-remote-mode'
 
 /** The state this window holds of a server, in the words its Servers page
  *  uses (PRDCT-4165): a tool that cannot reach a server says the same thing
@@ -98,6 +99,8 @@ export async function openFleetSession(
     account?: string
     dangerous?: boolean
     model?: string
+    /** The mode an Antigravity tab opens in (`shared/antigravity-mode.ts`). */
+    permissionMode?: string
     provider?: string
     thinking?: PiThinkingLevel
     command?: string
@@ -202,6 +205,9 @@ export async function openFleetSession(
       : {}),
     ...(modes.piMode ? { piProvider: payload.provider, piThinking: payload.thinking } : {}),
     ...connection,
+    // Named, else this Mac's setting, as its launcher sends a server:
+    // Antigravity left with neither runs in Auto there.
+    ...(modes.antigravityMode ? antigravityRemoteMode(payload.permissionMode) : {}),
     initialCommand: mode === 'terminal' ? payload.command : undefined,
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt : undefined,

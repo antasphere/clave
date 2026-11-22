@@ -14,7 +14,8 @@ import {
   listAntigravityModels,
   normalizeAntigravityLimits,
   readAntigravityLimits,
-  readAntigravityStartMode
+  readAntigravityStartMode,
+  readProfileSettingsMode
 } from './antigravity-cli'
 
 // `agy --output-format json -p /usage`, 1.5.14, 22 November 2026.
@@ -170,6 +171,11 @@ else { process.stderr.write('/usage is not available with a GEMINI_API_KEY\\n');
       message: 'Antigravity is using an API key. Plan limits do not apply.'
     })
   })
+  it('takes no exit 0 without a model for a sign-in', async () => {
+    const env = agy('process.exit(0)')
+    expect(await readAntigravityLimits({ env })).toMatchObject({ error: expect.any(String) })
+    expect(calls()).toHaveLength(1)
+  })
   it('says a CLI that is missing, or one that answers something else', async () => {
     expect(await readAntigravityLimits({ env: { PATH: home, HOME: home } })).toEqual({
       error: 'Antigravity CLI is not installed on this machine.'
@@ -212,5 +218,30 @@ describe('readAntigravityStartMode', () => {
   it('asks when the file is there and cannot be read', () => {
     mkdirSync(join(home, '.gemini', 'antigravity-cli', 'settings.json'), { recursive: true })
     expect(readAntigravityStartMode({ HOME: home })).toBe('default')
+  })
+})
+
+describe('readProfileSettingsMode', () => {
+  const mode = (settings?: string): string | undefined =>
+    readProfileSettingsMode(settings, home, { HOME: home })
+  it('says nothing for settings that say nothing of permissions', () => {
+    expect(mode()).toBeUndefined()
+    expect(mode('{"model":"x"}')).toBeUndefined()
+  })
+  it('reads inline settings and a file', () => {
+    expect(mode('{"agentMode":"plan"}')).toBe('plan')
+    writeFileSync(join(home, 'rules.json'), '{"agentMode":""}')
+    expect(mode('rules.json')).toBe('default')
+  })
+  it('lowers to Ask under strict, and never raises Plan', () => {
+    expect(mode('{"toolPermission":"strict"}')).toBe('default')
+    const dir = join(home, '.gemini', 'antigravity-cli')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'settings.json'), '{"agentMode":"plan"}')
+    expect(mode('{"toolPermission":"strict"}')).toBe('plan')
+  })
+  it('asks for settings that do not read', () => {
+    expect(mode('{"agentMode":')).toBe('default')
+    expect(mode('missing.json')).toBe('default')
   })
 })

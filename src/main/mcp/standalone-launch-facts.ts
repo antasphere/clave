@@ -49,6 +49,7 @@ import type { HarnessDetection } from '../agent-updates/standalone-detection'
 import { openProfileIdFor, type LaunchFacts } from '../routines/launch'
 import type { AccountProvider, AccountSwitchMode, ServedAccount } from './served-core'
 import { antigravityLaunchModels } from '../../shared/antigravity'
+import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../shared/within-budget'
 
 export interface StandaloneLaunchFacts extends LaunchFacts {
   /** This server, as a client names it. */
@@ -144,7 +145,13 @@ export function standaloneLaunchFacts(deps: StandaloneLaunchDeps): StandaloneLau
         }
       }
       if (harness === 'antigravity') {
-        const listed = (await deps.antigravityModels?.(deps.homeDir).catch(() => [])) ?? []
+        const listed = deps.antigravityModels
+          ? await withinBudget(
+              deps.antigravityModels(deps.homeDir),
+              ANTIGRAVITY_LISTING_BUDGET_MS,
+              []
+            )
+          : []
         return listed.length > 0 ? antigravityLaunchModels(listed) : 'unavailable'
       }
       if (harness === 'pi' || harness === 'opencode')

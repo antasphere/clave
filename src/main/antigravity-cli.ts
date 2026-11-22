@@ -10,8 +10,10 @@
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { devNull, homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
+import { mkdtemp } from 'node:fs/promises'
 import { antigravityDefaultMode, parseAntigravityModels } from '../shared/antigravity'
+import { stricterMode } from '../shared/antigravity-mode'
 import type { ModelOption } from '../shared/session-model'
 import { findExecutable } from './shell-launch'
 import { launchProfileManager } from './launch-profile-manager'
@@ -45,6 +47,42 @@ export function readAntigravityStartMode(env: { HOME?: string } = {}): string {
   }
 }
 
+/** What a profile's `--settings` (inline JSON, or a path) says about
+ *  permissions, or undefined when it says nothing. `agy acp` is never handed
+ *  a profile's arguments, so its chat has to be told; one that does not read
+ *  asks. */
+export function readProfileSettingsMode(
+  settings: string | undefined,
+  cwd: string,
+  env: { HOME?: string } = {}
+): string | undefined {
+  if (settings === undefined) return undefined
+  try {
+    const text = settings.trimStart().startsWith('{')
+      ? settings
+      : readFileSync(resolvePath(cwd, settings), 'utf8')
+    const said: unknown = JSON.parse(text.replace(/^\uFEFF/, ''))
+    if (!said || typeof said !== 'object' || Array.isArray(said)) return 'default'
+    const { agentMode, toolPermission } = said as Record<string, unknown>
+    if (agentMode !== undefined) return antigravityDefaultMode(JSON.stringify(said))
+    // `strict` alone lowers the CLI's own mode, which may be Plan already.
+    return toolPermission === 'strict'
+      ? stricterMode('default', readAntigravityStartMode(env))
+      : undefined
+  } catch {
+    return 'default'
+  }
+}
+
+/** An empty folder of this process's own: agy reads project configuration
+ *  from where it runs, and the temp folder of a shared machine is anybody's. */
+let privateCwd: Promise<string> | undefined
+const ownFolder = (): Promise<string> =>
+  (privateCwd ??= mkdtemp(join(tmpdir(), 'clave-agy-')).catch((error) => {
+    privateCwd = undefined
+    throw error
+  }))
+
 interface Ran {
   ok: boolean
   missing: boolean
@@ -52,7 +90,7 @@ interface Ran {
   stderr: string
 }
 
-/** One short agy command: in the temp folder, so it reads no project, its log
+/** One short agy command: in a folder of its own, so it reads no project, its log
  *  thrown away (a read every five minutes would fill the person's log
  *  folder), its stdin closed (`-p` waits on an open one). */
 async function runAgy(args: string[], options: CliOptions): Promise<Ran> {
@@ -61,12 +99,13 @@ async function runAgy(args: string[], options: CliOptions): Promise<Ran> {
   // Windows resolves the name itself: the lookup reads POSIX paths only.
   const file = process.platform === 'win32' ? command : findExecutable(command, env.PATH)
   if (!file) return { ok: false, missing: true, stdout: '', stderr: '' }
+  const cwd = await ownFolder()
   return new Promise((resolve) => {
     const child = execFile(
       file,
       ['--log-file', devNull, ...args],
       {
-        cwd: tmpdir(),
+        cwd,
         env,
         timeout: TIMEOUT_MS,
         killSignal: 'SIGKILL',
@@ -142,6 +181,8 @@ export async function readAntigravityLimits(
     return /sign in|log ?in|authenticat/i.test(signedIn.stderr)
       ? { error: SIGN_IN }
       : { error: 'Could not reach Antigravity. Check your connection, then retry.' }
+  // An exit 0 proves nothing by itself: only a model listed is a sign-in.
+  if (parseAntigravityModels(signedIn.stdout).length === 0) return { error: SIGN_IN }
   const ran = await runAgy(
     ['--print-timeout', '20s', '--output-format', 'json', '-p', '/usage'],
     options

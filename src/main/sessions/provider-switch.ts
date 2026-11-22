@@ -155,7 +155,9 @@ export function providerSwitchOptions(
     launchProfile: undefined,
     model: target.model,
     effort: undefined,
-    permissionMode: undefined,
+    // An Antigravity tab coming back to its own chat keeps the mode it was
+    // given: dropped, it would come back in Auto.
+    permissionMode: antigravity && previous.antigravityMode ? previous.permissionMode : undefined,
     allowDangerous: undefined,
     resumeSessionId: target.resume,
     claudeSessionId: undefined,
@@ -403,8 +405,8 @@ export function transportSwitchOptions(
       initialCommand: undefined,
       autoExecute: undefined,
       initialInput: undefined,
-      effort: undefined,
-      permissionMode: undefined
+      effort: family === 'antigravity' ? previous.effort : undefined,
+      permissionMode: family === 'antigravity' ? previous.permissionMode : undefined
     }
   }
   throw new Error(`"${target.adapterId}" is not a transport of the ${family} harness.`)

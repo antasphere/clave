@@ -40,6 +40,21 @@ describe('runtimeChoices', () => {
     ).toEqual({})
   })
 
+  it('hands every mode an Antigravity open names to its spawn, dropping none', () => {
+    for (const permissionMode of ['plan', 'default', 'accept-edits', 'acceptEdits', 'dontAsk'])
+      expect(
+        launchModeFields({
+          claudeMode: false,
+          codexMode: false,
+          antigravityMode: true,
+          dangerousMode: true,
+          permissionMode,
+          effort: undefined,
+          allowDangerous: undefined
+        })
+      ).toEqual({ permissionMode })
+  })
+
   it('keeps the launch flag when no mode was reported, or one it does not know', () => {
     expect(runtimeChoices({ dangerousMode: true })).toEqual({ dangerousMode: true })
     expect(runtimeChoices({})).toEqual({ dangerousMode: false })
