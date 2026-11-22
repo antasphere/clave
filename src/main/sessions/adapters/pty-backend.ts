@@ -674,6 +674,9 @@ export interface SessionRecord {
    *  `permission_mode` event so a Resume brings the mode back and not the
    *  launch's (PRDCT-4191). Absent until the provider has said. */
   permissionMode?: string
+  /** The Antigravity setting the tab was launched with, for a server that
+   *  cannot read the app's (`antigravity-setting.ts`): a default, not a mode. */
+  permissionDefault?: string
   /** The reasoning effort the chat was last running at, the same way. */
   effort?: string
   /** Which wave or lane this session works on, its role and its standing
@@ -938,6 +941,12 @@ export interface PtySpawnOptions {
    *  main's alone and set at every spawn: `permissionMode` stays what was
    *  said, which is all the record keeps. */
   antigravityLaunchMode?: string
+  /** The profile's settings file as a terminal in Ask is handed it, main's
+   *  alone (`settingsFileThatAsks`). */
+  antigravityAskSettings?: string
+  /** The Antigravity setting of the app that asked for the spawn (Settings →
+   *  Harnesses): a default below the profile, never a pick. */
+  permissionDefault?: string
   /** Bypass kept reachable to a Claude chat resumed in another mode when its
    *  launch had it (`--allow-dangerously-skip-permissions`, PRDCT-4191). */
   allowDangerous?: boolean
@@ -1399,6 +1408,7 @@ export class PtyBackend {
             kind === 'antigravity'
               ? (options?.antigravityLaunchMode ?? options?.permissionMode)
               : options?.permissionMode,
+          antigravityAskSettings: options?.antigravityAskSettings,
           pluginDir: options?.pluginDir,
           appendSystemPrompt: options?.appendSystemPrompt,
           opencodeStandalone: options?.opencodeStandalone
@@ -1513,6 +1523,7 @@ export class PtyBackend {
       ...(useAntigravityMode
         ? {
             permissionMode: options?.permissionMode ?? previous?.permissionMode,
+            permissionDefault: options?.permissionDefault ?? previous?.permissionDefault,
             effort: options?.effort ?? previous?.effort
           }
         : {}),
@@ -1988,7 +1999,7 @@ export class PtyBackend {
    *  when nothing changes. */
   setSessionRuntime(
     id: string,
-    patch: { model?: string; permissionMode?: string; effort?: string | null }
+    patch: { model?: string; permissionMode?: string | null; effort?: string | null }
   ): void {
     const key = this.recordKeyForSession(id)
     if (!key) return
@@ -1998,7 +2009,8 @@ export class PtyBackend {
     // The shape a launch accepts (`isValidModelName`): OpenCode and Pi report
     // `provider/model`, and a Resume relaunches on it (PRDCT-4427).
     if (patch.model !== undefined && isValidModelName(patch.model)) next.model = patch.model
-    if (
+    if (patch.permissionMode === null) delete next.permissionMode
+    else if (
       patch.permissionMode !== undefined &&
       /^(?:[a-zA-Z]{1,32}|accept-edits)$/.test(patch.permissionMode)
     )

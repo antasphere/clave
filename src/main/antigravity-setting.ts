@@ -12,17 +12,25 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sanitizeHarnessSettings } from '../shared/harness'
 import { preferencesManager } from './preferences-manager'
+import { stricterMode } from '../shared/antigravity-mode'
 
 let shellDir: string | undefined
+/** This process is a server on preferences of its own (`server-entry.ts`). */
+let served = false
 
 export function readAntigravitySettingFrom(dir: string | undefined): void {
   shellDir = dir
+  served = true
 }
 
 const rungOf = (settings: unknown): string | undefined =>
   sanitizeHarnessSettings(settings).antigravity?.permissionDefault
 
-export function personAntigravityRung(): string | undefined {
+/** `sent`: the setting of the app that asked for the spawn. It counts where
+ *  this process cannot read that app's file (an attached server, a daemon),
+ *  the stricter of it and this server's own; read here, the file wins, so a
+ *  setting changed since is the one that holds. */
+export function personAntigravityRung(sent?: string): string | undefined {
   if (shellDir) {
     try {
       const saved: unknown = JSON.parse(readFileSync(join(shellDir, 'preferences.json'), 'utf8'))
@@ -32,5 +40,6 @@ export function personAntigravityRung(): string | undefined {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return 'default'
     }
   }
-  return rungOf(preferencesManager.get('harnessSettings'))
+  const own = rungOf(preferencesManager.get('harnessSettings'))
+  return served && !shellDir && sent !== undefined ? stricterMode(own, sent) : own
 }

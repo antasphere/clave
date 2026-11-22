@@ -575,13 +575,9 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
     ).toEqual(['codex', '-c', TITLE])
   })
 
-  it("antigravity: a profile's own --mode wins over the default rung", () => {
+  it("antigravity: a profile's own --mode holds when no mode was resolved", () => {
     const own: LaunchProfile = { ...agy, additionalArgs: ['--mode', 'plan'] }
-    expect(buildAgentArgv({ kind: 'antigravity', profile: own, permissionMode: 'auto' })).toEqual([
-      'agy',
-      '--mode',
-      'plan'
-    ])
+    expect(buildAgentArgv({ kind: 'antigravity', profile: own })).toEqual(['agy', '--mode', 'plan'])
   })
 
   it('antigravity: a rung of its ladder is --mode, anything else is dropped', () => {

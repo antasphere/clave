@@ -720,14 +720,14 @@ describe('setupSpawnFlags', () => {
 })
 
 describe("setupSpawnFlags and Antigravity's setting", () => {
-  it('leaves the setting to this Mac, which reads it at every spawn', () => {
+  it('always carries the setting, as a setting', () => {
     useLaunchSettingsStore.setState({ harnesses: { antigravity: { permissionDefault: 'plan' } } })
     const setup = { kind: 'antigravity', dangerousMode: false } as const
-    expect(setupSpawnFlags(setup, undefined, null, true)).toEqual({})
+    expect(setupSpawnFlags(setup, undefined, null)).toEqual({ permissionDefault: 'plan' })
   })
-  it('sends it to a server, skip permissions or not', () => {
+  it('never as a pick, skip permissions or not', () => {
     useLaunchSettingsStore.setState({ harnesses: { antigravity: { permissionDefault: 'plan' } } })
     const setup = { kind: 'antigravity', dangerousMode: true } as const
-    expect(setupSpawnFlags(setup, undefined, null)).toEqual({ permissionMode: 'plan' })
+    expect(setupSpawnFlags(setup, undefined, null)).toEqual({ permissionDefault: 'plan' })
   })
 })

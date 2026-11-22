@@ -111,7 +111,9 @@ export function launchModeFields(input: {
     if (input.allowDangerous === true) out.allowDangerous = true
   }
   if (input.antigravityMode && typeof input.permissionMode === 'string')
-    out.permissionMode = input.permissionMode as SpawnPermissionMode
+    out.permissionMode = (
+      input.permissionMode === 'acceptEdits' ? 'accept-edits' : input.permissionMode
+    ) as SpawnPermissionMode
   if ((input.claudeMode || input.codexMode) && effort) out.effort = effort
   return out
 }

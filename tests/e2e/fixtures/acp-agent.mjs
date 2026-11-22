@@ -33,6 +33,11 @@
 // `plan`. `ACP_STAND_IN_REFUSE_MODE=<mode>` refuses that mode when it is set.
 // `ACP_STAND_IN_MODE_RACE=<mode>`: setting that mode is answered in ONE chunk
 // with a move to plan right behind the answer, as agy's frames share chunks.
+// `ACP_STAND_IN_SET_DELAY='{"auto":150}'` answers that mode late, applied as it
+// is answered: agy handles overlapping requests at once, out of order
+// (measured: five sets answered 4, 7, 5, 3, 6). Its answer comes before its
+// notification. A prompt containing `plan then auto` is the agent's own step
+// into plan and out of it.
 import {
   appendFileSync,
   existsSync,
@@ -320,6 +325,12 @@ async function prompt(id, params) {
   }
   await sleep(delayMs, turn)
   if (turn.cancelled) return finish('cancelled')
+  if (AGY && text.includes('plan then auto')) {
+    for (const currentModeId of ['plan', 'auto']) {
+      writeMeta(sessionId, { ...readMeta(sessionId), mode: currentModeId })
+      update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId })
+    }
+  }
   if (AGY && text.includes('plan mode')) {
     writeMeta(sessionId, { ...readMeta(sessionId), mode: 'plan' })
     update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: 'plan' })
@@ -679,10 +690,15 @@ function handle(frame) {
           )
           return
         }
-        writeMeta(sessionId, { ...meta, mode: params.value })
-        if (AGY)
-          update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: params.value })
-        return answer(id, { configOptions: configOptions(meta.model, params.value, meta.level) })
+        const set = () => {
+          const now = readMeta(sessionId)
+          writeMeta(sessionId, { ...now, mode: params.value })
+          answer(id, { configOptions: configOptions(now.model, params.value, now.level) })
+          if (AGY)
+            update(sessionId, { sessionUpdate: 'current_mode_update', currentModeId: params.value })
+        }
+        const late = JSON.parse(process.env.ACP_STAND_IN_SET_DELAY ?? '{}')[params.value]
+        return late ? void setTimeout(set, late) : set()
       }
       if (AGY && params.configId === 'thought_level') {
         if (!LEVELS[meta.model]?.includes(params.value))

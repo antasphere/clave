@@ -1398,6 +1398,9 @@ describe('opening a session', () => {
       permissionMode: 'bypassPermissions'
     })
     expect(options(2)).not.toHaveProperty('permissionMode')
+    // Antigravity left with none would run in Auto: what is named is never dropped.
+    await run(h, 'openSession', { cwd: '/proj', mode: 'antigravity', permissionMode: 'plan' })
+    expect(options(3)).toMatchObject({ permissionMode: 'plan' })
   })
   it('with no window to mount a pane, kicks the process at a plain size', async () => {
     const h = setup({ ...world(), windows: [] })

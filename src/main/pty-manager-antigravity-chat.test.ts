@@ -157,9 +157,15 @@ vi.mock('./usage-ledger', () => ledger)
 vi.mock('./title-generator', () => mocks.title)
 const cli = vi.hoisted(() => ({
   readAntigravityStartMode: vi.fn(() => 'auto'),
-  readProfileSettingsMode: vi.fn<(settings: string | undefined) => string | undefined>(
-    () => undefined
-  )
+  readProfileSettings: vi.fn<(settings: string | undefined) => Record<string, unknown>>(() => ({})),
+  settingsFileThatAsks: vi.fn<(file: string) => string | undefined>(() => '/private/ask.json')
+}))
+// The server of `npm run dev:attached`: no app folder, its own preferences.
+const attached = vi.hoisted(() => ({ served: false }))
+vi.mock('./antigravity-setting', () => ({
+  personAntigravityRung: (sent?: string) =>
+    (mocks.preferences.harnessSettings as { antigravity?: { permissionDefault?: string } })
+      ?.antigravity?.permissionDefault ?? (attached.served ? sent : undefined)
 }))
 vi.mock('./antigravity-cli', () => cli)
 vi.mock('./launch-profile-manager', () => ({
@@ -485,11 +491,11 @@ describe('a mode somebody named never ends looser', () => {
     expect(spawnOptions().mode).toBe('plan')
   })
   it('reads what the profile’s --settings says', async () => {
-    cli.readProfileSettingsMode.mockReturnValueOnce('plan')
+    cli.readProfileSettings.mockReturnValueOnce({ start: 'plan' })
     mocks.agyArgs = ['--settings', '{"agentMode":"plan"}']
     await openAntigravityChat()
     expect(spawnOptions().mode).toBe('plan')
-    expect(cli.readProfileSettingsMode.mock.calls.at(-1)?.[0]).toBe('{"agentMode":"plan"}')
+    expect(cli.readProfileSettings.mock.calls.at(-1)?.[0]).toBe('{"agentMode":"plan"}')
   })
   it('asks in a routine’s run', async () => {
     await openAntigravityChat({ link: { kind: 'routine', routineKey: 'k', runId: 'r' } })
@@ -525,6 +531,10 @@ describe('a mode somebody named never ends looser', () => {
     says('auto')
     expect(mocks.backend.setSessionRuntime).not.toHaveBeenCalledWith(session.id, {
       permissionMode: 'auto'
+    })
+    // Nothing picked takes back a step of the agent's own written earlier.
+    expect(mocks.backend.setSessionRuntime).toHaveBeenCalledWith(session.id, {
+      permissionMode: null
     })
     mocks.antigravity.chosenMode.mockReturnValue('plan')
     says('plan')
@@ -587,6 +597,32 @@ describe('a mode somebody named never ends looser', () => {
       effort: 'low'
     })) as never)
     expect(ptyManager.restartSpawn(session.id, { adapterId: 'pty' })!.options.effort).toBe('low')
+  })
+  it('asks in a chat under rules only a terminal can be handed', async () => {
+    cli.readProfileSettings.mockReturnValue({ rules: true })
+    mocks.agyArgs = ['--settings', '{"permissions":{"deny":["command(rm)"]}}']
+    await openAntigravityChat({ permissionMode: 'auto' })
+    expect(spawnOptions().mode).toBe('default')
+    await openTerminal({ permissionMode: 'auto' })
+    expect(terminalOptions().antigravityLaunchMode).toBe('auto')
+    cli.readProfileSettings.mockReturnValue({})
+  })
+  it('hands a terminal a copy of its settings file that asks', async () => {
+    mocks.agyArgs = ['--settings', 'rules.json']
+    await openTerminal({ permissionMode: 'default' })
+    expect(terminalOptions().antigravityAskSettings).toBe('/private/ask.json')
+  })
+  it('reads the setting a launch carries below the profile, and never as a pick', async () => {
+    attached.served = true
+    await openAntigravityChat({ permissionDefault: 'plan' })
+    expect(spawnOptions().mode).toBe('plan')
+    expect(spawnOptions().pickedMode).toBeUndefined()
+    expect(writtenRecord().permissionMode).toBeUndefined()
+    expect(writtenRecord().permissionDefault).toBe('plan')
+    mocks.agyArgs = ['--mode', 'plan']
+    await openAntigravityChat({ permissionDefault: 'auto' })
+    expect(spawnOptions().mode).toBe('plan')
+    attached.served = false
   })
   it('hands a terminal the mode it runs in, apart from the one that was named', async () => {
     setting('default')

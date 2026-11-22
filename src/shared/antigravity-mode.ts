@@ -61,44 +61,54 @@ export function resolveAntigravityMode(input: {
   /** Settings → Harnesses. */
   setting?: string | undefined
   profile: AntigravityProfileFlags
-  /** What the profile's `--settings` says about permissions, when it does. */
-  settingsMode?: string | undefined
+  /** The `agentMode` of the profile's `--settings`: where it starts, as its
+   *  `--mode` is, so under a pick. */
+  settingsStart?: string | undefined
+  /** What rules that must hold allow at most, a pick included: `strict`, or
+   *  rules the transport cannot be handed. */
+  cap?: string | undefined
+  /** The CLI's own mode, which a cap lowers when nothing else was said. */
+  cliDefault?: string | undefined
   /** A routine's run: nobody is at the keyboard (ADR 0004). */
   routine?: boolean
 }): AntigravityMode | undefined {
-  const { named, setting, profile, settingsMode, routine } = input
+  const { named, setting, profile, settingsStart, cap, cliDefault, routine } = input
   let mode: AntigravityMode | undefined
   if (named !== undefined)
     mode = isAntigravityMode(named) ? named : stricterMode(setting, profile.mode, 'default')
   else if (profile.mode !== undefined)
     mode = isAntigravityMode(profile.mode) ? profile.mode : stricterMode(setting, 'default')
-  else mode = stricterMode(setting)
-  if (settingsMode !== undefined) mode = stricterMode(mode, settingsMode)
-  return mode ?? (routine ? 'default' : undefined)
+  else mode = stricterMode(setting, settingsStart)
+  if (!mode && routine) mode = 'default'
+  if (cap !== undefined) mode = stricterMode(mode ?? cliDefault, cap)
+  return mode
 }
 
-/** A profile's own arguments with the mode a terminal runs in: the stricter
- *  of the tab's and the profile's, in the words the CLI takes. */
-export function antigravityModeArgv(tokens: readonly string[], mode?: string): string[] {
+/** A profile's own arguments with the mode a terminal runs in, in the words
+ *  the CLI takes: the mode resolved, else the profile's own. Never throws: a
+ *  restart kills the tab before it builds these, and a throw lost the tab.
+ *  `askFile` is the copy of the profile's settings file that asks; with none,
+ *  Ask becomes Plan, which asks more. */
+export function antigravityModeArgv(
+  tokens: readonly string[],
+  mode?: string,
+  askFile?: string
+): string[] {
   const { mode: own, settings, rest } = antigravityProfileFlags(tokens)
-  const runs = stricterMode(mode, own)
+  const runs = stricterMode(mode ?? own)
   if (!runs) return [...tokens]
-  if (runs !== 'default')
-    return [...rest, ...(settings !== undefined ? ['--settings', settings] : []), '--mode', runs]
-  let base: Record<string, unknown> = {}
-  if (settings !== undefined) {
-    // A second `--settings` replaces the first, so Ask goes inside the
-    // profile's own; a file cannot be merged here and is never dropped, its
-    // deny rules with it.
+  const kept = settings !== undefined ? ['--settings', settings] : []
+  if (runs !== 'default') return [...rest, ...kept, '--mode', runs]
+  if (settings === undefined) return [...rest, '--settings', JSON.stringify({ agentMode: '' })]
+  // A second `--settings` replaces the first, so Ask goes inside the
+  // profile's own, its rules kept.
+  if (settings.trimStart().startsWith('{')) {
     try {
-      const parsed: unknown = JSON.parse(settings)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
-      base = parsed as Record<string, unknown>
+      const parsed = JSON.parse(settings) as Record<string, unknown>
+      return [...rest, '--settings', JSON.stringify({ ...parsed, agentMode: '' })]
     } catch {
-      throw new Error(
-        'This Antigravity profile passes a settings file, so Ask cannot be added to it: put "agentMode": "" in that file, or choose a profile without one.'
-      )
+      // Not JSON: agy refuses it at start, and is never handed a looser mode.
     }
-  }
-  return [...rest, '--settings', JSON.stringify({ ...base, agentMode: '' })]
+  } else if (askFile) return [...rest, '--settings', askFile]
+  return [...rest, ...kept, '--mode', 'plan']
 }

@@ -52,7 +52,10 @@ describe('runtimeChoices', () => {
           effort: undefined,
           allowDangerous: undefined
         })
-      ).toEqual({ permissionMode })
+      ).toEqual({
+        // Claude's spelling of the same rung.
+        permissionMode: permissionMode === 'acceptEdits' ? 'accept-edits' : permissionMode
+      })
   })
 
   it('keeps the launch flag when no mode was reported, or one it does not know', () => {

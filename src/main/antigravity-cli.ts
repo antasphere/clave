@@ -8,12 +8,11 @@
  * terminal backend (`settings/boot-graph.test.ts`).
  */
 import { execFile } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { devNull, homedir, tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
-import { mkdtemp } from 'node:fs/promises'
 import { antigravityDefaultMode, parseAntigravityModels } from '../shared/antigravity'
-import { stricterMode } from '../shared/antigravity-mode'
 import type { ModelOption } from '../shared/session-model'
 import { findExecutable } from './shell-launch'
 import { launchProfileManager } from './launch-profile-manager'
@@ -48,40 +47,82 @@ export function readAntigravityStartMode(env: { HOME?: string } = {}): string {
 }
 
 /** What a profile's `--settings` (inline JSON, or a path) says about
- *  permissions, or undefined when it says nothing. `agy acp` is never handed
- *  a profile's arguments, so its chat has to be told; one that does not read
- *  asks. */
-export function readProfileSettingsMode(
-  settings: string | undefined,
-  cwd: string,
-  env: { HOME?: string } = {}
-): string | undefined {
-  if (settings === undefined) return undefined
+ *  permissions. */
+export interface ProfileSettings {
+  /** Its `agentMode`: where a tab starts, under a pick. */
+  start?: string
+  /** `strict`, or settings that do not read: asks, in both transports. */
+  strict?: true
+  /** Rules a terminal is handed with the file and a chat cannot be:
+   *  `agy acp` takes no `--settings`, so a chat under them asks. */
+  rules?: true
+}
+
+function parseSettings(settings: string, cwd: string): Record<string, unknown> | undefined {
   try {
     const text = settings.trimStart().startsWith('{')
       ? settings
       : readFileSync(resolvePath(cwd, settings), 'utf8')
     const said: unknown = JSON.parse(text.replace(/^\uFEFF/, ''))
-    if (!said || typeof said !== 'object' || Array.isArray(said)) return 'default'
-    const { agentMode, toolPermission } = said as Record<string, unknown>
-    if (agentMode !== undefined) return antigravityDefaultMode(JSON.stringify(said))
-    // `strict` alone lowers the CLI's own mode, which may be Plan already.
-    return toolPermission === 'strict'
-      ? stricterMode('default', readAntigravityStartMode(env))
+    return said && typeof said === 'object' && !Array.isArray(said)
+      ? (said as Record<string, unknown>)
       : undefined
   } catch {
-    return 'default'
+    return undefined
+  }
+}
+
+export function readProfileSettings(settings: string | undefined, cwd: string): ProfileSettings {
+  if (settings === undefined) return {}
+  const said = parseSettings(settings, cwd)
+  if (!said) return { strict: true }
+  const { agentMode, toolPermission, permissions } = said
+  const ruled =
+    (permissions !== undefined &&
+      (typeof permissions !== 'object' ||
+        permissions === null ||
+        Object.keys(permissions).length > 0)) ||
+    said.allowNonWorkspaceAccess === false ||
+    said.enableTerminalSandbox === true
+  return {
+    ...(agentMode !== undefined
+      ? { start: antigravityDefaultMode(JSON.stringify({ agentMode })) }
+      : {}),
+    ...(toolPermission === 'strict' ? { strict: true as const } : {}),
+    ...(ruled ? { rules: true as const } : {})
+  }
+}
+
+let askFolder: string | undefined
+
+/** A profile's settings file as a terminal in Ask is handed it: untouched
+ *  when it already asks, else a copy that does, in a folder only the person
+ *  can read (it may hold keys, so never the command line). Undefined when
+ *  none can be made. */
+export function settingsFileThatAsks(file: string, cwd: string): string | undefined {
+  const said = parseSettings(file, cwd)
+  if (!said) return undefined
+  if (said.agentMode === '') return file
+  try {
+    if (!askFolder || !existsSync(askFolder))
+      askFolder = mkdtempSync(join(tmpdir(), 'clave-agy-settings-'))
+    const name = createHash('sha256').update(resolvePath(cwd, file)).digest('hex')
+    const copy = join(askFolder, `${name}.json`)
+    writeFileSync(copy, JSON.stringify({ ...said, agentMode: '' }), { mode: 0o600 })
+    return copy
+  } catch {
+    return undefined
   }
 }
 
 /** An empty folder of this process's own: agy reads project configuration
- *  from where it runs, and the temp folder of a shared machine is anybody's. */
-let privateCwd: Promise<string> | undefined
-const ownFolder = (): Promise<string> =>
-  (privateCwd ??= mkdtemp(join(tmpdir(), 'clave-agy-')).catch((error) => {
-    privateCwd = undefined
-    throw error
-  }))
+ *  from where it runs, and the temp folder of a shared machine is anybody's.
+ *  Made again when the system reaped it. */
+let privateCwd: string | undefined
+function ownFolder(): string {
+  if (!privateCwd || !existsSync(privateCwd)) privateCwd = mkdtempSync(join(tmpdir(), 'clave-agy-'))
+  return privateCwd
+}
 
 interface Ran {
   ok: boolean
@@ -99,7 +140,7 @@ async function runAgy(args: string[], options: CliOptions): Promise<Ran> {
   // Windows resolves the name itself: the lookup reads POSIX paths only.
   const file = process.platform === 'win32' ? command : findExecutable(command, env.PATH)
   if (!file) return { ok: false, missing: true, stdout: '', stderr: '' }
-  const cwd = await ownFolder()
+  const cwd = ownFolder()
   return new Promise((resolve) => {
     const child = execFile(
       file,

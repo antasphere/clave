@@ -77,6 +77,7 @@ import {
   buildProvenanceHeader
 } from '../../../shared/exchange-provenance'
 import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../../shared/within-budget'
+import { antigravitySettingField } from './antigravity-setting-field'
 
 /**
  * Renderer-side executor for the in-app MCP server. The sidebar state (groups,
@@ -627,6 +628,7 @@ export async function openSessionProgrammatically(payload: {
     ...accountFields,
     ...(payload.resumeSessionId ? { resumeSessionId: payload.resumeSessionId } : {}),
     // The mode and the effort to start at (PRDCT-4236). Bypass is the flag.
+    ...antigravitySettingField(antigravityMode),
     ...launchModeFields({
       claudeMode,
       codexMode,

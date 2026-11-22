@@ -580,7 +580,11 @@ export const SpawnOptions = Schema.Struct({
   allowDangerous: Schema.optional(Schema.Boolean),
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId: Schema.optional(Schema.String),
-  connectionLabel: Schema.optional(Schema.String)
+  connectionLabel: Schema.optional(Schema.String),
+  /** Antigravity's permission setting in the app that asked (Settings →
+   *  Harnesses): a default below the profile, never a pick, for a server that
+   *  cannot read that app's. */
+  permissionDefault: Schema.optional(Schema.String.pipe(Schema.maxLength(64)))
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -853,6 +857,8 @@ export const SessionRecord = Schema.Struct({
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId: Schema.optional(Schema.String),
   connectionLabel: Schema.optional(Schema.String),
+  /** The Antigravity setting the tab was launched with, a default. */
+  permissionDefault: Schema.optional(Schema.String),
   /** PRDCT-4540: the provider the tab's process last sent a request to when
    *  that request was not on its connection (Clave's Pi extension reports
    *  it); absent while it is on it. `connectionId` stays the one its next

@@ -38,3 +38,17 @@ describe('personAntigravityRung', () => {
     expect(personAntigravityRung()).toBe('plan')
   })
 })
+
+describe('the setting a launch carries', () => {
+  it('counts on a server that holds no app folder, the stricter of the two', () => {
+    readAntigravitySettingFrom(undefined)
+    expect(personAntigravityRung('plan')).toBe('plan')
+    own.settings = { antigravity: { permissionDefault: 'default' } }
+    expect(personAntigravityRung('auto')).toBe('default')
+  })
+  it('never outlives a change where the app’s own file is read', () => {
+    readAntigravitySettingFrom(dir)
+    save('{"harnessSettings":{"antigravity":{"permissionDefault":"auto"}}}')
+    expect(personAntigravityRung('plan')).toBe('auto')
+  })
+})

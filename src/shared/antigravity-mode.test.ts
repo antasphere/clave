@@ -75,10 +75,16 @@ describe('resolveAntigravityMode: never looser than what was said', () => {
     expect(resolve({ profile })).toBe('default')
     expect(resolve({ profile, setting: 'plan' })).toBe('plan')
   })
-  it('caps by what the profile’s settings say', () => {
-    expect(resolve({ settingsMode: 'plan' })).toBe('plan')
-    expect(resolve({ settingsMode: 'default', named: 'auto' })).toBe('default')
-    expect(resolve({ settingsMode: 'auto', setting: 'default' })).toBe('default')
+  it("starts where the profile's settings do, under a pick", () => {
+    expect(resolve({ settingsStart: 'plan' })).toBe('plan')
+    expect(resolve({ settingsStart: 'auto', setting: 'default' })).toBe('default')
+    expect(resolve({ settingsStart: 'plan', named: 'auto' })).toBe('auto')
+  })
+  it('caps everything, a pick too, by rules that must hold', () => {
+    expect(resolve({ cap: 'default', named: 'auto' })).toBe('default')
+    expect(resolve({ cap: 'default', named: 'plan' })).toBe('plan')
+    expect(resolve({ cap: 'default', cliDefault: 'plan' })).toBe('plan')
+    expect(resolve({ cap: 'default', cliDefault: 'auto' })).toBe('default')
   })
   it('asks in a routine, which runs with nobody at the keyboard', () => {
     expect(resolve({ routine: true })).toBe('default')
@@ -96,9 +102,9 @@ describe('antigravityModeArgv', () => {
   it.each(['plan', 'accept-edits', 'auto'])('passes %s as --mode', (mode) => {
     expect(antigravityModeArgv([], mode)).toEqual(['--mode', mode])
   })
-  it('runs the stricter of the tab’s mode and the profile’s', () => {
+  it('runs what was resolved, as the chat does, over the profile’s', () => {
     expect(antigravityModeArgv(['--mode', 'auto'], 'plan')).toEqual(['--mode', 'plan'])
-    expect(antigravityModeArgv(['--mode', 'plan'], 'auto')).toEqual(['--mode', 'plan'])
+    expect(antigravityModeArgv(['--mode', 'plan'], 'auto')).toEqual(['--mode', 'auto'])
     expect(antigravityModeArgv(['-mode=auto'], 'default')).toEqual(ASK)
   })
   it('keeps the profile’s inline settings beside Ask, its rules included', () => {
@@ -109,8 +115,24 @@ describe('antigravityModeArgv', () => {
       )
     ).toEqual(['--settings', '{"permissions":{"deny":["command(rm)"]},"agentMode":""}'])
   })
-  it('refuses rather than drop a settings file to pass Ask', () => {
-    expect(() => antigravityModeArgv(['--settings', 'rules.json'], 'default')).toThrow(/settings/)
+  it('passes Ask through a settings file’s own copy, never dropping its rules', () => {
+    expect(
+      antigravityModeArgv(['--settings', 'rules.json'], 'default', '/private/ask.json')
+    ).toEqual(['--settings', '/private/ask.json'])
+  })
+  it('never throws: with no copy it keeps the file and asks more', () => {
+    expect(antigravityModeArgv(['--settings', 'rules.json'], 'default')).toEqual([
+      '--settings',
+      'rules.json',
+      '--mode',
+      'plan'
+    ])
+    expect(antigravityModeArgv(['--settings', '{"broken'], 'default')).toEqual([
+      '--settings',
+      '{"broken',
+      '--mode',
+      'plan'
+    ])
   })
   it('touches nothing when nothing was said', () => {
     expect(antigravityModeArgv(['--sandbox'])).toEqual(['--sandbox'])

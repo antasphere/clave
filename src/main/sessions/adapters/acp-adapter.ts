@@ -127,6 +127,9 @@ interface Outgoing {
   prompt: unknown[]
   /** Withdrawn, or handed back by a stop or an end: its turn never goes. */
   dropped: boolean
+  /** The switches written before it, and the failures known by then. */
+  after: Promise<void>
+  failedBefore: number
 }
 /** Why messages that waited leave unsent. */
 type Returned = 'withdrawn' | 'stopped' | 'ended'
@@ -154,11 +157,22 @@ interface HandleState {
   /** The mode and the level last said to the chat; unset until the handshake
    *  settles, so the agent's opening values never read as a switch. */
   said?: { mode?: string; effort: string | null }
-  /** The mode picked: the launch's, the chip's, or a stricter one the agent
-   *  moved to. Never the default. */
+  /** The mode picked: the launch's or the chip's. Never the default. */
   chosen?: string
+  /** The mode the session settled on, what a step of the agent's own is
+   *  measured from while nothing was picked. */
+  base?: string
+  /** A stricter mode the agent stepped to on its own (`/plan`), for as long
+   *  as it stays in it. */
+  step?: string
   /** The chip's switch on its way to the agent. */
   picking?: string
+  /** The switches, one after another: agy handles requests at once and
+   *  answers them out of order. A prompt waits for those written before it. */
+  switches: Promise<void>
+  /** Counts the stricter switches that failed: what was written behind one
+   *  is not sent. */
+  failedSwitches: number
   commands: CommandOption[]
   history: HistoryItem[]
   /** True while `session/load` replays the conversation into `history`. */
@@ -416,6 +430,8 @@ export class AcpAdapter implements SessionAdapter {
       loading: false,
       queue: [],
       turns: Promise.resolve(),
+      switches: Promise.resolve(),
+      failedSwitches: 0,
       prompts: 0,
       waiting: [],
       written: 0,
@@ -487,7 +503,9 @@ export class AcpAdapter implements SessionAdapter {
           id: `waiting-${++state.written}`,
           event: userMessageEvent(value),
           prompt,
-          dropped: false
+          dropped: false,
+          after: state.switches,
+          failedBefore: state.failedSwitches
         }
         // The agent runs one prompt at a time and takes a message only once
         // the turns before it are over: written while one runs, it waits
@@ -521,13 +539,23 @@ export class AcpAdapter implements SessionAdapter {
           this.emitMeta(state)
           return
         }
-        void this.setModel(state, value.model)
+        {
+          const { model } = value
+          if (this.sessionOptions) this.inTurn(state, () => this.setModel(state, model))
+          else void this.setModel(state, model)
+        }
         return
       case 'set_permission_mode':
-        if (this.sessionOptions) void this.switchMode(state, value.mode)
+        if (this.sessionOptions) {
+          const { mode } = value
+          this.inTurn(state, () => this.switchMode(state, mode))
+        }
         return
       case 'set_effort':
-        if (this.sessionOptions) void this.switchEffort(state, value.effort)
+        if (this.sessionOptions) {
+          const { effort } = value
+          this.inTurn(state, () => this.switchEffort(state, effort))
+        }
         return
       default:
         // stop_task, permission_draft: the protocol carries neither.
@@ -538,7 +566,8 @@ export class AcpAdapter implements SessionAdapter {
   /** The mode picked in this chat, what its record keeps; undefined while it
    *  runs on the default. */
   chosenMode(id: string): string | undefined {
-    return this.handles.get(id)?.chosen
+    const state = this.handles.get(id)
+    return state?.step ?? state?.chosen
   }
 
   history(handle: SessionHandle): HistoryItem[] {
@@ -722,6 +751,7 @@ export class AcpAdapter implements SessionAdapter {
       if (this.sessionOptions && !(await this.heldTheMode(state))) return
       if (this.sessionOptions && !state.ended && !state.closing) {
         state.said = { effort: null }
+        state.base = modeOption(state)?.currentValue
         this.sayOptions(state, true)
       }
     } catch (error) {
@@ -755,7 +785,10 @@ export class AcpAdapter implements SessionAdapter {
     const option = modeOption(state)
     if (option?.currentValue === wanted) return
     if (!option?.values.includes(wanted)) {
-      if (mode)
+      // An agy with no ladder at all runs in Ask: nothing to say of a mode
+      // that is Ask or looser (a stricter one ends the chat, `heldTheMode`).
+      const unsaid = this.sessionOptions && !option && mode !== 'plan'
+      if (mode && !unsaid)
         this.notice(state, `${this.label} has no mode ${mode}; the session starts in its own`)
       return
     }
@@ -785,17 +818,28 @@ export class AcpAdapter implements SessionAdapter {
     }
   }
 
+  /** One switch at a time, each reading the options the one before left. */
+  private inTurn(state: HandleState, change: () => Promise<void>): void {
+    state.switches = state.switches
+      .then(async () => {
+        await state.started?.catch(() => {})
+        if (!state.ended && !state.closing) await change()
+      })
+      .catch((error) => console.error(`${this.label} switch failed:`, error))
+  }
+
   /** The chip's switch, mid-turn too. Whatever happens, the chat is told the
-   *  mode the session is really on. */
+   *  mode the session is really on, and a failed move to a stricter one
+   *  holds what was written behind it. */
   private async switchMode(state: HandleState, mode: string): Promise<void> {
-    await state.started?.catch(() => {})
-    if (state.ended || state.closing) return
     const option = modeOption(state)
     try {
       if (option?.values.includes(mode) && option.currentValue === mode) {
-        // Already on it, by default: now it is a pick, and is said as one.
+        // Already on it: now it is a pick, and is said as one.
+        const known = state.chosen === mode && state.step === undefined
         state.chosen = mode
-        this.sayOptions(state, true)
+        state.step = undefined
+        if (!known) this.sayOptions(state, true)
         return
       }
       if (!option?.values.includes(mode)) {
@@ -813,14 +857,14 @@ export class AcpAdapter implements SessionAdapter {
       if (state.ended || state.closing) return
       this.notice(state, `${this.label} could not switch to ${mode}: ${errorMessage(error)}`)
     } finally {
-      if (state.picking === mode) state.picking = undefined
+      state.picking = undefined
     }
+    const current = modeOption(state)?.currentValue || 'default'
+    if (isAntigravityMode(mode) && stricterMode(current, mode) !== current) state.failedSwitches++
     this.sayOptions(state, true)
   }
 
   private async switchEffort(state: HandleState, effort: string): Promise<void> {
-    await state.started?.catch(() => {})
-    if (state.ended || state.closing) return
     const option = levelOption(state)
     try {
       if (option?.values.includes(effort)) await this.setOption(state, option, effort)
@@ -841,8 +885,9 @@ export class AcpAdapter implements SessionAdapter {
           const { configOptions } = object(answer)
           if (Array.isArray(configOptions)) state.configOptions = parseConfigOptions(configOptions)
           else option.currentValue = value
-          if (option.category !== 'mode') return
-          if (state.picking === value) state.chosen = value
+          if (option.category !== 'mode' || state.picking !== value) return
+          state.chosen = value
+          state.step = undefined
         }
       }
     )
@@ -853,9 +898,9 @@ export class AcpAdapter implements SessionAdapter {
     state.configOptions = parseConfigOptions(object(answer).configOptions)
   }
 
-  /** An update of the agent's own options, live or behind a load's answer:
-   *  the pick follows the chip's switch, and a move of the agent's own only
-   *  toward asking more. */
+  /** An update of the agent's own options, live or behind a load's answer.
+   *  A step of its own toward asking more is kept while it lasts and let go
+   *  when it leaves it; one toward asking less never becomes the pick. */
   private agentOptions(state: HandleState, update: Record<string, unknown>): void {
     const before = modeOption(state)?.currentValue
     if (update.sessionUpdate === 'current_mode_update') {
@@ -868,9 +913,10 @@ export class AcpAdapter implements SessionAdapter {
     } else return
     const now = modeOption(state)?.currentValue
     if (now && now !== before && state.said) {
-      const held = state.chosen ?? before
-      if (now === state.picking) state.chosen = now
-      else if (held && now !== held && stricterMode(now, held) === now) state.chosen = now
+      if (now !== state.picking) {
+        const held = state.chosen ?? state.base
+        state.step = held && now !== held && stricterMode(now, held) === now ? now : undefined
+      }
     }
     this.sayOptions(state)
   }
@@ -957,6 +1003,7 @@ export class AcpAdapter implements SessionAdapter {
 
   private async turn(state: HandleState, message: Outgoing): Promise<void> {
     if (state.started) await state.started.catch(() => {})
+    await message.after
     if (message.dropped) return
     if (state.ended || state.closing || !state.connection || !state.sessionId) return
     // A message that waited enters the conversation now, at the start of its
@@ -967,6 +1014,14 @@ export class AcpAdapter implements SessionAdapter {
       this.emitWaiting(state)
       this.emit(state, message.event)
       this.emit(state, { type: 'state_change', state: 'working' })
+    }
+    if (message.failedBefore !== state.failedSwitches) {
+      this.notice(
+        state,
+        `${this.label} could not take the stricter mode picked before this message, so it was not sent`
+      )
+      this.endTurn(state, false)
+      return
     }
     state.turnRunning = true
     let stopReason = ''

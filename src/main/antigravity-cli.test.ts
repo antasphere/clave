@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -15,7 +16,8 @@ import {
   normalizeAntigravityLimits,
   readAntigravityLimits,
   readAntigravityStartMode,
-  readProfileSettingsMode
+  readProfileSettings,
+  settingsFileThatAsks
 } from './antigravity-cli'
 
 // `agy --output-format json -p /usage`, 1.5.14, 22 November 2026.
@@ -221,27 +223,48 @@ describe('readAntigravityStartMode', () => {
   })
 })
 
-describe('readProfileSettingsMode', () => {
-  const mode = (settings?: string): string | undefined =>
-    readProfileSettingsMode(settings, home, { HOME: home })
+describe('readProfileSettings', () => {
+  const read = (settings?: string): unknown => readProfileSettings(settings, home)
   it('says nothing for settings that say nothing of permissions', () => {
-    expect(mode()).toBeUndefined()
-    expect(mode('{"model":"x"}')).toBeUndefined()
+    expect(read()).toEqual({})
+    expect(read('{"model":"x","permissions":{}}')).toEqual({})
   })
   it('reads inline settings and a file', () => {
-    expect(mode('{"agentMode":"plan"}')).toBe('plan')
+    expect(read('{"agentMode":"plan"}')).toEqual({ start: 'plan' })
     writeFileSync(join(home, 'rules.json'), '{"agentMode":""}')
-    expect(mode('rules.json')).toBe('default')
+    expect(read('rules.json')).toEqual({ start: 'default' })
   })
-  it('lowers to Ask under strict, and never raises Plan', () => {
-    expect(mode('{"toolPermission":"strict"}')).toBe('default')
-    const dir = join(home, '.gemini', 'antigravity-cli')
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'settings.json'), '{"agentMode":"plan"}')
-    expect(mode('{"toolPermission":"strict"}')).toBe('plan')
+  it('tells strict, which holds in both transports, from rules the chat cannot apply', () => {
+    expect(read('{"toolPermission":"strict"}')).toEqual({ strict: true })
+    for (const rules of [
+      '{"permissions":{"deny":["command(rm)"]}}',
+      '{"permissions":{"ask":["command(git push)"]}}',
+      '{"allowNonWorkspaceAccess":false}',
+      '{"enableTerminalSandbox":true}'
+    ])
+      expect(read(rules)).toEqual({ rules: true })
   })
   it('asks for settings that do not read', () => {
-    expect(mode('{"agentMode":')).toBe('default')
-    expect(mode('missing.json')).toBe('default')
+    for (const settings of ['{"agentMode":', 'missing.json'])
+      expect(read(settings)).toEqual({ strict: true })
+  })
+})
+
+describe('settingsFileThatAsks', () => {
+  it('passes a file that already asks untouched, as it is', () => {
+    writeFileSync(join(home, 'ask.json'), '{"agentMode":"","toolPermission":"strict"}')
+    expect(settingsFileThatAsks('ask.json', home)).toBe('ask.json')
+  })
+  it('copies any other, its rules kept, for the person alone to read', () => {
+    writeFileSync(join(home, 'rules.json'), '{"agentMode":"auto","permissions":{"deny":["x"]}}')
+    const copy = settingsFileThatAsks('rules.json', home)!
+    expect(JSON.parse(readFileSync(copy, 'utf8'))).toEqual({
+      agentMode: '',
+      permissions: { deny: ['x'] }
+    })
+    expect(statSync(copy).mode & 0o077).toBe(0)
+  })
+  it('answers none for a file that does not read', () => {
+    expect(settingsFileThatAsks('missing.json', home)).toBeUndefined()
   })
 })

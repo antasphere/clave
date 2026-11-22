@@ -31,6 +31,7 @@ import {
   rememberAgentSetup,
   type AgentSetup
 } from '../store/launch-prefs'
+import { antigravitySettingField } from './antigravity-setting-field'
 
 /** Where a new session starts.
  *
@@ -155,11 +156,13 @@ export async function withoutGoneConnection(
 export function setupSpawnFlags(
   setup: AgentSetup | null,
   launchProfileId?: string,
-  workspaceId: string | null = null,
-  onThisMac = false
-): Pick<SpawnOptions, 'model' | 'permissionMode'> {
+  workspaceId: string | null = null
+): Pick<SpawnOptions, 'model' | 'permissionMode' | 'permissionDefault'> {
   if (!setup || setup.kind === 'claude-agents') return {}
-  const antigravity = setup.kind === 'antigravity'
+  // Antigravity's goes as what it is, a setting: the machine that spawns
+  // weighs it below the profile, which this one may not even see.
+  if (setup.kind === 'antigravity')
+    return { ...(setup.model ? { model: setup.model } : {}), ...antigravitySettingField(true) }
   // A profile that sets its own permissions keeps them: no default rung
   // travels with it (verifier, round 2). The profile is the one named, else
   // the family's selected one.
@@ -167,11 +170,7 @@ export function setupSpawnFlags(
     (launchProfileId && profilesFor(setup.kind).find((p) => p.id === launchProfileId)) ||
     selectedLaunchProfile(setup.kind, workspaceId)
   const rung =
-    // This Mac reads the Antigravity setting itself at every spawn: sent as
-    // a named mode it would be pinned on the tab past a change of the setting.
-    (antigravity && onThisMac) ||
-    (setup.dangerousMode && !antigravity) ||
-    (profile && profileSetsPermissions(profile))
+    setup.dangerousMode || (profile && profileSetsPermissions(profile))
       ? undefined
       : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
   return {
@@ -448,7 +447,7 @@ async function launchSessionNow(input: LaunchRequest): Promise<string | null> {
       dangerousMode,
       initialPrompt,
       launchProfileId,
-      ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId, true),
+      ...setupSpawnFlags(req.setup, launchProfileId, launchWorkspaceId),
       ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields,
       ...connection

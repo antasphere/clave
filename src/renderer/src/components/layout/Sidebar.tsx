@@ -116,7 +116,7 @@ import {
   GlobeAltIcon,
   ChatBubbleLeftEllipsisIcon
 } from '@heroicons/react/24/outline'
-import { antigravityRemoteMode } from '../../lib/antigravity-remote-mode'
+import { antigravitySettingField } from '../../lib/antigravity-setting-field'
 
 // The height of a tab menu's account header with its usage bars, its
 // separator and the menu's padding (AccountMenuHeader with `chart`): the
@@ -1091,9 +1091,7 @@ export function Sidebar(): React.JSX.Element {
               claudeAgentsMode: session.claudeAgentsMode,
               dangerousMode: session.dangerousMode,
               model: session.model,
-              ...(session.antigravityMode && isRemoteKey(session.id)
-                ? antigravityRemoteMode()
-                : {}),
+              ...antigravitySettingField(session.antigravityMode),
               launchProfileId: session.launchProfileId,
               piProvider: session.piProvider,
               piThinking: session.piThinking,

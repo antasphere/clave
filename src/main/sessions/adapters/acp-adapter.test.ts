@@ -1289,3 +1289,75 @@ describe("Antigravity's mode, fail closed", () => {
     }
   })
 })
+
+describe("Antigravity's switches, one after another", () => {
+  const agent: AcpAgentSpec = {
+    id: 'antigravity-chat',
+    provider: 'antigravity',
+    label: 'Antigravity',
+    sessionOptions: true
+  }
+  const agy = (options: AcpSpawnOptions, env: Record<string, string> = {}): Promise<Session> =>
+    open(options, { agent, env: { ACP_STAND_IN_AGY: '1', ...env } })
+  const last = (s: Session): string | undefined =>
+    s.events.flatMap((e) => (e.type === 'permission_mode' ? [e.mode] : [])).at(-1)
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 700))
+  const pick = (s: Session, ...modes: string[]): void => {
+    for (const mode of modes) s.adapter.write(s.handle, { type: 'set_permission_mode', mode })
+  }
+
+  it.each([
+    ['plan', ['auto', 'plan']],
+    ['default', ['auto', 'default']],
+    ['auto', ['plan', 'auto']],
+    ['auto', ['plan', 'auto', 'plan']],
+    ['plan', ['auto', 'plan', 'default', 'auto', 'accept-edits', 'auto', 'plan', 'auto', 'default']]
+  ])('from %s, the last of %j wins, shown and recorded', async (mode, picks) => {
+    const s = await agy(
+      { mode, pickedMode: mode },
+      { ACP_STAND_IN_SET_DELAY: '{"auto":60,"accept-edits":30}' }
+    )
+    pick(s, ...picks)
+    await settle()
+    expect(last(s)).toBe(picks.at(-1))
+    expect(s.adapter.chosenMode(s.handle.id)).toBe(picks.at(-1))
+  })
+  it('keeps the pick that landed when the next one is refused', async () => {
+    const s = await agy({ defaultMode: 'accept-edits' }, { ACP_STAND_IN_REFUSE_MODE: 'auto' })
+    pick(s, 'plan', 'auto')
+    await settle()
+    expect(last(s)).toBe('plan')
+    expect(s.adapter.chosenMode(s.handle.id)).toBe('plan')
+  })
+  it('sends no message before the switch written ahead of it has landed', async () => {
+    const s = await agy({ mode: 'auto' }, { ACP_STAND_IN_SET_DELAY: '{"plan":300}' })
+    pick(s, 'plan')
+    s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(false)
+    await expect.poll(() => done(s.events), { timeout: 4000 }).toBe(true)
+    expect(last(s)).toBe('plan')
+  })
+  it('sends nothing that followed a stricter switch the agent refused', async () => {
+    const s = await agy({ mode: 'auto' }, { ACP_STAND_IN_REFUSE_MODE: 'plan' })
+    pick(s, 'plan')
+    s.adapter.write(s.handle, { type: 'user_message', text: 'hello' })
+    await expect.poll(() => done(s.events), { timeout: 4000 }).toBe(true)
+    expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(false)
+    s.events.length = 0
+    s.adapter.write(s.handle, { type: 'user_message', text: 'again' })
+    await expect.poll(() => done(s.events), { timeout: 4000 }).toBe(true)
+    expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(true)
+  })
+  it("lets go of the agent's own step when it leaves it", async () => {
+    const s = await agy({ defaultMode: 'auto' })
+    s.adapter.write(s.handle, { type: 'user_message', text: 'plan then auto' })
+    await expect.poll(() => done(s.events)).toBe(true)
+    expect(last(s)).toBe('auto')
+    expect(s.adapter.chosenMode(s.handle.id)).toBeUndefined()
+  })
+  it('says nothing of a mode an agy without the option could only honour anyway', async () => {
+    const s = await open({ mode: 'default' }, { agent })
+    expect(s.events.filter((e) => e.type === 'error')).toEqual([])
+  })
+})

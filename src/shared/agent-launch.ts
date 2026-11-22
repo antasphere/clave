@@ -306,6 +306,8 @@ export function buildAgentArgv(input: {
   /** OpenCode only (PRDCT-4496): run the TUI on its own server, so the
    *  tab's environment (its connection, its model) is the one read. */
   opencodeStandalone?: boolean
+  /** Antigravity only: the profile's settings file as Ask is handed it. */
+  antigravityAskSettings?: string
 }): string[] {
   const expectedFamily = input.kind === 'claude-agents' ? 'claude' : input.kind
   if (input.profile.family !== expectedFamily)
@@ -374,7 +376,12 @@ export function buildAgentArgv(input: {
     // The stricter of the tab's mode and the profile's, in the words agy
     // takes: `--mode default` is none of them and runs in Auto.
     const [program, ...own] = argv
-    argv.splice(0, argv.length, program, ...antigravityModeArgv(own, input.permissionMode))
+    argv.splice(
+      0,
+      argv.length,
+      program,
+      ...antigravityModeArgv(own, input.permissionMode, input.antigravityAskSettings)
+    )
     // The model by its id, with or without its level (agy 1.5), and the level
     // a chat moved here was running at.
     if (input.model) argv.push('--model', input.model)

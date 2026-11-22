@@ -96,7 +96,11 @@ import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapte
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { AcpAdapter } from './sessions/adapters/acp-adapter'
 import { PiRpcAdapter } from './sessions/adapters/pi-rpc-adapter'
-import { readAntigravityStartMode, readProfileSettingsMode } from './antigravity-cli'
+import {
+  readAntigravityStartMode,
+  readProfileSettings,
+  settingsFileThatAsks
+} from './antigravity-cli'
 import { personAntigravityRung } from './antigravity-setting'
 import {
   antigravityProfileFlags,
@@ -346,22 +350,32 @@ class PtyManager {
     // and each spawn resolves the default again. No skip-permissions flag:
     // `dangerousMode` never takes the place of a setting.
     let antigravityLaunchMode: string | undefined
+    let antigravityAskSettings: string | undefined
     if (family === 'antigravity' && ownProfile) {
       const flags = antigravityProfileFlags([
         ...ownProfile.command.slice(1),
         ...ownProfile.additionalArgs
       ])
       const named = options.permissionMode ?? this.recordedAntigravityMode(options.adoptSessionId)
+      const said = flags.settings === undefined ? {} : readProfileSettings(flags.settings, cwd)
+      const inChat = eventsProfile(carried?.id ?? options.launchProfileId ?? ownProfile.id)
+      const capped = said.strict || (said.rules && !!inChat)
       antigravityLaunchMode = resolveAntigravityMode({
         named,
-        setting: personAntigravityRung(),
+        setting: personAntigravityRung(options.permissionDefault),
         profile: flags,
-        settingsMode:
-          flags.settings === undefined
-            ? undefined
-            : readProfileSettingsMode(flags.settings, cwd, getLoginShellEnv()),
+        settingsStart: said.start,
+        cap: capped ? 'default' : undefined,
+        cliDefault: capped ? readAntigravityStartMode(getLoginShellEnv()) : undefined,
         routine: options.link?.kind === 'routine'
       })
+      if (
+        !inChat &&
+        antigravityLaunchMode === 'default' &&
+        flags.settings !== undefined &&
+        !flags.settings.trimStart().startsWith('{')
+      )
+        antigravityAskSettings = settingsFileThatAsks(flags.settings, cwd)
       options = {
         ...options,
         dangerousMode: false,
@@ -466,6 +480,7 @@ class PtyManager {
       : ptyAdapter.prepare(cwd, {
           ...options,
           antigravityLaunchMode,
+          antigravityAskSettings,
           // The account's token, decrypted here where the spawn is already
           // asynchronous, for the synchronous plan below (and only for a
           // Claude session: accountTokenForSpawn opens the store for no other).
@@ -825,6 +840,7 @@ class PtyManager {
       userRenamed: previous?.userRenamed,
       claudeMode: claude,
       antigravityMode: antigravity,
+      permissionDefault: antigravity ? options?.permissionDefault : undefined,
       codexMode: codex,
       piMode: pi,
       opencodeMode: opencode,
@@ -939,6 +955,9 @@ class PtyManager {
               ? antigravityChatAdapter.chosenMode(id)
               : stream.event.mode
           if (mode) ptyBackend.setSessionRuntime(id, { permissionMode: mode })
+          // Nothing picked: a step of the agent's own it has left is taken back.
+          else if (sessionManager.get(id)?.adapterId === 'antigravity-chat')
+            ptyBackend.setSessionRuntime(id, { permissionMode: null })
         } else if (stream.event.type === 'effort')
           ptyBackend.setSessionRuntime(id, { effort: stream.event.effort })
       }

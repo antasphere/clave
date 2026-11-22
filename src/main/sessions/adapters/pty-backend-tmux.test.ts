@@ -168,6 +168,47 @@ describe.skipIf(!isTmuxAvailable())('a tmux-backed terminal', () => {
     expect(backend.getSessionRecord(first.id)?.antigravitySessionId).toBe(conversation)
   })
 
+  it('an Antigravity terminal runs the mode resolved, and records what was said', () => {
+    const asked = backend.spawn(cwd, {
+      claudeMode: false,
+      antigravityMode: true,
+      tmuxMode: true,
+      antigravityLaunchMode: 'default',
+      effort: 'low',
+      permissionDefault: 'default'
+    })
+    backend.start(asked.id, 80, 24)
+    const command = processes[0].spec.args.join(' ')
+    expect(command).toContain(`'--settings' '{"agentMode":""}'`)
+    expect(command).not.toContain('--mode')
+    expect(backend.getSessionRecord(asked.id)).toMatchObject({
+      effort: 'low',
+      permissionDefault: 'default'
+    })
+    expect(backend.getSessionRecord(asked.id)?.permissionMode).toBeUndefined()
+    backend.kill(asked.id, false)
+
+    const planned = backend.spawn(cwd, {
+      claudeMode: false,
+      antigravityMode: true,
+      tmuxMode: true,
+      antigravityLaunchMode: 'plan',
+      permissionMode: 'plan'
+    })
+    backend.start(planned.id, 80, 24)
+    expect(processes[1].spec.args.join(' ')).toContain(`'--mode' 'plan'`)
+    expect(backend.getSessionRecord(planned.id)?.permissionMode).toBe('plan')
+    backend.kill(planned.id, false)
+    backend.spawn(cwd, {
+      claudeMode: false,
+      antigravityMode: true,
+      tmuxMode: true,
+      adoptTmuxName: planned.tmuxName,
+      adoptSessionId: planned.id
+    })
+    expect(backend.getSessionRecord(planned.id)?.permissionMode).toBe('plan')
+  })
+
   it('an OpenCode terminal keeps its session across a live reattach too', () => {
     // No tool server: the tab starts without Clave's tools.
     installTerminalPorts({ mcpConfig: { write: () => null, remove: () => {} } })
