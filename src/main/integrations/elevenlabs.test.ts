@@ -782,6 +782,11 @@ describe("ElevenLabs' own words (PRDCT-4831)", () => {
     expect(cleanReason('a sk_12ab34 b', null)).toBe('a … b')
     expect(cleanReason('nor xi-api-key received', null)).toBe('nor xi-api-key received')
     expect(cleanReason(`a xi-${'f'.repeat(16)} b`, null)).toBe('a … b')
+    // Each mask at its edge, both sides (verifier round 2).
+    expect(cleanReason('a sk_12ab3 b', null)).toBe('a sk_12ab3 b')
+    expect(cleanReason(`a xi-${'f'.repeat(15)} b`, null)).toBe(`a xi-${'f'.repeat(15)} b`)
+    expect(cleanReason(`a ${'Z'.repeat(40)} b`, null)).toBe('a … b')
+    expect(cleanReason(`a ${'Z'.repeat(39)} b`, null)).toBe(`a ${'Z'.repeat(39)} b`)
     expect(cleanReason(`a ${'Z9'.repeat(25)} b`, null)).toBe('a … b')
     expect(cleanReason('one\ntwo\u0007three', null)).toBe('one two three')
     const long = cleanReason('word '.repeat(200), null)
