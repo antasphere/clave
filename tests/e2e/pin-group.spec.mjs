@@ -211,6 +211,13 @@ export async function run(t) {
     )
     t.equal('and no card was added', shown.length, 2)
     t.equal('the mark is on that card alone', shown.filter((c) => c.flashing).length, 1)
+    // The mark is a moment, not a state: it goes while the picker stays open.
+    const unmarked = await until(async () => (await cards(win)).every((c) => !c.flashing), {
+      tries: 20,
+      gapMs: 250
+    })
+    t.check('the mark clears by itself, the picker still open', unmarked === true, await cards(win))
+    t.check('CONTROL: the picker is still open then', await pickerOpen(win))
     await closePicker(win)
 
     // The same by the gesture Romain used: the group dropped onto the pins.
@@ -248,6 +255,18 @@ export async function run(t) {
       dropped
     )
     t.equal('and the drop made no copy', dropped.length, 2)
+    // The next open, by hand, is a picker to pick from: it marks nothing. (What
+    // the sidebar remembers of the pin to show must not outlive the close.)
+    await closePicker(win)
+    await win.click('button[aria-label="Add a group"]')
+    await win.waitForSelector('.group-picker-panel', { timeout: 5000 })
+    const byHand = await cards(win)
+    t.equal('opened by hand, the picker lists the same two cards', byHand.length, 2)
+    t.check(
+      'and marks none of them',
+      byHand.every((c) => !c.flashing),
+      byHand
+    )
     await closePicker(win)
     t.equal(
       'no pin was written for the launched group',

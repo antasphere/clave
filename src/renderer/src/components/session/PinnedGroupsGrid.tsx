@@ -1,10 +1,5 @@
 import { forwardRef, useCallback, useMemo, useState } from 'react'
-import {
-  findPinOfGroup,
-  importClaveFile,
-  pinInPicker,
-  usePinnedStore
-} from '../../store/pinned-store'
+import { importClaveFile, pinDropAction, usePinnedStore } from '../../store/pinned-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { DocumentIcon } from '@heroicons/react/24/outline'
 
@@ -26,30 +21,28 @@ export const PinnedGroupsGrid = forwardRef<HTMLDivElement, PinnedGroupsGridProps
     const [isFileDragOverLocal, setIsFileDragOverLocal] = useState(false)
     const isFileDragOver = isFileDragOverParent || isFileDragOverLocal
 
-    // The pin the dragged group already has: the one linked to it, or the one
-    // it was launched from. Dropping then shows that pin instead of saving a
-    // copy, when the picker has a card for it; otherwise the drop does nothing
-    // and the zone says nothing.
+    // What the drop does (pinDropAction): pin the group, show the pin it has
+    // already, or nothing, in which case the zone says nothing.
     const pinnedGroups = usePinnedStore((s) => s.pinnedGroups)
     const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
-    const existingPin = useMemo(
-      () => (draggedGroupId ? findPinOfGroup(draggedGroupId) : null),
-      // pinnedGroups: findPinOfGroup reads the store, and a pin read from its
-      // file mid-drag changes the answer.
+    const dropAction = useMemo(
+      () => (draggedGroupId ? pinDropAction(draggedGroupId) : null),
+      // pinnedGroups and the workspace: pinDropAction reads both stores, and a
+      // pin read from its file mid-drag changes the answer.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [draggedGroupId, pinnedGroups, activeWorkspaceId]
     )
-    const showsExistingPin = !!existingPin && pinInPicker(existingPin, activeWorkspaceId)
 
-    const showGroupPlaceholder = !!draggedGroupId && (!existingPin || showsExistingPin)
+    const showGroupPlaceholder = dropAction !== null
     const showFilePlaceholder = isFileDragOver
-    const groupPlaceholderLabel = showsExistingPin
-      ? isOverPinnedZone
-        ? 'Drop to show its pin'
-        : 'Show pin'
-      : isOverPinnedZone
-        ? 'Drop to pin'
-        : 'Pin'
+    const groupPlaceholderLabel =
+      dropAction === 'show'
+        ? isOverPinnedZone
+          ? 'Drop to show its pin'
+          : 'Show pin'
+        : isOverPinnedZone
+          ? 'Drop to pin'
+          : 'Pin'
 
     // ── HTML5 file drop handlers (for .clave files from Finder) ──
     const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -96,7 +89,7 @@ export const PinnedGroupsGrid = forwardRef<HTMLDivElement, PinnedGroupsGridProps
             <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr' }}>
               {showGroupPlaceholder && (
                 <div
-                  data-pin-drop-zone={showsExistingPin ? 'show' : 'pin'}
+                  data-pin-drop-zone={dropAction}
                   className={`
                   flex items-center justify-center px-2 py-2 rounded-xl border-2 border-dashed
                   text-[12px] font-medium transition-all duration-150

@@ -6,6 +6,7 @@ import type {
   SessionGroup
 } from '../../../../src/renderer/src/store/session-types'
 import {
+  CreateGroup,
   type GroupTerminal,
   type GroupView,
   LayoutSnapshot,
@@ -165,6 +166,31 @@ describe('normalizeLayout', () => {
       displayOrder: ['g1']
     })
     expect(snapshot.groups[0].templateId).toBe('pin-1')
+  })
+
+  it('carries the pin stamp of a group an agent launches, in the command and in its answer', () => {
+    // An agent's launch of a pin creates its group through this command, over
+    // the wire: a field the payload does not declare is stripped on the way.
+    const payload = Schema.decodeUnknownSync(CreateGroup.payload)({
+      windowKey: 'w1',
+      group: { name: 'Clave', sessionIds: ['s1'], templateId: 'pin-1' }
+    })
+    expect(payload.group.templateId).toBe('pin-1')
+    const group = {
+      id: 'g1',
+      name: 'Clave',
+      sessionIds: ['s1'],
+      collapsed: false,
+      cwd: null,
+      terminals: [],
+      templateId: 'pin-1'
+    }
+    const answer = Schema.decodeUnknownSync(CreateGroup.success)({
+      group,
+      layout: { windowKey: 'w1', revision: 1, groups: [group], displayOrder: ['g1'] }
+    })
+    expect(answer.group.templateId).toBe('pin-1')
+    expect(answer.layout.groups[0].templateId).toBe('pin-1')
   })
 
   it('answers an empty layout for nothing, null and nonsense', () => {

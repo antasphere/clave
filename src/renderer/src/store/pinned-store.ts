@@ -95,6 +95,31 @@ function resolvePinnedAccount(
 
 export type { PinnedGroup }
 
+/** A pin taking its group's new name, and folder when one is given. The
+ *  session a saved pin holds was made from the group, named after it and in
+ *  its folder (blueprintFromGroup), so it follows: a pin renamed "Clave app"
+ *  that still opened a tab called "Clave" would no longer be the group's tab.
+ *  A file pin's sessions are what its `.clave` says, and stay. */
+function pinFollowingGroup(
+  pin: PinnedGroup,
+  name: string,
+  cwd: string | null = pin.cwd
+): PinnedGroup {
+  if (pin.name === name && pin.cwd === cwd) return pin
+  return {
+    ...pin,
+    name,
+    cwd,
+    sessions: pin.filePath
+      ? pin.sessions
+      : pin.sessions.map((s) => ({
+          ...s,
+          ...(s.name === pin.name ? { name } : {}),
+          ...(cwd !== null && s.cwd === pin.cwd ? { cwd } : {})
+        }))
+  }
+}
+
 type PinnedState = 'idle' | 'active-visible' | 'active-hidden'
 
 export function getPinnedState(pg: PinnedGroup): PinnedState {
@@ -237,7 +262,7 @@ export const usePinnedStore = create<PinnedStoreState>((set) => ({
 
   renamePinnedGroup: (id, name) =>
     set((s) => {
-      const next = s.pinnedGroups.map((pg) => (pg.id === id ? { ...pg, name } : pg))
+      const next = s.pinnedGroups.map((pg) => (pg.id === id ? pinFollowingGroup(pg, name) : pg))
       const renamed = next.find((pg) => pg.id === id)
       if (renamed) syncToClaveFile(renamed)
       return { pinnedGroups: next }
@@ -673,7 +698,10 @@ function readStoredList(key: string): unknown[] {
  *  Pure, so the rule is decidable without a window. */
 export function filePinTwins(pins: PinnedGroup[], workspaceId: string): PinnedGroup[] {
   const shown = pins.filter((p) => pinShownIn(p, workspaceId))
-  const filePins = shown.filter((p) => p.filePath)
+  // Only a file pin the picker lists can be doubled: a toolbar's file pin is a
+  // row of buttons, never a card, and removing the saved pin of its name and
+  // folder would leave the picker with no card for that group at all.
+  const filePins = shown.filter((p) => p.filePath && pinInPicker(p, workspaceId))
   return shown.filter(
     (p) => !p.filePath && filePins.some((f) => f.name === p.name && sameFolder(f.cwd, p.cwd))
   )
@@ -1051,6 +1079,18 @@ export function findPinOfGroup(groupId: string): PinnedGroup | null {
   if (linked) return linked
   const group = useSessionStore.getState().groups.find((g) => g.id === groupId)
   return group ? findTemplateOfGroup(group, pins, getActiveWorkspaceId()) : null
+}
+
+/** What dropping `groupId` onto the pins does, so the drop zone says it and
+ *  never promises a gesture that does nothing: `pin` saves a pin, `show` opens
+ *  the picker on the pin the group has, null is no gesture at all. A server's
+ *  group is never pinned from here (pinGroupFromCurrent refuses it), whatever
+ *  pin shares its name; a pin the picker does not list has no card to show. */
+export function pinDropAction(groupId: string): 'pin' | 'show' | null {
+  if (isRemoteKey(groupId)) return null
+  const existing = findPinOfGroup(groupId)
+  if (!existing) return 'pin'
+  return pinInPicker(existing, getActiveWorkspaceId()) ? 'show' : null
 }
 
 /** Pin a live group: the group and one chat tab, never a photograph of its
@@ -1443,9 +1483,7 @@ export function resyncPinnedGroup(groupId: string): void {
     const next = s.pinnedGroups.map((p) =>
       p.id === pg.id
         ? {
-            ...p,
-            name: group.name,
-            cwd: group.cwd,
+            ...pinFollowingGroup(p, group.name, group.cwd),
             color: group.color ?? null,
             view: liveView,
             terminals: updatedTerminals
@@ -1506,7 +1544,7 @@ useSessionStore.subscribe((state, prevState) => {
     const newColor = group.color ?? null
     if (group.name !== pg.name || newColor !== pg.color) {
       changed = true
-      return { ...pg, name: group.name, color: newColor }
+      return { ...pinFollowingGroup(pg, group.name), color: newColor }
     }
     return pg
   })

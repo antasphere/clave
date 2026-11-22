@@ -6,6 +6,12 @@ const mocks = vi.hoisted(() => ({
   launch: vi.fn(),
   resolveAccount: vi.fn(),
   launchModel: vi.fn<(provider: string) => Promise<string | undefined>>(async () => undefined),
+  // What pinned-store subscribed to the session store with at load: the sync of
+  // a group's name and colour to its linked pin.
+  subscribers: [] as ((
+    state: { groups: SessionGroup[] },
+    prev: { groups: SessionGroup[] }
+  ) => void)[],
   state: {
     groups: [] as SessionGroup[],
     sessions: [] as Session[],
@@ -26,7 +32,10 @@ vi.mock('./session-store', () => ({
     getState: () => mocks.state,
     setState: (updater: (state: typeof mocks.state) => Partial<typeof mocks.state>) =>
       Object.assign(mocks.state, updater(mocks.state)),
-    subscribe: () => () => {}
+    subscribe: (fn: (typeof mocks.subscribers)[number]) => {
+      mocks.subscribers.push(fn)
+      return () => {}
+    }
   }
 }))
 let pinned: typeof import('./pinned-store')
@@ -649,7 +658,11 @@ it('names as copies the saved pins with the name and the folder of a file pin sh
     // A copy stamped with this workspace is.
     savedPin({ id: 'copy-here', workspaceId: 'local-ws' }),
     // A file pin is never a copy, whatever it shares.
-    filePin({ id: 'second-file', filePath: '/repo/clave/other.clave' })
+    filePin({ id: 'second-file', filePath: '/repo/clave/other.clave' }),
+    // A toolbar's file pin is a row of buttons, not a card: the saved pin of
+    // its name and folder is the only card that group has, and is kept.
+    filePin({ id: 'toolbar', name: 'Tools', cwd: '/repo/tools', toolbar: true }),
+    savedPin({ id: 'only-card', name: 'Tools', cwd: '/repo/tools' })
   ]
   expect(pinned.filePinTwins(pins, 'local-ws').map((p) => p.id)).toEqual([
     'copy-august',
@@ -763,7 +776,7 @@ it('does not read a pinned group as out of sync because of its tabs, only its te
   expect(pinned.isPinnedOutOfSync('group-live')).toBe(true)
 })
 
-it("re-syncs the group and its terminals, and leaves the pin's session as declared", () => {
+it('re-syncs the group and its terminals, never the tabs: the pin keeps its one session as declared', () => {
   mocks.state.sessions = liveTabs()
   mocks.state.groups = [
     liveGroup({
@@ -779,5 +792,92 @@ it("re-syncs the group and its terminals, and leaves the pin's session as declar
   const [after] = pinned.usePinnedStore.getState().pinnedGroups
   expect(after).toMatchObject({ name: 'Clave app', cwd: '/repo/clave-app', color: 'red' })
   expect(after.terminals).toMatchObject([{ command: 'pnpm dev' }])
-  expect(after.sessions).toEqual(before.sessions)
+  // Three tabs are open in the group; the pin still holds its one session, on
+  // the harness, the mode, the account and the prompt it declared. Only the
+  // name follows the group's (the next test).
+  expect(after.sessions).toEqual([{ ...before.sessions[0], name: 'Clave app' }])
+})
+
+it('says what a drop onto the pins does, and nothing for a drop that does nothing', () => {
+  useLocalWorkspace()
+  mocks.state.sessions = liveTabs()
+  mocks.state.groups = [liveGroup()]
+  // No pin yet: the drop pins the group.
+  expect(pinned.pinDropAction('group-live')).toBe('pin')
+  // It has a pin the picker lists: the drop shows it.
+  pinned.usePinnedStore.setState({ pinnedGroups: [filePin()] })
+  expect(pinned.pinDropAction('group-live')).toBe('show')
+  // Its pin is a toolbar's, with no card to show: no gesture.
+  pinned.usePinnedStore.setState({
+    pinnedGroups: [filePin({ toolbar: true, activeGroupId: 'group-live' })]
+  })
+  expect(pinned.pinDropAction('group-live')).toBeNull()
+  // A server's group is never pinned from here, whatever pin shares its name
+  // and folder: the zone must not promise a drop that pinGroupFromCurrent refuses.
+  const serverGroup = resourceKey('group', 'vps', 'group')
+  mocks.state.groups = [liveGroup({ id: serverGroup })]
+  pinned.usePinnedStore.setState({ pinnedGroups: [filePin()] })
+  expect(pinned.findPinOfGroup(serverGroup)?.id).toBe('file')
+  expect(pinned.pinGroupFromCurrent(serverGroup)).toBeNull()
+  expect(pinned.pinDropAction(serverGroup)).toBeNull()
+})
+
+// ── The pin's tab follows its group's name and folder ──
+
+it("renames the saved pin's tab with the pin, by Re-sync, by the name sync and by Rename", () => {
+  useLocalWorkspace()
+  mocks.state.sessions = liveTabs()
+  mocks.state.groups = [liveGroup()]
+  const made = pinned.pinGroupFromCurrent('group-live')!
+  const tabOf = (): { name: string; cwd: string } =>
+    pinned.usePinnedStore.getState().pinnedGroups.find((p) => p.id === made.pinnedId)!.sessions[0]
+  expect(tabOf()).toMatchObject({ name: 'Clave', cwd: '/repo/clave' })
+
+  // Re-sync after the group was renamed and moved: the tab is still the group's.
+  mocks.state.groups = [
+    { ...mocks.state.groups[0], name: 'Clave app', cwd: '/repo/clave-app' } as SessionGroup
+  ]
+  pinned.resyncPinnedGroup('group-live')
+  expect(pinned.usePinnedStore.getState().pinnedGroups[0]).toMatchObject({
+    name: 'Clave app',
+    cwd: '/repo/clave-app'
+  })
+  expect(tabOf()).toMatchObject({ name: 'Clave app', cwd: '/repo/clave-app' })
+
+  // The sync that follows a rename of the live group, with no Re-sync.
+  const prev = { groups: mocks.state.groups }
+  mocks.state.groups = [{ ...mocks.state.groups[0], name: 'Clave desktop' } as SessionGroup]
+  expect(mocks.subscribers.length).toBeGreaterThan(0)
+  for (const notify of mocks.subscribers) notify({ groups: mocks.state.groups }, prev)
+  expect(pinned.usePinnedStore.getState().pinnedGroups[0].name).toBe('Clave desktop')
+  expect(tabOf().name).toBe('Clave desktop')
+
+  // Rename on the pin's own card.
+  pinned.usePinnedStore.getState().renamePinnedGroup(made.pinnedId, 'Clave tools')
+  expect(tabOf()).toMatchObject({ name: 'Clave tools', cwd: '/repo/clave-app' })
+})
+
+it("leaves a file pin's sessions as its file names them, and a saved pin's other tabs alone", () => {
+  mocks.state.sessions = liveTabs()
+  mocks.state.groups = [liveGroup({ name: 'Renamed', cwd: '/repo/moved' })]
+  const declared = [
+    { ...pin().sessions[0], name: 'Clave', cwd: '/repo/clave' },
+    { ...pin().sessions[1], name: 'Logs', cwd: '/repo/logs' }
+  ]
+  // A file pin: every session stays what the file says.
+  pinned.usePinnedStore.setState({
+    pinnedGroups: [filePin({ activeGroupId: 'group-live', sessions: declared })]
+  })
+  pinned.resyncPinnedGroup('group-live')
+  expect(pinned.usePinnedStore.getState().pinnedGroups[0].name).toBe('Renamed')
+  expect(pinned.usePinnedStore.getState().pinnedGroups[0].sessions).toEqual(declared)
+  // A saved pin: the tab named after the group and in its folder follows, the other does not.
+  pinned.usePinnedStore.setState({
+    pinnedGroups: [savedPin({ activeGroupId: 'group-live', sessions: declared })]
+  })
+  pinned.resyncPinnedGroup('group-live')
+  expect(pinned.usePinnedStore.getState().pinnedGroups[0].sessions).toMatchObject([
+    { name: 'Renamed', cwd: '/repo/moved' },
+    { name: 'Logs', cwd: '/repo/logs' }
+  ])
 })
