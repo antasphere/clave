@@ -251,8 +251,11 @@ mode: one switch for the whole app on this Mac, live in every Folio pane at once
 (`useUpdatesStore`'s `on`, kept in `localStorage['clave.folio.read-aloud']`).
 On the page, a new answer is read as it finishes; off the page, it becomes an
 update (below). A reading goes on when its page leaves the screen: another tab,
-another workspace, Settings or the terminal over it; going back shows the same
-reading in place, the voice card playing and the block lit.
+another workspace, Settings or the terminal shown over it (the pane header's
+"Show terminal"); going back shows the same reading in place, the voice card
+playing and the block lit. A reading belongs to its Folio page, though: the
+tab's view switched to Chat or Terminal from the session menu, or the tab
+closed, stops it.
 
 The VOICE CARD (`src/lab/VoiceCard.tsx`, its words in `voice-card.ts`,
 PRDCT-4430) is the one place a person reads and drives the reading: in the
@@ -351,14 +354,20 @@ for. The rules, and where each lives:
    arriving, or a reconnect's replace, is never a turn. Only an answer that
    ends `done` with words counts.
 2. **On the page, read; off the page, filed; never over a reading.**
-   `turnEndAction` decides: the pane on screen and the voice free → read at
-   once; the pane the tab's chosen view (`active`) otherwise, or on screen while
-   a reading holds the voice → filed as an update (one per tab, the newest:
-   `fileUpdate` in `src/renderer/src/lib/updates.ts`); else nothing. A hidden
-   pane builds the page once, at that moment, from the live conversation.
-3. **One voice at a time, one sentence.** The announcer
+   `turnEndAction` decides: the pane on screen and the voice free (here and in
+   every other window) → read at once; the pane the tab's chosen view
+   (`active`) otherwise → filed as an update (one per tab, the newest:
+   `fileUpdate` in `src/renderer/src/lib/updates.ts`); else nothing. An answer
+   finished on its page while the voice is busy is filed `onPage`: once the
+   voice is free and its pane is still on screen, it is READ, never announced
+   to the person looking at it; if its pane has left the screen meanwhile, it
+   is an ordinary update. A hidden pane builds the page once, at that moment,
+   from the live conversation.
+3. **One voice at a time, across windows, one sentence.** The announcer
    (`src/renderer/src/lib/updates-voice.ts`, started once by `AppShell`) says
-   nothing while a reading is in progress, paused included, and says ONE line
+   nothing while a reading is in progress, paused included, or while another
+   window speaks (main tells each window, `updates:elsewhere`; a window's
+   status says `speaking` while it reads or says a line), and says ONE line
    for every update not yet announced, in the oldest one's voice
    (`announcementFor`: "I have an update for you on Atlas.", "I have 3
    updates for you on Atlas.", "I have updates for you on Atlas and Harbor.").
@@ -366,11 +375,13 @@ for. The rules, and where each lives:
    A line a reading cuts (`say` resolves `cut`) is said again once the voice
    is free; a line nothing could say is not repeated. When a reading an update
    started is heard to its end and updates still wait, they are all said
-   again. The pane's voice is `useReadAloud`'s `say`, which never sets the
-   reading.
+   again. A reading the person starts in one window stops the reading of
+   any other (`updates:yield`). The pane's voice is `useReadAloud`'s `say`,
+   which never sets the reading.
 4. **An update leaves** when its reading starts (Stop does not put it back),
    it is dismissed, a newer answer of its tab replaces it, its tab is closed,
-   the pane comes on screen, or the play mode is switched off (the mode takes
+   the tab's view is switched away from Folio (no page is left to read or to
+   open), the pane comes on screen, or the play mode is switched off (the mode takes
    its waiting updates with it; a reading in progress is the person's to
    stop). Updates live in memory only; only the switch is kept, and another
    window's change of it is followed (`followPlayMode`, on the `storage`
@@ -384,9 +395,12 @@ for. The rules, and where each lives:
    updates (Play, Open, Dismiss). The key `playUpdate` (`Ctrl+Shift+Space`)
    plays the oldest update or pauses and resumes the reading; with nothing to
    do it is left to the field or the terminal under it. Main routes it to the
-   window it concerns and holds it system-wide only while an update waits or
-   plays (`src/main/updates-key.ts`, Settings → Keymaps → "The update key
-   works in every app").
+   window it concerns (the one playing, else the one holding the oldest
+   update) and holds it system-wide only while an update waits or plays,
+   following a keymap change at once and letting go when a window closes. Its
+   logic is a pure core with no Electron in it (`src/main/updates-key-core.ts`,
+   unit-tested), wired by `src/main/updates-key.ts`; Settings → Keymaps →
+   "The update key works in every app".
 
 The store is `src/renderer/src/store/updates-store.ts`; each pane registers its
 voice there while it is the chosen view. The specs: `tests/e2e/folio-updates.spec.mjs`
