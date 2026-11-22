@@ -44,7 +44,7 @@ function integration(
   const stub: SpeechIntegration = {
     openKey: async () => key,
     status: () => ({ voiceId, modelId: 'eleven_flash_v2_5' }),
-    refreshAccount: async () => {
+    afterSpeak: async () => {
       checks += 1
     }
   }
@@ -189,6 +189,38 @@ describe('speak', () => {
     expect(lines.join('\n')).not.toContain(KEY)
   })
 
+  it('a key of no known shape, echoed by the service, is cut out of a speak and of a preview (verifier round 1)', async () => {
+    // Nothing but the key itself tells this one apart: the masks for
+    // key-shaped words do not see it.
+    const plain = '0123456789abcdef0123456789abcdef'
+    answer = () =>
+      new Response(JSON.stringify({ detail: { message: `The key ${plain} is not allowed.` } }), {
+        status: 401
+      })
+    const lines: string[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const spoken = await host({ key: plain }).speak({ sessionId: 's1', text: 'a' })
+      expect(spoken).toMatchObject({
+        ok: false,
+        reason: 'refused',
+        error: 'ElevenLabs refused the key: The key … is not allowed.'
+      })
+      const preview = await host({ key: plain }).preview('voice-b')
+      expect(preview).toMatchObject({
+        ok: false,
+        reason: 'refused',
+        error: 'ElevenLabs refused the key: The key … is not allowed.'
+      })
+    } finally {
+      warn.mockRestore()
+    }
+    expect(lines).toHaveLength(2)
+    expect(lines.join('\n')).not.toContain(plain)
+  })
+
   it('a stored voice id that is not a voice id makes no request (verifier round 2, S02)', async () => {
     for (const voiceId of ['../../v1/user voice', '../x', 'a/b', 'a b', 'x'.repeat(65)]) {
       const result = await host({ voiceId }).speak({ sessionId: 's1', text: 'a' })
@@ -209,7 +241,7 @@ describe('speak', () => {
     })
   })
 
-  it('reads the account alone again after a speak, once a minute at most', async () => {
+  it('tells the integration of a speak, once a minute at most', async () => {
     const speech = host()
     await speech.speak({ sessionId: 's1', text: 'a' })
     await speech.speak({ sessionId: 's1', text: 'b' })

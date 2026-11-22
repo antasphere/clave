@@ -257,6 +257,27 @@ describe.each([
     expect(JSON.stringify(integration.status())).not.toContain(KEY)
   })
 
+  it('a key of no known shape, echoed by the service, is cut out of the check and of the voices (verifier round 1)', async () => {
+    // Nothing but the key itself tells this one apart: the masks for
+    // key-shaped words do not see it.
+    const plain = '0123456789abcdef0123456789abcdef'
+    const echo = { status: 401, body: { detail: { message: `The key ${plain} is not allowed.` } } }
+    for (const where of ['/v2/voices', SPEECH_PROBE]) {
+      answers.set(where, [echo])
+      const status = await integration.setKey(plain)
+      expect(status.lastError).toBe('ElevenLabs refused the key: The key … is not allowed.')
+      expect(fileText(ports)).not.toContain(plain)
+      expect(JSON.stringify(integration.status())).not.toContain(plain)
+      answers.set(where, where === SPEECH_PROBE ? [voiceNotFound] : [someVoices])
+    }
+    answers.set('/v2/voices', [echo])
+    const refused = await integration.voices().then(
+      () => 'listed',
+      (error: Error) => error.message
+    )
+    expect(refused).toBe('ElevenLabs refused the key: The key … is not allowed.')
+  })
+
   it('another status of the voices is named, and a network failure keeps the paste', async () => {
     answers.set('/v2/voices', [{ status: 500 }])
     expect((await integration.setKey(KEY)).lastError).toBe('ElevenLabs answered 500.')
@@ -332,6 +353,46 @@ describe.each([
     })
   })
 
+  it('after a speak: a good key has its credits read alone, a key shown with a failure is checked again (verifier round 1)', async () => {
+    let clock = 1000
+    const timed = new ElevenLabsIntegration(ports, { baseUrl: () => BASE, now: () => clock })
+    await timed.setKey(KEY)
+    clock = 2000
+    let asked = requests.length
+    answers.set('/v1/user/subscription', [
+      { status: 200, body: { tier: 'pro', character_count: 7, character_limit: 10 } }
+    ])
+    expect(await timed.afterSpeak()).toMatchObject({
+      tier: 'pro',
+      charactersUsed: 7,
+      lastError: null,
+      checkedAt: 1000
+    })
+    expect(requests.slice(asked).map((r) => new URL(r.url).pathname)).toEqual([
+      '/v1/user/subscription'
+    ])
+    // A failure stored by a check while ElevenLabs could not be reached…
+    answers.set('/v2/voices', ['throw'])
+    expect((await timed.check()).lastError).toBe('The server could not reach ElevenLabs.')
+    // …does not outlive a speak: the whole check runs again.
+    answers.set('/v2/voices', [someVoices])
+    clock = 3000
+    asked = requests.length
+    expect(await timed.afterSpeak()).toMatchObject({ lastError: null, checkedAt: 3000 })
+    expect(
+      requests
+        .slice(asked)
+        .map((r) => new URL(r.url).pathname)
+        .sort()
+    ).toEqual(['/v1/text-to-speech/' + KEY_CHECK_VOICE, '/v1/user/subscription', '/v2/voices'])
+    // A real refusal stays one, in the same words.
+    answers.set('/v2/voices', [missing('voices_read')])
+    await timed.check()
+    expect((await timed.afterSpeak()).lastError).toContain('missing the permission voices_read')
+    await timed.removeKey()
+    expect((await timed.afterSpeak()).configured).toBe(false)
+  })
+
   it('a refresh never writes over a Remove or a Replace made meanwhile', async () => {
     await integration.setKey(KEY)
     const hold = heldSubscription()
@@ -341,6 +402,18 @@ describe.each([
     hold.release()
     expect((await refreshing).configured).toBe(false)
     expect(integration.status().configured).toBe(false)
+    // Replace: the first key's account never lands on the second key's
+    // entry (verifier round 1).
+    await integration.setKey(KEY)
+    const held = heldSubscription()
+    const stale = integration.refreshAccount()
+    await held.asked
+    answers.set('/v1/user/subscription', [subscription])
+    await integration.setKey('xi-unit-test-key-0002')
+    held.release()
+    expect((await stale).tier).toBe('creator')
+    expect(integration.status().tier).toBe('creator')
+    expect(await integration.openKey()).toBe('xi-unit-test-key-0002')
   })
 
   it('reads the voices page by page', async () => {
@@ -705,6 +778,10 @@ describe("ElevenLabs' own words (PRDCT-4831)", () => {
   it('cleans a reason: the key and key-shaped words cut out, one line, capped', () => {
     expect(cleanReason(`a ${KEY} b`, KEY)).toBe('a … b')
     expect(cleanReason(`a sk_${'f'.repeat(48)} b`, null)).toBe('a … b')
+    // A key of today echoed in part, and the header's own name left alone.
+    expect(cleanReason('a sk_12ab34 b', null)).toBe('a … b')
+    expect(cleanReason('nor xi-api-key received', null)).toBe('nor xi-api-key received')
+    expect(cleanReason(`a xi-${'f'.repeat(16)} b`, null)).toBe('a … b')
     expect(cleanReason(`a ${'Z9'.repeat(25)} b`, null)).toBe('a … b')
     expect(cleanReason('one\ntwo\u0007three', null)).toBe('one two three')
     const long = cleanReason('word '.repeat(200), null)

@@ -149,6 +149,10 @@ describe('what the card says', () => {
       )
     ).toBe('creator · 1,200 of 100,000 characters this period')
     expect(store.accountLine(status({ configured: true, checkedAt: 1, lastError: 'x' }))).toBeNull()
+    // A key that may not read the account: checked, with nothing to count.
+    expect(store.accountLine(status({ configured: true, checkedAt: 1 }))).toBe(
+      'Checked: ElevenLabs accepted the key.'
+    )
     // The same account as the card draws it: the tier as a chip, the words,
     // and the share spent for the meter.
     expect(

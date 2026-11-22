@@ -42,8 +42,9 @@ const answered = (status: number): string => `ElevenLabs answered ${status}.`
 export interface SpeechIntegration {
   openKey: () => Promise<string | null>
   status: () => { voiceId: string | null; modelId: ElevenLabsModelId }
-  /** The plan and credits read again, nothing else (the speak proved the key). */
-  refreshAccount: () => Promise<unknown>
+  /** Once a page was spoken: the credits read again, or the whole check
+   *  when the key is shown with a failure (`ElevenLabsIntegration.afterSpeak`). */
+  afterSpeak: () => Promise<unknown>
 }
 
 export interface HostSpeechOptions {
@@ -167,13 +168,14 @@ export function hostSpeech(recordOf: DigestRecordOf, options: HostSpeechOptions 
     }
   }
   let refreshedAt = Number.NEGATIVE_INFINITY
-  /** The Integrations card shows the credits spent: the account is read
-   *  again after a speak, once a minute at most, and only the account. */
+  /** The Integrations card shows the credits spent: the integration is told
+   *  of a speak, once a minute at most (it reads the account again, and
+   *  checks a key shown with a failure). */
   const refresh = (): void => {
     const at = now()
     if (at - refreshedAt < REFRESH_EVERY_MS) return
     refreshedAt = at
-    void integration.refreshAccount().catch(() => undefined)
+    void integration.afterSpeak().catch(() => undefined)
   }
 
   const logged = (answer: SpeakResult): SpeakResult => {

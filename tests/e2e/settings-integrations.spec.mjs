@@ -178,6 +178,11 @@ export async function run(t) {
       (line ?? '').includes('1,200 of 100,000 characters'),
       line
     )
+    t.equal(
+      'no check is offered beside a key shown with its plan',
+      await card.locator('[data-testid="elevenlabs-check"]').count(),
+      0
+    )
     t.check(
       'the account was asked with the key, in the header',
       stub.seen.some((r) => r.pathname === '/v1/user/subscription' && r.key === GOOD),

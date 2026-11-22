@@ -90,7 +90,9 @@ export function cleanReason(message: string, key: string | null): string {
   let text = message
   if (key) text = text.split(key).join('…')
   text = text
-    .replace(/\b(?:sk|xi)[_-][A-Za-z0-9_-]{16,}/g, '…')
+    // A key of today (`sk_…`), whole or in part; one of the older shapes.
+    .replace(/\bsk_[A-Za-z0-9_-]{6,}/g, '…')
+    .replace(/\bxi-[A-Za-z0-9_-]{16,}/g, '…')
     .replace(/[A-Za-z0-9]{40,}/g, '…')
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
@@ -396,11 +398,22 @@ export class ElevenLabsIntegration {
     })
   }
 
-  /** Read the account's plan and credits again, after a speak (the speech
-   *  route, once a minute at most): stored when the key may read them,
-   *  cleared when it no longer may, left as they are when the call fails.
-   *  The key itself was just proven by the speak, so nothing else is asked
-   *  and the check's own fields are not touched. */
+  /** What the speech route asks once a page was spoken (once a minute at
+   *  most). A key whose last check passed has its credits read again and
+   *  nothing else: the speak just proved it. A key shown with a failure is
+   *  checked again in full: ElevenLabs just spoke with it, so the failure
+   *  may be a stale one (a network failure at the last check), and the card
+   *  must not keep saying it. */
+  async afterSpeak(): Promise<ElevenLabsStatus> {
+    const entry = this.load().elevenLabs
+    if (!entry) return statusOf(undefined)
+    return entry.lastError ? this.check() : this.refreshAccount()
+  }
+
+  /** Read the account's plan and credits again: stored when the key may
+   *  read them, cleared when it no longer may, left as they are when the
+   *  call fails. Nothing else is asked and the check's own fields are not
+   *  touched. */
   async refreshAccount(): Promise<ElevenLabsStatus> {
     const opened = this.load().elevenLabs
     if (!opened) return statusOf(undefined)
