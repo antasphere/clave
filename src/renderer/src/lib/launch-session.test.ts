@@ -456,6 +456,23 @@ describe('launches in a server workspace (#241)', () => {
     f.fleetSnapshot.mockResolvedValue(undefined)
   }
 
+  it("sends a server Antigravity's setting as a marked mode too, for one older than the field", async () => {
+    withServer()
+    f.fleetStart.mockClear()
+    useLaunchSettingsStore.setState({ harnesses: { antigravity: { permissionDefault: 'plan' } } })
+    await launchSession({
+      setup: { kind: 'antigravity', dangerousMode: false },
+      cwd: { kind: 'workspace-root' }
+    })
+    expect(f.fleetStart.mock.calls[0][2]).toMatchObject({
+      permissionDefault: 'plan',
+      permissionMode: 'plan',
+      permissionModeFromSetting: true
+    })
+    useLaunchSettingsStore.setState({ harnesses: {} })
+    f.fleetStart.mockClear()
+  })
+
   it('starts on the server at the workspace root with the launch profile, never a Mac account', async () => {
     withServer()
     const id = await launchSession({ setup, cwd: { kind: 'workspace-root' }, remember: true })
