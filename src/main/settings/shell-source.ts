@@ -28,6 +28,7 @@ import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
 import { usageManager } from '../usage-manager'
 import { codexUsageManager } from '../codex-usage'
+import { antigravityUsageManager } from '../antigravity-cli'
 import { piUsageManager } from '../pi-usage'
 import { launchProfileManager } from '../launch-profile-manager'
 import { preferencesManager } from '../preferences-manager'
@@ -72,6 +73,7 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   codexAccounts: codexAccountsManager,
   claudeUsage: usageManager,
   codexUsage: codexUsageManager,
+  antigravityUsage: antigravityUsageManager,
   piUsage: piUsageManager,
   launchProfiles: launchProfileManager,
   preferences: preferencesManager,

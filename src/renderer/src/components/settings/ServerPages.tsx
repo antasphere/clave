@@ -18,7 +18,8 @@ import { describeClaudeProfileAuth } from '../../store/claude-profile-store'
 import { describeCodexAccountAuth } from '../../store/codex-account-store'
 import { formatAge, useUsageNavigation } from '../../store/usage-store'
 import { useNow } from '../../lib/use-now'
-import { QuotaOverview, ToolToggle, type QuotaProvider, type Tool } from '../usage/UsagePanel'
+import { QuotaOverview, ToolToggle, type Tool } from '../usage/UsagePanel'
+import type { ServerUsageProvider } from '../../store/server-settings-store'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
 import { HelpersList } from './HelpersSettings'
 import { IntegrationsList } from './IntegrationsSettings'
@@ -283,7 +284,7 @@ function ServerUsageRefresh({
 }: {
   serverId: string
   settings: ServerSettings
-  tool: QuotaProvider
+  tool: ServerUsageProvider
 }): ReactElement {
   const [busy, setBusy] = useState(false)
   const now = useNow(15_000)
@@ -327,7 +328,7 @@ export function ServerUsageSettings({ serverId }: { serverId: string }): ReactEl
   const setTool = useUsageNavigation((s) => s.select)
   // A server answers for Claude and Codex; a Pi or Antigravity pick made on
   // this Mac's page falls to Claude here.
-  const tool: QuotaProvider = picked === 'codex' ? 'codex' : 'claude'
+  const tool: ServerUsageProvider = picked === 'codex' ? 'codex' : 'claude'
   const accounts =
     tool === 'claude'
       ? settings.claude.map((a) => ({

@@ -300,6 +300,7 @@ async function spawnFromRecord(
       claudeAgentsMode: s.claudeAgentsMode,
       dangerousMode: runtime.dangerousMode,
       ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode } : {}),
+      ...(s.permissionDefault ? { permissionDefault: s.permissionDefault } : {}),
       ...(runtime.allowDangerous ? { allowDangerous: true } : {}),
       ...(runtime.effort ? { effort: runtime.effort } : {}),
       model: s.model,

@@ -195,6 +195,12 @@ describe('resolveLaunch', () => {
     })
   })
 
+  it('passes a model to Antigravity, which takes one', () => {
+    const launch = resolveLaunch(routine({ agent: 'antigravity', model: 'gemini-4-neon' }), facts())
+    expect(launch.ok).toBe(true)
+    expect(JSON.stringify(launch)).toContain('"model":"gemini-4-neon"')
+  })
+
   it('fails the run on an invalid value, naming it, never a silent fallback', () => {
     const reasons = [
       resolveLaunch(routine({ agent: 'gemini' }), facts()),
@@ -203,7 +209,6 @@ describe('resolveLaunch', () => {
       resolveLaunch(routine({ agent: 'codex', permissionMode: 'plan' }), facts()),
       resolveLaunch(routine({ effort: 'Very High' }), facts()),
       resolveLaunch(routine({ agent: 'pi', thinking: 'ultra' }), facts()),
-      resolveLaunch(routine({ agent: 'antigravity', model: 'x' }), facts()),
       resolveLaunch(routine({ profile: 'Nope' }), facts()),
       resolveLaunch(routine({ account: 'Nobody' }), facts()),
       resolveLaunch(routine({ agent: 'antigravity', account: 'any' }), facts())
@@ -216,7 +221,6 @@ describe('resolveLaunch', () => {
       'permissionMode is for claude; codex takes none',
       'effort "Very High" is not a level Claude knows',
       'thinking "ultra" is not one of off, minimal, low, medium, high, xhigh, max',
-      'The model argument applies to harnesses that take a model (Claude Code, Codex, Pi, OpenCode); Antigravity takes none on its command line.',
       'launch profile "Nope" is not a claude profile here ("Claude", "Work", "Work (chat)")',
       'Unknown Claude account "Nobody". Available: "Default" (default), "Antasphere" (acc-2)',
       'The account argument applies to harnesses with a connection pool (Claude Code, Codex, Pi, OpenCode); Antigravity runs on the login inside the harness.'

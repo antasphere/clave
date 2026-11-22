@@ -63,10 +63,12 @@ export function resolveSpawnModes(payload: {
     family !== null && DANGEROUS_MODE_FAMILIES.has(family) && payload.dangerous === true
   // model maps to claude --model / codex -m / pi --model, and to OpenCode's
   // configuration (`OPENCODE_CONFIG_CONTENT`, `providerInjection`), which its
-  // TUI and its chat read in its `provider/model` form (PRDCT-4496); antigravity
-  // and terminals have none.
+  // TUI and its chat read in its `provider/model` form (PRDCT-4496), and to
+  // agy --model (its chat's `model` option); terminals have none.
   const model =
-    (claudeMode || codexMode || piMode || opencodeMode) && payload.model ? payload.model : undefined
+    (claudeMode || codexMode || piMode || opencodeMode || antigravityMode) && payload.model
+      ? payload.model
+      : undefined
   return {
     claudeMode,
     antigravityMode,

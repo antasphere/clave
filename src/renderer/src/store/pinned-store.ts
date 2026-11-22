@@ -24,6 +24,7 @@ import { resolveDeclaredGroupView } from '../../../shared/group-view'
 import { useSessionStore } from './session-store'
 import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from './workspace-store'
 import type { ClaveFileWriteData } from '../../../preload/index.d'
+import { antigravitySettingField } from '../lib/antigravity-setting-field'
 
 /** One group as `serializePin` writes it into a `.clave` file. */
 type SerializedPin = NonNullable<ClaveFileWriteData['groups']>[number]
@@ -1279,6 +1280,7 @@ async function spawnPinnedGroup(
         dangerousMode: session.dangerousMode,
         initialPrompt,
         ...accountFields,
+        ...antigravitySettingField(session.antigravityMode),
         // The pin's workspace wins over the active one — an MCP launch of a
         // hidden workspace's pin must not leak its sessions into the active view.
         workspaceId: pg.workspaceId ?? undefined

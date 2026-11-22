@@ -111,6 +111,8 @@ import {
   type InputSetArgs,
   type RequestInputArgs
 } from './request-input'
+import { antigravityLaunchModels } from '../../shared/antigravity'
+import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../shared/within-budget'
 
 const MCP_PATH = '/mcp'
 
@@ -490,6 +492,14 @@ async function macModels(harness: HarnessId): Promise<readonly LaunchModel[] | '
     return models.length > 0
       ? models.map((model) => ({ id: model.id, label: model.label, family: model.label }))
       : 'unavailable'
+  }
+  if (harness === 'antigravity') {
+    const models = await withinBudget(
+      providerModels('antigravity-chat', os.homedir()),
+      ANTIGRAVITY_LISTING_BUDGET_MS,
+      []
+    )
+    return models.length > 0 ? antigravityLaunchModels(models) : 'unavailable'
   }
   return []
 }
@@ -1161,10 +1171,10 @@ function buildServer(callerSessionId: string | undefined): McpServer {
             `The connection (a subscription or a key) the new tab runs on: its id or exact name as Settings → Connections lists it ("default" is the machine login), or "any" for whichever connection of the pool has headroom, judged on the model the tab will run. Harnesses with a connection pool only (${OPEN_POOLED_HARNESS_NAMES}). Omit to follow Settings → Connections: the selected connection, or the recommended one when enabled, moved along the pool when exhausted. On Pi and OpenCode, a stored provider connection by its label or its id, or "any" for the first one with a key; omitted, they run on the login inside the harness. Unknown names error with the list; clave_launch_options lists them with their headroom.`
           ),
         permissionMode: z
-          .enum(SPAWN_PERMISSION_MODES)
+          .enum([...SPAWN_PERMISSION_MODES, 'accept-edits'])
           .optional()
           .describe(
-            'The mode a Claude agent asks permission under, short of bypass (bypass is dangerous). claude mode only; ignored with dangerous: true. With resume, defaults to the mode the conversation last ran in.'
+            'The mode a Claude or Antigravity agent asks permission under, short of bypass (bypass is dangerous). claude and antigravity modes only (Antigravity: plan, default, accept-edits or auto; any other asks); ignored by claude with dangerous: true. With resume, defaults to the mode the conversation last ran in.'
           ),
         effort: z
           .string()

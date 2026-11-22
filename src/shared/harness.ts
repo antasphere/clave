@@ -171,7 +171,7 @@ export const HARNESSES: readonly Harness[] = [
     // Antigravity's chat runs through `agy acp`, the Agent Client Protocol
     // server its own binary ships, the road OpenCode's chat takes.
     chatAdapterId: 'antigravity-chat',
-    takesModel: false,
+    takesModel: true,
     permissionRungs: [
       {
         id: 'default',
@@ -188,9 +188,15 @@ export const HARNESSES: readonly Harness[] = [
         label: 'Plan',
         hint: 'Plans first, changes nothing until you approve the plan.'
       },
-      { id: 'auto', label: 'Auto', hint: 'Does everything inside its sandbox.' }
+      {
+        id: 'auto',
+        label: 'Auto',
+        hint: 'Never asks inside its sandbox, deletions included; asks before a risky step outside it.'
+      }
     ],
-    defaultRung: 'default',
+    // The CLI decides: its saved `agentMode`, else Auto where the account
+    // has it (agy 1.5.7 on). The setting's "Default" names no rung.
+    defaultRung: null,
     bypassRung: null,
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     docsUrl: 'https://antigravity.google/docs/cli',

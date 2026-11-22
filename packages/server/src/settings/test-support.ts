@@ -266,6 +266,10 @@ export class FakeSettingsSource implements SettingsSourceService {
       return { error: 'Sign in to Codex CLI with ChatGPT to see your usage limits.' }
     },
     codexSnapshot: () => ({}),
+    readAntigravity: async (force) => {
+      this.record('usage.readAntigravity', force)
+      return read(12)
+    },
     readPi: (range) => {
       this.record('usage.readPi', range)
       return {

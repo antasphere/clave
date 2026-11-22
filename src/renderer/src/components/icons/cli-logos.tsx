@@ -42,18 +42,21 @@ export function ClaudeLogo({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
+/** Google's own mark: the path of antigravity.google/favicon.svg (read on
+ *  22 November 2026) in one ink, like the other providers', on a viewBox
+ *  squared around the shape. */
 export function AntigravityLogo({ className }: { className?: string }): React.JSX.Element {
   return (
     <svg
       className={className}
       width="14"
       height="14"
-      viewBox="0 0 24 24"
+      viewBox="13.2 14.2 85.4 85.4"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
       <path
-        d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z"
+        d="M89.6992 93.695C94.3659 97.195 101.366 94.8617 94.9492 88.445C75.6992 69.7783 79.7825 18.445 55.8659 18.445C31.9492 18.445 36.0325 69.7783 16.7825 88.445C9.78251 95.445 17.3658 97.195 22.0325 93.695C40.1159 81.445 38.9492 59.8617 55.8659 59.8617C72.7825 59.8617 71.6159 81.445 89.6992 93.695Z"
         fill="currentColor"
       />
     </svg>

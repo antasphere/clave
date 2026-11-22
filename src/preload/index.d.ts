@@ -536,6 +536,8 @@ export interface SessionRecord {
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId?: string
   connectionLabel?: string
+  /** Antigravity's permission setting, a default and never a pick. */
+  permissionDefault?: string
   /** PRDCT-4540: the provider the process went to off its connection. */
   connectionLeftFor?: string
   /** The thread a Codex chat tab resumes on relaunch. */
@@ -1056,6 +1058,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
       // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
       connectionId?: string
       connectionLabel?: string
+      /** Antigravity's permission setting, a default and never a pick. */
+      permissionDefault?: string
+      /** `permissionMode` repeats that setting, for an older server. */
+      permissionModeFromSetting?: boolean
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void
@@ -1499,6 +1505,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
     accountId?: string,
     options?: { force?: boolean }
   ) => Promise<UsageLimits | UsageError>
+  getAntigravityUsageLimits: (options?: { force?: boolean }) => Promise<UsageLimits | UsageError>
   getCodexUsageSnapshot: () => Promise<Record<string, UsageLimits | UsageError>>
   onCodexAccountUsage: (
     callback: (update: { accountId: string; result: UsageLimits | UsageError }) => void

@@ -2651,6 +2651,10 @@ const electronAPI = {
     server: ({ api }, accountId, options) =>
       api.settings.usage.readCodex(accountId, options).then(loose<UsageRead>)
   }),
+  getAntigravityUsageLimits: viaServer<[{ force?: boolean }?], UsageRead>({
+    ipc: (options) => ipcRenderer.invoke('usage:get-antigravity-limits', options),
+    server: ({ api }, options) => api.settings.usage.readAntigravity(options).then(loose<UsageRead>)
+  }),
   getCodexUsageSnapshot: viaServer<[], Record<string, UsageRead>>({
     ipc: () => ipcRenderer.invoke('usage:codex-snapshot'),
     server: ({ api }) => api.settings.usage.codexSnapshot().then(loose<Record<string, UsageRead>>)

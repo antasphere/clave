@@ -210,6 +210,10 @@ describe('clave_open_session on the window road', () => {
     expect(spawned()).not.toHaveProperty('permissionMode')
     expect(spawned()).not.toHaveProperty('effort')
   })
+  it('hands an Antigravity open the mode it named', async () => {
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'antigravity', permissionMode: 'plan' })
+    expect(spawned()).toMatchObject({ permissionMode: 'plan' })
+  })
   it('refuses a terminal profile beside chat, and leaves a terminal open untouched by the chat rule', async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),

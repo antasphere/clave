@@ -30,6 +30,10 @@ export interface AcpRequestOptions {
   /** Milliseconds before the request fails; null waits for as long as it
    *  takes (a `session/prompt` runs for minutes). Absent: the default. */
   timeout?: number | null
+  /** Called with the result as its frame is read, before any frame after it:
+   *  what an awaited answer writes would land after a notification that
+   *  followed it in the same chunk, and overwrite the newer word. */
+  onResult?(value: unknown): void
 }
 /** The JSON-RPC answer to a method the client does not offer. */
 export const JSON_RPC_METHOD_NOT_FOUND = -32601
@@ -62,6 +66,7 @@ export class AcpConnection {
       method: string
       resolve(value: unknown): void
       reject(error: Error): void
+      onResult?(value: unknown): void
       timer?: ReturnType<typeof setTimeout>
     }
   >()
@@ -128,7 +133,7 @@ export class AcpConnection {
               this.pending.delete(id)
               reject(new Error(`The agent did not answer ${method} in time`))
             }, timeout)
-      this.pending.set(id, { method, resolve, reject, timer })
+      this.pending.set(id, { method, resolve, reject, timer, onResult: options.onResult })
       try {
         this.send({ jsonrpc: '2.0', id, method, ...(params !== undefined ? { params } : {}) })
       } catch (error) {
@@ -218,7 +223,14 @@ export class AcpConnection {
             ? new AcpRpcError(error.code, message, error.data)
             : new Error(message)
         )
-      } else pending.resolve(frame.result)
+      } else {
+        try {
+          pending.onResult?.(frame.result)
+          pending.resolve(frame.result)
+        } catch (error) {
+          pending.reject(error instanceof Error ? error : new Error(String(error)))
+        }
+      }
       return
     }
     this.ignoredLines++

@@ -285,6 +285,13 @@ export const ReadCodexUsageSnapshot = Query.define('ReadCodexUsageSnapshot', {
   success: UsageSnapshotView
 })
 
+/** `usage:get-antigravity-limits` — the Antigravity CLI's own sign-in: each
+ *  group of models' weekly and five-hour windows. */
+export const ReadAntigravityUsage = Query.define('ReadAntigravityUsage', {
+  payload: UsageReadParams,
+  success: UsageReadView
+})
+
 /** `usage:get-pi` */
 export const ReadPiUsage = Query.define('ReadPiUsage', {
   payload: Schema.Struct({ range: PiUsageRange }),
