@@ -907,3 +907,19 @@ it("keeps the pin's folder, and its tab's, when Re-sync meets a group that has n
   expect(pinOf().sessions).toMatchObject([{ name: 'Clave 2', cwd: '/repo' }])
   expect(pinOf().terminals).toMatchObject([{ command: 'pnpm dev' }])
 })
+
+it('moves the saved pin and its tab when Re-sync meets a group that moved and kept its name', () => {
+  useLocalWorkspace()
+  mocks.state.sessions = liveTabs()
+  mocks.state.groups = [liveGroup()]
+  const made = pinned.pinGroupFromCurrent('group-live')!
+  const pinOf = (): PinnedGroup =>
+    pinned.usePinnedStore.getState().pinnedGroups.find((p) => p.id === made.pinnedId)!
+  expect(pinOf()).toMatchObject({ name: 'Clave', cwd: '/repo/clave' })
+
+  // Same name, another folder: the name alone must not make Re-sync a no-op.
+  mocks.state.groups = [{ ...mocks.state.groups[0], cwd: '/repo/moved' } as SessionGroup]
+  pinned.resyncPinnedGroup('group-live')
+  expect(pinOf()).toMatchObject({ name: 'Clave', cwd: '/repo/moved' })
+  expect(pinOf().sessions).toMatchObject([{ name: 'Clave', cwd: '/repo/moved' }])
+})
