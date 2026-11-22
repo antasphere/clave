@@ -64,6 +64,8 @@ export const SidebarGroup = Schema.Struct({
   terminals: Schema.Array(GroupTerminal),
   prompt: Schema.optional(Schema.NullOr(Schema.String)),
   rootSession: Schema.optional(Schema.Boolean),
+  /** The pin the group was launched from, by its id (PRDCT-4830). */
+  templateId: Schema.optional(Schema.NonEmptyString),
   color: Schema.optional(Schema.NullOr(Schema.String)),
   view: Schema.optional(Schema.NullOr(GroupView)),
   workspaceId: Schema.optional(Schema.String)
@@ -192,6 +194,7 @@ export const NewGroup = Schema.Struct({
   color: Schema.optional(Schema.NullOr(Schema.String)),
   prompt: Schema.optional(Schema.NullOr(Schema.String)),
   rootSession: Schema.optional(Schema.Boolean),
+  templateId: Schema.optional(Schema.NonEmptyString),
   view: Schema.optional(Schema.NullOr(GroupView)),
   terminals: Schema.optional(Schema.Array(GroupTerminal)),
   workspaceId: Schema.optional(Schema.String)

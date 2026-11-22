@@ -6,6 +6,7 @@ import type {
   SessionGroup
 } from '../../../../src/renderer/src/store/session-types'
 import {
+  CreateGroup,
   type GroupTerminal,
   type GroupView,
   LayoutSnapshot,
@@ -123,11 +124,73 @@ describe('normalizeLayout', () => {
       terminals: [],
       prompt: null,
       rootSession: true,
+      templateId: 'pin-1',
       color: 'teal',
       view: { url: 'u', title: 't', terminalId: null },
       workspaceId: 'ws'
     }
     expect(normalizeLayout({ groups: [group], displayOrder: [] }).groups[0]).toEqual(group)
+  })
+
+  it('drops a pin stamp that is not a name: empty, or of another type', () => {
+    for (const templateId of ['', 7, null, {}]) {
+      const [group] = normalizeLayout({
+        groups: [{ id: 'g', name: 'N', templateId }],
+        displayOrder: []
+      }).groups
+      expect(group).not.toHaveProperty('templateId')
+    }
+  })
+
+  it('carries the pin stamp through a save and through the layout the server answers', () => {
+    const group = {
+      id: 'g1',
+      name: 'Clave',
+      sessionIds: ['s1'],
+      collapsed: false,
+      cwd: '/w',
+      terminals: [],
+      templateId: 'pin-1'
+    }
+    const saved = Schema.decodeUnknownSync(SaveWindowLayout.payload)({
+      windowKey: 'w1',
+      baseRevision: 3,
+      groups: [group],
+      displayOrder: ['g1']
+    })
+    expect(saved.groups[0].templateId).toBe('pin-1')
+    const snapshot = Schema.decodeUnknownSync(LayoutSnapshot)({
+      windowKey: 'w1',
+      revision: 4,
+      groups: [group],
+      displayOrder: ['g1']
+    })
+    expect(snapshot.groups[0].templateId).toBe('pin-1')
+  })
+
+  it('carries the pin stamp of a group an agent launches, in the command and in its answer', () => {
+    // An agent's launch of a pin creates its group through this command, over
+    // the wire: a field the payload does not declare is stripped on the way.
+    const payload = Schema.decodeUnknownSync(CreateGroup.payload)({
+      windowKey: 'w1',
+      group: { name: 'Clave', sessionIds: ['s1'], templateId: 'pin-1' }
+    })
+    expect(payload.group.templateId).toBe('pin-1')
+    const group = {
+      id: 'g1',
+      name: 'Clave',
+      sessionIds: ['s1'],
+      collapsed: false,
+      cwd: null,
+      terminals: [],
+      templateId: 'pin-1'
+    }
+    const answer = Schema.decodeUnknownSync(CreateGroup.success)({
+      group,
+      layout: { windowKey: 'w1', revision: 1, groups: [group], displayOrder: ['g1'] }
+    })
+    expect(answer.group.templateId).toBe('pin-1')
+    expect(answer.layout.groups[0].templateId).toBe('pin-1')
   })
 
   it('answers an empty layout for nothing, null and nonsense', () => {
