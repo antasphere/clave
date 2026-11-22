@@ -95,16 +95,18 @@ function resolvePinnedAccount(
 
 export type { PinnedGroup }
 
-/** A pin taking its group's new name, and folder when one is given. The
- *  session a saved pin holds was made from the group, named after it and in
- *  its folder (blueprintFromGroup), so it follows: a pin renamed "Clave app"
+/** A pin taking its group's new name, and its folder when the group has one.
+ *  The session a saved pin holds was made from the group, named after it and
+ *  in its folder (blueprintFromGroup), so it follows: a pin renamed "Clave app"
  *  that still opened a tab called "Clave" would no longer be the group's tab.
- *  A file pin's sessions are what its `.clave` says, and stay. */
-function pinFollowingGroup(
-  pin: PinnedGroup,
-  name: string,
-  cwd: string | null = pin.cwd
-): PinnedGroup {
+ *  A file pin's sessions are what its `.clave` says, and stay.
+ *
+ *  A group with no folder says nothing about where its pin lives: the pin
+ *  keeps the folder it has, and its tab the one it opens in. A pin made from
+ *  such a group was given the workspace root, and a tab left with no folder
+ *  could not open at all. */
+function pinFollowingGroup(pin: PinnedGroup, name: string, folder?: string | null): PinnedGroup {
+  const cwd = folder ?? pin.cwd
   if (pin.name === name && pin.cwd === cwd) return pin
   return {
     ...pin,
@@ -115,7 +117,7 @@ function pinFollowingGroup(
       : pin.sessions.map((s) => ({
           ...s,
           ...(s.name === pin.name ? { name } : {}),
-          ...(cwd !== null && s.cwd === pin.cwd ? { cwd } : {})
+          ...(folder && s.cwd === pin.cwd ? { cwd: folder } : {})
         }))
   }
 }

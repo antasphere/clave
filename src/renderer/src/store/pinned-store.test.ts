@@ -881,3 +881,29 @@ it("leaves a file pin's sessions as its file names them, and a saved pin's other
     { name: 'Logs', cwd: '/repo/logs' }
   ])
 })
+
+it("keeps the pin's folder, and its tab's, when Re-sync meets a group that has none", () => {
+  useLocalWorkspace()
+  mocks.state.sessions = liveTabs()
+  // A group an agent made: no folder. Its pin gets the workspace root.
+  mocks.state.groups = [liveGroup({ cwd: null, prompt: null })]
+  const made = pinned.pinGroupFromCurrent('group-live')!
+  const pinOf = (): PinnedGroup =>
+    pinned.usePinnedStore.getState().pinnedGroups.find((p) => p.id === made.pinnedId)!
+  expect(pinOf()).toMatchObject({ cwd: '/repo', sessions: [{ name: 'Clave', cwd: '/repo' }] })
+
+  // Renamed, a terminal changed, still no folder: Re-sync.
+  mocks.state.groups = [
+    {
+      ...mocks.state.groups[0],
+      name: 'Clave 2',
+      terminals: [{ ...liveGroup().terminals[0], command: 'pnpm dev' }]
+    } as SessionGroup
+  ]
+  pinned.resyncPinnedGroup('group-live')
+  // The group says nothing about a folder: the pin keeps its own, and the tab
+  // keeps a folder to open in.
+  expect(pinOf()).toMatchObject({ name: 'Clave 2', cwd: '/repo' })
+  expect(pinOf().sessions).toMatchObject([{ name: 'Clave 2', cwd: '/repo' }])
+  expect(pinOf().terminals).toMatchObject([{ command: 'pnpm dev' }])
+})
