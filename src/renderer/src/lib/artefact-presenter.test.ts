@@ -54,7 +54,9 @@ function fake(): Fake {
   return f
 }
 
-const settle = (): Promise<void> => vi.advanceTimersByTimeAsync(0)
+const settle = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(0)
+}
 
 beforeEach(() => {
   vi.useFakeTimers()
