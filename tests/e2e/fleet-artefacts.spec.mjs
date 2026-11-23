@@ -282,6 +282,57 @@ export async function run(t) {
       { before, after: versionsOf(server, DECK) }
     )
 
+    // ── 4b. Present (PRDCT-4980): the deck alone in a presentation window,
+    // through a forward of its own, on the presentations' own session (which
+    // the window gate must stamp, or the forward refuses it) ──
+    const presentations = () =>
+      mac.app.evaluate(() => globalThis.__claveE2E?.presentations?.list() ?? [])
+    await mac.win.locator('[role="menu"]').waitFor({ state: 'detached', timeout: 5000 })
+    await mac.win.locator('[aria-label="Artefact menu"]:visible').click()
+    await mac.win.locator('[role="menuitem"]', { hasText: 'Present' }).click()
+    const shown = await until(
+      async () => (await presentations()).find((p) => p.sessionId === key) ?? null,
+      { tries: 150, gapMs: 100 }
+    )
+    t.check(
+      'Present shows the server’s deck in a presentation window, on a loopback port of the Mac',
+      !!shown &&
+        /^http:\/\/127\.0\.0\.1:\d+\/\?bar=0$/.test(shown.url) &&
+        port(shown.url) !== port(preview.url) &&
+        port(shown.url) !== port(server.url),
+      { shown, preview: preview.url }
+    )
+    const stage = shown
+      ? await until(
+          () =>
+            mac.app.windows().find((p) => p.url().startsWith(new URL(shown.url).origin)) ?? null,
+          { tries: 100, gapMs: 100 }
+        )
+      : null
+    const presented = () =>
+      stage
+        ? stage
+            .frameLocator('#deck')
+            .locator('#t')
+            .textContent({ timeout: 1000 })
+            .catch(() => null)
+        : null
+    t.equal(
+      'the deck reads in the presentation window, across both hops',
+      await until(presented, { tries: 150, gapMs: 100 }),
+      'second draft'
+    )
+    if (shown)
+      await mac.app.evaluate(
+        ({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.close(),
+        shown.windowId
+      )
+    t.check(
+      'closed, the presentation is gone',
+      !!(await until(async () => (await presentations()).length === 0, { tries: 100, gapMs: 100 })),
+      await presentations()
+    )
+
     // ── 5. The Mac's port is the windows' alone ──
     const stranger = await fetch(src).then(
       (r) => r.status,
