@@ -254,11 +254,24 @@ export async function run(t, server = 'in-process') {
       fresh
     )
 
-    // ── Escape, the focus inside the deck's own frame, ends it. The key goes
+    // ── Escape, the focus inside the deck's own frame, ends it, though the deck
+    // guards its unload (the click below gives that guard its effect). The key goes
     // in the way the keyboard's does, through the browser side of the page
     // (`sendInputEvent`): the debugger's key injection, which
     // `page.keyboard.press` uses, skips `before-input-event` altogether
     // (measured: no event seen with it, one with this).
+    // The guard a deck may set: a page refusing its unload would cancel the close.
+    // Playwright hears of the dialog Clave overrides, and must not fail on it.
+    page.on('dialog', (dialog) => void dialog.dismiss().catch(() => {}))
+    await page
+      .frameLocator('#deck')
+      .locator('#t')
+      .evaluate(() =>
+        addEventListener('beforeunload', (event) => {
+          event.preventDefault()
+          event.returnValue = ''
+        })
+      )
     await page.frameLocator('#deck').locator('#t').click({ timeout: 5000 })
     await app.evaluate(({ BrowserWindow }, id) => {
       const w = BrowserWindow.fromId(id)
@@ -344,6 +357,27 @@ export async function run(t, server = 'in-process') {
     t.check('presented once more', !toolErrored(again2), again2)
     const before = await until(async () => (await ofTab())[0] ?? null, 200)
     t.check('presented again by the agent', !!before, await presentations(app))
+    // A show of the presentation being closed is refused: nothing is left up.
+    const same = await win.evaluate(
+      ({ id, url, presentationId }) =>
+        Promise.all([
+          window.electronAPI.presentation.close(id),
+          window.electronAPI.presentation.show(id, url, 'same', presentationId)
+        ]).then((answers) => answers[1]),
+      { id: agent.sessionId, url: before?.url ?? '', presentationId: before?.presentationId ?? '' }
+    )
+    t.equal('a show of the presentation being closed is refused', same, false)
+    t.check(
+      'and no window is left up',
+      !!(await until(async () => ((await ofTab()).length === 0 ? true : null))) &&
+        (await windowFacts(app, before?.windowId ?? -1)) === null,
+      await ofTab()
+    )
+    const again3 = await client.call('clave_open_artefact', { path: DECK, present: true })
+    t.check('presented once more, again', !toolErrored(again3), again3)
+    const before2 = await until(async () => (await ofTab())[0] ?? null, 200)
+    t.check('presented again by the agent, a third time', !!before2, await presentations(app))
+
     // A show that arrives while the window is closing opens a window of its own:
     // the closing one must not take it, or its close would mark it closed.
     await win.evaluate(
@@ -352,14 +386,14 @@ export async function run(t, server = 'in-process') {
           window.electronAPI.presentation.close(id),
           window.electronAPI.presentation.show(id, url, 'race', 'p-race')
         ]),
-      { id: agent.sessionId, url: before?.url ?? '' }
+      { id: agent.sessionId, url: before2?.url ?? '' }
     )
     const raced = await until(async () => {
       const now = await ofTab()
       return now.length === 1 &&
         now[0].presentationId === 'p-race' &&
-        now[0].windowId !== before?.windowId &&
-        (await windowFacts(app, before?.windowId ?? -1)) === null
+        now[0].windowId !== before2?.windowId &&
+        (await windowFacts(app, before2?.windowId ?? -1)) === null
         ? now[0]
         : null
     })

@@ -150,6 +150,9 @@ function open(
 
   // The deck's own title would replace the artefact's.
   win.on('page-title-updated', (event) => event.preventDefault())
+  // A deck that guards its unload (`beforeunload`) would cancel every close,
+  // Escape's included, and leave a window marked closing that nothing ends.
+  win.webContents.on('will-prevent-unload', (event) => event.preventDefault())
   win.webContents.on('before-input-event', (event, input) => {
     if (!endsPresentation(input)) return
     event.preventDefault()
@@ -203,6 +206,9 @@ export function showPresentation(
 ): boolean {
   if (closedIds.has(presentationId)) return false
   const existing = presentations.get(sessionId)
+  // The presentation being closed is the person's to end: a show of it on its
+  // way meanwhile (a renewal, a version, a second ask) does not open it again.
+  if (existing?.closing && existing.presentationId === presentationId) return false
   if (!existing || existing.win.isDestroyed() || existing.closing) {
     open(owner, sessionId, url, title, presentationId)
     return true
