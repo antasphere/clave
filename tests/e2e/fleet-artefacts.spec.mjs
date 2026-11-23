@@ -470,9 +470,12 @@ export async function run(t) {
       },
       { tries: 300, gapMs: 100 }
     )
-    const ofKey = (await presentations()).filter((p) => p.sessionId === key)
-    // Counted on the windows themselves, not on main's list: one page on a preview's port.
-    const stages = mac.app.windows().filter((p) => /^http:\/\/127\.0\.0\.1:\d+\//.test(p.url()))
+    // Counted on the windows themselves, once the taken one has loaded its address:
+    // a page on a preview's port per presentation window.
+    const pages = () =>
+      mac.app.windows().filter((p) => /^http:\/\/127\.0\.0\.1:\d+\//.test(p.url()))
+    await until(() => pages().length >= 1, { tries: 150, gapMs: 100 })
+    await new Promise((resolve) => setTimeout(resolve, 1000))
     t.check(
       'both windows hold the preview and ask main to present it',
       !!answered,
@@ -480,11 +483,8 @@ export async function run(t) {
     )
     t.check(
       'one is answered yes, the other no, and one presentation window comes up',
-      !!answered &&
-        answered.filter((a) => a.taken).length === 1 &&
-        ofKey.length === 1 &&
-        stages.length === 1,
-      { answered, ofKey, stages: stages.map((p) => p.url()) }
+      !!answered && answered.filter((a) => a.taken).length === 1 && pages().length === 1,
+      { answered, pages: pages().map((p) => p.url()) }
     )
     assert.deepEqual(mac.errors, [])
   } finally {

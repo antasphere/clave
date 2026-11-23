@@ -88,6 +88,8 @@ describe('clave_open_artefact', () => {
       expect(description).toContain('"present it"')
       expect(description).toContain('full screen')
       expect(description).toContain('present: true')
+      expect(description).toContain('on another display when one is connected')
+      expect(description).not.toContain('external display')
     }
   })
 

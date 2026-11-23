@@ -47,6 +47,15 @@ interface Presentation {
   readonly displayId: number | null
   /** Put on screen once (its first paint): from then on a show brings it forward. */
   onScreen: boolean
+  /** Asked to close: a show from now on opens a window of its own rather than
+   *  taking this one, whose close would then mark the new presentation closed. */
+  closing: boolean
+}
+
+/** Close a presentation's window, marked closing at once (the close itself is asynchronous). */
+const closeIt = (presentation: Presentation): void => {
+  presentation.closing = true
+  if (!presentation.win.isDestroyed()) presentation.win.close()
 }
 
 /** By session: one presentation each, whichever window presents it. */
@@ -85,7 +94,7 @@ function watchOwner(owner: WebContents): void {
   const id = owner.id
   ownersWatched.add(id)
   const endAll = (): void => {
-    for (const p of [...presentations.values()]) if (p.owner.id === id) p.win.close()
+    for (const p of [...presentations.values()]) if (p.owner.id === id) closeIt(p)
   }
   owner.once('destroyed', () => {
     ownersWatched.delete(id)
@@ -134,7 +143,8 @@ function open(
     presentationId,
     url,
     displayId: display?.id ?? null,
-    onScreen: false
+    onScreen: false,
+    closing: false
   }
   presentations.set(sessionId, presentation)
 
@@ -143,7 +153,7 @@ function open(
   win.webContents.on('before-input-event', (event, input) => {
     if (!endsPresentation(input)) return
     event.preventDefault()
-    win.close()
+    closeIt(presentation)
   })
   win.webContents.on('will-navigate', (event, target) => {
     if (staysOnPreview(target, presentation.url)) return
@@ -160,6 +170,10 @@ function open(
     presentation.onScreen = true
     win.show()
     win.setFullScreen(true)
+  })
+  // Closed by hand (the window's button, the keyboard): closing from the first moment.
+  win.on('close', () => {
+    presentation.closing = true
   })
   win.on('closed', () => {
     if (presentations.get(sessionId) === presentation) presentations.delete(sessionId)
@@ -189,7 +203,7 @@ export function showPresentation(
 ): boolean {
   if (closedIds.has(presentationId)) return false
   const existing = presentations.get(sessionId)
-  if (!existing || existing.win.isDestroyed()) {
+  if (!existing || existing.win.isDestroyed() || existing.closing) {
     open(owner, sessionId, url, title, presentationId)
     return true
   }
@@ -216,8 +230,7 @@ export function showPresentation(
 /** Close the session's presentation, when `owner` is the window presenting it. */
 export function closePresentation(owner: WebContents, sessionId: string): void {
   const existing = presentations.get(sessionId)
-  if (existing && existing.owner.id === owner.id && !existing.win.isDestroyed())
-    existing.win.close()
+  if (existing && existing.owner.id === owner.id && !existing.closing) closeIt(existing)
 }
 
 const ID_MAX = 512

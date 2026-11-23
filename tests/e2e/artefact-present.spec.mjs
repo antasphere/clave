@@ -216,6 +216,44 @@ export async function run(t, server = 'in-process') {
       afterAgain
     )
 
+    // ── A second app window of this Mac, which does not hold the tab: the
+    // agent's ask is the holding window's alone.
+    const answers = () => app.evaluate(() => globalThis.__claveE2E.presentations.answers())
+    await win.evaluate(() => window.electronAPI.windowOpen())
+    const other = await until(
+      () => app.windows().find((p) => p !== win && !/^http:/.test(p.url())) ?? null
+    )
+    const otherReady = other
+      ? await until(() => other.evaluate(() => !!window.__clavePresenterForTests), 300)
+      : null
+    t.check('a second app window is ready', !!otherReady)
+    await other?.evaluate(() => {
+      window.__heard = []
+      window.electronAPI.artefacts.onPresentRequested((id) => window.__heard.push(id))
+    })
+    const asked = (await answers()).length
+    const third = await client.call('clave_open_artefact', { path: DECK, present: true })
+    t.check('asked once more with a second window open', !toolErrored(third), third)
+    const answeredNow = await until(async () => {
+      const fresh = (await answers()).slice(asked)
+      return fresh.length > 0 ? fresh : null
+    })
+    const heard = other
+      ? await until(async () =>
+          (await other.evaluate(() => window.__heard)).includes(agent.sessionId) ? true : null
+        )
+      : null
+    t.check('the second window hears the ask too', !!heard)
+    await sleep(2000)
+    const fresh = (await answers()).slice(asked)
+    t.check(
+      'only the window holding the tab asks main to present it',
+      !!answeredNow &&
+        fresh.length > 0 &&
+        fresh.every((a) => a.ownerWebContentsId === shown.ownerWebContentsId),
+      fresh
+    )
+
     // ── Escape, the focus inside the deck's own frame, ends it. The key goes
     // in the way the keyboard's does, through the browser side of the page
     // (`sendInputEvent`): the debugger's key injection, which
@@ -234,6 +272,13 @@ export async function run(t, server = 'in-process') {
       (await windowFacts(app, shown.windowId)) === null,
       await windowFacts(app, shown.windowId)
     )
+    const late = await win.evaluate(
+      ({ id, url, presentationId }) =>
+        window.electronAPI.presentation.show(id, url, 'late', presentationId),
+      { id: agent.sessionId, url: shown.url, presentationId: shown.presentationId }
+    )
+    t.equal('main refuses a late show of the presentation the person closed', late, false)
+    t.equal('and opens nothing for it', (await ofTab()).length, 0)
 
     // ── The person presents from the artefact's menu.
     const present = async () => {
@@ -299,6 +344,30 @@ export async function run(t, server = 'in-process') {
     t.check('presented once more', !toolErrored(again2), again2)
     const before = await until(async () => (await ofTab())[0] ?? null, 200)
     t.check('presented again by the agent', !!before, await presentations(app))
+    // A show that arrives while the window is closing opens a window of its own:
+    // the closing one must not take it, or its close would mark it closed.
+    await win.evaluate(
+      ({ id, url }) =>
+        Promise.all([
+          window.electronAPI.presentation.close(id),
+          window.electronAPI.presentation.show(id, url, 'race', 'p-race')
+        ]),
+      { id: agent.sessionId, url: before?.url ?? '' }
+    )
+    const raced = await until(async () => {
+      const now = await ofTab()
+      return now.length === 1 &&
+        now[0].presentationId === 'p-race' &&
+        now[0].windowId !== before?.windowId &&
+        (await windowFacts(app, before?.windowId ?? -1)) === null
+        ? now[0]
+        : null
+    })
+    t.check(
+      'a show while the window closes gets a window of its own, and stays up',
+      !!raced,
+      await ofTab()
+    )
     await win.reload()
     const afterReload = await until(async () => ((await ofTab()).length === 0 ? true : null))
     t.check('the app window reloaded, its presentation is closed', !!afterReload, await ofTab())
