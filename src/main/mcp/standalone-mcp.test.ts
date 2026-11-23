@@ -1730,8 +1730,8 @@ describe('standalone MCP and the server’s own History (PRDCT-4321)', () => {
 describe('clave_open_artefact on the server (PRDCT-4472)', () => {
   const artefactsFor = (opened: unknown[]): ArtefactsService => ({
     ...ArtefactsPort.none,
-    open: async (sessionId, path) => {
-      opened.push([sessionId, path])
+    open: async (sessionId, path, present) => {
+      opened.push(present === undefined ? [sessionId, path] : [sessionId, path, present])
       if (path.endsWith('.txt'))
         throw new ArtefactRefusal(
           'An artefact is a folder holding an HTML page, or one .html file.'
@@ -1764,6 +1764,34 @@ describe('clave_open_artefact on the server (PRDCT-4472)', () => {
     )
     expect(answer).toEqual({ opened: true, title: 'deck', page: '/work/deck/index.html' })
     expect(opened).toEqual([['caller', '/work/deck']])
+  })
+
+  it('passes present on to the server only when it is asked, and says it was requested (PRDCT-4980)', async () => {
+    const opened: unknown[] = []
+    const { client } = await fixture({ artefacts: artefactsFor(opened) })
+    const asked = payload(
+      await client.callTool({
+        name: 'clave_open_artefact',
+        arguments: { path: '/work/talk', present: true }
+      })
+    )
+    expect(asked).toEqual({
+      opened: true,
+      title: 'deck',
+      page: '/work/talk/index.html',
+      present: 'requested'
+    })
+    const plain = payload(
+      await client.callTool({
+        name: 'clave_open_artefact',
+        arguments: { path: '/work/notes', present: false }
+      })
+    )
+    expect(plain).toEqual({ opened: true, title: 'deck', page: '/work/notes/index.html' })
+    expect(opened).toEqual([
+      ['caller', '/work/talk', true],
+      ['caller', '/work/notes']
+    ])
   })
 
   it('answers a refusal as an error carrying its sentence', async () => {

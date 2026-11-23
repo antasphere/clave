@@ -12,7 +12,7 @@
  * asks with Present in the artefact's menu.
  */
 import { shownFor } from './artefact-version'
-import { createPresenter, type Presenter } from './artefact-presenter-core'
+import { createPresenter, wirePresenter, type Presenter } from './artefact-presenter-core'
 import { useArtefactStore } from '../store/artefact-store'
 import { useSessionStore } from '../store/session-store'
 
@@ -25,7 +25,8 @@ export function windowPresenter(): Presenter {
   presenter = createPresenter({
     hold: (sessionId, holdId) => api.artefacts.hold(sessionId, holdId),
     release: (sessionId, holdId) => api.artefacts.release(sessionId, holdId),
-    show: (sessionId, url, title) => api.presentation.show(sessionId, url, title),
+    show: (sessionId, url, title, presentationId) =>
+      api.presentation.show(sessionId, url, title, presentationId),
     close: (sessionId) => api.presentation.close(sessionId),
     artefact: (sessionId) => useArtefactStore.getState().artefacts[sessionId],
     shown: (sessionId, openedAt) =>
@@ -38,40 +39,28 @@ export function windowPresenter(): Presenter {
 export const presentArtefact = (sessionId: string): boolean => windowPresenter().present(sessionId)
 
 let started = false
-/**
- * Follow the agents' asks, main's closes and the artefacts' changes;
- * idempotent. An ask is this window's to act on when the window holds the
- * session: every window hears it, one holds the tab.
- */
+/** Follow the agents' asks, main's closes and the artefacts' changes; idempotent. */
 export function initPresenter(): void {
   if (started) return
   started = true
   const api = window.electronAPI
-  const p = windowPresenter()
-  api.artefacts.onPresentRequested((sessionId) => {
-    if (!useSessionStore.getState().sessions.some((s) => s.id === sessionId)) return
-    if (p.present(sessionId)) return
-    // The change that opened it comes first on the same channel; should the
-    // window not list it yet, it presents once it does, or never after ten seconds.
-    const off = useArtefactStore.subscribe((state) => {
-      if (!state.artefacts[sessionId]) return
-      stop()
-      p.present(sessionId)
-    })
-    const timer = setTimeout(() => off(), 10_000)
-    const stop = (): void => {
-      clearTimeout(timer)
-      off()
-    }
-  })
-  api.presentation.onClosed((sessionId) => p.closed(sessionId))
-  api.artefacts.onPreviewExited((sessionId) => p.previewExited(sessionId))
-  useArtefactStore.subscribe((state, prev) => {
-    if (state.artefacts === prev.artefacts && state.version === prev.version) return
-    for (const sessionId of p.sessions()) {
-      const artefact = state.artefacts[sessionId] ?? null
-      if (artefact !== (prev.artefacts[sessionId] ?? null)) p.artefactChanged(sessionId, artefact)
-      p.versionChanged(sessionId)
-    }
+  // The end-to-end specs read which presentations a window runs; a user's app has no handle.
+  if (window.__claveTestMode)
+    (window as { __clavePresenterForTests?: Presenter }).__clavePresenterForTests =
+      windowPresenter()
+  wirePresenter({
+    presenter: windowPresenter(),
+    // Every window that lists the session hears the ask (a server's sessions are
+    // listed by every window showing that server): main keeps one presentation.
+    shows: (sessionId) => useSessionStore.getState().sessions.some((s) => s.id === sessionId),
+    listed: (sessionId) => useArtefactStore.getState().artefacts[sessionId],
+    onPresentRequested: (callback) => api.artefacts.onPresentRequested(callback),
+    onClosed: (callback) => api.presentation.onClosed(callback),
+    onPreviewExited: (callback) => api.artefacts.onPreviewExited(callback),
+    onChanged: (callback) => api.artefacts.onChanged(callback),
+    onListChanged: (callback) =>
+      useArtefactStore.subscribe((state, prev) => {
+        if (state.artefacts !== prev.artefacts || state.version !== prev.version) callback()
+      })
   })
 }

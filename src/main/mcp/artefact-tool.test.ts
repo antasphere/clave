@@ -66,11 +66,11 @@ describe('clave_open_artefact', () => {
     ).toEqual({ opened: true, title: 'deck', page: '/work/deck/index.html' })
   })
 
-  it('answers presenting when it was asked to present (PRDCT-4980)', () => {
+  it('answers that the presentation was requested when it was asked to present (PRDCT-4980)', () => {
     const page = { title: 'deck', page: '/work/deck/index.html' }
-    expect(openedAnswer(page, true)).toEqual({ ...openedAnswer(page), presenting: true })
+    expect(openedAnswer(page, true)).toEqual({ ...openedAnswer(page), present: 'requested' })
     expect(openedAnswer(page, false)).toEqual(openedAnswer(page))
-    expect(Object.keys(openedAnswer(page, false))).not.toContain('presenting')
+    expect(Object.keys(openedAnswer(page, false))).not.toContain('present')
   })
 
   it('takes present, an optional boolean, and says when to pass it on both servers', () => {

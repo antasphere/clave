@@ -99,7 +99,10 @@ export async function run(t, server = 'in-process') {
   rmSync(ROOT, { recursive: true, force: true })
   const DECK = `${ROOT}/talk`
   mkdirSync(DECK, { recursive: true })
-  writeFileSync(`${DECK}/index.html`, '<!doctype html><h1 id="t">on the big screen</h1>')
+  writeFileSync(
+    `${DECK}/index.html`,
+    '<!doctype html><title>own title</title><h1 id="t">on the big screen</h1>'
+  )
   const WS = {
     id: 'aaaa0000-0000-4000-8000-000000004980',
     name: 'Present',
@@ -128,7 +131,11 @@ export async function run(t, server = 'in-process') {
     // ── The agent presents.
     const opened = await client.call('clave_open_artefact', { path: DECK, present: true })
     t.check('the real MCP opens the folder and presents it', !toolErrored(opened), opened)
-    t.equal('the tool answers that it presents', toolPayload(opened)?.presenting, true)
+    t.equal(
+      'the tool answers that the presentation was requested',
+      toolPayload(opened)?.present,
+      'requested'
+    )
     const ofTab = async () =>
       (await presentations(app)).filter((p) => p.sessionId === agent.sessionId)
     const shown = (await until(async () => (await ofTab())[0] ?? null, 200)) ?? null
@@ -151,10 +158,10 @@ export async function run(t, server = 'in-process') {
         !facts.preload &&
         facts.nodeIntegration !== true &&
         facts.sandbox === true &&
-        facts.defaultSession === false &&
-        shown.partition === 'clave-presentation',
-      { facts, partition: shown.partition }
+        facts.defaultSession === false,
+      facts
     )
+    t.equal('it carries the artefact’s title', shown.title, 'talk')
     const listed = await win.evaluate(() => window.electronAPI.windowList())
     t.equal('it is no app window: the windows listed are still one', listed?.length, 1)
 
@@ -179,6 +186,24 @@ export async function run(t, server = 'in-process') {
       await until(async () => ((await deckText()) === 'edited live' ? 'edited live' : null)),
       'edited live'
     )
+
+    // ── What the page may do: no permission beyond full screen and copy, never
+    // leave its preview (a web link goes to the browser instead), no window of its own.
+    t.equal(
+      'the deck is refused a permission it was not given',
+      await page.evaluate(
+        async () => (await navigator.permissions.query({ name: 'geolocation' })).state
+      ),
+      'denied'
+    )
+    const refused = await win.evaluate(() =>
+      window.electronAPI.presentation.show('anything', 'https://example.com/', 'x', 'p-other').then(
+        () => 'shown',
+        () => 'refused'
+      )
+    )
+    t.equal('main refuses to present a page off this Mac’s loopback', refused, 'refused')
+    t.equal('nothing more is presented', (await presentations(app)).length, 1)
 
     // ── Asked again: the same window, never a second one.
     const again = await client.call('clave_open_artefact', { path: DECK, present: true })
@@ -234,10 +259,49 @@ export async function run(t, server = 'in-process') {
       afterSecond
     )
 
+    // ── The page never leaves its preview: a web link it opens or goes to is
+    // sent to the browser, and no window is made for it. Done last on this
+    // window: the debugger then waits on the navigation that was stopped.
+    const stage = fromMenu
+      ? await until(
+          () => app.windows().find((p) => p.url().startsWith(new URL(fromMenu.url).origin)) ?? null
+        )
+      : null
+    if (stage) {
+      const windowsBefore = app.windows().length
+      await stage.evaluate(() => {
+        window.open('https://example.com/popup', '_blank')
+        location.href = 'https://example.com/away'
+      })
+      await sleep(800)
+      t.equal('the page stays on its preview when it tries to leave', stage.url(), fromMenu.url)
+      t.check(
+        'a link it opens goes to the browser, never into a Clave window',
+        await until(async () => {
+          const opened = await app.evaluate(() => globalThis.__claveE2E.presentations.linksOpened())
+          return opened.includes('https://example.com/popup') &&
+            opened.includes('https://example.com/away')
+            ? opened
+            : null
+        }),
+        await app.evaluate(() => globalThis.__claveE2E.presentations.linksOpened())
+      )
+      t.equal('and no window was made for it', app.windows().length, windowsBefore)
+    } else t.check('the window the menu opened is a page of its own', false)
+
     // ── Closing the artefact ends the presentation.
     await win.evaluate((id) => window.electronAPI.artefacts.close(id), agent.sessionId)
     const ended = await until(async () => ((await ofTab()).length === 0 ? true : null))
     t.check('closing the artefact ends its presentation', !!ended, await ofTab())
+
+    // ── The app window that presents it reloads: its hold died, the deck goes with it.
+    const again2 = await client.call('clave_open_artefact', { path: DECK, present: true })
+    t.check('presented once more', !toolErrored(again2), again2)
+    const before = await until(async () => (await ofTab())[0] ?? null, 200)
+    t.check('presented again by the agent', !!before, await presentations(app))
+    await win.reload()
+    const afterReload = await until(async () => ((await ofTab()).length === 0 ? true : null))
+    t.check('the app window reloaded, its presentation is closed', !!afterReload, await ofTab())
   } finally {
     await app.close()
   }

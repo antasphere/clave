@@ -867,12 +867,15 @@ export interface ArtefactsAPI {
 /** A session's deck alone, full screen, in a window of its own (PRDCT-4980). */
 export interface PresentationAPI {
   /** Show the preview at `url` (a loopback address this window holds) in the
-   *  session's presentation window, made full screen on an external display
-   *  when one is connected; a second call moves it to `url` and brings it forward. */
-  show(sessionId: string, url: string, title: string): Promise<void>
+   *  session's presentation window, made full screen on another display when
+   *  one is connected; a second call moves it to `url` and brings it forward.
+   *  False: this window is not the one presenting it (another window of this
+   *  Mac is, or the person closed that presentation), and it should let go. */
+  show(sessionId: string, url: string, title: string, presentationId: string): Promise<boolean>
+  /** Close the session's presentation, if this window is the one presenting it. */
   close(sessionId: string): Promise<void>
-  /** The presentation window of a session this window presents was closed (Esc, or by hand). */
-  onClosed(callback: (sessionId: string) => void): () => void
+  /** A presentation this window presents was closed (Escape, or by hand). */
+  onClosed(callback: (closed: { sessionId: string; presentationId: string }) => void): () => void
 }
 
 export interface ElectronAPI extends FleetDesktopAPI {

@@ -70,12 +70,17 @@ export interface E2eHooks {
   presentations: {
     list: () => {
       sessionId: string
+      presentationId: string
       url: string
+      title: string
       windowId: number
       ownerWebContentsId: number
       displayId: number | null
-      partition: string
     }[]
+    /** The links a presentation's page sent to the browser, kept here under test mode. */
+    linksOpened: () => string[]
+    /** What main answered each window's show: taken, or not this window's. */
+    answers: () => { sessionId: string; ownerWebContentsId: number; taken: boolean }[]
   }
   // ── later lanes add theirs here ──
 }

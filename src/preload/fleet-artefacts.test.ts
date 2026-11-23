@@ -38,7 +38,10 @@ interface Fixture {
   leases: Map<string, string>
   failing: Set<string>
   emit: (owner: string, event: ServerEvent) => void
-  local: { emit: (change: { sessionId: string; artefact: Artefact | null }) => void }
+  local: {
+    emit: (change: { sessionId: string; artefact: Artefact | null }) => void
+    ask: (sessionId: string) => void
+  }
 }
 
 function fixture(): Fixture {
@@ -67,6 +70,7 @@ function fixture(): Fixture {
     return { url: `http://${args[0]}`, token: 'test-only' }
   })
   const localChanged = new Set<(change: { sessionId: string; artefact: Artefact | null }) => void>()
+  const localAsked = new Set<(sessionId: string) => void>()
   const localRecord =
     (method: string, answer: unknown) =>
     async (...args: unknown[]): Promise<unknown> => {
@@ -86,6 +90,10 @@ function fixture(): Fixture {
         return () => localChanged.delete(cb)
       },
       onPreviewExited: () => () => {},
+      onPresentRequested: (cb: (sessionId: string) => void) => {
+        localAsked.add(cb)
+        return () => localAsked.delete(cb)
+      },
       slidelessState: localRecord('slidelessState', { phase: 'ready', version: '1', error: null }),
       installSlideless: localRecord('installSlideless', null),
       onSlidelessState: () => () => {}
@@ -168,7 +176,10 @@ function fixture(): Fixture {
     leases,
     failing,
     emit,
-    local: { emit: (change) => localChanged.forEach((cb) => cb(change)) }
+    local: {
+      emit: (change) => localChanged.forEach((cb) => cb(change)),
+      ask: (sessionId) => localAsked.forEach((cb) => cb(sessionId))
+    }
   }
 }
 
@@ -297,6 +308,19 @@ describe('a connected server’s artefacts', () => {
     expect(states).toEqual([
       { serverId: 'y', state: { phase: 'installing', version: null, error: null } }
     ])
+  })
+
+  it('an ask to present arrives re-keyed for a server’s session, as is for this Mac’s (PRDCT-4980)', () => {
+    const asked: string[] = []
+    const off = h.api.artefacts.onPresentRequested((id) => asked.push(id))
+    h.emit('x', { _tag: 'artefact.present_requested', sessionId: 'wire-1' } as ServerEvent)
+    h.emit('x', { _tag: 'artefact.preview_exited', sessionId: 'wire-9' } as ServerEvent)
+    h.local.ask('own-1')
+    expect(asked).toEqual([X, 'own-1'])
+    off()
+    h.emit('x', { _tag: 'artefact.present_requested', sessionId: 'wire-1' } as ServerEvent)
+    h.local.ask('own-1')
+    expect(asked).toEqual([X, 'own-1'])
   })
 
   it('reads a machine’s Slideless: this Mac without an id, a server by its id', async () => {

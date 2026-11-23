@@ -1977,11 +1977,14 @@ const electronAPI = {
   // PRDCT-4980: a session's deck alone, full screen, in a window of its own
   // that main makes; this window holds the preview and hands main its address.
   presentation: {
-    show: (sessionId: string, url: string, title: string) =>
-      ipcRenderer.invoke('presentation:show', sessionId, url, title),
+    show: (sessionId: string, url: string, title: string, presentationId: string) =>
+      ipcRenderer.invoke('presentation:show', sessionId, url, title, presentationId),
     close: (sessionId: string) => ipcRenderer.invoke('presentation:close', sessionId),
-    onClosed: (callback: (sessionId: string) => void) =>
-      createIpcListener<[string]>('presentation:closed', callback)
+    onClosed: (callback: (closed: { sessionId: string; presentationId: string }) => void) =>
+      createIpcListener<[{ sessionId: string; presentationId: string }]>(
+        'presentation:closed',
+        callback
+      )
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),

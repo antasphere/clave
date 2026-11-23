@@ -428,6 +428,64 @@ export async function run(t) {
       })),
       await deckText()
     )
+
+    // ── 8. Two windows of this Mac list the server's session (PRDCT-4980): an
+    // ask to present it reaches both, and one presentation comes up, the other
+    // window letting go ──
+    await mac.win.evaluate(() => window.electronAPI.windowOpen())
+    const second = await until(
+      () =>
+        mac.app.windows().find((p) => p !== mac.win && !/^https?:\/\/127\./.test(p.url())) ?? null,
+      { tries: 150, gapMs: 100 }
+    )
+    const listedThere = second
+      ? await second
+          .locator(`[data-sidebar-item-id="${key}"]`)
+          .waitFor({ state: 'attached', timeout: 30_000 })
+          .then(
+            () => true,
+            () => false
+          )
+      : false
+    t.check('a second window of the Mac lists the server’s session too', listedThere)
+    // Its presenter starts with its grid, which may come after the sidebar.
+    const wired = second
+      ? await until(() => second.evaluate(() => !!window.__clavePresenterForTests), {
+          tries: 300,
+          gapMs: 100
+        })
+      : null
+    t.check('the second window is ready to present', !!wired)
+    const answersFor = async () =>
+      (await mac.app.evaluate(() => globalThis.__claveE2E.presentations.answers())).filter(
+        (a) => a.sessionId === key
+      )
+    const answeredBefore = (await answersFor()).length
+    await request(server, '/artefacts/open', { sessionId: started.id, path: OTHER, present: true })
+    // Each window holds the preview and asks main: wait for both answers.
+    const answered = await until(
+      async () => {
+        const fresh = (await answersFor()).slice(answeredBefore)
+        return new Set(fresh.map((a) => a.ownerWebContentsId)).size >= 2 ? fresh : null
+      },
+      { tries: 300, gapMs: 100 }
+    )
+    const ofKey = (await presentations()).filter((p) => p.sessionId === key)
+    // Counted on the windows themselves, not on main's list: one page on a preview's port.
+    const stages = mac.app.windows().filter((p) => /^http:\/\/127\.0\.0\.1:\d+\//.test(p.url()))
+    t.check(
+      'both windows hold the preview and ask main to present it',
+      !!answered,
+      await answersFor()
+    )
+    t.check(
+      'one is answered yes, the other no, and one presentation window comes up',
+      !!answered &&
+        answered.filter((a) => a.taken).length === 1 &&
+        ofKey.length === 1 &&
+        stages.length === 1,
+      { answered, ofKey, stages: stages.map((p) => p.url()) }
+    )
     assert.deepEqual(mac.errors, [])
   } finally {
     await world.close()
