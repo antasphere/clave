@@ -39,6 +39,7 @@ import { registerIntegrationsHandlers } from './integrations-handlers'
 import { registerSpeechHandlers } from './speech-handlers'
 // ── PRDCT-4474: a session's artefact, on this Mac's own server ──
 import { registerArtefactHandlers } from './artefact-handlers'
+import { registerPresentationHandlers } from '../presentation/presentation-windows'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 import { registerCodexAccountHandlers } from './codex-accounts-handlers'
 import { registerAccountLoginHandlers } from './account-login-handlers'
@@ -107,6 +108,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerIntegrationsHandlers()
   registerSpeechHandlers()
   registerArtefactHandlers()
+  registerPresentationHandlers()
   registerGithubHandlers()
   // ── Lane A: the server ──
   registerServerHandlers()

@@ -12,24 +12,37 @@ import { z } from 'zod'
 
 export const OPEN_ARTEFACT_TOOL = 'clave_open_artefact'
 
-export const openArtefactSchema = { path: z.string().min(1).max(4096) }
+export const openArtefactSchema = {
+  path: z.string().min(1).max(4096),
+  present: z.boolean().optional()
+}
+
+/** What `present` adds to both descriptions (PRDCT-4980): the trigger words first. */
+const PRESENT_SENTENCE =
+  ' To "present it", "show it full screen", "put it on the big screen": pass present: true (opening it again is fine for this): the deck also opens alone in a full-screen window of its own, on an external display when one is connected; Esc ends it.'
 
 /** The standalone server's description: its sessions are shown on every Mac attached to it. */
 export const OPEN_ARTEFACT_DESCRIPTION_SERVER =
-  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session, on every Mac attached to this server. Pass an absolute path of this server: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this server runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.'
+  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session, on every Mac attached to this server. Pass an absolute path of this server: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this server runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.' +
+  PRESENT_SENTENCE
 
 /** The desktop's description: the same, on this Mac. */
 export const OPEN_ARTEFACT_DESCRIPTION_DESKTOP =
-  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session. Pass an absolute path of this Mac: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this Mac runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.'
+  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session. Pass an absolute path of this Mac: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this Mac runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.' +
+  PRESENT_SENTENCE
 
-/** What the tool answers once the artefact is open. */
-export const openedAnswer = (artefact: {
-  readonly title: string
-  readonly page: string
-}): { opened: true; title: string; page: string } => ({
+/** What the tool answers once the artefact is open (and, asked, presented). */
+export const openedAnswer = (
+  artefact: {
+    readonly title: string
+    readonly page: string
+  },
+  present?: boolean
+): { opened: true; title: string; page: string; presenting?: true } => ({
   opened: true,
   title: artefact.title,
-  page: artefact.page
+  page: artefact.page,
+  ...(present === true && { presenting: true as const })
 })
 
 export const SIDE_PANEL_HTML_REFUSAL =

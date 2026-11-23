@@ -66,6 +66,17 @@ export interface E2eHooks {
   // ── PRDCT-4832: the update key, never registered with the OS under test
   // mode: the accelerators that would be held, and a press of the key. ──
   updatesKey: { registered: () => string[]; press: () => boolean }
+  // ── PRDCT-4980: the presentation windows open now (`presentation/presentation-windows.ts`) ──
+  presentations: {
+    list: () => {
+      sessionId: string
+      url: string
+      windowId: number
+      ownerWebContentsId: number
+      displayId: number | null
+      partition: string
+    }[]
+  }
   // ── later lanes add theirs here ──
 }
 

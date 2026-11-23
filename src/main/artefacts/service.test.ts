@@ -256,6 +256,19 @@ describe('opening an artefact', () => {
     ])
   })
 
+  it('asked to present, tells the windows so right after the change, and only then (PRDCT-4980)', async () => {
+    const { service, deck, events } = setup()
+    const shown = await service.open('s1', deck, true)
+    await service.open('s2', deck)
+    await service.open('s2', deck, false)
+    expect(events.filter((e) => e._tag !== 'slideless.state_changed')).toEqual([
+      { _tag: 'artefact.changed', sessionId: 's1', artefact: shown },
+      { _tag: 'artefact.present_requested', sessionId: 's1' },
+      expect.objectContaining({ _tag: 'artefact.changed', sessionId: 's2' }),
+      expect.objectContaining({ _tag: 'artefact.changed', sessionId: 's2' })
+    ])
+  })
+
   it('a second open replaces the first and drops its holds', async () => {
     const { service, root, deck, forwards, setNow } = setup()
     await service.open('s1', deck)

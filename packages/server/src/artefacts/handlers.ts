@@ -56,7 +56,11 @@ const plain = <A>(
 export const artefactHandlers = [
   QueryHandler.make(ListArtefacts, () => plain((a) => a.list())),
   QueryHandler.make(GetSlidelessState, () => plain((a) => a.slidelessState())),
-  CommandHandler.make(OpenArtefact, (p) => call((a) => a.open(p.sessionId, p.path))),
+  CommandHandler.make(OpenArtefact, (p) =>
+    call((a) =>
+      p.present === true ? a.open(p.sessionId, p.path, true) : a.open(p.sessionId, p.path)
+    )
+  ),
   CommandHandler.make(CloseArtefact, (p) => plain((a) => a.close(p.sessionId))),
   CommandHandler.make(HoldArtefactPreview, (p) =>
     call((a) => (p.holdId === undefined ? a.hold(p.sessionId) : a.hold(p.sessionId, p.holdId)))

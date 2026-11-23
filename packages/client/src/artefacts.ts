@@ -20,7 +20,7 @@ import type {
 import type { Call } from './call'
 
 export interface ArtefactsClient {
-  readonly open: (sessionId: string, path: string) => Promise<Artefact>
+  readonly open: (sessionId: string, path: string, present?: boolean) => Promise<Artefact>
   readonly close: (sessionId: string) => Promise<void>
   readonly hold: (sessionId: string, holdId?: string) => Promise<ArtefactPreview>
   readonly release: (sessionId: string, holdId: string) => Promise<void>
@@ -32,7 +32,10 @@ export interface ArtefactsClient {
 }
 
 export const artefactsClient = (call: Call, patientCall: Call = call): ArtefactsClient => ({
-  open: (sessionId, path) => call((c) => c.artefacts.open({ payload: { sessionId, path } })),
+  open: (sessionId, path, present) =>
+    call((c) =>
+      c.artefacts.open({ payload: { sessionId, path, ...(present === true && { present }) } })
+    ),
   close: (sessionId) =>
     call((c) => c.artefacts.close({ payload: { sessionId } })).then(() => undefined),
   hold: (sessionId, holdId) =>

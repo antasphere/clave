@@ -8,7 +8,8 @@
  * forwarder (`forward.ts`), and lets go when it no longer shows it.
  *
  * - `OpenArtefact`: link a session to a folder holding an HTML page, or to
- *   one `.html` file; the link replaces the session's previous one.
+ *   one `.html` file; the link replaces the session's previous one. With
+ *   `present`, the windows are also told to present it full screen.
  * - `CloseArtefact`: drop the session's link.
  * - `HoldArtefactPreview` / `ReleaseArtefactPreview`: a window holds the
  *   running preview of the session's artefact, renewing the hold before its
@@ -107,7 +108,10 @@ const HoldId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
 export const OpenArtefact = Command.define('OpenArtefact', {
   payload: Schema.Struct({
     sessionId: SessionId,
-    path: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096))
+    path: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096)),
+    /** Present it too (PRDCT-4980): the window that holds the session shows the
+     *  deck alone in a full-screen window of its own (`artefact.present_requested`). */
+    present: Schema.optional(Schema.Boolean)
   }),
   success: Artefact,
   failure: RefusedOrUnavailable
@@ -171,6 +175,12 @@ export const ArtefactChanged = Schema.TaggedStruct('artefact.changed', {
   sessionId: Schema.String,
   artefact: Schema.NullOr(Artefact)
 })
+/** The agent asked to present the session's artefact (PRDCT-4980): the window
+ *  holding the session opens it full screen in a window of its own. Never kept:
+ *  a window that starts later presents nothing. */
+export const ArtefactPresentRequested = Schema.TaggedStruct('artefact.present_requested', {
+  sessionId: Schema.String
+})
 /** The preview died under its holders: a window that shows it holds again. */
 export const ArtefactPreviewExited = Schema.TaggedStruct('artefact.preview_exited', {
   sessionId: Schema.String
@@ -181,6 +191,7 @@ export const SlidelessStateChanged = Schema.TaggedStruct('slideless.state_change
 })
 export const ArtefactEvent = Schema.Union(
   ArtefactChanged,
+  ArtefactPresentRequested,
   ArtefactPreviewExited,
   SlidelessStateChanged
 )

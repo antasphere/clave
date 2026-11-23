@@ -1951,6 +1951,12 @@ const electronAPI = {
       'artefact.preview_exited',
       (event) => event.sessionId
     ),
+    // PRDCT-4980: the agent asked to present the session's artefact.
+    onPresentRequested: viaServerEvent<'artefact.present_requested', string>(
+      'artefacts:present-requested',
+      'artefact.present_requested',
+      (event) => event.sessionId
+    ),
     // This Mac's own copy here; a server's id is the fleet wrapper's to route.
     slidelessState: viaOwnServer<[string?], SlidelessState>({
       ipc: () => ipcRenderer.invoke('artefacts:slidelessState'),
@@ -1967,6 +1973,15 @@ const electronAPI = {
       serverId: null,
       state: event.state
     }))
+  },
+  // PRDCT-4980: a session's deck alone, full screen, in a window of its own
+  // that main makes; this window holds the preview and hands main its address.
+  presentation: {
+    show: (sessionId: string, url: string, title: string) =>
+      ipcRenderer.invoke('presentation:show', sessionId, url, title),
+    close: (sessionId: string) => ipcRenderer.invoke('presentation:close', sessionId),
+    onClosed: (callback: (sessionId: string) => void) =>
+      createIpcListener<[string]>('presentation:closed', callback)
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),

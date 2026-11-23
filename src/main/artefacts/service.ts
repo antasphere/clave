@@ -461,7 +461,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   let stopStates: (() => void) | null = null
 
   return {
-    open: async (sessionId, path) => {
+    open: async (sessionId, path, present) => {
       if (!deps.sessions.knows(sessionId)) throw new ArtefactRefusal(NO_SUCH_SESSION)
       const { target, page, title } = resolveArtefact(path)
       // The link replaces the session's previous one, and its holds with it:
@@ -474,6 +474,8 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       dropSessionHolds(sessionId)
       const artefact: Artefact = { sessionId, ...link }
       tell({ _tag: 'artefact.changed', sessionId, artefact })
+      // After the change, so the window that presents it already lists it.
+      if (present === true) tell({ _tag: 'artefact.present_requested', sessionId })
       installWhenMissing()
       return artefact
     },

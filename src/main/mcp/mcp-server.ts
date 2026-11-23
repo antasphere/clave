@@ -1589,15 +1589,18 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     OPEN_ARTEFACT_TOOL,
     { description: OPEN_ARTEFACT_DESCRIPTION_DESKTOP, inputSchema: openArtefactSchema },
-    async ({ path: target }) => {
+    async ({ path: target, present }) => {
       try {
         if (!callerSessionId) throw new Error('Requires an authenticated Clave session')
         // Through the typed client, as the served tools reach the server;
-        // nothing is focused, the windows hear `artefact.changed`.
+        // nothing is focused, the windows hear `artefact.changed` (and
+        // `artefact.present_requested` when it is presented, PRDCT-4980).
         const api = await serverClient.api()
-        const artefact = await api.artefacts.open(callerSessionId, target)
+        const artefact = await api.artefacts.open(callerSessionId, target, present === true)
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(openedAnswer(artefact)) }]
+          content: [
+            { type: 'text' as const, text: JSON.stringify(openedAnswer(artefact, present)) }
+          ]
         }
       } catch (error) {
         return {

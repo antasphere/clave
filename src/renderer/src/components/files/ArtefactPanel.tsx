@@ -5,6 +5,7 @@ import {
   CodeBracketIcon,
   DocumentTextIcon,
   FolderIcon,
+  PresentationChartBarIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import { LOCAL_SERVER_ID, resourceKey } from '@clave/contract/fleet'
@@ -18,13 +19,15 @@ import { FileMenu } from './FileMenu'
 import { inBrowser, shownFor } from '../../lib/artefact-version'
 import { useFleetStore } from '../../store/fleet-store'
 import { serverNameOf } from '../../lib/drop-refusal'
+import { presentArtefact } from '../../lib/artefact-presenter'
 
 /**
  * The panel a session's artefact lives in (PRDCT-4474), the other half of the
  * session's frame beside the conversation (see TerminalGrid), its body the
  * Slideless frame. Its bar is the session bar's height (PRDCT-4491) and
  * carries what Slideless's own bar did (PRDCT-4494): the version shown, in a
- * chip beside the title, and in the ⋯ menu Save version, the page's source as
+ * chip beside the title, and in the ⋯ menu Present (the deck alone, full
+ * screen, PRDCT-4980), Save version, the page's source as
  * a file tab of the machine the session runs on, and the file's place. Hiding
  * the panel keeps the artefact on its server; the chip in the session's
  * header brings it back.
@@ -60,9 +63,20 @@ export function ArtefactPanel({
             label="Artefact menu"
             actions={[
               {
+                // PRDCT-4980: the deck alone, full screen, in a window of its own.
+                id: 'present',
+                label: 'Present',
+                icon: PresentationChartBarIcon,
+                disabled: !ready,
+                onSelect: () => {
+                  presentArtefact(sessionId)
+                }
+              },
+              {
                 id: 'save-version',
                 label: 'Save version',
                 icon: BookmarkSquareIcon,
+                separated: true,
                 disabled: !ready,
                 reports: true,
                 onSelect: async () => {

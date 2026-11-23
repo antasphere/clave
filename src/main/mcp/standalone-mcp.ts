@@ -1214,9 +1214,16 @@ function buildServer(
     server.registerTool(
       OPEN_ARTEFACT_TOOL,
       { description: OPEN_ARTEFACT_DESCRIPTION_SERVER, inputSchema: openArtefactSchema },
-      async ({ path }) => {
+      async ({ path, present }) => {
         try {
-          return text(openedAnswer(await artefacts.open(sessionId, path)))
+          return text(
+            openedAnswer(
+              present === true
+                ? await artefacts.open(sessionId, path, true)
+                : await artefacts.open(sessionId, path),
+              present
+            )
+          )
         } catch (error) {
           return { content: [{ type: 'text', text: message(error) }], isError: true }
         }

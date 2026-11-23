@@ -3,6 +3,7 @@ import { initLinkedDocuments, useLinkedDocumentStore } from '../../store/linked-
 import { LinkedDocumentPanel } from '../files/LinkedDocumentPanel'
 import { ArtefactPanel } from '../files/ArtefactPanel'
 import { initArtefacts, isShown, SPLIT_DEFAULT, useArtefactStore } from '../../store/artefact-store'
+import { initPresenter } from '../../lib/artefact-presenter'
 import { latestOpenedWins, type PaneLook } from './latest-opened-wins'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -106,7 +107,11 @@ export function TerminalGrid(): React.JSX.Element {
   const artefacts = useArtefactStore((s) => s.artefacts)
   const artefactHidden = useArtefactStore((s) => s.hidden)
   const artefactSplit = useArtefactStore((s) => s.split)
-  useEffect(() => initArtefacts(), [])
+  useEffect(() => {
+    initArtefacts()
+    // PRDCT-4980: an agent's ask to present its deck is this window's when it holds the tab.
+    initPresenter()
+  }, [])
   const shownArtefacts = useMemo(
     () =>
       new Set(

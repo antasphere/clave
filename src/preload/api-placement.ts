@@ -213,6 +213,12 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   'artefacts.close': routed,
   'artefacts.onChanged': routed,
   'artefacts.onPreviewExited': routed,
+  'artefacts.onPresentRequested': routed,
+  'presentation.show': localBecause(
+    "the window is this Mac's: a server tab's preview reaches it through the forward its hold opened"
+  ),
+  'presentation.close': localBecause("the presentation window is this Mac's"),
+  'presentation.onClosed': localBecause("the presentation window is this Mac's"),
   'artefacts.slidelessState': routed,
   'artefacts.installSlideless': routed,
   'artefacts.onSlidelessState': routed,

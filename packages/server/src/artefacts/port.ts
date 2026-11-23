@@ -33,8 +33,9 @@ export class ArtefactRefusal extends Error {
 }
 
 export interface ArtefactsService {
-  /** Link a session to a folder holding an HTML page, or to one `.html` file. */
-  readonly open: (sessionId: string, path: string) => Promise<Artefact>
+  /** Link a session to a folder holding an HTML page, or to one `.html` file;
+   *  with `present`, tell the windows to present it full screen (PRDCT-4980). */
+  readonly open: (sessionId: string, path: string, present?: boolean) => Promise<Artefact>
   /** Drop the session's link and its holds; a session with none is not an error. */
   readonly close: (sessionId: string) => Promise<void>
   /** Hold (or renew a hold of) the running preview of the session's artefact. */

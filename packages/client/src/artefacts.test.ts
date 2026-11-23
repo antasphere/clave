@@ -25,8 +25,10 @@ afterEach(async () => {
 
 const state = { phase: 'ready', version: '0.14.1', error: null } as const
 const port = (asked: unknown[]): ArtefactsService => ({
-  open: async (sessionId, path) => {
-    asked.push(['open', sessionId, path])
+  open: async (sessionId, path, present) => {
+    asked.push(
+      present === undefined ? ['open', sessionId, path] : ['open', sessionId, path, present]
+    )
     if (path === '/nowhere') throw new ArtefactRefusal('No such file or folder: /nowhere')
     return { sessionId, target: path, page: `${path}/index.html`, title: 'deck', openedAt: 'now' }
   },
@@ -57,6 +59,10 @@ describe('the artefacts of the client', () => {
     server = await startEmbedded({ ports: { sessions: new FakeSource(), artefacts: port(asked) } })
     api = createApiClient({ url: server.url, token: server.token })
     expect((await api.artefacts.open('s1', '/work/deck')).page).toBe('/work/deck/index.html')
+    expect((await api.artefacts.open('s1', '/work/talk', true)).page).toBe('/work/talk/index.html')
+    expect((await api.artefacts.open('s1', '/work/notes', false)).page).toBe(
+      '/work/notes/index.html'
+    )
     expect((await api.artefacts.hold('s1')).holdId).toBe('h1')
     expect((await api.artefacts.hold('s1', 'h2')).holdId).toBe('h2')
     await api.artefacts.release('s1', 'h2')
@@ -70,6 +76,8 @@ describe('the artefacts of the client', () => {
     expect(await api.artefacts.installSlideless()).toEqual(state)
     expect(asked).toEqual([
       ['open', 's1', '/work/deck'],
+      ['open', 's1', '/work/talk', true],
+      ['open', 's1', '/work/notes'],
       ['hold', 's1', undefined],
       ['hold', 's1', 'h2'],
       ['release', 's1', 'h2'],

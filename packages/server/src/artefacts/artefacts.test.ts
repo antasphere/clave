@@ -47,8 +47,10 @@ function fakePort(): {
   const asked: unknown[] = []
   const listeners = new Set<(event: ArtefactEvent) => void>()
   const port: ArtefactsService = {
-    open: async (sessionId, path) => {
-      asked.push(['open', sessionId, path])
+    open: async (sessionId, path, present) => {
+      asked.push(
+        present === undefined ? ['open', sessionId, path] : ['open', sessionId, path, present]
+      )
       if (path === '/nowhere') throw new ArtefactRefusal('No such file or folder: /nowhere')
       return { ...artefact, sessionId, target: path }
     },
@@ -184,7 +186,27 @@ describe('the artefacts over HTTP', () => {
     }
   })
 
-  it('tells a push client each of its three events', async () => {
+  it('passes present on to the port only when it is asked (PRDCT-4980)', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), artefacts: port } })
+    expect(
+      (await post('/artefacts/open', { sessionId: 's1', path: '/a', present: true })).status
+    ).toBe(200)
+    expect(
+      (await post('/artefacts/open', { sessionId: 's1', path: '/b', present: false })).status
+    ).toBe(200)
+    expect((await post('/artefacts/open', { sessionId: 's1', path: '/c' })).status).toBe(200)
+    expect(
+      (await post('/artefacts/open', { sessionId: 's1', path: '/d', present: 'yes' })).status
+    ).toBe(400)
+    expect(asked).toEqual([
+      ['open', 's1', '/a', true],
+      ['open', 's1', '/b'],
+      ['open', 's1', '/c']
+    ])
+  })
+
+  it('tells a push client each of its events', async () => {
     const { port, emit } = fakePort()
     server = await startEmbedded({ ports: { sessions: new FakeSource(), artefacts: port } })
     const peer = new Peer(server.url.replace('http', 'ws') + '/push')
@@ -195,6 +217,7 @@ describe('the artefacts over HTTP', () => {
       { _tag: 'artefact.changed', sessionId: 's1', artefact },
       { _tag: 'artefact.changed', sessionId: 's1', artefact: null },
       { _tag: 'artefact.preview_exited', sessionId: 's1' },
+      { _tag: 'artefact.present_requested', sessionId: 's1' },
       { _tag: 'slideless.state_changed', state: ready }
     ]
     for (const event of events) {

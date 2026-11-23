@@ -854,12 +854,25 @@ export interface ArtefactsAPI {
   ): () => void
   /** The preview died under its holders: hold again. */
   onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The agent asked to present the session's artefact full screen (PRDCT-4980). */
+  onPresentRequested(callback: (sessionId: string) => void): () => void
   /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
   slidelessState(serverId?: string): Promise<SlidelessState>
   installSlideless(serverId?: string): Promise<SlidelessState>
   onSlidelessState(
     callback: (change: { serverId: string | null; state: SlidelessState }) => void
   ): () => void
+}
+
+/** A session's deck alone, full screen, in a window of its own (PRDCT-4980). */
+export interface PresentationAPI {
+  /** Show the preview at `url` (a loopback address this window holds) in the
+   *  session's presentation window, made full screen on an external display
+   *  when one is connected; a second call moves it to `url` and brings it forward. */
+  show(sessionId: string, url: string, title: string): Promise<void>
+  close(sessionId: string): Promise<void>
+  /** The presentation window of a session this window presents was closed (Esc, or by hand). */
+  onClosed(callback: (sessionId: string) => void): () => void
 }
 
 export interface ElectronAPI extends FleetDesktopAPI {
@@ -1252,6 +1265,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
    * its sessions, their ids keyed as the window keys them.
    */
   artefacts: ArtefactsAPI
+  presentation: PresentationAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   // ── Issue #407: the relay address and the relay client's state (Settings → Mobile) ──

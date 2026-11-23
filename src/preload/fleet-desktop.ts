@@ -1535,6 +1535,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.artefacts.onPreviewExited(cb),
         eventListener('artefact.preview_exited', (event, owner) => cb(key(owner, event.sessionId)))
       ),
+    onPresentRequested: (cb) =>
+      both(
+        local.artefacts.onPresentRequested(cb),
+        eventListener('artefact.present_requested', (event, owner) =>
+          cb(key(owner, event.sessionId))
+        )
+      ),
     slidelessState: async (serverId) =>
       serverId === undefined || serverId === LOCAL_SERVER_ID
         ? local.artefacts.slidelessState()
