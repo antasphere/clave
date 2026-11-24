@@ -104,6 +104,9 @@ export async function run(t) {
       'Scratch'
     ])
     await hoverTo(win, middleOf(rowSel(ledger)))
+    // An entry never draws the outline, with or without the guard: this check
+    // says what the person sees. What the guard decides is the release below,
+    // which is the one that fails without it.
     eq('over the middle of the lane entry, no row is marked', named(await ontoMarked(win)), [])
     await release(win)
     await win.waitForTimeout(1200)
