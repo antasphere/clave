@@ -8,7 +8,7 @@
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Session, SessionGroup } from './session-types'
-import { NestRefused } from '../../../shared/nest-tools'
+import { nestRefusalMessage } from '../../../shared/nest-tools'
 
 const calls: Array<[string, string | null]> = []
 /** The server answers no, with this sentence. */
@@ -19,19 +19,25 @@ let silent: string | null = null
 let answersAfterMs = 0
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, answersAfterMs + 5))
 
-vi.mock('../lib/nest-api', () => ({
-  nestApi: {
-    nest: vi.fn(async (id: string, under: string | null) => {
-      calls.push([id, under])
-      if (answersAfterMs) await new Promise((r) => setTimeout(r, answersAfterMs))
-      // As `nest-api.ts` throws them: the server's no is a `NestRefused`, a
-      // call that was never answered a plain Error.
-      if (refuse !== null) throw new NestRefused(refuse)
-      if (silent !== null) throw new Error(silent)
-    }),
-    onNested: () => () => {}
+vi.mock('../lib/nest-api', async () => {
+  // The bridge is stood in for; the door is the real one. What the preload
+  // sends across is a message and nothing else: the server's no marked, a
+  // call that was never answered as its words came. `nestErrorOf` is what
+  // makes a refusal of the first again, and the store is tested behind it.
+  const door = await vi.importActual<typeof import('../lib/nest-api')>('../lib/nest-api')
+  return {
+    ...door,
+    nestApi: {
+      nest: vi.fn(async (id: string, under: string | null) => {
+        calls.push([id, under])
+        if (answersAfterMs) await new Promise((r) => setTimeout(r, answersAfterMs))
+        if (refuse !== null) throw door.nestErrorOf(new Error(nestRefusalMessage(refuse)))
+        if (silent !== null) throw door.nestErrorOf(new Error(silent))
+      }),
+      onNested: () => () => {}
+    }
   }
-}))
+})
 
 let useSessionStore: typeof import('./session-store').useSessionStore
 
@@ -639,6 +645,21 @@ describe('what the row says when the server refuses', () => {
       await useSessionStore.getState().detachSession('other')
       useSessionStore.setState({ sidebarUndoStack: [] })
     }
+  })
+
+  it('a server that says it cannot is not a refusal: plain words, and an undo keeps its step', async () => {
+    // The server answers so for any failure of its host. A disk busy for a
+    // moment must not put its path under a row, nor cost the person an undo.
+    await useSessionStore.getState().nestSession('other', 'lead')
+    silent = 'EBUSY: resource busy or locked, open /home/someone/records/other.json'
+    useSessionStore.getState().undoSidebar()
+    await settle()
+    expect(notice()).toEqual({
+      id: 'other',
+      message: 'The server could not be asked: the tab stays where it was'
+    })
+    expect(linkOf('other')).toBe('lead')
+    expect(useSessionStore.getState().sidebarUndoStack).toHaveLength(1)
   })
 
   it('a sentence too long for a row is cut', async () => {

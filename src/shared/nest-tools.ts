@@ -53,17 +53,19 @@ export class NestRefused extends Error {
 }
 
 /** The error a tagged answer of the server becomes on its way to a window:
- *  a refusal marked with its sentence, anything else as it came. The three
- *  answers that are a no: the rule's or the host's refusal, a tab that is
- *  gone, a server that says it has no such command. */
+ *  a refusal marked with its sentence, anything else as it came. The two
+ *  answers that are a no: the rule's or the host's refusal, and a tab that
+ *  is gone. A server that says it cannot (`CapabilityUnavailable`) is not
+ *  one: the server answers so for any failure of its host, a disk that was
+ *  busy for a moment included, and its words then carry that failure's own,
+ *  a path among them. It stays a call that was never answered: plain words
+ *  under the row, and an undo keeps its step. */
 export function nestAnswerError(error: unknown): unknown {
   const tagged = error as { _tag?: unknown; message?: unknown } | null
   if (!tagged || typeof tagged !== 'object') return error
   if (tagged._tag === 'NestRefused' && typeof tagged.message === 'string')
     return new Error(nestRefusalMessage(tagged.message))
   if (tagged._tag === 'SessionNotFound') return new Error(nestRefusalMessage(NEST_TAB_GONE))
-  if (tagged._tag === 'CapabilityUnavailable' && typeof tagged.message === 'string')
-    return new Error(nestRefusalMessage(tagged.message))
   return error
 }
 

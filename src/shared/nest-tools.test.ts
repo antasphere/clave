@@ -66,16 +66,22 @@ describe('a refusal across the bridge', () => {
     expect(nestRefusalIn('')).toBeNull()
   })
 
-  it('marks the three answers that are a no', () => {
+  it('marks the two answers that are a no', () => {
     const read = (error: unknown): string | null =>
       nestRefusalIn((nestAnswerError(error) as Error).message)
     expect(read(tagged('NestRefused', 'A tab cannot be nested under itself'))).toBe(
       'A tab cannot be nested under itself'
     )
     expect(read(tagged('SessionNotFound', '{ "id": "x" }', { id: 'x' }))).toBe(NEST_TAB_GONE)
-    expect(read(tagged('CapabilityUnavailable', 'This server has no terminals'))).toBe(
-      'This server has no terminals'
+  })
+
+  it('leaves a server that says it cannot as it came: its words may be a failed disk’s', () => {
+    const busy = tagged(
+      'CapabilityUnavailable',
+      'EBUSY: resource busy or locked, open /home/someone/records/x.json',
+      { capability: 'sessions' }
     )
+    expect(nestAnswerError(busy)).toBe(busy)
   })
 
   it('leaves a call that was never answered as it came', () => {

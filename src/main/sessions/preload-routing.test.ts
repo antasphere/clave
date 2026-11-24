@@ -1005,7 +1005,7 @@ describe('nesting a tab under another goes to the server alone (PRDCT-4997)', ()
     expect(error).not.toHaveProperty('_tag')
   })
 
-  it('a tab the server no longer knows, and a server with no such command, are answers too', async () => {
+  it('a tab the server no longer knows is an answer too, said in a sentence', async () => {
     answer(onServer)
     mocks.sessions.nest = vi.fn(async () => {
       throw Object.assign(new Error('{ "id": "s1" }'), { _tag: 'SessionNotFound', id: 's1' })
@@ -1013,14 +1013,18 @@ describe('nesting a tab under another goes to the server alone (PRDCT-4997)', ()
     const gone = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
     // A sentence, never the not-found's own payload.
     expect(nestRefusalIn((gone as Error).message)).toBe('That tab is gone')
+  })
+
+  it('a server that says it cannot is not a refusal: its words may be a failed disk’s', async () => {
+    answer(onServer)
     mocks.sessions.nest = vi.fn(async () => {
-      throw Object.assign(new Error('This server has no terminals'), {
+      throw Object.assign(new Error('EBUSY: resource busy or locked, open /x/records/s1.json'), {
         _tag: 'CapabilityUnavailable',
         capability: 'sessions'
       })
     })
-    const without = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
-    expect(nestRefusalIn((without as Error).message)).toBe('This server has no terminals')
+    const busy = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(nestRefusalIn((busy as Error).message)).toBeNull()
   })
 
   it('a call the server never answered crosses as it came, unmarked', async () => {

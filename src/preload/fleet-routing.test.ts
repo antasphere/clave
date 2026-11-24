@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElectronAPI } from './index.d'
 import { resourceKey } from '../../packages/contract/src/fleet'
+import { nestRefusalIn } from '../shared/nest-tools'
 
 const mocks = vi.hoisted(() => ({
   exposed: new Map<string, unknown>(),
   invoke: vi.fn(),
   disabled: new Set<string>(),
   calls: [] as Array<{ owner: string; method: string; args: unknown[] }>,
+  /** What a server's `nest` throws instead of answering, when set. */
+  nestAnswers: null as unknown,
   listeners: new Map<string, Set<(...args: unknown[]) => void>>(),
   registries: new Map<string, Array<Record<string, unknown>>>(),
   revisions: new Map<string, number>(),
@@ -94,6 +97,7 @@ vi.mock('@clave/client/node', () => ({
           keepOnRecord: call('keepOnRecord', undefined),
           nest: async (id: string, under: string | null) => {
             mocks.calls.push({ owner, method: 'nest', args: [id, under] })
+            if (mocks.nestAnswers) throw mocks.nestAnswers
             return { id, under, changed: true }
           }
         },
@@ -424,6 +428,30 @@ describe('desktop owner routing', () => {
       'Clave server is not available'
     )
     expect(mocks.calls.filter((c) => c.method === 'nest')).toEqual([])
+  })
+  it('a server’s no crosses marked as a refusal, a call it never answered as it came (PRDCT-4997)', async () => {
+    const child = resourceKey('session', 'b', 'child')
+    const parent = resourceKey('session', 'b', 'parent')
+    try {
+      mocks.nestAnswers = Object.assign(new Error('A tab cannot be nested under itself'), {
+        _tag: 'NestRefused'
+      })
+      const refused = await api.sessionsNest(child, parent).catch((e: unknown) => e)
+      expect(nestRefusalIn((refused as Error).message)).toBe('A tab cannot be nested under itself')
+      mocks.nestAnswers = new Error('socket hang up')
+      const silent = await api.sessionsNest(child, parent).catch((e: unknown) => e)
+      expect(nestRefusalIn((silent as Error).message)).toBeNull()
+    } finally {
+      mocks.nestAnswers = null
+    }
+  })
+  it('its own refusal of a pair split across machines is marked too (PRDCT-4997)', async () => {
+    const split = await api
+      .sessionsNest(resourceKey('session', 'b', 'child'), resourceKey('session', 'a', 'parent'))
+      .catch((e: unknown) => e)
+    expect(nestRefusalIn((split as Error).message)).toBe(
+      'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+    )
   })
   it('refuses a pair split across machines before any server is asked (PRDCT-4997)', async () => {
     const words =
