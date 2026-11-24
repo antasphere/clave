@@ -1459,13 +1459,20 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         })
       return (await Promise.all([own, ...servers])).flat()
     },
-    hold: (id, holdId) =>
+    hold: (id, holdId, target) =>
       route(
         id,
-        (wireId) => local.artefacts.hold(wireId, holdId),
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.hold(wireId, holdId)
+            : local.artefacts.hold(wireId, holdId, target),
         async (b, wireId) => {
           const serverId = parseSessionKey(id).serverId
-          const preview = await b.api.artefacts.hold(wireId, holdId)
+          // One of the session's artefacts (PRDCT-5022), named only when it is asked.
+          const preview =
+            target === undefined
+              ? await b.api.artefacts.hold(wireId, holdId)
+              : await b.api.artefacts.hold(wireId, holdId, target)
           const known = holdId === undefined ? undefined : remoteHolds.get(holdId)
           if (known && known.serverId === serverId && known.lease === preview.lease) {
             if (preview.holdId !== holdId) {
@@ -1503,23 +1510,41 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         if (known) releaseForward(known.forward)
       }
     },
-    saveVersion: (id) =>
+    saveVersion: (id, target) =>
       route(
         id,
-        (wireId) => local.artefacts.saveVersion(wireId),
-        (b, wireId) => b.api.artefacts.saveVersion(wireId)
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.saveVersion(wireId)
+            : local.artefacts.saveVersion(wireId, target),
+        (b, wireId) =>
+          target === undefined
+            ? b.api.artefacts.saveVersion(wireId)
+            : b.api.artefacts.saveVersion(wireId, target)
       ),
-    versions: (id) =>
+    versions: (id, target) =>
       route(
         id,
-        (wireId) => local.artefacts.versions(wireId),
-        (b, wireId) => b.api.artefacts.versions(wireId)
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.versions(wireId)
+            : local.artefacts.versions(wireId, target),
+        (b, wireId) =>
+          target === undefined
+            ? b.api.artefacts.versions(wireId)
+            : b.api.artefacts.versions(wireId, target)
       ),
-    close: (id) =>
+    close: (id, target) =>
       route(
         id,
-        (wireId) => local.artefacts.close(wireId),
-        (b, wireId) => b.api.artefacts.close(wireId)
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.close(wireId)
+            : local.artefacts.close(wireId, target),
+        (b, wireId) =>
+          target === undefined
+            ? b.api.artefacts.close(wireId)
+            : b.api.artefacts.close(wireId, target)
       ),
     onChanged: (cb) =>
       both(
@@ -1527,7 +1552,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         eventListener('artefact.changed', (event, owner) =>
           cb({
             sessionId: key(owner, event.sessionId),
-            artefact: event.artefact ? keyedArtefact(owner, event.artefact) : null
+            artefact: event.artefact ? keyedArtefact(owner, event.artefact) : null,
+            ...(event.artefacts && {
+              artefacts: event.artefacts.map((a) => keyedArtefact(owner, a))
+            })
           })
         )
       ),
@@ -1535,6 +1563,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       both(
         local.artefacts.onPreviewExited(cb),
         eventListener('artefact.preview_exited', (event, owner) => cb(key(owner, event.sessionId)))
+      ),
+    onPresentRequested: (cb) =>
+      both(
+        local.artefacts.onPresentRequested(cb),
+        eventListener('artefact.present_requested', (event, owner) =>
+          cb(key(owner, event.sessionId))
+        )
       ),
     slidelessState: async (serverId) =>
       serverId === undefined || serverId === LOCAL_SERVER_ID

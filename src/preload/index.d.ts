@@ -842,25 +842,52 @@ export interface PluginSecretPrompt {
 export interface ArtefactsAPI {
   /** Every artefact this window can show: this Mac's own server's, and each connected server's, their session ids as the window keys them. */
   list(): Promise<Artefact[]>
-  /** Hold the preview of a session's artefact; call again with the holdId before ttlMs runs out. The url is one this window can frame. */
-  hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
+  /** Hold the preview of one of a session's artefacts (`target`, else its front one);
+   *  call again with the holdId before ttlMs runs out. The url is one this window can frame. */
+  hold(
+    sessionId: string,
+    holdId?: string,
+    target?: string
+  ): Promise<{ url: string; holdId: string; ttlMs: number }>
   release(sessionId: string, holdId: string): Promise<void>
-  saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
-  /** The versions the session's artefact keeps, from its running preview (PRDCT-4494). */
-  versions(sessionId: string): Promise<ArtefactVersions>
-  /** The session shows no artefact any more, for every window and every Mac. */
-  close(sessionId: string): Promise<void>
+  saveVersion(sessionId: string, target?: string): Promise<{ version: number; created: boolean }>
+  /** The versions one of the session's artefacts keeps, from its running preview (PRDCT-4494). */
+  versions(sessionId: string, target?: string): Promise<ArtefactVersions>
+  /** The session lets go of one of its artefacts (`target`), or of all, for every window and Mac. */
+  close(sessionId: string, target?: string): Promise<void>
+  /** A session's artefacts changed: its front one (null once none is left) and, from a
+   *  server that keeps several (PRDCT-5022), all of them, oldest first, the front last. */
   onChanged(
-    callback: (change: { sessionId: string; artefact: Artefact | null }) => void
+    callback: (change: {
+      sessionId: string
+      artefact: Artefact | null
+      artefacts?: readonly Artefact[]
+    }) => void
   ): () => void
   /** The preview died under its holders: hold again. */
   onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The agent asked to present the session's artefact full screen (PRDCT-4980). */
+  onPresentRequested(callback: (sessionId: string) => void): () => void
   /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
   slidelessState(serverId?: string): Promise<SlidelessState>
   installSlideless(serverId?: string): Promise<SlidelessState>
   onSlidelessState(
     callback: (change: { serverId: string | null; state: SlidelessState }) => void
   ): () => void
+}
+
+/** A session's deck alone, full screen, in a window of its own (PRDCT-4980). */
+export interface PresentationAPI {
+  /** Show the preview at `url` (a loopback address this window holds) in the
+   *  session's presentation window, made full screen on another display when
+   *  one is connected; a second call moves it to `url` and brings it forward.
+   *  False: this window is not the one presenting it (another window of this
+   *  Mac is, or the person closed that presentation), and it should let go. */
+  show(sessionId: string, url: string, title: string, presentationId: string): Promise<boolean>
+  /** Close the session's presentation, if this window is the one presenting it. */
+  close(sessionId: string): Promise<void>
+  /** A presentation this window presents was closed (Escape, or by hand). */
+  onClosed(callback: (closed: { sessionId: string; presentationId: string }) => void): () => void
 }
 
 export interface ElectronAPI extends FleetDesktopAPI {
@@ -1259,6 +1286,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
    * its sessions, their ids keyed as the window keys them.
    */
   artefacts: ArtefactsAPI
+  presentation: PresentationAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   // ── Issue #407: the relay address and the relay client's state (Settings → Mobile) ──

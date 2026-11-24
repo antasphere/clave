@@ -1936,10 +1936,11 @@ const electronAPI = {
       server: async ({ api }) => [...(await api.artefacts.list())]
     }),
     // The preview runs on this machine's loopback: its own address is framed as it is.
-    hold: viaOwnServer<[string, string?], { url: string; holdId: string; ttlMs: number }>({
-      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:hold', sessionId, holdId),
-      server: async ({ api }, sessionId, holdId) => {
-        const held = await api.artefacts.hold(sessionId, holdId)
+    hold: viaOwnServer<[string, string?, string?], { url: string; holdId: string; ttlMs: number }>({
+      ipc: (sessionId, holdId, target) =>
+        ipcRenderer.invoke('artefacts:hold', sessionId, holdId, target),
+      server: async ({ api }, sessionId, holdId, target) => {
+        const held = await api.artefacts.hold(sessionId, holdId, target)
         return { url: held.url, holdId: held.holdId, ttlMs: held.ttlMs }
       }
     }),
@@ -1947,29 +1948,35 @@ const electronAPI = {
       ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:release', sessionId, holdId),
       server: ({ api }, sessionId, holdId) => api.artefacts.release(sessionId, holdId)
     }),
-    saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    saveVersion: viaOwnServer<[string, string?], { version: number; created: boolean }>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:saveVersion', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.saveVersion(sessionId, target)
     }),
-    versions: viaOwnServer<[string], ArtefactVersions>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:versions', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.versions(sessionId)
+    versions: viaOwnServer<[string, string?], ArtefactVersions>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:versions', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.versions(sessionId, target)
     }),
-    close: viaOwnServer<[string], void>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.close(sessionId)
+    close: viaOwnServer<[string, string?], void>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:close', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.close(sessionId, target)
     }),
-    onChanged: viaServerEvent<'artefact.changed', { sessionId: string; artefact: Artefact | null }>(
-      'artefacts:changed',
+    onChanged: viaServerEvent<
       'artefact.changed',
-      (event) => ({
-        sessionId: event.sessionId,
-        artefact: event.artefact
-      })
-    ),
+      { sessionId: string; artefact: Artefact | null; artefacts?: readonly Artefact[] }
+    >('artefacts:changed', 'artefact.changed', (event) => ({
+      sessionId: event.sessionId,
+      artefact: event.artefact,
+      ...(event.artefacts && { artefacts: event.artefacts })
+    })),
     onPreviewExited: viaServerEvent<'artefact.preview_exited', string>(
       'artefacts:preview-exited',
       'artefact.preview_exited',
+      (event) => event.sessionId
+    ),
+    // PRDCT-4980: the agent asked to present the session's artefact.
+    onPresentRequested: viaServerEvent<'artefact.present_requested', string>(
+      'artefacts:present-requested',
+      'artefact.present_requested',
       (event) => event.sessionId
     ),
     // This Mac's own copy here; a server's id is the fleet wrapper's to route.
@@ -1988,6 +1995,18 @@ const electronAPI = {
       serverId: null,
       state: event.state
     }))
+  },
+  // PRDCT-4980: a session's deck alone, full screen, in a window of its own
+  // that main makes; this window holds the preview and hands main its address.
+  presentation: {
+    show: (sessionId: string, url: string, title: string, presentationId: string) =>
+      ipcRenderer.invoke('presentation:show', sessionId, url, title, presentationId),
+    close: (sessionId: string) => ipcRenderer.invoke('presentation:close', sessionId),
+    onClosed: (callback: (closed: { sessionId: string; presentationId: string }) => void) =>
+      createIpcListener<[{ sessionId: string; presentationId: string }]>(
+        'presentation:closed',
+        callback
+      )
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),

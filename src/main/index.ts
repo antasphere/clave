@@ -20,6 +20,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc-handlers'
 import { registerUpdatesKey, releaseUpdatesKey, updatesKeyBindingsChanged } from './updates-key'
+import { PRESENTATION_PARTITION } from './presentation/presentation-windows'
 import { applyPersistedIcon } from './ipc-handlers/app-handlers'
 import { cleanupDroppedFiles } from './ipc-handlers/dropped-file-handlers'
 import {
@@ -720,7 +721,9 @@ app.whenReady().then(() => {
   // view guests inside them, the same two sessions the preview serves.
   installWindowGate(loopbackForwards, () => [
     session.defaultSession,
-    session.fromPartition(VIEW_PARTITION)
+    session.fromPartition(VIEW_PARTITION),
+    // PRDCT-4980: a presentation window shows a server's preview too.
+    session.fromPartition(PRESENTATION_PARTITION)
   ])
   // Their listeners close with the app; the handlers themselves are wired
   // with the saved servers (`ipc-handlers/server-handlers.ts`).

@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { z } from 'zod'
 import {
   OPEN_ARTEFACT_DESCRIPTION_DESKTOP,
   OPEN_ARTEFACT_DESCRIPTION_SERVER,
   SIDE_PANEL_HTML_REFUSAL,
+  openArtefactSchema,
   openedAnswer,
   sidePanelRefusal
 } from './artefact-tool'
@@ -64,6 +66,40 @@ describe('clave_open_artefact', () => {
     ).toEqual({ opened: true, title: 'deck', page: '/work/deck/index.html' })
   })
 
+  it('answers that the presentation was requested when it was asked to present (PRDCT-4980)', () => {
+    const page = { title: 'deck', page: '/work/deck/index.html' }
+    expect(openedAnswer(page, true)).toEqual({ ...openedAnswer(page), present: 'requested' })
+    expect(openedAnswer(page, false)).toEqual(openedAnswer(page))
+    expect(Object.keys(openedAnswer(page, false))).not.toContain('present')
+  })
+
+  it('takes present, an optional boolean, and says when to pass it on both servers', () => {
+    const input = z.object(openArtefactSchema)
+    expect(input.parse({ path: '/work/deck' })).toEqual({ path: '/work/deck' })
+    expect(input.parse({ path: '/work/deck', present: true })).toEqual({
+      path: '/work/deck',
+      present: true
+    })
+    expect(input.safeParse({ path: '/work/deck', present: 'yes' }).success).toBe(false)
+    for (const description of [
+      OPEN_ARTEFACT_DESCRIPTION_DESKTOP,
+      OPEN_ARTEFACT_DESCRIPTION_SERVER
+    ]) {
+      expect(description).toContain('"present it"')
+      expect(description).toContain('full screen')
+      expect(description).toContain('present: true')
+      expect(description).toContain('on another display when one is connected')
+      expect(description).toContain('joins the ones already open')
+      expect(description).not.toContain('external display')
+    }
+  })
+
+  it('passes present on in the standalone server too', () => {
+    const src = readFileSync(join(__dirname, 'standalone-mcp.ts'), 'utf8')
+    expect(src).toMatch(/async \(\{ path, present \}\)/)
+    expect(src).toMatch(/artefacts\.open\(sessionId, path, true\)/)
+  })
+
   it('reads the same on the desktop, beside YOUR session and on this Mac', () => {
     expect(OPEN_ARTEFACT_DESCRIPTION_DESKTOP).toBe(
       OPEN_ARTEFACT_DESCRIPTION_SERVER.replace(
@@ -79,6 +115,7 @@ describe('clave_open_artefact', () => {
     expect(src).toMatch(
       /OPEN_ARTEFACT_TOOL,\s*\{ description: OPEN_ARTEFACT_DESCRIPTION_DESKTOP, inputSchema: openArtefactSchema \}/
     )
-    expect(src).toMatch(/api\.artefacts\.open\(callerSessionId, target\)/)
+    expect(src).toMatch(/api\.artefacts\.open\(callerSessionId, target, present === true\)/)
+    expect(src).toMatch(/openedAnswer\(artefact, present\)/)
   })
 })

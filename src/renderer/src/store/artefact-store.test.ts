@@ -114,3 +114,55 @@ describe('the artefact store', () => {
     expect(mod.ownerOfSession('s1')).toBe('local')
   })
 })
+
+/** Several artefacts per session (PRDCT-5022): what a session shows in the window. */
+describe('the artefact a session shows', () => {
+  const a = (target: string, openedAt: string): Artefact => ({
+    sessionId: 's1',
+    target,
+    page: `${target}/index.html`,
+    title: target.split('/').pop()!,
+    openedAt
+  })
+  const deck = a('/work/deck', '2026-11-24T08:00:00.000Z')
+  const talk = a('/work/talk', '2026-11-24T09:00:00.000Z')
+
+  it('is the front one, the last opened, with no pick', () => {
+    expect(mod.shownOf([deck, talk], undefined)).toBe(talk)
+    expect(mod.shownOf([], undefined)).toBeUndefined()
+    expect(mod.shownOf(undefined, undefined)).toBeUndefined()
+  })
+
+  it('is the one picked, while the front stays the one it was picked on', () => {
+    expect(mod.shownOf([deck, talk], { target: deck.target, front: talk.openedAt })).toBe(deck)
+    // Picked on another front: a newer open by the agent shows its own.
+    expect(mod.shownOf([deck, talk], { target: deck.target, front: deck.openedAt })).toBe(talk)
+    // The pick is gone from the list: the front.
+    expect(mod.shownOf([talk], { target: deck.target, front: talk.openedAt })).toBe(talk)
+  })
+
+  it('groups the servers’ list by session in its order, and derives every session', () => {
+    const other = { ...deck, sessionId: 's2' }
+    const lists = mod.groupBySession([deck, other, talk])
+    expect(lists).toEqual({ s1: [deck, talk], s2: [other] })
+    expect(mod.shownAll(lists, { s1: { target: deck.target, front: talk.openedAt } })).toEqual({
+      s1: deck,
+      s2: other
+    })
+  })
+
+  it('a pick in the store shows that artefact until the agent opens another', () => {
+    const store = mod.useArtefactStore.getState()
+    store.setLists({ s1: [deck, talk] })
+    expect(mod.useArtefactStore.getState().artefacts.s1).toBe(talk)
+    mod.useArtefactStore.getState().pick('s1', deck.target)
+    expect(mod.useArtefactStore.getState().artefacts.s1).toBe(deck)
+    const again = a('/work/deck', '2026-11-24T10:00:00.000Z')
+    const newer = a('/work/notes', '2026-11-24T10:30:00.000Z')
+    mod.useArtefactStore.getState().setLists({ s1: [talk, again, newer] }, 's1')
+    expect(mod.useArtefactStore.getState().artefacts.s1).toBe(newer)
+    mod.useArtefactStore.getState().setLists({ s1: [] }, 's1')
+    expect(mod.useArtefactStore.getState().artefacts.s1).toBeUndefined()
+    expect(mod.useArtefactStore.getState().lists.s1).toBeUndefined()
+  })
+})
