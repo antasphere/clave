@@ -255,19 +255,22 @@ exec /bin/sh "$@"
       }
       await win.keyboard.press('Escape')
       await win.mouse.up()
+      // A key was just pressed: the row that kept the focus would wear the
+      // keyboard's focus ring in the next picture.
+      await win.evaluate(() => document.activeElement?.blur?.())
       await win.waitForTimeout(300)
     }
     await unfold(ledger, false)
     await win.waitForTimeout(400)
     await hold(await centerOf(row(docs)), await centerOf(row(ledger), 0.5), '06-drag-onto-a-tab')
     await hold(
-      await centerOf(row(docs)),
-      await centerOf(row(loose), 0.12),
+      await centerOf(row(loose)),
+      await centerOf(row(docs), 0.88),
       '07-drag-between-two-tabs'
     )
     await hold(
       await centerOf(row(gen2)),
-      await centerOf(row(loose), 0.88),
+      await centerOf(row(docs), 0.12),
       '08-drag-a-nested-tab-out'
     )
 
