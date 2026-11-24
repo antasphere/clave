@@ -805,6 +805,11 @@ export async function run(t) {
     const coordination = await callMcp(app, 'createGroup', { name: 'Coordination' })
     await callMcp(app, 'moveSession', { sessionId: parent, groupId: coordination.groupId })
     await win.waitForTimeout(600)
+    // A tab moves with the tabs nested under it (PRDCT-4997): the nested tab
+    // is put back in a group of its own, so the two sit apart.
+    const apart = await callMcp(app, 'createGroup', { name: 'Helpers' })
+    await callMcp(app, 'moveSession', { sessionId: child, groupId: apart.groupId })
+    await win.waitForTimeout(600)
     const header = win.locator(rowSel(coordination.groupId))
     await header.locator('.sidebar-tab-icon').first().click()
     await row(child)
@@ -819,6 +824,28 @@ export async function run(t) {
     await toggle().waitFor()
     await win.waitForTimeout(400)
     t.equal('expanding the parent nests it again', await row(child).count(), 0)
+    // The parent and its nested tab in one group: folding the group folds the
+    // nest with it, the count staying on the parent's row while the group
+    // closes and once it is closed (PRDCT-5049).
+    await callMcp(app, 'moveSession', { sessionId: child, groupId: coordination.groupId })
+    await win.waitForTimeout(600)
+    const open = await toggleOf(win, parent)
+    await header.locator('.sidebar-tab-icon').first().click()
+    await win.waitForTimeout(60)
+    const folding = await toggleOf(win, parent)
+    await win.waitForTimeout(600)
+    const folded = await toggleOf(win, parent)
+    t.check(
+      'folding the group keeps the parent’s count, while it folds and once folded',
+      typeof open?.count === 'number' &&
+        folding?.count === open.count &&
+        folded?.count === open.count,
+      { open, folding, folded }
+    )
+    await header.locator('.sidebar-tab-icon').first().click()
+    await win.waitForTimeout(600)
+    t.equal('unfolded, the count is the same', (await toggleOf(win, parent))?.count, open?.count)
+    t.equal('and the nested tab is still in its parent’s nest', await row(child).count(), 0)
 
     // ── 11. Close ──
     await callMcp(app, 'closeSession', { sessionId: page })

@@ -771,14 +771,28 @@ export function Sidebar(): React.JSX.Element {
     for (const id of linkedHiddenIds) reachable.delete(id)
     return reachable
   }, [scopedItems, groups, linkedHiddenIds])
+  // The tabs of a folded group: in the view, out of sight. Their nests hold,
+  // so a group folds with what is nested under its tabs and no count drops
+  // off a row as it closes (PRDCT-5049). The wave and lane entries keep
+  // reading the rows in sight.
+  const foldedRows = useMemo(() => {
+    const folded = new Set<string>()
+    for (const item of scopedItems ?? []) {
+      if (item.type !== 'group') continue
+      const group = groups.find((g) => g.id === item.groupId)
+      if (group?.collapsed)
+        for (const id of group.sessionIds) if (!linkedHiddenIds.has(id)) folded.add(id)
+    }
+    return folded
+  }, [scopedItems, groups, linkedHiddenIds])
   const workspaceSessions = useMemo(
     () => sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
     [sessions, activeWorkspaceId]
   )
   // The nests as they stand, with no tab lifted out for a rename.
   const baseSubagents = useMemo(
-    () => subagentPresentation(workspaceSessions, reachableRows),
-    [workspaceSessions, reachableRows]
+    () => subagentPresentation(workspaceSessions, reachableRows, null, foldedRows),
+    [workspaceSessions, reachableRows, foldedRows]
   )
   const baseWork = useMemo(
     () => workPresentation(workspaceSessions, reachableRows, baseSubagents.descendants),
@@ -802,9 +816,9 @@ export function Sidebar(): React.JSX.Element {
   const subagents = useMemo(
     () =>
       editableRootId
-        ? subagentPresentation(workspaceSessions, reachableRows, editableRootId)
+        ? subagentPresentation(workspaceSessions, reachableRows, editableRootId, foldedRows)
         : baseSubagents,
-    [workspaceSessions, reachableRows, editableRootId, baseSubagents]
+    [workspaceSessions, reachableRows, editableRootId, baseSubagents, foldedRows]
   )
   // The wave and lane entries (PRDCT-4123): one row per unit of work, read
   // from the sessions' own assignments, its members and their agents folded
