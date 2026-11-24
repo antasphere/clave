@@ -58,6 +58,7 @@ import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { NestResult } from '@clave/contract/nest-rules'
 import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
 import {
   MIC_GET_ACCESS_CHANNEL,
@@ -246,6 +247,14 @@ const refusalOf = (error: unknown): ServerRefusal | null => {
 }
 const tellRefusal = (refusal: ServerRefusal | null): void => {
   for (const listener of refusalListeners) listener(refusal)
+}
+/** A nesting the records refused (PRDCT-4997), as a plain Error whose message
+ *  is the rule's sentence; anything else is thrown as it came. */
+const plainNestRefusal = (error: unknown): never => {
+  const tagged = error as { _tag?: unknown; message?: unknown } | null
+  if (tagged && tagged._tag === 'NestRefused' && typeof tagged.message === 'string')
+    throw new Error(tagged.message)
+  throw error
 }
 /** `serverRouter.route`, with the refusal relay around every routed call. */
 const viaServer = <A extends unknown[], R>(
@@ -1549,6 +1558,15 @@ const electronAPI = {
     server: ({ api }, id, change) => api.sessions.changeWork(id, change)
   }),
 
+  // ── PRDCT-4997: which tab a tab is nested under, on its record ──
+  // The server's command alone, as the work's. A refusal reaches the window
+  // as a plain Error carrying the rule's sentence: a tagged error keeps only
+  // its message across the context bridge, and a plain one is sure to.
+  sessionsNest: viaServer<[string, string | null], NestResult>({
+    ipc: () => Promise.reject(new Error('Clave server is not available')),
+    server: ({ api }, id, under) => api.sessions.nest(id, under).catch(plainNestRefusal)
+  }),
+
   // Kept on the server's record once main names it, like the name (round 1
   // of wave 6 lane A's verifier): over IPC it reached main's copy only.
   setSessionWorkspace: viaServer<[string, string | null], void>({
@@ -1618,6 +1636,9 @@ const electronAPI = {
     onServerEventOf('session.work_changed', (event) =>
       callback({ id: event.id, work: event.work as WorkAssignment | null })
     ),
+  // PRDCT-4997: the tab a tab is nested under, as its record now keeps it.
+  onSessionNested: (callback: (payload: { id: string; under: string | null }) => void) =>
+    onServerEventOf('session.nested', (event) => callback({ id: event.id, under: event.under })),
   onSessionPageChanged: (
     callback: (payload: {
       id: string
