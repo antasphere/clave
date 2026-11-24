@@ -12,24 +12,44 @@ import { z } from 'zod'
 
 export const OPEN_ARTEFACT_TOOL = 'clave_open_artefact'
 
-export const openArtefactSchema = { path: z.string().min(1).max(4096) }
+export const openArtefactSchema = {
+  path: z.string().min(1).max(4096),
+  present: z.boolean().optional()
+}
+
+/** What several pages add to both descriptions (PRDCT-5022). */
+const SEVERAL_SENTENCE =
+  " Another page or deck you open joins the ones already open: it shows in front, and the person picks which one shows in the panel's bar."
+
+/** What `present` adds to both descriptions (PRDCT-4980): the trigger words first. */
+const PRESENT_SENTENCE =
+  ' To "present it", "show it full screen", "put it on the big screen": pass present: true (opening it again is fine for this): the deck also opens alone in a full-screen window of its own, on another display when one is connected; Esc ends it. The answer says the presentation was requested: the Mac showing your session puts it up.'
 
 /** The standalone server's description: its sessions are shown on every Mac attached to it. */
 export const OPEN_ARTEFACT_DESCRIPTION_SERVER =
-  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session, on every Mac attached to this server. Pass an absolute path of this server: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this server runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.'
+  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session, on every Mac attached to this server. Pass an absolute path of this server: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this server runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.' +
+  SEVERAL_SENTENCE +
+  PRESENT_SENTENCE
 
 /** The desktop's description: the same, on this Mac. */
 export const OPEN_ARTEFACT_DESCRIPTION_DESKTOP =
-  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session. Pass an absolute path of this Mac: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this Mac runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.'
+  'THE tool for "show me the page", "open the deck", "let me see the report", "open the preview": shows an HTML page, document or deck you made beside YOUR session. Pass an absolute path of this Mac: a FOLDER holding a self-contained index.html (inline style and script, its assets beside it), or one .html file. It is shown through Slideless, which this Mac runs: the page reloads on every edit you make to its files and a version is saved when each of your turns ends, so open it ONCE and keep editing; never open it again to refresh.' +
+  SEVERAL_SENTENCE +
+  PRESENT_SENTENCE
 
-/** What the tool answers once the artefact is open. */
-export const openedAnswer = (artefact: {
-  readonly title: string
-  readonly page: string
-}): { opened: true; title: string; page: string } => ({
+/** What the tool answers once the artefact is open, and, asked to present it, that the
+ *  windows were asked: a window of a Mac that shows the session puts it up, none can say so here. */
+export const openedAnswer = (
+  artefact: {
+    readonly title: string
+    readonly page: string
+  },
+  present?: boolean
+): { opened: true; title: string; page: string; present?: 'requested' } => ({
   opened: true,
   title: artefact.title,
-  page: artefact.page
+  page: artefact.page,
+  ...(present === true && { present: 'requested' as const })
 })
 
 export const SIDE_PANEL_HTML_REFUSAL =

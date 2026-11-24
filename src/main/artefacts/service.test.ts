@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import type { ArtefactEvent } from '@clave/contract/artefacts'
 import type { AgentState } from '@clave/contract/sessions'
-import { ArtefactLinks, MAX_LINKS, type LinksStorage } from './links'
+import { ArtefactLinks, MAX_LINKS, MAX_PER_SESSION, type LinksStorage } from './links'
 import {
   HOLD_TTL_MS,
   LINGER_MS,
@@ -241,23 +241,46 @@ describe('opening an artefact', () => {
     mkdirSync(single)
     writeFileSync(join(single, 'page.htm'), 'x')
     expect((await service.open('s2', single)).page).toBe(join(single, 'page.htm'))
-    const document = JSON.parse(storage.text!) as { v: number; artefacts: Record<string, unknown> }
-    expect(document.v).toBe(1)
-    expect(document.artefacts.s1).toEqual({
+    const document = JSON.parse(storage.text!) as {
+      v: number
+      artefacts: Record<string, unknown>
+      lists: Record<string, unknown>
+    }
+    const written = {
       target: deck,
       page: join(deck, 'index.html'),
       title: 'deck',
       openedAt: folder.openedAt
-    })
+    }
+    expect(document.v).toBe(1)
+    expect(document.artefacts.s1).toEqual(written)
+    expect(document.lists.s1).toEqual([written])
     expect(events.filter((e) => e._tag === 'artefact.changed')).toEqual([
-      { _tag: 'artefact.changed', sessionId: 's1', artefact: folder },
-      { _tag: 'artefact.changed', sessionId: 's2', artefact: file },
+      { _tag: 'artefact.changed', sessionId: 's1', artefact: folder, artefacts: [folder] },
+      { _tag: 'artefact.changed', sessionId: 's2', artefact: file, artefacts: [file] },
+      expect.objectContaining({
+        _tag: 'artefact.changed',
+        sessionId: 's2',
+        artefacts: [file, expect.objectContaining({ target: single })]
+      })
+    ])
+  })
+
+  it('asked to present, tells the windows so right after the change, and only then (PRDCT-4980)', async () => {
+    const { service, deck, events } = setup()
+    const shown = await service.open('s1', deck, true)
+    await service.open('s2', deck)
+    await service.open('s2', deck, false)
+    expect(events.filter((e) => e._tag !== 'slideless.state_changed')).toEqual([
+      { _tag: 'artefact.changed', sessionId: 's1', artefact: shown, artefacts: [shown] },
+      { _tag: 'artefact.present_requested', sessionId: 's1' },
+      expect.objectContaining({ _tag: 'artefact.changed', sessionId: 's2' }),
       expect.objectContaining({ _tag: 'artefact.changed', sessionId: 's2' })
     ])
   })
 
-  it('a second open replaces the first and drops its holds', async () => {
-    const { service, root, deck, forwards, setNow } = setup()
+  it('a second open joins the first in front, each keeps its holds, a reopen drops its own (PRDCT-5022)', async () => {
+    const { service, root, deck, forwards, events, setNow } = setup()
     await service.open('s1', deck)
     const held = await service.hold('s1')
     expect(forwards.resolve(held.lease)).toBeDefined()
@@ -265,19 +288,89 @@ describe('opening an artefact', () => {
     mkdirSync(other)
     writeFileSync(join(other, 'index.html'), 'other')
     const second = await service.open('s1', other)
-    expect((await service.list()).map((a) => a.target)).toEqual([other])
     expect(second.target).toBe(other)
-    // The first preview is shown by no session any more: it stopped at
-    // once, with no minute of waiting, and its lease went.
-    expect(forwards.resolve(held.lease)).toBeUndefined()
-    // The first hold went with the first link: its id is not renewed.
-    const renewed = await service.hold('s1', held.holdId)
-    expect(renewed.holdId).not.toBe(held.holdId)
-    expect(renewed.lease).not.toBe(held.lease)
-    // A close stops the second the same way, held or not.
+    expect((await service.list()).map((a) => a.target)).toEqual([deck, other])
+    // The first is still the session's: its preview runs and its hold renews.
+    expect(forwards.resolve(held.lease)).toBeDefined()
+    expect((await service.hold('s1', held.holdId, deck)).holdId).toBe(held.holdId)
+    // A hold naming no artefact holds the front one, on a preview of its own.
+    const front = await service.hold('s1')
+    expect(front.lease).not.toBe(held.lease)
+    // The first opened again comes to the front, starting afresh: its hold went.
+    await service.open('s1', deck)
+    expect((await service.list()).map((a) => a.target)).toEqual([other, deck])
+    const fresh = await service.hold('s1', held.holdId)
+    expect(fresh.holdId).not.toBe(held.holdId)
+    expect((await service.hold('s1', front.holdId, other)).holdId).toBe(front.holdId)
+    // Closing one stops its preview at once and keeps the other, holds and all.
     setNow(START + 1)
+    await service.close('s1', other)
+    expect((await service.list()).map((a) => a.target)).toEqual([deck])
+    expect(forwards.resolve(front.lease)).toBeUndefined()
+    expect((await service.hold('s1', fresh.holdId, deck)).holdId).toBe(fresh.holdId)
+    expect(events.at(-1)).toEqual({
+      _tag: 'artefact.changed',
+      sessionId: 's1',
+      artefact: expect.objectContaining({ target: deck }),
+      artefacts: [expect.objectContaining({ target: deck })]
+    })
+    // Closing them all stops the rest, and says none is left.
     await service.close('s1')
-    expect(forwards.resolve(renewed.lease)).toBeUndefined()
+    expect(await service.list()).toEqual([])
+    expect(forwards.resolve(fresh.lease)).toBeUndefined()
+    expect(events.at(-1)).toEqual({
+      _tag: 'artefact.changed',
+      sessionId: 's1',
+      artefact: null,
+      artefacts: []
+    })
+  })
+
+  it("keeps a preview of an artefact behind the front waiting, like the front's (PRDCT-5022)", async () => {
+    const { service, root, deck, forwards } = setup()
+    await service.open('s1', deck)
+    const held = await service.hold('s1')
+    const other = join(root, 'other')
+    mkdirSync(other)
+    writeFileSync(join(other, 'index.html'), 'other')
+    await service.open('s1', other)
+    // The first, behind the front now, lets go of its last hold: the session
+    // still shows it, so its preview waits its minute rather than stopping.
+    await service.release('s1', held.holdId)
+    expect(forwards.resolve(held.lease)).toBeDefined()
+  })
+
+  it("lets go of the holds of a link the session's bound dropped (PRDCT-5022)", async () => {
+    const { service, root, deck, forwards } = setup()
+    await service.open('s1', deck)
+    const held = await service.hold('s1')
+    for (let n = 1; n <= MAX_PER_SESSION; n++) {
+      const folder = join(root, `more-${n}`)
+      mkdirSync(folder)
+      writeFileSync(join(folder, 'index.html'), `${n}`)
+      await service.open('s1', folder)
+    }
+    expect((await service.list()).map((a) => a.target)).not.toContain(deck)
+    // Its hold went with it, and its preview, shown by nobody, stopped.
+    expect(forwards.resolve(held.lease)).toBeUndefined()
+    expect((await service.hold('s1', held.holdId)).holdId).not.toBe(held.holdId)
+  })
+
+  it("a version, the versions and a save name one of the session's artefacts, else the front one", async () => {
+    const { service, root, deck } = setup()
+    await service.open('s1', deck)
+    const other = join(root, 'other')
+    mkdirSync(other)
+    writeFileSync(join(other, 'index.html'), 'other')
+    await service.open('s1', other)
+    await service.hold('s1', undefined, deck)
+    await expect.poll(async () => (await service.versions('s1', deck)).error).toBeUndefined()
+    expect(await service.versions('s1')).toEqual({
+      versions: [],
+      error: 'The preview of this artefact is not running.'
+    })
+    expect(await service.saveVersion('s1', deck)).toEqual({ version: 1, created: true })
+    await expect(service.saveVersion('s1', join(root, 'nowhere'))).rejects.toThrow(NO_ARTEFACT_OPEN)
   })
 })
 
@@ -515,6 +608,21 @@ describe('a version at each finished turn', () => {
     emitState('s2', 'done')
     await settle(500)
     expect(calls()).toEqual([])
+  })
+
+  it('saves a version of each artefact of the session (PRDCT-5022)', async () => {
+    const { service, root, deck, emitState, calls } = setup()
+    const other = join(root, 'other')
+    mkdirSync(other)
+    writeFileSync(join(other, 'index.html'), 'other')
+    await service.open('s1', deck)
+    await service.open('s1', other)
+    service.start()
+    emitState('s1', 'working')
+    emitState('s1', 'done')
+    await expect
+      .poll(() => [...calls()].sort(), { timeout: 5_000 })
+      .toEqual([`command ${deck}`, `command ${other}`].sort())
   })
 
   it('a failing save is one log line, never thrown', async () => {
