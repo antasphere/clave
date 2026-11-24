@@ -399,6 +399,82 @@ describe('undo', () => {
   })
 })
 
+describe('what the server says about a tab that has not joined the window yet', () => {
+  // A tab the server opened joins the store from a record read a moment
+  // earlier. What the server says about it in between must not be lost: the
+  // tab would join as its older record describes it, until a restart
+  // (PRDCT-5000).
+  const lane = { unit: 'lane-x', kind: 'lane', label: 'Lane X', role: 'lead' } as NonNullable<
+    Session['work']
+  >
+  const late = (): Session | undefined =>
+    useSessionStore.getState().sessions.find((s) => s.id === 'late')
+
+  it('keeps the tab it is nested under, and applies it as the tab joins', () => {
+    useSessionStore.getState().applyServedNest('late', 'lead')
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    expect(linkOf('late')).toBe('lead')
+  })
+
+  it('keeps its work the same way', () => {
+    useSessionStore.getState().applyServedWork('late', lane)
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    expect(late()?.work).toEqual(lane)
+  })
+
+  it('a taking-out and a work that ended, told early, win over the older record', () => {
+    useSessionStore.getState().applyServedNest('late', null)
+    useSessionStore.getState().applyServedWork('late', null)
+    useSessionStore
+      .getState()
+      .adoptSessionInPlace(session('late', { spawnedBy: 'lead', work: lane }))
+    expect(linkOf('late')).toBeUndefined()
+    expect(late()?.work).toBeUndefined()
+  })
+
+  it('the newest word wins', () => {
+    useSessionStore.getState().applyServedNest('late', 'lead')
+    useSessionStore.getState().applyServedNest('late', 'mate')
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    expect(linkOf('late')).toBe('mate')
+  })
+
+  it('whichever way the tab joins', () => {
+    useSessionStore.getState().applyServedNest('late', 'lead')
+    useSessionStore.getState().addHiddenSession(session('late'))
+    expect(linkOf('late')).toBe('lead')
+    useSessionStore.getState().applyServedNest('later', 'lead')
+    useSessionStore.getState().addSession(session('later'))
+    expect(linkOf('later')).toBe('lead')
+  })
+
+  it('once: a tab that leaves and joins again is read from its record', () => {
+    useSessionStore.getState().applyServedNest('late', 'lead')
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.filter((s) => s.id !== 'late'),
+      displayOrder: state.displayOrder.filter((id) => id !== 'late')
+    }))
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    expect(linkOf('late')).toBeUndefined()
+  })
+
+  it('and not for long: a word about a tab that never came is forgotten', () => {
+    const clock = vi.spyOn(Date, 'now')
+    clock.mockReturnValue(1_000_000)
+    useSessionStore.getState().applyServedNest('late', 'lead')
+    clock.mockReturnValue(1_000_000 + 31_000)
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    expect(linkOf('late')).toBeUndefined()
+    clock.mockRestore()
+  })
+
+  it('a tab already in the window is told at once, as before', () => {
+    useSessionStore.getState().applyServedWork('other', lane)
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'other')?.work).toEqual(lane)
+  })
+})
+
 describe('what changes nothing', () => {
   it('nesting a tab under the tab it is already nested under', async () => {
     await useSessionStore.getState().nestSession('loose', 'lead')

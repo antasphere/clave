@@ -550,8 +550,39 @@ interface SessionState {
   hideAgentSession: (sessionId: string) => void
 }
 
+/** What the server said about a tab this window has not taken in yet
+ *  (PRDCT-5000). A tab the server opened joins the store from a record read a
+ *  moment earlier (`adoptServerStartedSessions`). A fact published in between,
+ *  its work or the tab it is nested under, found no such tab in the store and
+ *  was dropped, so the tab joined as its older record described it and stayed
+ *  so until a restart. The fact is kept here instead, the newest of each kind,
+ *  and applied as the tab enters the store (`normalizeSession`). It is kept
+ *  for the time a tab takes to join and no longer: a word about a tab that
+ *  never comes here (another window's) is forgotten. */
+type EarlyFacts = { at: number; work?: WorkAssignment | null; under?: string | null }
+const EARLY_FACT_MS = 30_000
+const earlyFacts = new Map<string, EarlyFacts>()
+
+function keepEarlyFact(id: string, fact: Omit<EarlyFacts, 'at'>): void {
+  const now = Date.now()
+  for (const [key, kept] of earlyFacts) if (now - kept.at > EARLY_FACT_MS) earlyFacts.delete(key)
+  earlyFacts.set(id, { ...earlyFacts.get(id), ...fact, at: now })
+}
+
+function takeEarlyFacts(id: string): Pick<Session, 'work' | 'spawnedBy'> {
+  const kept = earlyFacts.get(id)
+  if (!kept) return {}
+  earlyFacts.delete(id)
+  if (Date.now() - kept.at > EARLY_FACT_MS) return {}
+  return {
+    ...('work' in kept ? { work: kept.work ?? undefined } : {}),
+    ...('under' in kept ? { spawnedBy: kept.under ?? undefined } : {})
+  }
+}
+
 /** The defaults every session entering the store gets; the workspace stamp
- *  falls back to this window's active workspace (mirrors pty:spawn). */
+ *  falls back to this window's active workspace (mirrors pty:spawn). What the
+ *  server said about the tab while it was on its way in is applied last. */
 function normalizeSession(session: Session): Session {
   const workspaceId =
     session.workspaceId ??
@@ -572,7 +603,8 @@ function normalizeSession(session: Session): Session {
     serverCommand: session.serverCommand ?? null,
     hasUnseenActivity: session.hasUnseenActivity ?? false,
     userRenamed: session.userRenamed ?? false,
-    planFilePath: session.planFilePath ?? null
+    planFilePath: session.planFilePath ?? null,
+    ...takeEarlyFacts(session.id)
   }
 }
 
@@ -2489,7 +2521,11 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   applyServedWork: (id, work) =>
     set((state) => {
-      if (!state.sessions.some((s) => s.id === id)) return state
+      if (!state.sessions.some((s) => s.id === id)) {
+        // Not in this window yet: kept for the moment it joins (PRDCT-5000).
+        keepEarlyFact(id, { work })
+        return state
+      }
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, work: work ?? undefined } : s))
       }
@@ -2617,7 +2653,12 @@ export const useSessionStore = create<SessionState>((set) => ({
   applyServedNest: (id, under) =>
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
-      if (!session || (session.spawnedBy ?? null) === under) return state
+      if (!session) {
+        // Not in this window yet: kept for the moment it joins (PRDCT-5000).
+        keepEarlyFact(id, { under })
+        return state
+      }
+      if ((session.spawnedBy ?? null) === under) return state
       return {
         sessions: state.sessions.map((s) =>
           s.id === id ? { ...s, spawnedBy: under ?? undefined } : s
