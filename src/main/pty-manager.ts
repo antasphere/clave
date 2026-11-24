@@ -1250,10 +1250,13 @@ class PtyManager {
       // The message the limit rejected, when the move is the limit's doing:
       // the reader asked once and gets the answer on the next account.
       initialInput: resendRejected ? this.rejected.get(id) : undefined,
-      // The parent, else the record's: the kill takes the record before the
-      // spawn could read it, and a spawn made without one (an older restore)
-      // would lose the child its parent (#259, V1-F1).
-      spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      // The tab it is nested under: the record's when it has one, read now,
+      // else the spawn's own. The kill takes the record before the spawn
+      // could read it (#259, V1-F1), and since PRDCT-4997 a tab nested or
+      // taken out after its spawn wrote the record alone, so the spawn's
+      // options would bring the old link back, as the work line below says
+      // for work. A session with no record keeps the spawn's.
+      spawnedBy: record ? record.spawnedBy : previous.spawnedBy,
       openedBy: previous.openedBy ?? ptyBackend.getSessionRecord(id)?.openedBy,
       // Which work it does (PRDCT-4123): the record's, read now, for the same
       // reason. Never the spawn's own options: a restart carried one into
@@ -1372,6 +1375,27 @@ class PtyManager {
   /** Every record's work assignment, read without side effects (PRDCT-4123). */
   listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {
     return ptyBackend.listWorkAssignments()
+  }
+  /** The tab the session is nested under, on its record (PRDCT-4997); false
+   *  when it keeps no record. The host's `nest` is the only caller. The
+   *  spawn's own options are brought in line too: every later respawn
+   *  (`restartSpawn`, which spreads them, `launchContextOf` and the rest)
+   *  starts from them, and a tab taken out must not come back nested. */
+  setSessionSpawnedBy(id: string, under: string | null): boolean {
+    const written = ptyBackend.setSessionSpawnedBy(id, under)
+    const spawn = this.spawns.get(id)
+    if (written && spawn?.options) {
+      const options = { ...spawn.options }
+      if (under) options.spawnedBy = under
+      else delete options.spawnedBy
+      this.spawns.set(id, { ...spawn, options })
+    }
+    return written
+  }
+  /** Every record as the nesting rule reads it, without side effects
+   *  (PRDCT-4997). */
+  listNestRecords(): ReturnType<typeof ptyBackend.listNestRecords> {
+    return ptyBackend.listNestRecords()
   }
   /** The persisted record of a live session, as it is now. */
   getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)

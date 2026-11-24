@@ -125,7 +125,11 @@ describe('nesting a tab under another (PRDCT-4997)', () => {
       }
     }
     const call = (async (run: (c: unknown) => unknown) => run(client)) as unknown as Call
-    expect(await sessionsClient(call).nest('t', 'u')).toEqual({ id: 't', under: 'u', changed: true })
+    expect(await sessionsClient(call).nest('t', 'u')).toEqual({
+      id: 't',
+      under: 'u',
+      changed: true
+    })
     expect(await sessionsClient(call).nest('t', null)).toEqual({
       id: 't',
       under: null,

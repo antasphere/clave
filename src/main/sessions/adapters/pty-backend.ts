@@ -39,6 +39,7 @@ import { lineageOf } from '../lineage'
 import { newOpencodeSessionId } from '../../opencode-session-id'
 import { recordHarnessStart } from '../../usage-ledger'
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import type { NestRecord } from '@clave/contract/nest-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
   buildAgentArgv,
@@ -1909,6 +1910,47 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta) return false
     return writeSessionRecord({ ...meta, work: work ?? undefined })
+  }
+
+  /** Every record as the nesting rule reads it (PRDCT-4997), read without
+   *  touching anything, as `listWorkAssignments` is: no tmux call, no
+   *  pruning. The tab it is nested under is its `spawnedBy` when that is a
+   *  session id; a record carrying a `link` is no tab of the sidebar; an
+   *  assignment `sanitizeWork` keeps is the entry that shows the tab. */
+  listNestRecords(): NestRecord[] {
+    sessionRecordsDir()
+    const storage = lazyTerminalPorts.storage
+    const out: NestRecord[] = []
+    for (const file of storage.list(SESSION_RECORDS_FOLDER).filter((f) => f.endsWith('.json'))) {
+      const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
+      if (!raw || typeof raw !== 'object') continue
+      const meta = raw as Partial<Record<keyof SessionRecord, unknown>>
+      const id = meta.id
+      if (typeof id !== 'string' || !id) continue
+      const work = sanitizeWork(meta.work)
+      out.push({
+        id,
+        under: lineageOf(id, meta.spawnedBy, undefined) ?? null,
+        workspaceId:
+          typeof meta.workspaceId === 'string' && meta.workspaceId ? meta.workspaceId : null,
+        windowKey: typeof meta.windowKey === 'string' && meta.windowKey ? meta.windowKey : null,
+        ...(meta.link ? { hidden: true } : {}),
+        ...(work ? { work: { label: work.label, kind: work.kind } } : {})
+      })
+    }
+    return out
+  }
+
+  /** Persist (or clear, with null) the tab a session is nested under, its
+   *  record's `spawnedBy` (PRDCT-4997): the one write behind the server's
+   *  NestSession. Mirrors setSessionWork, and answers whether a record was
+   *  written: false for a session that keeps none. */
+  setSessionSpawnedBy(id: string, under: string | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta) return false
+    return writeSessionRecord({ ...meta, spawnedBy: under ?? undefined })
   }
 
   /**
