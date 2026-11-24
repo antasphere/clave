@@ -13,7 +13,7 @@ import {
   type Session,
   type GroupTerminalColor
 } from '../../store/session-store'
-import { subagentPresentation } from '../../lib/subagent-presentation'
+import { nestToShowFocus, subagentPresentation } from '../../lib/subagent-presentation'
 import { entryTarget, workPresentation } from '../../lib/work-presentation'
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
@@ -934,17 +934,21 @@ export function Sidebar(): React.JSX.Element {
   const nestTargetsRef = useRef(nestTargets)
   nestTargetsRef.current = nestTargets
 
-  // The focused tab is always in sight: when it becomes a tab whose nest is
-  // folded, that nest opens, once per change of focus, so the person can
-  // still fold it again (PRDCT-4998).
+  // The focused tab is always in sight: when it comes to sit in a nest, that
+  // nest opens, once, so the person can still fold it again (PRDCT-4998). The
+  // rule is `nestToShowFocus`: it also holds when the focus did not move (a
+  // restart brings the parent back after the tab, an agent nests the tab on
+  // screen).
   const nestFocusRef = useRef<string | null>(null)
   useEffect(() => {
-    if (focusedSessionId === nestFocusRef.current) return
-    nestFocusRef.current = focusedSessionId
-    if (!focusedSessionId) return
-    const root = baseSubagents.rootById.get(focusedSessionId)
-    if (!root || baseWork.entryByAnchor.has(root) || baseWork.folded.has(root)) return
-    if (!useSessionStore.getState().expandedNests[root]) setNestExpanded(root, true)
+    const { seen, open } = nestToShowFocus(
+      nestFocusRef.current,
+      focusedSessionId,
+      baseSubagents.rootById,
+      (root) => !baseWork.entryByAnchor.has(root) && !baseWork.folded.has(root)
+    )
+    nestFocusRef.current = seen
+    if (open && !useSessionStore.getState().expandedNests[open]) setNestExpanded(open, true)
   }, [focusedSessionId, baseSubagents, baseWork, setNestExpanded])
 
   // A nesting the server would not make puts the row back where it was and

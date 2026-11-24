@@ -69,3 +69,25 @@ export function subagentPresentation(
   }
   return { rootById, descendants }
 }
+
+/** The focused tab is always in sight (PRDCT-4998): the nest to open for it,
+ * once each time the tab on screen comes to sit in a nest. That is when the
+ * focus moves onto a nested tab, and also when the focus does not move at all:
+ * the tab's parent arrives after it (a restart places the tabs one at a time,
+ * in the order they come back), or the tab is nested while it has the focus.
+ * `seen` is what the last answer was given for. The same tab under the same
+ * parent asks for nothing again, so a person can fold that nest and it stays
+ * folded. A parent drawn by a wave or lane entry has no nest of its own to
+ * open (`drawsNest` says no): nothing is remembered, so its nest opens the
+ * moment it draws one. */
+export function nestToShowFocus(
+  seen: string | null,
+  focusedId: string | null,
+  rootById: ReadonlyMap<string, string>,
+  drawsNest: (rootId: string) => boolean
+): { seen: string | null; open: string | null } {
+  const root = focusedId ? rootById.get(focusedId) : undefined
+  if (!root || !drawsNest(root)) return { seen: null, open: null }
+  const key = `${focusedId}\n${root}`
+  return { seen: key, open: key === seen ? null : root }
+}
