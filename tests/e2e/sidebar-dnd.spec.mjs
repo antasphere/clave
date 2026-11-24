@@ -291,12 +291,15 @@ export async function run(t) {
     )
     t.check('the group emptied by that move is gone', !after.some((g) => g.id === beta.id), after)
 
-    // ── 6. The line holds still on a row's midline (hysteresis) ──
+    // ── 6. The line holds still on a row's zone boundary (hysteresis) ──
+    // A session row's middle means "nest under it" since PRDCT-4997, and its
+    // zones flip at 30% and 70% of its height: the upper boundary is where a
+    // line ("before it") meets no line, the place a jitter would show.
     const rows = after.find((g) => g.id === alpha.id).ids
     await dragTo(win, await centerOf(win, rowSel(rows[0])), () =>
-      centerOf(win, rowSel(rows[2]), { yFraction: 0.5 })
+      centerOf(win, rowSel(rows[2]), { yFraction: 0.3 })
     )
-    const mid = await centerOf(win, rowSel(rows[2]), { yFraction: 0.5 })
+    const mid = await centerOf(win, rowSel(rows[2]), { yFraction: 0.3 })
     const seen = new Set()
     for (let i = 0; i < 12; i++) {
       await win.mouse.move(mid.x, mid.y + (i % 2 === 0 ? 1 : -1))

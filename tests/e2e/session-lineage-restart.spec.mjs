@@ -2,7 +2,7 @@
  * A tab an agent opened stays that agent's child across a restart (#259).
  *
  * The parent link is what folds a delegated agent under the tab that opened
- * it (the sidebar's subagent selector, #216) and what `"parent"` resolves to
+ * it (its row folds under the opener's, PRDCT-4998) and what `"parent"` resolves to
  * in `clave_send_to_session` / `clave_read_session` (checked here with a
  * message, the report back a delegated agent sends). This drives the road real
  * agents take — `clave_open_session` over the MCP endpoint with the parent
@@ -99,12 +99,44 @@ const recordOf = async (win, id) =>
   (
     await win.evaluate((wanted) => window.electronAPI.listSessionRecords({ ids: [wanted] }), id)
   )?.[0] ?? null
+// The rows on screen: a folded nest keeps its rows in the DOM (PRDCT-4998),
+// so a row inside a collapsed nest is not one the person sees.
 const rows = (win, id) =>
-  win.evaluate((sid) => document.querySelectorAll(`[data-sidebar-item-id="${sid}"]`).length, id)
+  win.evaluate(
+    (sid) =>
+      document.querySelectorAll(
+        `[data-sidebar-item-id="${sid}"]:not([data-nest-collapsed="true"] *)`
+      ).length,
+    id
+  )
+// The parent's own row carries one count toggle per nest, and the child's
+// row sits in that nest (folded), marked with its parent's id.
 const triggers = (win, id) =>
   win.evaluate(
-    (sid) => document.querySelectorAll(`[data-sidebar-item-id="${sid}"] .subagent-trigger`).length,
+    (sid) =>
+      document.querySelectorAll(
+        `[data-sidebar-item-id="${sid}"] > .sidebar-item .sidebar-nest-toggle`
+      ).length,
     id
+  )
+// Whether the parent's nest is unfolded. The focused tab's nest opens by
+// design (PRDCT-4998: the focused tab is always in sight), so a child that
+// holds the focus is a row on screen, inside its parent's nest.
+const nestOpen = (win, id) =>
+  win.evaluate(
+    (sid) =>
+      document
+        .querySelector(`[data-sidebar-item-id="${sid}"] > .sidebar-item .sidebar-nest-toggle`)
+        ?.getAttribute('aria-expanded') === 'true',
+    id
+  )
+const nestedIn = (win, parent, child) =>
+  win.evaluate(
+    ([p, c]) =>
+      document.querySelectorAll(
+        `[data-sidebar-nested-root="${p}"][data-sidebar-item-id="${c}"]`
+      ).length,
+    [parent, child]
   )
 
 /** The three facts, checked on one running app. */
@@ -122,16 +154,19 @@ async function checkLineage(t, label, app, win, parent, child) {
   const folded = await until(
     async () =>
       (await rows(win, parent)) === 1 &&
-      (await rows(win, child)) === 0 &&
-      (await triggers(win, parent)) === 1
+      (await rows(win, child)) === ((await nestOpen(win, parent)) ? 1 : 0) &&
+      (await triggers(win, parent)) === 1 &&
+      (await nestedIn(win, parent, child)) === 1
         ? true
         : null,
     { tries: 40, gapMs: 250 }
   )
-  t.check(`${label}: the child is folded under its parent's selector`, folded === true, {
+  t.check(`${label}: the child is nested under its parent's row`, folded === true, {
     parentRows: await rows(win, parent),
     childRows: await rows(win, child),
-    parentTriggers: await triggers(win, parent)
+    nestOpen: await nestOpen(win, parent),
+    parentToggles: await triggers(win, parent),
+    childInParentNest: await nestedIn(win, parent, child)
   })
 
   // A restored chat stays dormant until it is shown, and its agent (with the
