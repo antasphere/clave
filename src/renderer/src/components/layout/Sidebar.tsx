@@ -2554,7 +2554,7 @@ export function Sidebar(): React.JSX.Element {
                                             ? 'Kept in Ongoing'
                                             : group.sessionIds.some((id) => work.folded.has(id))
                                               ? 'Shown with their wave or lane'
-                                              : 'Subagents shown with their parent'
+                                              : 'Shown under their tab'
                                           : 'No sessions'}
                                       </div>
                                     )}

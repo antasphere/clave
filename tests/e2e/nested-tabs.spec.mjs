@@ -771,7 +771,7 @@ export async function run(t) {
     t.equal(
       'the group left with only nested tabs says where they are shown',
       (await placeholder.innerText().catch(() => null))?.trim(),
-      'Subagents shown with their parent'
+      'Shown under their tab'
     )
     t.equal(
       'and keeps its new-session control',
