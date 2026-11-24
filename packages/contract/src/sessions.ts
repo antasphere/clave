@@ -87,7 +87,27 @@ export const SessionAttachment = Schema.Struct({
   reachable: Schema.optional(Schema.Literal(false))
 })
 export type SessionAttachment = typeof SessionAttachment.Type
-export const Attachment = Schema.Union(FileAttachment, SessionAttachment)
+export const MAX_GROUP_SESSIONS = 100
+/** A sidebar group dragged onto the composer (PRDCT-5032): its id, the
+ *  `groupId` the Clave tools take, its name and its tabs as they stood. */
+export const GroupAttachment = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  label: AttachmentLabel,
+  delivery: Schema.Literal('group'),
+  groupId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+  sessions: Schema.Array(
+    Schema.Struct({
+      sessionId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+      name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+      agent: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))
+    })
+  ).pipe(Schema.maxItems(MAX_GROUP_SESSIONS)),
+  machine: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))),
+  reachable: Schema.optional(Schema.Literal(false))
+})
+export type GroupAttachment = typeof GroupAttachment.Type
+export const Attachment = Schema.Union(FileAttachment, SessionAttachment, GroupAttachment)
 export type Attachment = typeof Attachment.Type
 export const Attachments = Schema.Array(Attachment).pipe(Schema.maxItems(MAX_ATTACHMENTS))
 

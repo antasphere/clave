@@ -97,9 +97,9 @@ export async function prepareAttachment(
 /** Build what the provider receives. Every file is checked again here, at
  *  send time — the file may have moved since it was added, and a renderer's
  *  record of a file is never taken on trust. Images are read and encoded, and
- *  only go when the adapter takes image content; files and sessions are
- *  appended to the text as one line each, keyed by the marker the text
- *  refers to them by (`[File #1]`, `[Session #1]`), so the agent reads
+ *  only go when the adapter takes image content; files, sessions and groups
+ *  are appended to the text as one line each, keyed by the marker the text
+ *  refers to them by (`[File #1]`, `[Session #1]`, `[Group #1]`), so the agent reads
  *  "finish when [Session #1] is done" and knows which tab that is. */
 export async function preparePrompt(
   text: string,
@@ -120,6 +120,23 @@ export async function preparePrompt(
             name: file.name,
             agent: file.agent,
             cwd: file.cwd,
+            ...(file.machine ? { machine: file.machine } : {}),
+            ...(file.reachable === false ? { reachable: false } : {})
+          })
+      )
+      continue
+    }
+    if (file.delivery === 'group') {
+      lines.push(
+        key(file) +
+          JSON.stringify({
+            group: file.groupId,
+            name: file.name,
+            sessions: file.sessions.map((tab) => ({
+              session: tab.sessionId,
+              name: tab.name,
+              agent: tab.agent
+            })),
             ...(file.machine ? { machine: file.machine } : {}),
             ...(file.reachable === false ? { reachable: false } : {})
           })
@@ -163,11 +180,14 @@ export async function preparePrompt(
     has('session')
       ? '- a Clave session (another tab of this app): read it with clave_read_session, message it with clave_send_to_session, by its session id.'
       : '',
-    attachments.some((f) => f.delivery === 'session' && f.machine)
-      ? '  A session with "machine" runs on that other Clave machine; unless it is marked unreachable, the tools take its id as given.'
+    has('group')
+      ? '- a Clave group (a sidebar group of tabs): its id is the groupId that clave_open_session, clave_move_session and clave_rename take; "sessions" lists its tabs as they were when attached, each read and messaged by its session id; clave_list shows the group as it is now.'
       : '',
-    attachments.some((f) => f.delivery === 'session' && f.reachable === false)
-      ? '  A session with "reachable": false runs where your Clave tools cannot reach it: refer to it by name and ask the user to relay, never call the tools with its id.'
+    attachments.some((f) => 'machine' in f && f.machine)
+      ? '  A session or group with "machine" runs on that other Clave machine; unless it is marked unreachable, the tools take its id as given.'
+      : '',
+    attachments.some((f) => 'reachable' in f && f.reachable === false)
+      ? '  A session or group with "reachable": false runs where your Clave tools cannot reach it: refer to it by name and ask the user to relay, never call the tools with its id.'
       : ''
   ].filter(Boolean)
   const suffix = lines.length ? [...legend, ...lines].join('\n') : ''

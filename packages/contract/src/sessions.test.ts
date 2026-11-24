@@ -111,6 +111,20 @@ const inputs: unknown[] = [
       }
     ]
   },
+  {
+    type: 'user_message',
+    text: 'check every tab of [Group #1]',
+    attachments: [
+      {
+        id: 'g',
+        label: 'Group #1',
+        delivery: 'group',
+        groupId: 'group-1732460000000-3',
+        name: 'Release',
+        sessions: [{ sessionId: 'sess-1', name: 'Lane A', agent: 'Claude Code' }]
+      }
+    ]
+  },
   { type: 'user_message', text: 'once', clientMessageId: 'phone-7f3a9c2e' },
   { type: 'permission_response', id: 'p1', optionId: 'allow-once' },
   { type: 'permission_response', id: 'p1', optionId: 'answer', answers: { q: 'yes' } },

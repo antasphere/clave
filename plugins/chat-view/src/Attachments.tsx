@@ -9,6 +9,7 @@ import {
   type Attachment,
   type AttachmentPreview,
   type FileAttachment,
+  type GroupAttachment,
   THIS_MAC,
   type SessionAttachment
 } from '../../../src/shared/attachments'
@@ -27,7 +28,8 @@ import {
    figure that matters (its size, a folder's item count); it opens a preview,
    an image chip carries a thumbnail so a screenshot reads as the screenshot,
    and a folder previews as its listing. A session chip is another tab of the
-   app: it names the tab and its agent, and has nothing to preview. Every
+   app: it names the tab and its agent, and has nothing to preview; a group
+   chip names a sidebar group and counts its tabs, listed in its tooltip. Every
    chip shows its label, the name the message text refers to it by. */
 
 const sizeLabel = (size: number): string =>
@@ -167,6 +169,23 @@ function SessionGlyph(): React.JSX.Element {
       <rect className="bx bx--front" x="8" y="10" width="18" height="7" rx="2" />
       <circle className="dot" cx="12" cy="13.5" r="1.4" />
       <line className="ln ln--thin" x1="15" y1="13.5" x2="22" y2="13.5" />
+    </svg>
+  )
+}
+/** A sidebar group: its frame, and its tabs as rows inside it. */
+function GroupGlyph(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 28 28"
+      className="chat-attachment-glyph chat-drawing"
+      data-family="group"
+      aria-hidden="true"
+    >
+      <rect className="ln ln--soft" x="2" y="3" width="24" height="22" rx="3" />
+      <rect className="bx" x="5" y="7" width="18" height="6" rx="2" />
+      <rect className="bx bx--front" x="5" y="15" width="18" height="6" rx="2" />
+      <circle className="dot" cx="9" cy="18" r="1.4" />
+      <line className="ln ln--thin" x1="12" y1="18" x2="19" y2="18" />
     </svg>
   )
 }
@@ -359,36 +378,54 @@ function FileChip({
   )
 }
 
+/** A tab dropped from the sidebar, or a whole group of them (PRDCT-5032). */
 function SessionChip({
   file,
   onRemove
 }: {
-  file: SessionAttachment
+  file: SessionAttachment | GroupAttachment
   onRemove?: () => void
 }): React.JSX.Element {
-  const { name, agent, cwd, label, machine } = file
+  const { name, label, machine } = file
+  const group = file.delivery === 'group'
   const outOfReach = file.reachable === false
   // A tab of another machine names it on the chip, the way the sidebar badges
   // a server's tab; one this tab's agent cannot reach says that too, so the
   // reader knows before sending what the agent will be able to do with it.
+  // A group says how many tabs it holds, and its tooltip names them.
   const where = machine === THIS_MAC ? 'This Mac' : machine
+  let what: string
+  let detail: string
+  if (file.delivery === 'group') {
+    const count = file.sessions.length
+    const tabs = `${count} ${count === 1 ? 'tab' : 'tabs'}`
+    what = label ? tabs : `Group · ${tabs}`
+    detail = file.sessions.map((tab) => tab.name).join('\n')
+  } else {
+    what = label ? file.agent : `Session · ${file.agent}`
+    detail = file.cwd
+  }
   const title = [
-    cwd,
+    detail,
     where && `Runs on ${where}`,
-    outOfReach && "This tab's agent cannot read or message it: it will only know its name."
+    outOfReach &&
+      (group
+        ? "This tab's agent cannot act on the group or its tabs: it will only know its name."
+        : "This tab's agent cannot read or message it: it will only know its name.")
   ]
     .filter(Boolean)
     .join('\n')
   return (
     <li
       className="chat-attachment"
-      data-family="session"
-      data-session={file.sessionId}
+      data-family={group ? 'group' : 'session'}
+      data-session={file.delivery === 'session' ? file.sessionId : undefined}
+      data-group={file.delivery === 'group' ? file.groupId : undefined}
       data-machine={machine ? 'other' : undefined}
       data-reach={outOfReach ? 'none' : undefined}
     >
       <span className="chat-attachment-open" title={title || undefined}>
-        <SessionGlyph />
+        {group ? <GroupGlyph /> : <SessionGlyph />}
         <span className="chat-attachment-text">
           <span className="chat-attachment-name">{name}</span>
           <span className="chat-attachment-hint">
@@ -403,7 +440,7 @@ function SessionChip({
                 {where}
               </span>
             )}
-            {outOfReach ? 'Name only' : label ? agent : `Session · ${agent}`}
+            {outOfReach ? 'Name only' : what}
           </span>
         </span>
       </span>

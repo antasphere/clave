@@ -269,11 +269,11 @@ function SessionItemImpl({
           ) : getClaudeVariant(session) ? (
             <ClaudeVariantGlyph variant={getClaudeVariant(session)!} />
           ) : null}
-          <FleetBadge sessionId={session.id} />
-          <SessionViewButton session={session} />
           {nested?.length && onToggleNest ? (
             <NestToggle parent={session} nested={nested} open={nestOpen} onToggle={onToggleNest} />
           ) : null}
+          <FleetBadge sessionId={session.id} />
+          <SessionViewButton session={session} />
           <SessionStatus session={session} />
         </>
       }

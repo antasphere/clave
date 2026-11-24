@@ -20,7 +20,12 @@ import type { ServerEvent } from '@clave/contract/events'
 import type { RoutinesListing } from '@clave/contract/routines/model'
 import type { Artefact } from '@clave/contract/artefacts/model'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
-import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
+import {
+  isFileAttachment,
+  isGroupAttachment,
+  type AttachmentSource,
+  type FileAttachment
+} from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
@@ -694,6 +699,19 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ...event,
       // A session record names a tab, not a file: it carries no path to scope.
       attachments: event.attachments.map((file) => {
+        // A group the server's agent was handed by its bare ids (PRDCT-5032):
+        // the group and each of its tabs keyed back, as a tab is below.
+        if (isGroupAttachment(file))
+          return file.reachable === false
+            ? file
+            : {
+                ...file,
+                groupId: resourceKey('group', ref.serverId, file.groupId),
+                sessions: file.sessions.map((tab) => ({
+                  ...tab,
+                  sessionId: sessionKey({ serverId: ref.serverId, sessionId: tab.sessionId })
+                }))
+              }
         // A tab the server's agent was handed by its bare id: the key this
         // Mac names it by, the same rewrite the send boundary undid. One
         // marked out of reach was never the server's, and keeps its id.
@@ -2486,6 +2504,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       input = {
         ...input,
         attachments: input.attachments.map((file) => {
+          if (isGroupAttachment(file)) {
+            // A dropped group goes as a dropped tab does (PRDCT-5032): as it
+            // is to this Mac's agent; to a server's, by bare ids, the group
+            // and its tabs, and marked out of reach unless it is the server's.
+            if (!remote(id)) return file
+            const group = parseResourceKey('group', file.groupId)
+            return {
+              ...file,
+              groupId: group.id,
+              sessions: file.sessions.map((tab) => ({
+                ...tab,
+                sessionId: parseSessionKey(tab.sessionId).sessionId
+              })),
+              ...(group.serverId === owner ? {} : { reachable: false as const })
+            }
+          }
           if (!isFileAttachment(file)) {
             // A dropped tab. A tab of this Mac goes as it is, and so does a
             // server's tab dropped on a tab of this Mac: the agent here
