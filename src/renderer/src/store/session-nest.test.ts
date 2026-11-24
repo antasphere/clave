@@ -322,6 +322,46 @@ describe('undo', () => {
     expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
   })
 
+  it('that could not be asked keeps its step: pressing Undo again tries again', async () => {
+    await useSessionStore.getState().nestSession('loose', 'lead')
+    for (const silent of [
+      "Clave's server did not answer. Try again in a moment.",
+      'Clave server is not available',
+      'request to http://127.0.0.1:43127/sessions/nest failed'
+    ]) {
+      refuse = silent
+      useSessionStore.getState().undoSidebar()
+      await settle()
+      // Not done, and not lost: the tab is still nested and the step is still
+      // the next one an Undo takes, never the older step behind it.
+      expect(linkOf('loose')).toBe('lead')
+      expect(useSessionStore.getState().sidebarUndoStack).toHaveLength(1)
+      expect(useSessionStore.getState().sidebarUndoStack[0].nests).toEqual([['loose', undefined]])
+    }
+    refuse = null
+    calls.length = 0
+    useSessionStore.getState().undoSidebar()
+    await settle()
+    expect(linkOf('loose')).toBeUndefined()
+    expect(calls).toEqual([['loose', null]])
+    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+  })
+
+  it('that could not be asked is let go when the person did something else meanwhile', async () => {
+    await useSessionStore.getState().nestSession('loose', 'lead')
+    refuse = "Clave's server did not answer. Try again in a moment."
+    answersAfterMs = 20
+    useSessionStore.getState().undoSidebar()
+    useSessionStore.getState().moveItems(['other'], 'mate', 'after')
+    await settle()
+    expect(linkOf('loose')).toBe('lead')
+    // Their newer step stays the one an Undo takes: the older one is not put
+    // back over it.
+    const stack = useSessionStore.getState().sidebarUndoStack
+    expect(stack).toHaveLength(1)
+    expect(stack[0].nests).toBeUndefined()
+  })
+
   it('never puts back a link the rule now refuses: nothing moves, nothing is asked, the row says why', async () => {
     // The person takes a tab out, then an agent nests its old parent under it.
     await useSessionStore.getState().detachSession('loose-child')

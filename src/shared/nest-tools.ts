@@ -22,6 +22,11 @@ export const ATTACH_SESSION_ARGS = {
   detach: 'Take the tab out of the tab it is nested under'
 } as const
 
+/** What a window is answered when it asks for a nesting before main has
+ *  named the server to it: the command is the server's alone, so there is no
+ *  other road. Not a refusal: the same call can be made again. */
+export const NEST_SERVER_NOT_NAMED = 'Clave server is not available'
+
 /** The refusal of a call that carries no tab identity. */
 export const ATTACH_SESSION_NEEDS_TAB = `${ATTACH_SESSION_TOOL} must be called from inside a Clave agent tab — this request has no tab identity.`
 

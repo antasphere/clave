@@ -13,6 +13,8 @@ import type { GitRangeDirection } from '../../../shared/git-range'
 import type { WorkAssignment } from '@clave/contract/work-rules'
 import { nestedUnder, nestRefusal, type NestRecord } from '@clave/contract/nest-rules'
 import { nestApi } from '../lib/nest-api'
+import { NEST_SERVER_NOT_NAMED } from '../../../shared/nest-tools'
+import { SERVER_SILENT } from '../../../shared/helper-preferences'
 import type {
   Theme,
   AppIcon,
@@ -1126,6 +1128,15 @@ export function nestNoticeOf(message: string): string {
     : 'The server could not be asked: the tab stays where it was'
 }
 
+/** Whether a nesting that failed was never answered, the server silent or
+ *  not named yet or the road itself failing, as opposed to refused. Only then
+ *  is the same step worth trying again: a refusal in words would be the same
+ *  the next time. */
+export function nestCouldNotBeAsked(message: string): boolean {
+  const words = message.trim()
+  return words === SERVER_SILENT || words === NEST_SERVER_NOT_NAMED || nestNoticeOf(words) !== words
+}
+
 const MAX_SIDEBAR_UNDO = 50
 
 function cloneGroupsForSnapshot(groups: SessionGroup[]): SessionGroup[] {
@@ -2199,7 +2210,16 @@ export const useSessionStore = create<SessionState>((set) => ({
         const message = err instanceof Error ? err.message : String(err)
         revertNest(id, had, before, after, null)
         console.error('[clave] nesting refused:', message)
-        set({ nestNotice: { id, message: nestNoticeOf(message) } })
+        set((state) => ({
+          nestNotice: { id, message: nestNoticeOf(message) },
+          // Refused, the step is spent: asking again would be refused again.
+          // Not answered at all, it is the person's to try again, so their
+          // next Undo takes this step and never the older one behind it,
+          // unless they did something else meanwhile, which then comes first.
+          ...(nestCouldNotBeAsked(message) && state.sidebarUndoStack === after.sidebarUndoStack
+            ? { sidebarUndoStack: [...state.sidebarUndoStack, top] }
+            : {})
+        }))
       })
     }
   },

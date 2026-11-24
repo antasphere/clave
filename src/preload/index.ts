@@ -30,6 +30,7 @@ import {
   type HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
+import { NEST_SERVER_NOT_NAMED } from '../shared/nest-tools'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
@@ -1563,7 +1564,7 @@ const electronAPI = {
   // as a plain Error carrying the rule's sentence: a tagged error keeps only
   // its message across the context bridge, and a plain one is sure to.
   sessionsNest: viaServer<[string, string | null], NestResult>({
-    ipc: () => Promise.reject(new Error('Clave server is not available')),
+    ipc: () => Promise.reject(new Error(NEST_SERVER_NOT_NAMED)),
     server: ({ api }, id, under) => api.sessions.nest(id, under).catch(plainNestRefusal)
   }),
 
