@@ -456,8 +456,7 @@ export async function run(t) {
     }
 
     // ── 12. Restart ──
-    // Before it, take the release notes out (by the store, as the menu does),
-    // and fold every nest.
+    // Before it, take the release notes out (by the store, as the menu does).
     await store_detach(win, notes)
     const outBefore = await until(async () =>
       (await nestedUnderAll(app))[notes] === null ? true : null
@@ -485,7 +484,30 @@ export async function run(t) {
       const tr = await toggleOf(win, round2)
       eq('the ledger lane counts its nested tab', tl?.count, 1, tl)
       eq('the second verifier counts its stopped tab', tr?.count, 1, tr)
-      eq('folded', [tl?.expanded, tr?.expanded], ['false', 'false'])
+      // Which tab a restart puts on screen is the app's own business (the
+      // first one it places, in the order they come back). The nests come
+      // back folded, but for the one that holds that tab: the focused tab is
+      // always in sight, whether it or its parent came back first.
+      const onScreen = (await callMcp(app, 'list', {})).focusedSessionId
+      const holder = { [scratch]: ledger, [round1]: round2 }[onScreen] ?? null
+      const folds = async () => ({
+        ledger: (await toggleOf(win, ledger))?.expanded,
+        round2: (await toggleOf(win, round2))?.expanded
+      })
+      const expected = { ledger: String(holder === ledger), round2: String(holder === round2) }
+      await until(async () =>
+        JSON.stringify(await folds()) === JSON.stringify(expected) ? true : null
+      )
+      eq(
+        'the nests come back folded, but for the one that holds the tab on screen',
+        await folds(),
+        expected,
+        { onScreen: names[onScreen] ?? onScreen, got: await folds(), expected }
+      )
+      // Folded by the person, a nest stays folded, the tab on screen in it or not.
+      await setNestOpen(win, ledger, false)
+      await setNestOpen(win, round2, false)
+      await win.waitForTimeout(500)
       eq(
         'a folded nest shows no row',
         (await visibleRows(win, scratch)) + (await visibleRows(win, round1)),

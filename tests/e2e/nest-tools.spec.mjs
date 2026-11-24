@@ -59,6 +59,7 @@ import {
   writeRecordingCli,
   openTab,
   toggleOf,
+  visibleRows,
   recordOf,
   recordIn,
   mcpClient,
@@ -252,6 +253,13 @@ export async function run(t) {
           (await toggleOf(win, lead))?.count === 2 ? true : null
         )
         t.check('the window shows the count', shown === true, await toggleOf(win, lead))
+        // The person asked to see nothing: a nesting an agent makes leaves
+        // the nest folded.
+        eq(
+          'an agent’s nesting leaves the nest folded',
+          (await toggleOf(win, lead))?.expanded,
+          'false'
+        )
       }
       eq(
         'a second identical attach answers changed: false',
@@ -265,11 +273,30 @@ export async function run(t) {
         toolPayload(await attach({ sessionId: 'mine', to: lead })),
         { sessionId: me, nestedUnder: lead, changed: true }
       )
+      // The stopped tab is the one on screen when the agent nests it: the
+      // focus does not move, and the focused tab is always in sight.
+      await callMcp(app, 'focus', { sessionId: ended })
+      const onScreen = await until(async () =>
+        (await callMcp(app, 'list', {})).focusedSessionId === ended ? true : null
+      )
+      t.check('the stopped tab is on screen', onScreen === true)
+      eq('the lead’s nest is still folded', (await toggleOf(win, lead))?.expanded, 'false')
       eq(
         'a stopped tab nests, under "mine" as the parent',
         toolPayload(await attach({ sessionId: ended, to: 'mine' })),
         { sessionId: ended, nestedUnder: me, changed: true }
       )
+      {
+        const opened = await until(async () =>
+          (await toggleOf(win, lead))?.expanded === 'true' ? true : null
+        )
+        t.check(
+          'nested by an agent while it is on screen, a tab stays in sight: its nest opens',
+          opened === true,
+          await toggleOf(win, lead)
+        )
+        eq('and its row is on screen', await visibleRows(win, ended), 1)
+      }
       {
         const rec = await until(() =>
           recordOf(DIR, ended)?.spawnedBy === me ? recordOf(DIR, ended) : null
@@ -569,6 +596,27 @@ export async function run(t) {
       const state = JSON.parse(readFileSync(path.join(mac.dir, 'mcp-server.json'), 'utf8'))
       const shared = mcpClient(mcpEndpoint(mac.dir), state.token)
       await shared.init()
+      // An agent that runs on the server itself, with the server's own tools:
+      // started first, so it has long gone quiet when it is used at the end.
+      await request(server, '/launch-profiles', {
+        profile: {
+          id: 'nest-tools-fleet-stub',
+          name: 'Nest tools fleet stream stub',
+          family: 'claude',
+          command: [process.execPath, path.join(REPO, 'tests/e2e/fixtures/claude-stream-stub.mjs')],
+          additionalArgs: []
+        }
+      })
+      const caller = await request(server, '/sessions/start', {
+        cwd: server.root,
+        options: { claudeMode: true, launchProfileId: 'chat:claude:nest-tools-fleet-stub' }
+      })
+      await request(server, '/sessions/type', { id: caller.id, text: 'caller first message' })
+      const configFile = path.join(server.dataDir, 'mcp-configs', `${caller.id}.json`)
+      await eventually(() => existsSync(configFile), 'the agent on the server gets its config')
+      const entry = JSON.parse(readFileSync(configFile, 'utf8')).mcpServers.clave
+      const onServer = mcpClient(entry.url, entry.headers.Authorization.replace(/^Bearer /, ''))
+      await onServer.init()
       const openOn = async (name) =>
         toolPayload(
           await shared.call('clave_open_session', {
@@ -746,6 +794,59 @@ export async function run(t) {
           return rec && !rec.spawnedBy ? true : null
         })
         t.check("and the server's record is cleared", ok === true, rec)
+      }
+
+      // The server's own road, with a desktop watching: the agent that runs
+      // on the server (started first, long idle by now) nests two of its tabs
+      // with the server's tool, then takes the tab out again.
+      await mac.win.waitForTimeout(2000)
+      const linkHere = () =>
+        mac.win.evaluate(
+          (key) =>
+            window.__claveSessionStoreForTests.getState().sessions.find((s) => s.id === key)
+              ?.spawnedBy ?? null,
+          a
+        )
+      eq(
+        'on the server’s own road, with a desktop watching, an attach answers changed: true',
+        toolPayload(await onServer.call(TOOL, { sessionId: raw(a), to: raw(b) })),
+        { sessionId: raw(a), nestedUnder: raw(b), changed: true }
+      )
+      {
+        const heard = await until(async () => ((await linkHere()) === b ? true : null))
+        t.check(
+          'the desktop shows a nesting made on the server, without a reload',
+          heard === true,
+          {
+            link: await linkHere(),
+            expected: b
+          }
+        )
+        const shown = await until(async () =>
+          (await toggleOf(mac.win, b))?.count === 1 ? true : null
+        )
+        t.check('and its sidebar counts it', shown === true, {
+          toggle: await toggleOf(mac.win, b),
+          sidebar: await sidebarFacts(mac.win, a, b)
+        })
+      }
+      // A taking-out moves no row, so no other event comes to make the
+      // desktop read the server again: only the server's own word about the
+      // nesting can tell it (a nesting that moved the row could also have
+      // reached it with the layout).
+      await mac.win.waitForTimeout(2000)
+      eq(
+        'and a detach answers changed: true',
+        toolPayload(await onServer.call(TOOL, { sessionId: raw(a), detach: true })),
+        { sessionId: raw(a), nestedUnder: null, changed: true }
+      )
+      {
+        const out = await until(async () => ((await linkHere()) === null ? true : null))
+        t.check(
+          'the desktop hears a taking-out made on the server, told by the server alone',
+          out === true,
+          { link: await linkHere(), expected: null }
+        )
       }
     } finally {
       await world.close()
