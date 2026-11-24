@@ -30,6 +30,7 @@ import {
   takeoverRenames,
   type WorkChangeResult
 } from '@clave/contract/work-rules'
+import { applyNest, type NestResult } from '@clave/contract/nest-rules'
 import {
   type ServerFrame,
   decodeServerFrame,
@@ -270,6 +271,27 @@ export class FakeSource implements SessionHostService {
       if (session) this.sessions.set(r.id, { ...session, title: r.name })
     }
     return { changed: updates, renamed }
+  }
+  // ── PRDCT-4997: which tab a tab is nested under, kept by hand ──
+  /** Each live session's link, as its record's `spawnedBy` would keep it;
+   *  the rule is the real one, applied over every session this host has. */
+  readonly nested = new Map<string, string>()
+  nest = (id: string, under: string | null): NestResult => {
+    const all = [...this.sessions.values()].map((s) => {
+      const work = this.works.get(s.id)
+      return {
+        id: s.id,
+        under: this.nested.get(s.id) ?? null,
+        windowKey: s.windowKey,
+        work: work ? { label: work.label, kind: work.kind } : null
+      }
+    })
+    const result = applyNest(all, id, under)
+    if (result.changed) {
+      if (result.under) this.nested.set(id, result.under)
+      else this.nested.delete(id)
+    }
+    return result
   }
   screen = async (id: string): Promise<SessionScreen> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)

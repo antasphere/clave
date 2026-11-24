@@ -35,6 +35,7 @@ import type {
   SpawnOptions
 } from '@clave/contract/sessions'
 import type { WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { NestResult } from '@clave/contract/nest-rules'
 
 export type Unsubscribe = () => void
 
@@ -112,6 +113,12 @@ export interface SessionHostService extends SessionStreamSource {
    *  when the session is unknown, and `WorkChangeRefusal` when the records
    *  refuse the change. */
   readonly changeWork: (id: string, change: WorkChange) => WorkChangeResult
+  /** PRDCT-4997: nest a session under another tab, or take it out with
+   *  null, applied over every record this host keeps (`applyNest`) and
+   *  written on the subject's record (`spawnedBy`) when it changed. Throws
+   *  `NestSessionUnknown` when either session is unknown, and `NestRefusal`
+   *  when the rule says no or the subject keeps no record. */
+  readonly nest: (id: string, under: string | null) => NestResult
   /** The last `lines` rendered lines of a terminal session. Throws when the
    *  session is unknown; rejects with `SessionScreenUnavailable` when it has
    *  no screen this host kept (a chat tab). */
@@ -205,6 +212,9 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
       throw NO_SESSIONS
     },
     changeWork: () => {
+      throw NO_SESSIONS
+    },
+    nest: () => {
       throw NO_SESSIONS
     },
     screen: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),

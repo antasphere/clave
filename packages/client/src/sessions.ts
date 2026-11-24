@@ -30,6 +30,7 @@ import {
   type SpawnOptions
 } from '@clave/contract/sessions'
 import type { WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { NestResult } from '@clave/contract/nest-rules'
 import type { Call } from './call'
 
 export interface StartSessionInput {
@@ -101,6 +102,10 @@ export interface SessionsClient {
    *  it rewrote, the session's own first, and the names an accepted handover
    *  gave. */
   readonly changeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
+  // ── PRDCT-4997: which tab a tab is nested under ──
+  /** Nest the session under another tab, or take it out with null; `changed`
+   *  is false when its record already said so. */
+  readonly nest: (id: string, under: string | null) => Promise<NestResult>
 }
 
 /** A write goes over the wire in its encoded form: bytes as base64. A write
@@ -252,5 +257,12 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
     call((c) => c.sessions.changeWork({ payload: { id, change } })).then((r) => ({
       changed: [...r.changed],
       renamed: [...r.renamed]
+    })),
+  // ── PRDCT-4997 ──
+  nest: (id, under) =>
+    call((c) => c.sessions.nest({ payload: { id, under } })).then((r) => ({
+      id: r.id,
+      under: r.under,
+      changed: r.changed
     }))
 })
