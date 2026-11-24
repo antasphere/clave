@@ -3523,8 +3523,11 @@ body.reorder-dragging * {
   background-color: var(--surface-200);
 }
 
-/* A tab's nested tabs (PRDCT-4998): a quiet count before the row's status,
-   and the tabs themselves as rows under it, indented behind a hairline. */
+/* A tab's nested tabs (PRDCT-4998): a quiet count at the head of the row's
+   trailing items, and the tabs themselves as rows under it, indented behind a
+   hairline. Its pill keeps 3px of padding for the hover and gives back 5px of
+   the row's 8px gap on each side, so the chevron and the number sit 6px from
+   their neighbours (PRDCT-5033). */
 .sidebar-nest-toggle {
   position: relative;
   display: inline-flex;
@@ -3532,7 +3535,8 @@ body.reorder-dragging * {
   gap: 1px;
   flex-shrink: 0;
   height: 18px;
-  padding: 0 5px 0 2px;
+  padding: 0 3px;
+  margin: 0 -5px;
   border-radius: 9999px;
   color: var(--text-tertiary);
   font-size: 11px;

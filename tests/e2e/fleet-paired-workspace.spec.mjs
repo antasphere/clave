@@ -250,18 +250,57 @@ export async function run(t) {
       true
     )
 
+    await step(
+      'a server tab with a tab nested under it shows the count before the server’s tag',
+      async () => {
+        const parent = owned('session', owner, first.id)
+        const child = owned('session', owner, onServer.id)
+        const nested = await win.evaluate(
+          ([id, under]) => window.__claveSessionStoreForTests.getState().nestSession(id, under),
+          [child, parent]
+        )
+        assert.deepEqual(nested, { ok: true }, 'the store nests one server tab under another')
+        const toggle = row(win, parent).locator('> .sidebar-item .sidebar-nest-toggle')
+        await toggle.waitFor()
+        const tag = row(win, parent).locator('> .sidebar-item [data-fleet-badge="session"]')
+        const [toggleBox, tagBox] = [await toggle.boundingBox(), await tag.boundingBox()]
+        assert.ok(
+          toggleBox && tagBox && toggleBox.x + toggleBox.width <= tagBox.x,
+          'the count comes first, then the server’s tag (PRDCT-5033)'
+        )
+        const out = await win.evaluate(
+          (id) => window.__claveSessionStoreForTests.getState().detachSession(id),
+          child
+        )
+        assert.deepEqual(out, { ok: true }, 'and takes it out again')
+        await row(win, child).locator('> .sidebar-item').waitFor()
+      }
+    )
+    t.check('in the Mac workspace, a nested count comes before the server’s tag on its row', true)
+
     await step('the server workspace shows only the server’s tabs', async () => {
       await switchTo(win, serverWs.id)
       await row(win, owned('session', owner, first.id)).waitFor()
       await row(win, owned('session', owner, onServer.id)).waitFor()
       assert.equal(await row(win, localSession.id).count(), 0, 'the Mac tab is not there')
-      // In the server's own workspace the badge is the plain icon, not the name.
+      // In the server's own workspace no row carries the server's mark: the
+      // workspace switcher names the server once, in its tag (PRDCT-5033).
       assert.equal(
         await row(win, owned('session', owner, first.id))
           .locator('[data-fleet-badge]')
           .count(),
         0
       )
+      assert.equal(
+        await row(win, owned('session', owner, first.id))
+          .locator('[data-fleet-owner]')
+          .isVisible(),
+        false,
+        'the row draws no server mark'
+      )
+      await win
+        .locator(`[aria-label="Switch workspace"] [data-workspace-server="${owner}"]`)
+        .waitFor()
       // The server tree's toolbar button shows here, in the server workspace.
       await eventually(
         async () =>

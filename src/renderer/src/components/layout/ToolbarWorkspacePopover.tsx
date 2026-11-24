@@ -23,6 +23,7 @@ import {
   serverWorkspaceError
 } from '../../lib/workspace-actions'
 import { shortenPath } from '../../lib/utils'
+import { ServerTag } from '../fleet/FleetControls'
 import { useListReorder } from '../../hooks/use-list-reorder'
 
 /** A folder picked for registration that holds several `.clave` profiles — one
@@ -79,6 +80,10 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
   const name = active?.name ?? 'Clave'
+  // A server's workspace names its server once, here, beside its own name:
+  // its rows no longer carry the server's icon (PRDCT-5033).
+  const activeServer = active ? workspaceServer(active.id) : null
+  const activeOffline = activeServer !== null && statuses[activeServer]?.state !== 'connected'
 
   // Activity dots: a hidden workspace with a session waiting on the user
   // (unseen activity or a pending permission prompt) is marked, so switching
@@ -195,6 +200,15 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
   const label = (
     <>
       <span className="truncate">{name}</span>
+      {activeServer && (
+        <ServerTag
+          serverId={activeServer}
+          className={activeOffline ? 'max-w-[120px] opacity-60' : 'max-w-[120px]'}
+          title={`${serverName(activeServer)}${activeOffline ? ', offline' : ''}`}
+          data-workspace-server={activeServer}
+          data-workspace-server-state={statuses[activeServer]?.state ?? 'unknown'}
+        />
+      )}
       {needsAttention && <span className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />}
       {/* Optically nudged down a half pixel: flex centring lines the icon box up
           with the text's line box, which sits above the text's visual centre at
@@ -221,7 +235,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
         <PopoverTrigger asChild>
           <button
             aria-label="Switch workspace"
-            className="flex items-center gap-1 max-w-[220px] px-1.5 py-0.5 rounded text-[11px] font-medium text-text-tertiary hover:text-text-secondary hover:bg-surface-100 tracking-wide transition-colors"
+            className="flex items-center gap-1.5 max-w-[340px] px-1.5 py-0.5 rounded text-[11px] font-medium text-text-tertiary hover:text-text-secondary hover:bg-surface-100 tracking-wide transition-colors"
             title={active ? shortenPath(active.rootDir) : 'Workspaces'}
           >
             {label}
@@ -294,12 +308,21 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
                       }
                     >
                       <span className="flex-1 min-w-0 py-0.5">
-                        <span className="block text-control leading-tight text-text-primary truncate">
-                          {ws.name}
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-control leading-tight text-text-primary truncate">
+                            {ws.name}
+                          </span>
+                          {server && (
+                            <ServerTag
+                              serverId={server}
+                              className={offline ? 'max-w-[120px] opacity-60' : 'max-w-[120px]'}
+                              data-workspace-server={server}
+                            />
+                          )}
                         </span>
                         <span className="block text-[11px] leading-tight text-text-tertiary truncate mt-0.5">
                           {server
-                            ? `${serverName(server)}${offline ? ' · offline' : ''} · ${ws.rootDir}`
+                            ? `${offline ? 'offline · ' : ''}${ws.rootDir}`
                             : combinedServers.has(ws.id)
                               ? `${shortenPath(ws.rootDir)} · with ${combinedServers.get(ws.id)!.join(', ')}`
                               : shortenPath(ws.rootDir)}
