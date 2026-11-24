@@ -967,3 +967,49 @@ describe('restart correlation at the preload boundary', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {})
   })
 })
+
+describe('nesting a tab under another goes to the server alone (PRDCT-4997)', () => {
+  it('sends both ids to the server, a detach as null, and answers what it did', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async (id: string, under: string | null) => ({
+      id,
+      under,
+      changed: true
+    }))
+    expect(await api.sessionsNest('s1', 's2')).toEqual({ id: 's1', under: 's2', changed: true })
+    expect(await api.sessionsNest('s1', null)).toEqual({ id: 's1', under: null, changed: true })
+    expect(mocks.sessions.nest.mock.calls).toEqual([
+      ['s1', 's2'],
+      ['s1', null]
+    ])
+  })
+
+  it('is refused before main names a server, never kept on main’s copy', async () => {
+    answer({ 'server:endpoint': null })
+    await expect(api.sessionsNest('s1', 's2')).rejects.toThrow('Clave server is not available')
+    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([])
+  })
+
+  it('a refusal reaches the window as a plain Error carrying the rule’s sentence', async () => {
+    answer(onServer)
+    const words = 'The two tabs are in different windows: move the tab into the other window first'
+    mocks.sessions.nest = vi.fn(async () => {
+      throw Object.assign(new Error(words), { _tag: 'NestRefused', id: 's1' })
+    })
+    const error = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe(words)
+    expect(error).not.toHaveProperty('_tag')
+  })
+
+  it('hears session.nested off the push channel, a detach as null', async () => {
+    mocks.apiList.mockResolvedValue([])
+    await connectBacking()
+    const heard = vi.fn()
+    api.onSessionNested(heard)
+    mocks.emitEvent({ _tag: 'session.nested', id: 's1', under: 's2' })
+    mocks.emitEvent({ _tag: 'session.nested', id: 's1', under: null })
+    mocks.emitEvent({ _tag: 'session.renamed', id: 's1', name: 'Not this one' })
+    expect(heard.mock.calls).toEqual([[{ id: 's1', under: 's2' }], [{ id: 's1', under: null }]])
+  })
+})

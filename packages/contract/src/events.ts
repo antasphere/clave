@@ -104,6 +104,12 @@ export const ServerEvent = Schema.Union(
     id: Schema.String,
     work: Schema.NullOr(WorkAssignment)
   }),
+  /** A tab was nested under another tab, or taken out with `under` null
+   *  (PRDCT-4997): the record's `spawnedBy`, which the sidebar folds by. */
+  Schema.TaggedStruct('session.nested', {
+    id: Schema.String,
+    under: Schema.NullOr(Schema.String)
+  }),
   /** Another tab's agent typed a message into this one (`from` is its name,
    *  null when it had none): the window marks the row so the message is
    *  never silent. */

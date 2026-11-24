@@ -1732,6 +1732,39 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         (b, wireId) =>
           b.api.sessions.keepOnRecord(wireId, { name: { displayName: name, userRenamed: renamed } })
       ),
+    // PRDCT-4997: a tab is nested under a tab of its own machine, so both ends
+    // go to the one server that owns them, each by its wire id; a pair split
+    // across machines is refused before any server is asked.
+    sessionsNest: (id, under) => {
+      const owner = parseSessionKey(id).serverId
+      const parent = under === null ? null : parseSessionKey(under)
+      if (parent && parent.serverId !== owner)
+        return Promise.reject(
+          new Error(
+            'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+          )
+        )
+      const underWireId = parent ? parent.sessionId : null
+      return route(
+        id,
+        (wireId) => local.sessionsNest(wireId, underWireId),
+        async (b, wireId) => {
+          // The rule's sentence as a plain Error, as this Mac's road gives it.
+          const result = await b.api.sessions.nest(wireId, underWireId).catch((error: unknown) => {
+            const tagged = error as { _tag?: unknown; message?: unknown } | null
+            throw tagged?._tag === 'NestRefused' && typeof tagged.message === 'string'
+              ? new Error(tagged.message)
+              : error
+          })
+          refresh(owner)
+          return {
+            id: key(owner, result.id),
+            under: result.under === null ? null : key(owner, result.under),
+            changed: result.changed
+          }
+        }
+      )
+    },
     setSessionViewRecord: (id, view) =>
       route(
         id,
@@ -1899,6 +1932,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.onSessionRenamed(cb),
         eventListener('session.renamed', (event, owner) =>
           cb({ id: key(owner, event.id), name: event.name })
+        )
+      ),
+    // PRDCT-4997: a server's nesting, both ends keyed by the server that told it.
+    onSessionNested: (cb) =>
+      both(
+        local.onSessionNested(cb),
+        eventListener('session.nested', (event, owner) =>
+          cb({ id: key(owner, event.id), under: event.under ? key(owner, event.under) : null })
         )
       ),
     onSessionTyped: (cb) =>

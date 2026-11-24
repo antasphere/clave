@@ -65,6 +65,8 @@ import {
   setWorkChange,
   workToolAnswer
 } from '../../../shared/work-tools'
+import { ATTACH_SESSION_NEEDS_TAB, attachAnswer, attachRequest } from '../../../shared/nest-tools'
+import { nestedUnder } from '@clave/contract/nest-rules'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
 import type { CodexModels } from './launch-options-input'
@@ -273,6 +275,9 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
       work: s.work ?? null,
+      // The tab it is shown under in the sidebar (PRDCT-4997); parentId
+      // above is who opened it.
+      nestedUnder: s.spawnedBy ?? null,
       // The account the tab runs on (Claude or Codex), in its OWNER's list: a
       // server tab names the server's account (PRDCT-4328); the Default when
       // the tab predates accounts or was launched without naming one.
@@ -1313,6 +1318,43 @@ async function handleHandOver(payload: Record<string, unknown>): Promise<unknown
 }
 
 /**
+ * `clave_attach_session` on the window's road (PRDCT-4997), for a call the
+ * server does not serve (a tab of another Clave server): the same arguments
+ * read the same way (`shared/nest-tools`), both tabs of one machine, and the
+ * server's NestSession through the preload, which routes the pair to the
+ * machine that owns it. The store learns the link from `session.nested`, as
+ * every window does; this only places the tab, with the tabs nested under
+ * it, right after its parent. A placement that fails leaves the answer as
+ * it is.
+ */
+async function handleAttachSession(payload: Record<string, unknown>): Promise<unknown> {
+  const caller = typeof payload.callerSessionId === 'string' ? payload.callerSessionId : undefined
+  if (!caller) throw new Error(ATTACH_SESSION_NEEDS_TAB)
+  const request = attachRequest(payload)
+  const subject = resolveTargetSession(ownSessionRef(request.subject, caller), caller)
+  const parent =
+    request.type === 'nest' ? resolveTargetSession(ownSessionRef(request.to, caller), caller) : null
+  if (parent && ownerOf(parent.id) !== ownerOf(subject.id))
+    throw new Error(
+      'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+    )
+  const result = await window.electronAPI.sessionsNest(subject.id, parent ? parent.id : null)
+  if (parent) {
+    try {
+      const state = useSessionStore.getState()
+      const nested = nestedUnder(
+        state.sessions.map((s) => ({ id: s.id, under: s.spawnedBy ?? null })),
+        subject.id
+      )
+      state.moveItems([subject.id, ...nested], parent.id, 'after')
+    } catch {
+      // The link is written; where the row sits is left as it was.
+    }
+  }
+  return attachAnswer(result)
+}
+
+/**
  * Strip control bytes that would break the bracketed-paste envelope or be
  * interpreted as keystrokes/escape sequences by the receiving TUI. Newlines
  * and tabs are safe *inside* a paste and kept; everything else below 0x20
@@ -1942,6 +1984,8 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return handleSetWork(payload as Record<string, unknown>)
     case 'handOver':
       return handleHandOver(payload as Record<string, unknown>)
+    case 'attachSession':
+      return handleAttachSession(payload as Record<string, unknown>)
     case 'flushLinkedDocument': {
       const p = payload as { sessionId: string; allowConflict?: boolean }
       await flushLinkedDocument(p.sessionId, p.allowConflict)
