@@ -167,9 +167,14 @@ export function createPresenter(deps: PresenterDeps): Presenter {
     if (entry) start(sessionId, artefact, entry.presentationId, entry.sent)
   }
 
+  /** Another artefact or another open of it: two opens may share a millisecond, never a target. */
+  const another = (entry: Running, artefact: Shown): boolean =>
+    artefact.openedAt !== entry.openedAt ||
+    (artefact.target !== undefined && artefact.target !== entry.target)
+
   const follow = (sessionId: string, artefact: Shown): void => {
     const entry = running.get(sessionId)
-    if (entry && artefact.openedAt !== entry.openedAt) restart(sessionId, artefact)
+    if (entry && another(entry, artefact)) restart(sessionId, artefact)
   }
 
   return {
@@ -179,7 +184,7 @@ export function createPresenter(deps: PresenterDeps): Presenter {
       const entry = running.get(sessionId)
       if (!entry) start(sessionId, artefact, newId(), false)
       // Already presented: brought forward (main focuses its window).
-      else if (entry.openedAt === artefact.openedAt) send(sessionId, entry)
+      else if (!another(entry, artefact)) send(sessionId, entry)
       else restart(sessionId, artefact)
       return true
     },

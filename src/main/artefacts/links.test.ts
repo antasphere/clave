@@ -32,7 +32,7 @@ const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })))
 
 describe('the artefact links', () => {
-  it('keeps several artefacts per session in a version 2 document, the front one last', () => {
+  it('keeps several artefacts per session, the front one last, each front where an older build reads it', () => {
     const storage = memory()
     const links = new ArtefactLinks(storage)
     expect(links.get('s1')).toBeUndefined()
@@ -45,8 +45,9 @@ describe('the artefact links', () => {
     expect(links.find('s1', link(1).target)).toEqual(link(1))
     expect(links.find('s1', link(2).target)).toBeUndefined()
     expect(JSON.parse(storage.text!)).toEqual({
-      v: 2,
-      artefacts: { s1: [link(1), link(3)], s2: [link(2)] }
+      v: 1,
+      artefacts: { s1: link(3), s2: link(2) },
+      lists: { s1: [link(1), link(3)], s2: [link(2)] }
     })
   })
 
@@ -89,9 +90,38 @@ describe('the artefact links', () => {
     expect(links.all()).toEqual({ s1: [link(1)], s2: [link(2)] })
     links.set('s1', link(3))
     expect(JSON.parse(storage.text!)).toEqual({
-      v: 2,
-      artefacts: { s1: [link(1), link(3)], s2: [link(2)] }
+      v: 1,
+      artefacts: { s1: link(3), s2: link(2) },
+      lists: { s1: [link(1), link(3)], s2: [link(2)] }
     })
+  })
+
+  it('a build that keeps one artefact per session reads every front, and its rewrite loses none', () => {
+    // The previous build's reader and writer, as they were: v 1, a link per session.
+    const olderRead = (text: string): Record<string, unknown> => {
+      const parsed = JSON.parse(text) as { v?: unknown; artefacts?: Record<string, unknown> }
+      if (parsed.v !== 1 || typeof parsed.artefacts !== 'object') return {}
+      return parsed.artefacts
+    }
+    const storage = memory()
+    const links = new ArtefactLinks(storage)
+    links.set('s1', link(1))
+    links.set('s1', link(2))
+    links.set('s2', link(3))
+    const seen = olderRead(storage.text!)
+    expect(seen).toEqual({ s1: link(2), s2: link(3) })
+    // It opens one more and writes its own shape back, with no lists.
+    storage.text = JSON.stringify({ v: 1, artefacts: { ...seen, s3: link(4) } })
+    expect(new ArtefactLinks(storage).all()).toEqual({
+      s1: [link(2)],
+      s2: [link(3)],
+      s3: [link(4)]
+    })
+  })
+
+  it('reads a version 2 document, an earlier shape of this change, as lists', () => {
+    const storage = memory(JSON.stringify({ v: 2, artefacts: { s1: [link(1), link(2)] } }))
+    expect(new ArtefactLinks(storage).all()).toEqual({ s1: [link(1), link(2)] })
   })
 
   it('reads an unreadable document as empty, says it once, and replaces it at the next write', () => {
@@ -102,7 +132,11 @@ describe('the artefact links', () => {
     expect(links.get('s1')).toBeUndefined()
     expect(logged).toHaveLength(1)
     links.set('s1', link(1))
-    expect(JSON.parse(storage.text!)).toEqual({ v: 2, artefacts: { s1: [link(1)] } })
+    expect(JSON.parse(storage.text!)).toEqual({
+      v: 1,
+      artefacts: { s1: link(1) },
+      lists: { s1: [link(1)] }
+    })
     expect(new ArtefactLinks(memory('{"v":3,"artefacts":{}}'), () => {}).all()).toEqual({})
   })
 
@@ -170,7 +204,11 @@ describe('the artefact links', () => {
     expect(links.all()).toEqual({})
     links.set('s1', link(1))
     expect(statSync(file).mode & 0o777).toBe(0o600)
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ v: 2, artefacts: { s1: [link(1)] } })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+      v: 1,
+      artefacts: { s1: link(1) },
+      lists: { s1: [link(1)] }
+    })
     expect(new ArtefactLinks(fileLinksStorage(file)).get('s1')).toEqual(link(1))
   })
 })

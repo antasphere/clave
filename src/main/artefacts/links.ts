@@ -4,10 +4,16 @@
  * session keeps several artefacts (PRDCT-5022), oldest first, the one it
  * shows in front (last):
  *
- *   { "v": 2, "artefacts": { "<sessionId>": [{ "target", "page", "title", "openedAt" }, …] } }
+ *   { "v": 1,
+ *     "artefacts": { "<sessionId>": { "target", "page", "title", "openedAt" } },
+ *     "lists": { "<sessionId>": [{ "target", "page", "title", "openedAt" }, …] } }
  *
- * A version 1 document (one link per session) reads as a list of one, and
- * the next write writes version 2.
+ * `artefacts` keeps each session's front, the shape a build before several
+ * artefacts reads: going back to one (a beta's way back to stable, a server
+ * downgraded) finds every session's front rather than an unreadable file it
+ * would replace. Such a build rewrites the document without `lists`, and a
+ * session with no list reads as a list of its front. A `v: 2` document (an
+ * earlier shape of this change, never released) reads too.
  *
  * Kept over a storage of one text so the rules run in tests without a disk.
  * An unreadable document reads as empty, said once in the log, and the next
@@ -52,8 +58,11 @@ export interface LinksStorage {
 }
 
 interface LinksDocument {
-  v: 2
-  artefacts: Record<string, ArtefactLink[]>
+  v: 1
+  /** Each session's front: what a build that keeps one artefact per session reads. */
+  artefacts: Record<string, ArtefactLink>
+  /** Each session's artefacts, oldest first, the front last. */
+  lists: Record<string, ArtefactLink[]>
 }
 
 const isLink = (value: unknown): value is ArtefactLink => {
@@ -160,18 +169,30 @@ export class ArtefactLinks {
     const text = this.storage.read()
     if (text === null) return {}
     try {
-      const parsed = JSON.parse(text) as { v?: unknown; artefacts?: unknown }
+      const parsed = JSON.parse(text) as { v?: unknown; artefacts?: unknown; lists?: unknown }
       if (
         (parsed.v !== 1 && parsed.v !== 2) ||
         typeof parsed.artefacts !== 'object' ||
         parsed.artefacts === null
       )
-        throw new Error('not a version 1 or 2 links document')
+        throw new Error('not a version 1 links document')
+      const fronts = parsed.artefacts as Record<string, unknown>
+      const lists =
+        parsed.v === 2
+          ? fronts
+          : typeof parsed.lists === 'object' && parsed.lists !== null
+            ? (parsed.lists as Record<string, unknown>)
+            : {}
       const links: Record<string, ArtefactLink[]> = {}
-      for (const [id, value] of Object.entries(parsed.artefacts as Record<string, unknown>)) {
-        // Version 1: one link per session, a list of one now.
-        const listed = parsed.v === 1 ? [value] : Array.isArray(value) ? value : []
-        const own = listed.filter(isLink).map(copy).slice(-MAX_PER_SESSION)
+      const ids = new Set([...Object.keys(fronts), ...(parsed.v === 2 ? [] : Object.keys(lists))])
+      for (const id of ids) {
+        const listed = lists[id]
+        // A session with no list (a build that keeps one rewrote the document,
+        // or wrote it first): its front, a list of one.
+        const own = (Array.isArray(listed) ? listed : parsed.v === 1 ? [fronts[id]] : [])
+          .filter(isLink)
+          .map(copy)
+          .slice(-MAX_PER_SESSION)
         if (own.length > 0) links[id] = own
       }
       return links
@@ -186,7 +207,12 @@ export class ArtefactLinks {
   }
 
   private write(links: Record<string, ArtefactLink[]>): void {
-    const document: LinksDocument = { v: 2, artefacts: links }
+    const fronts: Record<string, ArtefactLink> = {}
+    for (const [id, own] of Object.entries(links)) {
+      const front = frontOf(own)
+      if (front) fronts[id] = front
+    }
+    const document: LinksDocument = { v: 1, artefacts: fronts, lists: links }
     this.storage.write(`${JSON.stringify(document, null, 2)}\n`)
   }
 }
