@@ -373,14 +373,17 @@ export async function run(t) {
           [openedRow?.parentId ?? null, openedRow?.nestedUnder ?? null],
           [me, lead]
         )
+        // `parentId` is the tab "parent" reaches: for a tab nobody opened,
+        // the tab it is nested under, on every road the list takes.
         const notesRow = rows.find((s) => s.id === notes)
         eq(
           'a tab nobody opened, once nested, answers its parent as parentId',
-          notesRow?.parentId ?? null,
-          verifier
+          [notesRow?.parentId ?? null, notesRow?.nestedUnder ?? null],
+          [verifier, verifier]
         )
         // The agent's own tab was opened by the person (the launcher): once
-        // nested, its "parent" for messages is the tab it is nested under.
+        // nested, its "parent" for MESSAGES is the tab it is nested under,
+        // the fallback a tab nested at its open has always had.
         eq(
           'the caller (a person’s tab) is nested under the lead',
           toolPayload(await attach({ sessionId: 'mine', to: lead }))?.nestedUnder,
@@ -389,7 +392,11 @@ export async function run(t) {
         const meRow = (toolPayload(await client.call('clave_list', {}))?.sessions ?? []).find(
           (s) => s.id === me
         )
-        eq('and clave_list gives it the lead as parentId', meRow?.parentId ?? null, lead)
+        eq(
+          'and clave_list gives it the lead as parentId and as nestedUnder',
+          [meRow?.parentId ?? null, meRow?.nestedUnder ?? null],
+          [lead, lead]
+        )
         const read = await client.call('clave_read_session', { sessionId: 'parent', lines: 5 })
         t.check(
           'and "parent" in the messaging tools reaches the lead',

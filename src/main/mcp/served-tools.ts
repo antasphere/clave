@@ -372,9 +372,13 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
     .filter(({ record }) => inScope(record?.workspaceId))
     .map(({ s, record }) => ({
       id: s.id,
-      // The tab that opened it, as the daemon's road says (PRDCT-4507):
-      // main's lineage, else the opener the record keeps.
-      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy),
+      // The tab "parent" reaches from it, as the daemon's road and the
+      // window's say (PRDCT-4507): main's lineage, else the opener the record
+      // keeps, else the tab it is nested under. That last one was missing on
+      // this road alone, so the same tab had a parent in one listing and none
+      // in another (PRDCT-4997); the messaging tools always had it
+      // (`parentOfSession`).
+      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy ?? record?.spawnedBy),
       name: s.title,
       cwd: s.cwd,
       mode: modeOf(record, s.provider),
