@@ -276,4 +276,45 @@ describe('undo', () => {
     expect(linkOf('other')).toBe('lead')
     expect(calls).toEqual([])
   })
+
+  it('of a plain move leaves alone a nesting an agent made since', () => {
+    // The person moves a row, then an agent's tool nests another tab: undoing
+    // the move puts the row back and must not take the agent's tab out.
+    useSessionStore.getState().moveItems(['other'], 'loose', 'after')
+    useSessionStore.getState().applyServedNest('mate', 'lead')
+    useSessionStore.getState().undoSidebar()
+    expect(useSessionStore.getState().displayOrder).toEqual(['g', 'other', 'loose', 'loose-child'])
+    expect(linkOf('mate')).toBe('lead')
+    expect(calls).toEqual([])
+  })
+
+  it('of a nesting puts back that one link, never another tab changed since', async () => {
+    await useSessionStore.getState().nestSession('other', 'lead')
+    useSessionStore.getState().applyServedNest('mate', 'lead')
+    calls.length = 0
+    useSessionStore.getState().undoSidebar()
+    await Promise.resolve()
+    expect(linkOf('other')).toBeUndefined()
+    expect(linkOf('mate')).toBe('lead')
+    expect(calls).toEqual([['other', null]])
+  })
+})
+
+describe('what changes nothing', () => {
+  it('nesting a tab under the tab it is already nested under', async () => {
+    await useSessionStore.getState().nestSession('loose', 'lead')
+    const { displayOrder, groups, sidebarUndoStack } = useSessionStore.getState()
+    calls.length = 0
+    expect(await useSessionStore.getState().nestSession('loose', 'lead')).toEqual({ ok: true })
+    expect(calls).toEqual([])
+    expect(useSessionStore.getState().displayOrder).toBe(displayOrder)
+    expect(useSessionStore.getState().groups).toBe(groups)
+    expect(useSessionStore.getState().sidebarUndoStack).toBe(sidebarUndoStack)
+  })
+
+  it('taking out a tab that stands alone', async () => {
+    expect(await useSessionStore.getState().detachSession('other')).toEqual({ ok: true })
+    expect(calls).toEqual([])
+    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+  })
 })

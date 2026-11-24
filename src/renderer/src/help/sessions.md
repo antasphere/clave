@@ -4,15 +4,15 @@ Sessions are the core of Clave. Each session is an independent terminal running 
 
 ## Creating Sessions
 
-| Shortcut    | Type             | Description                                       |
-| ----------- | ---------------- | ------------------------------------------------- |
-| Cmd+N       | Claude Code      | AI-assisted coding session                        |
-| Cmd+T       | Terminal         | Plain shell session                               |
-| Cmd+D       | Dangerous        | Claude Code without permission prompts            |
-| Cmd+I       | Antigravity CLI  | Antigravity CLI coding session                    |
-| Cmd+U       | Codex CLI        | Codex coding session                              |
-| Cmd+Y       | Codex CLI (YOLO) | Codex session without sandbox or approval prompts |
-| Cmd+Shift+P | Pi               | Pi coding-agent session                           |
+| Shortcut | Type | Description |
+|---|---|---|
+| Cmd+N | Claude Code | AI-assisted coding session |
+| Cmd+T | Terminal | Plain shell session |
+| Cmd+D | Dangerous | Claude Code without permission prompts |
+| Cmd+I | Antigravity CLI | Antigravity CLI coding session |
+| Cmd+U | Codex CLI | Codex coding session |
+| Cmd+Y | Codex CLI (YOLO) | Codex session without sandbox or approval prompts |
+| Cmd+Shift+P | Pi | Pi coding-agent session |
 
 You can also create sessions from the **+** button in the sidebar.
 

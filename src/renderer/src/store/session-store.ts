@@ -1062,9 +1062,11 @@ type SidebarSnapshot = {
   displayOrder: string[]
   selectedSessionIds: string[]
   focusedSessionId: string | null
-  /** Every local session's nesting when the snapshot was taken (PRDCT-4997):
-   *  an undo puts the links back through the server. Absent on a snapshot
-   *  that restores the layout alone. */
+  /** The link a nesting or a taking-out changed, as it was before that step
+   *  (PRDCT-4997): an undo of the step puts it back through the server.
+   *  Absent on every other step, which restores the layout alone: undoing a
+   *  plain move must never touch a nesting made since, by an agent's tool or
+   *  from another window. */
   nests?: Array<[string, string | undefined]>
 }
 
@@ -1081,21 +1083,24 @@ function cloneGroupsForSnapshot(groups: SessionGroup[]): SessionGroup[] {
   }))
 }
 
-function snapshotSidebar(state: {
-  groups: SessionGroup[]
-  sessions: Session[]
-  displayOrder: string[]
-  selectedSessionIds: string[]
-  focusedSessionId: string | null
-}): SidebarSnapshot {
+function snapshotSidebar(
+  state: {
+    groups: SessionGroup[]
+    sessions: Session[]
+    displayOrder: string[]
+    selectedSessionIds: string[]
+    focusedSessionId: string | null
+  },
+  /** The links the step is about to change, as they are now: given by a
+   *  nesting and a taking-out, by nothing else. */
+  nests?: Array<[string, string | undefined]>
+): SidebarSnapshot {
   return {
     groups: cloneGroupsForSnapshot(state.groups),
     displayOrder: [...getDisplayOrder(state)],
     selectedSessionIds: [...state.selectedSessionIds],
     focusedSessionId: state.focusedSessionId,
-    nests: state.sessions
-      .filter((s) => s.sessionType === 'local')
-      .map((s): [string, string | undefined] => [s.id, s.spawnedBy])
+    ...(nests ? { nests } : {})
   }
 }
 
@@ -2451,10 +2456,12 @@ export const useSessionStore = create<SessionState>((set) => ({
     if (refusal) return { ok: false, error: refusal }
 
     const previous = subject.spawnedBy
+    // Already nested under that tab: nothing to move, to undo or to tell.
+    if (previous === underId) return { ok: true }
     const before = { groups: state.groups, displayOrder: state.displayOrder }
     let snapshot: SidebarSnapshot | null = null
     set((current) => {
-      snapshot = snapshotSidebar(current)
+      snapshot = snapshotSidebar(current, [[id, previous]])
       // The row and every tab nested under it land right after the new
       // parent, inside the parent's group when it has one. A null answer
       // means the layout already is so.
@@ -2489,11 +2496,13 @@ export const useSessionStore = create<SessionState>((set) => ({
     const subject = state.sessions.find((s) => s.id === id)
     if (!subject) return { ok: false, error: 'That tab is gone' }
     const previous = subject.spawnedBy
+    // A tab that stands alone, with nowhere to go: nothing to do.
+    if (previous === undefined && !move) return { ok: true }
     const records = nestRecordsOf(state)
     const before = { groups: state.groups, displayOrder: state.displayOrder }
     let snapshot: SidebarSnapshot | null = null
     set((current) => {
-      snapshot = snapshotSidebar(current)
+      snapshot = snapshotSidebar(current, [[id, previous]])
       const moved = move
         ? moveLayoutItems(
             { groups: current.groups, displayOrder: getDisplayOrder(current) },
