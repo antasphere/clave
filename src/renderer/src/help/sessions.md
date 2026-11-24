@@ -44,6 +44,12 @@ Drag sessions together in the sidebar to create groups. Groups let you organize 
 
 See the **Session Groups** doc for more on pinned groups and .clave files.
 
+## Nested Tabs
+
+Drag a tab onto the middle of another tab to nest it under that tab. The parent's row shows how many tabs are nested under it; click that count to unfold them as rows under the parent, and click it again to fold them away. To take a tab out, drag its row out between two rows, or use **Detach** in its menu; **Attach to** in a tab's menu nests it without a drag.
+
+An agent does the same with `clave_attach_session`, and a tab an agent opens with `attachToParent` starts nested under the agent's tab.
+
 ## Ongoing Conversations
 
 Some conversations are not work: a situation you handle over weeks, like an exchange with your accountant or an email thread to sort out. Keep them out of the sidebar without closing them:

@@ -47,6 +47,8 @@ import {
   TypeIntoSession,
   // ── PRDCT-4123: which work a session does ──
   ChangeSessionWork,
+  // ── PRDCT-4997: which tab a tab is nested under ──
+  NestSession,
   // ── The mobile wave, lane B: whether a client's message landed ──
   GetSessionWriteStatus
 } from './sessions'
@@ -110,6 +112,8 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
   // ── PRDCT-4123: which work a session does ──
   .add(HttpCqrs.commandEndpoint('changeWork', '/sessions/work', ChangeSessionWork))
+  // ── PRDCT-4997: which tab a tab is nested under ──
+  .add(HttpCqrs.commandEndpoint('nest', '/sessions/nest', NestSession))
   // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
   .add(HttpCqrs.queryEndpoint('writeStatus', '/sessions/writes', GetSessionWriteStatus))
   // Mobile history ordering: the legacy history route keeps its semantics.

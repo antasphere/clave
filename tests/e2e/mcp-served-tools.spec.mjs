@@ -130,27 +130,38 @@ const drawnGroups = (win) =>
   )
 const rowDrawn = (win, id) =>
   win.evaluate((sid) => !!document.querySelector(`[data-sidebar-item-id="${sid}"]`), id)
-/** A tab an agent opened is drawn folded under the agent's row (#216, #259):
- *  no row of its own, the opener's selector in its place. */
+/** A tab an agent opened is drawn nested under the agent's row (#216, #259,
+ *  PRDCT-4998): no row of its own among the ordinary rows, a row inside the
+ *  opener's nest instead, and the count toggle on the opener's row. */
 const foldedUnder = (win, parentId, childId) =>
   win.evaluate(
     ([p, c]) =>
-      !document.querySelector(`[data-sidebar-item-id="${c}"]`) &&
-      !!document.querySelector(`[data-sidebar-item-id="${p}"] .subagent-trigger`),
+      !document.querySelector(`[data-sidebar-item-id="${c}"]:not([data-sidebar-nested-root])`) &&
+      !!document.querySelector(`[data-sidebar-nested-root="${p}"][data-sidebar-item-id="${c}"]`) &&
+      !!document.querySelector(
+        `[data-sidebar-item-id="${p}"] > .sidebar-item .sidebar-nest-toggle`
+      ),
     [parentId, childId]
   )
-/** The names the opener's selector lists, read by opening it. */
+/** The names of the rows nested under the opener, read with its nest
+ *  unfolded (a click on its count toggle, as a person does). */
 const subagentNames = async (win, parentId) => {
-  const trigger = win.locator(`[data-sidebar-item-id="${parentId}"] .subagent-trigger`)
-  // No selector on the opener's row: the tab is not folded (the check that
-  // says so is red), so there is nothing to open and no names. Answer that
-  // rather than wait on a click that never lands and take every later check
-  // down with it.
-  if ((await trigger.count()) === 0) return []
-  await trigger.click()
-  const names = await win.getByRole('menuitem').allInnerTexts()
-  await win.keyboard.press('Escape')
-  return names
+  const toggle = win.locator(
+    `[data-sidebar-item-id="${parentId}"] > .sidebar-item .sidebar-nest-toggle`
+  )
+  // No toggle on the opener's row: the tab is not nested (the check that
+  // says so is red), so there are no names. Answer that rather than wait on
+  // a click that never lands and take every later check down with it.
+  if ((await toggle.count()) === 0) return []
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    await toggle.click()
+    await win.waitForTimeout(400)
+  }
+  return win
+    .locator(
+      `[data-sidebar-nested-root="${parentId}"]:not([data-nest-collapsed="true"] *) .sidebar-item`
+    )
+    .allInnerTexts()
 }
 /** The road the last call of this command took, as main recorded it. */
 const lastRoad = async (app, command) =>

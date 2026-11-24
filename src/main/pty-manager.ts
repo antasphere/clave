@@ -1250,10 +1250,13 @@ class PtyManager {
       // The message the limit rejected, when the move is the limit's doing:
       // the reader asked once and gets the answer on the next account.
       initialInput: resendRejected ? this.rejected.get(id) : undefined,
-      // The parent, else the record's: the kill takes the record before the
-      // spawn could read it, and a spawn made without one (an older restore)
-      // would lose the child its parent (#259, V1-F1).
-      spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
+      // The tab it is nested under: the record's when it has one, read now,
+      // else the spawn's own. The kill takes the record before the spawn
+      // could read it (#259, V1-F1), and since PRDCT-4997 a tab nested or
+      // taken out after its spawn wrote the record alone, so the spawn's
+      // options would bring the old link back, as the work line below says
+      // for work. A session with no record keeps the spawn's.
+      spawnedBy: record ? record.spawnedBy : previous.spawnedBy,
       openedBy: previous.openedBy ?? ptyBackend.getSessionRecord(id)?.openedBy,
       // Which work it does (PRDCT-4123): the record's, read now, for the same
       // reason. Never the spawn's own options: a restart carried one into
@@ -1372,6 +1375,19 @@ class PtyManager {
   /** Every record's work assignment, read without side effects (PRDCT-4123). */
   listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {
     return ptyBackend.listWorkAssignments()
+  }
+  /** The tab the session is nested under, on its record (PRDCT-4997); false
+   *  when it keeps no record. The host's `nest` is the only caller. The
+   *  record alone is written, as for the work: a respawn reads the link from
+   *  the record (`restartSpawn`), never from the spawn's own options, so a
+   *  tab taken out does not come back nested. */
+  setSessionSpawnedBy(id: string, under: string | null): boolean {
+    return ptyBackend.setSessionSpawnedBy(id, under)
+  }
+  /** Every record as the nesting rule reads it, without side effects
+   *  (PRDCT-4997). */
+  listNestRecords(): ReturnType<typeof ptyBackend.listNestRecords> {
+    return ptyBackend.listNestRecords()
   }
   /** The persisted record of a live session, as it is now. */
   getSessionRecord = ptyBackend.getSessionRecord.bind(ptyBackend)

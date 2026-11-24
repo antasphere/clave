@@ -115,6 +115,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
   observeSessionWrites,
+  publishOrSend,
   publishSessionStates,
   sessionLimitCleared,
   sessionLimitReported,
@@ -682,6 +683,9 @@ async function main(): Promise<void> {
           chatDefaultFor(launchProfileManager.getPreferences(), family, null),
         // PRDCT-4485: the launcher's choices, for clave_launch_options and the open.
         launch: agentLaunchFacts,
+        // PRDCT-4997: a nesting the tools made past the command bus, told to
+        // every attached client as the bus would tell it.
+        publish: (event) => publishOrSend(event, () => {}),
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,

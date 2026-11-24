@@ -87,6 +87,15 @@ import {
   sendToTarget
 } from './session-targets'
 import { planResumeFromRecords } from './conversation-history'
+import type { ServerEvent } from '@clave/contract/events'
+import { nestedUnder } from '@clave/contract/nest-rules'
+import {
+  ATTACH_SESSION_ARGS,
+  ATTACH_SESSION_DESCRIPTION,
+  ATTACH_SESSION_TOOL,
+  attachAnswer,
+  attachRequest
+} from '../../shared/nest-tools'
 import type { ServerConversations } from '../session-history/server-conversations'
 import type { HistoryConversation } from '@clave/contract/history'
 import {
@@ -139,6 +148,10 @@ export interface StandaloneMcpOptions {
    *  `clave_switch_account` are not registered and `clave_open_session`
    *  refuses `account` as before. */
   readonly launch?: StandaloneLaunchFacts | undefined
+  /** PRDCT-4997: how a fact these tools made reaches the windows. The tools
+   *  call the host directly, past the server's command bus, so a nesting is
+   *  told here as `session.nested`; absent, nothing is told. */
+  readonly publish?: ((event: ServerEvent) => void) | undefined
 }
 /** The conversation this server's History remembers by its id, with its
  *  transcript still on the disk (PRDCT-4321); undefined otherwise, or when the
@@ -214,7 +227,7 @@ const BUILT_IN_CHATS = Object.values(CHAT_PROFILE_IDS)
 export const LAUNCH_OPTIONS_DESCRIPTION =
   "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for the tabs Clave started on no connection, never sessions started outside Clave); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
 export const LIST_DESCRIPTION =
-  'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); parentId names the tab that opened it.'
+  'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); nestedUnder names the tab it is shown under, parentId the tab "parent" reaches from it (the tab that opened it, else the tab it is nested under).'
 export const SWITCH_ACCOUNT_DESCRIPTION =
   'Move a tab to another connection (a subscription or a key of its harness\'s pool) when the one it runs on is about to hit its limit, or when asked: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only. "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name, or "any" for whichever connection of the pool has headroom. This server switches at once when its switch mode is automatic (accountSwitchMode in its preferences.json, read when it starts; propose is the default, and a setting from the Mac\'s server pages is PRDCT-3318) and refuses when it is propose, since a server has no window to propose to. A pin set from the Mac window lives in that window and is not visible here: this tool cannot honour it (PRDCT-4508).'
 export const OPEN_SESSION_DESCRIPTION = `Open a new tab on this server: an agent of one of its harnesses (${HARNESSES.map((h) => h.name).join(', ')}) or a plain terminal, in an absolute directory. ${CHAT_HARNESSES} open in Clave's CHAT VIEW (the conversation interface with message bubbles and a composer) or in the terminal: omit chat to open the way this server's launcher does (its interaction mode), chat: true forces a chat view, chat: false the terminal. Optionally a model, a connection (account), a launch profile, a name, a first prompt and a group; clave_launch_options lists what this machine can launch. With resume, the new tab continues a PAST conversation by its id. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.`
@@ -337,7 +350,7 @@ function buildServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local. An HTML page, document or deck you made -> clave_open_artefact with its folder (index.html inside): open it ONCE, then edit its files; it reloads itself and keeps a version per turn. Before opening a tab, or to know which harness, model or connection has room -> clave_launch_options. ' +
+        'Your Clave tools run on this server without a desktop. Ask the person every question, value, choice, file or link to open with clave_request_input, never with your own question tool (a form in their chat that lives across your turns; fill it from what they say with clave_input_set; clave_input_result reads it), for approval with clave_request_approval, for a secret with clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session (target "parent" to report back to the tab that opened yours; "mine" logs a checkpoint, typed nowhere), read it with clave_read_session, resume a stopped one with clave_resume_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs, clave_attach_session nests one under another. Sessions and paths are server-local. An HTML page, document or deck you made -> clave_open_artefact with its folder (index.html inside): open it ONCE, then edit its files; it reloads itself and keeps a version per turn. Before opening a tab, or to know which harness, model or connection has room -> clave_launch_options. ' +
         ROUTINE_TOOLS_INSTRUCTION.slice(2)
     }
   )
@@ -539,7 +552,9 @@ function buildServer(
             launchProfileId: record?.launchProfileId ?? null,
             account: launch && record ? accountOf(launch, record) : null,
             // PRDCT-4540: a tab whose process left its connection says so.
-            connectionLeft: record ? providerConnectionLeft(record) : null
+            connectionLeft: record ? providerConnectionLeft(record) : null,
+            // PRDCT-4997: the tab it is shown under, as its record keeps it.
+            nestedUnder: record?.spawnedBy ?? null
           }
         })
       })
@@ -1094,6 +1109,48 @@ function buildServer(
       return text({ sessionId: id, groupId })
     }
   )
+  // ── PRDCT-4997: nest a tab that exists under another, or take it out ──
+  // The host applies the rule and writes the record; the words the rule or
+  // the host throws are the tool's error. Then the tab and the tabs nested
+  // under it are placed after the parent when this server keeps a sidebar,
+  // best effort: the link is the tool's work.
+  server.registerTool(
+    ATTACH_SESSION_TOOL,
+    {
+      description: ATTACH_SESSION_DESCRIPTION,
+      inputSchema: {
+        sessionId: z.string().optional().describe(ATTACH_SESSION_ARGS.sessionId),
+        to: z.string().optional().describe(ATTACH_SESSION_ARGS.to),
+        detach: z.boolean().optional().describe(ATTACH_SESSION_ARGS.detach)
+      }
+    },
+    async (args) => {
+      const request = attachRequest(args)
+      const id = known(request.subject)
+      const under = request.type === 'nest' ? known(request.to) : null
+      const result = sessions.nest(id, under)
+      if (result.changed)
+        options.publish?.({ _tag: 'session.nested', id: result.id, under: result.under })
+      if (under && sidebar) {
+        try {
+          let records: readonly SessionRecord[] = []
+          try {
+            records = sessions.listAdoptableRecords()
+          } catch {
+            // A host with no records: the tab moves alone.
+          }
+          const nested = nestedUnder(
+            records.map((r) => ({ id: r.id, under: r.spawnedBy ?? null })),
+            id
+          )
+          sidebar.moveItems(SERVER_LAYOUT_KEY, [id, ...nested], under, 'after')
+        } catch {
+          // The link is written; where the row sits is left as it was.
+        }
+      }
+      return text(attachAnswer(result))
+    }
+  )
   server.registerTool(
     'clave_read_session',
     {
@@ -1214,9 +1271,16 @@ function buildServer(
     server.registerTool(
       OPEN_ARTEFACT_TOOL,
       { description: OPEN_ARTEFACT_DESCRIPTION_SERVER, inputSchema: openArtefactSchema },
-      async ({ path }) => {
+      async ({ path, present }) => {
         try {
-          return text(openedAnswer(await artefacts.open(sessionId, path)))
+          return text(
+            openedAnswer(
+              present === true
+                ? await artefacts.open(sessionId, path, true)
+                : await artefacts.open(sessionId, path),
+              present
+            )
+          )
         } catch (error) {
           return { content: [{ type: 'text', text: message(error) }], isError: true }
         }

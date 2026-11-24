@@ -1133,6 +1133,32 @@ export const ChangeSessionWork = Command.define('ChangeSessionWork', {
   failure: Schema.Union(SessionNotFound, WorkChangeRefused, CapabilityUnavailable)
 })
 
+// ── PRDCT-4997: which tab a tab is nested under ──
+
+/** The records refused the nesting: the rule's own words (`nest-rules.ts`). */
+export class NestRefused extends Schema.TaggedError<NestRefused>()('NestRefused', {
+  id: Schema.String,
+  message: Schema.String
+}) {}
+
+/**
+ * Nest a session under another tab, or take it out with `under: null`: the
+ * record's `spawnedBy` is rewritten, and nothing else (the tab keeps running,
+ * `openedBy` stays who opened it). The rule is `nest-rules.ts`'s, applied
+ * over every record the host keeps; `changed` is false when the record
+ * already said so. The windows follow through `session.nested`, published
+ * only when the record changed.
+ */
+export const NestSession = Command.define('NestSession', {
+  payload: Schema.Struct({ id: Schema.String, under: Schema.NullOr(Schema.String) }),
+  success: Schema.Struct({
+    id: Schema.String,
+    under: Schema.NullOr(Schema.String),
+    changed: Schema.Boolean
+  }),
+  failure: Schema.Union(SessionNotFound, NestRefused, CapabilityUnavailable)
+})
+
 // ── The mobile wave, lane B: nothing is sent twice (decision 10 of the spec,
 // the seam `seam-write-status.md` of 29 October 2026 shared with lanes C and D) ──
 

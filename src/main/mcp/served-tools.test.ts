@@ -512,6 +512,54 @@ describe('serveCommand', () => {
     const withLineage = (await serveCommand('list', {}, h.ctx({ shell: both }))) as Listing
     expect(withLineage.sessions.find((s) => s.id === 'opened')?.parentId).toBe('live')
   })
+
+  it('says where each tab is nested, apart from who opened it (PRDCT-4997)', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['nested', 'opened', 'plain'] })])],
+      sessions: [session('nested'), session('opened'), session('plain')],
+      records: {
+        nested: record('nested', { spawnedBy: 'lead', openedBy: 'opener' }),
+        opened: record('opened', { openedBy: 'opener' }),
+        plain: record('plain', {})
+      }
+    })
+    const shell = { ...h.ctx().shell, parentOf: () => null }
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx({ shell }))) as Listing
+    expect(listed.sessions.find((s) => s.id === 'nested')).toMatchObject({
+      nestedUnder: 'lead',
+      parentId: 'opener'
+    })
+    expect(listed.sessions.find((s) => s.id === 'opened')).toMatchObject({
+      nestedUnder: null,
+      parentId: 'opener'
+    })
+    expect(listed.sessions.find((s) => s.id === 'plain')?.nestedUnder).toBeNull()
+  })
+
+  it('gives a tab nobody opened the tab it is nested under as its parent, as the other roads do (PRDCT-4997)', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['tucked', 'opened'] })])],
+      sessions: [session('tucked'), session('opened')],
+      records: {
+        // A person's own tab, nested by hand: no opener on its record.
+        tucked: record('tucked', { spawnedBy: 'lead' }),
+        // An agent's tab nested elsewhere keeps its opener.
+        opened: record('opened', { spawnedBy: 'lead', openedBy: 'opener' })
+      }
+    })
+    const shell = { ...h.ctx().shell, parentOf: () => null }
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx({ shell }))) as Listing
+    expect(listed.sessions.find((s) => s.id === 'tucked')).toMatchObject({
+      nestedUnder: 'lead',
+      parentId: 'lead'
+    })
+    expect(listed.sessions.find((s) => s.id === 'opened')).toMatchObject({
+      nestedUnder: 'lead',
+      parentId: 'opener'
+    })
+  })
 })
 
 describe('resolveGroupRef', () => {

@@ -41,11 +41,15 @@ import {
   ReleaseSessions,
   // ── PRDCT-4123: which work a session does ──
   ChangeSessionWork,
+  // ── PRDCT-4997: which tab a tab is nested under ──
+  NestRefused,
+  NestSession,
   // ── The mobile wave, lane B: whether a client's message landed ──
   GetSessionWriteStatus
 } from '@clave/contract/sessions'
 import { WorkChangeRefused } from '@clave/contract/work'
 import { WorkChangeRefusal, WorkSessionUnknown } from '@clave/contract/work-rules'
+import { NestRefusal, NestSessionUnknown } from '@clave/contract/nest-rules'
 import { SessionHost, type SessionHostService } from './port'
 import { ServerEvents } from '../events'
 import { SessionWrites, sanitizeReason } from './writes'
@@ -370,6 +374,33 @@ export const sessionHandlers = [
       for (const rename of result.renamed)
         yield* events.publish({ _tag: 'session.renamed', id: rename.id, name: rename.name })
       return { changed: result.changed, renamed: result.renamed }
+    })
+  ),
+  // ── PRDCT-4997: which tab a tab is nested under. The host applies the rule
+  // over every record it keeps and writes the subject's `spawnedBy`; the
+  // windows follow through `session.nested`, published only when the record
+  // changed, so a drop on the row a tab already sits under says nothing. A
+  // refusal is the rule's own words, and nothing is published. The not-found
+  // is about the id the rule names: the tab, or the tab it would go under. ──
+  CommandHandler.make(NestSession, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      const result = yield* Effect.try({
+        try: () => host.nest(payload.id, payload.under),
+        catch: (error) =>
+          error instanceof NestSessionUnknown
+            ? new SessionNotFound({ id: error.id })
+            : error instanceof NestRefusal
+              ? new NestRefused({ id: payload.id, message: error.message })
+              : error instanceof SessionNotFound || error instanceof CapabilityUnavailable
+                ? error
+                : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+      if (result.changed) {
+        const events = yield* ServerEvents
+        yield* events.publish({ _tag: 'session.nested', id: result.id, under: result.under })
+      }
+      return { id: result.id, under: result.under, changed: result.changed }
     })
   ),
   QueryHandler.make(ReadSessionScreen, (payload) =>

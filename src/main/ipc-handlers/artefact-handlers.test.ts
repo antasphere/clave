@@ -93,6 +93,23 @@ describe('the artefacts over IPC', () => {
     ])
   })
 
+  it('names one of the session’s artefacts when the window does, and nothing when it does not (PRDCT-5022)', async () => {
+    await invoke('artefacts:hold', 's1', undefined, '/work/talk')
+    await invoke('artefacts:hold', 's1', 'h1', '')
+    await invoke('artefacts:saveVersion', 's1', '/work/talk')
+    await invoke('artefacts:versions', 's1', '/work/talk')
+    await invoke('artefacts:close', 's1', '/work/talk')
+    await invoke('artefacts:close', 's1', 42)
+    expect(calls).toEqual([
+      { method: 'hold', args: ['s1', undefined, '/work/talk'] },
+      { method: 'hold', args: ['s1', 'h1'] },
+      { method: 'saveVersion', args: ['s1', '/work/talk'] },
+      { method: 'versions', args: ['s1', '/work/talk'] },
+      { method: 'close', args: ['s1', '/work/talk'] },
+      { method: 'close', args: ['s1'] }
+    ])
+  })
+
   it('with no server named, every channel refuses with the sentence and asks nothing', async () => {
     named = false
     for (const channel of handlers.keys())
