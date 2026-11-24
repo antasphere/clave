@@ -38,6 +38,16 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 `,
     { mode: 0o755 }
   )
+  // A `claude` that only waits: the launcher's agent tab, which gets its MCP
+  // token, with no provider called.
+  writeFileSync(
+    `${root}/bin/claude`,
+    `#!/bin/sh
+echo "stand-in claude $CLAVE_SESSION_ID"
+exec tail -f /dev/null
+`,
+    { mode: 0o755 }
+  )
   writeFileSync(
     `${root}/bin/sh`,
     `#!/bin/sh
@@ -268,6 +278,70 @@ export function flatOrder(layout) {
     groups.has(id) ? [id, ...(groups.get(id).sessionIds ?? [])] : [id]
   )
 }
+
+// ── An agent's MCP, with tools/list (the harness's client has no list) ────
+
+/** A Streamable-HTTP MCP client bound to one bearer token: `call(tool, args)`
+ *  answers the JSON-RPC reply, `tools()` the tools/list answer's tools. */
+export function mcpClient(url, token) {
+  let sid = null
+  let nextId = 1
+  const post = async (body) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        authorization: `Bearer ${token}`,
+        ...(sid ? { 'mcp-session-id': sid } : {})
+      },
+      body: JSON.stringify(body)
+    })
+    const got = res.headers.get('mcp-session-id')
+    if (got) sid = got
+    const text = await res.text()
+    const payloads =
+      text.startsWith('event:') || text.includes('\ndata:') || text.startsWith('data:')
+        ? text
+            .split('\n')
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).trim())
+        : [text]
+    const parsed = payloads.filter(Boolean).map((p) => JSON.parse(p))
+    return parsed[parsed.length - 1] ?? null
+  }
+  return {
+    async init() {
+      const res = await post({
+        jsonrpc: '2.0',
+        id: nextId++,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'clave-e2e', version: '0.0.0' }
+        }
+      })
+      await post({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      return res
+    },
+    call: (name, args) =>
+      post({
+        jsonrpc: '2.0',
+        id: nextId++,
+        method: 'tools/call',
+        params: { name, arguments: args }
+      }),
+    async tools() {
+      const res = await post({ jsonrpc: '2.0', id: nextId++, method: 'tools/list', params: {} })
+      return res?.result?.tools ?? []
+    }
+  }
+}
+
+/** The text of a tool's error (or of its answer). */
+export const errorText = (rpc) =>
+  rpc?.error?.message ?? rpc?.result?.content?.map((c) => c.text ?? '').join('\n') ?? ''
 
 /** `nestedUnder` of every tab, from the window's own listing. */
 export async function nestedUnderAll(app) {
