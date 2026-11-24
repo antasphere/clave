@@ -24,16 +24,25 @@ export function subagentAttention(descendants: readonly Session[]): {
  * A session with a work assignment (PRDCT-4123) is never folded under the tab
  * it is nested under, and the climb stops at the first one: work membership
  * wins over the nesting, and a tab nested under a member folds into that
- * member's wave or lane entry (`work-presentation.ts`). */
+ * member's wave or lane entry (`work-presentation.ts`).
+ * `foldedIds` are the tabs of a folded group, in the view but out of sight
+ * (PRDCT-5049). They keep their nests, so folding a group folds its tabs with
+ * what is nested under them, and no count drops off a row as the group
+ * closes. A tab in sight never folds under a tab out of sight: its climb
+ * stops at the first ancestor in a folded group, and it keeps its own row. */
 export function subagentPresentation(
   sessions: readonly Session[],
   reachableIds: ReadonlySet<string>,
-  editableRootId?: string | null
+  editableRootId?: string | null,
+  foldedIds: ReadonlySet<string> = new Set()
 ): {
   rootById: Map<string, string>
   descendants: Map<string, Session[]>
 } {
-  const available = new Map(sessions.filter((s) => reachableIds.has(s.id)).map((s) => [s.id, s]))
+  const available = new Map(
+    sessions.filter((s) => reachableIds.has(s.id) || foldedIds.has(s.id)).map((s) => [s.id, s])
+  )
+  const inSight = (id: string): boolean => reachableIds.has(id)
   const rootById = new Map<string, string>()
   const descendants = new Map<string, Session[]>()
   const depths = new Map<string, number>()
@@ -44,6 +53,7 @@ export function subagentPresentation(
       const parent = available.get(current.spawnedBy)
       if (!parent || parent.sessionType !== 'local' || parent.workspaceId !== session.workspaceId)
         break
+      if (inSight(session.id) && !inSight(parent.id)) break
       if (seen.has(parent.id)) {
         // Malformed cycles, including branches into them, stay individually reachable.
         current = session

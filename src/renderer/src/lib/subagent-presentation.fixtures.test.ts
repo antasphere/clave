@@ -158,6 +158,49 @@ describe('subagent presentation', () => {
     expect(graph([nested]).rootById.size).toBe(0)
   })
 
+  it('keeps the nests of a folded group’s tabs, so the group folds with them (PRDCT-5049)', () => {
+    const lead = session('lead')
+    const gen1 = session('gen1', { spawnedBy: lead.id })
+    const gen2 = session('gen2', { spawnedBy: gen1.id })
+    const rows = [lead, gen1, gen2]
+    // In sight: the nest as always.
+    expect([...graph(rows).rootById]).toEqual([
+      ['gen1', 'lead'],
+      ['gen2', 'lead']
+    ])
+    // The group folds: nothing is in sight, and the nest holds.
+    const folded = subagentPresentation(rows, new Set(), null, new Set(['lead', 'gen1', 'gen2']))
+    expect([...folded.rootById]).toEqual([
+      ['gen1', 'lead'],
+      ['gen2', 'lead']
+    ])
+    expect(folded.descendants.get('lead')?.map((s) => s.id)).toEqual(['gen1', 'gen2'])
+  })
+
+  it('never folds a tab in sight under a tab in a folded group: it keeps its own row', () => {
+    const lead = session('lead')
+    const gen1 = session('gen1', { spawnedBy: lead.id })
+    const gen2 = session('gen2', { spawnedBy: gen1.id })
+    // The lead's group is folded, its nested tab sits in sight elsewhere.
+    const apart = subagentPresentation([lead, gen1], new Set(['gen1']), null, new Set(['lead']))
+    expect(apart.rootById.size).toBe(0)
+    // A climb stops at the first ancestor out of sight.
+    const partway = subagentPresentation(
+      [lead, gen1, gen2],
+      new Set(['gen1', 'gen2']),
+      null,
+      new Set(['lead'])
+    )
+    expect([...partway.rootById]).toEqual([['gen2', 'gen1']])
+  })
+
+  it('folds a tab of a folded group under its parent in sight', () => {
+    const lead = session('lead')
+    const gen1 = session('gen1', { spawnedBy: lead.id })
+    const shown = subagentPresentation([lead, gen1], new Set(['lead']), null, new Set(['gen1']))
+    expect([...shown.rootById]).toEqual([['gen1', 'lead']])
+  })
+
   it('falls back to ordinary rows for self-links, cycles and branches into cycles', () => {
     expect(
       graph([
