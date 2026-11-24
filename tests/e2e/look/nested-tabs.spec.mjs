@@ -290,6 +290,28 @@ exec /bin/sh "$@"
       await win.keyboard.press('Escape')
       await win.waitForTimeout(250)
     }
+    // 11: what a row says when the server would not nest it (put in the store
+    // directly: the real refusals need a tab that keeps no record).
+    for (const [id, name] of [
+      [docs, '11-refusal-under-a-row'],
+      [gen1, '11-refusal-under-a-nested-row']
+    ]) {
+      await store(
+        (s, a) =>
+          s.setState({
+            nestNotice: {
+              id: a,
+              message: 'This session keeps no record, so where it is nested cannot be kept'
+            }
+          }),
+        id
+      )
+      for (const themeName of ['dark', 'light']) {
+        await theme(themeName)
+        await win.waitForTimeout(300)
+        await shot(`${name}-${themeName}`)
+      }
+    }
     t.check('the look ran', true)
   } finally {
     await app.close()

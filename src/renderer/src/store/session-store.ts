@@ -473,6 +473,12 @@ interface SessionState {
   /** The server says a tab is nested under `under` now (null: it stands
    *  alone), whoever asked. The link alone: no move, no undo step. */
   applyServedNest: (id: string, under: string | null) => void
+  /** What the server answered when it would not nest a tab or take it out:
+   *  shown under that tab's row, which has just gone back to where it was,
+   *  until the sidebar clears it. The rule's own refusals never reach here:
+   *  the sidebar offers no such drop and no such menu entry. */
+  nestNotice: { id: string; message: string } | null
+  clearNestNotice: () => void
   renameSession: (id: string, name: string) => void
   autoRenameSession: (id: string, name: string) => void
   resetSessionName: (id: string) => void
@@ -1072,6 +1078,17 @@ type SidebarSnapshot = {
 
 /** What a nesting answered: done, or refused with the sentence to show. */
 export type NestOutcome = { ok: true } | { ok: false; error: string }
+
+/** The sentence a refused nesting shows under the tab's row (PRDCT-4997). The
+ *  server's own words when they are words, as the rule's and the host's
+ *  refusals are. An answer that carries an address or a path is a failure of
+ *  the road, not a refusal, and a row is no place for either: it is replaced. */
+export function nestNoticeOf(message: string): string {
+  const words = message.trim()
+  return words && words.length <= 200 && !/[/\\]|https?:/i.test(words)
+    ? words
+    : 'The server could not be asked: the tab stays where it was'
+}
 
 const MAX_SIDEBAR_UNDO = 50
 
@@ -2477,7 +2494,8 @@ export const useSessionStore = create<SessionState>((set) => ({
         ...(moved ? { groups: moved.groups, displayOrder: moved.displayOrder } : {}),
         sessions,
         expandedNests: { ...current.expandedNests, [root]: true },
-        sidebarUndoStack: pushSidebarSnapshot(current.sidebarUndoStack, snapshot)
+        sidebarUndoStack: pushSidebarSnapshot(current.sidebarUndoStack, snapshot),
+        nestNotice: null
       }
     })
     try {
@@ -2487,6 +2505,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       const message = err instanceof Error ? err.message : String(err)
       revertNest(id, previous, before, snapshot)
       console.error('[clave] nesting refused:', message)
+      set({ nestNotice: { id, message: nestNoticeOf(message) } })
       return { ok: false, error: message }
     }
   },
@@ -2514,7 +2533,8 @@ export const useSessionStore = create<SessionState>((set) => ({
       return {
         ...(moved ? { groups: moved.groups, displayOrder: moved.displayOrder } : {}),
         sessions: current.sessions.map((s) => (s.id === id ? { ...s, spawnedBy: undefined } : s)),
-        sidebarUndoStack: pushSidebarSnapshot(current.sidebarUndoStack, snapshot)
+        sidebarUndoStack: pushSidebarSnapshot(current.sidebarUndoStack, snapshot),
+        nestNotice: null
       }
     })
     try {
@@ -2524,9 +2544,14 @@ export const useSessionStore = create<SessionState>((set) => ({
       const message = err instanceof Error ? err.message : String(err)
       revertNest(id, previous, before, snapshot)
       console.error('[clave] nesting refused:', message)
+      set({ nestNotice: { id, message: nestNoticeOf(message) } })
       return { ok: false, error: message }
     }
   },
+
+  nestNotice: null,
+
+  clearNestNotice: () => set((state) => (state.nestNotice ? { nestNotice: null } : state)),
 
   applyServedNest: (id, under) =>
     set((state) => {

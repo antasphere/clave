@@ -3596,10 +3596,24 @@ body.reorder-dragging * {
   opacity: 0;
   pointer-events: none;
 }
+/* What the server answered when it would not nest a tab or take it out, under
+   that tab's row for a few seconds: the row has just gone back to where it
+   was, and this says why. Amber, the tone that asks the person to look. */
+.sidebar-row-note {
+  padding: 1px var(--sidebar-row-px) 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-status-waiting);
+  text-wrap: pretty;
+  animation: overlay-in 150ms var(--ease-out-expo);
+}
 @media (prefers-reduced-motion: reduce) {
   .sidebar-nest,
   .sidebar-nest-toggle > svg {
     transition: none;
+  }
+  .sidebar-row-note {
+    animation: none;
   }
 }
 .subagent-menu {

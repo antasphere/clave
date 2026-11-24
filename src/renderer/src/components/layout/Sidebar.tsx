@@ -250,6 +250,8 @@ export function Sidebar(): React.JSX.Element {
   const setNestExpanded = useSessionStore((s) => s.setNestExpanded)
   const nestSession = useSessionStore((s) => s.nestSession)
   const detachSession = useSessionStore((s) => s.detachSession)
+  const nestNotice = useSessionStore((s) => s.nestNotice)
+  const clearNestNotice = useSessionStore((s) => s.clearNestNotice)
   const addGroupTerminal = useSessionStore((s) => s.addGroupTerminal)
   const removeGroupTerminal = useSessionStore((s) => s.removeGroupTerminal)
   const setGroupTerminalSessionId = useSessionStore((s) => s.setGroupTerminalSessionId)
@@ -939,6 +941,21 @@ export function Sidebar(): React.JSX.Element {
     if (!root || baseWork.entryByAnchor.has(root) || baseWork.folded.has(root)) return
     if (!useSessionStore.getState().expandedNests[root]) setNestExpanded(root, true)
   }, [focusedSessionId, baseSubagents, baseWork, setNestExpanded])
+
+  // A nesting the server would not make puts the row back where it was and
+  // says why under it (PRDCT-4997): long enough to be read, then gone, so a
+  // sidebar never keeps an old refusal on show.
+  useEffect(() => {
+    if (!nestNotice) return
+    const timer = setTimeout(clearNestNotice, 7000)
+    return () => clearTimeout(timer)
+  }, [nestNotice, clearNestNotice])
+  const nestNoteFor = (id: string): React.JSX.Element | null =>
+    nestNotice?.id === id ? (
+      <div className="sidebar-row-note" role="status" data-nest-notice={id}>
+        {nestNotice.message}
+      </div>
+    ) : null
 
   // Live ref so row-facing handlers can read the current order without listing it
   // as a dependency. Keeping those handlers' identity stable lets the memoized row
@@ -2044,6 +2061,7 @@ export function Sidebar(): React.JSX.Element {
             dropIndicator.targetId === session.id
           }
         />
+        {nestNoteFor(session.id)}
         {nested?.length ? (
           <div className="sidebar-nest" data-open={open ? 'true' : undefined}>
             {/* The rows stay in the DOM while folded (the grid track animates
@@ -2055,23 +2073,25 @@ export function Sidebar(): React.JSX.Element {
             >
               <div className="sidebar-nest-rows">
                 {nested.map((child) => (
-                  <SessionItem
-                    key={child.id}
-                    session={child}
-                    nestedRoot={session.id}
-                    isSelected={representedSelection(child.id)}
-                    dimmed={hasSelection && !representedSelection(child.id)}
-                    onClick={(modifiers) => handleSessionClick(child.id, modifiers)}
-                    onContextMenu={(e) => handleSessionContextMenu(e, child.id)}
-                    grouped={!!inGroup}
-                    groupSelected={inGroup?.groupSelected}
-                    groupColorHex={inGroup?.groupColorHex}
-                    forceEditing={renamingId === child.id}
-                    onEditingDone={clearRenaming}
-                    onPointerDown={(e) => handlePointerDown(e, child.id, false)}
-                    isDragging={draggedIds.includes(child.id)}
-                    onDelete={() => setDeleteConfirmSessionId(child.id)}
-                  />
+                  <div key={child.id}>
+                    <SessionItem
+                      session={child}
+                      nestedRoot={session.id}
+                      isSelected={representedSelection(child.id)}
+                      dimmed={hasSelection && !representedSelection(child.id)}
+                      onClick={(modifiers) => handleSessionClick(child.id, modifiers)}
+                      onContextMenu={(e) => handleSessionContextMenu(e, child.id)}
+                      grouped={!!inGroup}
+                      groupSelected={inGroup?.groupSelected}
+                      groupColorHex={inGroup?.groupColorHex}
+                      forceEditing={renamingId === child.id}
+                      onEditingDone={clearRenaming}
+                      onPointerDown={(e) => handlePointerDown(e, child.id, false)}
+                      isDragging={draggedIds.includes(child.id)}
+                      onDelete={() => setDeleteConfirmSessionId(child.id)}
+                    />
+                    {nestNoteFor(child.id)}
+                  </div>
                 ))}
               </div>
             </div>

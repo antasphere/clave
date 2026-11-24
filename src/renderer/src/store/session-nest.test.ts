@@ -88,6 +88,7 @@ beforeEach(() => {
     groups: [group('g', ['lead', 'mate'])],
     displayOrder: ['g', 'other', 'loose', 'loose-child'],
     expandedNests: {},
+    nestNotice: null,
     sidebarUndoStack: [],
     selectedSessionIds: [],
     focusedSessionId: null
@@ -316,5 +317,57 @@ describe('what changes nothing', () => {
     expect(await useSessionStore.getState().detachSession('other')).toEqual({ ok: true })
     expect(calls).toEqual([])
     expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+  })
+})
+
+describe('what the row says when the server refuses', () => {
+  const notice = (): { id: string; message: string } | null => useSessionStore.getState().nestNotice
+
+  it('the server’s own sentence, under the tab that went back', async () => {
+    refuse = 'This session keeps no record, so where it is nested cannot be kept'
+    await useSessionStore.getState().nestSession('other', 'lead')
+    expect(notice()).toEqual({ id: 'other', message: refuse })
+  })
+
+  it('the same for a tab the server would not take out', async () => {
+    await useSessionStore.getState().nestSession('other', 'lead')
+    refuse = 'No session with id "other"'
+    await useSessionStore.getState().detachSession('other')
+    expect(notice()).toEqual({ id: 'other', message: refuse })
+    expect(linkOf('other')).toBe('lead')
+  })
+
+  it('never an address or a path: a failure of the road is said in plain words', async () => {
+    for (const raw of [
+      'request to http://127.0.0.1:43127/sessions/nest failed',
+      'ENOENT: no such file or directory, open /tmp/records/x.json',
+      '',
+      'x'.repeat(201)
+    ]) {
+      refuse = raw || ' '
+      await useSessionStore.getState().nestSession('other', 'lead')
+      expect(notice()).toEqual({
+        id: 'other',
+        message: 'The server could not be asked: the tab stays where it was'
+      })
+    }
+  })
+
+  it('is gone at the next nesting, and when the sidebar clears it', async () => {
+    refuse = 'Refused'
+    await useSessionStore.getState().nestSession('other', 'lead')
+    expect(notice()).not.toBeNull()
+    refuse = null
+    await useSessionStore.getState().nestSession('loose', 'lead')
+    expect(notice()).toBeNull()
+    refuse = 'Refused'
+    await useSessionStore.getState().nestSession('other', 'lead')
+    useSessionStore.getState().clearNestNotice()
+    expect(notice()).toBeNull()
+  })
+
+  it('never for a drop the rule itself refuses: nothing was asked', async () => {
+    await useSessionStore.getState().nestSession('lead', 'lead')
+    expect(notice()).toBeNull()
   })
 })
