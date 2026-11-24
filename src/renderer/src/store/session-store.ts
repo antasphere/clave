@@ -1212,17 +1212,44 @@ function presentedRootOf(sessions: Session[], id: string): string {
 /** Put back what a nesting the server refused had changed (PRDCT-4997): the
  *  layout, the tab's previous link, and the undo step it pushed, found by
  *  identity so a step pushed meanwhile stays. */
+/** The rows of a layout, in order: what a refusal compares to know whether
+ *  the person moved anything while the server was answering. */
+type NestLayout = { groups: SessionGroup[]; displayOrder: string[] }
+function sameRows(a: NestLayout, b: NestLayout): boolean {
+  if (a.groups === b.groups && a.displayOrder === b.displayOrder) return true
+  const rows = (l: NestLayout): string =>
+    JSON.stringify([l.displayOrder, l.groups.map((g) => [g.id, g.sessionIds])])
+  return rows(a) === rows(b)
+}
+
+/** What a refusal puts back (PRDCT-4997). The link, always: the server still
+ *  holds the old one, and the window never says what the server does not. The
+ *  layout too (`before`), but only while it still is as the refused step left
+ *  it (`after`): a row the person moved while the server was answering stays
+ *  where they put it. The refused step's own undo snapshot, when it left one,
+ *  goes with it. */
 function revertNest(
   id: string,
   previous: string | undefined,
-  layout: { groups: SessionGroup[]; displayOrder: string[] },
+  before: NestLayout & { selectedSessionIds?: string[]; focusedSessionId?: string | null },
+  after: NestLayout,
   snapshot: SidebarSnapshot | null
 ): void {
   useSessionStore.setState((state) => ({
-    groups: layout.groups,
-    displayOrder: layout.displayOrder,
+    ...(sameRows(state, after)
+      ? {
+          groups: before.groups,
+          displayOrder: before.displayOrder,
+          ...(before.selectedSessionIds ? { selectedSessionIds: before.selectedSessionIds } : {}),
+          ...(before.focusedSessionId !== undefined
+            ? { focusedSessionId: before.focusedSessionId }
+            : {})
+        }
+      : {}),
     sessions: state.sessions.map((s) => (s.id === id ? { ...s, spawnedBy: previous } : s)),
-    sidebarUndoStack: state.sidebarUndoStack.filter((snap) => snap !== snapshot)
+    sidebarUndoStack: snapshot
+      ? state.sidebarUndoStack.filter((snap) => snap !== snapshot)
+      : state.sidebarUndoStack
   }))
 }
 
@@ -2054,9 +2081,37 @@ export const useSessionStore = create<SessionState>((set) => ({
     }),
 
   undoSidebar: () => {
-    // The links an undo puts back (PRDCT-4997), told to the server once the
-    // layout is restored: a refusal is logged, the layout stays restored.
-    const relinked: Array<[string, string | undefined]> = []
+    const now = useSessionStore.getState()
+    const top = now.sidebarUndoStack[now.sidebarUndoStack.length - 1]
+    if (!top) return
+    // A link an undo would put back (PRDCT-4997) is checked against the tabs
+    // as they stand, by the rule the server applies: an agent may have nested
+    // or closed a tab since the step was made. A step that cannot be put back
+    // is spent, nothing moves, and the row says why.
+    const records = nestRecordsOf(now)
+    for (const [id, link] of top.nests ?? []) {
+      const subject = now.sessions.find((s) => s.id === id)
+      if (!subject || link === undefined || subject.spawnedBy === link) continue
+      const refusal = now.sessions.some((s) => s.id === link)
+        ? nestRefusal(records, id, link)
+        : 'The tab it was nested under is gone'
+      if (!refusal) continue
+      set({
+        sidebarUndoStack: now.sidebarUndoStack.slice(0, -1),
+        nestNotice: { id, message: nestNoticeOf(refusal) }
+      })
+      return
+    }
+    // The links the undo puts back are told to the server once the layout is
+    // restored. Each is kept with the link the tab had: a refusal puts that
+    // one back, and the layout with it (`revertNest`).
+    const before = {
+      groups: now.groups,
+      displayOrder: now.displayOrder,
+      selectedSessionIds: now.selectedSessionIds,
+      focusedSessionId: now.focusedSessionId
+    }
+    const relinked: Array<[id: string, link: string | undefined, had: string | undefined]> = []
     set((state) => {
       if (state.sidebarUndoStack.length === 0) return {}
       const snap = state.sidebarUndoStack[state.sidebarUndoStack.length - 1]
@@ -2088,7 +2143,7 @@ export const useSessionStore = create<SessionState>((set) => ({
             if (!nests.has(s.id)) return s
             const link = nests.get(s.id)
             if (s.spawnedBy === link) return s
-            relinked.push([s.id, link])
+            relinked.push([s.id, link, s.spawnedBy])
             return { ...s, spawnedBy: link }
           })
         : state.sessions
@@ -2099,12 +2154,16 @@ export const useSessionStore = create<SessionState>((set) => ({
         selectedSessionIds:
           selectedSessionIds.length > 0 ? selectedSessionIds : state.selectedSessionIds,
         sidebarUndoStack,
-        ...(relinked.length ? { sessions } : {})
+        ...(relinked.length ? { sessions, nestNotice: null } : {})
       }
     })
-    for (const [id, link] of relinked) {
+    const after = useSessionStore.getState()
+    for (const [id, link, had] of relinked) {
       nestApi.nest(id, link ?? null).catch((err: unknown) => {
-        console.error('[clave] nesting refused:', err instanceof Error ? err.message : String(err))
+        const message = err instanceof Error ? err.message : String(err)
+        revertNest(id, had, before, after, null)
+        console.error('[clave] nesting refused:', message)
+        set({ nestNotice: { id, message: nestNoticeOf(message) } })
       })
     }
   },
@@ -2498,12 +2557,13 @@ export const useSessionStore = create<SessionState>((set) => ({
         nestNotice: null
       }
     })
+    const after = useSessionStore.getState()
     try {
       await nestApi.nest(id, underId)
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      revertNest(id, previous, before, snapshot)
+      revertNest(id, previous, before, after, snapshot)
       console.error('[clave] nesting refused:', message)
       set({ nestNotice: { id, message: nestNoticeOf(message) } })
       return { ok: false, error: message }
@@ -2537,12 +2597,13 @@ export const useSessionStore = create<SessionState>((set) => ({
         nestNotice: null
       }
     })
+    const after = useSessionStore.getState()
     try {
       await nestApi.nest(id, null)
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      revertNest(id, previous, before, snapshot)
+      revertNest(id, previous, before, after, snapshot)
       console.error('[clave] nesting refused:', message)
       set({ nestNotice: { id, message: nestNoticeOf(message) } })
       return { ok: false, error: message }

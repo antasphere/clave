@@ -11,11 +11,15 @@ import type { Session, SessionGroup } from './session-types'
 
 const calls: Array<[string, string | null]> = []
 let refuse: string | null = null
+/** How long the server takes to answer, for the refusals that land late. */
+let answersAfterMs = 0
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, answersAfterMs + 5))
 
 vi.mock('../lib/nest-api', () => ({
   nestApi: {
     nest: vi.fn(async (id: string, under: string | null) => {
       calls.push([id, under])
+      if (answersAfterMs) await new Promise((r) => setTimeout(r, answersAfterMs))
       if (refuse) throw new Error(refuse)
     }),
     onNested: () => () => {}
@@ -74,6 +78,7 @@ const linkOf = (id: string): string | undefined =>
 beforeEach(() => {
   calls.length = 0
   refuse = null
+  answersAfterMs = 0
   vi.spyOn(console, 'error').mockImplementation(() => {})
   // The parent sits in a group; the tab to nest stands at the top level with
   // a tab of its own nested under it, which must follow it.
@@ -163,6 +168,39 @@ describe('nesting a tab under another', () => {
   })
 })
 
+describe('a refusal that answers late', () => {
+  it('keeps a move the person made meanwhile: the link goes back, the layout stays', async () => {
+    refuse = 'The server refused'
+    answersAfterMs = 20
+    const pending = useSessionStore.getState().nestSession('other', 'lead')
+    // While the server thinks, the person moves another row.
+    useSessionStore.getState().moveItems(['loose'], 'other', 'after')
+    const moved = useSessionStore.getState()
+    expect(await pending).toEqual({ ok: false, error: refuse })
+    expect(linkOf('other')).toBeUndefined()
+    expect(useSessionStore.getState().displayOrder).toEqual(moved.displayOrder)
+    expect(useSessionStore.getState().groups).toEqual(moved.groups)
+    // The refused nesting leaves no undo step; the move keeps its own.
+    expect(useSessionStore.getState().sidebarUndoStack).toHaveLength(1)
+    expect(useSessionStore.getState().nestNotice).toEqual({ id: 'other', message: refuse })
+  })
+
+  it('the same for a tab the server would not take out', async () => {
+    await useSessionStore.getState().nestSession('other', 'lead')
+    refuse = 'The server refused'
+    answersAfterMs = 20
+    const pending = useSessionStore
+      .getState()
+      .detachSession('other', { targetId: 'loose', position: 'before' })
+    useSessionStore.getState().moveItems(['mate'], 'lead', 'before')
+    const moved = useSessionStore.getState()
+    await pending
+    expect(linkOf('other')).toBe('lead')
+    expect(useSessionStore.getState().displayOrder).toEqual(moved.displayOrder)
+    expect(useSessionStore.getState().groups).toEqual(moved.groups)
+  })
+})
+
 describe('taking a tab out', () => {
   beforeEach(async () => {
     await useSessionStore.getState().nestSession('loose', 'lead')
@@ -249,13 +287,73 @@ describe('undo', () => {
     expect(calls).toEqual([['loose', 'lead']])
   })
 
-  it('logs a refused relink and keeps the layout restored', async () => {
+  it('puts the link and the layout back when the server refuses it, and the row says why', async () => {
     await useSessionStore.getState().nestSession('loose', 'lead')
-    refuse = 'Refused'
+    const nested = useSessionStore.getState()
+    refuse = 'This session keeps no record, so where it is nested cannot be kept'
     useSessionStore.getState().undoSidebar()
-    await new Promise((r) => setTimeout(r, 0))
-    expect(useSessionStore.getState().displayOrder).toEqual(['g', 'other', 'loose', 'loose-child'])
-    expect(console.error).toHaveBeenCalledWith('[clave] nesting refused:', 'Refused')
+    await settle()
+    // The server still holds the tab nested: the window says what the server says.
+    expect(linkOf('loose')).toBe('lead')
+    expect(useSessionStore.getState().displayOrder).toEqual(nested.displayOrder)
+    expect(useSessionStore.getState().groups).toEqual(nested.groups)
+    expect(useSessionStore.getState().nestNotice).toEqual({ id: 'loose', message: refuse })
+    expect(console.error).toHaveBeenCalledWith('[clave] nesting refused:', refuse)
+    // The step is spent: a second undo finds nothing of it.
+    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+  })
+
+  it('never puts back a link the rule now refuses: nothing moves, nothing is asked, the row says why', async () => {
+    // The person takes a tab out, then an agent nests its old parent under it.
+    await useSessionStore.getState().detachSession('loose-child')
+    useSessionStore.getState().applyServedNest('loose', 'loose-child')
+    calls.length = 0
+    const before = useSessionStore.getState()
+    useSessionStore.getState().undoSidebar()
+    await settle()
+    expect(calls).toEqual([])
+    expect(linkOf('loose-child')).toBeUndefined()
+    expect(linkOf('loose')).toBe('loose-child')
+    expect(useSessionStore.getState().displayOrder).toBe(before.displayOrder)
+    expect(useSessionStore.getState().groups).toBe(before.groups)
+    expect(useSessionStore.getState().nestNotice).toEqual({
+      id: 'loose-child',
+      message:
+        'That tab is nested under this one: take it out first, or nest this tab under another'
+    })
+    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+  })
+
+  it('never puts a tab back under a tab that is gone', async () => {
+    await useSessionStore.getState().detachSession('loose-child')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.filter((s) => s.id !== 'loose'),
+      displayOrder: state.displayOrder.filter((id) => id !== 'loose')
+    }))
+    calls.length = 0
+    useSessionStore.getState().undoSidebar()
+    await settle()
+    expect(calls).toEqual([])
+    expect(linkOf('loose-child')).toBeUndefined()
+    expect(useSessionStore.getState().nestNotice).toEqual({
+      id: 'loose-child',
+      message: 'The tab it was nested under is gone'
+    })
+    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+  })
+
+  it('refused late, keeps a move the person made meanwhile and puts the link back alone', async () => {
+    await useSessionStore.getState().nestSession('other', 'lead')
+    refuse = 'The server refused'
+    answersAfterMs = 20
+    useSessionStore.getState().undoSidebar()
+    // While the server thinks, the person moves another row.
+    useSessionStore.getState().moveItems(['loose'], 'other', 'before')
+    const moved = useSessionStore.getState()
+    await settle()
+    expect(linkOf('other')).toBe('lead')
+    expect(useSessionStore.getState().displayOrder).toEqual(moved.displayOrder)
+    expect(useSessionStore.getState().groups).toEqual(moved.groups)
   })
 
   it('a snapshot without nests restores the layout alone', () => {
