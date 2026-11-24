@@ -380,6 +380,11 @@ export function Sidebar(): React.JSX.Element {
     if (!dragged || !target) return false
     if (dragged.sessionType !== 'local' || target.sessionType !== 'local') return false
     if (ownerOf(draggedId) !== ownerOf(targetId)) return false
+    // A wave or lane entry is not a tab's row: it shows its members and their
+    // agents its own way and has no row to unfold, so nothing is dropped onto
+    // it and the menu does not offer it. An agent's tool may still nest a tab
+    // under a member, whose entry then lists it.
+    if (target.work) return false
     return nestRefusal(nestRecordsOf(state), draggedId, targetId) === null
   }, [])
 
