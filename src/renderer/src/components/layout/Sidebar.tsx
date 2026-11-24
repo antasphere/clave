@@ -116,7 +116,9 @@ import {
   WindowIcon,
   ArrowTopRightOnSquareIcon,
   GlobeAltIcon,
-  ChatBubbleLeftEllipsisIcon
+  ChatBubbleLeftEllipsisIcon,
+  ArrowUturnLeftIcon,
+  ArrowTurnDownRightIcon
 } from '@heroicons/react/24/outline'
 import { antigravitySettingField } from '../../lib/antigravity-setting-field'
 
@@ -1609,6 +1611,32 @@ export function Sidebar(): React.JSX.Element {
           onClick: () => createGroup(state.selectedSessionIds)
         })
       }
+      // Nesting from the menu (PRDCT-4997), the drag's two moves in words: a
+      // nested tab is taken out of the tab it is nested under; any other tab
+      // is offered the tabs it may be nested under, in the order they are
+      // drawn, and no entry at all when there is none.
+      if (subagentRootsRef.current.has(sessionId)) {
+        const parentId = session?.spawnedBy ?? subagentRootsRef.current.get(sessionId)
+        const parent = state.sessions.find((s) => s.id === parentId)
+        items.push({
+          label: `Detach from “${parent?.name ?? 'its tab'}”`,
+          icon: <ArrowUturnLeftIcon className="w-3.5 h-3.5" />,
+          onClick: () => void detachSession(sessionId)
+        })
+      } else {
+        const targets = nestTargetsRef.current.filter((id) => canNest(sessionId, id))
+        if (targets.length > 0) {
+          items.push({
+            label: 'Attach to',
+            icon: <ArrowTurnDownRightIcon className="w-3.5 h-3.5" />,
+            onClick: () => {},
+            submenu: targets.map((id) => ({
+              label: state.sessions.find((s) => s.id === id)?.name ?? id,
+              onClick: () => void nestSession(sessionId, id)
+            }))
+          })
+        }
+      }
       // A long-lived conversation, out of the sidebar (PRDCT-4190): the
       // selection when the row is part of it, else this row alone; only the
       // tabs whose conversation can come back after a reboot.
@@ -1695,7 +1723,10 @@ export function Sidebar(): React.JSX.Element {
       handleResumeSession,
       hideAgentSession,
       moveToWindowItems,
-      moveSessionToWindow
+      moveSessionToWindow,
+      canNest,
+      nestSession,
+      detachSession
     ]
   )
 
