@@ -369,11 +369,15 @@ interface SessionState {
    *  launched from the group's own `+` start on. */
   setGroupPrompt: (groupId: string, prompt: string | null) => void
   /** Move rows or groups relative to `targetId`; `null` = the top level, at
-   *  the end (the explicit ungroup). Rules in @clave/contract/sidebar/ops. */
+   *  the end (the explicit ungroup). Rules in @clave/contract/sidebar/ops.
+   *  `undo: false` leaves no undo step: for a placement the person did not
+   *  make (an agent's nesting on the window's road, PRDCT-4997), whose undo
+   *  would sit before their own last step. */
   moveItems: (
     itemIds: string[],
     targetId: string | null,
-    position: 'before' | 'after' | 'inside'
+    position: 'before' | 'after' | 'inside',
+    options?: { undo?: boolean }
   ) => void
   undoSidebar: () => void
   toggleSidebar: () => void
@@ -2082,7 +2086,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
     }),
 
-  moveItems: (itemIds, targetId, position) =>
+  moveItems: (itemIds, targetId, position, options) =>
     set((state) => {
       const owner = ownerOf(itemIds[0])
       if (itemIds.some((id) => ownerOf(id) !== owner) || (targetId && ownerOf(targetId) !== owner))
@@ -2108,7 +2112,10 @@ export const useSessionStore = create<SessionState>((set) => ({
         position
       )
       if (!next) return {}
-      const sidebarUndoStack = pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
+      const sidebarUndoStack =
+        options?.undo === false
+          ? state.sidebarUndoStack
+          : pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
       return { displayOrder: next.displayOrder, groups: next.groups, sidebarUndoStack }
     }),
 

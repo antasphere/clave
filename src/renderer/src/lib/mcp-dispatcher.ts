@@ -1346,7 +1346,9 @@ async function handleAttachSession(payload: Record<string, unknown>): Promise<un
         state.sessions.map((s) => ({ id: s.id, under: s.spawnedBy ?? null })),
         subject.id
       )
-      state.moveItems([subject.id, ...nested], parent.id, 'after')
+      // No undo step: the person did not make this move, and their Undo
+      // must reach their own last step, not an agent's placement.
+      state.moveItems([subject.id, ...nested], parent.id, 'after', { undo: false })
     } catch {
       // The link is written; where the row sits is left as it was.
     }

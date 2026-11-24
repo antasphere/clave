@@ -554,7 +554,10 @@ describe('clave_attach_session on the window road (PRDCT-4997)', () => {
       result: { sessionId: old, nestedUnder: lead, changed: true }
     })
     expect(sessionsNest).toHaveBeenCalledExactlyOnceWith(old, lead)
-    expect(moveItems).toHaveBeenCalledExactlyOnceWith([old, helper], lead, 'after')
+    // Placed without an undo step: the undo is the person's, never an agent's.
+    expect(moveItems).toHaveBeenCalledExactlyOnceWith([old, helper], lead, 'after', {
+      undo: false
+    })
   })
 
   it('takes a tab out with detach, and moves nothing', async () => {

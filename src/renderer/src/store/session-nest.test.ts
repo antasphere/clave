@@ -254,6 +254,25 @@ describe('what the server says and what moves with a tab', () => {
     expect(calls).toEqual([])
   })
 
+  it('places a tab for an agent without an undo step: the undo is the person’s', () => {
+    // The window's road of the agent tool places the tab it nested. A step
+    // the person never made must not sit on their undo: pressing it would
+    // move a row that is drawn under its parent wherever it sits, so nothing
+    // would seem to happen, and their own last step would wait behind it.
+    useSessionStore.getState().moveItems(['other'], 'loose', 'after')
+    const mine = useSessionStore.getState().sidebarUndoStack
+    expect(mine).toHaveLength(1)
+    useSessionStore.getState().moveItems(['mate'], 'other', 'after', { undo: false })
+    expect(useSessionStore.getState().displayOrder).toEqual([
+      'g',
+      'loose',
+      'other',
+      'mate',
+      'loose-child'
+    ])
+    expect(useSessionStore.getState().sidebarUndoStack).toBe(mine)
+  })
+
   it('moves a parent with the tabs nested under it', () => {
     useSessionStore.getState().moveItems(['loose'], 'lead', 'after')
     expect(useSessionStore.getState().groups.find((g) => g.id === 'g')?.sessionIds).toEqual([
