@@ -448,4 +448,42 @@ describe('who opened a server tab, named as this window names it (PRDCT-4193)', 
     expect(session?.openedBy).toBeUndefined()
     expect(session?.spawnedBy).toBeUndefined()
   })
+  // PRDCT-4997. A snapshot reaches the store through the preload, which scopes
+  // a record's `spawnedBy` to a key first (`scopeRecord`): the shape below is
+  // the one the app delivers. Keyed a second time it named no tab, and a
+  // server's nested tabs were never folded on a desktop.
+  it('takes a link the preload already scoped as it is, never keyed twice', () => {
+    const owner = `s-${serial}`
+    const nester = resourceKey('session', owner, 'nester-raw')
+    const a = withRecord(owner, { openedBy: 'opener-raw', spawnedBy: nester })
+    fleet.applyFleetSnapshot(a)
+    const session = store.useSessionStore.getState().sessions.find((s) => s.id === a.sessions[0].id)
+    expect(session?.spawnedBy).toBe(nester)
+    expect(session?.openedBy).toBe(resourceKey('session', owner, 'opener-raw'))
+    // Applied again (every `session.*` event re-reads the server): the same.
+    fleet.applyFleetSnapshot(a)
+    expect(
+      store.useSessionStore.getState().sessions.find((s) => s.id === a.sessions[0].id)?.spawnedBy
+    ).toBe(nester)
+  })
+  it('names a tab of the snapshot itself, so the sidebar can fold under it', () => {
+    const owner = `s-${serial}`
+    const base = withRecord(owner, {})
+    const parentId = base.sessions[0].id
+    const childId = resourceKey('session', owner, 'child-raw')
+    const a = {
+      ...base,
+      sessions: [...base.sessions, { ...base.sessions[0], id: childId }],
+      records: [
+        ...base.records,
+        // As the preload delivers it: the child's link is its parent's key.
+        { ...base.records[0], id: childId, spawnedBy: parentId }
+      ]
+    } as typeof base
+    fleet.applyFleetSnapshot(a)
+    const sessions = store.useSessionStore.getState().sessions
+    const child = sessions.find((s) => s.id === childId)
+    expect(child?.spawnedBy).toBe(parentId)
+    expect(sessions.some((s) => s.id === child?.spawnedBy)).toBe(true)
+  })
 })
