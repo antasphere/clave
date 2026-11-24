@@ -592,7 +592,9 @@ describe('the sessions’ server events', () => {
     { _tag: 'session.cleared', id: 's1', providerSessionId: null },
     { _tag: 'session.cleared', id: 's1', providerSessionId: 'c2' },
     { _tag: 'session.work_changed', id: 's1', work },
-    { _tag: 'session.work_changed', id: 's1', work: null }
+    { _tag: 'session.work_changed', id: 's1', work: null },
+    { _tag: 'session.nested', id: 's1', under: 's2' },
+    { _tag: 'session.nested', id: 's1', under: null }
   ]
   it.each(events.map((event) => [JSON.stringify(event), event]))('decodes %s', (_, event) => {
     expect(decode(ServerEvent, event)).toEqual(Either.right(event))
