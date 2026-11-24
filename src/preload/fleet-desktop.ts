@@ -25,6 +25,7 @@ import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
+import { nestAnswerError, nestRefusalMessage } from '../shared/nest-tools'
 import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { SpeakResult } from '../shared/speech'
@@ -1741,7 +1742,9 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (parent && parent.serverId !== owner)
         return Promise.reject(
           new Error(
-            'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+            nestRefusalMessage(
+              'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+            )
           )
         )
       const underWireId = parent ? parent.sessionId : null
@@ -1749,12 +1752,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         id,
         (wireId) => local.sessionsNest(wireId, underWireId),
         async (b, wireId) => {
-          // The rule's sentence as a plain Error, as this Mac's road gives it.
+          // The server's no as a plain Error marked as a refusal, as this
+          // Mac's road gives it.
           const result = await b.api.sessions.nest(wireId, underWireId).catch((error: unknown) => {
-            const tagged = error as { _tag?: unknown; message?: unknown } | null
-            throw tagged?._tag === 'NestRefused' && typeof tagged.message === 'string'
-              ? new Error(tagged.message)
-              : error
+            throw nestAnswerError(error)
           })
           refresh(owner)
           return {

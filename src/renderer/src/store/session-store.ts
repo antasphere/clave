@@ -13,7 +13,7 @@ import type { GitRangeDirection } from '../../../shared/git-range'
 import type { WorkAssignment } from '@clave/contract/work-rules'
 import { nestedUnder, nestRefusal, type NestRecord } from '@clave/contract/nest-rules'
 import { nestApi } from '../lib/nest-api'
-import { NEST_SERVER_NOT_NAMED } from '../../../shared/nest-tools'
+import { NEST_SERVER_NOT_NAMED, NestRefused } from '../../../shared/nest-tools'
 import { SERVER_SILENT } from '../../../shared/helper-preferences'
 import type {
   Theme,
@@ -1117,31 +1117,27 @@ type SidebarSnapshot = {
 /** What a nesting answered: done, or refused with the sentence to show. */
 export type NestOutcome = { ok: true } | { ok: false; error: string }
 
-/** What a failure of the road looks like in an error's words, as opposed to a
- *  refusal: an address, a path on a disk, a system's error code. A slash
- *  alone is not one: a refusal quotes names, and a lane is named freely
- *  ("Import/export"). */
-const ROAD_FAILURE =
-  /https?:\/\/|(?:^|[\s"'(:])\/[\w.-]+\/|[A-Za-z]:\\|\bE(?:NOENT|ACCES|PERM|EXIST|PIPE|CONN[A-Z]+|TIMEDOUT|HOSTUNREACH|NETUNREACH|NOTFOUND|ADDRINUSE|AI_AGAIN)\b|\b\d{1,3}(?:\.\d{1,3}){3}\b/
-
-/** The sentence a refused nesting shows under the tab's row (PRDCT-4997). The
- *  server's own words when they are words, as the rule's and the host's
- *  refusals are. An answer that carries an address or a path is a failure of
- *  the road, not a refusal, and a row is no place for either: it is replaced. */
-export function nestNoticeOf(message: string): string {
-  const words = message.trim()
-  return words && words.length <= 400 && !ROAD_FAILURE.test(words)
-    ? words
-    : 'The server could not be asked: the tab stays where it was'
-}
-
-/** Whether a nesting that failed was never answered, the server silent or
- *  not named yet or the road itself failing, as opposed to refused. Only then
- *  is the same step worth trying again: a refusal in words would be the same
- *  the next time. */
-export function nestCouldNotBeAsked(message: string): boolean {
-  const words = message.trim()
-  return words === SERVER_SILENT || words === NEST_SERVER_NOT_NAMED || nestNoticeOf(words) !== words
+/** What a nesting that did not happen comes down to (PRDCT-4997). A refusal
+ *  (`NestRefused`, the server's answer) says the server's own sentence under
+ *  the row, as it is: nothing is guessed from its words, which quote names a
+ *  person chose. Anything else is a call that was never answered. The app's
+ *  own two sentences for a server that is silent or not named yet are kept;
+ *  whatever else came back (an address, a path, a system's code) is not a
+ *  row's business, and one plain sentence stands for it. Only a call that
+ *  was never answered is worth making again: `refused` is what an undo reads
+ *  to know whether its step is spent. */
+const NEST_NOT_ASKED = 'The server could not be asked: the tab stays where it was'
+export function nestFailureOf(err: unknown): { refused: boolean; message: string; says: string } {
+  const message = (err instanceof Error ? err.message : String(err)).trim()
+  if (err instanceof NestRefused) {
+    const says = message.length > 400 ? `${message.slice(0, 399)}…` : message
+    return { refused: true, message, says: says || NEST_NOT_ASKED }
+  }
+  return {
+    refused: false,
+    message,
+    says: message === SERVER_SILENT || message === NEST_SERVER_NOT_NAMED ? message : NEST_NOT_ASKED
+  }
 }
 
 const MAX_SIDEBAR_UNDO = 50
@@ -2152,7 +2148,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       if (!refusal) continue
       set({
         sidebarUndoStack: now.sidebarUndoStack.slice(0, -1),
-        nestNotice: { id, message: nestNoticeOf(refusal) }
+        nestNotice: { id, message: refusal }
       })
       return
     }
@@ -2214,16 +2210,16 @@ export const useSessionStore = create<SessionState>((set) => ({
     const after = useSessionStore.getState()
     for (const [id, link, had] of relinked) {
       nestApi.nest(id, link ?? null).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err)
+        const failure = nestFailureOf(err)
         revertNest(id, had, before, after, null)
-        console.error('[clave] nesting refused:', message)
+        console.error('[clave] nesting refused:', failure.message)
         set((state) => ({
-          nestNotice: { id, message: nestNoticeOf(message) },
+          nestNotice: { id, message: failure.says },
           // Refused, the step is spent: asking again would be refused again.
           // Not answered at all, it is the person's to try again, so their
           // next Undo takes this step and never the older one behind it,
           // unless they did something else meanwhile, which then comes first.
-          ...(nestCouldNotBeAsked(message) && state.sidebarUndoStack === after.sidebarUndoStack
+          ...(!failure.refused && state.sidebarUndoStack === after.sidebarUndoStack
             ? { sidebarUndoStack: [...state.sidebarUndoStack, top] }
             : {})
         }))
@@ -2629,11 +2625,11 @@ export const useSessionStore = create<SessionState>((set) => ({
       await nestApi.nest(id, underId)
       return { ok: true }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const failure = nestFailureOf(err)
       revertNest(id, previous, before, after, snapshot)
-      console.error('[clave] nesting refused:', message)
-      set({ nestNotice: { id, message: nestNoticeOf(message) } })
-      return { ok: false, error: message }
+      console.error('[clave] nesting refused:', failure.message)
+      set({ nestNotice: { id, message: failure.says } })
+      return { ok: false, error: failure.message }
     }
   },
 
@@ -2669,11 +2665,11 @@ export const useSessionStore = create<SessionState>((set) => ({
       await nestApi.nest(id, null)
       return { ok: true }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const failure = nestFailureOf(err)
       revertNest(id, previous, before, after, snapshot)
-      console.error('[clave] nesting refused:', message)
-      set({ nestNotice: { id, message: nestNoticeOf(message) } })
-      return { ok: false, error: message }
+      console.error('[clave] nesting refused:', failure.message)
+      set({ nestNotice: { id, message: failure.says } })
+      return { ok: false, error: failure.message }
     }
   },
 

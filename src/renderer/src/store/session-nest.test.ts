@@ -8,9 +8,13 @@
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Session, SessionGroup } from './session-types'
+import { NestRefused } from '../../../shared/nest-tools'
 
 const calls: Array<[string, string | null]> = []
+/** The server answers no, with this sentence. */
 let refuse: string | null = null
+/** The server is never reached, and the call fails with these words. */
+let silent: string | null = null
 /** How long the server takes to answer, for the refusals that land late. */
 let answersAfterMs = 0
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, answersAfterMs + 5))
@@ -20,7 +24,10 @@ vi.mock('../lib/nest-api', () => ({
     nest: vi.fn(async (id: string, under: string | null) => {
       calls.push([id, under])
       if (answersAfterMs) await new Promise((r) => setTimeout(r, answersAfterMs))
-      if (refuse) throw new Error(refuse)
+      // As `nest-api.ts` throws them: the server's no is a `NestRefused`, a
+      // call that was never answered a plain Error.
+      if (refuse !== null) throw new NestRefused(refuse)
+      if (silent !== null) throw new Error(silent)
     }),
     onNested: () => () => {}
   }
@@ -78,6 +85,7 @@ const linkOf = (id: string): string | undefined =>
 beforeEach(() => {
   calls.length = 0
   refuse = null
+  silent = null
   answersAfterMs = 0
   vi.spyOn(console, 'error').mockImplementation(() => {})
   // The parent sits in a group; the tab to nest stands at the top level with
@@ -324,12 +332,12 @@ describe('undo', () => {
 
   it('that could not be asked keeps its step: pressing Undo again tries again', async () => {
     await useSessionStore.getState().nestSession('loose', 'lead')
-    for (const silent of [
+    for (const words of [
       "Clave's server did not answer. Try again in a moment.",
       'Clave server is not available',
       'request to http://127.0.0.1:43127/sessions/nest failed'
     ]) {
-      refuse = silent
+      silent = words
       useSessionStore.getState().undoSidebar()
       await settle()
       // Not done, and not lost: the tab is still nested and the step is still
@@ -338,7 +346,7 @@ describe('undo', () => {
       expect(useSessionStore.getState().sidebarUndoStack).toHaveLength(1)
       expect(useSessionStore.getState().sidebarUndoStack[0].nests).toEqual([['loose', undefined]])
     }
-    refuse = null
+    silent = null
     calls.length = 0
     useSessionStore.getState().undoSidebar()
     await settle()
@@ -349,7 +357,7 @@ describe('undo', () => {
 
   it('that could not be asked is let go when the person did something else meanwhile', async () => {
     await useSessionStore.getState().nestSession('loose', 'lead')
-    refuse = "Clave's server did not answer. Try again in a moment."
+    silent = "Clave's server did not answer. Try again in a moment."
     answersAfterMs = 20
     useSessionStore.getState().undoSidebar()
     useSessionStore.getState().moveItems(['other'], 'mate', 'after')
@@ -582,40 +590,62 @@ describe('what the row says when the server refuses', () => {
     expect(linkOf('other')).toBe('lead')
   })
 
-  it('never an address or a path: a failure of the road is said in plain words', async () => {
+  it('a call the server never answered is said in plain words, never an address or a path', async () => {
     for (const raw of [
       'request to http://127.0.0.1:43127/sessions/nest failed',
       'ENOENT: no such file or directory, open /tmp/records/x.json',
       'connect ECONNREFUSED 127.0.0.1:43127',
-      'C:\\Users\\someone\\records\\x.json is locked',
+      'socket hang up',
       '',
       'x'.repeat(401)
     ]) {
-      refuse = raw || ' '
+      silent = raw
       await useSessionStore.getState().nestSession('other', 'lead')
       expect(notice()).toEqual({
         id: 'other',
         message: 'The server could not be asked: the tab stays where it was'
       })
     }
+    // The app's own two sentences for a silent server are words for a row.
+    for (const own of [
+      "Clave's server did not answer. Try again in a moment.",
+      'Clave server is not available'
+    ]) {
+      silent = own
+      await useSessionStore.getState().nestSession('other', 'lead')
+      expect(notice()).toEqual({ id: 'other', message: own })
+    }
   })
 
-  it('a refusal that quotes a name with a slash in it is a refusal, said as it is', async () => {
-    // A lane is named freely: its name comes back inside the rule's sentence.
-    const refusal =
-      'This tab works on the lane "Import/export of the archive, CI/CD included", whose entry shows it. Take it out of the lane first (clave_set_work with action: "leave"), then nest it'
-    refuse = refusal
+  it('a refusal is said as the server said it, whatever names it quotes', async () => {
+    // A lane and a tab are named freely, and the rule's sentence quotes the
+    // name: one that reads like an address, a path or an error is still a
+    // refusal. Nothing is guessed from the words.
+    for (const name of ['Import/export, CI/CD', 'http://10.0.0.1/tmp/a/b', 'ENOENT /var/x/y']) {
+      const refusal = `This tab works on the lane "${name}", whose entry shows it. Take it out of the lane first (clave_set_work with action: "leave"), then nest it`
+      refuse = refusal
+      await useSessionStore.getState().nestSession('other', 'lead')
+      expect(notice()).toEqual({ id: 'other', message: refusal })
+      // And an undo it refuses is spent, as any refusal: asking again would
+      // be refused again, and the older steps would wait behind it for good.
+      refuse = null
+      await useSessionStore.getState().nestSession('other', 'lead')
+      refuse = refusal
+      useSessionStore.getState().undoSidebar()
+      await settle()
+      expect(linkOf('other')).toBe('lead')
+      expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+      refuse = null
+      await useSessionStore.getState().detachSession('other')
+      useSessionStore.setState({ sidebarUndoStack: [] })
+    }
+  })
+
+  it('a sentence too long for a row is cut', async () => {
+    refuse = `This tab works on the lane "${'x'.repeat(500)}"`
     await useSessionStore.getState().nestSession('other', 'lead')
-    expect(notice()).toEqual({ id: 'other', message: refusal })
-    // And an undo it refuses is spent, as any refusal in words: asking again
-    // would be refused again.
-    refuse = null
-    await useSessionStore.getState().nestSession('other', 'lead')
-    refuse = refusal
-    useSessionStore.getState().undoSidebar()
-    await settle()
-    expect(linkOf('other')).toBe('lead')
-    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
+    expect(notice()?.message).toHaveLength(400)
+    expect(notice()?.message.endsWith('…')).toBe(true)
   })
 
   it('is gone at the next nesting, and when the sidebar clears it', async () => {

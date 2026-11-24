@@ -6,15 +6,29 @@
  * server by mocking this one module.
  */
 
+import { NestRefused, nestRefusalIn } from '../../../shared/nest-tools'
+
 /** A nesting the server accepted, as it tells every window. */
 export interface NestedEvent {
   id: string
   under: string | null
 }
 
+/** What a call across the bridge threw, as this realm throws it: the server's
+ *  no as a `NestRefused` carrying its sentence, anything else (a call that
+ *  was never answered) as a plain Error with the words that came. What
+ *  crosses the bridge is not always an Error of this realm: the message is
+ *  kept, the rest is dropped. */
+export function nestErrorOf(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err)
+  const refusal = nestRefusalIn(message)
+  return refusal === null ? new Error(message) : new NestRefused(refusal)
+}
+
 export const nestApi = {
-  /** Nest `id` under `under`, or take it out with null. Throws an Error
-   *  carrying the refusal's sentence, or saying the bridge is missing. */
+  /** Nest `id` under `under`, or take it out with null. Throws a
+   *  `NestRefused` carrying the server's sentence when the server said no,
+   *  and a plain Error when it could not be asked (or the bridge is missing). */
   async nest(id: string, under: string | null): Promise<void> {
     const api = window.electronAPI
     if (!api?.sessionsNest)
@@ -22,9 +36,7 @@ export const nestApi = {
     try {
       await api.sessionsNest(id, under)
     } catch (err) {
-      // What crosses the bridge is not always an Error of this realm: the
-      // sentence is kept, the rest is dropped.
-      throw new Error(err instanceof Error ? err.message : String(err))
+      throw nestErrorOf(err)
     }
   },
   /** Hear every nesting the server accepted. A window whose bridge has no

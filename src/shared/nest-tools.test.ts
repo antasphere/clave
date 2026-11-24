@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { attachAnswer, attachRequest } from './nest-tools'
+import {
+  attachAnswer,
+  attachRequest,
+  nestAnswerError,
+  nestRefusalIn,
+  nestRefusalMessage,
+  NEST_TAB_GONE
+} from './nest-tools'
 
 /** `clave_attach_session`'s arguments and answer (PRDCT-4997), read the same
  *  way on every road. */
@@ -45,5 +52,38 @@ describe('the answer', () => {
       nestedUnder: null,
       changed: false
     })
+  })
+})
+
+describe('a refusal across the bridge', () => {
+  const tagged = (tag: string, message: string, more: object = {}): Error =>
+    Object.assign(new Error(message), { _tag: tag, ...more })
+
+  it('is the server’s sentence, marked, and read back as it was', () => {
+    const sentence = 'This tab works on the lane "http://10.0.0.1/tmp/ENOENT", whose entry shows it'
+    expect(nestRefusalIn(nestRefusalMessage(sentence))).toBe(sentence)
+    expect(nestRefusalIn(sentence)).toBeNull()
+    expect(nestRefusalIn('')).toBeNull()
+  })
+
+  it('marks the three answers that are a no', () => {
+    const read = (error: unknown): string | null =>
+      nestRefusalIn((nestAnswerError(error) as Error).message)
+    expect(read(tagged('NestRefused', 'A tab cannot be nested under itself'))).toBe(
+      'A tab cannot be nested under itself'
+    )
+    expect(read(tagged('SessionNotFound', '{ "id": "x" }', { id: 'x' }))).toBe(NEST_TAB_GONE)
+    expect(read(tagged('CapabilityUnavailable', 'This server has no terminals'))).toBe(
+      'This server has no terminals'
+    )
+  })
+
+  it('leaves a call that was never answered as it came', () => {
+    const silent = new Error('socket hang up')
+    expect(nestAnswerError(silent)).toBe(silent)
+    const unreachable = tagged('ServerUnreachable', 'connect ECONNREFUSED 127.0.0.1:43127')
+    expect(nestAnswerError(unreachable)).toBe(unreachable)
+    expect(nestAnswerError('a string')).toBe('a string')
+    expect(nestAnswerError(null)).toBeNull()
   })
 })

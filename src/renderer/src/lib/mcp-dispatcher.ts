@@ -67,6 +67,7 @@ import {
 } from '../../../shared/work-tools'
 import { ATTACH_SESSION_NEEDS_TAB, attachAnswer, attachRequest } from '../../../shared/nest-tools'
 import { nestedUnder } from '@clave/contract/nest-rules'
+import { nestErrorOf } from './nest-api'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
 import type { CodexModels } from './launch-options-input'
@@ -1338,7 +1339,13 @@ async function handleAttachSession(payload: Record<string, unknown>): Promise<un
     throw new Error(
       'The two tabs are on different machines: a tab is nested under a tab of its own machine'
     )
-  const result = await window.electronAPI.sessionsNest(subject.id, parent ? parent.id : null)
+  // A refusal crosses the bridge marked (`nest-api.ts`): the agent reads the
+  // server's sentence, as on the other roads.
+  const result = await window.electronAPI
+    .sessionsNest(subject.id, parent ? parent.id : null)
+    .catch((err: unknown) => {
+      throw nestErrorOf(err)
+    })
   if (parent) {
     try {
       const state = useSessionStore.getState()

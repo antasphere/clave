@@ -20,6 +20,7 @@ const globals = vi.hoisted(() => {
 })
 import { useLaunchProfileStore } from '../store/launch-profile-store'
 import type { LaunchProfile, LaunchProfilePreferences } from '../../../shared/agent-launch'
+import { nestRefusalMessage } from '../../../shared/nest-tools'
 
 /* The window road of clave_open_session: the renderer's own executor, the one
    a Mac with a saved server connection runs every open through (and the only
@@ -588,10 +589,17 @@ describe('clave_attach_session on the window road (PRDCT-4997)', () => {
   })
 
   it('answers the server’s refusal in its words, and refuses a call with no tab', async () => {
-    sessionsNest.mockRejectedValueOnce(new Error('A tab cannot be nested under itself'))
+    // The refusal crosses the bridge marked: the agent reads the sentence alone.
+    sessionsNest.mockRejectedValueOnce(
+      new Error(nestRefusalMessage('A tab cannot be nested under itself'))
+    )
     const refused = await dispatch('attachSession', { callerSessionId: lead, to: 'mine' })
     expect(refused).toMatchObject({ ok: false, error: 'A tab cannot be nested under itself' })
     expect(moveItems).not.toHaveBeenCalled()
+    // A call that was never answered is said as it came.
+    sessionsNest.mockRejectedValueOnce(new Error("Clave's server did not answer."))
+    const silent = await dispatch('attachSession', { callerSessionId: lead, to: 'mine' })
+    expect(silent).toMatchObject({ ok: false, error: "Clave's server did not answer." })
     const anonymous = await dispatch('attachSession', { sessionId: old, to: lead })
     expect(anonymous.ok).toBe(false)
     expect(anonymous.error).toMatch(/no tab identity/)

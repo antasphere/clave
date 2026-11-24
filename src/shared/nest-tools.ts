@@ -27,6 +27,46 @@ export const ATTACH_SESSION_ARGS = {
  *  other road. Not a refusal: the same call can be made again. */
 export const NEST_SERVER_NOT_NAMED = 'Clave server is not available'
 
+/**
+ * A nesting the server ANSWERED with a no, as opposed to one it never
+ * answered (a server silent, not named yet, a road that failed). The two are
+ * told apart where the answer is known, in the preload, by the error's tag.
+ * An Error crossing the context bridge keeps its message and nothing else, so
+ * the answer travels in the message, marked: `nestRefusalMessage` on the way
+ * out, `nestRefusalIn` on the way in. Nothing is read off the sentence's own
+ * words, which quote names a person chose (a lane called "Import/export", a
+ * tab named after a path).
+ */
+export const NEST_REFUSAL_MARK = '[nest refused] '
+export const nestRefusalMessage = (sentence: string): string => NEST_REFUSAL_MARK + sentence
+/** The server's sentence when `message` is a marked refusal, else null. */
+export function nestRefusalIn(message: string): string | null {
+  return message.startsWith(NEST_REFUSAL_MARK) ? message.slice(NEST_REFUSAL_MARK.length) : null
+}
+/** What a tab the server no longer knows is answered with: the declared
+ *  not-found carries an id and no sentence of its own. */
+export const NEST_TAB_GONE = 'That tab is gone'
+
+/** The refusal as the renderer throws and catches it, once unmarked. */
+export class NestRefused extends Error {
+  override readonly name = 'NestRefused'
+}
+
+/** The error a tagged answer of the server becomes on its way to a window:
+ *  a refusal marked with its sentence, anything else as it came. The three
+ *  answers that are a no: the rule's or the host's refusal, a tab that is
+ *  gone, a server that says it has no such command. */
+export function nestAnswerError(error: unknown): unknown {
+  const tagged = error as { _tag?: unknown; message?: unknown } | null
+  if (!tagged || typeof tagged !== 'object') return error
+  if (tagged._tag === 'NestRefused' && typeof tagged.message === 'string')
+    return new Error(nestRefusalMessage(tagged.message))
+  if (tagged._tag === 'SessionNotFound') return new Error(nestRefusalMessage(NEST_TAB_GONE))
+  if (tagged._tag === 'CapabilityUnavailable' && typeof tagged.message === 'string')
+    return new Error(nestRefusalMessage(tagged.message))
+  return error
+}
+
 /** The refusal of a call that carries no tab identity. */
 export const ATTACH_SESSION_NEEDS_TAB = `${ATTACH_SESSION_TOOL} must be called from inside a Clave agent tab — this request has no tab identity.`
 

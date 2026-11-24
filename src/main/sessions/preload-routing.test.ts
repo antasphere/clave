@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nestRefusalIn } from '../../shared/nest-tools'
 import type { ElectronAPI } from '../../preload/index.d'
 import type { SessionInput } from '../../shared/session-model'
 
@@ -990,7 +991,7 @@ describe('nesting a tab under another goes to the server alone (PRDCT-4997)', ()
     expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([])
   })
 
-  it('a refusal reaches the window as a plain Error carrying the rule’s sentence', async () => {
+  it('a refusal reaches the window as a plain Error carrying the rule’s sentence, marked as a refusal', async () => {
     answer(onServer)
     const words = 'The two tabs are in different windows: move the tab into the other window first'
     mocks.sessions.nest = vi.fn(async () => {
@@ -998,8 +999,37 @@ describe('nesting a tab under another goes to the server alone (PRDCT-4997)', ()
     })
     const error = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
     expect(error).toBeInstanceOf(Error)
-    expect((error as Error).message).toBe(words)
+    // The mark is what tells the window the server answered: the message is
+    // all an Error keeps across the context bridge.
+    expect(nestRefusalIn((error as Error).message)).toBe(words)
     expect(error).not.toHaveProperty('_tag')
+  })
+
+  it('a tab the server no longer knows, and a server with no such command, are answers too', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async () => {
+      throw Object.assign(new Error('{ "id": "s1" }'), { _tag: 'SessionNotFound', id: 's1' })
+    })
+    const gone = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    // A sentence, never the not-found's own payload.
+    expect(nestRefusalIn((gone as Error).message)).toBe('That tab is gone')
+    mocks.sessions.nest = vi.fn(async () => {
+      throw Object.assign(new Error('This server has no terminals'), {
+        _tag: 'CapabilityUnavailable',
+        capability: 'sessions'
+      })
+    })
+    const without = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(nestRefusalIn((without as Error).message)).toBe('This server has no terminals')
+  })
+
+  it('a call the server never answered crosses as it came, unmarked', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async () => {
+      throw new Error('socket hang up')
+    })
+    const error = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(nestRefusalIn((error as Error).message)).toBeNull()
   })
 
   it('hears session.nested off the push channel, a detach as null', async () => {

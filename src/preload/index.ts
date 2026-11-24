@@ -30,7 +30,7 @@ import {
   type HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
-import { NEST_SERVER_NOT_NAMED } from '../shared/nest-tools'
+import { NEST_SERVER_NOT_NAMED, nestAnswerError } from '../shared/nest-tools'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
@@ -249,13 +249,11 @@ const refusalOf = (error: unknown): ServerRefusal | null => {
 const tellRefusal = (refusal: ServerRefusal | null): void => {
   for (const listener of refusalListeners) listener(refusal)
 }
-/** A nesting the records refused (PRDCT-4997), as a plain Error whose message
- *  is the rule's sentence; anything else is thrown as it came. */
+/** A nesting the server answered with a no (PRDCT-4997), as a plain Error
+ *  whose message is the sentence, marked as a refusal (`nestAnswerError`);
+ *  anything else is thrown as it came. */
 const plainNestRefusal = (error: unknown): never => {
-  const tagged = error as { _tag?: unknown; message?: unknown } | null
-  if (tagged && tagged._tag === 'NestRefused' && typeof tagged.message === 'string')
-    throw new Error(tagged.message)
-  throw error
+  throw nestAnswerError(error)
 }
 /** `serverRouter.route`, with the refusal relay around every routed call. */
 const viaServer = <A extends unknown[], R>(
@@ -1561,8 +1559,9 @@ const electronAPI = {
 
   // ── PRDCT-4997: which tab a tab is nested under, on its record ──
   // The server's command alone, as the work's. A refusal reaches the window
-  // as a plain Error carrying the rule's sentence: a tagged error keeps only
-  // its message across the context bridge, and a plain one is sure to.
+  // as a plain Error carrying the server's sentence, marked as a refusal: a
+  // tagged error keeps only its message across the context bridge, and a
+  // plain one is sure to.
   sessionsNest: viaServer<[string, string | null], NestResult>({
     ipc: () => Promise.reject(new Error(NEST_SERVER_NOT_NAMED)),
     server: ({ api }, id, under) => api.sessions.nest(id, under).catch(plainNestRefusal)
