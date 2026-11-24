@@ -20,8 +20,7 @@ import {
   workStateLabel
 } from '../../lib/work-words'
 import { SidebarTabItem } from './SidebarTabItem'
-import { SessionStatus } from './SessionItem'
-import type { SessionMenuEvent } from './SubagentMenu'
+import { SessionStatus, type SessionMenuEvent } from './SessionItem'
 
 /**
  * A wave or a lane in the sidebar (PRDCT-4123): one stable row for a unit of

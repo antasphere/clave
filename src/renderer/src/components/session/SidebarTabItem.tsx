@@ -44,6 +44,11 @@ export interface SidebarTabItemProps {
   onEditingDone?: () => void
 
   // Drag and drop
+  /** The tab this row is drawn under, for a nested row (PRDCT-4997): the
+   *  drag reads it as standing for that tab. */
+  nestedRoot?: string
+  /** The row a dragged tab would be nested under right now. */
+  dropOnto?: boolean
   onPointerDown?: (e: React.PointerEvent) => void
   isDragging?: boolean
 }
@@ -68,7 +73,9 @@ export function SidebarTabItem({
   forceEditing,
   onEditingDone,
   onPointerDown,
-  isDragging
+  isDragging,
+  nestedRoot,
+  dropOnto
 }: SidebarTabItemProps): React.JSX.Element {
   const {
     editing,
@@ -103,6 +110,7 @@ export function SidebarTabItem({
       className={cn('relative', rowControl && 'subagent-session-row')}
       data-sidebar-item-id={id}
       data-sidebar-item-type="session"
+      data-sidebar-nested-root={nestedRoot}
       onPointerDown={!editing ? onPointerDown : undefined}
     >
       <button
@@ -110,6 +118,7 @@ export function SidebarTabItem({
         onContextMenu={onContextMenu}
         onKeyDown={renameable ? handleButtonKeyDown : undefined}
         title={title}
+        data-drop-onto={dropOnto ? 'true' : undefined}
         data-selected={
           isSelected && (!grouped || (!!rowControl && !groupSelected)) ? 'true' : undefined
         }

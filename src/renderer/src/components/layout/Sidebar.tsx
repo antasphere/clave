@@ -9,6 +9,8 @@ import {
   GROUP_TERMINAL_COLORS,
   resolveColorHex,
   inActiveWorkspace,
+  nestRecordsOf,
+  type Session,
   type GroupTerminalColor
 } from '../../store/session-store'
 import { subagentPresentation } from '../../lib/subagent-presentation'
@@ -16,8 +18,7 @@ import { entryTarget, workPresentation } from '../../lib/work-presentation'
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import ColorPicker from '../ui/ColorPicker'
-import type { SessionMenuEvent } from '../session/SubagentMenu'
-import { SessionItem as BaseSessionItem } from '../session/SessionItem'
+import { SessionItem as BaseSessionItem, type SessionMenuEvent } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
 import { WorkEntryItem } from '../session/WorkEntryItem'
@@ -60,7 +61,8 @@ import {
 import { PinnedGroupsGrid } from '../session/PinnedGroupsGrid'
 import { GroupPickerDialog } from '../session/GroupPickerDialog'
 import { useHistoryStore } from '../../store/history-store'
-import { useSidebarDnd } from '../../hooks/use-sidebar-dnd'
+import { useSidebarDnd, type DropPosition } from '../../hooks/use-sidebar-dnd'
+import { nestRefusal } from '@clave/contract/nest-rules'
 import { SidebarFooter, UpdateBanner } from './SidebarFooter'
 import { OngoingShelf } from '../ongoing/OngoingShelf'
 import { useOngoingStore } from '../../store/ongoing-store'
@@ -240,6 +242,12 @@ export function Sidebar(): React.JSX.Element {
   const setGroupView = useSessionStore((s) => s.setGroupView)
   const setActiveGroupView = useSessionStore((s) => s.setActiveGroupView)
   const moveItems = useSessionStore((s) => s.moveItems)
+  // The nested tabs (PRDCT-4997): which nests are open, and the two moves.
+  const expandedNests = useSessionStore((s) => s.expandedNests)
+  const toggleNest = useSessionStore((s) => s.toggleNest)
+  const setNestExpanded = useSessionStore((s) => s.setNestExpanded)
+  const nestSession = useSessionStore((s) => s.nestSession)
+  const detachSession = useSessionStore((s) => s.detachSession)
   const addGroupTerminal = useSessionStore((s) => s.addGroupTerminal)
   const removeGroupTerminal = useSessionStore((s) => s.removeGroupTerminal)
   const setGroupTerminalSessionId = useSessionStore((s) => s.setGroupTerminalSessionId)
@@ -358,11 +366,42 @@ export function Sidebar(): React.JSX.Element {
     [pinOrShowPin]
   )
 
+  // Which tabs a dragged tab may be nested under (PRDCT-4997): two tabs of the
+  // same machine, and the rule's yes on the store's records, the same records
+  // the store asks before it nests. A file tab or a group never nests.
+  const canNest = useCallback((draggedId: string, targetId: string): boolean => {
+    const state = useSessionStore.getState()
+    const dragged = state.sessions.find((s) => s.id === draggedId)
+    const target = state.sessions.find((s) => s.id === targetId)
+    if (!dragged || !target) return false
+    if (dragged.sessionType !== 'local' || target.sessionType !== 'local') return false
+    if (ownerOf(draggedId) !== ownerOf(targetId)) return false
+    return nestRefusal(nestRecordsOf(state), draggedId, targetId) === null
+  }, [])
+
+  // A drop onto a row nests the tab; a nested tab dropped between two rows is
+  // taken out and placed there; anything else moves as it always did.
+  const handleDrop = useCallback(
+    (ids: string[], targetId: string, position: DropPosition) => {
+      if (position === 'onto') {
+        void nestSession(ids[0], targetId)
+        return
+      }
+      if (subagentRootsRef.current.has(ids[0])) {
+        void detachSession(ids[0], { targetId, position })
+        return
+      }
+      moveItems(ids, targetId, position)
+    },
+    [nestSession, detachSession, moveItems]
+  )
+
   // Pointer-based DnD
   const { isDragging, draggedIds, dropIndicator, isOverPinnedZone, handlePointerDown } =
     useSidebarDnd({
       containerRef: scrollContainerRef,
-      moveItems,
+      onDrop: handleDrop,
+      canNest,
       pinnedZoneRef,
       onPinnedDrop: handlePinnedDrop
     })
@@ -727,9 +766,36 @@ export function Sidebar(): React.JSX.Element {
     () => sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
     [sessions, activeWorkspaceId]
   )
+  // The nests as they stand, with no tab lifted out for a rename.
+  const baseSubagents = useMemo(
+    () => subagentPresentation(workspaceSessions, reachableRows),
+    [workspaceSessions, reachableRows]
+  )
+  const baseWork = useMemo(
+    () => workPresentation(workspaceSessions, reachableRows, baseSubagents.descendants),
+    [workspaceSessions, reachableRows, baseSubagents]
+  )
+  // A nested tab is renamed in its own row when that row is in sight (its
+  // nest is open under a tab drawn as a row, PRDCT-4998); otherwise, folded
+  // or inside a wave or lane entry, it is lifted out as a row of its own for
+  // the rename, as before.
+  const renamingRoot = renamingId ? baseSubagents.rootById.get(renamingId) : undefined
+  const editableRootId =
+    renamingId &&
+    !(
+      renamingRoot &&
+      expandedNests[renamingRoot] &&
+      !baseWork.entryByAnchor.has(renamingRoot) &&
+      !baseWork.folded.has(renamingRoot)
+    )
+      ? renamingId
+      : null
   const subagents = useMemo(
-    () => subagentPresentation(workspaceSessions, reachableRows, renamingId),
-    [workspaceSessions, reachableRows, renamingId]
+    () =>
+      editableRootId
+        ? subagentPresentation(workspaceSessions, reachableRows, editableRootId)
+        : baseSubagents,
+    [workspaceSessions, reachableRows, editableRootId, baseSubagents]
   )
   // The wave and lane entries (PRDCT-4123): one row per unit of work, read
   // from the sessions' own assignments, its members and their agents folded
@@ -767,9 +833,20 @@ export function Sidebar(): React.JSX.Element {
       ) ?? null,
     [scopedItems, subagents, work]
   )
+  // The tabs drawn as rows under a tab's row (PRDCT-4998): those of a tab
+  // drawn as a row of its own, never of a wave or lane entry, which shows its
+  // agents its own way. Empty when it has none.
+  const nestedRowsOf = (id: string): Session[] | undefined =>
+    work.entryByAnchor.has(id) ? undefined : subagents.descendants.get(id)
   const representedSelection = (id: string): boolean => {
     if (selectedSessionIds.includes(id)) return true
-    if (subagents.descendants.get(id)?.some((s) => selectedSessionIds.includes(s.id))) return true
+    // A folded nest lights its parent for a selected tab inside it; an open
+    // one shows that tab's own row selected, and the parent only for itself.
+    if (
+      !(expandedNests[id] && nestedRowsOf(id)) &&
+      subagents.descendants.get(id)?.some((s) => selectedSessionIds.includes(s.id))
+    )
+      return true
     const entry = work.entryByAnchor.get(id)
     return (
       !!entry &&
@@ -783,30 +860,83 @@ export function Sidebar(): React.JSX.Element {
     if (filteredSessions) return filteredSessions.map((s) => s.id)
     if (!visibleItems) return sessions.map((s) => s.id)
     const order: string[] = []
+    // A row, then the rows of its nest when that nest is open (PRDCT-4998),
+    // in the order they are drawn; a folded nest's rows stay out.
+    const pushRow = (id: string): void => {
+      const entry = work.entryByAnchor.get(id)
+      if (entry) {
+        order.push(entryTarget(entry))
+        return
+      }
+      order.push(id)
+      if (expandedNests[id]) order.push(...(subagents.descendants.get(id) ?? []).map((s) => s.id))
+    }
     for (const item of visibleItems) {
       if (item.type === 'session') {
-        const entry = work.entryByAnchor.get(item.sessionId)
-        order.push(entry ? entryTarget(entry) : item.sessionId)
+        pushRow(item.sessionId)
       } else if (item.type === 'fileTab') {
         order.push(item.fileTabId)
       } else {
         const group = groups.find((g) => g.id === item.groupId)
         if (group && !group.collapsed)
-          order.push(
-            ...group.sessionIds
-              .filter(
-                (id) =>
-                  !subagents.rootById.has(id) && !work.folded.has(id) && !linkedHiddenIds.has(id)
-              )
-              .map((id) => {
-                const entry = work.entryByAnchor.get(id)
-                return entry ? entryTarget(entry) : id
-              })
-          )
+          group.sessionIds
+            .filter(
+              (id) =>
+                !subagents.rootById.has(id) && !work.folded.has(id) && !linkedHiddenIds.has(id)
+            )
+            .forEach(pushRow)
       }
     }
     return order
-  }, [filteredSessions, visibleItems, sessions, groups, subagents, work, linkedHiddenIds])
+  }, [
+    filteredSessions,
+    visibleItems,
+    sessions,
+    groups,
+    subagents,
+    work,
+    linkedHiddenIds,
+    expandedNests
+  ])
+
+  // The tabs this view draws at the top of a nest, in the order they are
+  // drawn: what a tab's menu offers to nest it under (PRDCT-4997).
+  const nestTargets = useMemo(() => {
+    if (!visibleItems) return []
+    const out: string[] = []
+    const take = (id: string): void => {
+      if (sessionsById.has(id) && !work.entryByAnchor.has(id)) out.push(id)
+    }
+    for (const item of visibleItems) {
+      if (item.type === 'session') take(item.sessionId)
+      else if (item.type === 'group') {
+        const group = groups.find((g) => g.id === item.groupId)
+        if (group && !group.collapsed)
+          group.sessionIds
+            .filter(
+              (id) =>
+                !subagents.rootById.has(id) && !work.folded.has(id) && !linkedHiddenIds.has(id)
+            )
+            .forEach(take)
+      }
+    }
+    return out
+  }, [visibleItems, groups, subagents, work, linkedHiddenIds, sessionsById])
+  const nestTargetsRef = useRef(nestTargets)
+  nestTargetsRef.current = nestTargets
+
+  // The focused tab is always in sight: when it becomes a tab whose nest is
+  // folded, that nest opens, once per change of focus, so the person can
+  // still fold it again (PRDCT-4998).
+  const nestFocusRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (focusedSessionId === nestFocusRef.current) return
+    nestFocusRef.current = focusedSessionId
+    if (!focusedSessionId) return
+    const root = baseSubagents.rootById.get(focusedSessionId)
+    if (!root || baseWork.entryByAnchor.has(root) || baseWork.folded.has(root)) return
+    if (!useSessionStore.getState().expandedNests[root]) setNestExpanded(root, true)
+  }, [focusedSessionId, baseSubagents, baseWork, setNestExpanded])
 
   // Live ref so row-facing handlers can read the current order without listing it
   // as a dependency. Keeping those handlers' identity stable lets the memoized row
@@ -1732,9 +1862,13 @@ export function Sidebar(): React.JSX.Element {
       if (modifiers.shiftKey) {
         // Range select from anchor
         const anchor = selectionAnchorRef.current
+        // A nested tab anchors as itself while its row is in sight (an open
+        // nest), and as the tab it is drawn under once that nest is folded.
         const anchorId = anchor
           ? (workRepresentedRef.current.get(anchor) ??
-            subagentRootsRef.current.get(anchor) ??
+            (flatSessionOrderRef.current.includes(anchor)
+              ? anchor
+              : subagentRootsRef.current.get(anchor)) ??
             anchor)
           : null
         if (!anchorId) {
@@ -1844,6 +1978,78 @@ export function Sidebar(): React.JSX.Element {
     []
   )
 
+  /** A tab's row, and under it the tabs nested under it as rows of their own
+   *  (PRDCT-4998), folded behind the count on its row unless its nest is
+   *  open. The same at the top level and inside a group, where the nested
+   *  rows take their parent's group look. */
+  const renderSessionRow = (
+    session: Session,
+    inGroup?: { groupSelected: boolean; groupColorHex: string | undefined }
+  ): React.JSX.Element => {
+    const nested = nestedRowsOf(session.id)
+    const open = !!expandedNests[session.id]
+    return (
+      <>
+        <SessionItem
+          session={session}
+          isSelected={representedSelection(session.id)}
+          dimmed={hasSelection && !representedSelection(session.id)}
+          onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
+          onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
+          grouped={!!inGroup}
+          groupSelected={inGroup?.groupSelected}
+          groupColorHex={inGroup?.groupColorHex}
+          forceEditing={renamingId === session.id}
+          onEditingDone={clearRenaming}
+          onPointerDown={(e) => handlePointerDown(e, session.id, false)}
+          isDragging={draggedIds.includes(session.id)}
+          onDelete={() => setDeleteConfirmSessionId(session.id)}
+          nested={nested}
+          nestOpen={open}
+          onToggleNest={() => toggleNest(session.id)}
+          dropOnto={
+            isDragging &&
+            dropIndicator?.position === 'onto' &&
+            dropIndicator.targetId === session.id
+          }
+        />
+        {nested?.length ? (
+          <div className="sidebar-nest" data-open={open ? 'true' : undefined}>
+            {/* The rows stay in the DOM while folded (the grid track animates
+                to 0); the drag hit-test reads this to ignore them. */}
+            <div
+              className="sidebar-nest-clip"
+              data-nest-collapsed={open ? undefined : 'true'}
+              inert={!open}
+            >
+              <div className="sidebar-nest-rows">
+                {nested.map((child) => (
+                  <SessionItem
+                    key={child.id}
+                    session={child}
+                    nestedRoot={session.id}
+                    isSelected={representedSelection(child.id)}
+                    dimmed={hasSelection && !representedSelection(child.id)}
+                    onClick={(modifiers) => handleSessionClick(child.id, modifiers)}
+                    onContextMenu={(e) => handleSessionContextMenu(e, child.id)}
+                    grouped={!!inGroup}
+                    groupSelected={inGroup?.groupSelected}
+                    groupColorHex={inGroup?.groupColorHex}
+                    forceEditing={renamingId === child.id}
+                    onEditingDone={clearRenaming}
+                    onPointerDown={(e) => handlePointerDown(e, child.id, false)}
+                    isDragging={draggedIds.includes(child.id)}
+                    onDelete={() => setDeleteConfirmSessionId(child.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </>
+    )
+  }
+
   return (
     <div className="flex flex-col h-full bg-surface-50">
       {/* The app's draggable top band — the traffic-light clearance, the mark,
@@ -1936,17 +2142,6 @@ export function Sidebar(): React.JSX.Element {
                           key={session.id}
                           session={session}
                           isSelected={representedSelection(session.id)}
-                          subagents={subagents.descendants.get(session.id)}
-                          onSubagentContextMenu={handleSessionContextMenu}
-                          selectedIds={
-                            subagents.descendants.has(session.id) ? selectedSessionIds : undefined
-                          }
-                          focusedId={
-                            subagents.descendants.has(session.id) ? focusedSessionId : undefined
-                          }
-                          onSelectSubagent={(id) =>
-                            handleSessionClick(id, { metaKey: false, shiftKey: false })
-                          }
                           onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
                           onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
                           forceEditing={renamingId === session.id}
@@ -2063,33 +2258,7 @@ export function Sidebar(): React.JSX.Element {
                                 isDragging={draggedIds.includes(session.id)}
                               />
                             ) : (
-                              <SessionItem
-                                session={session}
-                                isSelected={representedSelection(session.id)}
-                                subagents={subagents.descendants.get(session.id)}
-                                onSubagentContextMenu={handleSessionContextMenu}
-                                selectedIds={
-                                  subagents.descendants.has(session.id)
-                                    ? selectedSessionIds
-                                    : undefined
-                                }
-                                focusedId={
-                                  subagents.descendants.has(session.id)
-                                    ? focusedSessionId
-                                    : undefined
-                                }
-                                onSelectSubagent={(id) =>
-                                  handleSessionClick(id, { metaKey: false, shiftKey: false })
-                                }
-                                dimmed={hasSelection && !representedSelection(session.id)}
-                                onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
-                                onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
-                                forceEditing={renamingId === session.id}
-                                onEditingDone={clearRenaming}
-                                onPointerDown={(e) => handlePointerDown(e, session.id, false)}
-                                isDragging={draggedIds.includes(session.id)}
-                                onDelete={() => setDeleteConfirmSessionId(session.id)}
-                              />
+                              renderSessionRow(session)
                             )}
                             {isLastItem && (
                               <DropGap
@@ -2293,47 +2462,10 @@ export function Sidebar(): React.JSX.Element {
                                               isDragging={draggedIds.includes(session.id)}
                                             />
                                           ) : (
-                                            <SessionItem
-                                              session={session}
-                                              isSelected={representedSelection(session.id)}
-                                              subagents={subagents.descendants.get(session.id)}
-                                              onSubagentContextMenu={handleSessionContextMenu}
-                                              selectedIds={
-                                                subagents.descendants.has(session.id)
-                                                  ? selectedSessionIds
-                                                  : undefined
-                                              }
-                                              focusedId={
-                                                subagents.descendants.has(session.id)
-                                                  ? focusedSessionId
-                                                  : undefined
-                                              }
-                                              onSelectSubagent={(id) =>
-                                                handleSessionClick(id, {
-                                                  metaKey: false,
-                                                  shiftKey: false
-                                                })
-                                              }
-                                              dimmed={
-                                                hasSelection && !representedSelection(session.id)
-                                              }
-                                              onClick={(modifiers) =>
-                                                handleSessionClick(session.id, modifiers)
-                                              }
-                                              onContextMenu={(e) =>
-                                                handleSessionContextMenu(e, session.id)
-                                              }
-                                              grouped
-                                              groupSelected={allGroupSelected}
-                                              groupColorHex={groupColorHex}
-                                              forceEditing={renamingId === session.id}
-                                              onEditingDone={clearRenaming}
-                                              onPointerDown={(e) =>
-                                                handlePointerDown(e, session.id, false)
-                                              }
-                                              isDragging={draggedIds.includes(session.id)}
-                                              onDelete={() => setDeleteConfirmSessionId(session.id)}
-                                            />
+                                            renderSessionRow(session, {
+                                              groupSelected: allGroupSelected,
+                                              groupColorHex
+                                            })
                                           )}
                                           {isLastInGroup && (
                                             <DropGap
