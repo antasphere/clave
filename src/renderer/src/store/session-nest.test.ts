@@ -458,6 +458,18 @@ describe('what the server says about a tab that has not joined the window yet', 
     expect(linkOf('late')).toBe('mate')
   })
 
+  it('for each of several tabs on their way in at once', () => {
+    useSessionStore.getState().applyServedNest('late', 'lead')
+    useSessionStore.getState().applyServedNest('later', 'mate')
+    useSessionStore.getState().applyServedWork('latest', lane)
+    useSessionStore.getState().adoptSessionInPlace(session('late'))
+    useSessionStore.getState().adoptSessionInPlace(session('later'))
+    useSessionStore.getState().adoptSessionInPlace(session('latest'))
+    expect(linkOf('late')).toBe('lead')
+    expect(linkOf('later')).toBe('mate')
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'latest')?.work).toEqual(lane)
+  })
+
   it('whichever way the tab joins', () => {
     useSessionStore.getState().applyServedNest('late', 'lead')
     useSessionStore.getState().addHiddenSession(session('late'))

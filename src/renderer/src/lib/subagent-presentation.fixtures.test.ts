@@ -242,6 +242,13 @@ describe('the nest that keeps the focused tab in sight', () => {
     expect(ask(away.seen, helper.id, [lead, helper]).open).toBe(lead.id)
   })
 
+  it('opens the nest again when the focus moves to another tab of the same nest', () => {
+    const second = session('second', { spawnedBy: lead.id })
+    const first = ask(null, helper.id, [lead, helper, second])
+    // The person folds the nest, then goes to another tab that sits in it.
+    expect(ask(first.seen, second.id, [lead, helper, second]).open).toBe(lead.id)
+  })
+
   it('opens the other nest when the focused tab is moved under another tab', () => {
     const other = session('other')
     const first = ask(null, helper.id, [lead, other, helper])

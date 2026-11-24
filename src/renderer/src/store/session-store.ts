@@ -1245,9 +1245,6 @@ function presentedRootOf(sessions: Session[], id: string): string {
   return current.id
 }
 
-/** Put back what a nesting the server refused had changed (PRDCT-4997): the
- *  layout, the tab's previous link, and the undo step it pushed, found by
- *  identity so a step pushed meanwhile stays. */
 /** The rows of a layout, in order: what a refusal compares to know whether
  *  the person moved anything while the server was answering. */
 type NestLayout = { groups: SessionGroup[]; displayOrder: string[] }
