@@ -2,7 +2,10 @@ import { expect, test } from 'vitest'
 import {
   AttachmentSchema,
   attachmentKind,
+  groupReach,
   insertMarker,
+  isFileAttachment,
+  isGroupAttachment,
   markerOf,
   nextLabel,
   reconcileAttachments,
@@ -68,6 +71,62 @@ test('a session record is an attachment, a file record stays one, and labels are
   ).toThrow()
   expect(() => AttachmentSchema.parse({ ...tab, sessionId: 'clave-owner:group:srv:abc' })).toThrow()
   expect(() => AttachmentSchema.parse({ ...tab, path: '/x' })).toThrow()
+})
+
+const group: Attachment = {
+  id: 'g',
+  label: 'Group #1',
+  delivery: 'group',
+  groupId: 'group-1732460000000-3',
+  name: 'Release',
+  sessions: [
+    { sessionId: 'sess-1', name: 'Lane A', agent: 'Claude Code' },
+    { sessionId: 'sess-2', name: 'Verifier', agent: 'Codex' }
+  ]
+}
+
+test('a group record is one attachment: its id, its name and its tabs, never a file (PRDCT-5032)', () => {
+  expect(AttachmentSchema.parse(group)).toEqual(group)
+  expect(isGroupAttachment(group)).toBe(true)
+  expect(isFileAttachment(group)).toBe(false)
+  expect(attachmentKind(group)).toBe('Group')
+  expect(nextLabel('Group', [tab, group])).toBe('Group #2')
+  expect(reconcileAttachments('see [Group #1]', [group, tab])).toEqual([group])
+  // An empty group is still a group the agent can open a tab in.
+  expect(AttachmentSchema.parse({ ...group, sessions: [] })).toMatchObject({ sessions: [] })
+  // A paired server's group and tabs, by the keys this Mac names them by.
+  const serverGroup = 'clave-owner:group:server-1:group-9'
+  const serverTab = 'clave-owner:session:server-1:tab-9'
+  expect(
+    AttachmentSchema.parse({
+      ...group,
+      groupId: serverGroup,
+      sessions: [{ sessionId: serverTab, name: 'Lane B', agent: 'Claude Code' }]
+    })
+  ).toMatchObject({ groupId: serverGroup })
+  expect(() => AttachmentSchema.parse({ ...group, groupId: 'not a/group' })).toThrow()
+  expect(() => AttachmentSchema.parse({ ...group, groupId: 'clave-owner:session:s:g' })).toThrow()
+  expect(() =>
+    AttachmentSchema.parse({
+      ...group,
+      sessions: [{ sessionId: '../x', name: 'n', agent: 'a' }]
+    })
+  ).toThrow()
+  expect(() => AttachmentSchema.parse({ ...group, sessionId: 'sess-1' })).toThrow()
+})
+
+test('groupReach reads the owner off the group key, by the rule tabs follow', () => {
+  const nameOf = (id: string): string => `name of ${id}`
+  const serverTab = 'clave-owner:session:s1:b'
+  expect(groupReach('group-1', 'mac-tab', nameOf)).toEqual({})
+  expect(groupReach('clave-owner:group:s1:g', serverTab, nameOf)).toEqual({})
+  expect(groupReach('clave-owner:group:s1:g', 'mac-tab', nameOf)).toEqual({
+    machine: 'name of s1'
+  })
+  expect(groupReach('group-1', serverTab, nameOf)).toEqual({
+    machine: THIS_MAC,
+    reachable: false
+  })
 })
 
 test('a record is labelled by what it is to the agent: an image sent as a path is a File', () => {

@@ -4,7 +4,8 @@ import {
   dropSessionsOn,
   enterSessionDropTarget,
   leaveSessionDropTarget,
-  sessionDropTargetAt
+  sessionDropTargetAt,
+  type SessionsDropDetail
 } from '../lib/session-drag'
 import { rowZone, ZONE_BAND, type RowZone } from '../lib/sidebar-drop-zones'
 
@@ -637,7 +638,7 @@ export function useSidebarDnd(opts: {
       const target = sessionDropTargetAt(e.clientX, e.clientY)
       if (target !== drag.dropTarget) {
         if (drag.dropTarget) leaveSessionDropTarget(drag.dropTarget)
-        if (target) enterSessionDropTarget(target)
+        if (target) enterSessionDropTarget(target, drag.isGroup ? 'group' : 'session')
         drag.dropTarget = target
       }
       if (target) {
@@ -706,12 +707,12 @@ export function useSidebarDnd(opts: {
       }
 
       // Dropped on a pane that takes sessions: it gets the ids, the sidebar
-      // keeps its order. A group hands over every session it holds.
+      // keeps its order. A group goes as itself, by its id (PRDCT-5032).
       if (drag.started && drag.dropTarget) {
         const target = drag.dropTarget
-        const ids = drag.isGroup
-          ? (useSessionStore.getState().groups.find((g) => g.id === drag.ids[0])?.sessionIds ?? [])
-          : drag.ids
+        const detail: SessionsDropDetail = drag.isGroup
+          ? { kind: 'group', groupId: drag.ids[0] }
+          : { kind: 'session', sessionIds: [...drag.ids] }
         dragRef.current = null
         destroyOverlay()
         setDndState({
@@ -720,7 +721,7 @@ export function useSidebarDnd(opts: {
           dropIndicator: null,
           isOverPinnedZone: false
         })
-        dropSessionsOn(target, [...ids])
+        dropSessionsOn(target, detail)
         return
       }
 

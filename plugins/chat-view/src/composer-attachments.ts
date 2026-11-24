@@ -9,9 +9,14 @@ import {
 } from 'react'
 import {
   attachmentKind,
+  groupReach,
   insertMarker,
+  isAttachableGroupId,
+  isAttachableSessionId,
+  isFileAttachment,
   markerOf,
   MAX_ATTACHMENTS,
+  MAX_GROUP_SESSIONS,
   MAX_IMAGE_BYTES,
   nextLabel,
   reconcileAttachments,
@@ -19,9 +24,14 @@ import {
   sessionReach,
   type Attachment,
   type AttachmentSource,
+  type GroupAttachment,
   type SessionAttachment
 } from '../../../src/shared/attachments'
-import { onSessionsDrag } from '../../../src/renderer/src/lib/session-drag'
+import {
+  onSessionsDrag,
+  type SessionsDropDetail,
+  type SidebarDragKind
+} from '../../../src/renderer/src/lib/session-drag'
 import {
   droppedPathFallback,
   failureText,
@@ -79,6 +89,40 @@ export function agentLabel(session: Session): string {
   return 'Terminal'
 }
 
+/** The tab's name as the sidebar shows it, for a record. */
+const tabName = (session: Session): string => session.name || session.folderName || session.id
+
+/** A paired server's name as the reader gave it. */
+function serverName(serverId: string): string {
+  const { connections } = useFleetStore.getState()
+  return connections.find((c) => c.id === serverId)?.name ?? 'a Clave server'
+}
+
+const DROP_CARD_COPY: Record<
+  SidebarDragKind | 'files',
+  { eyebrow: string; title: string; body: string }
+> = {
+  files: {
+    eyebrow: 'Files',
+    title: 'Add files to the message',
+    body: 'Files and folders, reviewed in the composer before they go.'
+  },
+  session: {
+    eyebrow: 'Session',
+    title: 'Add the session to the message',
+    body: 'The agent gets its id, to read it or message it.'
+  },
+  group: {
+    eyebrow: 'Group',
+    title: 'Add the group to the message',
+    body: 'The agent gets its id and its tabs, to act on the group or on any tab in it.'
+  }
+}
+/** What the drop card says: files, or what a sidebar drag hovering the pane carries. */
+export const dropCardCopy = (
+  sessionsOver: SidebarDragKind | false
+): { eyebrow: string; title: string; body: string } => DROP_CARD_COPY[sessionsOver || 'files']
+
 export function useComposerAttachments(opts: {
   sessionId: string
   closed: boolean
@@ -90,8 +134,8 @@ export function useComposerAttachments(opts: {
 }): {
   attachments: Attachment[]
   preparations: Preparation[]
-  /** A sidebar drag hovering the pane, for the overlay. */
-  sessionsOver: boolean
+  /** A sidebar drag hovering the pane, for the overlay: what it carries. */
+  sessionsOver: SidebarDragKind | false
   /** Files from a drop, a paste or the picker. */
   addFiles: (sources: (File | string)[]) => Promise<void>
   /** Text into the draft at the caret, the caret moved past it: a folder's
@@ -99,6 +143,8 @@ export function useComposerAttachments(opts: {
   insertAtCaret: (insert: string) => void
   /** Sidebar tabs dropped on the pane. */
   addSessions: (sessionIds: string[]) => void
+  /** A sidebar group dropped on the pane: one record for the whole group. */
+  addGroup: (groupId: string) => void
   /** A preparation the reader removed before main answered. */
   withdraw: (key: string) => void
   /** The chips' change: a removed record takes its marker out of the text. */
@@ -119,7 +165,7 @@ export function useComposerAttachments(opts: {
   const { sessionId, closed, setDraft, textarea, pane, report } = opts
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [preparations, setPreparations] = useState<Preparation[]>([])
-  const [sessionsOver, setSessionsOver] = useState(false)
+  const [sessionsOver, setSessionsOver] = useState<SidebarDragKind | false>(false)
   // The records as of the last change, readable between renders: labels are
   // numbered from it, so two files prepared in the same tick get two numbers.
   const latest = useRef<Attachment[]>([])
@@ -244,8 +290,7 @@ export function useComposerAttachments(opts: {
         }
         const file = await window.electronAPI.sessionsFiles.prepare(sessionId, value)
         if (withdrawn.current.has(key)) continue
-        if (!latest.current.some((f) => f.delivery !== 'session' && f.path === file.path))
-          attach(file)
+        if (!latest.current.some((f) => isFileAttachment(f) && f.path === file.path)) attach(file)
         drop.landed()
         setPreparations((current) => current.filter((p) => p.id !== key))
       } catch (failure) {
@@ -290,22 +335,55 @@ export function useComposerAttachments(opts: {
           id: crypto.randomUUID(),
           delivery: 'session',
           sessionId: id,
-          name: session.name || session.folderName || id,
+          name: tabName(session),
           agent: agentLabel(session),
           cwd: session.cwd,
           // A tab of another machine says so, and one this tab's agent cannot
           // reach is marked, never refused (8 November 2026: a server's tab
           // dropped here failed the whole send).
-          ...sessionReach(id, sessionId, (serverId) => {
-            const { connections } = useFleetStore.getState()
-            return connections.find((c) => c.id === serverId)?.name ?? 'a Clave server'
-          })
+          ...sessionReach(id, sessionId, serverName)
         }
         attach(record)
         drop.landed()
       }
     },
     [attach, closed, preparations.length, report, sessionId, startDrop]
+  )
+
+  /* A sidebar group dropped on the pane: ONE record, the group's id and name
+     and its tabs in the sidebar's order, so the agent can act on the group
+     itself (open a tab in it, move one into it, rename it) or on any tab in
+     it (PRDCT-5032). A group already attached is not attached twice. */
+  const addGroup = useCallback(
+    (groupId: string): void => {
+      if (closed) return
+      const { groups, sessions } = useViewSessionStore.getState()
+      const group = groups.find((g) => g.id === groupId)
+      if (!group) return
+      // An id no agent could name (none is minted so) goes as its tabs, as it used to.
+      if (!isAttachableGroupId(group.id)) return addSessions(group.sessionIds)
+      if (latest.current.some((f) => f.delivery === 'group' && f.groupId === group.id)) return
+      if (latest.current.length + preparations.length >= MAX_ATTACHMENTS) {
+        report(`Attach up to ${MAX_ATTACHMENTS} files per message.`)
+        return
+      }
+      const drop = startDrop()
+      const record: GroupAttachment = {
+        id: crypto.randomUUID(),
+        delivery: 'group',
+        groupId: group.id,
+        name: (group.name.trim() || 'Group').slice(0, 255),
+        sessions: group.sessionIds
+          .map((id) => sessions.find((s) => s.id === id))
+          .filter((s): s is Session => !!s && isAttachableSessionId(s.id))
+          .slice(0, MAX_GROUP_SESSIONS)
+          .map((s) => ({ sessionId: s.id, name: tabName(s).slice(0, 255), agent: agentLabel(s) })),
+        ...groupReach(group.id, sessionId, serverName)
+      }
+      attach(record)
+      drop.landed()
+    },
+    [addSessions, attach, closed, preparations.length, report, sessionId, startDrop]
   )
 
   const withdraw = (key: string): void => {
@@ -339,12 +417,16 @@ export function useComposerAttachments(opts: {
     dispatchRefusal({ type: 'dismissed' })
   }
 
-  // The pane takes sidebar tabs for as long as it is mounted.
+  // The pane takes sidebar tabs and groups for as long as it is mounted.
   useEffect(() => {
     const root = pane.current
     if (!root) return
-    return onSessionsDrag(root, { onHover: setSessionsOver, onDrop: addSessions })
-  }, [pane, addSessions])
+    return onSessionsDrag(root, {
+      onHover: setSessionsOver,
+      onDrop: (detail: SessionsDropDetail) =>
+        detail.kind === 'group' ? addGroup(detail.groupId) : addSessions(detail.sessionIds)
+    })
+  }, [pane, addSessions, addGroup])
 
   return {
     attachments,
@@ -353,6 +435,7 @@ export function useComposerAttachments(opts: {
     addFiles,
     insertAtCaret,
     addSessions,
+    addGroup,
     withdraw,
     changeAttachments,
     onDraftChange,
