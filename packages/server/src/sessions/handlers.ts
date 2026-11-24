@@ -59,17 +59,6 @@ import { UnconfirmedSessionWrite } from '@clave/contract/session-write-error'
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-/** The id a nesting's not-found is about: the tab it would go under when the
- *  rule named that one (the subject is checked first, so its words name the
- *  subject otherwise), else the subject. PRDCT-4997. */
-const unknownNestId = (
-  error: NestSessionUnknown,
-  payload: { id: string; under: string | null }
-): string =>
-  payload.under !== null && error.message === `No session with id "${payload.under}"`
-    ? payload.under
-    : payload.id
-
 /** Whether the host keeps a record of that id, running or not; false where
  *  it keeps none or cannot list them. */
 const recorded = (host: SessionHostService, id: string): boolean => {
@@ -391,7 +380,8 @@ export const sessionHandlers = [
   // over every record it keeps and writes the subject's `spawnedBy`; the
   // windows follow through `session.nested`, published only when the record
   // changed, so a drop on the row a tab already sits under says nothing. A
-  // refusal is the rule's own words, and nothing is published. ──
+  // refusal is the rule's own words, and nothing is published. The not-found
+  // is about the id the rule names: the tab, or the tab it would go under. ──
   CommandHandler.make(NestSession, (payload) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
@@ -399,7 +389,7 @@ export const sessionHandlers = [
         try: () => host.nest(payload.id, payload.under),
         catch: (error) =>
           error instanceof NestSessionUnknown
-            ? new SessionNotFound({ id: unknownNestId(error, payload) })
+            ? new SessionNotFound({ id: error.id })
             : error instanceof NestRefusal
               ? new NestRefused({ id: payload.id, message: error.message })
               : error instanceof SessionNotFound || error instanceof CapabilityUnavailable

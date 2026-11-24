@@ -51,11 +51,17 @@ export class NestRefusal extends Error {
   override readonly name = 'NestRefusal'
 }
 
-/** The nesting names a session no record and no running session knows. A
- *  plain class, as `WorkSessionUnknown` is: the server answers it as its
- *  declared not-found. */
+/** The nesting names a session no record and no running session knows: the
+ *  tab itself, or the tab it would go under (`id` says which). A plain class,
+ *  as `WorkSessionUnknown` is: the server answers it as its declared
+ *  not-found, about that id. */
 export class NestSessionUnknown extends Error {
   override readonly name = 'NestSessionUnknown'
+  readonly id: string
+  constructor(id: string) {
+    super(`No session with id "${id}"`)
+    this.id = id
+  }
 }
 
 const same = (a: string | null | undefined, b: string | null | undefined): boolean =>
@@ -112,9 +118,9 @@ export function applyNest(
   under: string | null
 ): NestResult {
   const subject = all.find((r) => r.id === id)
-  if (!subject) throw new NestSessionUnknown(`No session with id "${id}"`)
+  if (!subject) throw new NestSessionUnknown(id)
   if (under !== null && under !== id && !all.some((r) => r.id === under))
-    throw new NestSessionUnknown(`No session with id "${under}"`)
+    throw new NestSessionUnknown(under)
   const refusal = nestRefusal(all, id, under)
   if (refusal) throw new NestRefusal(refusal)
   return { id, under, changed: !same(subject.under, under) }

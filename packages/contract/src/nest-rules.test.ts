@@ -71,6 +71,22 @@ describe('nesting a tab under another', () => {
     expect(() => applyNest(plain(), ID.old, ID.ghost)).toThrow(NestSessionUnknown)
     expect(() => applyNest(plain(), ID.ghost, null)).toThrow(NestSessionUnknown)
   })
+
+  it('names the id nobody knows: the tab, or the tab it would go under', () => {
+    const unknown = (id: string, under: string | null): NestSessionUnknown => {
+      try {
+        applyNest(plain(), id, under)
+      } catch (error) {
+        if (error instanceof NestSessionUnknown) return error
+      }
+      throw new Error('the nesting was not refused as unknown')
+    }
+    expect(unknown(ID.ghost, ID.lead).id).toBe(ID.ghost)
+    expect(unknown(ID.old, ID.ghost).id).toBe(ID.ghost)
+    expect(unknown(ID.old, ID.ghost).message).toBe(`No session with id "${ID.ghost}"`)
+    // Both unknown: the tab itself is named first.
+    expect(unknown(ID.ghost, ID.other).id).toBe(ID.ghost)
+  })
 })
 
 describe('what the rule refuses', () => {

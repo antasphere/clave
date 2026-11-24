@@ -13,7 +13,7 @@ import type { NestResult } from '@clave/contract/nest-rules'
 export const ATTACH_SESSION_TOOL = 'clave_attach_session'
 
 export const ATTACH_SESSION_DESCRIPTION =
-  "Nest a tab that already exists under another tab of the sidebar, as attachToParent does for a tab you open: the parent's row counts it and unfolds to show it. Use it to tuck a finished or handed-over tab under the tab that continues its work, or a helper under the tab it serves. detach: true takes the tab out again, a row of its own. It changes where the tab is shown and nothing else: the tab keeps running and nothing is sent to it."
+  'Nest a tab that already exists under another tab of the sidebar, as attachToParent does for a tab you open: the parent\'s row counts it and unfolds to show it. Use it to tuck a finished or handed-over tab under the tab that continues its work, or a helper under the tab it serves. detach: true takes the tab out again, a row of its own. It changes where the tab is shown: the tab keeps running and nothing is sent to it. Its "parent" for messages stays the tab that opened it; a tab nobody opened takes the tab it is nested under.'
 
 /** The three arguments' descriptions, one wording on every road. */
 export const ATTACH_SESSION_ARGS = {
