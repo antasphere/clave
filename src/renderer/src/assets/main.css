@@ -3507,6 +3507,7 @@ body.reorder-dragging * {
 /* A tab's nested tabs (PRDCT-4998): a quiet count before the row's status,
    and the tabs themselves as rows under it, indented behind a hairline. */
 .sidebar-nest-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 1px;
@@ -3533,9 +3534,17 @@ body.reorder-dragging * {
 .sidebar-nest-toggle[data-open='true'] > svg {
   transform: rotate(90deg);
 }
+/* The pill is 18px tall in a row of 28 or 32: the press lands on the whole
+   height of the row and a little to each side, as the page glyph's does. */
+.sidebar-nest-toggle::after {
+  content: '';
+  position: absolute;
+  inset: -7px -4px;
+}
 .sidebar-nest-toggle > .sidebar-tab-spinner {
   width: 10px;
   height: 10px;
+  margin: 0 2px 0 1px;
 }
 .sidebar-nest-toggle:hover,
 .sidebar-nest-toggle:focus-visible {
@@ -3543,10 +3552,13 @@ body.reorder-dragging * {
   background-color: var(--surface-200);
   outline: none;
 }
-.sidebar-nest-toggle[data-status='needs-you'] {
+/* Colour is for a folded nest, which says what goes on out of sight: amber
+   for a tab waiting on the person, blue for one with news. Unfolded, each
+   row says it for itself and the count is only a control again. */
+.sidebar-nest-toggle:not([data-open='true'])[data-status='needs-you'] {
   color: var(--color-status-waiting);
 }
-.sidebar-nest-toggle[data-status='unread'] {
+.sidebar-nest-toggle:not([data-open='true'])[data-status='unread'] {
   color: var(--color-status-working);
 }
 .sidebar-nest {
@@ -3574,6 +3586,15 @@ body.reorder-dragging * {
   color: var(--text-primary);
   background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+/* The pointer is over that row, which would slide its close button in and
+   cut the name the person is reading to aim: it stays away for the drop. */
+.sidebar-item[data-drop-onto='true'] .sidebar-item-close,
+.sidebar-item[data-drop-onto='true']:hover .sidebar-item-close {
+  width: 0;
+  margin-right: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .sidebar-nest,

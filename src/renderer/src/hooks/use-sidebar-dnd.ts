@@ -575,6 +575,20 @@ export function useSidebarDnd(opts: {
   )
 
   useEffect(() => {
+    // Over the middle of a tab it would be nested under (PRDCT-4998), the
+    // ghost steps down and in: centred on the cursor it covered that tab's
+    // name, the one thing to read at that moment, and stepped aside it sits
+    // where the row will land, under the tab and indented. Anywhere else it
+    // rides the cursor as before.
+    const poseOverlay = (drag: DragRef): void => {
+      const overlay = overlayRef.current
+      if (!overlay) return
+      const onto = drag.currentIndicator?.position === 'onto'
+      if ((overlay.dataset.onto === 'true') === onto) return
+      overlay.dataset.onto = onto ? 'true' : 'false'
+      overlay.style.transform = onto ? 'translate(20px, 30px) scale(0.96)' : 'scale(1.02)'
+    }
+
     const handlePointerMove = (e: PointerEvent): void => {
       const drag = dragRef.current
       if (!drag) return
@@ -635,6 +649,7 @@ export function useSidebarDnd(opts: {
           }
           setDndState((prev) => ({ ...prev, dropIndicator: null }))
         }
+        poseOverlay(drag)
         return
       }
 
@@ -660,12 +675,14 @@ export function useSidebarDnd(opts: {
             }
             setDndState((prev) => ({ ...prev, dropIndicator: null }))
           }
+          poseOverlay(drag)
           return // skip normal hit-test and auto-scroll
         }
       }
 
       // Hit test
       hitTest(e.clientX, e.clientY, drag)
+      poseOverlay(drag)
 
       // Auto-scroll
       autoScroll(e.clientY, drag)

@@ -17,10 +17,12 @@ function stateLabel(session: Session): string {
 
 /**
  * The quiet count on a tab's row that folds and unfolds the tabs nested under
- * it (PRDCT-4998), just before the row's status. It takes the colour of the
- * nested tab that most asks for attention, and a folded nest at work shows
- * the spinner in the chevron's place, so a folded row still says what is
- * going on under it. A span inside the row's button, not a button: the row
+ * it (PRDCT-4998), just before the row's status. Folded, it takes the colour
+ * of the nested tab that most asks for attention (the stylesheet reads
+ * `data-status` only then), and a nest at work shows the spinner in the
+ * chevron's place: a folded row still says what is going on under it.
+ * Unfolded, the rows speak for themselves and the count is a plain control.
+ * A span inside the row's button, not a button: the row
  * already is one, so a click, Enter or Space here never reaches the row, and
  * a press never starts a drag.
  */
