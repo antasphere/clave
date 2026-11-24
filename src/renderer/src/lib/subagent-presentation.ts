@@ -13,27 +13,17 @@ export function subagentAttention(descendants: readonly Session[]): {
   return { status: 'idle', sessions: [] }
 }
 
-function isLocalAgent(session: Session): boolean {
-  return (
-    session.sessionType === 'local' &&
-    !!(
-      session.claudeMode ||
-      session.claudeAgentsMode ||
-      session.codexMode ||
-      session.antigravityMode ||
-      session.piMode ||
-      session.opencodeMode
-    )
-  )
-}
-
 /** A view of the live sessions, never a change to their ownership or order.
  * Only follow links whose rows are reachable in this particular sidebar view.
  * Search passes no candidates so its results remain direct session links.
  * An editable target is a temporary presented root, with its real links intact.
+ * Any local tab nested under another folds under it, whatever it runs: an
+ * agent, a plain terminal (PRDCT-4997), since a person can now nest any tab by
+ * a drag. A remote session stays an ordinary row, as its record lives on
+ * another machine's terms.
  * A session with a work assignment (PRDCT-4123) is never folded under the tab
- * that spawned it, and the climb stops at the first one: work membership wins
- * over spawn ancestry, and an agent spawned by a member folds into that
+ * it is nested under, and the climb stops at the first one: work membership
+ * wins over the nesting, and a tab nested under a member folds into that
  * member's wave or lane entry (`work-presentation.ts`). */
 export function subagentPresentation(
   sessions: readonly Session[],
@@ -50,7 +40,7 @@ export function subagentPresentation(
   for (const session of available.values()) {
     let current = session
     const seen = new Set([current.id])
-    while (!current.work && isLocalAgent(current) && current.spawnedBy) {
+    while (!current.work && current.sessionType === 'local' && current.spawnedBy) {
       const parent = available.get(current.spawnedBy)
       if (!parent || parent.sessionType !== 'local' || parent.workspaceId !== session.workspaceId)
         break

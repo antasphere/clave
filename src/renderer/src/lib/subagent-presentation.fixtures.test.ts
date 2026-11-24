@@ -116,7 +116,7 @@ describe('subagent presentation', () => {
     expect(unread.hasUnseenActivity).toBe(true)
     expect(blocked.agentState).toBe('blocked')
   })
-  it('compacts nested agents while preserving live session objects and terminals', () => {
+  it('folds nested agents and nested terminals alike while preserving live session objects', () => {
     const parent = session('parent')
     const child = session('child', { spawnedBy: parent.id })
     const nested = session('nested', { spawnedBy: child.id })
@@ -125,11 +125,20 @@ describe('subagent presentation', () => {
     const result = graph(rows)
     expect([...result.rootById]).toEqual([
       ['nested', 'parent'],
-      ['child', 'parent']
+      ['child', 'parent'],
+      ['terminal', 'parent']
     ])
-    expect(result.descendants.get(parent.id)).toEqual([child, nested])
+    expect(result.descendants.get(parent.id)).toEqual([child, terminal, nested])
     expect(result.descendants.get(parent.id)?.[0]).toBe(child)
     expect(rows).toHaveLength(5)
+  })
+
+  it('counts a plain terminal nested under a tab among its descendants', () => {
+    const parent = session('parent', { codexMode: false })
+    const terminal = session('terminal', { spawnedBy: parent.id, codexMode: false })
+    const result = graph([parent, terminal])
+    expect(result.rootById.get(terminal.id)).toBe(parent.id)
+    expect(result.descendants.get(parent.id)).toEqual([terminal])
   })
 
   it('keeps missing, filtered and cross-workspace parents from hiding children', () => {
