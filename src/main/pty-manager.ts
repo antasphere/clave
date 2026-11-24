@@ -1378,19 +1378,11 @@ class PtyManager {
   }
   /** The tab the session is nested under, on its record (PRDCT-4997); false
    *  when it keeps no record. The host's `nest` is the only caller. The
-   *  spawn's own options are brought in line too: every later respawn
-   *  (`restartSpawn`, which spreads them, `launchContextOf` and the rest)
-   *  starts from them, and a tab taken out must not come back nested. */
+   *  record alone is written, as for the work: a respawn reads the link from
+   *  the record (`restartSpawn`), never from the spawn's own options, so a
+   *  tab taken out does not come back nested. */
   setSessionSpawnedBy(id: string, under: string | null): boolean {
-    const written = ptyBackend.setSessionSpawnedBy(id, under)
-    const spawn = this.spawns.get(id)
-    if (written && spawn?.options) {
-      const options = { ...spawn.options }
-      if (under) options.spawnedBy = under
-      else delete options.spawnedBy
-      this.spawns.set(id, { ...spawn, options })
-    }
-    return written
+    return ptyBackend.setSessionSpawnedBy(id, under)
   }
   /** Every record as the nesting rule reads it, without side effects
    *  (PRDCT-4997). */
