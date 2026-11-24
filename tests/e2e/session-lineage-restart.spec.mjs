@@ -133,9 +133,8 @@ const nestOpen = (win, id) =>
 const nestedIn = (win, parent, child) =>
   win.evaluate(
     ([p, c]) =>
-      document.querySelectorAll(
-        `[data-sidebar-nested-root="${p}"][data-sidebar-item-id="${c}"]`
-      ).length,
+      document.querySelectorAll(`[data-sidebar-nested-root="${p}"][data-sidebar-item-id="${c}"]`)
+        .length,
     [parent, child]
   )
 

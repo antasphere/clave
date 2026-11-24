@@ -146,7 +146,9 @@ const foldedUnder = (win, parentId, childId) =>
 /** The names of the rows nested under the opener, read with its nest
  *  unfolded (a click on its count toggle, as a person does). */
 const subagentNames = async (win, parentId) => {
-  const toggle = win.locator(`[data-sidebar-item-id="${parentId}"] > .sidebar-item .sidebar-nest-toggle`)
+  const toggle = win.locator(
+    `[data-sidebar-item-id="${parentId}"] > .sidebar-item .sidebar-nest-toggle`
+  )
   // No toggle on the opener's row: the tab is not nested (the check that
   // says so is red), so there are no names. Answer that rather than wait on
   // a click that never lands and take every later check down with it.
