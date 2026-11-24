@@ -586,8 +586,10 @@ describe('what the row says when the server refuses', () => {
     for (const raw of [
       'request to http://127.0.0.1:43127/sessions/nest failed',
       'ENOENT: no such file or directory, open /tmp/records/x.json',
+      'connect ECONNREFUSED 127.0.0.1:43127',
+      'C:\\Users\\someone\\records\\x.json is locked',
       '',
-      'x'.repeat(201)
+      'x'.repeat(401)
     ]) {
       refuse = raw || ' '
       await useSessionStore.getState().nestSession('other', 'lead')
@@ -596,6 +598,24 @@ describe('what the row says when the server refuses', () => {
         message: 'The server could not be asked: the tab stays where it was'
       })
     }
+  })
+
+  it('a refusal that quotes a name with a slash in it is a refusal, said as it is', async () => {
+    // A lane is named freely: its name comes back inside the rule's sentence.
+    const refusal =
+      'This tab works on the lane "Import/export of the archive, CI/CD included", whose entry shows it. Take it out of the lane first (clave_set_work with action: "leave"), then nest it'
+    refuse = refusal
+    await useSessionStore.getState().nestSession('other', 'lead')
+    expect(notice()).toEqual({ id: 'other', message: refusal })
+    // And an undo it refuses is spent, as any refusal in words: asking again
+    // would be refused again.
+    refuse = null
+    await useSessionStore.getState().nestSession('other', 'lead')
+    refuse = refusal
+    useSessionStore.getState().undoSidebar()
+    await settle()
+    expect(linkOf('other')).toBe('lead')
+    expect(useSessionStore.getState().sidebarUndoStack).toEqual([])
   })
 
   it('is gone at the next nesting, and when the sidebar clears it', async () => {

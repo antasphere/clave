@@ -1117,13 +1117,20 @@ type SidebarSnapshot = {
 /** What a nesting answered: done, or refused with the sentence to show. */
 export type NestOutcome = { ok: true } | { ok: false; error: string }
 
+/** What a failure of the road looks like in an error's words, as opposed to a
+ *  refusal: an address, a path on a disk, a system's error code. A slash
+ *  alone is not one: a refusal quotes names, and a lane is named freely
+ *  ("Import/export"). */
+const ROAD_FAILURE =
+  /https?:\/\/|(?:^|[\s"'(:])\/[\w.-]+\/|[A-Za-z]:\\|\bE(?:NOENT|ACCES|PERM|EXIST|PIPE|CONN[A-Z]+|TIMEDOUT|HOSTUNREACH|NETUNREACH|NOTFOUND|ADDRINUSE|AI_AGAIN)\b|\b\d{1,3}(?:\.\d{1,3}){3}\b/
+
 /** The sentence a refused nesting shows under the tab's row (PRDCT-4997). The
  *  server's own words when they are words, as the rule's and the host's
  *  refusals are. An answer that carries an address or a path is a failure of
  *  the road, not a refusal, and a row is no place for either: it is replaced. */
 export function nestNoticeOf(message: string): string {
   const words = message.trim()
-  return words && words.length <= 200 && !/[/\\]|https?:/i.test(words)
+  return words && words.length <= 400 && !ROAD_FAILURE.test(words)
     ? words
     : 'The server could not be asked: the tab stays where it was'
 }
