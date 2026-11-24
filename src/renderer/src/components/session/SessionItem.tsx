@@ -11,7 +11,7 @@ import {
   WindowIcon
 } from '@heroicons/react/24/outline'
 import { ClaudeVariantGlyph } from '../icons/cli-logos'
-import { SidebarTabItem } from './SidebarTabItem'
+import { SidebarTabItem, type RowMenuEvent } from './SidebarTabItem'
 import { claudeUsageForModel, capOutLabel, capStatus } from '../../store/usage-store'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
 import { useSessionAccountSummary } from '../../lib/session-accounts'
@@ -21,9 +21,9 @@ import { useMarkPack } from '../plugins/native-marks'
 import { tokenColor } from '../../lib/marks'
 import { NestToggle } from './NestToggle'
 
-/** The event a row's menu opens from: a right-click, or a keyboard's menu
- *  key turned into the same three fields. */
-export type SessionMenuEvent = Pick<React.MouseEvent, 'preventDefault' | 'clientX' | 'clientY'>
+/** The event a session row's menu opens from: the row's own (a right-click,
+ *  or the keyboard's menu key turned into the same three fields). */
+export type SessionMenuEvent = RowMenuEvent
 
 /** A warning on a row whose account is about to stop it (ADR 0002), before
  *  the next turn fails. Hovering shows the account card the tab's context menu
@@ -208,7 +208,7 @@ interface SessionItemProps {
   session: Session
   isSelected: boolean
   onClick: (modifiers: { metaKey: boolean; shiftKey: boolean }) => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onContextMenu: (e: SessionMenuEvent) => void
   grouped?: boolean
   groupSelected?: boolean
   groupColorHex?: string

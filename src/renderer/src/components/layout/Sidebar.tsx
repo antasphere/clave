@@ -1854,7 +1854,7 @@ export function Sidebar(): React.JSX.Element {
   )
 
   const handleFileTabContextMenu = useCallback(
-    (e: React.MouseEvent, fileTabId: string) => {
+    (e: SessionMenuEvent, fileTabId: string) => {
       e.preventDefault()
       const fileTab = useSessionStore.getState().fileTabs.find((f) => f.id === fileTabId)
       if (!fileTab) return

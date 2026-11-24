@@ -3,6 +3,10 @@ import { cn } from '@clave/ui/components'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
 
+/** The event a row's menu opens from: a right-click, or the keyboard's menu
+ *  key turned into the same three fields. */
+export type RowMenuEvent = Pick<React.MouseEvent, 'preventDefault' | 'clientX' | 'clientY'>
+
 export interface SidebarTabItemProps {
   /** Unique identifier for this item */
   id: string
@@ -13,7 +17,7 @@ export interface SidebarTabItemProps {
   /** Whether this item is currently selected */
   isSelected: boolean
   onClick: (modifiers: { metaKey: boolean; shiftKey: boolean }) => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onContextMenu: (e: RowMenuEvent) => void
   /** Called when the name is committed after editing */
   onRename: (id: string, newName: string) => void
   /** False for a row whose name is not its own to edit (a wave or lane entry
@@ -100,6 +104,25 @@ export function SidebarTabItem({
     [onClick]
   )
 
+  // The keyboard's menu key (and Shift+F10) opens the row's menu just under
+  // the row. The pop-up that listed a tab's nested tabs answered those keys
+  // on each of its entries; the nested tabs are rows now (PRDCT-4998), so
+  // every row answers them, which is the keyboard's one road to Attach to,
+  // Detach from and the rest of the menu.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>): void => {
+    if (!editing && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+      e.preventDefault()
+      const rect = e.currentTarget.getBoundingClientRect()
+      onContextMenu({
+        preventDefault: () => {},
+        clientX: Math.round(rect.left + 24),
+        clientY: Math.round(rect.bottom)
+      })
+      return
+    }
+    if (renameable) handleButtonKeyDown(e)
+  }
+
   // Dragging takes visual priority; otherwise fade dimmed (unselected) tabs.
   const itemOpacity = isDragging ? 0.3 : dimmed ? 0.55 : undefined
   const tintBackground =
@@ -116,7 +139,7 @@ export function SidebarTabItem({
       <button
         onClick={handleClick}
         onContextMenu={onContextMenu}
-        onKeyDown={renameable ? handleButtonKeyDown : undefined}
+        onKeyDown={handleKeyDown}
         title={title}
         data-drop-onto={dropOnto ? 'true' : undefined}
         data-selected={
