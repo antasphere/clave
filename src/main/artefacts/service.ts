@@ -12,6 +12,10 @@
  * stopped and its lease given back. A preview that dies under its holders is said to
  * them (`artefact.preview_exited`): they hold again and a new one starts.
  *
+ * A session keeps several artefacts (PRDCT-5022), the one opened last in
+ * front: each has its own preview, holds and versions, and a call that names
+ * no `target` acts on the front one.
+ *
  * A link is never dropped because the server does not know its session.
  * "Not known" is not "closed": a terminal tab that runs in tmux is found by
  * its id only once a window has taken it back, long after this service
@@ -295,8 +299,8 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
    *  ended, a tab closed for good or a link that moved on keeps none. */
   const awaited = (target: string): boolean =>
     Object.entries(deps.links.all()).some(
-      ([sessionId, link]) =>
-        link.target === target &&
+      ([sessionId, links]) =>
+        links.some((link) => link.target === target) &&
         previousState.get(sessionId) !== 'ended' &&
         deps.sessions.knows(sessionId)
     )
@@ -319,6 +323,12 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
 
   const dropSessionHolds = (sessionId: string): void => {
     for (const [holdId, hold] of [...holds]) if (hold.sessionId === sessionId) dropHold(holdId)
+  }
+
+  /** The holds a session has on one of its artefacts. */
+  const dropTargetHolds = (sessionId: string, target: string): void => {
+    for (const [holdId, hold] of [...holds])
+      if (hold.sessionId === sessionId && hold.target === target) dropHold(holdId)
   }
 
   function previewExited(target: string): void {
@@ -406,10 +416,16 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       })
     })
 
-  const linkOf = (sessionId: string): Artefact | undefined => {
-    const link = deps.links.get(sessionId)
+  /** One of the session's artefacts: `target`'s, else its front one. */
+  const linkOf = (sessionId: string, target?: string): Artefact | undefined => {
+    const link =
+      target === undefined ? deps.links.get(sessionId) : deps.links.find(sessionId, target)
     return link && { sessionId, ...link }
   }
+
+  /** The session's artefacts as the windows are told them: oldest first, the front last. */
+  const artefactsOf = (sessionId: string): Artefact[] =>
+    deps.links.list(sessionId).map((link) => ({ sessionId, ...link }))
 
   const readyCli = (): string => {
     const resolved = resolveCli(cliDir, deps.env)
@@ -418,8 +434,8 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     return resolved.cli.cliPath
   }
 
-  const saveVersion = async (sessionId: string): Promise<ArtefactVersion> => {
-    const link = linkOf(sessionId)
+  const saveVersion = async (sessionId: string, target?: string): Promise<ArtefactVersion> => {
+    const link = linkOf(sessionId, target)
     if (!link) throw new ArtefactRefusal(NO_ARTEFACT_OPEN)
     const cliPath = readyCli()
     return serially(link.target, async () =>
@@ -433,8 +449,8 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
 
   // The versions the preview keeps, for the bar's version chip (PRDCT-4494):
   // read from the running preview, the one a window that asks is holding.
-  const versions = async (sessionId: string): Promise<ArtefactVersions> => {
-    const link = linkOf(sessionId)
+  const versions = async (sessionId: string, target?: string): Promise<ArtefactVersions> => {
+    const link = linkOf(sessionId, target)
     if (!link) throw new ArtefactRefusal(NO_ARTEFACT_OPEN)
     if (!servers.targets().includes(link.target))
       return { versions: [], error: 'The preview of this artefact is not running.' }
@@ -445,16 +461,18 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   const onState = (sessionId: string, next: AgentState): void => {
     const previous = previousState.get(sessionId)
     previousState.set(sessionId, next)
-    // The tab ended: its preview is not kept waiting for it.
-    const shown = next === 'ended' ? deps.links.get(sessionId) : undefined
-    if (shown) noteIfUnheld(shown.target)
+    // The tab ended: its previews are not kept waiting for it.
+    const own = deps.links.list(sessionId)
+    if (next === 'ended') for (const link of own) noteIfUnheld(link.target)
     if (!finishesTurn(previous, next)) return
-    if (!deps.links.get(sessionId) || state().phase !== 'ready') return
-    saveVersion(sessionId).catch((error: unknown) =>
-      log(
-        `[artefacts] no version saved at the end of a turn of ${sessionId}: ${error instanceof Error ? error.message : String(error)}`
+    if (own.length === 0 || state().phase !== 'ready') return
+    // A version of each artefact of the session: one the turn left unchanged saves none.
+    for (const link of own)
+      saveVersion(sessionId, link.target).catch((error: unknown) =>
+        log(
+          `[artefacts] no version saved at the end of a turn of ${sessionId} (${link.title}): ${error instanceof Error ? error.message : String(error)}`
+        )
       )
-    )
   }
 
   let sweeper: ReturnType<typeof setInterval> | null = null
@@ -468,29 +486,40 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       // written first, so the preview of a folder the session no longer
       // shows is stopped at once rather than kept waiting.
       const link = { target, page, title, openedAt: new Date(now()).toISOString() }
-      // Over the bound, the links of tabs this server no longer knows go
-      // before the link of a tab that still runs.
-      deps.links.set(sessionId, link, (id) => deps.sessions.knows(id))
-      dropSessionHolds(sessionId)
+      // In front of the session's others, or brought there; over the bounds,
+      // the session's oldest, then the links of tabs this server no longer
+      // knows, go before the links of a tab that still runs.
+      const dropped = deps.links.set(sessionId, link, (id) => deps.sessions.knows(id))
+      // A new open starts afresh: this artefact's holds go, the others keep theirs.
+      dropTargetHolds(sessionId, target)
+      for (const gone of dropped) {
+        dropTargetHolds(gone.sessionId, gone.link.target)
+        noteIfUnheld(gone.link.target)
+      }
       const artefact: Artefact = { sessionId, ...link }
-      tell({ _tag: 'artefact.changed', sessionId, artefact })
+      tell({ _tag: 'artefact.changed', sessionId, artefact, artefacts: artefactsOf(sessionId) })
       // After the change, so the window that presents it already lists it.
       if (present === true) tell({ _tag: 'artefact.present_requested', sessionId })
       installWhenMissing()
       return artefact
     },
-    close: async (sessionId) => {
-      // The link goes first, so the preview stops with the holds instead of
-      // waiting a minute for a tab that shows it no more.
-      const link = deps.links.get(sessionId)
-      if (link) deps.links.remove(sessionId)
-      dropSessionHolds(sessionId)
-      if (!link) return
-      noteIfUnheld(link.target)
-      tell({ _tag: 'artefact.changed', sessionId, artefact: null })
+    close: async (sessionId, target) => {
+      // The links go first, so the previews stop with the holds instead of
+      // waiting a minute for a tab that shows them no more.
+      const removed = deps.links.remove(sessionId, target)
+      if (target === undefined) dropSessionHolds(sessionId)
+      else dropTargetHolds(sessionId, target)
+      if (removed.length === 0) return
+      for (const link of removed) noteIfUnheld(link.target)
+      tell({
+        _tag: 'artefact.changed',
+        sessionId,
+        artefact: linkOf(sessionId) ?? null,
+        artefacts: artefactsOf(sessionId)
+      })
     },
-    hold: async (sessionId, holdId): Promise<ArtefactPreview> => {
-      const link = linkOf(sessionId)
+    hold: async (sessionId, holdId, target): Promise<ArtefactPreview> => {
+      const link = linkOf(sessionId, target)
       if (!link) throw new ArtefactRefusal(NO_ARTEFACT_OPEN)
       readyCli()
       const known = holdId === undefined ? undefined : holds.get(holdId)
@@ -510,9 +539,12 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     },
     saveVersion,
     versions,
-    // Every link of the document, whether its session is known yet or not.
+    // Every link of the document, whether its session is known yet or not:
+    // each session's oldest first, its front last.
     list: async () =>
-      Object.entries(deps.links.all()).map(([sessionId, link]) => ({ sessionId, ...link })),
+      Object.entries(deps.links.all()).flatMap(([sessionId, links]) =>
+        links.map((link) => ({ sessionId, ...link }))
+      ),
     slidelessState: async () => state(),
     installSlideless: () => install(),
     subscribe: (listener) => {

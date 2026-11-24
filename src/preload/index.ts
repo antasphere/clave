@@ -1915,10 +1915,11 @@ const electronAPI = {
       server: async ({ api }) => [...(await api.artefacts.list())]
     }),
     // The preview runs on this machine's loopback: its own address is framed as it is.
-    hold: viaOwnServer<[string, string?], { url: string; holdId: string; ttlMs: number }>({
-      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:hold', sessionId, holdId),
-      server: async ({ api }, sessionId, holdId) => {
-        const held = await api.artefacts.hold(sessionId, holdId)
+    hold: viaOwnServer<[string, string?, string?], { url: string; holdId: string; ttlMs: number }>({
+      ipc: (sessionId, holdId, target) =>
+        ipcRenderer.invoke('artefacts:hold', sessionId, holdId, target),
+      server: async ({ api }, sessionId, holdId, target) => {
+        const held = await api.artefacts.hold(sessionId, holdId, target)
         return { url: held.url, holdId: held.holdId, ttlMs: held.ttlMs }
       }
     }),
@@ -1926,26 +1927,26 @@ const electronAPI = {
       ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:release', sessionId, holdId),
       server: ({ api }, sessionId, holdId) => api.artefacts.release(sessionId, holdId)
     }),
-    saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    saveVersion: viaOwnServer<[string, string?], { version: number; created: boolean }>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:saveVersion', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.saveVersion(sessionId, target)
     }),
-    versions: viaOwnServer<[string], ArtefactVersions>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:versions', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.versions(sessionId)
+    versions: viaOwnServer<[string, string?], ArtefactVersions>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:versions', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.versions(sessionId, target)
     }),
-    close: viaOwnServer<[string], void>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.close(sessionId)
+    close: viaOwnServer<[string, string?], void>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:close', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.close(sessionId, target)
     }),
-    onChanged: viaServerEvent<'artefact.changed', { sessionId: string; artefact: Artefact | null }>(
-      'artefacts:changed',
+    onChanged: viaServerEvent<
       'artefact.changed',
-      (event) => ({
-        sessionId: event.sessionId,
-        artefact: event.artefact
-      })
-    ),
+      { sessionId: string; artefact: Artefact | null; artefacts?: readonly Artefact[] }
+    >('artefacts:changed', 'artefact.changed', (event) => ({
+      sessionId: event.sessionId,
+      artefact: event.artefact,
+      ...(event.artefacts && { artefacts: event.artefacts })
+    })),
     onPreviewExited: viaServerEvent<'artefact.preview_exited', string>(
       'artefacts:preview-exited',
       'artefact.preview_exited',

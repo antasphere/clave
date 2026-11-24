@@ -6,13 +6,17 @@ In a Claude Code or Codex tab running inside Clave, ask:
 
 The agent writes a folder holding a self-contained `index.html` and calls `clave_open_artefact` with that folder. The page opens beside the conversation, through [Slideless](https://www.npmjs.com/package/@antasphere/slideless): it reloads on every edit the agent makes to its files, and a version is kept each time a turn of the agent ends. The version bar above the page goes back to any of them. No account is needed.
 
+A session keeps several pages. Another folder the agent opens joins the first and shows in front; the title in the panel's bar is then a menu of the session's pages, newest first, and picking one shows it until the agent opens another. Each page keeps its own preview and its own versions, and a finished turn saves a version of each of them (a page the turn left unchanged saves none).
+
+Asked to present one (`present: true`, or Present in the panel's ⋯ menu), Clave shows the page alone in a window of its own, full screen, on another display when one is connected; Escape ends it. The presentation follows the page the panel shows.
+
 This works the same whether the session runs on this Mac or on a [Clave server](server-install.md) the Mac is attached to.
 
 ## Who owns an artefact
 
 The server a session runs on owns that session's artefact, in every shape a server takes: inside the app, as the app's own child process, or as a daemon on another machine. It keeps four things.
 
-- **The link.** Which session shows which folder (or which single `.html` file) is a document of the server, `artefacts.json` in its data folder. A Mac that attaches later is told, and the link survives a restart of the server. The server keeps five hundred links, letting go first of those whose tab it no longer knows; a tab that comes back after a restart finds its own.
+- **The links.** Which folders (or single `.html` files) a session shows is a document of the server, `artefacts.json` in its data folder: a list per session, the one opened last in front. A Mac that attaches later is told, and the links survive a restart of the server. The server keeps twelve pages per session and five hundred sessions, letting go first of the sessions whose tab it no longer knows; a tab that comes back after a restart finds its own.
 - **Its own copy of Slideless.** Each machine that runs sessions installs the command line from the npm registry into its data folder (`slideless/cli`), checks the package against its published integrity hash and runs it with its own Node. Settings → Software Update → Slideless shows each machine's copy and installs or updates it there. A server with no way out to the registry says so in the panel's card and in Settings.
 - **The preview.** One `slideless dev` process per artefact, started when a window first shows the panel and stopped a minute after the last one has let go of it, so looking at another tab and coming back finds the page at once (a window renews its hold every thirty seconds; a hold not renewed for ninety seconds is dropped, so a Mac that disappears leaves nothing running).
 - **The versions.** They are kept beside the files, in the server's data folder (`slideless/versions`): one history, whichever Mac looks at it. The server saves a version itself each time the session's agent finishes a turn, with no window open and no Mac attached. That holds for a chat and for an agent in a terminal alike, on a server inside the app and on one running on its own.

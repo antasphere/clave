@@ -206,6 +206,43 @@ describe('the artefacts over HTTP', () => {
     ])
   })
 
+  it('passes a target on to the port only when it is named (PRDCT-5022)', async () => {
+    const asked: unknown[] = []
+    const { port } = fakePort()
+    const record =
+      (name: string) =>
+      (...args: unknown[]): never => {
+        asked.push([name, ...args])
+        throw new ArtefactRefusal('recorded')
+      }
+    server = await startEmbedded({
+      ports: {
+        sessions: new FakeSource(),
+        artefacts: {
+          ...port,
+          hold: record('hold'),
+          saveVersion: record('saveVersion'),
+          versions: record('versions'),
+          close: async (...args: unknown[]) => void asked.push(['close', ...args])
+        }
+      }
+    })
+    await post('/artefacts/hold', { sessionId: 's1', target: '/work/talk' })
+    await post('/artefacts/hold', { sessionId: 's1', holdId: 'h1' })
+    await post('/artefacts/save-version', { sessionId: 's1', target: '/work/talk' })
+    await get('/artefacts/versions?sessionId=s1&target=%2Fwork%2Ftalk')
+    await post('/artefacts/close', { sessionId: 's1', target: '/work/talk' })
+    await post('/artefacts/close', { sessionId: 's1' })
+    expect(asked).toEqual([
+      ['hold', 's1', undefined, '/work/talk'],
+      ['hold', 's1', 'h1'],
+      ['saveVersion', 's1', '/work/talk'],
+      ['versions', 's1', '/work/talk'],
+      ['close', 's1', '/work/talk'],
+      ['close', 's1']
+    ])
+  })
+
   it('tells a push client each of its events', async () => {
     const { port, emit } = fakePort()
     server = await startEmbedded({ ports: { sessions: new FakeSource(), artefacts: port } })
@@ -216,6 +253,7 @@ describe('the artefacts over HTTP', () => {
     const events: ArtefactEvent[] = [
       { _tag: 'artefact.changed', sessionId: 's1', artefact },
       { _tag: 'artefact.changed', sessionId: 's1', artefact: null },
+      { _tag: 'artefact.changed', sessionId: 's1', artefact, artefacts: [artefact] },
       { _tag: 'artefact.preview_exited', sessionId: 's1' },
       { _tag: 'artefact.present_requested', sessionId: 's1' },
       { _tag: 'slideless.state_changed', state: ready }

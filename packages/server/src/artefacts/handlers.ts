@@ -61,14 +61,30 @@ export const artefactHandlers = [
       p.present === true ? a.open(p.sessionId, p.path, true) : a.open(p.sessionId, p.path)
     )
   ),
-  CommandHandler.make(CloseArtefact, (p) => plain((a) => a.close(p.sessionId))),
+  CommandHandler.make(CloseArtefact, (p) =>
+    plain((a) => (p.target === undefined ? a.close(p.sessionId) : a.close(p.sessionId, p.target)))
+  ),
   CommandHandler.make(HoldArtefactPreview, (p) =>
-    call((a) => (p.holdId === undefined ? a.hold(p.sessionId) : a.hold(p.sessionId, p.holdId)))
+    call((a) =>
+      p.target !== undefined
+        ? a.hold(p.sessionId, p.holdId, p.target)
+        : p.holdId === undefined
+          ? a.hold(p.sessionId)
+          : a.hold(p.sessionId, p.holdId)
+    )
   ),
   CommandHandler.make(ReleaseArtefactPreview, (p) =>
     plain((a) => a.release(p.sessionId, p.holdId))
   ),
-  CommandHandler.make(SaveArtefactVersion, (p) => call((a) => a.saveVersion(p.sessionId))),
-  QueryHandler.make(ListArtefactVersions, (p) => call((a) => a.versions(p.sessionId))),
+  CommandHandler.make(SaveArtefactVersion, (p) =>
+    call((a) =>
+      p.target === undefined ? a.saveVersion(p.sessionId) : a.saveVersion(p.sessionId, p.target)
+    )
+  ),
+  QueryHandler.make(ListArtefactVersions, (p) =>
+    call((a) =>
+      p.target === undefined ? a.versions(p.sessionId) : a.versions(p.sessionId, p.target)
+    )
+  ),
   CommandHandler.make(InstallSlideless, () => plain((a) => a.installSlideless()))
 ] as const

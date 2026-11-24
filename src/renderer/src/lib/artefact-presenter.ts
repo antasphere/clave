@@ -23,7 +23,7 @@ export function windowPresenter(): Presenter {
   if (presenter) return presenter
   const api = window.electronAPI
   presenter = createPresenter({
-    hold: (sessionId, holdId) => api.artefacts.hold(sessionId, holdId),
+    hold: (sessionId, holdId, target) => api.artefacts.hold(sessionId, holdId, target),
     release: (sessionId, holdId) => api.artefacts.release(sessionId, holdId),
     show: (sessionId, url, title, presentationId) =>
       api.presentation.show(sessionId, url, title, presentationId),

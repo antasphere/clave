@@ -17,7 +17,7 @@ import {
 interface Fake {
   deps: PresenterDeps
   calls: unknown[][]
-  artefacts: Record<string, { openedAt: string; title: string }>
+  artefacts: Record<string, { openedAt: string; title: string; target?: string }>
   shown: Record<string, string>
   refuse: { on: boolean }
   /** What main answers a show: taken (true) or not this window's (false). */
@@ -41,8 +41,10 @@ function fake(): Fake {
     taken,
     holds: 0,
     deps: {
-      hold: async (sessionId, holdId) => {
-        calls.push(['hold', sessionId, holdId])
+      hold: async (sessionId, holdId, target) => {
+        calls.push(
+          target === undefined ? ['hold', sessionId, holdId] : ['hold', sessionId, holdId, target]
+        )
         if (refuse.on) throw new Error('This session has no artefact open.')
         // A renewal answers the preview it holds; a new hold, a preview of its own.
         const known = holdId === undefined ? undefined : urls.get(holdId)
@@ -284,6 +286,34 @@ describe('a presentation', () => {
     expect(of(f, 'show')).toEqual([['show', 's1', 'http://127.0.0.1:4101/?bar=0', 'deck', 'p1']])
   })
 
+  it('holds the artefact the window shows by its target, and follows a pick to another (PRDCT-5022)', async () => {
+    const f = fake()
+    f.artefacts.s1 = { openedAt: 'o2', title: 'talk', target: '/work/talk' }
+    const p = createPresenter(f.deps)
+    p.present('s1')
+    await settle()
+    expect(f.calls).toEqual([
+      ['hold', 's1', undefined, '/work/talk'],
+      ['show', 's1', 'http://127.0.0.1:4101/?bar=0', 'talk', 'p1']
+    ])
+    // The person picks the session's other artefact in the bar.
+    f.artefacts.s1 = { openedAt: 'o1', title: 'deck', target: '/work/deck' }
+    p.artefactListed('s1', f.artefacts.s1)
+    await settle()
+    expect(f.calls.slice(2)).toEqual([
+      ['release', 's1', 'h1'],
+      ['hold', 's1', undefined, '/work/deck'],
+      ['show', 's1', 'http://127.0.0.1:4102/?bar=0', 'deck', 'p1']
+    ])
+    // Its preview dies: held again, still that artefact.
+    p.previewExited('s1')
+    await settle()
+    expect(f.calls.slice(5, 7)).toEqual([
+      ['release', 's1', 'h2'],
+      ['hold', 's1', undefined, '/work/deck']
+    ])
+  })
+
   it('a presentation started again after it closed is a new one', async () => {
     const f = fake()
     const p = createPresenter(f.deps)
@@ -367,7 +397,10 @@ describe('the window’s wiring', () => {
     const { listeners, seen } = wiring(new Set())
     listeners.closed.forEach((cb) => cb({ sessionId: 's1', presentationId: 'p1' }))
     listeners.exited.forEach((cb) => cb('s1'))
+    listeners.changed.forEach((cb) => cb({ sessionId: 's1', artefact: { openedAt: 'o9' } }))
     listeners.changed.forEach((cb) => cb({ sessionId: 's1', artefact: null }))
+    // A server's change naming another front is the list's to follow (a pick may show
+    // another of the session's); only its word that none is left is routed.
     expect(seen).toEqual([
       ['closed', 's1', 'p1'],
       ['exited', 's1'],

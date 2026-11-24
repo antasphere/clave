@@ -23,23 +23,32 @@ export const PRESENT_RESTARTS_MAX = 3
 export const PRESENT_ASK_WAIT_MS = 10_000
 
 export interface PresenterDeps {
+  /** Hold the preview of one of the session's artefacts (PRDCT-5022: it may keep several). */
   hold: (
     sessionId: string,
-    holdId?: string
+    holdId?: string,
+    target?: string
   ) => Promise<{ url: string; holdId: string; ttlMs: number }>
   release: (sessionId: string, holdId: string) => Promise<void>
   /** Show the deck at `url` in the session's presentation window. False: this window
    *  is not the one presenting it (another one is, or the person closed it). */
   show: (sessionId: string, url: string, title: string, presentationId: string) => Promise<boolean>
   close: (sessionId: string) => Promise<void>
-  /** The session's artefact as the window lists it. */
-  artefact: (sessionId: string) => { openedAt: string; title: string } | undefined
+  /** The artefact the window shows for the session (the one picked in its bar, else its front). */
+  artefact: (sessionId: string) => Shown | undefined
   /** The version the session's panel shows for that open (`live`, `latest` or a number). */
   shown: (sessionId: string, openedAt: string) => string
   newId?: () => string
   now?: () => number
   setTimer?: typeof setTimeout
   clearTimer?: typeof clearTimeout
+}
+
+/** An artefact as the presenter needs it: its open, and which of the session's it is. */
+export interface Shown {
+  readonly openedAt: string
+  readonly title?: string
+  readonly target?: string
 }
 
 export interface Presenter {
@@ -50,11 +59,12 @@ export interface Presenter {
   closed(sessionId: string, presentationId: string): void
   /** The server says the preview died under its holders. */
   previewExited(sessionId: string): void
-  /** The server says the session's artefact changed: closed (null), or opened anew. */
-  artefactChanged(sessionId: string, artefact: { openedAt: string } | null): void
-  /** The window lists the session's artefact so: another open follows it; a session
-   *  missing from the list says nothing (a server that did not answer lists none). */
-  artefactListed(sessionId: string, artefact: { openedAt: string } | undefined): void
+  /** The server says the session's artefacts changed: none left (null), or another shown. */
+  artefactChanged(sessionId: string, artefact: Shown | null): void
+  /** The window shows this artefact for the session: another one (a new open, a pick)
+   *  is followed; a session missing from the list says nothing (a server that did not
+   *  answer lists none). */
+  artefactListed(sessionId: string, artefact: Shown | undefined): void
   /** The version the panel shows may have changed. */
   versionChanged(sessionId: string): void
   sessions(): string[]
@@ -63,6 +73,8 @@ export interface Presenter {
 interface Running {
   readonly presentationId: string
   readonly openedAt: string
+  /** Which of the session's artefacts it holds. */
+  readonly target?: string
   url?: string
   sentShown?: string
   /** A show was sent for this presentation (this entry or one it replaced): a window may be up. */
@@ -115,14 +127,24 @@ export function createPresenter(deps: PresenterDeps): Presenter {
 
   const start = (
     sessionId: string,
-    openedAt: string,
+    artefact: Shown,
     presentationId: string,
     sent: boolean
   ): void => {
-    const entry: Running = { presentationId, openedAt, sent, refusals: 0, loop: NOT_STARTED }
+    const entry: Running = {
+      presentationId,
+      openedAt: artefact.openedAt,
+      ...(artefact.target !== undefined && { target: artefact.target }),
+      sent,
+      refusals: 0,
+      loop: NOT_STARTED
+    }
     running.set(sessionId, entry)
     entry.loop = startHoldLoop({
-      hold: (holdId) => deps.hold(sessionId, holdId),
+      hold: (holdId) =>
+        entry.target === undefined
+          ? deps.hold(sessionId, holdId)
+          : deps.hold(sessionId, holdId, entry.target),
       release: (holdId) => deps.release(sessionId, holdId),
       onUrl: (url) => {
         if (running.get(sessionId) !== entry) return
@@ -139,15 +161,15 @@ export function createPresenter(deps: PresenterDeps): Presenter {
     })
   }
 
-  /** The same presentation, on another open or a new preview: its id and window kept. */
-  const restart = (sessionId: string, openedAt: string): void => {
+  /** The same presentation, on another artefact, open or preview: its id and window kept. */
+  const restart = (sessionId: string, artefact: Shown): void => {
     const entry = drop(sessionId)
-    if (entry) start(sessionId, openedAt, entry.presentationId, entry.sent)
+    if (entry) start(sessionId, artefact, entry.presentationId, entry.sent)
   }
 
-  const follow = (sessionId: string, artefact: { openedAt: string }): void => {
+  const follow = (sessionId: string, artefact: Shown): void => {
     const entry = running.get(sessionId)
-    if (entry && artefact.openedAt !== entry.openedAt) restart(sessionId, artefact.openedAt)
+    if (entry && artefact.openedAt !== entry.openedAt) restart(sessionId, artefact)
   }
 
   return {
@@ -155,10 +177,10 @@ export function createPresenter(deps: PresenterDeps): Presenter {
       const artefact = deps.artefact(sessionId)
       if (!artefact) return false
       const entry = running.get(sessionId)
-      if (!entry) start(sessionId, artefact.openedAt, newId(), false)
+      if (!entry) start(sessionId, artefact, newId(), false)
       // Already presented: brought forward (main focuses its window).
       else if (entry.openedAt === artefact.openedAt) send(sessionId, entry)
-      else restart(sessionId, artefact.openedAt)
+      else restart(sessionId, artefact)
       return true
     },
     isPresenting: (sessionId) => running.has(sessionId),
@@ -177,7 +199,10 @@ export function createPresenter(deps: PresenterDeps): Presenter {
       }
       restarts.set(sessionId, [...recent, at])
       // Held again without the old id: the server answers the new preview's address.
-      restart(sessionId, entry.openedAt)
+      restart(sessionId, {
+        openedAt: entry.openedAt,
+        ...(entry.target !== undefined && { target: entry.target })
+      })
     },
     artefactChanged: (sessionId, artefact) => {
       if (!running.has(sessionId)) return
@@ -201,15 +226,15 @@ export interface PresenterWiring {
   presenter: Presenter
   /** Whether this window lists the session: an agent's ask is for the windows that do. */
   shows: (sessionId: string) => boolean
-  /** The session's artefact as the window lists it now. */
-  listed: (sessionId: string) => { openedAt: string } | undefined
+  /** The artefact the window shows for the session now. */
+  listed: (sessionId: string) => Shown | undefined
   onPresentRequested: (callback: (sessionId: string) => void) => () => void
   onClosed: (
     callback: (closed: { sessionId: string; presentationId: string }) => void
   ) => () => void
   onPreviewExited: (callback: (sessionId: string) => void) => () => void
   onChanged: (
-    callback: (change: { sessionId: string; artefact: { openedAt: string } | null }) => void
+    callback: (change: { sessionId: string; artefact: Shown | null }) => void
   ) => () => void
   /** The window's list of artefacts, or a version chosen in a panel, changed. */
   onListChanged: (callback: () => void) => () => void
@@ -240,7 +265,11 @@ export function wirePresenter(w: PresenterWiring): () => void {
     }),
     w.onClosed(({ sessionId, presentationId }) => w.presenter.closed(sessionId, presentationId)),
     w.onPreviewExited((sessionId) => w.presenter.previewExited(sessionId)),
-    w.onChanged(({ sessionId, artefact }) => w.presenter.artefactChanged(sessionId, artefact)),
+    // The server's word that none is left ends it; another open is followed through
+    // the window's list, where a pick in the bar may show another of the session's.
+    w.onChanged(({ sessionId, artefact }) => {
+      if (artefact === null) w.presenter.artefactChanged(sessionId, null)
+    }),
     w.onListChanged(() => {
       for (const [sessionId, timer] of [...waiting]) {
         if (!w.listed(sessionId)) continue

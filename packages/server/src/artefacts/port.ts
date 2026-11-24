@@ -36,16 +36,18 @@ export interface ArtefactsService {
   /** Link a session to a folder holding an HTML page, or to one `.html` file;
    *  with `present`, tell the windows to present it full screen (PRDCT-4980). */
   readonly open: (sessionId: string, path: string, present?: boolean) => Promise<Artefact>
-  /** Drop the session's link and its holds; a session with none is not an error. */
-  readonly close: (sessionId: string) => Promise<void>
-  /** Hold (or renew a hold of) the running preview of the session's artefact. */
-  readonly hold: (sessionId: string, holdId?: string) => Promise<ArtefactPreview>
+  /** Drop one of the session's links (`target`), or all of them, with their holds;
+   *  a session with none is not an error. */
+  readonly close: (sessionId: string, target?: string) => Promise<void>
+  /** Hold (or renew a hold of) the running preview of one of the session's
+   *  artefacts (`target`), its front one when absent. */
+  readonly hold: (sessionId: string, holdId?: string, target?: string) => Promise<ArtefactPreview>
   /** Let go of a hold; an unknown one is ignored. */
   readonly release: (sessionId: string, holdId: string) => Promise<void>
-  /** Save a version of the session's artefact now. */
-  readonly saveVersion: (sessionId: string) => Promise<ArtefactVersion>
-  /** The versions of the session's artefact, from its running preview. */
-  readonly versions: (sessionId: string) => Promise<ArtefactVersions>
+  /** Save a version of one of the session's artefacts now (`target`, else the front one). */
+  readonly saveVersion: (sessionId: string, target?: string) => Promise<ArtefactVersion>
+  /** The versions of one of the session's artefacts, from its running preview. */
+  readonly versions: (sessionId: string, target?: string) => Promise<ArtefactVersions>
   readonly list: () => Promise<readonly Artefact[]>
   readonly slidelessState: () => Promise<SlidelessState>
   /** Install, or update to, the registry's latest release. */

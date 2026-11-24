@@ -15,6 +15,7 @@ import { useSessionStore } from '../../store/session-store'
 import { ownerOfSession, useArtefactStore } from '../../store/artefact-store'
 import { SlidelessArtefact } from './SlidelessArtefact'
 import { ArtefactVersionChip } from './ArtefactVersionChip'
+import { ArtefactPicker } from './ArtefactPicker'
 import { FileMenu } from './FileMenu'
 import { inBrowser, shownFor } from '../../lib/artefact-version'
 import { useFleetStore } from '../../store/fleet-store'
@@ -55,8 +56,15 @@ export function ArtefactPanel({
       <header className="pane-header">
         <div className="pane-header-lead" title={artefact.page}>
           <DocumentTextIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-          <span className="pane-header-title">{artefact.title}</span>
-          {ready && <ArtefactVersionChip sessionId={sessionId} openedAt={artefact.openedAt} />}
+          {/* PRDCT-5022: a picker of the session's artefacts when it keeps several. */}
+          <ArtefactPicker sessionId={sessionId} artefact={artefact} />
+          {ready && (
+            <ArtefactVersionChip
+              sessionId={sessionId}
+              target={artefact.target}
+              openedAt={artefact.openedAt}
+            />
+          )}
         </div>
         <div className="pane-header-actions">
           <FileMenu
@@ -80,7 +88,10 @@ export function ArtefactPanel({
                 disabled: !ready,
                 reports: true,
                 onSelect: async () => {
-                  const saved = await window.electronAPI.artefacts.saveVersion(sessionId)
+                  const saved = await window.electronAPI.artefacts.saveVersion(
+                    sessionId,
+                    artefact.target
+                  )
                   noteSaved(sessionId)
                   return saved.created
                     ? `Saved as v${saved.version}`

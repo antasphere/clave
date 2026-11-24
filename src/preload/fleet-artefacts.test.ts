@@ -270,6 +270,42 @@ describe('a connected server’s artefacts', () => {
     ])
   })
 
+  it('names one of the session’s artefacts to its server when asked (PRDCT-5022)', async () => {
+    await h.api.artefacts.hold(X, undefined, '/srv/talk')
+    await h.api.artefacts.saveVersion(X, '/srv/talk')
+    await h.api.artefacts.versions(X, '/srv/talk')
+    await h.api.artefacts.close(X, '/srv/talk')
+    expect(h.calls).toEqual([
+      { owner: 'x', method: 'hold', args: ['wire-1', undefined, '/srv/talk'] },
+      { owner: 'x', method: 'saveVersion', args: ['wire-1', '/srv/talk'] },
+      { owner: 'x', method: 'versions', args: ['wire-1', '/srv/talk'] },
+      { owner: 'x', method: 'close', args: ['wire-1', '/srv/talk'] }
+    ])
+  })
+
+  it('a server’s list of a session’s artefacts arrives re-keyed, each of them (PRDCT-5022)', () => {
+    const changes: unknown[] = []
+    h.api.artefacts.onChanged((change) => changes.push(change))
+    const a = artefactOf('wire-1')
+    const b = { ...artefactOf('wire-1'), target: '/srv/other' }
+    h.emit('x', {
+      _tag: 'artefact.changed',
+      sessionId: 'wire-1',
+      artefact: b,
+      artefacts: [a, b]
+    } as ServerEvent)
+    expect(changes).toEqual([
+      {
+        sessionId: X,
+        artefact: { ...b, sessionId: X },
+        artefacts: [
+          { ...a, sessionId: X },
+          { ...b, sessionId: X }
+        ]
+      }
+    ])
+  })
+
   it('a session of this Mac never touches forwards:open', async () => {
     const held = await h.api.artefacts.hold('own-1')
     await h.api.artefacts.hold('own-1', held.holdId)

@@ -33,8 +33,10 @@ const port = (asked: unknown[]): ArtefactsService => ({
     return { sessionId, target: path, page: `${path}/index.html`, title: 'deck', openedAt: 'now' }
   },
   close: async (sessionId) => void asked.push(['close', sessionId]),
-  hold: async (sessionId, holdId) => {
-    asked.push(['hold', sessionId, holdId])
+  hold: async (sessionId, holdId, target) => {
+    asked.push(
+      target === undefined ? ['hold', sessionId, holdId] : ['hold', sessionId, holdId, target]
+    )
     return {
       holdId: holdId ?? 'h1',
       lease: 'ab'.repeat(16),
@@ -65,6 +67,7 @@ describe('the artefacts of the client', () => {
     )
     expect((await api.artefacts.hold('s1')).holdId).toBe('h1')
     expect((await api.artefacts.hold('s1', 'h2')).holdId).toBe('h2')
+    expect((await api.artefacts.hold('s1', undefined, '/work/talk')).holdId).toBe('h1')
     await api.artefacts.release('s1', 'h2')
     await api.artefacts.close('s1')
     expect(await api.artefacts.saveVersion('s1')).toEqual({ version: 1, created: true })
@@ -80,6 +83,7 @@ describe('the artefacts of the client', () => {
       ['open', 's1', '/work/notes'],
       ['hold', 's1', undefined],
       ['hold', 's1', 'h2'],
+      ['hold', 's1', undefined, '/work/talk'],
       ['release', 's1', 'h2'],
       ['close', 's1']
     ])

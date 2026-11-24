@@ -90,7 +90,8 @@ export function SlidelessArtefact({
     // One hold call at a time (`startHoldLoop`): a wake-up during a call in
     // flight runs one more call after it, never a second hold at once.
     const loop = startHoldLoop({
-      hold: (holdId) => window.electronAPI.artefacts.hold(sessionId, holdId),
+      // This artefact of the session's (PRDCT-5022): it may keep several.
+      hold: (holdId) => window.electronAPI.artefacts.hold(sessionId, holdId, artefact.target),
       release: (holdId) => window.electronAPI.artefacts.release(sessionId, holdId),
       onUrl: (url) =>
         setHeld((prev) =>
@@ -103,7 +104,7 @@ export function SlidelessArtefact({
       wake.current = null
       loop.stop()
     }
-  }, [sessionId, openedAt, generation, gaveUp, ready])
+  }, [sessionId, artefact.target, openedAt, generation, gaveUp, ready])
 
   // The plain page of this Mac follows its file while Slideless is not there.
   const [reloadKey, setReloadKey] = useState(0)

@@ -29,6 +29,9 @@ const defaults: ArtefactHandlerDeps = {
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+/** An optional argument: a string, or nothing (never an empty string). */
+const optional = (value: unknown): string | undefined =>
+  typeof value === 'string' && value !== '' ? value : undefined
 
 export function registerArtefactHandlers(deps: ArtefactHandlerDeps = defaults): void {
   const on = <R>(
@@ -41,13 +44,32 @@ export function registerArtefactHandlers(deps: ArtefactHandlerDeps = defaults): 
     })
   }
   on('list', (api) => api.artefacts.list())
-  on('hold', (api, sessionId, holdId) =>
-    api.artefacts.hold(text(sessionId), typeof holdId === 'string' ? holdId : undefined)
-  )
+  // A target names one of the session's artefacts (PRDCT-5022); unnamed, nothing is passed.
+  on('hold', (api, sessionId, holdId, target) => {
+    const wanted = optional(target)
+    return wanted === undefined
+      ? api.artefacts.hold(text(sessionId), optional(holdId))
+      : api.artefacts.hold(text(sessionId), optional(holdId), wanted)
+  })
   on('release', (api, sessionId, holdId) => api.artefacts.release(text(sessionId), text(holdId)))
-  on('saveVersion', (api, sessionId) => api.artefacts.saveVersion(text(sessionId)))
-  on('versions', (api, sessionId) => api.artefacts.versions(text(sessionId)))
-  on('close', (api, sessionId) => api.artefacts.close(text(sessionId)))
+  on('saveVersion', (api, sessionId, target) => {
+    const wanted = optional(target)
+    return wanted === undefined
+      ? api.artefacts.saveVersion(text(sessionId))
+      : api.artefacts.saveVersion(text(sessionId), wanted)
+  })
+  on('versions', (api, sessionId, target) => {
+    const wanted = optional(target)
+    return wanted === undefined
+      ? api.artefacts.versions(text(sessionId))
+      : api.artefacts.versions(text(sessionId), wanted)
+  })
+  on('close', (api, sessionId, target) => {
+    const wanted = optional(target)
+    return wanted === undefined
+      ? api.artefacts.close(text(sessionId))
+      : api.artefacts.close(text(sessionId), wanted)
+  })
   on('slidelessState', (api) => api.artefacts.slidelessState())
   on('installSlideless', (api) => api.artefacts.installSlideless())
 }

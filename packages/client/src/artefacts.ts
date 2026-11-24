@@ -21,11 +21,11 @@ import type { Call } from './call'
 
 export interface ArtefactsClient {
   readonly open: (sessionId: string, path: string, present?: boolean) => Promise<Artefact>
-  readonly close: (sessionId: string) => Promise<void>
-  readonly hold: (sessionId: string, holdId?: string) => Promise<ArtefactPreview>
+  readonly close: (sessionId: string, target?: string) => Promise<void>
+  readonly hold: (sessionId: string, holdId?: string, target?: string) => Promise<ArtefactPreview>
   readonly release: (sessionId: string, holdId: string) => Promise<void>
-  readonly saveVersion: (sessionId: string) => Promise<ArtefactVersion>
-  readonly versions: (sessionId: string) => Promise<ArtefactVersions>
+  readonly saveVersion: (sessionId: string, target?: string) => Promise<ArtefactVersion>
+  readonly versions: (sessionId: string, target?: string) => Promise<ArtefactVersions>
   readonly list: () => Promise<readonly Artefact[]>
   readonly slidelessState: () => Promise<SlidelessState>
   readonly installSlideless: () => Promise<SlidelessState>
@@ -36,16 +36,30 @@ export const artefactsClient = (call: Call, patientCall: Call = call): Artefacts
     call((c) =>
       c.artefacts.open({ payload: { sessionId, path, ...(present === true && { present }) } })
     ),
-  close: (sessionId) =>
-    call((c) => c.artefacts.close({ payload: { sessionId } })).then(() => undefined),
-  hold: (sessionId, holdId) =>
+  close: (sessionId, target) =>
+    call((c) =>
+      c.artefacts.close({ payload: { sessionId, ...(target !== undefined && { target }) } })
+    ).then(() => undefined),
+  hold: (sessionId, holdId, target) =>
     patientCall((c) =>
-      c.artefacts.hold({ payload: { sessionId, ...(holdId !== undefined && { holdId }) } })
+      c.artefacts.hold({
+        payload: {
+          sessionId,
+          ...(holdId !== undefined && { holdId }),
+          ...(target !== undefined && { target })
+        }
+      })
     ),
   release: (sessionId, holdId) =>
     call((c) => c.artefacts.release({ payload: { sessionId, holdId } })).then(() => undefined),
-  saveVersion: (sessionId) => call((c) => c.artefacts.saveVersion({ payload: { sessionId } })),
-  versions: (sessionId) => call((c) => c.artefacts.versions({ payload: { sessionId } })),
+  saveVersion: (sessionId, target) =>
+    call((c) =>
+      c.artefacts.saveVersion({ payload: { sessionId, ...(target !== undefined && { target }) } })
+    ),
+  versions: (sessionId, target) =>
+    call((c) =>
+      c.artefacts.versions({ payload: { sessionId, ...(target !== undefined && { target }) } })
+    ),
   list: () => call((c) => c.artefacts.list({ payload: {} })),
   slidelessState: () => call((c) => c.artefacts.slidelessState({ payload: {} })),
   installSlideless: () => patientCall((c) => c.artefacts.installSlideless({ payload: {} }))

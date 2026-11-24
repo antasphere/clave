@@ -8,9 +8,12 @@
  * forwarder (`forward.ts`), and lets go when it no longer shows it.
  *
  * - `OpenArtefact`: link a session to a folder holding an HTML page, or to
- *   one `.html` file; the link replaces the session's previous one. With
- *   `present`, the windows are also told to present it full screen.
- * - `CloseArtefact`: drop the session's link.
+ *   one `.html` file; a session keeps several (PRDCT-5022), and the one
+ *   opened comes in front. With `present`, the windows are also told to
+ *   present it full screen.
+ * - `CloseArtefact`: drop one of the session's links (`target`), or all of them.
+ * - The calls that name a `target` act on that artefact of the session, the
+ *   front one when it is absent.
  * - `HoldArtefactPreview` / `ReleaseArtefactPreview`: a window holds the
  *   running preview of the session's artefact, renewing the hold before its
  *   time runs out, and releases it when it stops showing the page.
@@ -102,6 +105,8 @@ export const RefusedOrUnavailable = Schema.Union(ArtefactRefused, CapabilityUnav
 
 const SessionId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256))
 const HoldId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+/** One of a session's artefacts (PRDCT-5022), by its folder or file; absent, the front one. */
+const Target = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096))
 
 // ── Commands ──
 
@@ -118,13 +123,17 @@ export const OpenArtefact = Command.define('OpenArtefact', {
 })
 
 export const CloseArtefact = Command.define('CloseArtefact', {
-  payload: Schema.Struct({ sessionId: SessionId }),
+  payload: Schema.Struct({ sessionId: SessionId, target: Schema.optional(Target) }),
   success: Schema.Void,
   failure: CapabilityUnavailable
 })
 
 export const HoldArtefactPreview = Command.define('HoldArtefactPreview', {
-  payload: Schema.Struct({ sessionId: SessionId, holdId: Schema.optional(HoldId) }),
+  payload: Schema.Struct({
+    sessionId: SessionId,
+    holdId: Schema.optional(HoldId),
+    target: Schema.optional(Target)
+  }),
   success: ArtefactPreview,
   failure: RefusedOrUnavailable
 })
@@ -136,7 +145,7 @@ export const ReleaseArtefactPreview = Command.define('ReleaseArtefactPreview', {
 })
 
 export const SaveArtefactVersion = Command.define('SaveArtefactVersion', {
-  payload: Schema.Struct({ sessionId: SessionId }),
+  payload: Schema.Struct({ sessionId: SessionId, target: Schema.optional(Target) }),
   success: ArtefactVersion,
   failure: RefusedOrUnavailable
 })
@@ -157,7 +166,7 @@ export const ListArtefacts = Query.define('ListArtefacts', {
 
 /** The versions of the session's artefact, read from its running preview (PRDCT-4494). */
 export const ListArtefactVersions = Query.define('ListArtefactVersions', {
-  payload: Schema.Struct({ sessionId: SessionId }),
+  payload: Schema.Struct({ sessionId: SessionId, target: Schema.optional(Target) }),
   success: ArtefactVersions,
   failure: RefusedOrUnavailable
 })
@@ -170,10 +179,13 @@ export const GetSlidelessState = Query.define('GetSlidelessState', {
 
 // ── Events ──
 
-/** A session's artefact was opened or replaced, or closed (null). */
+/** A session's artefacts changed: `artefact` is its front one (the one opened, or
+ *  null once none is left), `artefacts` all of them, oldest first, the front last
+ *  (PRDCT-5022; absent from an older server, which keeps one per session). */
 export const ArtefactChanged = Schema.TaggedStruct('artefact.changed', {
   sessionId: Schema.String,
-  artefact: Schema.NullOr(Artefact)
+  artefact: Schema.NullOr(Artefact),
+  artefacts: Schema.optional(Schema.Array(Artefact))
 })
 /** The agent asked to present the session's artefact (PRDCT-4980): the window
  *  holding the session opens it full screen in a window of its own. Never kept:
