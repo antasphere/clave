@@ -3525,9 +3525,10 @@ body.reorder-dragging * {
 
 /* A tab's nested tabs (PRDCT-4998): a quiet count at the head of the row's
    trailing items, and the tabs themselves as rows under it, indented behind a
-   hairline. Its pill keeps 3px of padding for the hover and gives back 5px of
-   the row's 8px gap on each side, so the chevron and the number sit 6px from
-   their neighbours (PRDCT-5033). */
+   hairline. Its pill gives back 6px of the row's 8px gap on each side, so the
+   chevron and the number sit about 6px from what is beside them (PRDCT-5033);
+   2px of padding before the chevron, whose glyph sits inside its box, and 4px
+   after the number keep the pill even under the pointer. */
 .sidebar-nest-toggle {
   position: relative;
   display: inline-flex;
@@ -3535,8 +3536,8 @@ body.reorder-dragging * {
   gap: 1px;
   flex-shrink: 0;
   height: 18px;
-  padding: 0 3px;
-  margin: 0 -5px;
+  padding: 0 4px 0 2px;
+  margin: 0 -6px;
   border-radius: 9999px;
   color: var(--text-tertiary);
   font-size: 11px;
@@ -3558,11 +3559,18 @@ body.reorder-dragging * {
   transform: rotate(90deg);
 }
 /* The pill is 18px tall in a row of 28 or 32: the press lands on the whole
-   height of the row and a little to each side, as the page glyph's does. */
+   height of the row, and to each side up to what is beside it. */
 .sidebar-nest-toggle::after {
   content: '';
   position: absolute;
-  inset: -7px -4px;
+  inset: -7px -2px;
+}
+/* Before the page button, which grows on hover over a hit area larger than
+   itself, the count keeps the row's whole gap on that side, so a press on
+   the number unfolds the nest and never opens the page. A server workspace's
+   rows carry a hidden span between the two. */
+.sidebar-nest-toggle:has(+ .sidebar-tab-view, + [hidden] + .sidebar-tab-view) {
+  margin-right: 0;
 }
 .sidebar-nest-toggle > .sidebar-tab-spinner {
   width: 10px;

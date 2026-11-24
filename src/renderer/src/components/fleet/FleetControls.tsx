@@ -230,7 +230,8 @@ export function ServerTag({
 
 /** Which machine a row runs on, when it is not this Mac. In a Mac workspace a
  *  server tab is there because its workspace is paired with this one
- *  (PRDCT-4151), and the server's tag says where it runs. In a server's own
+ *  (PRDCT-4151), and with no workspace every tab shows: the server's tag says
+ *  where it runs. In a server's own
  *  workspace every tab is the server's: the workspace switcher carries the
  *  tag once, and the rows draw nothing (PRDCT-5033). The row still says whose
  *  it is and the state of that server's connection, as data drawn nowhere. */
@@ -248,7 +249,10 @@ function MachineBadge({
   if (!isRemoteKey(ownerKey)) return null
   const name = connection?.name ?? 'Server'
   const label = `${name}${status && status !== 'connected' ? ` (${status})` : ''}`
-  const named = activeWorkspaceId !== null && !isRemoteKey(activeWorkspaceId)
+  // Anywhere but a server's own workspace, a server's tab sits among this
+  // Mac's (a paired workspace, or no workspace at all, where every tab shows):
+  // the tag is what tells them apart.
+  const named = !isRemoteKey(activeWorkspaceId)
   if (named)
     return (
       <ServerTag

@@ -17,7 +17,8 @@ function stateLabel(session: Session): string {
 
 /**
  * The quiet count on a tab's row that folds and unfolds the tabs nested under
- * it (PRDCT-4998), just before the row's status. Folded, it takes the colour
+ * it (PRDCT-4998), at the head of the row's trailing items, before a server's
+ * tag and the row's status (PRDCT-5033). Folded, it takes the colour
  * of the nested tab that most asks for attention (the stylesheet reads
  * `data-status` only then), and a nest at work shows the spinner in the
  * chevron's place: a folded row still says what is going on under it.
