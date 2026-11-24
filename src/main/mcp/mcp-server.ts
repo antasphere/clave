@@ -113,6 +113,11 @@ import {
 } from './request-input'
 import { antigravityLaunchModels } from '../../shared/antigravity'
 import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../shared/within-budget'
+import {
+  ATTACH_SESSION_ARGS,
+  ATTACH_SESSION_DESCRIPTION,
+  ATTACH_SESSION_TOOL
+} from '../../shared/nest-tools'
 
 const MCP_PATH = '/mcp'
 
@@ -261,7 +266,8 @@ const SUBJECT_SESSION_COMMANDS = new Set([
   'moveSession',
   'setSessionView',
   'switchAccount',
-  'setWork'
+  'setWork',
+  'attachSession'
 ])
 
 /** A workspace ref (id or name) → its id, main-side (the registry is global). */
@@ -999,7 +1005,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_list',
     {
-      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; each session carries its harness (mode), model and launchProfileId as its record keeps them; a session on a harness with a connection pool (${OPEN_POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit).`,
+      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; each session carries its harness (mode), model and launchProfileId as its record keeps them; a session on a harness with a connection pool (${OPEN_POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit). nestedUnder is the tab a session is shown under in the sidebar; parentId is the tab "parent" reaches from it: the tab that opened it, else the tab it is nested under.`,
       inputSchema: {
         workspace: z
           .string()
@@ -1454,6 +1460,21 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       }
     },
     (args) => run('setWork', { ...args, callerSessionId })
+  )
+
+  // PRDCT-4997: nest a tab that exists under another, or take it out. The
+  // words and the argument rule are shared with every road (`nest-tools.ts`).
+  server.registerTool(
+    ATTACH_SESSION_TOOL,
+    {
+      description: ATTACH_SESSION_DESCRIPTION,
+      inputSchema: {
+        sessionId: z.string().optional().describe(ATTACH_SESSION_ARGS.sessionId),
+        to: z.string().optional().describe(ATTACH_SESSION_ARGS.to),
+        detach: z.boolean().optional().describe(ATTACH_SESSION_ARGS.detach)
+      }
+    },
+    (args) => run('attachSession', { ...args, callerSessionId })
   )
 
   server.registerTool(

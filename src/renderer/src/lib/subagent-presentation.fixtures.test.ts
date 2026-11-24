@@ -3,7 +3,7 @@ import { Effect, Layer, Schema } from 'effect'
 import { Command, CommandHandler, HandlerRegistry, layer as busesLayer } from '@structure-ai/cqrs'
 import { defineFixture, defineScenario, run } from '@structure-ai/fixtures'
 import type { Session, SessionGroup } from '../store/session-types'
-import { subagentAttention, subagentPresentation } from './subagent-presentation'
+import { nestToShowFocus, subagentAttention, subagentPresentation } from './subagent-presentation'
 
 const session = (id: string, over: Partial<Session> = {}): Session => ({
   id,
@@ -116,7 +116,7 @@ describe('subagent presentation', () => {
     expect(unread.hasUnseenActivity).toBe(true)
     expect(blocked.agentState).toBe('blocked')
   })
-  it('compacts nested agents while preserving live session objects and terminals', () => {
+  it('folds nested agents and nested terminals alike while preserving live session objects', () => {
     const parent = session('parent')
     const child = session('child', { spawnedBy: parent.id })
     const nested = session('nested', { spawnedBy: child.id })
@@ -125,11 +125,20 @@ describe('subagent presentation', () => {
     const result = graph(rows)
     expect([...result.rootById]).toEqual([
       ['nested', 'parent'],
-      ['child', 'parent']
+      ['child', 'parent'],
+      ['terminal', 'parent']
     ])
-    expect(result.descendants.get(parent.id)).toEqual([child, nested])
+    expect(result.descendants.get(parent.id)).toEqual([child, terminal, nested])
     expect(result.descendants.get(parent.id)?.[0]).toBe(child)
     expect(rows).toHaveLength(5)
+  })
+
+  it('counts a plain terminal nested under a tab among its descendants', () => {
+    const parent = session('parent', { codexMode: false })
+    const terminal = session('terminal', { spawnedBy: parent.id, codexMode: false })
+    const result = graph([parent, terminal])
+    expect(result.rootById.get(terminal.id)).toBe(parent.id)
+    expect(result.descendants.get(parent.id)).toEqual([terminal])
   })
 
   it('keeps missing, filtered and cross-workspace parents from hiding children', () => {
@@ -180,6 +189,77 @@ describe('subagent presentation', () => {
       graph([parent, session('remote', { sessionType: 'agent', spawnedBy: parent.id })]).rootById
         .size
     ).toBe(0)
+  })
+})
+
+describe('the nest that keeps the focused tab in sight', () => {
+  const lead = session('lead')
+  const helper = session('helper', { spawnedBy: lead.id })
+  const any = (): boolean => true
+  // What the sidebar does at each change: ask with what it remembers, keep
+  // the answer's memory.
+  const ask = (
+    seen: string | null,
+    focused: string | null,
+    rows: Session[],
+    drawsNest: (root: string) => boolean = any
+  ): ReturnType<typeof nestToShowFocus> =>
+    nestToShowFocus(seen, focused, graph(rows).rootById, drawsNest)
+
+  it('opens the nest of the tab the focus moves onto, once, so it can be folded again', () => {
+    const first = ask(null, helper.id, [lead, helper])
+    expect(first.open).toBe(lead.id)
+    // The same tab under the same parent asks for nothing: the person folded
+    // the nest and it stays folded.
+    expect(ask(first.seen, helper.id, [lead, helper]).open).toBeNull()
+  })
+
+  it('opens nothing for a tab that is nested under no tab', () => {
+    expect(ask(null, lead.id, [lead, helper])).toEqual({ seen: null, open: null })
+    expect(ask(null, null, [lead, helper])).toEqual({ seen: null, open: null })
+  })
+
+  it('opens the nest when the parent comes back after the focused tab, as a restart places them', () => {
+    // The focused tab is placed first: its parent is not there, it is a row.
+    const alone = ask(null, helper.id, [helper])
+    expect(alone).toEqual({ seen: null, open: null })
+    // The parent arrives. The focus did not move, and the tab is now hidden
+    // in a folded nest unless the nest opens.
+    expect(ask(alone.seen, helper.id, [lead, helper]).open).toBe(lead.id)
+  })
+
+  it('opens the nest when the tab on screen is nested while it has the focus', () => {
+    const loose = session('helper')
+    const before = ask(null, loose.id, [lead, loose])
+    expect(before.open).toBeNull()
+    expect(ask(before.seen, helper.id, [lead, helper]).open).toBe(lead.id)
+  })
+
+  it('opens the nest again each time the focus comes back to the nested tab', () => {
+    const first = ask(null, helper.id, [lead, helper])
+    const away = ask(first.seen, lead.id, [lead, helper])
+    expect(away).toEqual({ seen: null, open: null })
+    expect(ask(away.seen, helper.id, [lead, helper]).open).toBe(lead.id)
+  })
+
+  it('opens the nest again when the focus moves to another tab of the same nest', () => {
+    const second = session('second', { spawnedBy: lead.id })
+    const first = ask(null, helper.id, [lead, helper, second])
+    // The person folds the nest, then goes to another tab that sits in it.
+    expect(ask(first.seen, second.id, [lead, helper, second]).open).toBe(lead.id)
+  })
+
+  it('opens the other nest when the focused tab is moved under another tab', () => {
+    const other = session('other')
+    const first = ask(null, helper.id, [lead, other, helper])
+    const moved = ask(first.seen, helper.id, [lead, other, { ...helper, spawnedBy: other.id }])
+    expect(moved.open).toBe(other.id)
+  })
+
+  it('waits for a parent drawn by a wave or lane entry to draw a nest of its own', () => {
+    const drawn = ask(null, helper.id, [lead, helper], () => false)
+    expect(drawn).toEqual({ seen: null, open: null })
+    expect(ask(drawn.seen, helper.id, [lead, helper]).open).toBe(lead.id)
   })
 })
 

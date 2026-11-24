@@ -20,6 +20,7 @@ const globals = vi.hoisted(() => {
 })
 import { useLaunchProfileStore } from '../store/launch-profile-store'
 import type { LaunchProfile, LaunchProfilePreferences } from '../../../shared/agent-launch'
+import { nestRefusalMessage } from '../../../shared/nest-tools'
 
 /* The window road of clave_open_session: the renderer's own executor, the one
    a Mac with a saved server connection runs every open through (and the only
@@ -491,6 +492,138 @@ describe('clave_set_work and clave_hand_over on the window road', () => {
     expect(answer.ok).toBe(false)
     expect(answer.error).toMatch(/exactly one of/)
     expect(sessionsChangeWork).not.toHaveBeenCalled()
+  })
+})
+
+describe('clave_attach_session on the window road (PRDCT-4997)', () => {
+  const srv = (id: string): string => resourceKey('session', 'srv-1', id)
+  const lead = srv('lead')
+  const old = srv('old')
+  const helper = srv('helper')
+  let sessionsNest: ReturnType<typeof vi.fn>
+  let moveItems: ReturnType<typeof vi.fn>
+  const dispatch = async (
+    command: string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: command, command, payload })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  beforeEach(() => {
+    sessionsNest = vi.fn(async (id: string, under: string | null) => ({
+      id,
+      under,
+      changed: true
+    }))
+    globals.window.electronAPI.sessionsNest = sessionsNest
+    moveItems = vi.fn()
+    // Three tabs of one Clave server, the helper nested under the old tab,
+    // and a tab of this Mac.
+    useSessionStore.setState({
+      sessions: [
+        { id: lead, name: 'Lead', sessionType: 'local' } as never,
+        { id: old, name: 'Old', sessionType: 'local' } as never,
+        { id: helper, name: 'Helper', sessionType: 'local', spawnedBy: old } as never,
+        { id: 'mac-tab', name: 'Mac', sessionType: 'local' } as never
+      ],
+      groups: [],
+      moveItems
+    } as never)
+  })
+
+  it('nests a tab under another, then places it and its nested tabs after the parent', async () => {
+    const answer = await dispatch('attachSession', {
+      callerSessionId: lead,
+      sessionId: old,
+      to: 'mine'
+    })
+    expect(answer).toMatchObject({
+      ok: true,
+      result: { sessionId: old, nestedUnder: lead, changed: true }
+    })
+    expect(sessionsNest).toHaveBeenCalledExactlyOnceWith(old, lead)
+    // Placed without an undo step: the undo is the person's, never an agent's.
+    expect(moveItems).toHaveBeenCalledExactlyOnceWith([old, helper], lead, 'after', {
+      undo: false
+    })
+  })
+
+  it('takes a tab out with detach, and moves nothing', async () => {
+    const answer = await dispatch('attachSession', {
+      callerSessionId: lead,
+      sessionId: helper,
+      detach: true
+    })
+    expect(answer).toMatchObject({
+      ok: true,
+      result: { sessionId: helper, nestedUnder: null, changed: true }
+    })
+    expect(sessionsNest).toHaveBeenCalledExactlyOnceWith(helper, null)
+    expect(moveItems).not.toHaveBeenCalled()
+  })
+
+  it('refuses two tabs of different machines before the server is asked', async () => {
+    const answer = await dispatch('attachSession', {
+      callerSessionId: lead,
+      sessionId: 'mac-tab',
+      to: lead
+    })
+    expect(answer.ok).toBe(false)
+    expect(answer.error).toBe(
+      'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+    )
+    expect(sessionsNest).not.toHaveBeenCalled()
+  })
+
+  it('answers the server’s refusal in its words, and refuses a call with no tab', async () => {
+    // The refusal crosses the bridge marked: the agent reads the sentence alone.
+    sessionsNest.mockRejectedValueOnce(
+      new Error(nestRefusalMessage('A tab cannot be nested under itself'))
+    )
+    const refused = await dispatch('attachSession', { callerSessionId: lead, to: 'mine' })
+    expect(refused).toMatchObject({ ok: false, error: 'A tab cannot be nested under itself' })
+    expect(moveItems).not.toHaveBeenCalled()
+    // A call that was never answered is said as it came.
+    sessionsNest.mockRejectedValueOnce(new Error("Clave's server did not answer."))
+    const silent = await dispatch('attachSession', { callerSessionId: lead, to: 'mine' })
+    expect(silent).toMatchObject({ ok: false, error: "Clave's server did not answer." })
+    const anonymous = await dispatch('attachSession', { sessionId: old, to: lead })
+    expect(anonymous.ok).toBe(false)
+    expect(anonymous.error).toMatch(/no tab identity/)
+  })
+
+  it('a placement that fails never fails the tool', async () => {
+    moveItems.mockImplementation(() => {
+      throw new Error('the layout is gone')
+    })
+    const answer = await dispatch('attachSession', {
+      callerSessionId: lead,
+      sessionId: old,
+      to: lead
+    })
+    expect(answer).toMatchObject({ ok: true, result: { nestedUnder: lead } })
+  })
+
+  it('lists where each tab is nested', async () => {
+    const answer = (await dispatch('list', { callerSessionId: lead })) as {
+      result: { sessions: { id: string; nestedUnder: string | null }[] }
+    }
+    const rows = answer.result.sessions
+    expect(rows.find((s) => s.id === helper)?.nestedUnder).toBe(old)
+    expect(rows.find((s) => s.id === old)?.nestedUnder).toBeNull()
   })
 })
 

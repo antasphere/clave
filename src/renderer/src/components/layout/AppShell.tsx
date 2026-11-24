@@ -598,10 +598,16 @@ export function AppShell(): React.JSX.Element {
       const state = useSessionStore.getState()
       // The sidebar's narrowing is view-local. Read its rendered rows at the
       // keypress instead of persisting search/group-filter state for shortcuts.
+      // A folded nest keeps its rows in the DOM, as a collapsed group does
+      // (PRDCT-4998): they are out of sight, so they are not counted.
       const sidebar = state.sidebarOpen ? document.querySelector('[data-sidebar-shell]') : null
       const rowIds = sidebar
         ? [...sidebar.querySelectorAll<HTMLElement>('[data-sidebar-item-type="session"]')]
-            .filter((row) => !row.closest('[data-group-collapsed="true"]'))
+            .filter(
+              (row) =>
+                !row.closest('[data-group-collapsed="true"]') &&
+                !row.closest('[data-nest-collapsed="true"]')
+            )
             .map((row) => row.dataset.sidebarItemId!)
         : undefined
       const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId, rowIds)

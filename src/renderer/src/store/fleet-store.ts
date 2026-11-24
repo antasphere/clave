@@ -11,7 +11,7 @@ import type { FleetPendingRequest as PendingRequest } from '../../../preload/fle
 import type { FleetSnapshot } from '../../../preload/fleet-types'
 import { useSessionStore } from './session-store'
 import type { Session, SessionGroup } from './session-types'
-import { ownerOf, partitionLayout } from '../lib/fleet-identity'
+import { isRemoteKey, ownerOf, partitionLayout } from '../lib/fleet-identity'
 import { finishesTurn } from '../lib/tab-status'
 import { createSavePipeline, type SavePipeline } from '../lib/sidebar-save-pipeline'
 import { mergeLayouts } from '@clave/contract/sidebar/ops'
@@ -44,6 +44,19 @@ export function reportFleetError(error: unknown): void {
   useFleetStore.setState({
     error: 'The server operation failed. Check its connection and try again.'
   })
+}
+/**
+ * A tab a server's record names (who opened it, which tab it is nested under),
+ * as this window names that server's tabs: its owner's key. The preload scopes
+ * `spawnedBy` to a key before a snapshot gets here and leaves `openedBy` raw
+ * (`scopeRecord`, fleet-desktop.ts), so a name is wrapped only when it is not
+ * a key yet. Wrapping a key a second time names no tab at all: from 8
+ * November 2026 until PRDCT-4997 a server's nested tabs were never folded on
+ * a desktop, each side keying the same id and each side's test passing alone.
+ */
+export function ownedSessionRef(serverId: string, id: string | undefined): string | undefined {
+  if (!id) return undefined
+  return isRemoteKey(id) ? id : resourceKey('session', serverId, id)
 }
 type DesktopLayout = { groups: SessionGroup[]; displayOrder: string[] }
 const bases = new Map<string, DesktopLayout>()
@@ -221,13 +234,12 @@ export function applyFleetSnapshot(
         piProvider: record?.piProvider,
         piThinking: record?.piThinking,
         workspaceId: record?.workspaceId,
-        // Who opened it on its server, as this window names that server's
-        // tabs (PRDCT-4193): the name tie-break compares keys, so a raw id of
-        // the server's record is wrapped in its owner's key here.
-        spawnedBy: record?.spawnedBy
-          ? resourceKey('session', serverId, record.spawnedBy)
-          : undefined,
-        openedBy: record?.openedBy ? resourceKey('session', serverId, record.openedBy) : undefined,
+        // Who opened it on its server and which tab it is nested under, as
+        // this window names that server's tabs (PRDCT-4193): the sidebar's
+        // fold and the name tie-break compare keys. Keyed once, whichever
+        // side already did (`ownedSessionRef`).
+        spawnedBy: ownedSessionRef(serverId, record?.spawnedBy),
+        openedBy: ownedSessionRef(serverId, record?.openedBy),
         userRenamed: record?.userRenamed ?? false,
         planFilePath: old?.planFilePath ?? null,
         // A remote localhost page cannot be interpreted as a Mac-local preview.

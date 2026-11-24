@@ -40,6 +40,7 @@ import {
 } from './served-core'
 import { sessionTools } from './served-session-tools'
 import { workTools } from './served-work-tools'
+import { nestTools } from './served-nest-tools'
 import { isServerTabRef } from './session-targets'
 import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
 import {
@@ -371,9 +372,13 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
     .filter(({ record }) => inScope(record?.workspaceId))
     .map(({ s, record }) => ({
       id: s.id,
-      // The tab that opened it, as the daemon's road says (PRDCT-4507):
-      // main's lineage, else the opener the record keeps.
-      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy),
+      // The tab "parent" reaches from it, as the daemon's road and the
+      // window's say (PRDCT-4507): main's lineage, else the opener the record
+      // keeps, else the tab it is nested under. That last one was missing on
+      // this road alone, so the same tab had a parent in one listing and none
+      // in another (PRDCT-4997); the messaging tools always had it
+      // (`parentOfSession`).
+      ...parentIdOf(ctx.shell.parentOf(s.id) ?? record?.openedBy ?? record?.spawnedBy),
       name: s.title,
       cwd: s.cwd,
       mode: modeOf(record, s.provider),
@@ -395,7 +400,10 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       workspaceName: workspaceNameOf(ctx, record?.workspaceId),
       windowId: windowIdOf(s.windowKey),
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
-      work: record?.work ?? null
+      work: record?.work ?? null,
+      // The tab it is shown under in the sidebar, as its record keeps it
+      // (PRDCT-4997); parentId above is who opened it.
+      nestedUnder: record?.spawnedBy ?? null
     }))
   // The layouts of live windows only: a key the server keeps for a window
   // that is gone is an orphan the primary takes at its next read, and the
@@ -561,18 +569,20 @@ const TOOLS: Record<string, (ctx: Ctx, key: string, p: Payload) => Promise<unkno
   closeSession,
   ...sessionTools.others,
   ...workTools,
+  ...nestTools,
   launchOptions: (ctx) => launchOptions(ctx)
 }
 const SERVED = new Set(Object.keys(TOOLS))
 
 /** The reference a command's subject tab travels under: `sessionId` for most,
- *  `id` for a tab's rename, `to` for a handover's successor. A subject that
+ *  `id` for a tab's rename, `to` for a handover's successor and for the tab
+ *  a nesting puts it under (PRDCT-4997). A subject that
  *  is a tab of another Clave server (its `clave-owner:session:…` key) is
  *  the window's to reach: this process holds no connection to that server
  *  (PRDCT-4193; reading already deferred so since PRDCT-4166). */
 function subjectRefs(command: string, payload: Record<string, unknown>): unknown[] {
   if (command === 'rename') return payload.target === 'group' ? [] : [payload.id]
-  if (command === 'handOver') return [payload.sessionId, payload.to]
+  if (command === 'handOver' || command === 'attachSession') return [payload.sessionId, payload.to]
   return [payload.sessionId]
 }
 

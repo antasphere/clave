@@ -2,13 +2,13 @@ import { memo } from 'react'
 import { useSessionStore, type FileTab } from '../../store/session-store'
 import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import { CodeBracketSquareIcon } from '@heroicons/react/24/outline'
-import { SidebarTabItem } from './SidebarTabItem'
+import { SidebarTabItem, type RowMenuEvent } from './SidebarTabItem'
 
 interface FileTabItemProps {
   fileTab: FileTab
   isSelected: boolean
   onClick: (modifiers: { metaKey: boolean; shiftKey: boolean }) => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onContextMenu: (e: RowMenuEvent) => void
   grouped?: boolean
   groupSelected?: boolean
   dimmed?: boolean

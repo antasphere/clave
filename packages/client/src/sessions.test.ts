@@ -113,6 +113,35 @@ describe('a change of a session’s work (PRDCT-4123)', () => {
   })
 })
 
+describe('nesting a tab under another (PRDCT-4997)', () => {
+  it('sends the session and the tab it goes under, or null, and answers what the server did', async () => {
+    const payloads: unknown[] = []
+    const client = {
+      sessions: {
+        nest: ({ payload }: { payload: { id: string; under: string | null } }) => {
+          payloads.push(payload)
+          return { id: payload.id, under: payload.under, changed: payload.under !== null }
+        }
+      }
+    }
+    const call = (async (run: (c: unknown) => unknown) => run(client)) as unknown as Call
+    expect(await sessionsClient(call).nest('t', 'u')).toEqual({
+      id: 't',
+      under: 'u',
+      changed: true
+    })
+    expect(await sessionsClient(call).nest('t', null)).toEqual({
+      id: 't',
+      under: null,
+      changed: false
+    })
+    expect(payloads).toEqual([
+      { id: 't', under: 'u' },
+      { id: 't', under: null }
+    ])
+  })
+})
+
 describe('refusedWrite', () => {
   it('names the field that failed in one line instead of the union tree', async () => {
     const { Schema, ParseResult } = await import('effect')

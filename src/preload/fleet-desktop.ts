@@ -25,6 +25,7 @@ import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
+import { nestAnswerError, nestRefusalMessage } from '../shared/nest-tools'
 import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { SpeakResult } from '../shared/speech'
@@ -1767,6 +1768,39 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         (b, wireId) =>
           b.api.sessions.keepOnRecord(wireId, { name: { displayName: name, userRenamed: renamed } })
       ),
+    // PRDCT-4997: a tab is nested under a tab of its own machine, so both ends
+    // go to the one server that owns them, each by its wire id; a pair split
+    // across machines is refused before any server is asked.
+    sessionsNest: (id, under) => {
+      const owner = parseSessionKey(id).serverId
+      const parent = under === null ? null : parseSessionKey(under)
+      if (parent && parent.serverId !== owner)
+        return Promise.reject(
+          new Error(
+            nestRefusalMessage(
+              'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+            )
+          )
+        )
+      const underWireId = parent ? parent.sessionId : null
+      return route(
+        id,
+        (wireId) => local.sessionsNest(wireId, underWireId),
+        async (b, wireId) => {
+          // The server's no as a plain Error marked as a refusal, as this
+          // Mac's road gives it.
+          const result = await b.api.sessions.nest(wireId, underWireId).catch((error: unknown) => {
+            throw nestAnswerError(error)
+          })
+          refresh(owner)
+          return {
+            id: key(owner, result.id),
+            under: result.under === null ? null : key(owner, result.under),
+            changed: result.changed
+          }
+        }
+      )
+    },
     setSessionViewRecord: (id, view) =>
       route(
         id,
@@ -1934,6 +1968,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.onSessionRenamed(cb),
         eventListener('session.renamed', (event, owner) =>
           cb({ id: key(owner, event.id), name: event.name })
+        )
+      ),
+    // PRDCT-4997: a server's nesting, both ends keyed by the server that told it.
+    onSessionNested: (cb) =>
+      both(
+        local.onSessionNested(cb),
+        eventListener('session.nested', (event, owner) =>
+          cb({ id: key(owner, event.id), under: event.under ? key(owner, event.under) : null })
         )
       ),
     onSessionTyped: (cb) =>

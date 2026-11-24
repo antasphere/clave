@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nestRefusalIn } from '../../shared/nest-tools'
 import type { ElectronAPI } from '../../preload/index.d'
 import type { SessionInput } from '../../shared/session-model'
 
@@ -965,5 +966,84 @@ describe('restart correlation at the preload boundary', () => {
     answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: true } })
     expect(await api.restartSession('s1', {}, 'op-123')).not.toHaveProperty('requestId')
     expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {})
+  })
+})
+
+describe('nesting a tab under another goes to the server alone (PRDCT-4997)', () => {
+  it('sends both ids to the server, a detach as null, and answers what it did', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async (id: string, under: string | null) => ({
+      id,
+      under,
+      changed: true
+    }))
+    expect(await api.sessionsNest('s1', 's2')).toEqual({ id: 's1', under: 's2', changed: true })
+    expect(await api.sessionsNest('s1', null)).toEqual({ id: 's1', under: null, changed: true })
+    expect(mocks.sessions.nest.mock.calls).toEqual([
+      ['s1', 's2'],
+      ['s1', null]
+    ])
+  })
+
+  it('is refused before main names a server, never kept on main’s copy', async () => {
+    answer({ 'server:endpoint': null })
+    await expect(api.sessionsNest('s1', 's2')).rejects.toThrow('Clave server is not available')
+    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([])
+  })
+
+  it('a refusal reaches the window as a plain Error carrying the rule’s sentence, marked as a refusal', async () => {
+    answer(onServer)
+    const words = 'The two tabs are in different windows: move the tab into the other window first'
+    mocks.sessions.nest = vi.fn(async () => {
+      throw Object.assign(new Error(words), { _tag: 'NestRefused', id: 's1' })
+    })
+    const error = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    // The mark is what tells the window the server answered: the message is
+    // all an Error keeps across the context bridge.
+    expect(nestRefusalIn((error as Error).message)).toBe(words)
+    expect(error).not.toHaveProperty('_tag')
+  })
+
+  it('a tab the server no longer knows is an answer too, said in a sentence', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async () => {
+      throw Object.assign(new Error('{ "id": "s1" }'), { _tag: 'SessionNotFound', id: 's1' })
+    })
+    const gone = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    // A sentence, never the not-found's own payload.
+    expect(nestRefusalIn((gone as Error).message)).toBe('That tab is gone')
+  })
+
+  it('a server that says it cannot is not a refusal: its words may be a failed disk’s', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async () => {
+      throw Object.assign(new Error('EBUSY: resource busy or locked, open /x/records/s1.json'), {
+        _tag: 'CapabilityUnavailable',
+        capability: 'sessions'
+      })
+    })
+    const busy = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(nestRefusalIn((busy as Error).message)).toBeNull()
+  })
+
+  it('a call the server never answered crosses as it came, unmarked', async () => {
+    answer(onServer)
+    mocks.sessions.nest = vi.fn(async () => {
+      throw new Error('socket hang up')
+    })
+    const error = await api.sessionsNest('s1', 's2').catch((e: unknown) => e)
+    expect(nestRefusalIn((error as Error).message)).toBeNull()
+  })
+
+  it('hears session.nested off the push channel, a detach as null', async () => {
+    mocks.apiList.mockResolvedValue([])
+    await connectBacking()
+    const heard = vi.fn()
+    api.onSessionNested(heard)
+    mocks.emitEvent({ _tag: 'session.nested', id: 's1', under: 's2' })
+    mocks.emitEvent({ _tag: 'session.nested', id: 's1', under: null })
+    mocks.emitEvent({ _tag: 'session.renamed', id: 's1', name: 'Not this one' })
+    expect(heard.mock.calls).toEqual([[{ id: 's1', under: 's2' }], [{ id: 's1', under: null }]])
   })
 })

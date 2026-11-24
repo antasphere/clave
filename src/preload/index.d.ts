@@ -20,6 +20,7 @@ import type {
   ReviewEvent
 } from '../shared/github-pull'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { NestResult } from '@clave/contract/nest-rules'
 import type { TimelinePage } from '@clave/contract/timeline'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
@@ -1109,6 +1110,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  server; answers every record rewritten, the tab's own first, and the
    *  names an accepted handover gave. */
   sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
+  /** PRDCT-4997: nest the tab under another tab, or take it out with null,
+   *  through the server; a refusal rejects with the rule's sentence. */
+  sessionsNest: (id: string, under: string | null) => Promise<NestResult>
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
@@ -1139,6 +1143,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionWorkChanged: (
     callback: (payload: { id: string; work: WorkAssignment | null }) => void
   ) => () => void
+  /** PRDCT-4997: the tab a tab is nested under changed on its record; null
+   *  when it was taken out. */
+  onSessionNested: (callback: (payload: { id: string; under: string | null }) => void) => () => void
   onSessionPageChanged: (
     callback: (payload: {
       id: string
