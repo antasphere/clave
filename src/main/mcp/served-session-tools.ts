@@ -17,7 +17,7 @@
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
 import { launchModeFields } from '../../shared/runtime-choices'
-import { readHistoryLines } from '../../shared/history-read'
+import { readChatHistory } from '../../shared/history-read'
 import { ownSessionRef } from '../../shared/own-session-ref'
 import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
@@ -222,11 +222,12 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   if (target.transport === 'events') {
     // Counted in lines, not events; the raw events stay out of an agent's
     // context (PRDCT-4666).
-    const text = await readHistoryLines(
+    // The status its agent ended on comes from the same pages (PRDCT-5166).
+    const read = await readChatHistory(
       (before, limit) => ctx.api.sessions.history(target.id, before, limit),
       requested
     )
-    return readAnswer(host, target, text)
+    return readAnswer(host, target, read.lines, read.status)
   }
   let screen: { lines: readonly string[] }
   try {

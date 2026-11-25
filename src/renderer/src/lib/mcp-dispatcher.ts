@@ -50,7 +50,7 @@ import {
 } from './switch-account'
 import { sessionOwnAccount } from './session-accounts'
 import { pairedServerWorkspaces } from '../store/pairing-store'
-import { readHistoryLines } from '../../../shared/history-read'
+import { readChatHistory } from '../../../shared/history-read'
 import type { CodexAccount } from '../../../preload/index.d'
 import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -1689,7 +1689,8 @@ async function handleReadSession(payload: {
   const record = (await window.electronAPI.sessionsList()).find((s) => s.id === target.id)
   if (record?.transport === 'events') {
     // Counted in lines, not events, and without the raw events (PRDCT-4666).
-    const text = await readHistoryLines(
+    // The status its agent ended on comes from the same pages (PRDCT-5166).
+    const read = await readChatHistory(
       (before, limit) => window.electronAPI.sessionsHistory(target.id, before, limit),
       requested
     )
@@ -1699,8 +1700,9 @@ async function handleReadSession(payload: {
       mode: sessionMode(target),
       alive: target.alive,
       agentState: target.agentState ?? null,
-      lines: text.length,
-      text: text.join('\n')
+      lines: read.lines.length,
+      text: read.lines.join('\n'),
+      status: read.status
     }
   }
   if (ownerOf(target.id) !== LOCAL_SERVER_ID) {

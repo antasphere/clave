@@ -1482,7 +1482,14 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
               { event: { type: 'user_message', text: 'hi' } },
               // A streamed answer, one event per delta (PRDCT-4666).
               { event: { type: 'assistant_text', delta: 'he', final: false } },
-              { event: { type: 'assistant_text', delta: 'llo', final: true } }
+              // Ending on a status card (PRDCT-5166).
+              {
+                event: {
+                  type: 'assistant_text',
+                  delta: 'llo\n\n```clave-status\nwhere: greeted\nnext: say yes\n```',
+                  final: true
+                }
+              }
             ],
             before: null
           }
@@ -1497,8 +1504,16 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
     expect(answer.isError).not.toBe(true)
     expect(payload(answer)).toMatchObject({
       sessionId: 'stranger',
-      lines: 2,
-      text: 'You: hi\nAgent: hello'
+      lines: 4,
+      text: 'You: hi\nAgent: hello\n  Where: greeted\n  Next: say yes',
+      status: {
+        doing: null,
+        where: 'greeted',
+        decide: [],
+        next: 'say yes',
+        needsYou: true,
+        answered: false
+      }
     })
     // The raw events stay out of an agent's context (PRDCT-4666).
     expect(payload(answer)).not.toHaveProperty('history')

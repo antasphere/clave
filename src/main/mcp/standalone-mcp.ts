@@ -77,7 +77,7 @@ import type {
   SessionRecord,
   SpawnOptions
 } from '@clave/contract/sessions'
-import { readHistoryLines } from '../../shared/history-read'
+import { readChatHistory } from '../../shared/history-read'
 import {
   type TargetHost,
   readAnswer,
@@ -1155,7 +1155,7 @@ function buildServer(
     'clave_read_session',
     {
       description:
-        'Read the recent output of a tab on this server without interrupting it: the last lines of a terminal, the recent history of a chat. Target by session id, exact tab name, "parent" (the tab whose agent opened yours) or "mine". Any tab of this server can be read. Read a tab first to learn what it is doing; message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent\'s next instruction.',
+        'Read the recent output of a tab on this server without interrupting it: the last lines of a terminal, the recent history of a chat. Target by session id, exact tab name, "parent" (the tab whose agent opened yours) or "mine". Any tab of this server can be read. Read a tab first to learn what it is doing; message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent\'s next instruction. For a chat tab the answer also carries status, the status its agent ended its last turn on (what it is doing, where it stands, what is to decide, what the person must do next; needsYou, and answered once the person has written since), or null when it wrote none.',
       inputSchema: {
         sessionId: z.string().default('mine'),
         lines: z.number().int().min(1).max(500).default(100)
@@ -1171,11 +1171,12 @@ function buildServer(
       // A chat has no screen: its recent history, one line per thing said
       // or done, under the same envelope (PRDCT-4199); counted in lines, not
       // events, and without the raw events (PRDCT-4666).
-      const lines = await readHistoryLines(
+      // The status its agent ended on comes from the same pages (PRDCT-5166).
+      const read = await readChatHistory(
         (before, limit) => sessions.history(target.id, before, limit),
         args.lines
       )
-      return text(readAnswer(targetHost, target, lines))
+      return text(readAnswer(targetHost, target, read.lines, read.status))
     }
   )
   server.registerTool(

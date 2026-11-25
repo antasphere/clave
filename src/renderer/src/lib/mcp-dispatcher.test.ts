@@ -1011,7 +1011,17 @@ describe('round 1: the window road refuses before resuming, and places by the pa
         { event: { type: 'user_message', text: 'hello server' }, at: 1 },
         // A streamed answer, one event per delta (PRDCT-4666).
         { event: { type: 'assistant_text', delta: 'stub heard: ', final: false }, at: 2 },
-        { event: { type: 'assistant_text', delta: 'hello server', final: true }, at: 3 }
+        { event: { type: 'assistant_text', delta: 'hello server', final: true }, at: 3 },
+        // PRDCT-5166: a later answer that ends on a status card, then the person's reply.
+        {
+          event: {
+            type: 'assistant_text',
+            delta: 'Done.\n\n```clave-status\ndoing: the greeting\nnext: nothing\n```',
+            final: true
+          },
+          at: 4
+        },
+        { event: { type: 'user_message', text: 'thanks' }, at: 5 }
       ],
       before: null
     }))
@@ -1034,8 +1044,16 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       mode: 'claude',
       alive: true,
       agentState: 'idle',
-      lines: 2,
-      text: 'You: hello server\nAgent: stub heard: hello server'
+      lines: 6,
+      text: 'You: hello server\nAgent: stub heard: hello server\nAgent: Done.\n  Doing: the greeting\n  Next: nothing\nYou: thanks',
+      status: {
+        doing: 'the greeting',
+        where: null,
+        decide: [],
+        next: null,
+        needsYou: false,
+        answered: true
+      }
     })
     // The raw events stay out of an agent's context (PRDCT-4666).
     expect(answer.result).not.toHaveProperty('history')

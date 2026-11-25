@@ -1688,4 +1688,60 @@ describe('a chat read through the served tools answers its history as lines (PRD
     expect(h.argsOf('sessions.history')).toEqual([['chat', undefined, 200]])
     expect(h.argsOf('sessions.screen')).toEqual([])
   })
+
+  // PRDCT-5166: the card the agent ended on, as lines in the text and as data.
+  it('reads a chat whose agent ended on a status card: the lines without the block, the status as data', async () => {
+    const h = setup({
+      layouts: [layout('wA', [])],
+      sessions: [session('caller')],
+      records: { caller: record('caller') },
+      parents: {}
+    })
+    h.w.sessions.push(session('chat', { transport: 'events', provider: 'claude', state: 'idle' }))
+    h.w.records.chat = record('chat', { displayName: 'A chat' })
+    h.impl['sessions.history'] = () => ({
+      items: [
+        { event: { type: 'user_message', text: 'ship it' }, at: 1 },
+        {
+          event: {
+            type: 'assistant_text',
+            delta:
+              'Shipped.\n\n```clave-status\ndoing: the release\ndecide: tag it today? Yes.\nnext: nothing\n```',
+            final: true
+          },
+          at: 2
+        }
+      ],
+      before: null
+    })
+    const out = (await run(h, 'readSession', { sessionId: 'chat' })) as Record<string, unknown>
+    expect(out.text).toBe(
+      'You: ship it\nAgent: Shipped.\n  Doing: the release\n  To decide: tag it today? Yes.\n  Next: nothing'
+    )
+    expect(out.status).toEqual({
+      doing: 'the release',
+      where: null,
+      decide: ['tag it today? Yes.'],
+      next: null,
+      needsYou: true,
+      answered: false
+    })
+  })
+
+  it('answers status null for a chat whose agent wrote none', async () => {
+    const h = setup({
+      layouts: [layout('wA', [])],
+      sessions: [session('caller')],
+      records: { caller: record('caller') },
+      parents: {}
+    })
+    h.w.sessions.push(session('chat', { transport: 'events', provider: 'claude', state: 'idle' }))
+    h.w.records.chat = record('chat')
+    h.impl['sessions.history'] = () => ({
+      items: [{ event: { type: 'assistant_text', delta: 'Plain.', final: true }, at: 1 }],
+      before: null
+    })
+    const out = (await run(h, 'readSession', { sessionId: 'chat' })) as Record<string, unknown>
+    expect(out).toHaveProperty('status', null)
+  })
 })
