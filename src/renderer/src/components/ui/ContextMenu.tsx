@@ -24,7 +24,15 @@ export interface ContextMenuItem {
   /** A hairline above this entry: it opens a section of its own (the entries
    *  a plugin contributes, below the app's). */
   separatorBefore?: boolean
+  /** The entry's identity where two entries may share a label (the places of
+   *  Back and Forward's lists). The label otherwise. */
+  id?: string
+  /** `data-*` attributes on the entry's row, for a check to aim at. */
+  attributes?: Record<`data-${string}`, string>
 }
+
+/** What tells one entry of a surface from another. */
+const entryId = (item: ContextMenuItem): string => item.id ?? item.label
 
 interface ContextMenuProps {
   items: ContextMenuItem[]
@@ -37,6 +45,8 @@ interface ContextMenuProps {
   headerLift?: number
   /** Extra classes on the surface — a dialog above the default z-50 passes its own. */
   className?: string
+  /** `data-*` attributes on the surface, for a check to aim at. */
+  attributes?: Record<`data-${string}`, string>
 }
 
 export function ContextMenu({
@@ -46,7 +56,8 @@ export function ContextMenu({
   onClose,
   header,
   headerLift = 0,
-  className
+  className,
+  attributes
 }: ContextMenuProps): React.JSX.Element {
   // The menu measures itself, then the anchor moves so the whole surface
   // lands inside the window: Radix only flips and slides along the side, so
@@ -102,6 +113,7 @@ export function ContextMenu({
             overflowY: 'auto'
           }}
           onCloseAutoFocus={(e) => e.preventDefault()}
+          {...attributes}
         >
           {header && (
             <>
@@ -111,11 +123,11 @@ export function ContextMenu({
           )}
           {items.map((item) => (
             <ContextMenuEntry
-              key={item.label}
+              key={entryId(item)}
               item={item}
               onClose={onClose}
               className={className}
-              onHighlight={hasPreviews ? (row) => highlight(item.label, row) : undefined}
+              onHighlight={hasPreviews ? (row) => highlight(entryId(item), row) : undefined}
             />
           ))}
         </DropdownMenuPrimitive.Content>
@@ -155,6 +167,7 @@ function ContextMenuEntry({
           <DropdownMenuPrimitive.SubTrigger
             disabled={item.disabled}
             className="menu-item justify-between"
+            {...item.attributes}
           >
             {body}
             <ChevronRightIcon className="w-3 h-3 ml-4 flex-shrink-0 text-text-tertiary" />
@@ -179,6 +192,7 @@ function ContextMenuEntry({
         onBlur={onHighlight ? () => onHighlight(null) : undefined}
         aria-label={item.content ? item.label : undefined}
         className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
+        {...item.attributes}
       >
         {body}
         {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
@@ -191,20 +205,20 @@ function ContextMenuEntry({
  *  carries. Radix moves focus to the highlighted entry on hover and on the
  *  arrow keys alike, so focus is the one signal both follow. */
 function useMenuHighlight(items: ContextMenuItem[]): {
-  active: { label: string; row: HTMLElement } | null
-  highlight: (label: string, row: HTMLElement | null) => void
+  active: { id: string; row: HTMLElement } | null
+  highlight: (id: string, row: HTMLElement | null) => void
   preview: React.ReactNode
   hasPreviews: boolean
 } {
-  const [active, setActive] = useState<{ label: string; row: HTMLElement } | null>(null)
+  const [active, setActive] = useState<{ id: string; row: HTMLElement } | null>(null)
   // A blur is followed at once by the next row's focus when the highlight
   // moves down the list: clear on the next frame so the card does not blink.
   const clearFrame = useRef<number | null>(null)
-  const highlight = (label: string, row: HTMLElement | null): void => {
+  const highlight = (id: string, row: HTMLElement | null): void => {
     if (clearFrame.current != null) cancelAnimationFrame(clearFrame.current)
     clearFrame.current = null
     if (row) {
-      setActive({ label, row })
+      setActive({ id, row })
       return
     }
     clearFrame.current = requestAnimationFrame(() => {
@@ -213,7 +227,7 @@ function useMenuHighlight(items: ContextMenuItem[]): {
     })
   }
   const hasPreviews = items.some((item) => item.preview)
-  const preview = active ? items.find((item) => item.label === active.label)?.preview : null
+  const preview = active ? items.find((item) => entryId(item) === active.id)?.preview : null
   return { active, highlight, preview, hasPreviews }
 }
 
@@ -240,11 +254,11 @@ function SubmenuContent({
       >
         {children.map((child) => (
           <ContextMenuEntry
-            key={child.label}
+            key={entryId(child)}
             item={child}
             onClose={onClose}
             className={className}
-            onHighlight={hasPreviews ? (row) => highlight(child.label, row) : undefined}
+            onHighlight={hasPreviews ? (row) => highlight(entryId(child), row) : undefined}
           />
         ))}
       </DropdownMenuPrimitive.SubContent>
