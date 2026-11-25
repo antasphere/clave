@@ -127,6 +127,11 @@ export function importClaudeOutputStyle(machine: string): Promise<string | null>
 
 // ── What the page offers ─────────────────────────────────────────────────────
 
+/** The page's description, for this Mac and for a server. */
+export function writingStylesDescription(machineName: string): string {
+  return `How agents write to you on ${machineName}. One style serves every harness: Clave hands it to each its own way.`
+}
+
 /** The draft "Duplicate" opens: the style's fields under "{name} copy", with
  *  no id, so a save makes a new style. */
 export function duplicateDraft(style: WritingStyle): WritingStyleDraft {
