@@ -73,6 +73,8 @@ import { DeviceSessions, DevicesEventsLive, PhoneRoad, deviceHandlers } from './
 import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
 // ── PRDCT-4411: the speech ──
 import { SpeechPort, speechHandlers } from './speech'
+// ── PRDCT-5179: the decisions ──
+import { DecisionsPort, decisionHandlers } from './decisions'
 // ── PRDCT-4472: the artefacts ──
 import { ArtefactsEventsLive, ArtefactsPort, artefactHandlers } from './artefacts'
 
@@ -133,6 +135,8 @@ export type ServerServices =
   | SessionWrites
   // ── PRDCT-4411: the speech ──
   | SpeechPort
+  // ── PRDCT-5179: the decisions ──
+  | DecisionsPort
   // ── PRDCT-4472: the artefacts ──
   | ArtefactsPort
 
@@ -265,6 +269,8 @@ export const BusesLive = busesLayer.pipe(
       ...deviceHandlers,
       // ── PRDCT-4411: the speech ──
       ...speechHandlers,
+      // ── PRDCT-5179: the decisions ──
+      ...decisionHandlers,
       // ── PRDCT-4472: the artefacts ──
       ...artefactHandlers
       // ── Lane B: ...terminalHandlers ──

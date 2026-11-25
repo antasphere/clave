@@ -37,6 +37,7 @@
     "./git": "./src/git.ts",
     "./digests": "./src/digests.ts",
     "./speech": "./src/speech.ts",
+    "./decisions": "./src/decisions.ts",
     "./artefacts": "./src/artefacts.ts",
     "./artefacts/model": "./src/artefacts/model.ts",
     "./server-info": "./src/server-info.ts",

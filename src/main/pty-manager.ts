@@ -113,6 +113,7 @@ import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
+import * as decisionRunner from './decisions/runner'
 import * as exchangeDigest from './exchange-digest'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
 import { sessionConnectionChanged, sessionModelChanged } from './server/session-events'
@@ -1351,6 +1352,9 @@ class PtyManager {
     if (quit) titleGenerator.shutdown()
     else titleGenerator.cancelAll()
     exchangeDigest.cancelAll(quit)
+    // The decisions' requests to Jev go with them (PRDCT-5179), the same way.
+    if (quit) decisionRunner.shutdown()
+    else decisionRunner.cancelAll()
     await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {
