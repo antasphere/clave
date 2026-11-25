@@ -687,9 +687,7 @@ class PtyManager {
         env: styledEnv,
         initialPrompt: options?.initialPrompt,
         // Carried past a login profile when started through the shell.
-        ...(carriedVariables.length
-          ? { connectionVariables: [...new Set(carriedVariables)] }
-          : {})
+        ...(carriedVariables.length ? { connectionVariables: [...new Set(carriedVariables)] } : {})
       })
     }
     // `agy acp` alone: a saved profile's `additionalArgs` are the TUI's words,

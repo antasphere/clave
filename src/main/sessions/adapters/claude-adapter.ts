@@ -23,7 +23,11 @@ import {
   type SessionControl,
   flattenAnswers
 } from '../../../shared/session-model'
-import { buildAgentArgv, claudeProfilePermissions, withStyleText } from '../../../shared/agent-launch'
+import {
+  buildAgentArgv,
+  claudeProfilePermissions,
+  withStyleText
+} from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
 import {
