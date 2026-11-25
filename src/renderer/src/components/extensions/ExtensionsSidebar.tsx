@@ -4,15 +4,16 @@ import {
   ServerStackIcon
 } from '@heroicons/react/24/outline'
 import { useSessionStore, type ExtensionsSection } from '../../store/session-store'
+import { EXTENSIONS_SECTION_LABELS } from '../../lib/view-sections'
 import { WordmarkStrip } from '../layout/Wordmark'
 
+/** Each row's name is `EXTENSIONS_SECTION_LABELS`, which the Back and Forward lists read too. */
 const SECTIONS: {
   id: ExtensionsSection
-  label: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
 }[] = [
-  { id: 'marketplaces', label: 'Marketplaces', icon: BuildingStorefrontIcon },
-  { id: 'mcp', label: 'MCP Servers', icon: ServerStackIcon }
+  { id: 'marketplaces', icon: BuildingStorefrontIcon },
+  { id: 'mcp', icon: ServerStackIcon }
 ]
 
 /** Extensions-mode replacement for the sessions sidebar. */
@@ -43,7 +44,7 @@ export function ExtensionsSidebar(): React.JSX.Element {
       </div>
 
       <nav className="px-2 space-y-0.5">
-        {SECTIONS.map(({ id, label, icon: Icon }) => (
+        {SECTIONS.map(({ id, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setExtensionsSection(id)}
@@ -51,7 +52,7 @@ export function ExtensionsSidebar(): React.JSX.Element {
             data-selected={extensionsSection === id ? 'true' : undefined}
           >
             <Icon className="w-4 h-4 flex-shrink-0 opacity-60" />
-            <span>{label}</span>
+            <span>{EXTENSIONS_SECTION_LABELS[id]}</span>
           </button>
         ))}
       </nav>
