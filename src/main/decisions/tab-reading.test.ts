@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { cleanHumanText, pathsUnder, readTab, readTabLines } from './tab-reading'
+import {
+  RESULT_LINE_MIN,
+  cleanHumanText,
+  isToolResultLine,
+  neededLines,
+  pathsUnder,
+  readTab,
+  readTabLines
+} from './tab-reading'
 
 // What a tab said and touched (PRDCT-5179), read from invented transcripts
 // of the three harnesses, in the shapes the history's own tests use. Every
@@ -258,5 +266,74 @@ describe('readTab', () => {
         workspaceRoot: W
       })
     ).toBeNull()
+  })
+})
+
+describe('the lines worth decoding', () => {
+  const said = JSON.stringify({ type: 'user', message: { content: 'Fix the toolbar of Quill.' } })
+  const result = JSON.stringify({
+    type: 'user',
+    message: {
+      content: [
+        { tool_use_id: 'call_1', type: 'tool_result', content: 'x'.repeat(RESULT_LINE_MIN * 3) }
+      ]
+    }
+  })
+  // A person may paste a long text that speaks of tool calls: it is theirs.
+  const longSaid = JSON.stringify({
+    type: 'user',
+    message: { content: `${'Why does a call lose its id? '.repeat(400)} "tool_use_id"` }
+  })
+  const file = Buffer.from([said, result, longSaid, said].join('\n'))
+
+  /** The same bytes cut into chunks of `size`: a line end, the mark and a
+   *  line's head may each fall across two chunks. */
+  const chunked = (bytes: Buffer, size: number): Buffer[] => {
+    const out: Buffer[] = []
+    for (let i = 0; i < bytes.length; i += size) out.push(bytes.subarray(i, i + size))
+    return out
+  }
+  const collect = async (
+    chunks: Buffer[],
+    harness: 'claude' | 'codex' | 'pi'
+  ): Promise<string[]> => {
+    const lines: string[] = []
+    for await (const line of neededLines(chunks, harness)) lines.push(line)
+    return lines
+  }
+
+  it('drops a long tool result as bytes and keeps what a person said, however long', async () => {
+    expect(await collect([file], 'claude')).toEqual([said, longSaid, said])
+  })
+
+  it('reads the same lines whatever the size of the chunks', async () => {
+    for (const size of [1, 7, 64, 4095, 4096, 4097, 10_000])
+      expect(await collect(chunked(file, size), 'claude')).toEqual([said, longSaid, said])
+  })
+
+  it('keeps a last line that ends the file without a line end, and no empty line', async () => {
+    expect(await collect([Buffer.from(`${said}\n\n${said}`)], 'claude')).toEqual([said, said])
+    expect(await collect([Buffer.from(`${result}`)], 'claude')).toEqual([])
+  })
+
+  it('drops nothing of a harness whose results it does not know', async () => {
+    expect(await collect([file], 'codex')).toEqual([said, result, longSaid, said])
+  })
+
+  it('still drops, once decoded, a long result whose mark sits past the head', () => {
+    const late = `{"type":"user","pad":"${'x'.repeat(RESULT_LINE_MIN)}","message":{"content":[{"tool_use_id":"c"}]}}`
+    expect(isToolResultLine(late, 'claude')).toBe(true)
+    expect(isToolResultLine(said, 'claude')).toBe(false)
+    expect(isToolResultLine(late, 'pi')).toBe(false)
+  })
+
+  it('reads a tab the same through the bytes as through its lines', async () => {
+    const lines = [said, result, longSaid]
+    const viaBytes = await readTabLines(
+      neededLines([Buffer.from(lines.join('\n'))], 'claude'),
+      'claude',
+      W
+    )
+    expect(viaBytes).toEqual(await readTabLines(lines, 'claude', W))
   })
 })

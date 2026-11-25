@@ -1,5 +1,4 @@
 import * as fs from 'node:fs'
-import * as readline from 'node:readline'
 import { conversationRoot, locateTranscript } from '../session-history/transcript-peek'
 import { findCodexRollout } from '../session-history/codex'
 import { findPiSession } from '../session-history/pi'
@@ -11,8 +10,9 @@ import { codexScopedTexts, piScopedTexts, scopedTexts } from '../session-history
  * how many times the agent's tool calls named each absolute path of the
  * workspace. The transcript is found as the history finds it, per harness,
  * and read as a stream, one line at a time: a transcript reaches tens of
- * megabytes. Nothing here is sent anywhere; `tab-project.ts` scrubs and clips
- * what it sends.
+ * megabytes, nearly all of them the results of tool calls, which are dropped
+ * as bytes (`neededLines`). Nothing here is sent anywhere; `tab-project.ts`
+ * scrubs and clips what it sends.
  */
 
 export type TabHarness = 'claude' | 'codex' | 'pi'
@@ -171,6 +171,69 @@ export function locateTab(source: TabSource): string | null {
   return findPiSession(source.conversationId, source.cwd)
 }
 
+/** A line past this many bytes that carries a tool's result is skipped unread. */
+export const RESULT_LINE_MIN = 4096
+const RESULT_MARKER = '"tool_use_id"'
+
+/** Whether a line is one of the results a Claude tool call got back: the
+ *  largest lines of a transcript (a file's content, a listing), and never
+ *  read here, since only what a person said and what the agent's own calls
+ *  named count. Only a LONG line is skipped, so a message a person typed
+ *  about tool calls is still read. Pure. */
+export function isToolResultLine(line: string, harness: TabHarness): boolean {
+  return harness === 'claude' && line.length > RESULT_LINE_MIN && line.includes(RESULT_MARKER)
+}
+
+/**
+ * The lines of a transcript worth decoding, read as BYTES: a long line whose
+ * first `RESULT_LINE_MIN` bytes carry the mark of a tool's result is dropped
+ * without ever becoming a string. Decoding is the whole cost of reading a
+ * long tab: measured on 25 November 2026 on a 100 MB transcript, 97 MB of it
+ * tool results in 258 lines, a line reader took 828 ms where finding the
+ * line ends in the bytes took 32 ms, and the 358 lines a reading needs
+ * parsed in 28 ms. The mark sits in the first 4 KB of such a line (3,186 of
+ * 3,191 in the twelve largest transcripts looked at); the rare line where it
+ * does not is decoded and dropped by `isToolResultLine`.
+ */
+export async function* neededLines(
+  chunks: AsyncIterable<Buffer> | Iterable<Buffer>,
+  harness: TabHarness
+): AsyncGenerator<string> {
+  let parts: Buffer[] = []
+  let length = 0
+  /** The line being read is a tool's result: its bytes are dropped. */
+  let skipping = false
+  /** The line's head was looked at once already. */
+  let looked = false
+  for await (const chunk of chunks) {
+    let start = 0
+    for (;;) {
+      const end = chunk.indexOf(10, start)
+      const piece = chunk.subarray(start, end === -1 ? chunk.length : end)
+      if (!skipping && piece.length > 0) {
+        parts.push(piece)
+        length += piece.length
+        if (harness === 'claude' && !looked && length > RESULT_LINE_MIN) {
+          looked = true
+          const head = parts.length === 1 ? parts[0] : Buffer.concat(parts, length)
+          if (head.subarray(0, RESULT_LINE_MIN).includes(RESULT_MARKER)) {
+            skipping = true
+            parts = []
+          }
+        }
+      }
+      if (end === -1) break
+      if (!skipping && length > 0) yield Buffer.concat(parts, length).toString('utf-8')
+      parts = []
+      length = 0
+      skipping = false
+      looked = false
+      start = end + 1
+    }
+  }
+  if (!skipping && length > 0) yield Buffer.concat(parts, length).toString('utf-8')
+}
+
 /** Read one transcript's lines into a reading. Pure over the lines, so the
  *  tests feed arrays and `readTab` feeds a stream. Null when nothing was said. */
 export async function readTabLines(
@@ -183,6 +246,7 @@ export async function readTabLines(
   const touched: Record<string, number> = {}
   for await (const line of lines) {
     if (!line.trim()) continue
+    if (isToolResultLine(line, harness)) continue
     let entry: any
     try {
       entry = JSON.parse(line)
@@ -215,14 +279,17 @@ export async function readTab(source: TabSource): Promise<TabReading | null> {
     return null
   }
   if (!file) return null
-  const stream = fs.createReadStream(file, { encoding: 'utf-8' })
-  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity })
+  // Bytes, never a decoded stream: see `neededLines`.
+  const stream = fs.createReadStream(file, { highWaterMark: 1 << 20 })
   try {
-    return await readTabLines(lines, source.harness, source.workspaceRoot)
+    return await readTabLines(
+      neededLines(stream as AsyncIterable<Buffer>, source.harness),
+      source.harness,
+      source.workspaceRoot
+    )
   } catch {
     return null
   } finally {
-    lines.close()
     stream.destroy()
   }
 }
