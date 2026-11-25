@@ -112,6 +112,11 @@ const DROP_CARD_COPY: Record<
     title: 'Add the session to the message',
     body: 'The agent gets its id, to read it or message it.'
   },
+  sessions: {
+    eyebrow: 'Sessions',
+    title: 'Add the sessions to the message',
+    body: 'The agent gets their ids, to read them or message them.'
+  },
   group: {
     eyebrow: 'Group',
     title: 'Add the group to the message',

@@ -16,8 +16,9 @@ export const SESSIONS_DRAG_ENTER = 'clave:sessions-drag-enter'
 export const SESSIONS_DRAG_LEAVE = 'clave:sessions-drag-leave'
 export const SESSIONS_DROP = 'clave:sessions-drop'
 
-/** What a sidebar drag carries: tabs, or one group. */
-export type SidebarDragKind = 'session' | 'group'
+/** What a sidebar drag carries: one tab, several picked together
+ *  (PRDCT-5094), or one group. */
+export type SidebarDragKind = 'session' | 'sessions' | 'group'
 
 export type SessionsDropDetail =
   | { kind: 'session'; sessionIds: string[] }

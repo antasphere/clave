@@ -58,6 +58,11 @@ export function useSidebarDnd(opts: {
    *  offering an `onto` zone. Read through a ref, so the hit-test's identity
    *  does not change with it. */
   canNest: (draggedId: string, targetId: string) => boolean
+  /** The rows a drag of the row `itemId` carries, in the order they land:
+   *  the row alone by default, or the selection it belongs to when the
+   *  caller says so (PRDCT-5094, the Sidebar's `dragIdsFor`). Asked at the
+   *  press, through a ref; a group always moves alone. */
+  dragIds?: (itemId: string) => string[]
   pinnedZoneRef?: React.RefObject<HTMLElement | null>
   onPinnedDrop?: (groupId: string) => void
 }): {
@@ -69,8 +74,10 @@ export function useSidebarDnd(opts: {
 } {
   const { containerRef, onDrop, pinnedZoneRef, onPinnedDrop } = opts
   const canNestRef = useRef(opts.canNest)
+  const dragIdsRef = useRef(opts.dragIds)
   useLayoutEffect(() => {
     canNestRef.current = opts.canNest
+    dragIdsRef.current = opts.dragIds
   })
 
   const [dndState, setDndState] = useState<DndRenderState>({
@@ -84,8 +91,10 @@ export function useSidebarDnd(opts: {
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Create/destroy overlay element
-  const createOverlay = useCallback((sourceEl: HTMLElement) => {
+  // Create/destroy overlay element. The ghost is the grabbed row; a drag of
+  // several rows (PRDCT-5094) says how many ride with it in a count on its
+  // corner, as Finder badges a drag of several files.
+  const createOverlay = useCallback((sourceEl: HTMLElement, count: number) => {
     const overlay = document.createElement('div')
     overlay.className = 'sidebar-drag-overlay'
 
@@ -100,6 +109,12 @@ export function useSidebarDnd(opts: {
       clone.style.opacity = '1'
       // Match the source width
       overlay.style.width = `${button.getBoundingClientRect().width}px`
+    }
+    if (count > 1) {
+      const badge = document.createElement('span')
+      badge.className = 'sidebar-drag-count'
+      badge.textContent = String(count)
+      overlay.appendChild(badge)
     }
 
     // Try to pick up the group's background color from the parent container
@@ -266,7 +281,9 @@ export function useSidebarDnd(opts: {
           // The dragged tab is the root itself (these are its own rows) or
           // one of the rows drawn under that root: it stays where it is.
           if (drag.ids.includes(nestedRoot) || draggedRoot === nestedRoot) break
-          if (canNestRef.current(drag.ids[0], nestedRoot))
+          // Nesting is a one-tab gesture: several rows dragged together
+          // (PRDCT-5094) only ever land beside a row.
+          if (drag.ids.length === 1 && canNestRef.current(drag.ids[0], nestedRoot))
             newIndicator = { targetId: nestedRoot, position: 'onto' }
           break
         }
@@ -315,8 +332,10 @@ export function useSidebarDnd(opts: {
           const held: RowZone | null =
             cur?.targetId === itemId && cur.position !== 'inside' ? cur.position : null
           // A tab offers a middle zone, `onto`, when the dragged tab may be
-          // nested under it (`lib/sidebar-drop-zones.ts`); a group never nests.
-          const nestable = !drag.isGroup && canNestRef.current(drag.ids[0], itemId)
+          // nested under it (`lib/sidebar-drop-zones.ts`); a group never
+          // nests, and neither do several rows dragged together.
+          const nestable =
+            !drag.isGroup && drag.ids.length === 1 && canNestRef.current(drag.ids[0], itemId)
           position = rowZone({ frac, held, nestable, nestOpen: nestable && nestOpen(itemId) })
           // Onto the tab the dragged row is already drawn under: it stays.
           if (position === 'onto' && draggedRoot === itemId) {
@@ -551,15 +570,17 @@ export function useSidebarDnd(opts: {
       if (e.button !== 0) return
       if ((e.target as HTMLElement).tagName === 'INPUT') return
 
-      // A drag carries the row under the cursor and nothing else. The
-      // selection is a VIEW (which terminals tile the main pane — clicking a
-      // group header selects every one of its rows), not an edit selection:
-      // reading it as the drag payload meant that dragging any single row of
-      // the group you were looking at emptied the whole group into the drop
-      // target. Several sessions move together by grouping them (Cmd+G) and
-      // dragging the group.
+      // A drag carries the row under the cursor, or the rows the caller
+      // says travel with it (`dragIds`): a selection picked by hand, with
+      // Cmd or Shift clicks on rows, moves whole (PRDCT-5094). The selection
+      // as such is never the payload: it is also a VIEW (which terminals
+      // tile the main pane — clicking a group header selects every one of
+      // its rows), and reading it as the payload meant that dragging any
+      // single row of the group you were looking at emptied the whole group
+      // into the drop target.
+      const picked = isGroup ? null : dragIdsRef.current?.(itemId)
       dragRef.current = {
-        ids: [itemId],
+        ids: picked && picked.length > 0 && picked.includes(itemId) ? picked : [itemId],
         isGroup,
         startX: e.clientX,
         startY: e.clientY,
@@ -602,7 +623,7 @@ export function useSidebarDnd(opts: {
         // Start dragging
         drag.started = true
         if (drag.sourceEl) {
-          createOverlay(drag.sourceEl)
+          createOverlay(drag.sourceEl, drag.ids.length)
           drag.overlayWidth = overlayRef.current?.getBoundingClientRect().width ?? 0
         }
         setDndState({
@@ -638,7 +659,11 @@ export function useSidebarDnd(opts: {
       const target = sessionDropTargetAt(e.clientX, e.clientY)
       if (target !== drag.dropTarget) {
         if (drag.dropTarget) leaveSessionDropTarget(drag.dropTarget)
-        if (target) enterSessionDropTarget(target, drag.isGroup ? 'group' : 'session')
+        if (target)
+          enterSessionDropTarget(
+            target,
+            drag.isGroup ? 'group' : drag.ids.length > 1 ? 'sessions' : 'session'
+          )
         drag.dropTarget = target
       }
       if (target) {
