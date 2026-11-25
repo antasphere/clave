@@ -330,6 +330,13 @@ export function Sidebar(): React.JSX.Element {
 
   // Selection anchor for Cmd+Shift range select (Finder behavior)
   const selectionAnchorRef = useRef<string | null>(null)
+  // The selection as the last Cmd or Shift click on a row left it: picked by
+  // hand, so a drag of one of its rows carries all of it (PRDCT-5094, see
+  // `dragIdsFor`). Any other click forgets it, and anything else that changes
+  // the selection makes it stale, so a drag moves its row alone again.
+  const pickedSelectionRef = useRef<string[] | null>(null)
+  // What a drag of a row carries, filled in once the rows are known below.
+  const dragIdsRef = useRef<(itemId: string) => string[]>((itemId) => [itemId])
 
   // Scroll container ref for DnD
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -389,7 +396,9 @@ export function Sidebar(): React.JSX.Element {
   }, [])
 
   // A drop onto a row nests the tab; a nested tab dropped between two rows is
-  // taken out and placed there; anything else moves as it always did.
+  // taken out and placed there; anything else moves as it always did. Rows
+  // dragged together (PRDCT-5094) are never nested nor a nested row: always
+  // a move, one undo step.
   const handleDrop = useCallback(
     (ids: string[], targetId: string, position: DropPosition) => {
       if (position === 'onto') {
@@ -411,6 +420,7 @@ export function Sidebar(): React.JSX.Element {
       containerRef: scrollContainerRef,
       onDrop: handleDrop,
       canNest,
+      dragIds: (itemId) => dragIdsRef.current(itemId),
       pinnedZoneRef,
       onPinnedDrop: handlePinnedDrop
     })
@@ -985,6 +995,37 @@ export function Sidebar(): React.JSX.Element {
   // components skip re-rendering when an unrelated session's status changes.
   const flatSessionOrderRef = useRef(flatSessionOrder)
   flatSessionOrderRef.current = flatSessionOrder
+
+  // What a drag of a row carries (PRDCT-5094): the row alone, unless the
+  // selection picked by hand lights it, and then every row that selection
+  // lights, in the order they are drawn, as Finder drags its selection. A
+  // group header's selection is a VIEW (the rows tiled in the pane), never a
+  // payload: it once made the drag of one row empty the whole group into the
+  // drop target. A nested row grabbed itself moves alone, out of its nest; a
+  // picked one under another grabbed row stays in its nest and travels with
+  // its parent only. A row of another server stays behind, since a move never
+  // crosses servers.
+  const dragIdsFor = (itemId: string): string[] => {
+    const picked = pickedSelectionRef.current
+    const selected = useSessionStore.getState().selectedSessionIds
+    const samePick =
+      !!picked &&
+      picked.length > 1 &&
+      picked.length === selected.length &&
+      picked.every((id) => selected.includes(id))
+    if (!samePick || subagents.rootById.has(itemId) || !representedSelection(itemId))
+      return [itemId]
+    // A wave or lane entry is drawn by its anchor and selected by its holder.
+    const rowOf = new Map<string, string>()
+    for (const [anchor, entry] of work.entryByAnchor) rowOf.set(entryTarget(entry), anchor)
+    const owner = ownerOf(itemId)
+    const ids = flatSessionOrder
+      .filter((id) => !subagents.rootById.has(id))
+      .map((id) => rowOf.get(id) ?? id)
+      .filter((id) => ownerOf(id) === owner && representedSelection(id))
+    return ids.length > 1 && ids.includes(itemId) ? [...new Set<string>(ids)] : [itemId]
+  }
+  dragIdsRef.current = dragIdsFor
 
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
@@ -1921,6 +1962,11 @@ export function Sidebar(): React.JSX.Element {
   // Finder-style session click: Click=single, Cmd=toggle, Shift=range, Cmd+Shift=range-add
   const handleSessionClick = useCallback(
     (sessionId: string, modifiers: { metaKey: boolean; shiftKey: boolean }) => {
+      // Only the two picking gestures below record a pick (see dragIdsFor).
+      pickedSelectionRef.current = null
+      const notePick = (): void => {
+        pickedSelectionRef.current = useSessionStore.getState().selectedSessionIds
+      }
       // Agent sessions → switch to chat panel
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
       if (session?.sessionType === 'agent' && session.agentId) {
@@ -1966,10 +2012,12 @@ export function Sidebar(): React.JSX.Element {
           // Shift only: replace selection with range
           selectSessions(rangeIds)
         }
+        notePick()
         // Don't update anchor on shift-click
       } else if (modifiers.metaKey) {
         // Cmd+Click: toggle individual
         selectSession(sessionId, true)
+        notePick()
         selectionAnchorRef.current = sessionId
       } else {
         // Plain click: single select
@@ -1982,6 +2030,9 @@ export function Sidebar(): React.JSX.Element {
 
   const handleGroupClick = useCallback(
     (groupId: string, modifiers: { metaKey: boolean; shiftKey: boolean }) => {
+      // A header selects its group's rows to show them, Cmd or not: a view,
+      // which a drag never carries (see dragIdsFor).
+      pickedSelectionRef.current = null
       const state = useSessionStore.getState()
       const found = state.groups.find((g) => g.id === groupId)
       if (!found) return

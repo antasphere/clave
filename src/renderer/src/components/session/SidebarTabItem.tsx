@@ -142,9 +142,13 @@ export function SidebarTabItem({
         onKeyDown={handleKeyDown}
         title={title}
         data-drop-onto={dropOnto ? 'true' : undefined}
-        data-selected={
-          isSelected && (!grouped || (!!rowControl && !groupSelected)) ? 'true' : undefined
-        }
+        // A selected row carries its fill at the top level and in a group
+        // alike; only a group selected whole shows it on the card instead.
+        // In a group without a colour, the default, this attribute is the
+        // fill's one source (`.group-scope .sidebar-item[data-selected]`):
+        // a grouped row without it showed nothing but darker text
+        // (PRDCT-5095). A coloured group paints its tint inline as well.
+        data-selected={isSelected && !groupSelected ? 'true' : undefined}
         className={cn(
           'sidebar-item group',
           groupSelected

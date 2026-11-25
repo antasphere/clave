@@ -116,7 +116,7 @@ describe('the attachment caret before fixture typing', () => {
       ts.forEachChild(node, visit)
     }
     visit(source)
-    expect(sequences).toBe(4)
+    expect(sequences).toBe(5)
     expect(waits).toBe(sequences)
   })
 })
