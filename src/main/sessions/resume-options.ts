@@ -49,6 +49,9 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
     connectionId: record.connectionId,
     connectionLabel: record.connectionLabel,
-    permissionDefault: record.permissionDefault
+    permissionDefault: record.permissionDefault,
+    // The writing style the tab was given (PRDCT-5166): it comes back on the
+    // same one, never on the machine's default.
+    ...(record.writingStyle ? { writingStyle: record.writingStyle } : {})
   }
 }

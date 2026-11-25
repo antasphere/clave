@@ -10,7 +10,7 @@
  * - `OpenArtefact`: link a session to a folder holding an HTML page, or to
  *   one `.html` file; a session keeps several (PRDCT-5022), and the one
  *   opened comes in front. With `present`, the windows are also told to
- *   present it full screen.
+ *   present it in a window of its own.
  * - `CloseArtefact`: drop one of the session's links (`target`), or all of them.
  * - The calls that name a `target` act on that artefact of the session, the
  *   front one when it is absent.
@@ -115,7 +115,7 @@ export const OpenArtefact = Command.define('OpenArtefact', {
     sessionId: SessionId,
     path: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096)),
     /** Present it too (PRDCT-4980): the window that holds the session shows the
-     *  deck alone in a full-screen window of its own (`artefact.present_requested`). */
+     *  deck alone in a window of its own (`artefact.present_requested`). */
     present: Schema.optional(Schema.Boolean)
   }),
   success: Artefact,
@@ -188,7 +188,7 @@ export const ArtefactChanged = Schema.TaggedStruct('artefact.changed', {
   artefacts: Schema.optional(Schema.Array(Artefact))
 })
 /** The agent asked to present the session's artefact (PRDCT-4980): the window
- *  holding the session opens it full screen in a window of its own. Never kept:
+ *  holding the session opens it in a window of its own. Never kept:
  *  a window that starts later presents nothing. */
 export const ArtefactPresentRequested = Schema.TaggedStruct('artefact.present_requested', {
   sessionId: Schema.String

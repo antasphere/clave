@@ -86,9 +86,10 @@ describe('clave_open_artefact', () => {
       OPEN_ARTEFACT_DESCRIPTION_SERVER
     ]) {
       expect(description).toContain('"present it"')
-      expect(description).toContain('full screen')
+      // PRDCT-5167: a plain window, where Clave's is.
+      expect(description).toContain('never full screen by itself')
       expect(description).toContain('present: true')
-      expect(description).toContain('on another display when one is connected')
+      expect(description).not.toContain('another display')
       expect(description).toContain('joins the ones already open')
       expect(description).not.toContain('external display')
     }

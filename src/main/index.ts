@@ -42,6 +42,7 @@ import { preferencesManager } from './preferences-manager'
 import { workspaceManager } from './workspace-manager'
 import { windowWorkspaces } from './window-workspaces'
 import { windowRegistry } from './window-registry'
+import { bringForward } from './window-routing'
 import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
 import {
@@ -778,10 +779,17 @@ app.whenReady().then(() => {
     }
   }
 
+  // A click on the Dock icon (or any reopen: Spotlight, a launcher) lands on
+  // the app window the person used last, restored if minimized (PRDCT-5165).
+  // Left to macOS, it brings back the app's last key window, and when that
+  // was a presentation's deck (then full screen, a Space of its own) every click
+  // went to the deck. A presentation window is not in the registry, so its
+  // focus is never noted.
+  app.on('browser-window-focus', (_event, win) => windowRegistry.noteFocused(win.id))
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      openPersistedWindows()
-    }
+    const win = windowRegistry.getLastFocusedWindow()
+    if (win) bringForward(win)
+    else if (BrowserWindow.getAllWindows().length === 0) openPersistedWindows()
   })
 })
 

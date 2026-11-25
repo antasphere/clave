@@ -570,7 +570,9 @@ describe('starting a session on the wire', () => {
       launchProfileId: 'lp1',
       model: 'opus',
       piProvider: 'anthropic',
-      piThinking: 'high'
+      piThinking: 'high',
+      // PRDCT-5166: a field the schema did not name would be dropped here.
+      writingStyle: 'quiet'
     }
     for (const info of [bare, rich]) {
       const decoded = Schema.decodeUnknownSync(SessionInfo)(info)

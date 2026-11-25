@@ -127,3 +127,33 @@ export function withOpencodeClaveTools(
     [CLAVE_TAB_MCP_TOKEN_ENV]: endpoint.token
   }
 }
+
+/** A tab's OpenCode environment with a writing style's instruction file
+ *  added (PRDCT-5166): OpenCode's `instructions` are file paths, read beside
+ *  the person's own instruction files (checked on 2.4.1). The inline
+ *  configuration it already has (a connection's providers, Clave's own
+ *  server) is kept key by key, an `instructions` array already there keeps
+ *  its entries with this file appended once, and a value that is not a JSON
+ *  object is replaced by a configuration of its own, as the tools' merge
+ *  does. Pure. */
+export function withOpencodeInstructions(
+  env: Readonly<Record<string, string>> | undefined,
+  file: string
+): Record<string, string> {
+  let config: Record<string, unknown> = {}
+  const content = env?.[OPENCODE_CONFIG_ENV]
+  if (content) {
+    try {
+      const parsed: unknown = JSON.parse(content)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        config = parsed as Record<string, unknown>
+    } catch {
+      // Not Clave's to repair: the style goes in a configuration of its own.
+    }
+  }
+  const own = Array.isArray(config.instructions)
+    ? config.instructions.filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const instructions = own.includes(file) ? own : [...own, file]
+  return { ...(env ?? {}), [OPENCODE_CONFIG_ENV]: JSON.stringify({ ...config, instructions }) }
+}

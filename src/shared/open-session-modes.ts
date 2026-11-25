@@ -5,6 +5,7 @@ import {
   type LauncherFamily
 } from './agent-launch'
 import type { InteractionMode } from './harness'
+import { NO_STYLE } from './writing-styles'
 
 /** The modes `clave_open_session` takes; 'gemini' is the retired CLI's name,
  *  kept as an alias for antigravity. */
@@ -237,4 +238,32 @@ export function resolveProfileRef(
   return chatDefault !== undefined && isChatProfileRef(family, chatDefault)
     ? chatDefault
     : chatProfile
+}
+
+/** The `style` argument of `clave_open_session` (PRDCT-5166), in the words
+ *  every road's schema gives it: what an agent chooses a style by. */
+export const STYLE_ARGUMENT_DESCRIPTION =
+  'The writing style the new agent starts with: a style of this machine by its id or its exact name ("quiet" for work nobody watches as it runs, a lane for instance; "brief" for a tab a person talks to), or "none" for the harness\'s own way. Omit it to follow this machine\'s default. clave_launch_options lists the styles with when to use each. A tab keeps the style it was opened with. Agent modes only.'
+
+/** The longest `style` an open takes: the wire's `writingStyle` bound. */
+export const STYLE_ARGUMENT_MAX = 64
+
+/**
+ * The launch option an open's `style` becomes (PRDCT-5166): `writingStyle`,
+ * passed untouched, since the spawn resolves it against the machine's styles
+ * and refuses an unknown one with the list. A terminal runs no agent to
+ * write to anyone, so the argument is refused there, in the words the other
+ * agent-only arguments use.
+ */
+export function openStyleField(mode: string, style: string | undefined): { writingStyle?: string } {
+  if (style === undefined) return {}
+  if (mode === 'terminal')
+    throw new Error(`The style argument applies to agent modes only (got mode "${mode}")`)
+  return { writingStyle: style }
+}
+
+/** The `style` key of a `clave_list` row (PRDCT-5166): the id the tab's
+ *  record keeps, and no key at all for a tab on no style. */
+export function listedStyle(writingStyle: string | null | undefined): { style?: string } {
+  return writingStyle && writingStyle !== NO_STYLE ? { style: writingStyle } : {}
 }

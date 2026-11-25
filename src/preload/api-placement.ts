@@ -114,6 +114,17 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   launchProfileSetWorkspace: local,
   helpersList: localBecause("this Mac's helpers; a server's are fleetHelpers"),
   helperSet: localBecause("this Mac's helpers; a server's are fleetHelperSet"),
+  writingStylesList: localBecause("this Mac's writing styles; a server's are fleetWritingStyles"),
+  writingStyleSave: localBecause("this Mac's writing styles; a server's are fleetWritingStyleSave"),
+  writingStyleDelete: localBecause(
+    "this Mac's writing styles; a server's are fleetWritingStyleDelete"
+  ),
+  writingStyleSetDefault: localBecause(
+    "this Mac's writing styles; a server's are fleetWritingStyleSetDefault"
+  ),
+  writingStyleImportClaude: localBecause(
+    "this Mac's writing styles; a server's are fleetWritingStyleImportClaude"
+  ),
   integrationsRead: localBecause("this Mac's integrations; a server's are fleetIntegrations"),
   elevenLabsSetKey: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsSetKey"),
   elevenLabsCheck: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsCheck"),
@@ -617,6 +628,11 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetLaunchProfileSetGlobal: routed,
   fleetHelpers: routed,
   fleetHelperSet: routed,
+  fleetWritingStyles: routed,
+  fleetWritingStyleSave: routed,
+  fleetWritingStyleDelete: routed,
+  fleetWritingStyleSetDefault: routed,
+  fleetWritingStyleImportClaude: routed,
   fleetIntegrations: routed,
   fleetElevenLabsSetKey: routed,
   fleetElevenLabsCheck: routed,

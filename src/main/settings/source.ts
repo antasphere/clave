@@ -61,6 +61,7 @@ import type {
   HelperPreferenceView
 } from '../helpers/preferences'
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
+import type { WritingStylesView } from '../../shared/writing-styles'
 // ── Lane B (harness wave): provider connections ──
 import type {
   ProviderCompanyId,
@@ -148,6 +149,9 @@ export interface SettingsManagers {
       patch: HelperPreferencePatch
     ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
   }
+  /** The writing styles of this host (PRDCT-5166,
+   *  `../writing-styles/store.ts`); absent, refused. */
+  writingStyles?: WritingStylesLike
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  on its own secret port; absent, refused. */
   integrations?: IntegrationsLike
@@ -178,6 +182,17 @@ export interface SettingsManagers {
   /** The Pi and OpenCode usage of the tabs this host runs; absent, refused.
    *  Loaded on first use: its graph reaches the terminal backend. */
   harnessUsage?: () => Promise<HarnessUsageLike>
+}
+
+/** The writing styles of a host as the source needs them
+ *  (`../writing-styles/store.ts`'s `WritingStylesStore`). Each write throws
+ *  a plain `Error` with the person's sentence when it refuses. */
+export interface WritingStylesLike {
+  view(): WritingStylesView
+  save(draft: unknown): WritingStylesView
+  remove(id: string): WritingStylesView
+  setDefault(id: string | null): WritingStylesView
+  importClaudeOutputStyle(): WritingStylesView
 }
 
 // PRDCT-4551: what Pi and OpenCode tabs used, per connection
@@ -296,6 +311,8 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // status each write answers.
   const integrations = (): IntegrationsLike =>
     m.integrations ?? refuse('integrations', 'This server has no integrations.')
+  const styles = (): WritingStylesLike =>
+    m.writingStyles ?? refuse('writingStyles', 'This server keeps no writing styles.')
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   const modelsCatalog = (): ModelsCatalogLike =>
     m.modelsCatalog ?? refuse('modelsCatalog', 'This server has no models catalogue.')
@@ -441,6 +458,13 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
               ...(patch.account && { account: mutable<HelperAccount>(patch.account) })
             })
           : refuse('helpers', 'This server runs no helpers.')
+    },
+    writingStyles: {
+      list: () => styles().view(),
+      save: (draft) => styles().save({ ...draft }),
+      remove: (id) => styles().remove(id),
+      setDefault: (id) => styles().setDefault(id),
+      importClaude: () => styles().importClaudeOutputStyle()
     },
     integrations: {
       read: () => ({ elevenLabs: integrations().status() }),

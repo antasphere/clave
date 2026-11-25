@@ -4,7 +4,7 @@ Groups let you organize sessions and save workspace configurations for quick lau
 
 ## Creating Groups
 
-Select one or more sessions and press **Cmd+G** (or right-click → **Group**) to create a group. Drag a session onto a group to move it there — a drag always moves just the row you grabbed, never the rest of your selection. You can:
+Select one or more sessions and press **Cmd+G** (or right-click → **Group**) to create a group. Drag a session onto a group to move it there. Tabs you picked with Cmd-click or Shift-click move together when you drag one of them, in the order they appear. Clicking a group's header only shows its sessions, so dragging one of its rows then moves just that row. You can:
 
 - **Rename**: Right-click the group header
 - **Color**: Assign a color (8 presets or custom hex)

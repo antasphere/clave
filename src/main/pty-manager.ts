@@ -36,13 +36,19 @@ import {
 } from './provider-injection-spawn'
 // PRDCT-4551: the ledger of starts the usage per connection is counted by.
 import { recordHarnessStart } from './usage-ledger'
-import { opencodeConfiguredModel, recordedChatModel } from './provider-injection'
+import {
+  OPENCODE_CONFIG_ENV,
+  opencodeConfiguredModel,
+  recordedChatModel
+} from './provider-injection'
 import { connectionVariableNames } from './connection-handover'
 import { ledgerLineForReport } from './connection-watch'
 import { lineageOf } from './sessions/lineage'
 import { limitLiftedBy, limitReportOf } from './sessions/limit-report'
 import type { LimitReport } from '../shared/limit-report'
 import { runtimeChoices } from '../shared/runtime-choices'
+import { appliedStyleFile, decideLaunchStyle } from './writing-styles/launch'
+import { withOpencodeInstructions } from './clave-tools-launch'
 
 /** The runtime choices a restart carries (PRDCT-4191): the record's, which
  *  the provider's acknowledgements keep current, over the launch's. A record
@@ -436,6 +442,32 @@ class PtyManager {
         : ptyAdapter
     if (!adapter) throw new Error(`Adapter unavailable: ${events?.adapterId}`)
     const isEvents = !!events || echo
+    // The writing style the tab starts with (PRDCT-5166), decided here as the
+    // permission default is, for every launch alike: a refusal (a style the
+    // launch names and the machine does not have, or one it names for a tab
+    // that cannot take one) ends the spawn before any process starts. A chat on an adapter that hands no style on (the echo
+    // fixture, a plugin's) runs on none. From here on `writingStyle` is the
+    // id of the style applied, or nothing, and `writingStyleText` its text:
+    // a restart carries the first, each harness is given the second.
+    const styleAnswer =
+      isEvents && (echo || !CHAT_RECORD_ADAPTERS.has(adapter.id))
+        ? ({ ok: true, style: null } as const)
+        : decideLaunchStyle({
+            family,
+            agentsMode: options?.claudeAgentsMode === true,
+            chat: isEvents,
+            named: options?.writingStyle,
+            adopting: !!options?.adoptSessionId,
+            recorded:
+              options?.adoptSessionId && options.writingStyle === undefined
+                ? this.recordedWritingStyle(options.adoptSessionId)
+                : undefined,
+            routine: options?.link?.kind === 'routine',
+            windows: process.platform === 'win32'
+          })
+    if (!styleAnswer.ok) throw new Error(styleAnswer.reason)
+    const style = styleAnswer.style
+    options = { ...options, writingStyle: style?.id, writingStyleText: style?.text }
     // A Pi terminal asked to resume a session Pi never wrote (it ended before
     // its first message) starts fresh under the same id instead: `pi
     // --session <id>` finds nothing, says "No session found matching" and
@@ -484,7 +516,12 @@ class PtyManager {
           alive: true,
           ptyProcess: null,
           launchProfileId: profileId,
-          model: options?.model
+          model: options?.model,
+          // The style the chat's record names (PRDCT-5166), on the record's
+          // own condition, so the spawn's answer says the style applied.
+          ...(options?.writingStyle && options.writingStyleText
+            ? { writingStyle: options.writingStyle }
+            : {})
         }
       : ptyAdapter.prepare(cwd, {
           ...options,
@@ -621,7 +658,10 @@ class PtyManager {
         buildSpawnEnv(getLoginShellEnv(), {
           codexHome: codexHomeForSpawn('codex', options?.codexAccountId)
         }),
-        options?.initialPrompt
+        options?.initialPrompt,
+        // The writing style, as the thread's developer instructions
+        // (PRDCT-5166); no argument at all for a tab without one.
+        ...((options?.writingStyleText ? [options.writingStyleText] : []) as [] | [string])
       )
     }
     // Lane D (PRDCT-4427): the binary and `acp` alone. A saved profile's
@@ -634,14 +674,26 @@ class PtyManager {
         connectionId: options?.connectionId,
         label: options?.connectionLabel
       })
+      // The writing style (PRDCT-5166): an instruction file named in the
+      // inline configuration, which Clave's own server is merged into later
+      // (`withClaveTools`), the file kept. Carried past a login profile as a
+      // connection's variables are.
+      const opencodeEnv = buildSpawnEnv(getLoginShellEnv(), chatEnvAccount)
+      const styledEnv = options?.writingStyleText
+        ? withOpencodeInstructions(opencodeEnv, appliedStyleFile(options.writingStyleText))
+        : opencodeEnv
+      const carriedVariables = [
+        ...(chatConnection.providerEnv && options?.connectionId
+          ? connectionVariableNames(chatConnection.providerEnv)
+          : []),
+        ...(options?.writingStyleText ? [OPENCODE_CONFIG_ENV] : [])
+      ]
       opencodeChatAdapter.configure(session.id, {
         command: [opencodeProfile.command[0] ?? 'opencode', 'acp'],
-        env: buildSpawnEnv(getLoginShellEnv(), chatEnvAccount),
+        env: styledEnv,
         initialPrompt: options?.initialPrompt,
         // Carried past a login profile when started through the shell.
-        ...(chatConnection.providerEnv && options?.connectionId
-          ? { connectionVariables: connectionVariableNames(chatConnection.providerEnv) }
-          : {})
+        ...(carriedVariables.length ? { connectionVariables: [...new Set(carriedVariables)] } : {})
       })
     }
     // `agy acp` alone: a saved profile's `additionalArgs` are the TUI's words,
@@ -661,7 +713,10 @@ class PtyManager {
       antigravityChatAdapter.configure(session.id, {
         command: [antigravityProfile.command[0] ?? 'agy', 'acp'],
         env,
-        initialPrompt: options?.initialPrompt
+        initialPrompt: options?.initialPrompt,
+        // The writing style, sent with the conversation's first message: agy
+        // takes no instructions at launch (PRDCT-5166).
+        ...(options?.writingStyleText ? { styleText: options.writingStyleText } : {})
       })
     }
     // Lane D (PRDCT-4427): Pi's chat runs Pi's own command line, built as the
@@ -687,7 +742,9 @@ class PtyManager {
         resumeSessionId: resume,
         model: options?.model,
         provider: chatConnection.piProvider ?? options?.piProvider,
-        thinking: options?.piThinking
+        thinking: options?.piThinking,
+        // The writing style, on the rpc command line as on the TUI's (PRDCT-5166).
+        appendSystemPrompt: options?.writingStyleText
       })
       piChatAdapter.configure(session.id, {
         command: [...argv, '--mode', 'rpc'],
@@ -881,6 +938,11 @@ class PtyManager {
       ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       // Which work it does (PRDCT-4123): a restart's, else the record's.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work),
+      // The writing style the agent was given (PRDCT-5166), by its id, so the
+      // tab keeps it at every later launch; nothing for a tab given none.
+      ...(options?.writingStyle && options.writingStyleText
+        ? { writingStyle: options.writingStyle }
+        : {}),
       // Where the conversation came from (PRDCT-4300): a restart's, else the
       // record's, so a converted tab keeps its card across an account switch.
       ...((options?.continuedFrom ?? previous?.continuedFrom)
@@ -1132,6 +1194,17 @@ class PtyManager {
     return family === 'opencode' || family === 'antigravity'
   }
 
+  /** The writing style a tab launched again kept on its record
+   *  (PRDCT-5166), read before the spawn rewrites it: a restore at boot or an
+   *  adoption, whose spawn names none. A tmux-backed record is keyed by its
+   *  name, so the adoptable listing finds it when the id does not. */
+  private recordedWritingStyle(id: string): string | undefined {
+    const record =
+      ptyBackend.getSessionRecord(id) ??
+      ptyBackend.listAdoptableSessions().find((entry) => entry.id === id)
+    return record?.writingStyle
+  }
+
   /** The mode an Antigravity tab's own record holds, for a spawn that lost
    *  it (an app older than its server drops `accept-edits`). Another
    *  provider's record says nothing about this ladder. */
@@ -1263,6 +1336,10 @@ class PtyManager {
       // them, and a change of work since (a handover accepted, a lane left)
       // wrote the record alone, so a second restart would bring the old back.
       work: ptyBackend.getSessionRecord(id)?.work,
+      // The writing style it was given (PRDCT-5166), read now for the same
+      // reason; the spawn applies it again, never the machine's default.
+      writingStyle: record ? record.writingStyle : previous.writingStyle,
+      writingStyleText: undefined,
       // The mode, the model and the effort the chat was RUNNING on
       // (PRDCT-4191), from the record the provider's words were written to,
       // for the same reason: the spawn's options are the launch's.

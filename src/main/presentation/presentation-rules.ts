@@ -1,28 +1,38 @@
 /**
- * The rules of a presentation window (PRDCT-4980): which display a deck is
- * presented on, which address main agrees to show, where its page may go and
- * which key ends it. No Electron here, so each rule is tested alone
+ * The rules of a presentation window (PRDCT-4980): where its window opens,
+ * which address main agrees to show, where its page may go and which key
+ * ends it. No Electron here, so each rule is tested alone
  * (`presentation-rules.test.ts`); `presentation-windows.ts` applies them.
  */
 
-export interface DisplayLike {
-  readonly id: number
+export interface Area {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
 }
 
+/** The deck's area in its window: 16:9, 1280 by 720 when the display has the room. */
+const DECK_WIDTH = 1280
+const DECK_RATIO = 16 / 9
+/** The share of the display's work area the deck may take at most, either way. */
+const ROOM = 0.8
+
 /**
- * The display a deck is presented on: another display than the one the
- * Clave window is on (a projector, a second screen), else that one. Null
- * when the screen lists none.
+ * Where a presentation window opens on its display's work area (PRDCT-5167):
+ * a window like any other, never the whole screen. The deck's area (the
+ * window's content) is 16:9, 1280 by 720, smaller when four fifths of the
+ * work area is, and centred on it.
  */
-export function pickDisplay<D extends DisplayLike>(
-  displays: readonly D[],
-  ownerDisplayId: number | null
-): D | null {
-  return (
-    displays.find((d) => d.id !== ownerDisplayId) ??
-    displays.find((d) => d.id === ownerDisplayId) ??
-    null
-  )
+export function presentationBounds(area: Area): Area {
+  const width = Math.round(Math.min(DECK_WIDTH, area.width * ROOM, area.height * ROOM * DECK_RATIO))
+  const height = Math.round(width / DECK_RATIO)
+  return {
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    width,
+    height
+  }
 }
 
 /**

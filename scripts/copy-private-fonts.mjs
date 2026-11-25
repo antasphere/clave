@@ -18,7 +18,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WORKSPACE = path.resolve(REPO, '..', '..', '..', '..')
 const DEST = path.join(REPO, 'src/renderer/src/assets/fonts/private')
 
-const FONTS = ['company/website/apps/website/src/assets/fonts/synonym/Synonym-Variable.woff2']
+const FONTS = ['company/marketing/website/apps/website/src/assets/fonts/synonym/Synonym-Variable.woff2']
 
 for (const rel of FONTS) {
   const from = path.join(WORKSPACE, rel)

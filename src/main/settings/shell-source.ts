@@ -39,6 +39,7 @@ import { shellOwnsAntasphereAccount } from '../server-boot'
 import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { installWritingStyles, writingStylesStore } from '../writing-styles/store'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { setHelperConfigSource } from '../helpers/registry'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
@@ -79,6 +80,9 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   preferences: preferencesManager,
   workspaces: workspaceManager,
   ...(shellOwnsHelpers && { helpers: helperPreferences }),
+  // The writing styles, like the helpers, belong to whichever process is the
+  // server (PRDCT-5166): main only while it runs in-process.
+  ...(shellOwnsHelpers && { writingStyles: writingStylesStore }),
   // The integrations, like the helpers, belong to whichever process is the
   // server (PRDCT-4410): main only while it runs in-process.
   ...(shellOwnsHelpers && { integrations: elevenLabsIntegration }),
@@ -113,6 +117,9 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
 // a caller added later), so nothing ever runs here on defaults.
 if (shellOwnsHelpers) installHelperPreferences(helperPreferences)
 else setHelperConfigSource(() => ({ refused: HELPERS_RUN_ON_SERVER }))
+// The tabs main spawns in-process read this Mac's writing styles (PRDCT-5166);
+// with a server behind the window the tabs are its, and so are the styles.
+if (shellOwnsHelpers) installWritingStyles(writingStylesStore)
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

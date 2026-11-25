@@ -42,6 +42,9 @@ export interface HelperPreferencePatch {
   readonly model?: string | null
   readonly account?: HelperAccount
 }
+export type WritingStyle = typeof Settings.WritingStyleView.Type
+export type WritingStylesView = typeof Settings.WritingStylesView.Type
+export type WritingStyleDraft = typeof Settings.SaveWritingStyle.payload.Type
 export type IntegrationsStatus = typeof Settings.IntegrationsView.Type
 export type ElevenLabsStatus = typeof Settings.ElevenLabsStatusView.Type
 export type ElevenLabsModelId = typeof Settings.ElevenLabsModelId.Type
@@ -133,6 +136,18 @@ export interface SettingsSourceService {
       helperId: string,
       patch: HelperPreferencePatch
     ) => Awaitable<ReadonlyArray<HelperPreference>>
+  }
+  /** The writing styles of this host (PRDCT-5166): the built-in styles and
+   *  the machine's own, the style a tab starts with, and Claude Code's output
+   *  style there. Every write answers the whole view; a refusal is the
+   *  store's sentence. A host with none behind it answers
+   *  `CapabilityUnavailable`. */
+  readonly writingStyles: {
+    readonly list: () => Awaitable<WritingStylesView>
+    readonly save: (draft: WritingStyleDraft) => Awaitable<WritingStylesView>
+    readonly remove: (id: string) => Awaitable<WritingStylesView>
+    readonly setDefault: (id: string | null) => Awaitable<WritingStylesView>
+    readonly importClaude: () => Awaitable<WritingStylesView>
   }
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  by the host's secret port, its account check, and the voice and model
@@ -296,6 +311,13 @@ function noneSource(): SettingsSourceService {
       setWorkspace: refuse('launchProfiles')
     },
     helpers: { list: refuse('helpers'), set: refuse('helpers') },
+    writingStyles: {
+      list: refuse('writingStyles'),
+      save: refuse('writingStyles'),
+      remove: refuse('writingStyles'),
+      setDefault: refuse('writingStyles'),
+      importClaude: refuse('writingStyles')
+    },
     integrations: {
       read: refuse('integrations'),
       setElevenLabsKey: refuse('integrations'),

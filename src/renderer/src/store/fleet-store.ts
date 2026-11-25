@@ -240,6 +240,9 @@ export function applyFleetSnapshot(
         // side already did (`ownedSessionRef`).
         spawnedBy: ownedSessionRef(serverId, record?.spawnedBy),
         openedBy: ownedSessionRef(serverId, record?.openedBy),
+        // The writing style its agent was given, as its server's record keeps
+        // it (PRDCT-5166), so this window's clave_list says it.
+        writingStyle: record?.writingStyle,
         userRenamed: record?.userRenamed ?? false,
         planFilePath: old?.planFilePath ?? null,
         // A remote localhost page cannot be interpreted as a Mac-local preview.

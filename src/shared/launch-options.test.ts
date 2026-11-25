@@ -14,6 +14,7 @@ import {
 import { HARNESSES, HARNESS_BY_ID, type HarnessId } from './harness'
 import { BUILT_IN_LAUNCH_PROFILES, type LaunchProfile } from './agent-launch'
 import { CLAUDE_MODELS } from './claude-models'
+import { BUILT_IN_STYLES, type WritingStyle } from './writing-styles'
 import { usageSummaryOf } from './usage-summary'
 import type { PoolUsageWindow } from './account-pool'
 import { codexConnection, poolAccountOf, type Connection } from './connection'
@@ -185,6 +186,7 @@ function input(over: Partial<LaunchOptionsInput> = {}): LaunchOptionsInput {
     preferRecommended: false,
     // The remembered chat model: what an open passing no model lands on.
     launchModel: (pool) => (pool === 'claude' ? FABLE : undefined),
+    writingStyles: null,
     now,
     ...over
   }
@@ -773,5 +775,63 @@ describe('the profiles', () => {
       { id: 'claude-yolo', name: 'Claude yolo', form: 'terminal', default: false },
       { id: 'chat:claude:claude-yolo', name: 'Claude yolo (chat)', form: 'chat', default: false }
     ])
+  })
+})
+
+/** The machine's writing styles an agent chooses from (PRDCT-5166). */
+describe('the writing styles', () => {
+  const own: WritingStyle = {
+    id: 'terse',
+    name: 'Terse',
+    description: 'One line per answer.',
+    text: 'Answer in one line.',
+    statusCard: false,
+    builtIn: false
+  }
+
+  it('lists each style with what it is for and whether it asks for the card, the default marked', () => {
+    const options = launchOptions(
+      input({ writingStyles: { styles: [...BUILT_IN_STYLES, own], defaultStyleId: 'quiet' } })
+    )
+    expect(options.styles).toEqual([
+      {
+        id: 'brief',
+        name: 'Brief',
+        description: BUILT_IN_STYLES[0].description,
+        statusCard: true,
+        default: false
+      },
+      {
+        id: 'quiet',
+        name: 'Quiet',
+        description: BUILT_IN_STYLES[1].description,
+        statusCard: true,
+        default: true
+      },
+      {
+        id: 'terse',
+        name: 'Terse',
+        description: 'One line per answer.',
+        statusCard: false,
+        default: false
+      }
+    ])
+    expect(options.defaultStyle).toBe('quiet')
+    // The instructions stay out of the listing: the tab is given them, not the chooser.
+    expect(JSON.stringify(options.styles)).not.toContain('Answer in one line.')
+  })
+
+  it('says no default when the machine has none, names none, or names a style it lost', () => {
+    for (const defaultStyleId of [null, 'none', 'deleted-one']) {
+      const options = launchOptions(input({ writingStyles: { styles: [own], defaultStyleId } }))
+      expect(options.defaultStyle).toBeNull()
+      expect(options.styles.map((style) => style.default)).toEqual([false])
+    }
+  })
+
+  it('lists none where the road could not read them', () => {
+    const options = launchOptions(input({ writingStyles: null }))
+    expect(options.styles).toEqual([])
+    expect(options.defaultStyle).toBeNull()
   })
 })

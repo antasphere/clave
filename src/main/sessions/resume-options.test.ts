@@ -69,3 +69,15 @@ describe('resumeOptions carries the stored connection (PRDCT-4496)', () => {
     expect(options.connectionLabel).toBeUndefined()
   })
 })
+
+describe('resumeOptions carries the writing style (PRDCT-5166)', () => {
+  it("resumes a tab on its record's style, its id as the spawn reads it", () => {
+    const options = resumeOptions({ ...record, writingStyle: 'quiet' })
+    expect(options.writingStyle).toBe('quiet')
+    expect(options.adoptSessionId).toBe(record.id)
+  })
+
+  it('names none for a tab on no style, which the spawn then keeps on none', () => {
+    expect(resumeOptions(record)).not.toHaveProperty('writingStyle')
+  })
+})

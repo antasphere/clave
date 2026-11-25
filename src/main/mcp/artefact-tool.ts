@@ -23,7 +23,7 @@ const SEVERAL_SENTENCE =
 
 /** What `present` adds to both descriptions (PRDCT-4980): the trigger words first. */
 const PRESENT_SENTENCE =
-  ' To "present it", "show it full screen", "put it on the big screen": pass present: true (opening it again is fine for this): the deck also opens alone in a full-screen window of its own, on another display when one is connected; Esc ends it. The answer says the presentation was requested: the Mac showing your session puts it up.'
+  ' To "present it" or "open it in its own window": pass present: true (opening it again is fine for this): the deck also opens alone in a window of its own, a plain window on the display of Clave\'s window, never full screen by itself (the window\'s green button makes it full screen); Esc closes it. The answer says the presentation was requested: the Mac showing your session puts it up.'
 
 /** The standalone server's description: its sessions are shown on every Mac attached to it. */
 export const OPEN_ARTEFACT_DESCRIPTION_SERVER =

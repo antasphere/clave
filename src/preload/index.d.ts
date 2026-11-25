@@ -72,6 +72,7 @@ import type {
   HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
@@ -486,6 +487,9 @@ export interface SessionInfo {
   model?: string
   piProvider?: string
   piThinking?: PiThinkingLevel
+  /** The id of the writing style the agent was given (PRDCT-5166); absent
+   *  for a tab on none. */
+  writingStyle?: string
 }
 
 /** Who owns a session that is not a tab of its own — mirrors SessionLink in
@@ -577,6 +581,9 @@ export interface SessionRecord {
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. */
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** The id of the writing style the tab was opened with (PRDCT-5166);
+   *  absent for a tab on no style. */
+  writingStyle?: string
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -866,7 +873,7 @@ export interface ArtefactsAPI {
   ): () => void
   /** The preview died under its holders: hold again. */
   onPreviewExited(callback: (sessionId: string) => void): () => void
-  /** The agent asked to present the session's artefact full screen (PRDCT-4980). */
+  /** The agent asked to present the session's artefact in a window of its own (PRDCT-4980). */
   onPresentRequested(callback: (sessionId: string) => void): () => void
   /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
   slidelessState(serverId?: string): Promise<SlidelessState>
@@ -876,11 +883,11 @@ export interface ArtefactsAPI {
   ): () => void
 }
 
-/** A session's deck alone, full screen, in a window of its own (PRDCT-4980). */
+/** A session's deck alone in a window of its own (PRDCT-4980). */
 export interface PresentationAPI {
   /** Show the preview at `url` (a loopback address this window holds) in the
-   *  session's presentation window, made full screen on another display when
-   *  one is connected; a second call moves it to `url` and brings it forward.
+   *  session's presentation window, a plain window on this window's display
+   *  (PRDCT-5167); a second call moves it to `url` and brings it forward.
    *  False: this window is not the one presenting it (another window of this
    *  Mac is, or the person closed that presentation), and it should let go. */
   show(sessionId: string, url: string, title: string, presentationId: string): Promise<boolean>
@@ -1022,6 +1029,15 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `fleetHelpers` / `fleetHelperSet`. */
   helpersList: () => Promise<HelperPreference[]>
   helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's writing styles (PRDCT-5166): the built-in styles and its
+   *  own, the default a tab starts with, and Claude Code's output style.
+   *  Every write answers the whole view. A server's are `fleetWritingStyles`
+   *  and the `fleetWritingStyle*` members. */
+  writingStylesList: () => Promise<WritingStylesView>
+  writingStyleSave: (draft: WritingStyleDraft) => Promise<WritingStylesView>
+  writingStyleDelete: (id: string) => Promise<WritingStylesView>
+  writingStyleSetDefault: (id: string | null) => Promise<WritingStylesView>
+  writingStyleImportClaude: () => Promise<WritingStylesView>
   /** This Mac's integrations (PRDCT-4410): the ElevenLabs key sealed on the
    *  machine, its account check, the voice and model. Every write answers
    *  the status, which never carries the key. A server's are
@@ -1090,6 +1106,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       permissionDefault?: string
       /** `permissionMode` repeats that setting, for an older server. */
       permissionModeFromSetting?: boolean
+      /** The writing style the tab starts with (PRDCT-5166): a style's id or
+       *  exact name, or `none`; absent, the machine's default. */
+      writingStyle?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void

@@ -8,7 +8,7 @@
  * finds it when it was copied and finds nothing when it was not (a fork, CI),
  * and a font that is not in the build is simply not offered.
  *
- * Synonym carries the website's three corrections (company/website,
+ * Synonym carries the website's three corrections (company/marketing/website,
  * src/styles/global.css): size-adjust 104% on the face, and weight 450 with
  * -0.008em tracking on the root — see [data-ui-font='synonym'] in main.css.
  */

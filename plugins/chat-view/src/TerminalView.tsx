@@ -95,6 +95,7 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
+import { CurrentCardContext, currentCard } from './status-current'
 import { useFitRow } from './fit'
 import { EarlierLoading, JumpPill, PastFailed, PastTruncated } from './EarlierLoading'
 import {
@@ -805,6 +806,9 @@ export function TerminalView({
     }
     return out
   }, [blocks])
+  // The one status card that is still current (PRDCT-5166): the others read
+  // as answered. Read from the end, on every change of the entries.
+  const current = useMemo(() => currentCard(presentation.entries), [presentation.entries])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // What the reader typed into a question card, kept across the rows' unmounts.
@@ -1020,24 +1024,26 @@ export function TerminalView({
               >
                 <ExchangeContext.Provider value={exchanges}>
                   <StretchContext.Provider value={stretchContext}>
-                    <TranscriptRows
-                      rows={turns}
-                      settled={pastRead}
-                      scroll={transcript.scroll}
-                      reveal={reveal}
-                      holdAbove={pinQuestions}
-                    >
-                      {(turn, index, arriving) => (
-                        <TerminalTurn
-                          key={turn.key}
-                          rows={turn.rows}
-                          first={index === 0}
-                          arriving={arriving}
-                          liveRun={liveRun}
-                          onError={report}
-                        />
-                      )}
-                    </TranscriptRows>
+                    <CurrentCardContext.Provider value={current}>
+                      <TranscriptRows
+                        rows={turns}
+                        settled={pastRead}
+                        scroll={transcript.scroll}
+                        reveal={reveal}
+                        holdAbove={pinQuestions}
+                      >
+                        {(turn, index, arriving) => (
+                          <TerminalTurn
+                            key={turn.key}
+                            rows={turn.rows}
+                            first={index === 0}
+                            arriving={arriving}
+                            liveRun={liveRun}
+                            onError={report}
+                          />
+                        )}
+                      </TranscriptRows>
+                    </CurrentCardContext.Provider>
                   </StretchContext.Provider>
                 </ExchangeContext.Provider>
                 {tail.length > 0 && (

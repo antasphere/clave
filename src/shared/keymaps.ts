@@ -34,6 +34,8 @@ export const KEYMAP_ACTION_IDS = [
   'archiveAndKillSession',
   'previousWorkspace',
   'nextWorkspace',
+  'navigateBack',
+  'navigateForward',
   'previousSession',
   'nextSession',
   'selectSession1',
@@ -213,6 +215,11 @@ export const KEYMAP_ACTIONS: readonly KeymapActionDefinition[] = [
   action('focusSidebarSearch', 'Focus sidebar search', 'Navigation', 'global', ['Mod+F']),
   action('previousWorkspace', 'Previous workspace', 'Navigation', 'global', ['Mod+Ctrl+[']),
   action('nextWorkspace', 'Next workspace', 'Navigation', 'global', ['Mod+Ctrl+]']),
+  // Back and Forward through the places the content area showed (PRDCT-5155), with the
+  // mouse's side buttons too. ⌘[ and ⌘] stay the code editor's outdent and indent while it
+  // has the focus (`keymapAvailable` in AppShell).
+  action('navigateBack', 'Go back', 'Navigation', 'global', ['Mod+[', 'MouseBack']),
+  action('navigateForward', 'Go forward', 'Navigation', 'global', ['Mod+]', 'MouseForward']),
   action('groupSelectedSessions', 'Group selected sessions', 'Sidebar', 'global', ['Mod+G']),
   action('ungroupSelectedSessions', 'Ungroup selected sessions', 'Sidebar', 'global', [
     'Mod+Alt+G'

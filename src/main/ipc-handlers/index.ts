@@ -35,6 +35,7 @@ import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handler
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
 import { registerLaunchSettingsHandlers } from '../launch-settings'
 import { registerHelperHandlers } from './helper-handlers'
+import { registerWritingStyleHandlers } from './writing-style-handlers'
 import { registerIntegrationsHandlers } from './integrations-handlers'
 import { registerSpeechHandlers } from './speech-handlers'
 // ── PRDCT-4474: a session's artefact, on this Mac's own server ──
@@ -105,6 +106,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerLaunchProfileHandlers()
   registerLaunchSettingsHandlers()
   registerHelperHandlers()
+  registerWritingStyleHandlers()
   registerIntegrationsHandlers()
   registerSpeechHandlers()
   registerArtefactHandlers()

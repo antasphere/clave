@@ -32,6 +32,7 @@ import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
 import { nestAnswerError, nestRefusalMessage } from '../shared/nest-tools'
 import type { HelperPreference } from '../shared/helper-preferences'
+import type { WritingStylesView } from '../shared/writing-styles'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { SpeakResult } from '../shared/speech'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
@@ -1169,6 +1170,33 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (serverId === LOCAL_SERVER_ID) return local.helperSet(helperId, patch)
       const { api } = await backing(serverId)
       return [...(await api.settings.helpers.set(helperId, patch))] as HelperPreference[]
+    },
+    // The writing styles too (PRDCT-5166): a server's are the ones its tabs
+    // start with, kept there; this Mac's go over its own route.
+    fleetWritingStyles: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.writingStylesList()
+      const { api } = await backing(serverId)
+      return (await api.settings.writingStyles.list()) as WritingStylesView
+    },
+    fleetWritingStyleSave: async (serverId, draft) => {
+      if (serverId === LOCAL_SERVER_ID) return local.writingStyleSave(draft)
+      const { api } = await backing(serverId)
+      return (await api.settings.writingStyles.save(draft)) as WritingStylesView
+    },
+    fleetWritingStyleDelete: async (serverId, id) => {
+      if (serverId === LOCAL_SERVER_ID) return local.writingStyleDelete(id)
+      const { api } = await backing(serverId)
+      return (await api.settings.writingStyles.remove(id)) as WritingStylesView
+    },
+    fleetWritingStyleSetDefault: async (serverId, id) => {
+      if (serverId === LOCAL_SERVER_ID) return local.writingStyleSetDefault(id)
+      const { api } = await backing(serverId)
+      return (await api.settings.writingStyles.setDefault(id)) as WritingStylesView
+    },
+    fleetWritingStyleImportClaude: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.writingStyleImportClaude()
+      const { api } = await backing(serverId)
+      return (await api.settings.writingStyles.importClaude()) as WritingStylesView
     },
     // The integrations too (PRDCT-4410): a server's key is sealed on that
     // server, this Mac's over its own route; neither lands on the other.

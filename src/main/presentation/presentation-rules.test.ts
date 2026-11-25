@@ -2,32 +2,75 @@ import { describe, expect, it } from 'vitest'
 import {
   endsPresentation,
   opensInBrowser,
-  pickDisplay,
   presentableUrl,
+  presentationBounds,
   presentationPermits,
   staysOnPreview
 } from './presentation-rules'
 
 /** The presentation window's rules (PRDCT-4980). */
-describe('the display a deck is presented on', () => {
-  const laptop = { id: 1 }
-  const projector = { id: 2 }
-  const third = { id: 3 }
-
-  it('is another display than the Clave window’s when there is one', () => {
-    expect(pickDisplay([laptop, projector], 1)).toBe(projector)
-    expect(pickDisplay([projector, laptop], 1)).toBe(projector)
-    expect(pickDisplay([laptop, projector, third], 2)).toBe(laptop)
+describe('where a presentation window opens (PRDCT-5167)', () => {
+  it('is a 1280 by 720 window centred on a display with the room, never the whole screen', () => {
+    // A large display's work area, under the menu bar.
+    expect(presentationBounds({ x: 0, y: 25, width: 2560, height: 1415 })).toEqual({
+      x: 640,
+      y: 373,
+      width: 1280,
+      height: 720
+    })
   })
 
-  it('is the Clave window’s own display when it is the only one', () => {
-    expect(pickDisplay([laptop], 1)).toBe(laptop)
+  it('shrinks to four fifths of a small work area, keeping 16:9', () => {
+    expect(presentationBounds({ x: 0, y: 25, width: 1280, height: 775 })).toEqual({
+      x: 128,
+      y: 125,
+      width: 1024,
+      height: 576
+    })
+    // A display standing upright: its width is what limits.
+    expect(presentationBounds({ x: 0, y: 0, width: 1080, height: 1895 })).toEqual({
+      x: 108,
+      y: 705,
+      width: 864,
+      height: 486
+    })
+    // A wide, short display: its height is what limits.
+    expect(presentationBounds({ x: 0, y: 0, width: 2560, height: 600 })).toEqual({
+      x: 854,
+      y: 60,
+      width: 853,
+      height: 480
+    })
   })
 
-  it('is the first display when the window’s is unknown, and none when the screen lists none', () => {
-    expect(pickDisplay([laptop, projector], null)).toBe(laptop)
-    expect(pickDisplay([], 1)).toBeNull()
-    expect(pickDisplay([], null)).toBeNull()
+  it('opens on the display it is given, wherever that display sits', () => {
+    expect(presentationBounds({ x: -1920, y: -200, width: 1920, height: 1055 })).toEqual({
+      x: -1600,
+      y: -32,
+      width: 1280,
+      height: 720
+    })
+  })
+
+  it('leaves room around it on every display', () => {
+    for (const area of [
+      { x: 0, y: 25, width: 1280, height: 775 },
+      { x: 0, y: 25, width: 1440, height: 875 },
+      { x: 0, y: 25, width: 1512, height: 957 },
+      { x: 0, y: 25, width: 1920, height: 1055 },
+      { x: 0, y: 25, width: 2560, height: 1415 },
+      { x: 0, y: 0, width: 1080, height: 1895 },
+      { x: 0, y: 0, width: 800, height: 600 }
+    ]) {
+      const window = presentationBounds(area)
+      expect(window.width).toBeLessThan(area.width)
+      expect(window.height).toBeLessThan(area.height)
+      expect(window.x).toBeGreaterThan(area.x)
+      expect(window.y).toBeGreaterThan(area.y)
+      expect(window.x + window.width).toBeLessThan(area.x + area.width)
+      expect(window.y + window.height).toBeLessThan(area.y + area.height)
+      expect(Math.abs(window.width / window.height - 16 / 9)).toBeLessThan(0.01)
+    }
   })
 })
 

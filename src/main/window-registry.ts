@@ -7,7 +7,7 @@ export type { WindowIdentity }
  * The WindowRegistry — the single in-main source of truth for multi-window
  * Clave (PRDCT-1703). A window is the whole app once more, on whatever
  * workspace it shows; any number of windows may show the same workspace.
- * The registry answers three questions and nothing else:
+ * The registry answers four questions and nothing else:
  *
  *   1. which window is which: its runtime `BrowserWindow` id, its persisted
  *      `key` (the name of its layout file and the stamp on the session
@@ -18,7 +18,10 @@ export type { WindowIdentity }
  *   3. which window is the PRIMARY — the lowest live id, re-elected when it
  *      closes while others remain. The primary takes in what a closing
  *      window leaves behind, adopts orphans at boot, and carries app-level
- *      fallbacks.
+ *      fallbacks,
+ *   4. which window the person used LAST: the one a click on the Dock icon
+ *      brings back (PRDCT-5165). Only a registered window counts, so a
+ *      presentation's deck never does.
  *
  * The registry emits nothing; callers route. It is deliberately generic over
  * a minimal `WindowLike` so the class runs in plain node: the unit tests
@@ -49,6 +52,7 @@ export class WindowRegistry<W extends WindowLike = WindowLike> {
   private readonly windows = new Map<number, Entry<W>>()
   private readonly sessionHosts = new Map<string, number>()
   private primaryId: number | null = null
+  private lastFocusedId: number | null = null
 
   constructor(private readonly deps: WindowRegistryDeps<W>) {}
 
@@ -69,6 +73,23 @@ export class WindowRegistry<W extends WindowLike = WindowLike> {
       if (host === windowId) this.sessionHosts.delete(sessionId)
     }
     if (this.primaryId === windowId) this.primaryId = this.electPrimary()
+    if (this.lastFocusedId === windowId) this.lastFocusedId = null
+  }
+
+  /** A window took the focus. One the registry does not list (a
+   *  presentation's deck) changes nothing: the choice stays on the app
+   *  window the person used before it. */
+  noteFocused(windowId: number): void {
+    if (this.isLive(windowId)) this.lastFocusedId = windowId
+  }
+
+  /** The window a reopen brings back (a click on the Dock icon, PRDCT-5165):
+   *  the one focused last, else the primary, else null. */
+  getLastFocusedWindow(): W | null {
+    if (this.lastFocusedId !== null && this.isLive(this.lastFocusedId)) {
+      return this.getWindow(this.lastFocusedId)
+    }
+    return this.getPrimaryWindow()
   }
 
   setWindowWorkspace(windowId: number, workspaceId: string | null): void {

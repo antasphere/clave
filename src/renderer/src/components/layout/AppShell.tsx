@@ -101,6 +101,8 @@ import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-key
 import type { KeymapActionId } from '../../../../shared/keymaps'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
 import { connectKeymapStore, useShortcutLabel } from '../../store/keymap-store'
+import { initNavigationHistory, useNavigationStore } from '../../store/navigation-store'
+import { NavigationButtons } from './NavigationButtons'
 
 const sidebarTransition = {
   duration: 0.2,
@@ -708,6 +710,9 @@ export function AppShell(): React.JSX.Element {
       },
       previousWorkspace: () => cycleWorkspace(-1),
       nextWorkspace: () => cycleWorkspace(1),
+      // Back and Forward through the places the content area showed (PRDCT-5155).
+      navigateBack: () => void useNavigationStore.getState().back(),
+      navigateForward: () => void useNavigationStore.getState().forward(),
       previousSession: () => cycleSession(-1),
       nextSession: () => cycleSession(1),
       selectSession1: () => selectByIndex(0),
@@ -751,7 +756,14 @@ export function AppShell(): React.JSX.Element {
   }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
   // Folio's update key has something to do only while an update waits or a
   // reading plays (PRDCT-4832); otherwise the chord reaches what is under it.
+  // ⌘[ and ⌘] outdent and indent in the code editor (CodeMirror's own keymap):
+  // while it has the focus, Back and Forward leave them to it (PRDCT-5155). The
+  // mouse's side buttons are not asked: the keymap manager reads a click on its
+  // own, and leaves one over a text field alone whatever its action.
   const keymapAvailable = useCallback((actionId: KeymapActionId): boolean => {
+    if (actionId === 'navigateBack' || actionId === 'navigateForward') {
+      return !document.activeElement?.closest('.cm-editor')
+    }
     if (actionId !== 'playUpdate') return true
     const { updates, current } = useUpdatesStore.getState()
     return updates.length > 0 || current !== null
@@ -818,6 +830,9 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => connectUpdaterStore(), [])
   useEffect(() => connectAgentUpdatesStore(), [])
   useEffect(() => connectKeymapStore(), [])
+  // The window's history of places, for Back and Forward (PRDCT-5155): in
+  // memory, empty at launch, recording from here on.
+  useEffect(() => initNavigationHistory(), [])
 
   // One dialog for both the native Help menu and the in-app Help action.
   useEffect(
@@ -1051,6 +1066,8 @@ export function AppShell(): React.JSX.Element {
               >
                 <Bars3BottomLeftIcon className="w-4 h-4" />
               </button>
+              {/* Back and Forward through the places the content area showed (PRDCT-5155). */}
+              <NavigationButtons />
             </div>
 
             {/* Center — active workspace, and the switcher behind it */}

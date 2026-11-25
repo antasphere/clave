@@ -8,6 +8,7 @@ import type {
 import type { Attachment } from '../../../src/shared/attachments'
 import { inputRequestMeta } from '@clave/contract/input-kinds'
 import { formMessageMarker } from '../../../src/shared/form-message'
+import { holdStatusTail, readStatusCard, type StatusCard } from '../../../src/shared/status-card'
 import { sameId } from './models'
 
 export type ChatEvent = SessionEvent
@@ -53,6 +54,13 @@ export type Entry =
        *  its working notes must not take these words for a note then
        *  (stretches.ts, PRDCT-4212). */
       closes?: boolean
+      /** The status the message ended on, taken out of `text`
+       *  (`readStatusCard`, PRDCT-5166): drawn as a card under the words. */
+      card?: StatusCard
+      /** The end of a message still being written that may be its status
+       *  block, kept out of `text` until the message is final
+       *  (`holdStatusTail`), so the block never shows as code on its way in. */
+      held?: string
     }
   | {
       kind: 'tool'
@@ -232,6 +240,38 @@ export type Action =
   /** This view asked the provider for a permission mode (PRDCT-4331). */
   | { askMode: string }
 
+export type AnswerEntry = Extract<Entry, { kind: 'assistant' }>
+/** Whether an answer is something to draw: words, or a status card. A
+ *  message that is a card alone has an empty `text` and is still the
+ *  agent's message (it is drawn, it closes the turn, it finishes a page):
+ *  the one rule every reader of an answer asks, never `text` alone. */
+export const hasContent = (entry: AnswerEntry): boolean =>
+  entry.text.trim() !== '' || entry.card !== undefined
+/** An answer still being written, with `full` its whole text so far: the
+ *  words to show now and the tail held back while it may be the status
+ *  block. */
+function streamAnswer(answer: AnswerEntry, full: string): AnswerEntry {
+  const { held: _held, ...rest } = answer
+  void _held
+  const { body, held } = holdStatusTail(full)
+  return { ...rest, text: body, final: false, ...(held ? { held } : {}) }
+}
+/** An answer once nothing more of it will come, with `full` its whole text:
+ *  its card taken out when it ends on one, and otherwise every word it
+ *  wrote, what was held included. Nothing an agent wrote is ever lost. */
+function settleAnswer(answer: AnswerEntry, full = answer.text + (answer.held ?? '')): AnswerEntry {
+  const { held: _held, ...rest } = answer
+  void _held
+  const { body, card } = readStatusCard(full)
+  return card ? { ...rest, text: body, card, final: true } : { ...rest, text: full, final: true }
+}
+/** The entries with every answer that still holds a tail read as it stands:
+ *  the stream ended under it (the turn closed, the process exited) without
+ *  the frame that finishes it. The same array when none holds anything. */
+function settleHeld(entries: Entry[]): Entry[] {
+  if (!entries.some((e) => e.kind === 'assistant' && e.held !== undefined)) return entries
+  return entries.map((e) => (e.kind === 'assistant' && e.held !== undefined ? settleAnswer(e) : e))
+}
 /** Whether anything answers the reader's last message yet: text, a tool call,
  *  a question, an error. What decides, on Escape, between taking the message
  *  back (nothing did) and leaving it in the transcript as interrupted. A
@@ -244,7 +284,7 @@ export function answeredSince(entries: Entry[]): boolean {
     .some(
       (e) =>
         e.kind !== 'user' &&
-        (e.kind !== 'assistant' || e.text.trim() !== '') &&
+        (e.kind !== 'assistant' || hasContent(e)) &&
         !(e.kind === 'permission' && e.moved) &&
         !(e.kind === 'error' && e.quiet)
     )
@@ -270,9 +310,10 @@ function settle(entries: Entry[], matches: (request: Permission) => boolean): En
 /** The entries with the agent's last words marked as the ones the turn
  *  ended on (`closes`), when they are not yet; the same array otherwise. */
 function closeTurn(entries: Entry[]): Entry[] {
-  // Words, never an empty entry (a closing frame that opened nothing): the
-  // views filter those out, and a mark on one would cut the turn nowhere.
-  const index = entries.findLastIndex((e) => e.kind === 'assistant' && e.text.trim() !== '')
+  // Words or a card, never an empty entry (a closing frame that opened
+  // nothing): the views filter those out, and a mark on one would cut the
+  // turn nowhere.
+  const index = entries.findLastIndex((e) => e.kind === 'assistant' && hasContent(e))
   const last = entries[index]
   if (last?.kind !== 'assistant' || last.closes) return entries
   const next = [...entries]
@@ -315,7 +356,14 @@ function liveBefore(entries: Entry[], id: string): boolean {
 }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action)
-    return { ...state, state: 'ended', exitCode: action.exit, pendingModel: null, waiting: [] }
+    return {
+      ...state,
+      entries: settleHeld(state.entries),
+      state: 'ended',
+      exitCode: action.exit,
+      pendingModel: null,
+      waiting: []
+    }
   if ('pickModel' in action) return { ...state, pendingModel: action.pickModel }
   if ('askMode' in action) return { ...state, askedMode: action.askMode }
   if ('reconnected' in action) return state.run === null ? state : { ...state, run: null }
@@ -523,10 +571,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // subscribe's answer does: a process that ended with (exit 1) and came
     // back must not show that code again when the new run ends.
     const exitCode = event.state === 'ended' ? state.exitCode : undefined
-    // The turn ended: its last words are marked as the ones it ended on.
+    // The turn ended: its last words are marked as the ones it ended on,
+    // after an answer the stream left holding a tail is read as it stands.
     const closed =
       event.state === 'idle' || event.state === 'done' || event.state === 'ended'
-        ? closeTurn(state.entries)
+        ? closeTurn(settleHeld(state.entries))
         : state.entries
     // Nothing waits for a process that is gone (PRDCT-4566).
     const waiting = event.state === 'ended' ? [] : state.waiting
@@ -648,16 +697,28 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       })
       break
     case 'assistant_text': {
+      // The status block (PRDCT-5166) is taken out here and nowhere else, so
+      // every reader of an answer reads its words alone: while the message
+      // is written its possible block is held back, and once it is final the
+      // block it ends on becomes its card.
       const last = entries.at(-1)
-      if (last?.kind === 'assistant' && !last.final)
-        entries[entries.length - 1] = { ...last, text: last.text + event.delta, final: event.final }
-      else if (event.delta === '' && event.final) {
+      if (last?.kind === 'assistant' && !last.final) {
+        const full = last.text + (last.held ?? '') + event.delta
+        entries[entries.length - 1] = event.final
+          ? settleAnswer(last, full)
+          : streamAnswer(last, full)
+      } else if (event.delta === '' && event.final) {
         // The turn's closing frame after a tool call: it closes the last open
         // answer and never opens an empty one of its own.
         const open = entries.findLastIndex((e) => e.kind === 'assistant' && !e.final)
         const answer = open >= 0 ? entries[open] : undefined
-        if (answer?.kind === 'assistant') entries[open] = { ...answer, final: true }
-      } else entries.push({ kind: 'assistant', text: event.delta, final: event.final, at })
+        if (answer?.kind === 'assistant') entries[open] = settleAnswer(answer)
+      } else {
+        const answer: AnswerEntry = { kind: 'assistant', text: '', final: false, at }
+        entries.push(
+          event.final ? settleAnswer(answer, event.delta) : streamAnswer(answer, event.delta)
+        )
+      }
       break
     }
     case 'tool_call':
@@ -769,7 +830,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       if (message?.kind === 'user') entries[started] = { ...message, interrupted: true }
       const open = entries.findLastIndex((e) => e.kind === 'assistant' && !e.final)
       const answer = open >= 0 ? entries[open] : undefined
-      if (answer?.kind === 'assistant') entries[open] = { ...answer, final: true }
+      if (answer?.kind === 'assistant') entries[open] = settleAnswer(answer)
       break
     }
     case 'provider_event':

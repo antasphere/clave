@@ -23,7 +23,11 @@ import {
   type SessionControl,
   flattenAnswers
 } from '../../../shared/session-model'
-import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
+import {
+  buildAgentArgv,
+  claudeProfilePermissions,
+  withStyleText
+} from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
 import {
@@ -1161,7 +1165,12 @@ export class ClaudeAdapter implements SessionAdapter {
           sessionId,
           resumeSessionId: options.resume,
           model: options.model,
-          claudeSettings: buildClaudeHookSettingsArg(spec.id) ?? undefined,
+          // A tab with a writing style (PRDCT-5166) resets the person's own
+          // output style in the same settings, for this tab alone.
+          claudeSettings:
+            buildClaudeHookSettingsArg(spec.id, {
+              resetOutputStyle: !!context.writingStyleText
+            }) ?? undefined,
           mcpConfigPath: mcpConfigPath ?? undefined
         })
         argv.push(
@@ -1187,9 +1196,12 @@ export class ClaudeAdapter implements SessionAdapter {
         if (options.effort) argv.push('--effort', options.effort)
         // ADR 0004: a routine run's contract skill and its one-line system
         // prompt, from the spawn's own context; a tab's launch carries none.
+        // The writing style's text follows that line (PRDCT-5166): Claude
+        // Code records the system prompt at the conversation's first request
+        // and replays it on every later one and on a resume.
         if (context.pluginDir) argv.push('--plugin-dir', context.pluginDir)
-        if (context.appendSystemPrompt)
-          argv.push('--append-system-prompt', context.appendSystemPrompt)
+        const systemPrompt = withStyleText(context.appendSystemPrompt, context.writingStyleText)
+        if (systemPrompt) argv.push('--append-system-prompt', systemPrompt)
         const env: Record<string, string> = {
           ...buildSpawnEnv(getLoginShellEnv(), {
             configDir: context.configDir,

@@ -36,6 +36,8 @@ import {
 } from '../../../../src/shared/attachments'
 import { EndedNotice, type ChatViewProps } from '../ChatView'
 import { openRequests, type Entry } from '../reducer'
+import { StatusCard } from '../StatusCard'
+import { currentCard } from '../status-current'
 import { createEntryMarkdownPlugins } from '../markdown-append'
 import { ChatCode } from '../code'
 import { describeToolHead, runTitle, toolHint, toolVerb, type ToolEntry } from '../tools'
@@ -73,6 +75,7 @@ import { FolioDrawing } from './FolioDrawing'
 import {
   briefFor,
   buildPages,
+  pageAnswered,
   currentPage,
   entryBlocks,
   firstBlocks,
@@ -245,10 +248,13 @@ export function Line({
   pen,
   first,
   reading,
+  past = false,
   onError
 }: {
   row: PageRow
   pen: boolean
+  /** The row's status card was answered: drawn quieter (PRDCT-5166). */
+  past?: boolean
   /** The number of the row's first block on the page. */
   first: number
   /** The block the voice reads, when it is one of this row's. */
@@ -265,7 +271,11 @@ export function Line({
   return (
     <div className="folio-line" data-notes={row.notes.length > 0 ? 'true' : undefined}>
       <div className="folio-text">
-        {row.prose && <Prose entry={row.prose} first={first} reading={reading} onError={onError} />}
+        {row.prose && row.prose.text.trim() !== '' && (
+          <Prose entry={row.prose} first={first} reading={reading} onError={onError} />
+        )}
+        {/* The status the answer ended on, at its foot on the page (PRDCT-5166). */}
+        {row.prose?.card && <StatusCard card={row.prose.card} past={past} />}
         {row.error &&
           (row.error.quiet ? (
             // Nothing failed (PRDCT-4566): the page's own quiet aside, as a
@@ -411,6 +421,7 @@ function PageView({
   direction,
   voice,
   autoRead,
+  current,
   onError
 }: {
   page: Page
@@ -418,6 +429,8 @@ function PageView({
   title: string
   sessionId: string
   direction: number
+  /** The answer whose status card is current (`currentCard`, PRDCT-5166). */
+  current: Entry | null
   voice: ReturnType<typeof useReadAloud>
   autoRead: boolean
   onError: (error: unknown) => void
@@ -468,12 +481,15 @@ function PageView({
     block?.scrollIntoView?.({ block: 'nearest' })
   }, [lit])
 
-  const finished = !live && !!page.answer
+  // A page answered by a status card alone is finished too (PRDCT-5166).
+  const finished = !live && pageAnswered(page)
+  // What can be read aloud or copied is the words: a card alone has none.
+  const readable = finished && page.answer !== ''
   // A click on a block reads from it: a reading of this page moves there, any
   // other starts one. A link, a button or a field keeps its own click, and a
   // selection made by dragging is not a click on a block.
   const onBodyClick = (event: React.MouseEvent<HTMLDivElement>): void => {
-    if (!finished || !voice.supported) return
+    if (!readable || !voice.supported) return
     const target = event.target as HTMLElement
     if (target.closest('a, button, summary, input, textarea, select, label')) return
     const block = target.closest<HTMLElement>('.folio-block')
@@ -491,9 +507,9 @@ function PageView({
       data-status={page.status}
       aria-label={`Page ${page.number}: ${title}`}
     >
-      <div className="folio-top" data-card={finished && voice.supported ? 'true' : undefined}>
+      <div className="folio-top" data-card={readable && voice.supported ? 'true' : undefined}>
         <PageHead page={page} of={of} title={title} sessionId={sessionId} />
-        {finished && voice.supported && (
+        {readable && voice.supported && (
           <VoiceCard page={page} sessionId={sessionId} voice={voice} autoRead={autoRead} />
         )}
       </div>
@@ -510,6 +526,7 @@ function PageView({
             pen={penOnLast && row === lastRow}
             first={firsts.get(row.key) ?? 0}
             reading={rowReading(row.key)}
+            past={row.prose !== current}
             onError={onError}
           />
         ))}
@@ -524,9 +541,9 @@ function PageView({
           <p className="folio-aside">Stopped before it finished.</p>
         )}
       </div>
-      {finished && (
+      {finished && (readable || page.tools > 0) && (
         <footer className="folio-foot">
-          <CopyAnswer text={page.answer} />
+          {readable && <CopyAnswer text={page.answer} />}
           {page.tools > 0 && (
             <span className="folio-tally">
               {page.tools} {page.tools === 1 ? 'step' : 'steps'}
@@ -808,6 +825,8 @@ export function FolioView({
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return buildPages(entries, (entry) => ordinal.get(entry), presentation.state)
   }, [presentation.entries, presentation.first, presentation.state, remotePending, session.id])
+  // The one status card still current (PRDCT-5166): the others read as answered.
+  const current = useMemo(() => currentCard(presentation.entries), [presentation.entries])
   // The page the reader holds; null follows the last page, the one being written.
   const [held, setHeld] = useState<string | null>(null)
   const page = currentPage(pages, held)
@@ -1221,6 +1240,7 @@ export function FolioView({
                 direction={turned.direction}
                 voice={voice}
                 autoRead={autoRead}
+                current={current}
                 onError={report}
               />
             )}

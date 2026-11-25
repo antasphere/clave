@@ -42,6 +42,7 @@ import { isChatProfileRef } from './open-session-modes'
 import { pickProviderConnection } from './provider-connection-pick'
 import type { PiStartModel } from './pi-start-model'
 import { capName, capStatusLine, formatResetIn } from './cap-status'
+import { NO_STYLE, findStyle, type WritingStylesView } from './writing-styles'
 // PRDCT-4551: what Pi and OpenCode tabs used, per connection
 import {
   billsPerUse,
@@ -114,6 +115,10 @@ export interface LaunchOptionsInput {
    *  (PRDCT-4551), read ahead (the input is synchronous); absent where the
    *  road could not read it. */
   readonly harnessUsage?: Pick<HarnessUsageView, 'rows'> | null
+  /** The machine's writing styles and its default (PRDCT-5166), as the
+   *  process holding its settings answers them; null where the road could
+   *  not read them (a server released before the styles). */
+  readonly writingStyles: Pick<WritingStylesView, 'styles' | 'defaultStyleId'> | null
   readonly now: number
 }
 
@@ -196,11 +201,26 @@ export interface HarnessOptions {
    *  harness's own sign-in, used today. */
   readonly signInUsedToday?: UsedToday
 }
+/** A writing style as an agent chooses it (PRDCT-5166): what it is for,
+ *  whether it asks for the status card, and whether a tab opened with no
+ *  style named starts on it. Its instructions stay out: an agent picks by the
+ *  description, the tab is given the text. */
+export interface StyleOption {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly statusCard: boolean
+  readonly default: boolean
+}
 export interface LaunchOptions {
   readonly machine: { readonly id: string; readonly name: string }
   readonly interactionMode: InteractionMode
   readonly harnesses: readonly HarnessOptions[]
   readonly notInstalled: readonly string[]
+  /** The machine's writing styles: pass one's id to an open as `style`. */
+  readonly styles: readonly StyleOption[]
+  /** The style an open naming none starts with; null is no style. */
+  readonly defaultStyle: string | null
 }
 
 /** The launcher's DEFAULT_MODEL (`SessionLauncher.tsx`): the harness's own
@@ -428,10 +448,25 @@ export function launchOptions(input: LaunchOptionsInput): LaunchOptions {
     }
     harnesses.push(harnessOptions(input, harness, presence, profiles))
   }
+  const styles = input.writingStyles?.styles ?? []
+  // A default that names a style the machine no longer has, or `none`, is
+  // no style: what a launch naming none then runs on (`launchStyle`).
+  const fallback = input.writingStyles?.defaultStyleId
+    ? findStyle(styles, input.writingStyles.defaultStyleId)
+    : null
+  const defaultStyle = fallback && fallback !== NO_STYLE ? fallback.id : null
   return {
     machine: { id: input.machine.id, name: input.machine.name },
     interactionMode: input.interactionMode,
     harnesses,
-    notInstalled
+    notInstalled,
+    styles: styles.map((style) => ({
+      id: style.id,
+      name: style.name,
+      description: style.description,
+      statusCard: style.statusCard,
+      default: style.id === defaultStyle
+    })),
+    defaultStyle
   }
 }

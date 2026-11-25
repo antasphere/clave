@@ -142,6 +142,8 @@ export async function resumeHistoryEntry(
         launchProfileId: info.launchProfileId,
         piProvider: info.piProvider,
         piThinking: info.piThinking,
+        // The writing style the spawn applied (PRDCT-5166).
+        writingStyle: info.writingStyle,
         sessionType: 'local'
       },
       target

@@ -256,6 +256,28 @@ html[data-ui-font='synonym'] {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
 }
+/* How many rows a drag carries when it carries several (PRDCT-5094): a pill
+   on the ghost's top-right corner, the way Finder badges a drag of several
+   files. The ghost is the grabbed row; this says the rest ride with it. */
+.sidebar-drag-count {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-action-foreground);
+  background-color: var(--color-action);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 /* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
    switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
    just inside the edge of the row it lands beside, so a scrolling list never
@@ -3672,6 +3694,27 @@ body.reorder-dragging * {
   padding-inline-start: 22px;
 }
 .work-breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Back and Forward (PRDCT-5155) ──
+   The list a right-click on either toolbar button opens: one row per place,
+   its glyph and its name. A long name (a tab, its artefact and another
+   workspace's name) is cut short rather than the menu grown across the
+   window. */
+.nav-history-menu {
+  max-width: 24rem;
+}
+.nav-history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--menu-item-gap);
+  min-width: 0;
+}
+.nav-history-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

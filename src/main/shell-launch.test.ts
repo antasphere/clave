@@ -1,8 +1,10 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { findExecutable, resolvePosixShellLaunch } from './shell-launch'
+import { findExecutable, resolvePosixShellLaunch, shellSingleQuote } from './shell-launch'
+import { BUILT_IN_STYLES, composeStyleText } from '../shared/writing-styles'
 
 const POSIX = ['/bin/sh', '/bin/bash', '/bin/zsh', '/opt/homebrew/bin/bash', '/usr/bin/dash']
 const NON_POSIX = ['/opt/homebrew/bin/nu', '/opt/homebrew/bin/fish', '/usr/bin/xonsh', '/bin/tcsh']
@@ -104,4 +106,35 @@ describe('findExecutable', () => {
     })
     expect(seen).toEqual([join(first, 'claude'), join(second, 'claude')])
   })
+})
+
+describe("a writing style's text through the terminal's quoting (PRDCT-5166)", () => {
+  // The built-in style the terminal hands an agent most (several lines, the
+  // status card's rule with its backticks and a fenced block), then a line of
+  // the kind a person writes in a style of their own: double and single
+  // quotes, a dollar sign and a backslash, none of which the built-in text
+  // holds.
+  const text = `${composeStyleText(BUILT_IN_STYLES.find((style) => style.id === 'brief')!)}\n\nSay "done" when it's done; $HOME and C:\\Users stay as written.`
+
+  it('carries newlines, backticks, both quotes, a dollar sign and a backslash', () => {
+    expect(text).toContain('\n')
+    expect(text).toContain('`')
+    expect(text).toContain('"')
+    expect(text).toContain("'")
+    expect(text).toContain('$HOME')
+    expect(text).toContain('\\')
+  })
+
+  it.each(['/bin/sh', '/bin/zsh'].filter((shell) => existsSync(shell)))(
+    'reaches the program byte for byte through %s -c',
+    (shell) => {
+      // The argv renderer the terminal applies (`pty-backend.ts`): each token
+      // single-quoted, joined by spaces, run by the shell's `-c`.
+      const argv = ['printf', '%s', text]
+      const rendered = argv.map(shellSingleQuote).join(' ')
+      const run = spawnSync(shell, ['-c', rendered], { encoding: 'utf8' })
+      expect(run.status).toBe(0)
+      expect(run.stdout).toBe(text)
+    }
+  )
 })

@@ -13,49 +13,52 @@ import {
   ServerIcon,
   DevicePhoneMobileIcon,
   SparklesIcon,
+  PencilSquareIcon,
   SquaresPlusIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
+import { SETTINGS_SECTION_LABELS } from '../../lib/view-sections'
 import { WordmarkStrip } from '../layout/Wordmark'
 import { MachinePicker } from './MachinePicker'
 
 type Row = {
   id: SettingsSection
-  label: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
 }
 
 /** The pages, grouped the way a reader looks for them: what the app is like
- *  to use, what runs inside it, and the app itself. */
+ *  to use, what runs inside it, and the app itself. Each row's name is
+ *  `SETTINGS_SECTION_LABELS`, which the Back and Forward lists read too. */
 const GROUPS: { label: string; rows: Row[] }[] = [
   {
     label: 'Preferences',
     rows: [
-      { id: 'general', label: 'General', icon: AdjustmentsHorizontalIcon },
-      { id: 'appearance', label: 'Appearance', icon: SwatchIcon },
-      { id: 'audio', label: 'Audio', icon: MicrophoneIcon },
-      { id: 'keymaps', label: 'Keymaps', icon: CommandLineIcon }
+      { id: 'general', icon: AdjustmentsHorizontalIcon },
+      { id: 'appearance', icon: SwatchIcon },
+      { id: 'audio', icon: MicrophoneIcon },
+      { id: 'keymaps', icon: CommandLineIcon }
     ]
   },
   {
     label: 'Agents',
     rows: [
-      { id: 'agents', label: 'Harnesses', icon: CpuChipIcon },
-      { id: 'helpers', label: 'Helpers', icon: SparklesIcon },
-      { id: 'integrations', label: 'Integrations', icon: SquaresPlusIcon },
-      { id: 'accounts', label: 'Connections', icon: UserCircleIcon },
-      { id: 'usage', label: 'Usage', icon: ChartBarIcon },
-      { id: 'activity', label: 'Activity', icon: ClockIcon }
+      { id: 'agents', icon: CpuChipIcon },
+      { id: 'helpers', icon: SparklesIcon },
+      { id: 'styles', icon: PencilSquareIcon },
+      { id: 'integrations', icon: SquaresPlusIcon },
+      { id: 'accounts', icon: UserCircleIcon },
+      { id: 'usage', icon: ChartBarIcon },
+      { id: 'activity', icon: ClockIcon }
     ]
   },
   {
     label: 'Clave',
     rows: [
-      { id: 'servers', label: 'Servers', icon: ServerIcon },
-      { id: 'mobile', label: 'Mobile', icon: DevicePhoneMobileIcon },
-      { id: 'plugins', label: 'Plugins', icon: PuzzlePieceIcon },
-      { id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }
+      { id: 'servers', icon: ServerIcon },
+      { id: 'mobile', icon: DevicePhoneMobileIcon },
+      { id: 'plugins', icon: PuzzlePieceIcon },
+      { id: 'updates', icon: ArrowDownTrayIcon }
     ]
   }
 ]
@@ -111,7 +114,7 @@ export function SettingsSidebar(): React.JSX.Element {
                 Preferences above stay this Mac's whatever is picked. */}
             {group.label === 'Agents' && <MachinePicker />}
             <div className="space-y-0.5">
-              {group.rows.map(({ id, label, icon: Icon }) => (
+              {group.rows.map(({ id, icon: Icon }) => (
                 <button
                   key={id}
                   onClick={() => setSettingsSection(id)}
@@ -120,7 +123,7 @@ export function SettingsSidebar(): React.JSX.Element {
                   data-settings-nav-row={id}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0 opacity-60" />
-                  <span className="truncate">{label}</span>
+                  <span className="truncate">{SETTINGS_SECTION_LABELS[id]}</span>
                   {id === 'updates' && updateWaiting && (
                     <span className="ml-auto w-2 h-2 rounded-full bg-accent flex-shrink-0" />
                   )}
