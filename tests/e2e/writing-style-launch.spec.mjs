@@ -4,7 +4,7 @@
 // `claude` on the PATH records its argv. A Claude terminal tab and a Claude
 // chat each start with the style's text in `--append-system-prompt` and the
 // output style reset in their `--settings`; a tab opened with
-// `writingStyle: 'none'` receives neither, and its record names no style.
+// `style: 'none'` receives neither, and its record names no style.
 // Pinned to the in-process server like chat-terminal-switch: the stub is
 // found on the PATH the app was launched with. tmux is off for the run: a
 // terminal on the shared tmux socket would take the server's PATH.
@@ -198,7 +198,7 @@ export async function run(t) {
       cwd: ROOT,
       mode: 'claude',
       name: 'No style',
-      writingStyle: 'none'
+      style: 'none'
     })
     await callMcp(app, 'focus', { sessionId: bare.sessionId })
     const bareProcess = await processOf(bare.sessionId)
