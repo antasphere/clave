@@ -101,7 +101,8 @@ import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-key
 import type { KeymapActionId } from '../../../../shared/keymaps'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
 import { connectKeymapStore, useShortcutLabel } from '../../store/keymap-store'
-import { useNavigationStore } from '../../store/navigation-store'
+import { initNavigationHistory, useNavigationStore } from '../../store/navigation-store'
+import { NavigationButtons } from './NavigationButtons'
 
 const sidebarTransition = {
   duration: 0.2,
@@ -829,6 +830,9 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => connectUpdaterStore(), [])
   useEffect(() => connectAgentUpdatesStore(), [])
   useEffect(() => connectKeymapStore(), [])
+  // The window's history of places, for Back and Forward (PRDCT-5155): in
+  // memory, empty at launch, recording from here on.
+  useEffect(() => initNavigationHistory(), [])
 
   // One dialog for both the native Help menu and the in-app Help action.
   useEffect(
@@ -1062,6 +1066,8 @@ export function AppShell(): React.JSX.Element {
               >
                 <Bars3BottomLeftIcon className="w-4 h-4" />
               </button>
+              {/* Back and Forward through the places the content area showed (PRDCT-5155). */}
+              <NavigationButtons />
             </div>
 
             {/* Center — active workspace, and the switcher behind it */}
