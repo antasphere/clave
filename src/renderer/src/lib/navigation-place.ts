@@ -25,13 +25,27 @@ import { besideAction, type BesideCard, type Place, type PlacePlugin } from './n
 
 type SessionState = ReturnType<typeof useSessionStore.getState>
 
-const tabExists = (s: SessionState, id: string): boolean =>
-  s.sessions.some((session) => session.id === id) || s.fileTabs.some((tab) => tab.id === id)
+/**
+ * Whether a tab of a place is still there for it: the session or the file tab exists, and
+ * the sidebar and the grid show it in the place's workspace (`inActiveWorkspace`, the rule
+ * they use). A tab moved since into a group of another workspace is no longer this place's:
+ * going back never draws it in a workspace where it has no row.
+ */
+export function tabOfPlace(
+  s: Pick<SessionState, 'sessions' | 'fileTabs'>,
+  id: string,
+  workspaceId: string | null
+): boolean {
+  const tab = s.sessions.find((x) => x.id === id) ?? s.fileTabs.find((f) => f.id === id)
+  return tab !== undefined && inActiveWorkspace(tab, workspaceId)
+}
 
 const groupHasView = (s: SessionState, id: string): boolean =>
   s.groups.some((group) => group.id === id && !!group.view)
 
-const tabHasView = (s: SessionState, id: string): boolean =>
+/** A tab's own page, still there for the place: its tab is, and it still has the page. */
+const tabHasView = (s: SessionState, id: string, workspaceId: string | null): boolean =>
+  tabOfPlace(s, id, workspaceId) &&
   s.sessions.some((session) => session.id === id && !!session.view)
 
 const isSettingsSection = (section: string | null): section is SettingsSection =>
@@ -132,18 +146,18 @@ export function readPlace(): Place {
 }
 
 /** Whether going to the place would still show something: its workspace exists, and for the
- *  mosaic, one of its tabs or the page over them still does. A plugin that stopped does not
- *  kill a place that has more to show (the restore leaves the page out); a place that is
- *  nothing but a plugin's page lives while the plugin runs. */
+ *  mosaic, one of its tabs (`tabOfPlace`) or the page over them still does. A plugin that
+ *  stopped does not kill a place that has more to show (the restore leaves the page out); a
+ *  place that is nothing but a plugin's page lives while the plugin runs. */
 export function placeAlive(p: Place): boolean {
   if (p.workspaceId !== null && !findWorkspace(useWorkspaceStore.getState(), p.workspaceId)) {
     return false
   }
   if (p.view !== 'terminals') return true
   const s = useSessionStore.getState()
-  if (p.tabs.some((id) => tabExists(s, id))) return true
+  if (p.tabs.some((id) => tabOfPlace(s, id, p.workspaceId))) return true
   if (p.groupView !== null && groupHasView(s, p.groupView)) return true
-  if (p.tabView !== null && tabHasView(s, p.tabView)) return true
+  if (p.tabView !== null && tabHasView(s, p.tabView, p.workspaceId)) return true
   return p.plugin !== null && pluginRunning(p.plugin, usePluginUIStore.getState().records)
 }
 
@@ -241,8 +255,8 @@ export async function applyPlace(p: Place, seen: (card: BesideCard) => boolean):
   }
 
   // `selectSessions` closes a plugin page and clears the group and tab pages: the steps
-  // after it put back what the place had.
-  const live = p.tabs.filter((id) => tabExists(useSessionStore.getState(), id))
+  // after it put back what the place had. A tab moved to another workspace is left out.
+  const live = p.tabs.filter((id) => tabOfPlace(useSessionStore.getState(), id, p.workspaceId))
   if (live.length > 0) {
     useSessionStore.getState().selectSessions(live)
     useSessionStore
@@ -252,8 +266,9 @@ export async function applyPlace(p: Place, seen: (card: BesideCard) => boolean):
 
   const s = useSessionStore.getState()
   if (p.groupView !== null && groupHasView(s, p.groupView)) s.setActiveGroupView(p.groupView)
-  else if (p.tabView !== null && tabHasView(s, p.tabView)) s.setActiveSessionView(p.tabView)
-  else {
+  else if (p.tabView !== null && tabHasView(s, p.tabView, p.workspaceId)) {
+    s.setActiveSessionView(p.tabView)
+  } else {
     // With none of its tabs left, nothing above cleared the page of the place being left.
     if (s.activeGroupViewId !== null) s.setActiveGroupView(null)
     if (s.activeSessionViewId !== null) s.setActiveSessionView(null)
@@ -378,14 +393,16 @@ function describePlace(p: Place): { label: string; kind: PlaceKind } {
     const group = s.groups.find((g) => g.id === p.groupView)
     return { label: group?.name ?? 'Group page', kind: 'group-page' }
   }
-  if (p.tabView !== null) {
+  // A tab's page whose tab left for another workspace is not what going there shows: the
+  // tabs still there are, and only they are named.
+  if (p.tabView !== null && tabOfPlace(s, p.tabView, p.workspaceId)) {
     const session = s.sessions.find((x) => x.id === p.tabView)
     const page = session?.view ? session.view.title || hostOf(session.view.url) : null
     const name = session?.name ?? 'Tab'
     return { label: page ? `${name} · ${page}` : name, kind: 'tab-page' }
   }
   const named = p.tabs.flatMap((id) => {
-    const name = tabName(s, id)
+    const name = tabOfPlace(s, id, p.workspaceId) ? tabName(s, id) : null
     return name === null ? [] : [{ id, name }]
   })
   const lead = named.find((tab) => tab.id === p.focused) ?? named[0]

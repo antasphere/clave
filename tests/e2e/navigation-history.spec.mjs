@@ -22,8 +22,10 @@
  * under it; the Analytics page; a tab an agent opens; a closed tab skipped;
  * a second workspace switched back to; the list behind the button, nearest
  * first; the mouse's side buttons; the code editor, which keeps ⌘[ and ⌘]
- * for its own outdent and indent; and a page over the tabs, under which a tab
- * an agent opens or a tab closed is no move. The cards beside a tab (an
+ * for its own outdent and indent; a page over the tabs, under which a tab an
+ * agent opens or a tab closed is no move; a place that would show what is on
+ * screen, which Back and its list pass over; and a tab moved into a group of
+ * the other workspace, never put back in this one. The cards beside a tab (an
  * artefact, a document) are walked in navigation-history-beside.spec.mjs.
  *
  * Where the keyboard focus lands after a move is checked by typing: what is
@@ -892,6 +894,72 @@ async function walk(t) {
     t.check(
       'and one Back lands on C, the place before the first A, not on A again',
       s?.index === beforeT1 && same(seen.tiles, [C]),
+      { trail: trail(s), seen }
+    )
+
+    // ── 15. A tab moved to the other workspace is not put back in this one ─
+    await win.click(rowOf(E))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [E]))
+    const eAt = s?.index
+    const X = await openTerminal(app, 'Tab X')
+    s = await snapshotUntil(win, (x) => x.index === eAt + 1 && same(current(x)?.tabs, [X]))
+    await win.click(rowOf(C), { modifiers: ['Meta'] })
+    s = await snapshotUntil(
+      win,
+      (x) => x.index === eAt + 2 && same(sorted(current(x)?.tabs ?? []), sorted([X, C]))
+    )
+    await win.click(rowOf(A))
+    s = await snapshotUntil(win, (x) => x.index === eAt + 3 && same(current(x)?.tabs, [A]))
+    t.check(
+      'E, X, the mosaic of X and C, then A: four places',
+      same(
+        s?.places.slice(eAt).map((p) => sorted(p.tabs)),
+        [[E], [X], sorted([X, C]), [A]]
+      ),
+      trail(s)
+    )
+    const { groupId: elsewhereGroup } = await callMcp(app, 'createGroup', {
+      name: 'Elsewhere group',
+      workspace: ELSEWHERE.id
+    })
+    await callMcp(app, 'moveSession', { sessionId: X, groupId: elsewhereGroup })
+    await until(async () => ((await win.locator(rowOf(X)).count()) === 0 ? true : null))
+    await sleep(QUIET_MS)
+    await win.click(BACK, { button: 'right' })
+    const movedList = win.locator('[data-nav-list="back"]')
+    await movedList.waitFor({ timeout: 5000 }).catch(() => {})
+    const movedRows = await win
+      .locator('[data-nav-list="back"] [data-nav-entry]')
+      .evaluateAll((els) =>
+        els.map((el) => ({
+          index: Number(el.getAttribute('data-nav-index')),
+          text: (el.textContent || '').trim()
+        }))
+      )
+    t.check(
+      'X moved into a group of the other workspace: the Back list names the mosaic by C alone, and X nowhere',
+      movedRows[0]?.index === eAt + 2 &&
+        movedRows[0]?.text === 'Tab C' &&
+        movedRows[1]?.index === eAt &&
+        !movedRows.some((row) => row.text.includes('Tab X')),
+      movedRows.slice(0, 4)
+    )
+    await win.keyboard.press('Escape')
+    await movedList.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {})
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === eAt + 2)
+    seen = await screenUntil(win, (x) => same(x.tiles, [C]))
+    t.check(
+      'Back to the mosaic draws C alone: X is not put back in this workspace',
+      s?.index === eAt + 2 && same(seen.tiles, [C]) && seen.workspace === WS.name,
+      { trail: trail(s), seen }
+    )
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === eAt)
+    seen = await screenUntil(win, (x) => same(x.tiles, [E]))
+    t.check(
+      'and Back again skips the place of X alone, for E before it',
+      s?.index === eAt && same(seen.tiles, [E]) && seen.workspace === WS.name,
       { trail: trail(s), seen }
     )
   } finally {
