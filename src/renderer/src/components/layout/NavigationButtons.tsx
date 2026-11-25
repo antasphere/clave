@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
   ChatBubbleLeftEllipsisIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   Cog6ToothIcon,
   DocumentIcon,
   DocumentTextIcon,
@@ -106,7 +106,9 @@ export function NavigationButtons(): React.JSX.Element {
     const name = direction === 'back' ? 'Back' : 'Forward'
     const shortcut = direction === 'back' ? backShortcut : forwardShortcut
     const title = shortcut ? `${name} (${shortcut})` : name
-    const Icon = direction === 'back' ? ArrowLeftIcon : ArrowRightIcon
+    // Chevrons, not the arrows a group's or a tab's page has for its own history right under
+    // the toolbar (WebViewPane): the two pairs are never mistaken for each other.
+    const Icon = direction === 'back' ? ChevronLeftIcon : ChevronRightIcon
     return (
       <button
         className="btn-icon btn-icon-md"

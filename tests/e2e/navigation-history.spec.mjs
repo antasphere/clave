@@ -230,6 +230,33 @@ async function switchWorkspace(win, workspace) {
 /** Whether a toolbar button is disabled, as the DOM says. */
 const disabled = (win, selector) => win.locator(selector).isDisabled()
 
+/** The outlines the toolbar's Back and Forward draw, and those of the Back and Forward a page
+ *  over the column has of its own (a group's or a tab's page, right under the toolbar). */
+function navIcons(win) {
+  return win.evaluate(() => {
+    const shown = (el) =>
+      el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) &&
+      el.getBoundingClientRect().width > 0
+    const outline = (button) =>
+      button
+        ? [...button.querySelectorAll('svg path')].map((p) => p.getAttribute('d')).join(' ')
+        : null
+    const visible = (selector) => [...document.querySelectorAll(selector)].find(shown) ?? null
+    return {
+      toolbar: [outline(visible('[data-nav="back"]')), outline(visible('[data-nav="forward"]'))],
+      page: [
+        outline(visible('[data-testid="view-nav-back"]')),
+        outline(visible('[data-testid="view-nav-forward"]'))
+      ]
+    }
+  })
+}
+
+/** Both pairs drawn, and no button of the toolbar's drawn like the page's button beside it. */
+const drawnApart = (icons) =>
+  [...icons.toolbar, ...icons.page].every((d) => typeof d === 'string' && d.length > 0) &&
+  icons.toolbar.every((d, i) => d !== icons.page[i])
+
 /** Press a mouse side button over an element through the browser's own input pipeline
  *  (the event reaches the page as a real `mousedown`/`mouseup` with button 3 or 4). */
 async function sideButton(app, win, button, selector) {
@@ -513,6 +540,12 @@ async function walk(t) {
     )
     t.equal('opening it dropped the places ahead, as a browser does', s?.places.length, 8)
     t.equal('named for its group', current(s)?.label, 'Board group')
+    const boardIcons = await navIcons(win)
+    t.check(
+      'the toolbar’s Back and Forward are not drawn like the group’s page’s own pair under them',
+      drawnApart(boardIcons),
+      boardIcons
+    )
     await win.click(BACK)
     s = await snapshotUntil(win, (x) => x.index === 6)
     seen = await screenUntil(win, (x) => x.title === null && x.tiles.length === 2)
@@ -530,6 +563,8 @@ async function walk(t) {
       trail: trail(s),
       seen
     })
+    const dashIcons = await navIcons(win)
+    t.check('nor like the tab’s page’s own pair', drawnApart(dashIcons), dashIcons)
     await win.click(BACK)
     s = await snapshotUntil(win, (x) => x.index === 6)
     seen = await screenUntil(win, (x) => x.title === null && x.tiles.length === 2)

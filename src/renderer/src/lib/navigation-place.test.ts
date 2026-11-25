@@ -109,3 +109,24 @@ describe('a tab of a place (PRDCT-5155)', () => {
     ).toBe('Tab tab-2')
   })
 })
+
+describe('the Agents view in the lists (PRDCT-5155)', () => {
+  const agents = (focused: string | null): Place =>
+    place(focused ? [focused] : [], { view: 'agents', focused, beside: null })
+
+  it('is named for the agent it shows: the focused agent tab', () => {
+    useSessionStore.setState((state) => ({
+      sessions: [
+        ...state.sessions,
+        session('agent-1', null, { name: 'Scout', sessionType: 'agent' }),
+        session('agent-far', 'ws-b', { name: 'Far', sessionType: 'agent' })
+      ]
+    }))
+    expect(placeLabel(agents('agent-1'))).toEqual({ label: 'Agents · Scout', kind: 'agents' })
+    // No agent tab in focus, or one that is gone or left the workspace: the view alone.
+    expect(placeLabel(agents(null)).label).toBe('Agents')
+    expect(placeLabel(agents('tab-1')).label).toBe('Agents')
+    expect(placeLabel(agents('agent-gone')).label).toBe('Agents')
+    expect(placeLabel(agents('agent-far')).label).toBe('Agents')
+  })
+})

@@ -374,6 +374,7 @@ function cardTitle(sessionId: string, card: BesideCard): string {
 function describePlace(p: Place): { label: string; kind: PlaceKind } {
   // A plugin covers whatever else the column holds, Settings included (AppShell).
   if (p.plugin) return { label: pluginTitle(p.plugin), kind: 'plugin' }
+  const s = useSessionStore.getState()
   switch (p.view) {
     case 'settings': {
       const section = isSettingsSection(p.section) ? SETTINGS_SECTION_LABELS[p.section] : null
@@ -383,12 +384,17 @@ function describePlace(p: Place): { label: string; kind: PlaceKind } {
       const section = isExtensionsSection(p.section) ? EXTENSIONS_SECTION_LABELS[p.section] : null
       return { label: section ? `Extensions · ${section}` : 'Extensions', kind: 'extensions' }
     }
-    case 'agents':
-      return { label: 'Agents', kind: 'agents' }
+    case 'agents': {
+      // The view shows the focused agent tab's conversation: named for its agent.
+      const agent =
+        p.focused !== null && tabOfPlace(s, p.focused, p.workspaceId)
+          ? s.sessions.find((x) => x.id === p.focused && x.sessionType === 'agent')
+          : undefined
+      return { label: agent ? `Agents · ${agent.name}` : 'Agents', kind: 'agents' }
+    }
     case 'ongoing':
       return { label: 'Ongoing', kind: 'ongoing' }
   }
-  const s = useSessionStore.getState()
   if (p.groupView !== null) {
     const group = s.groups.find((g) => g.id === p.groupView)
     return { label: group?.name ?? 'Group page', kind: 'group-page' }

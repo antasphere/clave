@@ -205,6 +205,10 @@ export function initNavigationHistory(): () => void {
   return () => {
     for (const stop of stops) stop()
     clearTimer()
+    // A start after this stop (StrictMode runs the shell's effect twice in development)
+    // reads the place on screen afresh: as the last place read, it would be no change, and
+    // the first place would never be recorded.
+    lastRead = null
   }
 }
 
