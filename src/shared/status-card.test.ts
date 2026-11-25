@@ -90,8 +90,18 @@ describe('readStatusCard', () => {
     expect(card!.where).toBeTruthy()
   })
 
-  it('reads "nothing" as nothing owed, with what a model adds around it', () => {
-    for (const next of ['nothing', 'Nothing.', '"nothing"', 'none', 'nothing for now', '-', 'N/A'])
+  it('reads the single word as nothing owed, in any case, in quotes, with a full stop', () => {
+    for (const next of [
+      'nothing',
+      'Nothing.',
+      '"nothing"',
+      'NOTHING',
+      'none',
+      'n/a',
+      '-',
+      '—',
+      'N/A'
+    ])
       expect(readStatusCard(block('doing: x', `next: ${next}`)).card?.next, next).toBeNull()
     expect(readStatusCard(block('doing: x', 'next: Approve the plan')).card?.next).toBe(
       'Approve the plan'
@@ -112,7 +122,7 @@ describe('readStatusCard', () => {
     expect(card.decide).toEqual([])
     expect(card.next).toBeNull()
     expect(statusNeedsYou(card)).toBe(false)
-    for (const none of ['none', 'Nothing.', 'N/A', '-', 'nothing for now'])
+    for (const none of ['none', 'Nothing.', 'N/A', '-'])
       expect(readStatusCard(block('doing: x', `decide: ${none}`)).card?.decide, none).toEqual([])
     // A question that opens on the word is still a question.
     expect(
@@ -142,9 +152,31 @@ describe('readStatusCard', () => {
     expect(readStatusCard(block('doing: x', `decide: ${decision}`)).card?.decide).toEqual([
       decision
     ])
-    // The word with the few words a model adds is still nothing.
-    for (const none of ['nothing needed from you', 'None needed.', 'no action needed', '—'])
-      expect(readStatusCard(block('doing: x', `next: ${none}`)).card?.next, none).toBeNull()
+    // The verifier's round 2: counting the words still dropped these four.
+    for (const next of [
+      'None of it works',
+      'Nothing works, restart it',
+      'None yet, review it',
+      'Nothing until you merge',
+      'Nothing: merge it'
+    ])
+      expect(readStatusCard(block('doing: x', `next: ${next}`)).card?.next, next).toBe(next)
+  })
+
+  // The other side of the same finding: a finished turn phrased at length is
+  // not read as nothing either. Nothing is read into prose: its own words
+  // show under Next, and only the single word the rule asks for owes nothing.
+  it('shows a finished turn phrased at length in its own words', () => {
+    for (const next of [
+      'nothing — the PR is merged and deployed',
+      'Nothing needed from you now',
+      'No action needed from you',
+      'None; all done',
+      'nothing for now'
+    ]) {
+      const card = readStatusCard(block('doing: x', `next: ${next}`)).card!
+      expect(card.next, next).toBe(next)
+    }
   })
 
   it('says a card asks something only for a decision or a next step', () => {

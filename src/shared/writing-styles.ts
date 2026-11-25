@@ -166,27 +166,43 @@ export const STYLE_SUPPORT: Readonly<
   antigravity: { terminal: 'none', chat: 'first-message' }
 }
 
-/** How a first message that carries a style opens, and where the person's
- *  own message begins in it: the two marks `messageWithoutStyle` reads back. */
-const FIRST_MESSAGE_OPENING =
-  'Before my message, how to write to me for this whole conversation. Follow it without commenting on it.'
+/** How a first message that carries a style opens: it says how many
+ *  characters of style follow, so the message can be read back exactly
+ *  (`messageWithoutStyle`) whatever the style's text or the person's message
+ *  hold. */
+const firstMessageOpening = (characters: number): string =>
+  `Before my message, how to write to me for this whole conversation, in the next ${characters} characters. Follow it without commenting on it.`
+const FIRST_MESSAGE_OPENED =
+  /^Before my message, how to write to me for this whole conversation, in the next (\d+) characters\. Follow it without commenting on it\.\n\n/
+/** What stands between the style and the person's own message. */
 const FIRST_MESSAGE_MARK = '\n\nMy message:\n\n'
 
 /** A first message that carries a style, for a harness on the
  *  `first-message` road: the style said as what it is, so the agent does not
  *  answer it, then the message as the person wrote it. */
 export function styleAsFirstMessage(styleText: string, message: string): string {
-  return `${FIRST_MESSAGE_OPENING}\n\n${styleText}${FIRST_MESSAGE_MARK}${message}`
+  return `${firstMessageOpening(styleText.length)}\n\n${styleText}${FIRST_MESSAGE_MARK}${message}`
 }
 
-/** The message the person wrote, from what a harness on the `first-message`
- *  road kept of it: a conversation loaded back replays what was SENT, the
- *  style included, and the views show what was written. A message that does
- *  not open on the style is given back as it is. */
+/**
+ * The message the person wrote, from what a harness on the `first-message`
+ * road kept of it: a conversation loaded back replays what was SENT, the
+ * style included, and the views show what was written. The style is skipped
+ * by the length its opening gives, never searched for, so a style or a
+ * message that holds the words "My message:" is read right. Anything that
+ * does not match to the character (a message that only begins like the
+ * opening, a text the harness altered) is given back as it is: showing a
+ * style is better than cutting a person's words.
+ */
 export function messageWithoutStyle(sent: string): string {
-  if (!sent.startsWith(FIRST_MESSAGE_OPENING)) return sent
-  const at = sent.indexOf(FIRST_MESSAGE_MARK, FIRST_MESSAGE_OPENING.length)
-  return at < 0 ? sent : sent.slice(at + FIRST_MESSAGE_MARK.length)
+  // A harness may hand its lines back with Windows ends; the style was sent
+  // with plain ones, and its length is counted on those.
+  const text = sent.replace(/\r\n/g, '\n')
+  const opened = FIRST_MESSAGE_OPENED.exec(text)
+  if (!opened) return sent
+  const at = opened[0].length + Number(opened[1])
+  if (text.slice(at, at + FIRST_MESSAGE_MARK.length) !== FIRST_MESSAGE_MARK) return sent
+  return text.slice(at + FIRST_MESSAGE_MARK.length)
 }
 
 /** A slug of a name: lower-case words joined by dashes. */

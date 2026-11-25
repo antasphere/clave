@@ -76,8 +76,9 @@ describe('styleAsFirstMessage', () => {
 })
 
 describe('messageWithoutStyle', () => {
+  const message = 'Fix the test\nplease'
+
   it('gives back the message the person wrote from what was sent with a style', () => {
-    const message = 'Fix the test\nplease'
     expect(messageWithoutStyle(styleAsFirstMessage('Be short.', message))).toBe(message)
     // The built-in styles hold blank lines and a fenced block: still one cut.
     for (const style of BUILT_IN_STYLES)
@@ -86,9 +87,39 @@ describe('messageWithoutStyle', () => {
       )
   })
 
-  it('leaves a message that carries no style as it is', () => {
+  // The verifier's round 2: the cut was the first "My message:" found, so a
+  // style that held those words gave part of itself as the person's message,
+  // and a search from the end would have cut a person's own.
+  it('skips the style by its length, whatever it or the message holds', () => {
+    const tricky = 'Label a quote like this:\n\nMy message:\n\nis how you should label quotes.'
+    expect(messageWithoutStyle(styleAsFirstMessage(tricky, 'Fix the login bug'))).toBe(
+      'Fix the login bug'
+    )
+    const theirs = 'Reply to this.\n\nMy message:\n\nwas the subject line.'
+    expect(messageWithoutStyle(styleAsFirstMessage('Be short.', theirs))).toBe(theirs)
+    expect(messageWithoutStyle(styleAsFirstMessage(tricky, theirs))).toBe(theirs)
+  })
+
+  it('reads a replay handed back with Windows line ends', () => {
+    const sent = styleAsFirstMessage('Be short.\nBe plain.', 'Fix it')
+    expect(messageWithoutStyle(sent.replace(/\n/g, '\r\n'))).toBe('Fix it')
+  })
+
+  it('leaves as it is whatever does not match to the character', () => {
+    // A person's own message, the mark and all.
     expect(messageWithoutStyle('My message:\n\nhello')).toBe('My message:\n\nhello')
+    expect(messageWithoutStyle('Note.\n\nMy message:\n\nhello')).toBe(
+      'Note.\n\nMy message:\n\nhello'
+    )
     expect(messageWithoutStyle('')).toBe('')
+    // A message that only begins like the opening.
+    const likeIt =
+      'Before my message, how to write to me for this whole conversation. Follow it without commenting on it.\n\nMy message:\n\nhello'
+    expect(messageWithoutStyle(likeIt)).toBe(likeIt)
+    // A style the harness cut short: its length no longer lands on the mark.
+    const sent = styleAsFirstMessage('Be short and plain.', 'Fix it')
+    const altered = sent.replace('Be short and plain.', 'Be short.')
+    expect(messageWithoutStyle(altered)).toBe(altered)
   })
 })
 

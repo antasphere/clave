@@ -141,27 +141,43 @@ export class WritingStylesStore implements WritingStylesSource {
     return this.view()
   }
 
-  /** A document that is there and does not parse (a hand edit that left a
-   *  syntax error) reads as no style of the machine's own, and the next write
-   *  would put a new document over every style the person made. Its exact
-   *  text is kept beside it first, as `writing-styles.damaged-<n>.json`, the
-   *  first number not taken. A missing document is not a damaged one. */
+  /**
+   * A document the read keeps less of than it holds reads as fewer styles
+   * than the person made, and the next write would put a new document over
+   * the rest. Its exact text is kept beside it first, as
+   * `writing-styles.damaged-<n>.json`, the first number not taken. A missing
+   * or an empty document holds nothing to lose.
+   */
   private setAsideDamaged(): void {
     const storage = this.ports.storage
     const text = storage.read(WRITING_STYLES_FILE)
-    if (text === null) return
-    try {
-      JSON.parse(text)
-      return
-    } catch {
-      // Damaged: kept below before the write over it.
-    }
+    if (text === null || text.trim() === '' || !this.readLoses(text)) return
     for (let n = 1; ; n++) {
       const name = damagedStylesFile(n)
       if (storage.read(name) !== null) continue
       storage.write(name, text)
       return
     }
+  }
+
+  /** Whether `load()` keeps less than the document holds: it does not parse
+   *  (a hand edit that left a syntax error), it is not the object this store
+   *  writes (a bare list of styles, `styles` keyed by id), or one of its
+   *  styles is left out by the read (over the limits, a name already taken,
+   *  a field of the wrong kind). Whatever the read discards, a write would
+   *  erase for good. */
+  private readLoses(text: string): boolean {
+    let raw: unknown
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      return true
+    }
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return true
+    const styles = (raw as { styles?: unknown }).styles
+    if (styles === undefined) return false
+    if (!Array.isArray(styles)) return true
+    return this.load().styles.length < styles.length
   }
 
   private allStyles(document: StoredDocument): WritingStyle[] {

@@ -30,7 +30,7 @@ export const STATUS_CARD_RULE = [
   'doing: what we are working on, in a few words',
   'where: one or two sentences: what is done, what is left, what this turn changed',
   'decide: a question only the person can answer, with your recommendation and why',
-  'next: the one thing the person must do now, or "nothing"',
+  'next: the one thing the person must do now, or the single word nothing',
   '```',
   '',
   'Write `decide` once per decision, at most three times, and leave it out when nothing waits on the person. Write each line as plain prose for someone who just walked in. Put the block only in the message that ends your turn, never in a note between tool calls. Do not end your answer with its own summary or next step: the card is the ending. The block is not part of your answer: write it every time, whatever length or format the person asked the answer to have.'
@@ -66,27 +66,30 @@ type Key = 'doing' | 'where' | 'decide' | 'next'
  *  which a model adds from habit. */
 const FIELD = /^\s*(?:[-*]\s+)?(?:\*\*)?(doing|where|decide|next)(?:\*\*)?\s*:(?:\*\*)?\s*(.*)$/i
 
-/** The word that says nothing is owed, opening a `next` or a `decide` line. */
-const NOTHING = /^(?:nothing|none|n\/a|no action)\b/i
-/** The most words a line that says nothing runs to: the word and the few a
- *  model adds after it ("nothing for now", "none needed from you"). */
-const NOTHING_WORDS = 4
+/** The words that say nothing is owed, as the whole of a `next` or a `decide`
+ *  line. */
+const NOTHING = new Set(['nothing', 'none', 'n/a'])
 /**
  * Whether a `next` or a `decide` line says nothing is owed: the rule's own
- * word alone, with the few words a model adds, or a dash. A line that opens
- * on the word and goes on to say something ("None of the migrations ran:
- * run them by hand", "Nothing else, or the rename too?") is the agent's word
- * and is kept. Losing a real ask is the one silent loss here, so the test
- * is narrow: a longer line, a colon or a question is never nothing.
+ * word and nothing else (in any case, in quotes, with a full stop), or a
+ * dash. The rule asks for "the single word nothing"; a line that says more
+ * is the agent's own words and is kept as written, whatever it opens on.
+ *
+ * Two rules were tried before this one and both were wrong in both
+ * directions (the verifier's rounds 1 and 2): a line that OPENS on the word
+ * dropped real asks ("None of the migrations ran: run them by hand"), and
+ * counting its words still dropped some ("Nothing works, restart it") while
+ * keeping finished turns as owed. No reading of free prose tells the two
+ * apart, so nothing is read into it: a real ask is never lost, and a
+ * finished turn phrased at length shows its own words under Next.
  */
 function saysNothing(value: string): boolean {
   const said = value
     .trim()
     .replace(/^["'“”‘’]+|["'“”‘’.!]+$/g, '')
     .trim()
-  if (/^[-–—]+$/.test(said)) return true
-  if (!NOTHING.test(said)) return false
-  return !/[?:;]/.test(said) && said.split(/\s+/).length <= NOTHING_WORDS
+    .toLowerCase()
+  return NOTHING.has(said) || /^[-–—]+$/.test(said)
 }
 
 const clip = (value: string): string =>

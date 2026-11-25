@@ -243,12 +243,58 @@ describe('WritingStylesStore', () => {
       expect(fs.readFileSync(own(), 'utf-8')).toBe(damaged)
     })
 
-    it('is not a missing document, nor one that parses with a bad entry', () => {
+    it('is not a missing document, an empty one, nor one the read keeps whole', () => {
       store.save(draft('Plain'))
       expect(files()).toEqual([WRITING_STYLES_FILE])
-      fs.writeFileSync(own(), JSON.stringify({ version: 1, styles: [{ id: 'NO' }, 'x'] }))
       store.save(draft('Other'))
+      store.setDefault('plain')
       expect(files()).toEqual([WRITING_STYLES_FILE])
+      fs.writeFileSync(own(), '')
+      store.save(draft('Third'))
+      fs.writeFileSync(own(), '{}')
+      store.save(draft('Fourth'))
+      expect(files()).toEqual([WRITING_STYLES_FILE])
+    })
+  })
+
+  // The verifier's round 2: a document that parses and is not what this
+  // store writes was read as fewer styles, then written over with no copy.
+  describe('a document the read keeps less of than it holds', () => {
+    const own = (): string => path.join(dir, WRITING_STYLES_FILE)
+    const aside = (n: number): string => path.join(dir, damagedStylesFile(n))
+    const entry = (id: string, text = 'Be mine.'): object => ({
+      id,
+      name: id,
+      description: '',
+      text,
+      statusCard: false
+    })
+
+    it('is set aside when it is a bare list of styles', () => {
+      const text = JSON.stringify([entry('mine')])
+      fs.writeFileSync(own(), text)
+      store.save(draft('Fresh'))
+      expect(fs.readFileSync(aside(1), 'utf-8')).toBe(text)
+    })
+
+    it('is set aside when its styles are keyed by id, whatever the write', () => {
+      const text = JSON.stringify({ version: 1, styles: { mine: entry('mine') } })
+      fs.writeFileSync(own(), text)
+      store.setDefault(null)
+      expect(fs.readFileSync(aside(1), 'utf-8')).toBe(text)
+    })
+
+    it('is set aside when the read leaves one of its styles out', () => {
+      const tooLong = 'a'.repeat(6001)
+      const text = JSON.stringify({ version: 1, styles: [entry('good'), entry('long', tooLong)] })
+      fs.writeFileSync(own(), text)
+      const view = store.save(draft('Fresh'))
+      expect(fs.readFileSync(aside(1), 'utf-8')).toBe(text)
+      // The style the read kept is still there, beside the new one.
+      expect(view.styles.map((style) => style.id)).toEqual(['brief', 'quiet', 'good', 'fresh'])
+      // The document is whole again: the next write sets nothing aside.
+      store.setDefault('good')
+      expect(fs.existsSync(aside(2))).toBe(false)
     })
   })
 

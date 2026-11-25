@@ -53,11 +53,12 @@ holds that machine's settings, as the helpers' preference is
 group's picker names (this Mac, or a saved Clave server), picks the style new
 tabs start with, and offers to import the person's Claude Code output style as
 a style. The road is the Helpers page's, layer for layer (the wire's module is
-`packages/contract/src/settings/writing-styles.ts`). A document that
-no longer parses (a hand edit that left a syntax error) reads as no style of
-the machine's own; before the first write over it, its exact text is kept
-beside it as `writing-styles.damaged-<n>.json`, so one comma never costs a
-person their styles.
+`packages/contract/src/settings/writing-styles.ts`). A document the
+read keeps less of than it holds (a hand edit that left a syntax error, a
+shape this store does not write, a style over the limits) reads as fewer
+styles of the machine's own; before the first write over it, its exact text
+is kept beside it as `writing-styles.damaged-<n>.json`, so a hand edit never
+costs a person their styles.
 
 ## How a style reaches each harness
 
@@ -121,17 +122,18 @@ message that hands the turn back with one fenced block:
 doing: what we are working on, in a few words
 where: one or two sentences: what is done, what is left, what this turn changed
 decide: a question only the person can answer, with your recommendation and why
-next: the one thing the person must do now, or "nothing"
+next: the one thing the person must do now, or the single word nothing
 ```
 ````
 
-`decide` zero to three times. A `next` or a `decide` that says nothing is
-owed is read as none: the word alone (`nothing`, `none`, `n/a`, a dash) or
-with the few words a model adds ("nothing for now"). A line that opens on the
-word and goes on to ask something ("None of the migrations ran: run them by
-hand") is kept: losing a real ask is the one silent loss here. A block, not a
-tool call: no extra model round trip on every turn, and it reads as text in a
-terminal.
+`decide` zero to three times. A `next` or a `decide` that is the single word
+(`nothing`, `none`, `n/a`, in any case, or a dash) says nothing is owed. A
+line that says more than the word is the agent's own words and is kept as
+written, whatever it opens on: "None of the migrations ran: run them by hand"
+is an ask, and no reading of free prose tells it from "nothing, all merged",
+so nothing is read into it. A real ask is never lost; a finished turn phrased
+at length shows its own words under Next. A block, not a tool call: no extra
+model round trip on every turn, and it reads as text in a terminal.
 
 The reader takes the agent's word and nothing else. A block is a card only
 when it **ends the message at its top level**; a block quoted inside another
