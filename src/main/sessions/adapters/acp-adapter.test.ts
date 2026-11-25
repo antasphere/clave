@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -1443,6 +1443,27 @@ describe('a writing style on the first message (PRDCT-5166)', () => {
     await turn(s, 'again')
     expect(sent(s.state)).toEqual([styleAsFirstMessage(STYLE, 'hello'), 'again'])
     expect(shown(s.events)).toEqual(['hello', 'again'])
+  })
+
+  it('stays owed when the first prompt is refused: the next carries it, once', async () => {
+    const s = await agy({})
+    const { providerSessionId } = s.events.find((e) => e.type === 'session_meta') as {
+      providerSessionId: string
+    }
+    // The stand-in refuses a prompt for a session it does not know: its
+    // record set aside, the first prompt is answered with an error.
+    const meta = join(s.state, 'sessions', `${providerSessionId}.json`)
+    renameSync(meta, `${meta}.aside`)
+    await turn(s, 'first')
+    expect(s.events.some((e) => e.type === 'error' && /turn failed/.test(e.message))).toBe(true)
+    renameSync(`${meta}.aside`, meta)
+    await turn(s, 'second')
+    await turn(s, 'third')
+    expect(sent(s.state)).toEqual([
+      styleAsFirstMessage(STYLE, 'first'),
+      styleAsFirstMessage(STYLE, 'second'),
+      'third'
+    ])
   })
 
   it('never goes to a conversation loaded back', async () => {

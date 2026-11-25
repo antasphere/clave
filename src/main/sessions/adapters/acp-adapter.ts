@@ -1094,6 +1094,9 @@ export class AcpAdapter implements SessionAdapter {
       )
       stopReason = text(result.stopReason)
     } catch (error) {
+      // A prompt the agent refused never took the style: still owed, so the
+      // next prompt carries it, once.
+      if (style && state.styleOwed === undefined) state.styleOwed = style
       if (state.ended || state.closing) return
       this.notice(state, `${this.label} turn failed: ${errorMessage(error)}`)
     } finally {
