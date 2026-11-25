@@ -61,7 +61,8 @@ export async function run(t) {
     t.check(
       'Chat: the card shows its four fields',
       [
-        'the export of a conversation',
+        // The head opens on a capital, whatever the agent wrote.
+        'The export of a conversation',
         'the writer is done and its tests pass',
         'To decide',
         'keep the old format? I would, for the readers who parse it',
@@ -140,7 +141,7 @@ export async function run(t) {
       (await lastWrap.locator('.chat-turn').count()) === 0 &&
         (await lastWrap.getByTestId('status-card').count()) === 1 &&
         (await lastWrap.getByTestId('status-card').getAttribute('data-past')) === null &&
-        (await lastWrap.getByTestId('status-card').innerText()).includes('a card with no words')
+        (await lastWrap.getByTestId('status-card').innerText()).includes('A card with no words')
     )
     const chatAnswers = await answers(chat).allInnerTexts()
     t.check(
@@ -188,7 +189,7 @@ export async function run(t) {
     t.check(
       'Folio: the last page draws its card alone, current',
       (await lastCard.getAttribute('data-past')) === null &&
-        (await lastCard.innerText()).includes('a card with no words') &&
+        (await lastCard.innerText()).includes('A card with no words') &&
         (await page.locator('.folio-prose').count()) === 0
     )
     for (let i = 0; i < 3; i++) await folio.locator('[aria-label="Previous page"]').click()
