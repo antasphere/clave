@@ -13,6 +13,7 @@ import { LaunchProfileManager } from '../launch-profile-manager'
 import { PreferencesManager } from '../preferences-manager'
 import { WorkspaceManager } from '../workspace-manager'
 import { HelperPreferences } from '../helpers/preferences'
+import { DecisionPreferences } from '../decisions/preferences'
 import { ElevenLabsIntegration } from '../integrations/elevenlabs'
 import type { LoginJob } from '../account-login'
 import { electronTestPorts, tempDataDir } from '../ports/testing'
@@ -185,6 +186,30 @@ describe('the settings source over the real managers', () => {
       enabled: false,
       claudeProfileId: null
     })
+  })
+
+  it('refuses the decisions without a store, and writes them to this host’s with one (PRDCT-5179)', async () => {
+    const bare = settingsSourceFromManagers(managers)
+    await expect(Promise.resolve().then(() => bare.decisions.list())).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'decisions'
+    })
+    const source = settingsSourceFromManagers({
+      ...build(),
+      decisions: new DecisionPreferences(electronTestPorts(dir))
+    })
+    expect((await source.decisions.list()).find((d) => d.id === 'tab-project')).toMatchObject({
+      enabled: true
+    })
+    const after = await source.decisions.set('tab-project', { enabled: false })
+    expect(after.find((d) => d.id === 'tab-project')).toMatchObject({ enabled: false })
+    // On this host's disk: the runner of either process reads it there.
+    expect(new DecisionPreferences(electronTestPorts(dir)).configFor('tab-project')).toEqual({
+      enabled: false
+    })
+    await expect(
+      Promise.resolve().then(() => source.decisions.set('nope', { enabled: false }))
+    ).rejects.toThrow('There is no decision "nope" on this machine.')
   })
 
   it('refuses the integrations without a store, and seals the key on this host with one (PRDCT-4410)', async () => {

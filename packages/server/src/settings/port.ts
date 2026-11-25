@@ -42,6 +42,10 @@ export interface HelperPreferencePatch {
   readonly model?: string | null
   readonly account?: HelperAccount
 }
+export type DecisionPreference = typeof Settings.DecisionPreferenceView.Type
+export interface DecisionPreferencePatch {
+  readonly enabled?: boolean
+}
 export type IntegrationsStatus = typeof Settings.IntegrationsView.Type
 export type ElevenLabsStatus = typeof Settings.ElevenLabsStatusView.Type
 export type ElevenLabsModelId = typeof Settings.ElevenLabsModelId.Type
@@ -134,6 +138,15 @@ export interface SettingsSourceService {
       helperId: string,
       patch: HelperPreferencePatch
     ) => Awaitable<ReadonlyArray<HelperPreference>>
+  }
+  /** The decisions' switches on this host (PRDCT-5179): every declared
+   *  decision with its switch; a write answers the list. */
+  readonly decisions: {
+    readonly list: () => Awaitable<ReadonlyArray<DecisionPreference>>
+    readonly set: (
+      id: string,
+      patch: DecisionPreferencePatch
+    ) => Awaitable<ReadonlyArray<DecisionPreference>>
   }
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  by the host's secret port, its account check, and the voice and model
@@ -302,6 +315,7 @@ function noneSource(): SettingsSourceService {
       setWorkspace: refuse('launchProfiles')
     },
     helpers: { list: refuse('helpers'), set: refuse('helpers') },
+    decisions: { list: refuse('decisions'), set: refuse('decisions') },
     integrations: {
       read: refuse('integrations'),
       setElevenLabsKey: refuse('integrations'),

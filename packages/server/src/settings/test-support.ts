@@ -8,6 +8,7 @@ import type {
   AntasphereAccountStatus,
   ClaudeAccount,
   CodexAccount,
+  DecisionPreference,
   HelperPreference,
   IntegrationsStatus,
   LaunchProfile,
@@ -66,6 +67,15 @@ export class FakeSettingsSource implements SettingsSourceService {
       model: 'haiku',
       defaultModel: 'haiku',
       account: { kind: 'session' }
+    }
+  ]
+  /** The host's decisions as the fake holds them (PRDCT-5179). */
+  decisionList: DecisionPreference[] = [
+    {
+      id: 'tab-project',
+      label: 'Tab projects',
+      description: 'Which project a tab works on.',
+      enabled: true
     }
   ]
   state: WorkspaceState = {
@@ -333,6 +343,18 @@ export class FakeSettingsSource implements SettingsSourceService {
           : h
       )
       return this.helperList
+    }
+  }
+  readonly decisions: SettingsSourceService['decisions'] = {
+    list: () => this.decisionList,
+    set: (id, patch) => {
+      this.record('decisions.set', id, patch)
+      const known = this.decisionList.find((d) => d.id === id)
+      if (!known) throw new Error(`There is no decision "${id}" on this machine.`)
+      this.decisionList = this.decisionList.map((d) =>
+        d.id === id ? { ...d, ...(patch.enabled !== undefined && { enabled: patch.enabled }) } : d
+      )
+      return this.decisionList
     }
   }
   private integrationsHere(): void {

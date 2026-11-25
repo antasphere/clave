@@ -32,6 +32,7 @@ import {
   ListAccountLogins,
   ListElevenLabsVoices,
   ListHelperPreferences,
+  ListDecisions,
   ListClaudeAccounts,
   ListCodexAccounts,
   ListLaunchProfiles,
@@ -60,6 +61,7 @@ import {
   SetJevKey,
   SetGlobalLaunchProfile,
   SetHelperPreference,
+  SetDecisionPreference,
   SetLastActiveWorkspace,
   SetWorkspaceLaunchProfile,
   SettingsRefused,
@@ -214,6 +216,17 @@ export const settingsHandlers = [
         ...(p.enabled !== undefined && { enabled: p.enabled }),
         ...(p.model !== undefined && { model: p.model }),
         ...(p.account !== undefined && { account: p.account })
+      })
+    }))
+  ),
+  // The decisions (PRDCT-5179): the host's switches, whole list each way.
+  QueryHandler.make(ListDecisions, () =>
+    ask(async (s) => ({ decisions: await s.decisions.list() }))
+  ),
+  CommandHandler.make(SetDecisionPreference, (p) =>
+    must(async (s) => ({
+      decisions: await s.decisions.set(p.id, {
+        ...(p.enabled !== undefined && { enabled: p.enabled })
       })
     }))
   ),

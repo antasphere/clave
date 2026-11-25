@@ -49,6 +49,7 @@ import {
   UpsertLaunchProfile
 } from './launch-profiles'
 import { ListHelperPreferences, SetHelperPreference } from './helpers'
+import { ListDecisions, SetDecisionPreference } from './decisions'
 import {
   CheckElevenLabs,
   ListElevenLabsVoices,
@@ -239,6 +240,9 @@ export const settingsGroup = ApiGroup.make('settings')
   // The helpers (PRDCT-4330)
   .add(HttpCqrs.queryEndpoint('listHelperPreferences', '/helpers', ListHelperPreferences))
   .add(HttpCqrs.commandEndpoint('setHelperPreference', '/helpers', SetHelperPreference))
+  // The decisions (PRDCT-5179): one switch each, on the machine that runs them
+  .add(HttpCqrs.queryEndpoint('listDecisions', '/decisions', ListDecisions))
+  .add(HttpCqrs.commandEndpoint('setDecisionPreference', '/decisions', SetDecisionPreference))
   // The integrations (PRDCT-4410): the ElevenLabs key sealed on the machine
   .add(HttpCqrs.queryEndpoint('readIntegrations', '/integrations', ReadIntegrations))
   .add(

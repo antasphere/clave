@@ -5,6 +5,7 @@ import { resetSettingsPorts } from '../ports'
 import { tempDataDir } from '../ports/testing'
 import { standaloneSettingsSource } from './standalone-source'
 import { helperById, helperConfig, setHelperConfigSource } from '../helpers/registry'
+import { decisionById, decisionConfig, setDecisionConfigSource } from '../decisions/registry'
 
 /**
  * The standalone server owns the Antasphere login the way the shell does
@@ -67,6 +68,25 @@ describe('the helpers on the standalone server (PRDCT-4330)', () => {
     } finally {
       shutdown()
       setHelperConfigSource()
+    }
+  })
+})
+
+describe('the decisions on the standalone server (PRDCT-5179)', () => {
+  it("the runner reads this server's switches, written through its settings source", async () => {
+    const dir = tempDataDir('clave-standalone-decisions-')
+    const { settings, shutdown } = standaloneSettingsSource(dir, {})
+    try {
+      const decision = decisionById('tab-project')!
+      expect(decisionConfig(decision)).toEqual({ enabled: true })
+      const listed = await settings.decisions.set('tab-project', { enabled: false })
+      expect(listed.find((d) => d.id === 'tab-project')).toMatchObject({ enabled: false })
+      expect(decisionConfig(decision)).toEqual({ enabled: false })
+      // The Jev card rides beside the ElevenLabs one on this server.
+      expect(await settings.integrations.read()).toMatchObject({ jev: { configured: false } })
+    } finally {
+      shutdown()
+      setDecisionConfigSource()
     }
   })
 })

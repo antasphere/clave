@@ -42,6 +42,11 @@ import { helperPreferences, installHelperPreferences } from '../helpers/preferen
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { jevIntegration } from '../integrations/jev'
 import { setHelperConfigSource } from '../helpers/registry'
+import {
+  decisionPreferences,
+  installDecisionPreferences,
+  refuseDecisionsHere
+} from '../decisions/preferences'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import { modelsCatalog } from '../models-catalog'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
@@ -80,6 +85,9 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   preferences: preferencesManager,
   workspaces: workspaceManager,
   ...(shellOwnsHelpers && { helpers: helperPreferences }),
+  // The decisions (PRDCT-5179), like the helpers: main's only while it is
+  // the server, the process that holds the Jev key.
+  ...(shellOwnsHelpers && { decisions: decisionPreferences }),
   // The integrations, like the helpers, belong to whichever process is the
   // server (PRDCT-4410): main only while it runs in-process.
   ...(shellOwnsHelpers && { integrations: elevenLabsIntegration }),
@@ -116,6 +124,10 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
 // a caller added later), so nothing ever runs here on defaults.
 if (shellOwnsHelpers) installHelperPreferences(helperPreferences)
 else setHelperConfigSource(() => ({ refused: HELPERS_RUN_ON_SERVER }))
+// The decisions keep the same rule (PRDCT-5179): main runs them only as the
+// server; otherwise every one is refused here before the key is read.
+if (shellOwnsHelpers) installDecisionPreferences(decisionPreferences)
+else refuseDecisionsHere()
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

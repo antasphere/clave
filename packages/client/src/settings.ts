@@ -29,6 +29,24 @@ const helpersMissing = <T>(run: Promise<T>): Promise<T> =>
       : error
   })
 
+/** A server released before the decisions' switches (PRDCT-5179): the same
+ *  404, said as the update it needs. The window says the same words
+ *  (`src/shared/decision-preferences.ts`; the test holds the two equal). */
+export const DECISIONS_NEED_UPDATE = 'This server needs an update to show its decisions.'
+export class DecisionPreferencesMissing extends Error {
+  readonly _tag = 'DecisionPreferencesMissing'
+  constructor() {
+    super(DECISIONS_NEED_UPDATE)
+    this.name = 'DecisionPreferencesMissing'
+  }
+}
+const decisionsMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new DecisionPreferencesMissing()
+      : error
+  })
+
 /** A server released before the integrations (PRDCT-4410): the same 404,
  *  said as the update it needs. */
 export const INTEGRATIONS_NEED_UPDATE = 'This server needs an update to show its integrations.'
@@ -63,6 +81,10 @@ export interface HelperPreferencePatch {
   readonly enabled?: boolean
   readonly model?: string | null
   readonly account?: HelperAccount
+}
+export type DecisionPreference = typeof S.DecisionPreferenceView.Type
+export interface DecisionPreferencePatch {
+  readonly enabled?: boolean
 }
 export type IntegrationsStatus = typeof S.IntegrationsView.Type
 export type ElevenLabsModelId = typeof S.ElevenLabsModelId.Type
@@ -165,6 +187,14 @@ export interface SettingsClient {
       helperId: string,
       patch: HelperPreferencePatch
     ) => Promise<ReadonlyArray<HelperPreference>>
+  }
+  /** The decisions' switches on that server (PRDCT-5179); both answer the list. */
+  readonly decisions: {
+    readonly listDecisions: () => Promise<ReadonlyArray<DecisionPreference>>
+    readonly setDecisionPreference: (
+      id: string,
+      patch: DecisionPreferencePatch
+    ) => Promise<ReadonlyArray<DecisionPreference>>
   }
   /** The integrations of that server (PRDCT-4410): the ElevenLabs key goes
    *  in once, as the redacted field's plain string, and comes back in no
@@ -336,6 +366,14 @@ export function settingsClient(callApi: Call): SettingsClient {
         helpersMissing(
           call((g) => g.setHelperPreference({ payload: { helperId, ...patch } }))
         ).then((v) => v.helpers)
+    },
+    decisions: {
+      listDecisions: () =>
+        decisionsMissing(call((g) => g.listDecisions({ payload: {} }))).then((v) => v.decisions),
+      setDecisionPreference: (id, patch) =>
+        decisionsMissing(call((g) => g.setDecisionPreference({ payload: { id, ...patch } }))).then(
+          (v) => v.decisions
+        )
     },
     integrations: {
       read: () => integrationsMissing(call((g) => g.readIntegrations({ payload: {} }))),

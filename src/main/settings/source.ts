@@ -62,6 +62,7 @@ import type {
 } from '../helpers/preferences'
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
 import type { JevStatus } from '../../shared/jev'
+import type { DecisionPreference, DecisionPreferencePatch } from '../../shared/decision-preferences'
 // ── Lane B (harness wave): provider connections ──
 import type {
   ProviderCompanyId,
@@ -157,6 +158,15 @@ export interface SettingsManagers {
       id: string,
       patch: HelperPreferencePatch
     ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
+  }
+  /** The decisions' switches on this host (PRDCT-5179,
+   *  `../decisions/preferences.ts`); absent, refused. */
+  decisions?: {
+    list(): DecisionPreference[] | Promise<DecisionPreference[]>
+    set(
+      id: string,
+      patch: DecisionPreferencePatch
+    ): DecisionPreference[] | Promise<DecisionPreference[]>
   }
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  on its own secret port; absent, refused. */
@@ -465,6 +475,14 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
               ...(patch.account && { account: mutable<HelperAccount>(patch.account) })
             })
           : refuse('helpers', 'This server runs no helpers.')
+    },
+    decisions: {
+      list: () =>
+        m.decisions ? m.decisions.list() : refuse('decisions', 'This server runs no decisions.'),
+      set: (id, patch) =>
+        m.decisions
+          ? m.decisions.set(id, { ...patch })
+          : refuse('decisions', 'This server runs no decisions.')
     },
     integrations: {
       read: () => withJev(integrations().status()),

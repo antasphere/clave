@@ -225,6 +225,37 @@ describe('the helpers on the server (PRDCT-4330)', () => {
   })
 })
 
+describe('the decisions on the server (PRDCT-5179)', () => {
+  it('lists the host’s decisions and switches one, passing only what was sent', async () => {
+    const listed = await get('/decisions')
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toEqual({ decisions: fake.decisionList })
+    const off = await post('/decisions', { id: 'tab-project', enabled: false })
+    expect(off.status).toBe(200)
+    expect(await off.json()).toEqual({
+      decisions: [expect.objectContaining({ id: 'tab-project', enabled: false })]
+    })
+    const untouched = await post('/decisions', { id: 'tab-project' })
+    expect(await untouched.json()).toEqual({
+      decisions: [expect.objectContaining({ id: 'tab-project', enabled: false })]
+    })
+    expect(fake.calls.filter((c) => c.method === 'decisions.set')).toEqual([
+      { method: 'decisions.set', args: ['tab-project', { enabled: false }] },
+      { method: 'decisions.set', args: ['tab-project', {}] }
+    ])
+  })
+
+  it('refuses an unknown decision with its sentence, and a switch it cannot decode', async () => {
+    const unknown = await post('/decisions', { id: 'nope', enabled: false })
+    expect(unknown.status).toBe(422)
+    expect(await unknown.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'There is no decision "nope" on this machine.'
+    })
+    expect((await post('/decisions', { id: 'tab-project', enabled: 'yes' })).status).toBe(400)
+  })
+})
+
 describe('the integrations on the server (PRDCT-4410)', () => {
   const KEY = 'xi-server-test-key'
   it('hands the ElevenLabs key to the source and to no answer', async () => {

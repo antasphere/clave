@@ -39,6 +39,8 @@ export const SettingsLive = HttpApiBuilder.group(ClaveApi, 'settings', (handlers
     .handle('setWorkspaceLaunchProfile', HttpCqrs.command(S.SetWorkspaceLaunchProfile))
     .handle('listHelperPreferences', HttpCqrs.query(S.ListHelperPreferences))
     .handle('setHelperPreference', HttpCqrs.command(S.SetHelperPreference))
+    .handle('listDecisions', HttpCqrs.query(S.ListDecisions))
+    .handle('setDecisionPreference', HttpCqrs.command(S.SetDecisionPreference))
     .handle('readIntegrations', HttpCqrs.query(S.ReadIntegrations))
     .handle('setElevenLabsKey', HttpCqrs.command(S.SetElevenLabsKey))
     .handle('checkElevenLabs', HttpCqrs.command(S.CheckElevenLabs))

@@ -127,3 +127,52 @@ describe('main owns the helpers only when it is the server', () => {
     }
   )
 })
+
+/**
+ * The decisions (PRDCT-5179) keep the helpers' rule: main owns their
+ * switches and runs them only while the server runs in its process. With a
+ * server behind the window main offers no switch and refuses every decision
+ * before the key is read.
+ */
+describe('main owns the decisions only when it is the server', () => {
+  it('in-process: the runner reads main’s own switches, written through the source', async () => {
+    await load('in-process')
+    const { installSettingsPorts, resetSettingsPorts } = await import('../ports')
+    const { tempDataDir, electronTestPorts } = await import('../ports/testing')
+    installSettingsPorts(electronTestPorts(tempDataDir('clave-shell-decisions-')))
+    try {
+      const prefs = await import('../decisions/preferences')
+      const registry = await import('../decisions/registry')
+      const m = (await import('./shell-source')) as unknown as {
+        shellSettingsSource: { managers: { decisions?: unknown; jev?: unknown } }
+      }
+      expect(m.shellSettingsSource.managers.decisions).toBe(prefs.decisionPreferences)
+      expect(m.shellSettingsSource.managers.jev).toBe(
+        (await import('../integrations/jev')).jevIntegration
+      )
+      const decision = registry.decisionById('tab-project')!
+      expect(registry.decisionConfig(decision)).toEqual({ enabled: true })
+      prefs.decisionPreferences.set('tab-project', { enabled: false })
+      expect(registry.decisionConfig(decision)).toEqual({ enabled: false })
+    } finally {
+      resetSettingsPorts()
+    }
+  })
+
+  it.each(['separate', 'attached'] as const)(
+    '%s: no switch in main, no key, every decision refused here',
+    async (mode) => {
+      const m = (await load(mode)) as unknown as {
+        shellSettingsSource: { managers: { decisions?: unknown; jev?: unknown } }
+      }
+      expect('decisions' in m.shellSettingsSource.managers).toBe(false)
+      expect('jev' in m.shellSettingsSource.managers).toBe(false)
+      const prefs = await import('../decisions/preferences')
+      const registry = await import('../decisions/registry')
+      expect(registry.decisionConfig(registry.decisionById('tab-project')!)).toEqual({
+        enabled: true,
+        refused: prefs.DECISIONS_RUN_ON_SERVER
+      })
+    }
+  )
+})
