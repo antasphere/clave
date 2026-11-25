@@ -25,6 +25,8 @@ import type {
   ModelsCatalogView
 } from '@clave/contract/settings/models-catalog-view'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { setWritingStylesSource } from '../writing-styles/source'
+import { BUILT_IN_STYLES } from '../../shared/writing-styles'
 
 const group = (id: string, extra: Partial<SidebarGroup> = {}): SidebarGroup => ({
   ...{ id, name: id, sessionIds: [], collapsed: false, cwd: null, terminals: [] },
@@ -909,6 +911,45 @@ describe('launchOptions, served: what this machine can launch', () => {
       expect(await suggested(false)).toEqual(['later'])
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  // PRDCT-5166: the machine's writing styles, from the source the spawn reads.
+  it("lists this machine's writing styles and its default, from the styles' source", async () => {
+    const h = setup()
+    const before = (await serveCommand('launchOptions', {}, h.ctx())) as LaunchOptions
+    // No source installed: the built-in styles, no default.
+    expect(before.styles.map((style) => style.id)).toEqual(['brief', 'quiet'])
+    expect(before.defaultStyle).toBeNull()
+    setWritingStylesSource({
+      view: () => ({
+        styles: [
+          ...BUILT_IN_STYLES,
+          {
+            id: 'terse',
+            name: 'Terse',
+            description: 'One line.',
+            text: 'One line.',
+            statusCard: false,
+            builtIn: false
+          }
+        ],
+        defaultStyleId: 'terse',
+        claudeOutputStyle: null
+      })
+    })
+    try {
+      const answer = (await serveCommand('launchOptions', {}, h.ctx())) as LaunchOptions
+      expect(answer.defaultStyle).toBe('terse')
+      expect(answer.styles.at(-1)).toEqual({
+        id: 'terse',
+        name: 'Terse',
+        description: 'One line.',
+        statusCard: false,
+        default: true
+      })
+    } finally {
+      setWritingStylesSource(null)
     }
   })
 

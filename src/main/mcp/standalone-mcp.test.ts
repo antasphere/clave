@@ -1878,6 +1878,12 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(harnesses.map((h) => h.id)).toEqual(['claude', 'codex', 'pi', 'opencode'])
     expect(options.notInstalled).toEqual(['Antigravity'])
     expect(options).not.toHaveProperty('warnings')
+    // PRDCT-5166: this server's writing styles; no source installed, the built-in ones.
+    expect((options.styles as Array<{ id: string }>).map((style) => style.id)).toEqual([
+      'brief',
+      'quiet'
+    ])
+    expect(options.defaultStyle).toBeNull()
     const [claude, codex, pi, opencode] = harnesses
     expect(claude).toMatchObject({
       installed: true,

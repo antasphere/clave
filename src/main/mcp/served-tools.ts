@@ -83,6 +83,7 @@ export {
   modeOf,
   resolveGroupRef
 } from './served-core'
+import { writingStylesView } from '../writing-styles/source'
 
 // ── The tools ──
 
@@ -553,6 +554,9 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
         : undefined,
     providerStartModel: (id, connectionId) =>
       id === 'pi' ? piStarts.get(connectionId) : undefined,
+    // The machine's writing styles (PRDCT-5166), from the source the spawn
+    // reads too, so the list and the launch never disagree.
+    writingStyles: writingStylesView(),
     now: Date.now()
   })
 }

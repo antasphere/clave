@@ -51,6 +51,7 @@ import {
 import { sessionOwnAccount } from './session-accounts'
 import { pairedServerWorkspaces } from '../store/pairing-store'
 import { readChatHistory } from '../../../shared/history-read'
+import { readWritingStyles } from './writing-styles-read'
 import type { CodexAccount } from '../../../preload/index.d'
 import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -1887,12 +1888,15 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
       ? api?.harnessUsageRead?.({ range: 'today' })
       : api?.fleetHarnessUsage?.(serverId, { range: 'today' })
   )?.catch(() => null)
+  // The machine's writing styles (PRDCT-5166), from the machine that keeps them.
+  const writingStyles = await readWritingStyles(serverId)
   const facts = {
     harnessSettings: harnesses,
     interactionMode,
     codexModels,
     antigravityModels,
     harnessUsage: harnessUsage ?? null,
+    writingStyles,
     now: Date.now()
   }
   // The machine's stored connections, read first when the window holds none

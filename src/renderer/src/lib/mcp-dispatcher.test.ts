@@ -1617,6 +1617,7 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
     selectedConnectionId: () => 'default',
     preferRecommended: true,
     launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
+    writingStyles: null,
     now: 1
   }
   beforeEach(() => {
@@ -1707,6 +1708,117 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
   })
 })
 
+// PRDCT-5166: the window's listing carries the machine's writing styles, read
+// from the machine that keeps them: this Mac's settings, or the server's.
+describe('clave_launch_options on the window road lists the writing styles', () => {
+  const view = {
+    styles: [
+      {
+        id: 'quiet',
+        name: 'Quiet',
+        description: 'For work nobody watches.',
+        text: 'Write nothing until the end.',
+        statusCard: true,
+        builtIn: true
+      }
+    ],
+    defaultStyleId: 'quiet',
+    claudeOutputStyle: null
+  }
+  /** A machine's input carrying the styles its facts were given. */
+  const machineInput = (id: string, name: string, writingStyles: unknown): LaunchOptionsInput => ({
+    machine: { id, name },
+    harnesses: [],
+    presence: () => undefined,
+    profiles: () => [],
+    defaultProfileId: () => undefined,
+    openProfileId: () => undefined,
+    models: () => 'unavailable',
+    harnessSettings: {},
+    interactionMode: 'chat',
+    connections: () => [],
+    selectedConnectionId: () => undefined,
+    preferRecommended: false,
+    launchModel: () => undefined,
+    writingStyles: (writingStyles ?? null) as LaunchOptionsInput['writingStyles'],
+    now: 1
+  })
+  const ask = async (server: string | undefined): Promise<unknown> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'options', command: 'launchOptions', payload: { server } })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  afterEach(() => {
+    delete globals.window.electronAPI.writingStylesList
+    delete globals.window.electronAPI.fleetWritingStyles
+    launchInput.local.mockReset()
+    launchInput.server.mockReset()
+    useFleetStore.setState({ connections: [], statuses: {} } as never)
+  })
+
+  it("hands this Mac's styles to the input, and the answer lists them with the default", async () => {
+    const writingStylesList = vi.fn(async () => view)
+    const fleetWritingStyles = vi.fn(async () => view)
+    Object.assign(globals.window.electronAPI, { writingStylesList, fleetWritingStyles })
+    // The real input builder loads the usage store, which cannot load here:
+    // this one passes the facts' styles on, as it does.
+    launchInput.local.mockImplementation(
+      (facts: { writingStyles?: unknown }): LaunchOptionsInput =>
+        machineInput('local', 'This Mac', facts.writingStyles)
+    )
+    const answer = (await ask(undefined)) as { ok: boolean; result: Record<string, unknown> }
+    expect(answer.ok).toBe(true)
+    expect(writingStylesList).toHaveBeenCalledTimes(1)
+    expect(fleetWritingStyles).not.toHaveBeenCalled()
+    expect(launchInput.local).toHaveBeenCalledWith(expect.objectContaining({ writingStyles: view }))
+    expect(answer.result.styles).toEqual([
+      {
+        id: 'quiet',
+        name: 'Quiet',
+        description: 'For work nobody watches.',
+        statusCard: true,
+        default: true
+      }
+    ])
+    expect(answer.result.defaultStyle).toBe('quiet')
+  })
+
+  it("reads a server's styles from that server, and none when it cannot answer", async () => {
+    const fleetWritingStyles = vi.fn(async (serverId: string) => {
+      void serverId
+      throw new Error('This server needs an update to show its writing styles.')
+    })
+    Object.assign(globals.window.electronAPI, { fleetWritingStyles })
+    useFleetStore.setState({
+      connections: [{ id: 'srv', name: 'Studio box', url: 'http://srv', enabled: true }] as never,
+      statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+    })
+    launchInput.server.mockImplementation(
+      (serverId: string, name: string, settings: unknown, facts: { writingStyles?: unknown }) => {
+        void settings
+        return machineInput(serverId, name, facts.writingStyles)
+      }
+    )
+    const answer = (await ask('srv')) as { ok: boolean; result: Record<string, unknown> }
+    expect(answer.ok).toBe(true)
+    expect(fleetWritingStyles).toHaveBeenCalledWith('srv')
+    expect(launchInput.server.mock.calls[0][3]).toMatchObject({ writingStyles: null })
+    expect(answer.result).toMatchObject({ styles: [], defaultStyle: null })
+  })
+})
+
 // Lane C of the harness wave (PRDCT-4496), verifier's F1: the window's listing
 // and its open read the same list of a server's stored connections.
 describe("clave_launch_options and clave_open_session agree on a server's stored connection", () => {
@@ -1785,6 +1897,7 @@ describe("clave_launch_options and clave_open_session agree on a server's stored
         selectedConnectionId: () => undefined,
         preferRecommended: false,
         launchModel: () => undefined,
+        writingStyles: null,
         now: 1
       })
     )
