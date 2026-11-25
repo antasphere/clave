@@ -9,10 +9,10 @@
  *
  * Every method may answer a value or a promise; a thrown or rejected
  * `CapabilityUnavailable` is the one declared failure, anything else is a
- * defect. A secret enters through exactly four methods (`setToken`, the
+ * defect. A secret enters through exactly five methods (`setToken`, the
  * token; `startApiKey`, the key; `integrations.setElevenLabsKey`, the
- * ElevenLabs key; and `providerConnections.setKey`, a provider key, lane B
- * of the harness wave), as the plain string the payload carried redacted, and is
+ * ElevenLabs key; `integrations.setJevKey`, the Jev key, PRDCT-5179; and
+ * `providerConnections.setKey`, a provider key, lane B of the harness wave), as the plain string the payload carried redacted, and is
  * held nowhere on this side of the port.
  */
 import { Context, Layer } from 'effect'
@@ -46,6 +46,7 @@ export type IntegrationsStatus = typeof Settings.IntegrationsView.Type
 export type ElevenLabsStatus = typeof Settings.ElevenLabsStatusView.Type
 export type ElevenLabsModelId = typeof Settings.ElevenLabsModelId.Type
 export type ElevenLabsVoices = typeof Settings.ElevenLabsVoicesView.Type
+export type JevStatus = typeof Settings.JevStatusView.Type
 export type Workspace = typeof Settings.WorkspaceView.Type
 export type WorkspaceState = typeof Settings.WorkspaceStateView.Type
 export type WorkspaceStamp = typeof Settings.WorkspaceStamp.Type
@@ -149,6 +150,11 @@ export interface SettingsSourceService {
       modelId: ElevenLabsModelId | undefined
     ) => Awaitable<IntegrationsStatus>
     readonly listElevenLabsVoices: () => Awaitable<ElevenLabsVoices>
+    /** The Jev key (PRDCT-5179), sealed beside the ElevenLabs one and
+     *  checked against TypeSafe's list of models. */
+    readonly setJevKey: (apiKey: string) => Awaitable<IntegrationsStatus>
+    readonly checkJev: () => Awaitable<IntegrationsStatus>
+    readonly removeJevKey: () => Awaitable<IntegrationsStatus>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Awaitable<void>
@@ -302,7 +308,10 @@ function noneSource(): SettingsSourceService {
       checkElevenLabs: refuse('integrations'),
       removeElevenLabsKey: refuse('integrations'),
       setElevenLabsVoice: refuse('integrations'),
-      listElevenLabsVoices: refuse('integrations')
+      listElevenLabsVoices: refuse('integrations'),
+      setJevKey: refuse('integrations'),
+      checkJev: refuse('integrations'),
+      removeJevKey: refuse('integrations')
     },
     preferences: { setAppIcon: refuse('appIcon') },
     antasphere: {

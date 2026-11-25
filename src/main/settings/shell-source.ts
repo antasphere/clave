@@ -40,6 +40,7 @@ import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
+import { jevIntegration } from '../integrations/jev'
 import { setHelperConfigSource } from '../helpers/registry'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import { modelsCatalog } from '../models-catalog'
@@ -82,6 +83,8 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   // The integrations, like the helpers, belong to whichever process is the
   // server (PRDCT-4410): main only while it runs in-process.
   ...(shellOwnsHelpers && { integrations: elevenLabsIntegration }),
+  // The Jev key (PRDCT-5179), sealed beside the ElevenLabs one: the same owner.
+  ...(shellOwnsHelpers && { jev: jevIntegration }),
   // Lane C of the harness wave (PRDCT-4496): the models catalogue, the
   // server's like the integrations: main's only while it runs in-process.
   ...(shellOwnsHelpers && { modelsCatalog }),

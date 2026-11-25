@@ -55,7 +55,10 @@ import {
   ReadIntegrations,
   RemoveElevenLabsKey,
   SetElevenLabsKey,
-  SetElevenLabsVoice
+  SetElevenLabsVoice,
+  CheckJev,
+  RemoveJevKey,
+  SetJevKey
 } from './integrations'
 import { SetAppIcon } from './preferences'
 import {
@@ -265,6 +268,10 @@ export const settingsGroup = ApiGroup.make('settings')
       ListElevenLabsVoices
     )
   )
+  // The Jev key (PRDCT-5179), sealed beside the ElevenLabs one
+  .add(HttpCqrs.commandEndpoint('setJevKey', '/integrations/jev/key', SetJevKey))
+  .add(HttpCqrs.commandEndpoint('checkJev', '/integrations/jev/check', CheckJev))
+  .add(HttpCqrs.commandEndpoint('removeJevKey', '/integrations/jev/remove', RemoveJevKey))
   // Preferences
   .add(HttpCqrs.commandEndpoint('setAppIcon', '/preferences/app-icon', SetAppIcon))
   // Workspaces

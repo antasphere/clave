@@ -109,7 +109,9 @@ export class FakeSettingsSource implements SettingsSourceService {
       charactersUsed: null,
       charactersLimit: null,
       lastError: null
-    }
+    },
+    // The Jev key (PRDCT-5179), carried beside the ElevenLabs one.
+    jev: { configured: false, setAt: null, checkedAt: null, lastError: null }
   }
   /** The Antasphere account as the fake holds it, moved by the four commands. */
   antasphereStatus: AntasphereAccountStatus = {
@@ -339,8 +341,19 @@ export class FakeSettingsSource implements SettingsSourceService {
   }
   private elevenLabs(patch: Partial<IntegrationsStatus['elevenLabs']>): IntegrationsStatus {
     this.integrationsStatus = {
+      ...this.integrationsStatus,
       elevenLabs: { ...this.integrationsStatus.elevenLabs, ...patch }
     }
+    return this.integrationsStatus
+  }
+  private jevStatus(patch: Partial<NonNullable<IntegrationsStatus['jev']>>): IntegrationsStatus {
+    const jev = this.integrationsStatus.jev ?? {
+      configured: false,
+      setAt: null,
+      checkedAt: null,
+      lastError: null
+    }
+    this.integrationsStatus = { ...this.integrationsStatus, jev: { ...jev, ...patch } }
     return this.integrationsStatus
   }
   readonly integrations: SettingsSourceService['integrations'] = {
@@ -380,6 +393,24 @@ export class FakeSettingsSource implements SettingsSourceService {
           { voiceId: 'v1', name: 'Voice one', category: 'premade', labels: {}, previewUrl: null }
         ]
       }
+    },
+    setJevKey: (apiKey) => {
+      this.record('integrations.setJevKey')
+      this.integrationsHere()
+      if (!apiKey.trim()) throw new Error('Paste the API key first.')
+      this.secrets.push(apiKey)
+      return this.jevStatus({ configured: true, setAt: 1, checkedAt: 1, lastError: null })
+    },
+    checkJev: () => {
+      this.record('integrations.checkJev')
+      this.integrationsHere()
+      if (!this.integrationsStatus.jev?.configured) throw new Error('No Jev key on this machine.')
+      return this.jevStatus({ checkedAt: 2 })
+    },
+    removeJevKey: () => {
+      this.record('integrations.removeJevKey')
+      this.integrationsHere()
+      return this.jevStatus({ configured: false, setAt: null, checkedAt: null, lastError: null })
     }
   }
   readonly preferences: SettingsSourceService['preferences'] = {

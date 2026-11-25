@@ -61,6 +61,7 @@ import type {
   HelperPreferenceView
 } from '../helpers/preferences'
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
+import type { JevStatus } from '../../shared/jev'
 // ── Lane B (harness wave): provider connections ──
 import type {
   ProviderCompanyId,
@@ -115,6 +116,15 @@ export interface IntegrationsLike {
   voices(): Promise<{ voices: ElevenLabsVoice[] }>
 }
 
+/** The Jev key of a host as the source needs it (PRDCT-5179,
+ *  `../integrations/jev.ts`'s `JevIntegration`). */
+export interface JevLike {
+  status(): JevStatus
+  setKey(apiKey: string): Promise<JevStatus>
+  check(): Promise<JevStatus>
+  removeKey(): Promise<JevStatus>
+}
+
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 /** The models catalogue of a host as the source needs it
  *  (`../models-catalog.ts`'s `ModelsCatalog`). */
@@ -151,6 +161,9 @@ export interface SettingsManagers {
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  on its own secret port; absent, refused. */
   integrations?: IntegrationsLike
+  /** The Jev key of this host (PRDCT-5179), sealed beside the ElevenLabs
+   *  one; absent, its writes are refused and the answers carry no Jev card. */
+  jev?: JevLike
   /** Where the process has a PTY for a login (the shell); absent, a login is
    *  refused. Loaded on the first call, not at construction: the login
    *  manager pulls the PTY backend in, which the shell must not load from
@@ -296,6 +309,17 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // status each write answers.
   const integrations = (): IntegrationsLike =>
     m.integrations ?? refuse('integrations', 'This server has no integrations.')
+  // The Jev key (PRDCT-5179): EVERY integrations answer carries both
+  // statuses, the ElevenLabs writes included, so a page never loses one card
+  // by acting on the other.
+  const jev = (): JevLike => m.jev ?? refuse('integrations', 'This server holds no Jev key.')
+  const withJev = (
+    elevenLabs: ElevenLabsStatus,
+    jevStatus: JevStatus | undefined = m.jev?.status()
+  ): { elevenLabs: ElevenLabsStatus; jev?: JevStatus } => ({
+    elevenLabs,
+    ...(jevStatus && { jev: jevStatus })
+  })
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   const modelsCatalog = (): ModelsCatalogLike =>
     m.modelsCatalog ?? refuse('modelsCatalog', 'This server has no models catalogue.')
@@ -443,16 +467,25 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
           : refuse('helpers', 'This server runs no helpers.')
     },
     integrations: {
-      read: () => ({ elevenLabs: integrations().status() }),
-      setElevenLabsKey: async (apiKey) => ({
-        elevenLabs: await integrations().setKey(apiKey)
-      }),
-      checkElevenLabs: async () => ({ elevenLabs: await integrations().check() }),
-      removeElevenLabsKey: async () => ({ elevenLabs: await integrations().removeKey() }),
-      setElevenLabsVoice: async (voiceId, voiceName, modelId) => ({
-        elevenLabs: await integrations().setVoice(voiceId, voiceName, modelId)
-      }),
-      listElevenLabsVoices: () => integrations().voices()
+      read: () => withJev(integrations().status()),
+      setElevenLabsKey: async (apiKey) => withJev(await integrations().setKey(apiKey)),
+      checkElevenLabs: async () => withJev(await integrations().check()),
+      removeElevenLabsKey: async () => withJev(await integrations().removeKey()),
+      setElevenLabsVoice: async (voiceId, voiceName, modelId) =>
+        withJev(await integrations().setVoice(voiceId, voiceName, modelId)),
+      listElevenLabsVoices: () => integrations().voices(),
+      setJevKey: async (apiKey) => {
+        const status = await jev().setKey(apiKey)
+        return withJev(integrations().status(), status)
+      },
+      checkJev: async () => {
+        const status = await jev().check()
+        return withJev(integrations().status(), status)
+      },
+      removeJevKey: async () => {
+        const status = await jev().removeKey()
+        return withJev(integrations().status(), status)
+      }
     },
     preferences: {
       setAppIcon: (icon) => {

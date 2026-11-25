@@ -180,6 +180,10 @@ export interface SettingsClient {
       modelId?: ElevenLabsModelId
     ) => Promise<IntegrationsStatus>
     readonly listElevenLabsVoices: () => Promise<ElevenLabsVoices>
+    /** The Jev key (PRDCT-5179), the same road as the ElevenLabs one. */
+    readonly setJevKey: (apiKey: string) => Promise<IntegrationsStatus>
+    readonly checkJev: () => Promise<IntegrationsStatus>
+    readonly removeJevKey: () => Promise<IntegrationsStatus>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
@@ -349,7 +353,10 @@ export function settingsClient(callApi: Call): SettingsClient {
           )
         ),
       listElevenLabsVoices: () =>
-        integrationsMissing(call((g) => g.listElevenLabsVoices({ payload: {} })))
+        integrationsMissing(call((g) => g.listElevenLabsVoices({ payload: {} }))),
+      setJevKey: (apiKey) => integrationsMissing(call((g) => g.setJevKey({ payload: { apiKey } }))),
+      checkJev: () => integrationsMissing(call((g) => g.checkJev({ payload: {} }))),
+      removeJevKey: () => integrationsMissing(call((g) => g.removeJevKey({ payload: {} })))
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)

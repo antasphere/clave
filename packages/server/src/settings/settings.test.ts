@@ -291,6 +291,55 @@ describe('the integrations on the server (PRDCT-4410)', () => {
   })
 })
 
+describe('the Jev key on the server (PRDCT-5179)', () => {
+  const KEY = 'jev-server-test-key'
+  it('hands the key to the source and to no answer, and keeps the other card', async () => {
+    const before = await get('/integrations')
+    expect(await before.json()).toMatchObject({
+      elevenLabs: { configured: false },
+      jev: { configured: false }
+    })
+    const set = await post('/integrations/jev/key', { apiKey: KEY })
+    expect(set.status).toBe(200)
+    const text = await set.text()
+    expect(text).not.toContain(KEY)
+    expect(JSON.parse(text)).toMatchObject({
+      elevenLabs: { configured: false },
+      jev: { configured: true, setAt: 1 }
+    })
+    expect(fake.secrets).toEqual([KEY])
+    expect(fake.calls.find((c) => c.method === 'integrations.setJevKey')?.args).toEqual([])
+    expect(await (await get('/integrations')).text()).not.toContain(KEY)
+  })
+
+  it('checks and removes the key', async () => {
+    await post('/integrations/jev/key', { apiKey: KEY })
+    const checked = await post('/integrations/jev/check', {})
+    expect(checked.status).toBe(200)
+    expect(await checked.json()).toMatchObject({ jev: { configured: true, checkedAt: 2 } })
+    const removed = await post('/integrations/jev/remove', {})
+    expect(await removed.json()).toMatchObject({ jev: { configured: false, setAt: null } })
+  })
+
+  it('says a refusal in its sentence, and a host with none as unavailable', async () => {
+    const check = await post('/integrations/jev/check', {})
+    expect(check.status).toBe(422)
+    expect(await check.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'No Jev key on this machine.'
+    })
+    fake.refuse.integrations = true
+    const set = await post('/integrations/jev/key', { apiKey: KEY })
+    expect(set.status).toBe(422)
+    expect(await set.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'integrations'
+    })
+    expect((await post('/integrations/jev/remove', {})).status).toBe(422)
+    expect(fake.secrets).toEqual([])
+  })
+})
+
 describe('the settings events on the push channel', () => {
   const welcomed = async (): Promise<Peer> => {
     const peer = new Peer(server.url.replace('http', 'ws') + '/push')

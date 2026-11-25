@@ -5,8 +5,8 @@
  * the source's own `CapabilityUnavailable` is the one failure that reaches
  * the wire as declared (422). Anything else the source throws is a defect.
  *
- * The four secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
- * `SetElevenLabsKey`, `SetProviderConnectionKey`) arrive
+ * The five secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
+ * `SetElevenLabsKey`, `SetJevKey`, `SetProviderConnectionKey`) arrive
  * redacted; they are opened here, handed to the source, and appear in no
  * answer: the success schemas carry none, and the contract's own test keeps
  * it so.
@@ -25,6 +25,7 @@ import {
   SignOutOfAntasphere,
   CapabilityUnavailable,
   CheckElevenLabs,
+  CheckJev,
   ClearClaudeAccountToken,
   ClearCodexAccountCredential,
   DeleteLaunchProfile,
@@ -46,6 +47,7 @@ import {
   RemoveClaudeAccount,
   RemoveCodexAccount,
   RemoveElevenLabsKey,
+  RemoveJevKey,
   RenameClaudeAccount,
   RenameCodexAccount,
   ReorderClaudeAccounts,
@@ -55,6 +57,7 @@ import {
   SetClaudeAccountToken,
   SetElevenLabsKey,
   SetElevenLabsVoice,
+  SetJevKey,
   SetGlobalLaunchProfile,
   SetHelperPreference,
   SetLastActiveWorkspace,
@@ -227,6 +230,12 @@ export const settingsHandlers = [
     call((s) => s.integrations.setElevenLabsVoice(p.voiceId, p.voiceName, p.modelId))
   ),
   QueryHandler.make(ListElevenLabsVoices, () => call((s) => s.integrations.listElevenLabsVoices())),
+  // The Jev key (PRDCT-5179): the same road, sealed beside the ElevenLabs one.
+  CommandHandler.make(SetJevKey, (p) =>
+    call((s) => s.integrations.setJevKey(Redacted.value(p.apiKey)))
+  ),
+  CommandHandler.make(CheckJev, () => call((s) => s.integrations.checkJev())),
+  CommandHandler.make(RemoveJevKey, () => call((s) => s.integrations.removeJevKey())),
   // Preferences: the icon needs a Dock, which this server may not have.
   CommandHandler.make(SetAppIcon, (p) => call((s) => s.preferences.setAppIcon(p.icon))),
   // The Antasphere account (PRDCT-3259): the server owns the login, or says

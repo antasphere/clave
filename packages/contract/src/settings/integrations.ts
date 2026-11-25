@@ -33,7 +33,21 @@ export const ElevenLabsStatusView = Schema.Struct({
   lastError: Schema.NullOr(Schema.String)
 })
 
-export const IntegrationsView = Schema.Struct({ elevenLabs: ElevenLabsStatusView })
+/** The Jev key (PRDCT-5179): whether a machine holds one, never what it is.
+ *  The fields of `JevStatus` in `src/shared/jev.ts`. */
+export const JevStatusView = Schema.Struct({
+  configured: Schema.Boolean,
+  setAt: Schema.NullOr(Schema.Number),
+  checkedAt: Schema.NullOr(Schema.Number),
+  /** The last check's failure in the person's words; null when it passed. */
+  lastError: Schema.NullOr(Schema.String)
+})
+
+export const IntegrationsView = Schema.Struct({
+  elevenLabs: ElevenLabsStatusView,
+  /** Optional: a window still decodes a server released before Jev. */
+  jev: Schema.optional(JevStatusView)
+})
 
 export const ElevenLabsVoiceView = Schema.Struct({
   voiceId: Schema.String,
@@ -93,5 +107,27 @@ export const SetElevenLabsVoice = Command.define('SetElevenLabsVoice', {
 export const ListElevenLabsVoices = Query.define('ListElevenLabsVoices', {
   payload: Schema.Struct({}),
   success: ElevenLabsVoicesView,
+  failure: RefusedOrUnavailable
+})
+
+/** `integrations:jev-set-key` (PRDCT-5179) — sealed on the machine, then
+ *  checked; a failed check keeps the key and says why in `lastError`. */
+export const SetJevKey = Command.define('SetJevKey', {
+  payload: Schema.Struct({ apiKey: Schema.Redacted(Schema.String) }),
+  success: IntegrationsView,
+  failure: RefusedOrUnavailable
+})
+
+/** `integrations:jev-check` — ask TypeSafe's list of models again. */
+export const CheckJev = Command.define('CheckJev', {
+  payload: Schema.Struct({}),
+  success: IntegrationsView,
+  failure: RefusedOrUnavailable
+})
+
+/** `integrations:jev-remove` — the sealed key forgotten. */
+export const RemoveJevKey = Command.define('RemoveJevKey', {
+  payload: Schema.Struct({}),
+  success: IntegrationsView,
   failure: RefusedOrUnavailable
 })

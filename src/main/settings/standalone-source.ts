@@ -32,6 +32,7 @@ import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
+import { jevIntegration } from '../integrations/jev'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
@@ -84,6 +85,8 @@ export function standaloneSettingsSource(
     workspaces: workspaceManager,
     helpers: helperPreferences,
     integrations: elevenLabsIntegration,
+    // The Jev key (PRDCT-5179), sealed beside the ElevenLabs one.
+    jev: jevIntegration,
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog,
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line

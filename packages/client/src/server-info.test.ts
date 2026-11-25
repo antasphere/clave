@@ -112,6 +112,12 @@ describe('the integrations of an older server (PRDCT-4410)', () => {
     await expect(api.settings.integrations.setElevenLabsKey('xi-old-server')).rejects.toThrow(
       INTEGRATIONS_NEED_UPDATE
     )
+    // A server released before the Jev key (PRDCT-5179): the same grace.
+    await expect(api.settings.integrations.setJevKey('jev-old-server')).rejects.toBeInstanceOf(
+      IntegrationsMissing
+    )
+    await expect(api.settings.integrations.checkJev()).rejects.toThrow(INTEGRATIONS_NEED_UPDATE)
+    await expect(api.settings.integrations.removeJevKey()).rejects.toThrow(INTEGRATIONS_NEED_UPDATE)
     const shared = await import('../../../src/shared/elevenlabs')
     expect(INTEGRATIONS_NEED_UPDATE).toBe(shared.INTEGRATIONS_NEED_UPDATE)
   })
