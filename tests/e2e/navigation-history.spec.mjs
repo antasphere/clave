@@ -705,17 +705,35 @@ async function walk(t) {
     )
     s = await snapshot(win)
     // The places behind, alive, nearest first: what the history holds, the places that were
-    // B alone left out (every other tab of the walk still exists).
-    const expected = s.places
-      .map((p, i) => ({ i, p }))
-      .filter(
-        ({ i, p }) =>
-          i < s.index && (p.tabs.some((id) => id !== B) || p.groupView || p.tabView || p.plugin)
+    // B alone left out (every other tab of the walk still exists), and each place listed once
+    // in a row: one that would look like the row before it (the place on screen, for the first
+    // row) is left out, compared as it would show with B left out (a mosaic of A and B now
+    // shows A alone). A page over the tabs looks the same whatever tabs are under it.
+    const looks = (p) => {
+      const covered =
+        p.view === 'settings' ||
+        p.view === 'extensions' ||
+        p.view === 'ongoing' ||
+        p.plugin ||
+        p.groupView ||
+        p.tabView
+      return JSON.stringify(
+        covered
+          ? ['page', p.workspaceId, p.view, p.label, p.groupView, p.tabView, p.plugin]
+          : ['tabs', p.workspaceId, p.view, p.tabs.filter((id) => id !== B).sort()]
       )
-      .map(({ i }) => i)
-      .reverse()
+    }
+    const expected = []
+    let lastLook = looks(s.places[s.index])
+    for (let i = s.index - 1; i >= 0; i--) {
+      const p = s.places[i]
+      if (!(p.tabs.some((id) => id !== B) || p.groupView || p.tabView || p.plugin)) continue
+      if (looks(p) === lastLook) continue
+      expected.push(i)
+      lastLook = looks(p)
+    }
     t.check(
-      'a right-click on Back lists the places behind, nearest first, the closed tab’s left out',
+      'a right-click on Back lists the places behind, nearest first, the closed tab’s left out, each once in a row',
       same(
         rows.map((r) => r.index),
         expected
