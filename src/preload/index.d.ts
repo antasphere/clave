@@ -1103,6 +1103,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       permissionDefault?: string
       /** `permissionMode` repeats that setting, for an older server. */
       permissionModeFromSetting?: boolean
+      /** The writing style the tab starts with (PRDCT-5166): a style's id or
+       *  exact name, or `none`; absent, the machine's default. */
+      writingStyle?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void

@@ -1490,6 +1490,8 @@ const electronAPI = {
         // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
         connectionId?: string
         connectionLabel?: string
+        // The writing style the tab starts with (PRDCT-5166): a style's id or exact name, or `none`.
+        writingStyle?: string
       }?
     ],
     SessionInfo
