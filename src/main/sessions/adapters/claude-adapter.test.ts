@@ -45,7 +45,8 @@ vi.mock('./pty-backend', () => ({
   }),
   getLoginShellEnv: () => ({ PATH: '/test/bin' }),
   getUserShell: () => '/bin/zsh',
-  buildClaudeHookSettingsArg: (id) => JSON.stringify({ hooks: id }),
+  buildClaudeHookSettingsArg: (id, options) =>
+    JSON.stringify({ hooks: id, ...(options?.resetOutputStyle ? { outputStyle: 'default' } : {}) }),
   shellSingleQuote: (s) => `'${s.replace(/'/g, `'\\''`)}'`,
   isValidClaudeSessionId: (s) => /^[\w-]+$/.test(s)
 }))
@@ -3118,4 +3119,50 @@ it('tells an identified initialInput that stdin refuses as one non-fatal error, 
     process.off('unhandledRejection', onUnhandled)
     child.emit('exit', 0)
   }
+})
+
+describe('a chat with a writing style (PRDCT-5166)', () => {
+  const STYLE = 'Answer first.\nSay "done" when `npm test` passes.'
+  const started = async (context: Parameters<ClaudeAdapter['configure']>[1]): Promise<string> => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn()
+    })
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    adapter.configure(spec.id, context)
+    const handle = await adapter.spawn({ ...spec, options: {} })
+    adapter.write(handle, { type: 'user_message', text: 'Hello' })
+    const command = mock.spawn.mock.calls.at(-1)![1][2] as string
+    child.emit('exit', 0)
+    return command
+  }
+  const quoted = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
+
+  it('starts the CLI with the text in --append-system-prompt and the reset in --settings', async () => {
+    const command = await started({ writingStyle: 'dense', writingStyleText: STYLE })
+    expect(command).toContain(`'--append-system-prompt' ${quoted(STYLE)}`)
+    expect(command).toContain(
+      `'--settings' ${quoted(JSON.stringify({ hooks: spec.id, outputStyle: 'default' }))}`
+    )
+  })
+
+  it("puts a routine's own line first, the style after a blank line", async () => {
+    const command = await started({
+      appendSystemPrompt: 'You are a routine run.',
+      writingStyle: 'dense',
+      writingStyleText: STYLE
+    })
+    expect(command).toContain(
+      `'--append-system-prompt' ${quoted(`You are a routine run.\n\n${STYLE}`)}`
+    )
+  })
+
+  it('adds neither without a style', async () => {
+    const command = await started({})
+    expect(command).not.toContain('--append-system-prompt')
+    expect(command).not.toContain('outputStyle')
+  })
 })

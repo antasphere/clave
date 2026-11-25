@@ -692,6 +692,9 @@ interface HandleState {
    *  then, the way the Claude adapter does it: a restart or an account move
    *  never resends it. */
   initialPrompt?: string
+  /** A writing style's text (PRDCT-5166), the thread's `developerInstructions`
+   *  at its start and at every resume, in the place of the person's own. */
+  developerInstructions?: string
   /** Serializes delivery requests, not whole turns: a follow-up waits for a
    *  pending start/steer reply, then targets whichever turn is still active. */
   turnRequest?: Promise<void>
@@ -763,7 +766,12 @@ export class CodexAdapter implements SessionAdapter {
   private pasts = new Map<string, HistoryItem[]>()
   private profiles = new Map<
     string,
-    { profile: LaunchProfile; env?: Record<string, string>; initialPrompt?: string }
+    {
+      profile: LaunchProfile
+      env?: Record<string, string>
+      initialPrompt?: string
+      developerInstructions?: string
+    }
   >()
   constructor(
     private connect: (
@@ -776,15 +784,21 @@ export class CodexAdapter implements SessionAdapter {
 
   /** Main-only launch context: the profile and the environment the
    *  app-server starts with (a Codex account's `CODEX_HOME`), and the
-   *  launch's prompt when it has one. Never part of the Session record or
-   *  the wire. */
+   *  launch's prompt when it has one, and the writing style's text when the
+   *  tab has one (PRDCT-5166). Never part of the Session record or the wire. */
   configure(
     id: string,
     profile: LaunchProfile,
     env?: Record<string, string>,
-    initialPrompt?: string
+    initialPrompt?: string,
+    developerInstructions?: string
   ): void {
-    this.profiles.set(id, { profile: structuredClone(profile), env, initialPrompt })
+    this.profiles.set(id, {
+      profile: structuredClone(profile),
+      env,
+      initialPrompt,
+      ...(developerInstructions ? { developerInstructions } : {})
+    })
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -800,6 +814,7 @@ export class CodexAdapter implements SessionAdapter {
       profile: context?.profile,
       env: context?.env,
       initialPrompt: context?.initialPrompt,
+      developerInstructions: context?.developerInstructions,
       emitter,
       orderedInputs: 0,
       translator: new CodexTranslator((event) => {
@@ -1285,6 +1300,11 @@ export class CodexAdapter implements SessionAdapter {
         ...(sandbox ? { sandbox } : {}),
         approvalPolicy: permissionMode,
         approvalsReviewer: profilePolicy.approvalsReviewer ?? 'user',
+        // A writing style (PRDCT-5166), on a resumed thread too, so a
+        // thread brought back runs on the style its tab keeps.
+        ...(state.developerInstructions
+          ? { developerInstructions: state.developerInstructions }
+          : {}),
         // Add only this invocation's server, preserving existing user MCP
         // servers and the profile's developer instructions. Required
         // makes a failed handshake fail start/resume rather than lose tools.

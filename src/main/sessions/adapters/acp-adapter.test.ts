@@ -12,6 +12,7 @@ import {
 import type { SessionAdapter, SessionHandle } from '../adapter'
 import { SessionManager } from '../session-manager'
 import type { SessionEvent } from '../../../shared/session-model'
+import { styleAsFirstMessage } from '../../../shared/writing-styles'
 
 const STAND_IN = resolve(__dirname, '../../../../tests/e2e/fixtures/acp-agent.mjs')
 
@@ -63,12 +64,14 @@ async function open(
     state = tmp(),
     env = {},
     initialPrompt,
+    styleText,
     ready = true,
     agent = { id: 'opencode-chat', provider: 'opencode', label: 'OpenCode' }
   }: {
     state?: string
     env?: Record<string, string>
     initialPrompt?: string
+    styleText?: string
     ready?: boolean
     agent?: AcpAgentSpec
   } = {}
@@ -78,7 +81,8 @@ async function open(
   adapter.configure(id, {
     command: [process.execPath, STAND_IN, 'acp'],
     env: { ...process.env, ACP_STAND_IN_STATE: state, ...env },
-    ...(initialPrompt ? { initialPrompt } : {})
+    ...(initialPrompt ? { initialPrompt } : {}),
+    ...(styleText ? { styleText } : {})
   })
   const handle = await adapter.spawn({
     id,
@@ -1404,5 +1408,58 @@ describe('what the write-back records, at the moment it writes', () => {
     s.adapter.write(s.handle, { type: 'interrupt' })
     await expect.poll(() => done(s.events), { timeout: 3000 }).toBe(true)
     expect(frames(s.state).some((f) => f.method === 'session/prompt')).toBe(false)
+  })
+})
+
+describe('a writing style on the first message (PRDCT-5166)', () => {
+  const STYLE = 'Answer first.\nSay "done" when `npm test` passes.'
+  const agent: AcpAgentSpec = {
+    id: 'antigravity-chat',
+    provider: 'antigravity',
+    label: 'Antigravity',
+    sessionOptions: true
+  }
+  const agy = (options: AcpSpawnOptions, extra: { state?: string } = {}): Promise<Session> =>
+    open(options, { ...extra, agent, styleText: STYLE, env: { ACP_STAND_IN_AGY: '1' } })
+  /** The text of each `session/prompt` the agent received. */
+  const sent = (state: string): string[] =>
+    frames(state)
+      .filter((f) => f.method === 'session/prompt')
+      .map((f) => {
+        const blocks = f.params?.prompt as { type: string; text?: string }[]
+        return blocks.find((block) => block.type === 'text')?.text ?? ''
+      })
+  const shown = (events: SessionEvent[]): string[] =>
+    events.flatMap((e) => (e.type === 'user_message' ? [e.text] : []))
+  const turn = async (s: Session, text: string): Promise<void> => {
+    const from = s.events.length
+    s.adapter.write(s.handle, { type: 'user_message', text })
+    await expect.poll(() => done(s.events, from)).toBe(true)
+  }
+
+  it("goes with an Antigravity chat's first prompt, once, and the views see the message as written", async () => {
+    const s = await agy({})
+    await turn(s, 'hello')
+    await turn(s, 'again')
+    expect(sent(s.state)).toEqual([styleAsFirstMessage(STYLE, 'hello'), 'again'])
+    expect(shown(s.events)).toEqual(['hello', 'again'])
+  })
+
+  it('never goes to a conversation loaded back', async () => {
+    const state = tmp()
+    const first = await agy({}, { state })
+    const { providerSessionId } = first.events.find((e) => e.type === 'session_meta') as {
+      providerSessionId: string
+    }
+    await first.adapter.kill(first.handle)
+    const again = await agy({ resume: providerSessionId }, { state })
+    await turn(again, 'back')
+    expect(sent(state)).toEqual(['back'])
+  })
+
+  it('never goes to an OpenCode chat, which reads its style from a file', async () => {
+    const s = await open({}, { styleText: STYLE })
+    await turn(s, 'hello')
+    expect(sent(s.state)).toEqual(['hello'])
   })
 })
