@@ -66,6 +66,12 @@ function flush(): void {
   commit()
 }
 
+/** Record now the place waiting to settle, if one is: what a list of places is drawn from
+ *  must already hold the place on screen. */
+export function recordPendingPlace(): void {
+  if (!restoring) flush()
+}
+
 /** One of the watched stores changed: when the place on screen is another one, record it
  *  once it has stayed `SETTLE_MS` (each further change of the place starts the wait over). */
 function changed(): void {
@@ -80,7 +86,8 @@ function changed(): void {
 async function go(index: number): Promise<void> {
   if (restoring) return
   const target = useNavigationStore.getState().history.entries[index]
-  if (!target) return
+  // A place that no longer exists is never gone to (its row may outlive it by a moment).
+  if (!target || !placeAlive(target)) return
   // The place on screen is recorded before it is left. Recording it may drop the places
   // ahead or shift the oldest out, so the target is found again by identity.
   flush()

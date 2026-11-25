@@ -10,6 +10,7 @@ import { isShown, useArtefactStore } from '../store/artefact-store'
 import { useLinkedDocumentStore } from '../store/linked-document-store'
 import { pluginPanels, usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { PluginRecord } from '../../../main/plugins/plugin-store'
+import type { LinkedDocument } from '../../../shared/linked-documents'
 import { setActiveWorkspace } from './workspace-actions'
 import { EXTENSIONS_SECTION_LABELS, SETTINGS_SECTION_LABELS } from './view-sections'
 import type { BesideCard, Place, PlacePlugin } from './navigation-history'
@@ -168,7 +169,7 @@ async function applyBeside(
   live: readonly string[]
 ): Promise<void> {
   const documents = useLinkedDocumentStore.getState().documents
-  const updates: Array<Promise<unknown>> = []
+  const updates: Array<Promise<LinkedDocument>> = []
   const setDocumentHidden = (id: string, revision: number, hidden: boolean): void => {
     updates.push(window.electronAPI.linkedDocuments.update(id, revision, { hidden }))
   }
@@ -195,10 +196,19 @@ async function applyBeside(
     }
   }
   if (updates.length === 0) return
+  const answered = new Map<string, LinkedDocument>()
   for (const result of await Promise.allSettled(updates)) {
-    if (result.status === 'rejected') {
-      console.warn('[navigation] a linked document was not changed:', result.reason)
-    }
+    if (result.status === 'fulfilled') answered.set(result.value.id, result.value)
+    else console.warn('[navigation] a linked document was not changed:', result.reason)
+  }
+  // What main answered goes into the store at once. The refresh below may be overtaken by
+  // one another change started (the pane's own rule hiding the same document), and the
+  // store would then lag until that one answers: the place read right after the restore
+  // would be the old one, and its late correction a move of its own.
+  if (answered.size > 0) {
+    useLinkedDocumentStore.setState((state) => ({
+      documents: state.documents.map((d) => answered.get(d.id) ?? d)
+    }))
   }
   await useLinkedDocumentStore
     .getState()

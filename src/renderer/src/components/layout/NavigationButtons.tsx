@@ -17,7 +17,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import { usePluginUIStore } from '../plugins/plugin-ui-store'
-import { useNavigationStore } from '../../store/navigation-store'
+import { recordPendingPlace, useNavigationStore } from '../../store/navigation-store'
 import { useSessionStore } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { useShortcutLabel } from '../../store/keymap-store'
@@ -120,9 +120,13 @@ export function NavigationButtons(): React.JSX.Element {
         }}
         onContextMenu={(event) => {
           event.preventDefault()
-          if (!enabled[direction]) return
+          // A place still settling (a tab picked a moment ago) is recorded first, so the
+          // list is drawn from the history that holds it and is not closed by it at once.
+          recordPendingPlace()
+          const current = useNavigationStore.getState().history
+          if (stepTarget(current, DELTA[direction], placeAlive) === null) return
           const box = event.currentTarget.getBoundingClientRect()
-          setList({ direction, x: box.left, y: box.bottom + MENU_GAP, history })
+          setList({ direction, x: box.left, y: box.bottom + MENU_GAP, history: current })
         }}
       >
         <Icon className="w-4 h-4" />
