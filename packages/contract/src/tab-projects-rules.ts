@@ -105,6 +105,38 @@ const SLACK = 1e-9
 const isShare = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 + SLACK
 
+const text = (value: unknown, max: number): string | undefined =>
+  typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined
+
+/**
+ * A record's reading as it is read back from disk, kept only when it is
+ * whole: a file written by another version, or by hand, must never put a
+ * half-shaped reading in a sidebar. Nothing is coerced and nothing unknown is
+ * kept (the rule of `sanitizeWork`). Pure.
+ */
+export function sanitizeTabProjects(value: unknown): TabProjects | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const status = PROJECT_STATUSES.find((known) => known === v.status)
+  const model = text(v.model, PROJECT_LIMITS.model)
+  const basis = text(v.basis, PROJECT_LIMITS.basis)
+  if (!status || !model || !basis || !isShare(v.fits)) return undefined
+  if (typeof v.readAt !== 'number' || !Number.isFinite(v.readAt) || v.readAt < 0) return undefined
+  if (!Array.isArray(v.picks) || v.picks.length > PROJECT_LIMITS.picks) return undefined
+  const picks: ProjectPick[] = []
+  for (const raw of v.picks) {
+    if (!raw || typeof raw !== 'object') return undefined
+    const pick = raw as Record<string, unknown>
+    const file = text(pick.file, PROJECT_LIMITS.file)
+    const name = text(pick.name, PROJECT_LIMITS.name)
+    if (!file || !name || !isShare(pick.p)) return undefined
+    picks.push({ file, name, p: pick.p })
+  }
+  // A reading that placed the tab names a project; one that did not names none.
+  if ((status === 'none') !== (picks.length === 0)) return undefined
+  return { status, picks, fits: v.fits, readAt: v.readAt, model, basis }
+}
+
 /** The shares of an answer, the largest first; equal shares in the order of
  *  their names, so the same answer always reads the same. Anything that is
  *  not a share between 0 and 1 is dropped. Pure. */

@@ -4,6 +4,7 @@ import {
   rankShares,
   readGroupProjects,
   readProjectChoice,
+  sanitizeTabProjects,
   sharePercent,
   type TabProjects
 } from './tab-projects-rules'
@@ -179,5 +180,37 @@ describe('sharePercent', () => {
     expect(sharePercent(0.634)).toBe('63%')
     expect(sharePercent(1)).toBe('100%')
     expect(sharePercent(-1)).toBe('0%')
+  })
+})
+
+describe('sanitizeTabProjects', () => {
+  const whole = tab('decided', [['Quill', 0.97]])
+
+  it('keeps a whole reading as it is', () => {
+    expect(sanitizeTabProjects(JSON.parse(JSON.stringify(whole)))).toEqual(whole)
+    expect(sanitizeTabProjects(tab('none', []))).toEqual(tab('none', []))
+  })
+
+  it('drops what is not a reading, and keeps nothing unknown', () => {
+    expect(sanitizeTabProjects(null)).toBeUndefined()
+    expect(sanitizeTabProjects('decided')).toBeUndefined()
+    expect(sanitizeTabProjects({ ...whole, status: 'sure' })).toBeUndefined()
+    expect(sanitizeTabProjects({ ...whole, fits: 2 })).toBeUndefined()
+    expect(sanitizeTabProjects({ ...whole, readAt: 'now' })).toBeUndefined()
+    expect(sanitizeTabProjects({ ...whole, model: '' })).toBeUndefined()
+    expect(
+      sanitizeTabProjects({ ...whole, picks: [{ file: '/w/a.clave', name: 'Quill' }] })
+    ).toBeUndefined()
+    expect(sanitizeTabProjects({ ...whole, extra: 1 })).toEqual(whole)
+  })
+
+  it('drops a reading whose status and projects disagree', () => {
+    expect(sanitizeTabProjects({ ...whole, status: 'none' })).toBeUndefined()
+    expect(sanitizeTabProjects({ ...whole, picks: [] })).toBeUndefined()
+  })
+
+  it('drops a reading naming more projects than a tab may', () => {
+    const four = [1, 2, 3, 4].map((n) => ({ file: '/w/a.clave', name: `P${n}`, p: 0.25 }))
+    expect(sanitizeTabProjects({ ...whole, picks: four })).toBeUndefined()
   })
 })
