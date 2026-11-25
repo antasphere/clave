@@ -36,7 +36,11 @@ import {
   spawnFieldsOf,
   usageOf
 } from './served-accounts'
-import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
+import {
+  openStyleField,
+  resolveProfileRef,
+  resolveSpawnModes
+} from '../../shared/open-session-modes'
 import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
 import { capturesExchange, exchangeCaptureRefusal } from '../../shared/agent-launch'
 import { accountArgumentRefusal, accountPoolsOf } from '../../shared/launch-options'
@@ -496,6 +500,8 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   const accountFields = pooled
     ? spawnFieldsOf(pooled, resolveAccountRef(ctx, pooled, accountRef, judgedModel))
     : {}
+  // The writing style, passed untouched: the spawn resolves it (PRDCT-5166).
+  const styleField = openStyleField(mode, str(p.style))
   const cwd = str(p.cwd) ?? ''
   const command = str(p.command)
   const prompt = str(p.prompt)
@@ -536,6 +542,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
+        ...styleField,
         ...(workspaceId !== undefined ? { workspaceId } : {}),
         // Persisted lineage folds the tab under its caller. Separate tabs
         // keep the in-memory messaging link below without sidebar nesting.

@@ -1,10 +1,12 @@
 import { BUILT_IN_LAUNCH_PROFILES } from '../../../shared/agent-launch'
 import {
   chatDefaultFor,
+  openStyleField,
   resolveProfileRef,
   resolveSpawnModes,
   type OpenSessionMode
 } from '../../../shared/open-session-modes'
+import { startRefusalText } from './start-refusal'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { afterSpawn, withWarnings } from '../../../shared/open-after-spawn'
 import { useSessionStore } from '../store/session-store'
@@ -107,6 +109,8 @@ export async function openFleetSession(
     command?: string
     autoRun?: boolean
     prompt?: string
+    /** The writing style the tab starts with (PRDCT-5166), passed untouched. */
+    style?: string
     name?: string
     /** A past conversation of this server to continue (PRDCT-4321). */
     resumeSessionId?: string
@@ -143,6 +147,9 @@ export async function openFleetSession(
       return { sessionId: holder.id, groupId: groupId ?? null, serverId }
     }
   }
+  // The writing style, passed untouched: the server's spawn resolves it
+  // against that server's styles (PRDCT-5166).
+  const styleField = openStyleField(mode, payload.style)
   const { family, ...modes } = resolveSpawnModes(payload)
   const providerHarness = modes.piMode ? 'pi' : modes.opencodeMode ? 'opencode' : null
   if (payload.account && !modes.claudeMode && !modes.codexMode && !providerHarness)
@@ -185,7 +192,9 @@ export async function openFleetSession(
   // A resumed conversation of this server (PRDCT-4321) comes back on the
   // profile and the account it ran on, when nothing above chose one.
   const resumedAccount = !account && modes.claudeMode ? payload.resumeAccount : undefined
-  const info = await window.electronAPI.fleetStart(serverId, payload.cwd, {
+  // A start the server refuses (an unknown style, a folder that is not
+  // there) is the tool's error in the server's own sentence.
+  const starting = window.electronAPI.fleetStart(serverId, payload.cwd, {
     ...modes,
     ...(workspaceId ? { workspaceId } : {}),
     // Sending the server's profile also prevents the preload from substituting
@@ -220,12 +229,16 @@ export async function openFleetSession(
     initialCommand: mode === 'terminal' ? payload.command : undefined,
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt : undefined,
+    ...styleField,
     ...(mode !== 'terminal' && payload.resumeSessionId
       ? { resumeSessionId: payload.resumeSessionId }
       : {}),
     ...(payload.attachToParent && payload.callerSessionId
       ? { spawnedBy: payload.callerSessionId }
       : {})
+  })
+  const info = await starting.catch((err: unknown) => {
+    throw new Error(startRefusalText(err))
   })
   // The tab exists from here on: every step after it is best effort, said in
   // the answer beside the tab's id, never thrown (PRDCT-4507).

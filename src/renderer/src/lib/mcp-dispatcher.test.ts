@@ -151,6 +151,24 @@ describe('clave_open_session on the window road', () => {
     }
   })
 
+  // PRDCT-5166: the writing style an open names, handed to the spawn.
+  it('hands the style to the spawn untouched, refuses it on a terminal, and says a refused start', async () => {
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'brief' })
+    expect(spawned()).toMatchObject({ writingStyle: 'brief' })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude' })
+    expect(spawned()).not.toHaveProperty('writingStyle')
+    const before = spawnSession.mock.calls.length
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'terminal', style: 'brief' })
+    ).rejects.toThrow('The style argument applies to agent modes only (got mode "terminal")')
+    expect(spawnSession.mock.calls.length).toBe(before)
+    const reason = 'Unknown writing style "loud". This machine has: none, brief, quiet.'
+    spawnSession.mockRejectedValueOnce({ _tag: 'SessionStartFailed', message: reason })
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'loud' })
+    ).rejects.toThrow(new Error(reason))
+  })
+
   it("opens a chat on the global default's chat form, the one the launcher would open", async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),
@@ -624,6 +642,22 @@ describe('clave_attach_session on the window road (PRDCT-4997)', () => {
     const rows = answer.result.sessions
     expect(rows.find((s) => s.id === helper)?.nestedUnder).toBe(old)
     expect(rows.find((s) => s.id === old)?.nestedUnder).toBeNull()
+  })
+
+  // PRDCT-5166: the style a tab was opened with, as the store carries its record's field.
+  it('lists the writing style each tab was opened with, and no style key for a tab on none', async () => {
+    useSessionStore.setState({
+      sessions: [
+        { id: lead, name: 'Lead', sessionType: 'local', writingStyle: 'quiet' } as never,
+        { id: old, name: 'Old', sessionType: 'local' } as never
+      ]
+    })
+    const answer = (await dispatch('list', { callerSessionId: lead })) as {
+      result: { sessions: Record<string, unknown>[] }
+    }
+    const rows = answer.result.sessions
+    expect(rows.find((s) => s.id === lead)?.style).toBe('quiet')
+    expect(rows.find((s) => s.id === old)).not.toHaveProperty('style')
   })
 })
 

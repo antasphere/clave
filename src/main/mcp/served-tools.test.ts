@@ -539,6 +539,21 @@ describe('serveCommand', () => {
     expect(listed.sessions.find((s) => s.id === 'plain')?.nestedUnder).toBeNull()
   })
 
+  it('says the writing style each tab was opened with, and no style key for a tab on none (PRDCT-5166)', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['styled', 'plain'] })])],
+      sessions: [session('styled'), session('plain')],
+      records: {
+        styled: record('styled', { writingStyle: 'quiet' }),
+        plain: record('plain', {})
+      }
+    })
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx())) as Listing
+    expect(listed.sessions.find((s) => s.id === 'styled')?.style).toBe('quiet')
+    expect(listed.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('style')
+  })
+
   it('gives a tab nobody opened the tab it is nested under as its parent, as the other roads do (PRDCT-4997)', async () => {
     const h = setup({
       layouts: [layout('wA', [group('gA', { sessionIds: ['tucked', 'opened'] })])],

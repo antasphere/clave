@@ -84,6 +84,7 @@ export {
   resolveGroupRef
 } from './served-core'
 import { writingStylesView } from '../writing-styles/source'
+import { listedStyle } from '../../shared/open-session-modes'
 
 // ── The tools ──
 
@@ -404,7 +405,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       work: record?.work ?? null,
       // The tab it is shown under in the sidebar, as its record keeps it
       // (PRDCT-4997); parentId above is who opened it.
-      nestedUnder: record?.spawnedBy ?? null
+      nestedUnder: record?.spawnedBy ?? null,
+      // The writing style it was opened with (PRDCT-5166); no key for none.
+      ...listedStyle(record?.writingStyle)
     }))
   // The layouts of live windows only: a key the server keeps for a window
   // that is gone is an orphan the primary takes at its next read, and the

@@ -1745,3 +1745,44 @@ describe('a chat read through the served tools answers its history as lines (PRD
     expect(out).toHaveProperty('status', null)
   })
 })
+
+// PRDCT-5166: an open names the writing style its tab starts with; the spawn
+// resolves it, and its refusal is the tool's error.
+describe('clave_open_session with a writing style, served', () => {
+  const world = (): Partial<World> => ({
+    layouts: [layout('wA', [group('g1', { name: 'Build', workspaceId: 'ws1' })])],
+    sessions: [session('caller')],
+    records: { caller: record('caller', { workspaceId: 'ws1' }) }
+  })
+  const startOptions = (h: Harness): Record<string, unknown> =>
+    (h.argsOf('sessions.start').at(-1) as { options: Record<string, unknown> }).options
+
+  it('hands the style to the start untouched, and nothing when none is named', async () => {
+    const h = setup(world())
+    await run(h, 'openSession', { cwd: '/proj', mode: 'codex', style: 'Quiet' })
+    expect(startOptions(h).writingStyle).toBe('Quiet')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude', style: 'none' })
+    expect(startOptions(h).writingStyle).toBe('none')
+    await run(h, 'openSession', { cwd: '/proj', mode: 'claude' })
+    expect(startOptions(h)).not.toHaveProperty('writingStyle')
+  })
+
+  it('refuses a style on a terminal before anything starts', async () => {
+    const h = setup(world())
+    await expect(
+      run(h, 'openSession', { cwd: '/proj', mode: 'terminal', style: 'brief' })
+    ).rejects.toThrow('The style argument applies to agent modes only (got mode "terminal")')
+    expect(h.argsOf('sessions.start')).toEqual([])
+  })
+
+  it("says the spawn's refusal of an unknown style in its own words", async () => {
+    const h = setup(world())
+    const reason = 'Unknown writing style "loud". This machine has: none, brief, quiet.'
+    h.impl['sessions.start'] = () => {
+      throw Object.assign(new Error(reason), { _tag: 'SessionStartFailed' })
+    }
+    await expect(
+      run(h, 'openSession', { cwd: '/proj', mode: 'claude', style: 'loud' })
+    ).rejects.toThrow(reason)
+  })
+})

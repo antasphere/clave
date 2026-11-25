@@ -69,7 +69,13 @@ import {
 import { ATTACH_SESSION_NEEDS_TAB, attachAnswer, attachRequest } from '../../../shared/nest-tools'
 import { nestedUnder } from '@clave/contract/nest-rules'
 import { nestErrorOf } from './nest-api'
-import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
+import {
+  listedStyle,
+  openStyleField,
+  resolveSpawnModes,
+  resolveProfileRef
+} from './open-session-modes'
+import { startRefusalText } from './start-refusal'
 import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
 import type { CodexModels } from './launch-options-input'
 import { useLaunchSettingsStore } from '../store/launch-settings-store'
@@ -254,6 +260,14 @@ function listedAccount(
   return { id, label, removed, exhausted: sessionAccountExhausted(s) }
 }
 
+/** The writing style a tab's record keeps (PRDCT-5166), as the session
+ *  store carries it once the record's field is mapped onto the tab; read
+ *  loosely until the store's type declares it. */
+function styleOfTab(session: object): string | undefined {
+  const style = (session as { writingStyle?: unknown }).writingStyle
+  return typeof style === 'string' ? style : undefined
+}
+
 function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
   const state = useSessionStore.getState()
   const wsState = useWorkspaceStore.getState()
@@ -280,6 +294,8 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       // The tab it is shown under in the sidebar (PRDCT-4997); parentId
       // above is who opened it.
       nestedUnder: s.spawnedBy ?? null,
+      // The writing style it was opened with (PRDCT-5166); no key for none.
+      ...listedStyle(styleOfTab(s)),
       // The account the tab runs on (Claude or Codex), in its OWNER's list: a
       // server tab names the server's account (PRDCT-4328); the Default when
       // the tab predates accounts or was launched without naming one.
@@ -502,6 +518,8 @@ export async function openSessionProgrammatically(payload: {
   command?: string
   autoRun?: boolean
   prompt?: string
+  /** The writing style the tab starts with (PRDCT-5166), passed untouched. */
+  style?: string
   workspace?: string
   callerSessionId?: string
   attachToParent?: boolean
@@ -562,6 +580,8 @@ export async function openSessionProgrammatically(payload: {
   }
 
   const mode = payload.mode ?? 'claude'
+  // The writing style, passed untouched: the spawn resolves it (PRDCT-5166).
+  const styleField = openStyleField(mode, payload.style)
   // Which CLI starts and which flags it takes, decided in `open-session-modes`
   // where a unit test reaches it. The skip-approvals flag used to stop here
   // for every agent but Claude, while the spawn already turned it into Codex's
@@ -623,7 +643,9 @@ export async function openSessionProgrammatically(payload: {
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {}),
     ...(connection ?? {})
   }
-  const info = await window.electronAPI.spawnSession(payload.cwd, {
+  // A start the spawn refuses (an unknown style, a folder that is not there)
+  // is the tool's error in the spawn's own sentence.
+  const starting = window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
     antigravityMode,
     codexMode,
@@ -650,11 +672,15 @@ export async function openSessionProgrammatically(payload: {
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
+    ...styleField,
     workspaceId,
     // Only attached tabs persist the parent for sidebar nesting and restart.
     spawnedBy,
     // The opener, nested or not, on the record (PRDCT-4192).
     openedBy: payload.callerSessionId
+  })
+  const info = await starting.catch((err: unknown) => {
+    throw new Error(startRefusalText(err))
   })
 
   if (payload.callerSessionId) messagingParents.set(info.id, payload.callerSessionId)
