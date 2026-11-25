@@ -12,6 +12,7 @@ import { pluginPanels, usePluginUIStore } from '../components/plugins/plugin-ui-
 import type { PluginRecord } from '../../../main/plugins/plugin-store'
 import type { LinkedDocument } from '../../../shared/linked-documents'
 import { setActiveWorkspace } from './workspace-actions'
+import { getRegisteredTerminal } from './terminal-registry'
 import { EXTENSIONS_SECTION_LABELS, SETTINGS_SECTION_LABELS } from './view-sections'
 import type { BesideCard, Place, PlacePlugin } from './navigation-history'
 
@@ -264,6 +265,28 @@ export async function applyPlace(p: Place): Promise<boolean> {
 
   if (p.beside !== null) await applyBeside(p.beside, live)
   return true
+}
+
+/** How long the keyboard waits after a restore: a tab the restore put on screen is inert
+ *  until React has drawn it, and the terminal pane waits as long before it focuses. */
+const FOCUS_DELAY_MS = 50
+
+/**
+ * Give the keyboard to the place shown, where a click on its tab's row sends it: the focused
+ * tab's terminal. The terminal pane focuses itself only when its tab BECOMES the focused one,
+ * so a restore that kept the focused tab (Back from Settings, a page or a plugin's page to the
+ * mosaic under it) left the keyboard on the button that moved, and typing reached nothing. A
+ * document being edited beside the tab keeps the keyboard, as it does for the pane; a move made
+ * meanwhile wins.
+ */
+export function focusPlace(p: Place): void {
+  if (p.view !== 'terminals' || p.plugin || p.groupView || p.tabView || p.focused === null) return
+  const id = p.focused
+  setTimeout(() => {
+    if (useSessionStore.getState().focusedSessionId !== id) return
+    if (document.activeElement?.closest('[data-testid="linked-document-panel"]')) return
+    getRegisteredTerminal(id)?.focus()
+  }, FOCUS_DELAY_MS)
 }
 
 // ── The label of a place, for the lists behind Back and Forward ──

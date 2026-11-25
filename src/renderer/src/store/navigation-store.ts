@@ -10,7 +10,7 @@ import {
   type NavigationHistory,
   type Place
 } from '../lib/navigation-history'
-import { applyPlace, placeAlive, placeLabel, readPlace } from '../lib/navigation-place'
+import { applyPlace, focusPlace, placeAlive, placeLabel, readPlace } from '../lib/navigation-place'
 import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import { useSessionStore } from './session-store'
 import { useWorkspaceStore } from './workspace-store'
@@ -116,6 +116,8 @@ async function go(index: number): Promise<void> {
     const shown = readPlace()
     seen = shown
     if (!isEmptyPlace(shown)) useNavigationStore.setState({ history: replaceAt(now, at, shown) })
+    // Typing goes to the tab shown, as after a click on its row, not to the button that moved.
+    focusPlace(shown)
   } finally {
     clearTimer()
     restoring = false
