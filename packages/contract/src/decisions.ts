@@ -56,7 +56,9 @@ const SessionId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256))
 /** One tab's answer. */
 export const TabProjectsRead = Schema.Struct({
   sessionId: Schema.String,
-  /** The reading the record now holds; null when it holds none. */
+  /** The reading the record now holds; null when it holds none, and when the
+   *  decision cannot run on this server (no key, switched off): a reading is
+   *  served only while Clave may act on it. */
   projects: Schema.NullOr(TabProjects),
   /** Absent when a reading was made or the record's was still good, and
    *  when it is one this Mac does not know. */

@@ -7,6 +7,8 @@ import { projectOptionsOf, type ProjectOption } from './project-options'
 import { readTab, type TabHarness, type TabReading, type TabSource } from './tab-reading'
 import { basisOf, tabProjectDecision, type TabProjectInput } from './tab-project'
 import { runDecision, type DecisionFailureReason, type DecisionOutcome } from './runner'
+import { decisionConfig } from './registry'
+import { jevIntegration } from '../integrations/jev'
 import type { TabProjectOutcome } from './tab-project'
 
 /**
@@ -50,6 +52,10 @@ export interface HostDecisionsOptions {
   /** The conversation a live session would resume, when its record does not
    *  name one (a Codex terminal's rollout: `ptyManager.conversationIdOf`). */
   conversationOf?: (sessionId: string) => string | null | undefined
+  /** Whether the decision can run on this host at all, asked before any tab
+   *  is read: the reason it cannot (`disabled`, `no-key`), or null. By
+   *  default the decision's switch and this process's Jev key. */
+  preflight?: () => DecisionFailureReason | null
   /** Test seams: the transcript, the options, the request. */
   readTab?: (source: TabSource) => Promise<TabReading | null>
   optionsOf?: (workspace: RegistryWorkspace) => Promise<ProjectOption[]>
@@ -97,7 +103,16 @@ function harnessOf(
   return null
 }
 
+/** The decision's switch, then this process's key: read from the settings
+ *  files alone, no Keychain call, no request. */
+function defaultPreflight(): DecisionFailureReason | null {
+  const config = decisionConfig(tabProjectDecision)
+  if (config.refused || !config.enabled) return 'disabled'
+  return jevIntegration.status().configured ? null : 'no-key'
+}
+
 export function hostDecisions(options: HostDecisionsOptions): HostDecisions {
+  const preflight = options.preflight ?? defaultPreflight
   const read = options.readTab ?? readTab
   const now = options.now ?? Date.now
   const home = options.home ?? os.homedir()
@@ -171,6 +186,28 @@ export function hostDecisions(options: HostDecisionsOptions): HostDecisions {
 
   return {
     readTabProjects: async (sessionIds) => {
+      // A host with no key, or with the decision switched off, reads no
+      // transcript and walks no folder: every person's grouping asks, and on
+      // a machine without Jev it must cost nothing. It serves no reading
+      // either, so Clave names no group, exactly as before the decisions;
+      // the records keep theirs, and switching it back on costs no request
+      // for a tab that has not moved.
+      let blocked: DecisionFailureReason | null = null
+      try {
+        blocked = preflight()
+      } catch (error) {
+        // The settings could not be read: the runner's own checks still hold.
+        console.error('[decisions] could not read whether a decision may run', error)
+      }
+      if (blocked) {
+        const reason = blocked
+        return sessionIds.map((sessionId) => ({
+          sessionId,
+          projects: null,
+          reason,
+          written: false
+        }))
+      }
       // Within one call: the registry read once, each workspace's options once.
       let registry: Promise<ReadonlyArray<RegistryWorkspace>> | undefined
       const workspaces = (): Promise<ReadonlyArray<RegistryWorkspace>> =>

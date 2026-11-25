@@ -100,6 +100,7 @@ function setup(
     },
     now: () => 5_000,
     home: '/w',
+    preflight: () => null,
     ...over
   })
   return { ...s, host }
@@ -319,5 +320,54 @@ describe('a tab read on the host', () => {
       'failed',
       'cancelled'
     ])
+  })
+})
+
+describe('a host where the decision cannot run', () => {
+  const read: DecisionRecord = {
+    claudeMode: true,
+    claudeSessionId: 'c-1',
+    cwd: W,
+    workspaceId: lab.id,
+    projects: {
+      status: 'decided',
+      picks: [{ file: quill.file, name: quill.name, p: 0.97 }],
+      fits: 0.95,
+      readAt: 1,
+      model: 'jev-1.14.0',
+      basis: 'b'
+    }
+  }
+
+  for (const reason of ['no-key', 'disabled'] as const) {
+    it(`reads nothing, asks nothing and serves no reading (${reason})`, async () => {
+      const s = setup({ a: read, b: { ...read, projects: undefined } }, { preflight: () => reason })
+      expect(await s.host.readTabProjects(['a', 'b'])).toEqual([
+        { sessionId: 'a', projects: null, reason, written: false },
+        { sessionId: 'b', projects: null, reason, written: false }
+      ])
+      expect(s.reads).toEqual([])
+      expect(s.optionReads).toEqual([])
+      expect(s.runs).toEqual([])
+      expect(s.written).toEqual([])
+      // The record keeps its reading for the day the decision runs again.
+      expect(s.records.get('a')?.projects).toEqual(read.projects)
+    })
+  }
+
+  it('goes on when whether it may run cannot be read', async () => {
+    const s = setup(
+      { a: { ...read, projects: undefined } },
+      {
+        preflight: () => {
+          throw new Error('the settings are unreadable')
+        }
+      }
+    )
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const [answer] = await s.host.readTabProjects(['a'])
+    errors.mockRestore()
+    expect(answer.written).toBe(true)
+    expect(s.runs).toHaveLength(1)
   })
 })
