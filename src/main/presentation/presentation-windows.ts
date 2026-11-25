@@ -1,9 +1,12 @@
 /**
- * Presentation windows (PRDCT-4980): a session's deck alone, full screen, in
- * a window of its own. An app window that lists the session holds the
- * preview (its own hold, the way its panel does) and hands main the address
- * it got: this Mac's loopback for a session of this Mac, the port this Mac
- * forwards a server's preview on otherwise. Main only shows it.
+ * Presentation windows (PRDCT-4980): a session's deck alone in a window of its
+ * own, a window like any other (PRDCT-5167): 16:9, centred on the display of
+ * the app window that asked, never full screen by itself. The person makes it
+ * full screen with the window's green button or the deck's own control. An
+ * app window that lists the session holds the preview (its own hold, the way
+ * its panel does) and hands main the address it got: this Mac's loopback for
+ * a session of this Mac, the port this Mac forwards a server's preview on
+ * otherwise. Main only shows it.
  *
  * One presentation per session: every app window that lists a server's
  * session hears an agent's ask, and the first to show it presents it; the
@@ -29,8 +32,8 @@ import { TEST_NO_ACTIVATE } from '../test-mode'
 import {
   endsPresentation,
   opensInBrowser,
-  pickDisplay,
   presentableUrl,
+  presentationBounds,
   presentationPermits,
   staysOnPreview
 } from './presentation-rules'
@@ -44,7 +47,7 @@ interface Presentation {
   readonly sessionId: string
   presentationId: string
   url: string
-  readonly displayId: number | null
+  readonly displayId: number
   /** Put on screen once (its first paint): from then on a show brings it forward. */
   onScreen: boolean
   /** Asked to close: a show from now on opens a window of its own rather than
@@ -111,17 +114,16 @@ function open(
   title: string,
   presentationId: string
 ): void {
+  // The display of the app window that asked: the deck opens where the person is.
   const ownerWindow = BrowserWindow.fromWebContents(owner)
-  const ownerDisplay =
+  const display =
     ownerWindow && !ownerWindow.isDestroyed()
       ? screen.getDisplayMatching(ownerWindow.getBounds())
-      : null
-  const display = pickDisplay(screen.getAllDisplays(), ownerDisplay?.id ?? null)
-  const area = display?.bounds
+      : screen.getPrimaryDisplay()
   const win = new BrowserWindow({
-    ...(area
-      ? { x: area.x, y: area.y, width: area.width, height: area.height }
-      : { width: 1280, height: 800 }),
+    ...presentationBounds(display.workArea),
+    // The bounds are the deck's area (16:9); the title bar sits above it.
+    useContentSize: true,
     show: false,
     title,
     backgroundColor: '#000000',
@@ -142,7 +144,7 @@ function open(
     sessionId,
     presentationId,
     url,
-    displayId: display?.id ?? null,
+    displayId: display.id,
     onScreen: false,
     closing: false
   }
@@ -171,8 +173,8 @@ function open(
     // Under --test-no-activate no window is ever put on screen (test-mode.ts).
     if (TEST_NO_ACTIVATE || win.isDestroyed()) return
     presentation.onScreen = true
+    // A plain window (PRDCT-5167): full screen only when the person makes it so.
     win.show()
-    win.setFullScreen(true)
   })
   // Closed by hand (the window's button, the keyboard): closing from the first moment.
   win.on('close', () => {
@@ -214,7 +216,7 @@ export function showPresentation(
     return true
   }
   const forward = (): void => {
-    // Before its first paint, ready-to-show puts it on screen, full screen.
+    // Before its first paint, ready-to-show puts it on screen.
     if (TEST_NO_ACTIVATE || !existing.onScreen) return
     existing.win.show()
     existing.win.focus()

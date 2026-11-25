@@ -21,7 +21,7 @@ export type { WindowIdentity }
  *      fallbacks,
  *   4. which window the person used LAST: the one a click on the Dock icon
  *      brings back (PRDCT-5165). Only a registered window counts, so a
- *      presentation's full-screen deck never does.
+ *      presentation's deck never does.
  *
  * The registry emits nothing; callers route. It is deliberately generic over
  * a minimal `WindowLike` so the class runs in plain node: the unit tests

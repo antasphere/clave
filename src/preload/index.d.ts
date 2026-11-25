@@ -866,7 +866,7 @@ export interface ArtefactsAPI {
   ): () => void
   /** The preview died under its holders: hold again. */
   onPreviewExited(callback: (sessionId: string) => void): () => void
-  /** The agent asked to present the session's artefact full screen (PRDCT-4980). */
+  /** The agent asked to present the session's artefact in a window of its own (PRDCT-4980). */
   onPresentRequested(callback: (sessionId: string) => void): () => void
   /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
   slidelessState(serverId?: string): Promise<SlidelessState>
@@ -876,11 +876,11 @@ export interface ArtefactsAPI {
   ): () => void
 }
 
-/** A session's deck alone, full screen, in a window of its own (PRDCT-4980). */
+/** A session's deck alone in a window of its own (PRDCT-4980). */
 export interface PresentationAPI {
   /** Show the preview at `url` (a loopback address this window holds) in the
-   *  session's presentation window, made full screen on another display when
-   *  one is connected; a second call moves it to `url` and brings it forward.
+   *  session's presentation window, a plain window on this window's display
+   *  (PRDCT-5167); a second call moves it to `url` and brings it forward.
    *  False: this window is not the one presenting it (another window of this
    *  Mac is, or the person closed that presentation), and it should let go. */
   show(sessionId: string, url: string, title: string, presentationId: string): Promise<boolean>

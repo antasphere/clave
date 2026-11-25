@@ -8,7 +8,7 @@ The agent writes a folder holding a self-contained `index.html` and calls `clave
 
 A session keeps several pages. Another folder the agent opens joins the first and shows in front; the title in the panel's bar is then a menu of the session's pages, newest first, and picking one shows it until the agent opens another. Each page keeps its own preview and its own versions, and a finished turn saves a version of each of them (a page the turn left unchanged saves none).
 
-Asked to present one (`present: true`, or Present in the panel's ⋯ menu), Clave shows the page alone in a window of its own, full screen, on another display when one is connected; Escape ends it. The presentation follows the page the panel shows.
+Asked to present one (`present: true`, or Present in the panel's ⋯ menu), Clave shows the page alone in a window of its own: a plain 16:9 window centred on the display of the Clave window, never full screen by itself (its green button, or the deck's own control, makes it full screen); Escape ends it. The presentation follows the page the panel shows.
 
 This works the same whether the session runs on this Mac or on a [Clave server](server-install.md) the Mac is attached to.
 

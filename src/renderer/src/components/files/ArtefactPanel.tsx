@@ -27,8 +27,8 @@ import { presentArtefact } from '../../lib/artefact-presenter'
  * session's frame beside the conversation (see TerminalGrid), its body the
  * Slideless frame. Its bar is the session bar's height (PRDCT-4491) and
  * carries what Slideless's own bar did (PRDCT-4494): the version shown, in a
- * chip beside the title, and in the ⋯ menu Present (the deck alone, full
- * screen, PRDCT-4980), Save version, the page's source as
+ * chip beside the title, and in the ⋯ menu Present (the deck alone in a
+ * window of its own, PRDCT-4980), Save version, the page's source as
  * a file tab of the machine the session runs on, and the file's place. Hiding
  * the panel keeps the artefact on its server; the chip in the session's
  * header brings it back.
@@ -71,7 +71,7 @@ export function ArtefactPanel({
             label="Artefact menu"
             actions={[
               {
-                // PRDCT-4980: the deck alone, full screen, in a window of its own.
+                // PRDCT-4980: the deck alone in a window of its own.
                 id: 'present',
                 label: 'Present',
                 icon: PresentationChartBarIcon,

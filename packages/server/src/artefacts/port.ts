@@ -34,7 +34,7 @@ export class ArtefactRefusal extends Error {
 
 export interface ArtefactsService {
   /** Link a session to a folder holding an HTML page, or to one `.html` file;
-   *  with `present`, tell the windows to present it full screen (PRDCT-4980). */
+   *  with `present`, tell the windows to present it in a window of its own (PRDCT-4980). */
   readonly open: (sessionId: string, path: string, present?: boolean) => Promise<Artefact>
   /** Drop one of the session's links (`target`), or all of them, with their holds;
    *  a session with none is not an error. */

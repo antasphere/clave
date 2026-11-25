@@ -1,4 +1,4 @@
-// A session presents its deck full screen in a window of its own (PRDCT-4980),
+// A session presents its deck in a window of its own (PRDCT-4980),
 // in the real app, through the real Slideless. An agent asks with
 // `clave_open_artefact`'s `present` through the real MCP: the window holding
 // its tab holds the preview and main shows it alone in a presentation window
@@ -7,7 +7,7 @@
 // again, the same window comes forward, never a second one. Escape pressed
 // with the focus inside the deck's own frame closes it. Present in the
 // artefact's menu presents it for the person, and closing the artefact ends
-// the presentation. Under test mode no window is ever shown, so full screen
+// the presentation. Under test mode no window is ever shown, so the window
 // itself is not seen here: the display picked for it is.
 //
 // It runs on the in-process server here, and on the app's own separate

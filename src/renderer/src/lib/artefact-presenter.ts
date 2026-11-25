@@ -1,6 +1,6 @@
 /**
- * The window's side of a presentation (PRDCT-4980): a session's deck alone,
- * full screen, in a window main makes (`src/main/presentation/`). This window
+ * The window's side of a presentation (PRDCT-4980): a session's deck alone
+ * in a window main makes (`src/main/presentation/`). This window
  * holds the preview the way its panel does, with a hold of its own, so hiding
  * the panel or looking at another tab keeps the deck up; it hands main the
  * address, follows the version the panel shows and a new open by the agent,

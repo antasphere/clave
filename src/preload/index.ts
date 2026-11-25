@@ -1996,7 +1996,7 @@ const electronAPI = {
       state: event.state
     }))
   },
-  // PRDCT-4980: a session's deck alone, full screen, in a window of its own
+  // PRDCT-4980: a session's deck alone in a window of its own
   // that main makes; this window holds the preview and hands main its address.
   presentation: {
     show: (sessionId: string, url: string, title: string, presentationId: string) =>
