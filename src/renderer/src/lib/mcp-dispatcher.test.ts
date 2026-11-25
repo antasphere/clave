@@ -625,6 +625,59 @@ describe('clave_attach_session on the window road (PRDCT-4997)', () => {
     expect(rows.find((s) => s.id === helper)?.nestedUnder).toBe(old)
     expect(rows.find((s) => s.id === old)?.nestedUnder).toBeNull()
   })
+
+  // PRDCT-5179: an app attached to a server of its own answers clave_list on
+  // this road; the projects a tab was read on are said here as the served
+  // road says them, and a tab never read says none.
+  it('lists the projects each tab was read on, with their shares', async () => {
+    const file = '/w/.clave/workspaces/default.clave'
+    const reading = (status: string, picks: Array<[string, number]>): unknown => ({
+      status,
+      picks: picks.map(([name, p]) => ({ file, name, p })),
+      fits: 0.95,
+      readAt: 1,
+      model: 'jev-1.14.0',
+      basis: `basis-${status}`
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: lead,
+          name: 'Lead',
+          sessionType: 'local',
+          projects: reading('decided', [['Quill', 0.97]])
+        },
+        {
+          id: old,
+          name: 'Old',
+          sessionType: 'local',
+          projects: reading('undecided', [
+            ['Lumen', 0.63],
+            ['Atlas', 0.23]
+          ])
+        },
+        { id: helper, name: 'Helper', sessionType: 'local', projects: reading('none', []) },
+        { id: 'mac-tab', name: 'Mac', sessionType: 'local' }
+      ] as never
+    })
+    const answer = (await dispatch('list', { callerSessionId: lead })) as {
+      result: { sessions: Array<{ id: string; projects?: unknown }> }
+    }
+    const rows = answer.result.sessions
+    expect(rows.find((s) => s.id === lead)?.projects).toEqual({
+      status: 'decided',
+      names: [{ name: 'Quill', share: 0.97 }]
+    })
+    expect(rows.find((s) => s.id === old)?.projects).toEqual({
+      status: 'undecided',
+      names: [
+        { name: 'Lumen', share: 0.63 },
+        { name: 'Atlas', share: 0.23 }
+      ]
+    })
+    expect(rows.find((s) => s.id === helper)?.projects).toEqual({ status: 'none', names: [] })
+    expect(rows.find((s) => s.id === 'mac-tab')).not.toHaveProperty('projects')
+  })
 })
 
 /* A stopped tab, on the window's road (PRDCT-4193): clave_resume_session and

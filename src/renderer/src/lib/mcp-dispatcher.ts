@@ -276,6 +276,15 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
       work: s.work ?? null,
+      // Which projects the tab works on, as Jev last read it (PRDCT-5179), in
+      // the served road's words: an app attached to a server of its own
+      // answers clave_list here, so without it no listing said them there.
+      ...(s.projects && {
+        projects: {
+          status: s.projects.status,
+          names: s.projects.picks.map((pick) => ({ name: pick.name, share: pick.p }))
+        }
+      }),
       // The tab it is shown under in the sidebar (PRDCT-4997); parentId
       // above is who opened it.
       nestedUnder: s.spawnedBy ?? null,
