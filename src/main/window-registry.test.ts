@@ -219,6 +219,42 @@ describe('resolveTargetWindow ladder', () => {
   })
 })
 
+describe('the window a Dock click brings back (PRDCT-5165)', () => {
+  it('is the window focused last, not the primary', () => {
+    const { reg, win } = setup()
+    win(1, 'A')
+    const b = win(2, 'B')
+    reg.noteFocused(2)
+    expect(reg.getLastFocusedWindow()).toBe(b)
+  })
+
+  it("a presentation's window taking the focus leaves it on the app window used before", () => {
+    const { reg, win } = setup()
+    win(1, 'A')
+    const b = win(2, 'B')
+    reg.noteFocused(2)
+    reg.noteFocused(42) // a presentation window: never registered
+    expect(reg.getLastFocusedWindow()).toBe(b)
+  })
+
+  it('the primary when nothing was focused, or when the window focused last closed', () => {
+    const { reg, win } = setup()
+    const a = win(1, 'A')
+    const b = win(2, 'B')
+    expect(reg.getLastFocusedWindow()).toBe(a)
+    reg.noteFocused(2)
+    b.destroy()
+    reg.unregisterWindow(2)
+    expect(reg.getLastFocusedWindow()).toBe(a)
+  })
+
+  it('null when no window exists at all', () => {
+    const { reg } = setup()
+    reg.noteFocused(1)
+    expect(reg.getLastFocusedWindow()).toBeNull()
+  })
+})
+
 describe('identity', () => {
   it("reports the window's own identity and nothing about other windows", () => {
     const { reg, win } = setup()
