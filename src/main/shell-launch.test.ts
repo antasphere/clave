@@ -109,14 +109,20 @@ describe('findExecutable', () => {
 })
 
 describe("a writing style's text through the terminal's quoting (PRDCT-5166)", () => {
-  // The built-in style the terminal hands an agent most: several lines, the
-  // status card's rule with its backticks, double quotes and a fenced block.
-  const text = composeStyleText(BUILT_IN_STYLES.find((style) => style.id === 'brief')!)
+  // The built-in style the terminal hands an agent most (several lines, the
+  // status card's rule with its backticks and a fenced block), then a line of
+  // the kind a person writes in a style of their own: double and single
+  // quotes, a dollar sign and a backslash, none of which the built-in text
+  // holds.
+  const text = `${composeStyleText(BUILT_IN_STYLES.find((style) => style.id === 'brief')!)}\n\nSay "done" when it's done; $HOME and C:\\Users stay as written.`
 
-  it('carries newlines, backticks and double quotes', () => {
+  it('carries newlines, backticks, both quotes, a dollar sign and a backslash', () => {
     expect(text).toContain('\n')
     expect(text).toContain('`')
     expect(text).toContain('"')
+    expect(text).toContain("'")
+    expect(text).toContain('$HOME')
+    expect(text).toContain('\\')
   })
 
   it.each(['/bin/sh', '/bin/zsh'].filter((shell) => existsSync(shell)))(
