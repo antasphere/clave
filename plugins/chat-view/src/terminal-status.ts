@@ -288,6 +288,23 @@ export function shownWork(agents: SubAgent[]): SubAgent[] {
   )
 }
 
+/** The count of the work running now, in the Terminal view's own words:
+ *  the subagents and the commands counted apart, each by its own word
+ *  ("3 agents · 4 commands"), since a command left running is no agent;
+ *  empty when nothing runs. The Terminal view's status line said it until
+ *  6 November 2026, when the work cards took over; Folio's work dock says
+ *  it at the head of its card and in its pill's label. */
+export function runningLabel(work: SubAgent[], separator = ' · '): string {
+  const agents = work.filter((item) => item.kind === 'agent').length
+  const commands = work.filter((item) => item.kind === 'shell').length
+  return [
+    agents > 0 ? `${agents} agent${agents === 1 ? '' : 's'}` : '',
+    commands > 0 ? `${commands} command${commands === 1 ? '' : 's'}` : ''
+  ]
+    .filter(Boolean)
+    .join(separator)
+}
+
 /** "12k", "1M": the status line's own compact count. */
 export function compactTokens(value: number): string {
   if (value >= 1_000_000) return `${+(value / 1_000_000).toFixed(1)}M`

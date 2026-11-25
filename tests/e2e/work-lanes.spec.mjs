@@ -212,6 +212,27 @@ export async function run(t) {
       return out
     }
 
+    // The window takes in the tabs the server opened a moment after the tools
+    // answered, from its layout and each tab's record. The sidebar is read as
+    // the person reads it once every tab of both waves has joined the window:
+    // read sooner, an entry is drawn without its holder, which is the window
+    // being late, not wrong. What each tab was told meanwhile must be on it
+    // when it joins (PRDCT-5000): the checks below read that.
+    {
+      const opened = Object.values(all).flatMap((wave) => Object.values(wave.ids))
+      const missing = () =>
+        win.evaluate((ids) => {
+          const here = new Set(
+            window.__claveSessionStoreForTests.getState().sessions.map((s) => s.id)
+          )
+          return ids.filter((id) => !here.has(id)).length
+        }, opened)
+      const joined = await until(async () => ((await missing()) === 0 ? true : null), {
+        tries: 240
+      })
+      t.equal('every tab the agents opened has joined the window', joined, true)
+    }
+
     // ── 2. The sidebar draws one entry per unit, from the records alone ──
     for (const shape of SHAPES) {
       const { ids, groupId } = all[shape.name]

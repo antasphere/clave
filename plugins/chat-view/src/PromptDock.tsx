@@ -442,7 +442,8 @@ export function ApprovalRun({
     >
       <summary className="chat-tool-row">
         <ShieldCheckIcon className="chat-tool-status" aria-label="Allowed" />
-        <span className="chat-tool-run-summary">
+        {/* Two parts, so a line of the row's: the summary alone sets them flush. */}
+        <span className="chat-tool-run-summary chat-tool-line">
           <span className="chat-tool-name">{head}</span>
           {detail && <span className="chat-tool-summary">{detail}</span>}
         </span>

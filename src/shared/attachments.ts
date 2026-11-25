@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
+import { LOCAL_SERVER_ID, parseResourceKey } from '@clave/contract/fleet'
 
 /* What a reader attaches to a chat message. The attachment record is what the
    composer holds and what the transcript shows. A FILE record is a name, a
@@ -8,7 +8,11 @@ import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
    bytes never cross the renderer, the main process reads the file once the
    message is sent. A SESSION record is another Clave tab dragged onto the
    composer: its id, name, agent and folder, delivered as a line the agent can
-   act on with the Clave tools (read the tab, message it).
+   act on with the Clave tools (read the tab, message it). A GROUP record is a
+   sidebar group dragged onto it: the group's id (the `groupId` the tools
+   take), its name and its tabs as they stood, one record for the whole group
+   (PRDCT-5032: a group used to arrive as one session record per tab, and the
+   agent never learnt the group).
 
    Every record carries a LABEL, `Image #1`, `File #2`, `Session #1`, numbered
    per kind in the order they were attached. The label is the attachment's
@@ -25,20 +29,25 @@ export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/
 
 const labelSchema = z.string().min(1).max(32).optional()
 
-const BARE_SESSION_ID = /^[a-zA-Z0-9_-]{1,128}$/
-/** A tab id an agent on this Mac can name: a tab of this Mac by its bare id,
- *  or a paired server's tab by its owner key (`clave-owner:session:<server>:<id>`),
- *  which the Clave tools take since PRDCT-4166. Dropping a server's tab on the
- *  composer used to fail the whole send on the bare-id pattern alone. */
-export function isAttachableSessionId(value: string): boolean {
-  if (BARE_SESSION_ID.test(value)) return true
+const BARE_ID = /^[a-zA-Z0-9_-]{1,128}$/
+/** An id of `kind` an agent on this Mac can name: one of this Mac by its bare
+ *  id, or a paired server's by its owner key (`clave-owner:<kind>:<server>:<id>`). */
+function isAttachableId(kind: 'session' | 'group', value: string): boolean {
+  if (BARE_ID.test(value)) return true
   if (value.length > 1024 || !value.startsWith('clave-owner:')) return false
   try {
-    return BARE_SESSION_ID.test(parseSessionKey(value).sessionId)
+    return BARE_ID.test(parseResourceKey(kind, value).id)
   } catch {
     return false
   }
 }
+/** A tab id an agent on this Mac can name: a tab of this Mac by its bare id,
+ *  or a paired server's tab by its owner key (`clave-owner:session:<server>:<id>`),
+ *  which the Clave tools take since PRDCT-4166. Dropping a server's tab on the
+ *  composer used to fail the whole send on the bare-id pattern alone. */
+export const isAttachableSessionId = (value: string): boolean => isAttachableId('session', value)
+/** A sidebar group id, by the same rule: bare, or a server's owner key. */
+export const isAttachableGroupId = (value: string): boolean => isAttachableId('group', value)
 
 export const FileAttachmentSchema = z
   .object({
@@ -84,8 +93,42 @@ export const SessionAttachmentSchema = z
   .strict()
 export type SessionAttachment = z.infer<typeof SessionAttachmentSchema>
 
+/** The most tabs a group record lists; a larger group lists its first ones. */
+export const MAX_GROUP_SESSIONS = 100
+
+export const GroupAttachmentSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    label: labelSchema,
+    delivery: z.literal('group'),
+    /** The sidebar group's id, the `groupId` the agent tools take. */
+    groupId: z.string().refine(isAttachableGroupId, 'Not a Clave group id'),
+    /** The group's name as the sidebar shows it. */
+    name: z.string().min(1).max(255),
+    /** Its tabs when it was attached, in the sidebar's order. */
+    sessions: z
+      .array(
+        z
+          .object({
+            sessionId: z.string().refine(isAttachableSessionId, 'Not a Clave tab id'),
+            name: z.string().min(1).max(255),
+            agent: z.string().min(1).max(64)
+          })
+          .strict()
+      )
+      .max(MAX_GROUP_SESSIONS),
+    /** As on a session record: the group's machine, when not the receiving tab's. */
+    machine: z.string().min(1).max(128).optional(),
+    /** As on a session record: false when the receiving agent cannot reach it. */
+    reachable: z.literal(false).optional()
+  })
+  .strict()
+export type GroupAttachment = z.infer<typeof GroupAttachmentSchema>
+
 /** What this Mac calls itself to a server's agent. */
 export const THIS_MAC = 'the Mac this message was sent from'
+
+type Reach = Pick<SessionAttachment, 'machine' | 'reachable'>
 
 /**
  * Where a dropped tab sits relative to the tab it is dropped on, by their
@@ -100,29 +143,45 @@ export function sessionReach(
   droppedId: string,
   targetId: string,
   nameOf: (serverId: string) => string
-): Pick<SessionAttachment, 'machine' | 'reachable'> {
-  const owner = ownerOfKey(droppedId)
-  const here = ownerOfKey(targetId)
+): Reach {
+  return reach(ownerOfKey('session', droppedId), targetId, nameOf)
+}
+/** The same rule for a dropped sidebar group, by the owner its id carries. */
+export function groupReach(
+  groupId: string,
+  targetId: string,
+  nameOf: (serverId: string) => string
+): Reach {
+  return reach(ownerOfKey('group', groupId), targetId, nameOf)
+}
+function reach(owner: string, targetId: string, nameOf: (serverId: string) => string): Reach {
+  const here = ownerOfKey('session', targetId)
   if (owner === here) return {}
   const machine = owner === LOCAL_SERVER_ID ? THIS_MAC : nameOf(owner)
   return here === LOCAL_SERVER_ID ? { machine } : { machine, reachable: false }
 }
-function ownerOfKey(id: string): string {
+function ownerOfKey(kind: 'session' | 'group', id: string): string {
   try {
-    return parseSessionKey(id).serverId
+    return parseResourceKey(kind, id).serverId
   } catch {
     return LOCAL_SERVER_ID
   }
 }
 
-export const AttachmentSchema = z.union([FileAttachmentSchema, SessionAttachmentSchema])
+export const AttachmentSchema = z.union([
+  FileAttachmentSchema,
+  SessionAttachmentSchema,
+  GroupAttachmentSchema
+])
 export const AttachmentsSchema = z.array(AttachmentSchema).max(MAX_ATTACHMENTS)
 export type Attachment = z.infer<typeof AttachmentSchema>
 
 export const isFileAttachment = (file: Attachment): file is FileAttachment =>
-  file.delivery !== 'session'
+  file.delivery !== 'session' && file.delivery !== 'group'
 export const isSessionAttachment = (file: Attachment): file is SessionAttachment =>
   file.delivery === 'session'
+export const isGroupAttachment = (file: Attachment): file is GroupAttachment =>
+  file.delivery === 'group'
 
 /** An image as the provider receives it, base64 in main only. */
 export const ProviderImageSchema = z.object({
@@ -159,18 +218,19 @@ export function attachmentIssue(file: Attachment, imagesSupported: boolean): str
 
 // ── Labels and markers ──
 
-export type AttachmentKind = 'Image' | 'File' | 'Folder' | 'Session'
+export type AttachmentKind = 'Image' | 'File' | 'Folder' | 'Session' | 'Group'
 
 /** The kind a record is labelled by: what it IS to the agent, which is its
  *  delivery — a HEIC that goes as a path is a File, however it is named,
  *  and a folder is a Folder, a path to list. */
 export function attachmentKind(file: Attachment): AttachmentKind {
   if (file.delivery === 'session') return 'Session'
+  if (file.delivery === 'group') return 'Group'
   if (file.delivery === 'folder') return 'Folder'
   return file.delivery === 'image' ? 'Image' : 'File'
 }
 
-const LABEL = /^(Image|File|Folder|Session) #(\d+)$/
+const LABEL = /^(Image|File|Folder|Session|Group) #(\d+)$/
 
 /** The next label of a kind among `current`: one past the highest number
  *  that kind already holds, so a label is never issued twice in one message. */

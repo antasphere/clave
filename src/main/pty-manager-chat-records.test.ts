@@ -920,9 +920,16 @@ describe('a restart that moves the tab to another provider (PRDCT-4300)', () => 
       configDir: '/cfg/work',
       spawnedBy: '77777777-7777-4777-8777-777777777777'
     })
+    // The record the spawn wrote carries its link: since PRDCT-4997 the
+    // restart reads where the tab is nested off the record, not the spawn.
     mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
       id === session.id
-        ? { id, adapterId: 'claude-chat', claudeSessionId: session.claudeSessionId }
+        ? {
+            id,
+            adapterId: 'claude-chat',
+            claudeSessionId: session.claudeSessionId,
+            spawnedBy: '77777777-7777-4777-8777-777777777777'
+          }
         : null) as never)
     const plan = ptyManager.restartSpawn(session.id, {
       adapterId: 'codex-chat',

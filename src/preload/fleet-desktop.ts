@@ -20,11 +20,17 @@ import type { ServerEvent } from '@clave/contract/events'
 import type { RoutinesListing } from '@clave/contract/routines/model'
 import type { Artefact } from '@clave/contract/artefacts/model'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
-import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
+import {
+  isFileAttachment,
+  isGroupAttachment,
+  type AttachmentSource,
+  type FileAttachment
+} from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import { reportFromWire } from '../shared/limit-report'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
+import { nestAnswerError, nestRefusalMessage } from '../shared/nest-tools'
 import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { SpeakResult } from '../shared/speech'
@@ -728,6 +734,19 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ...event,
       // A session record names a tab, not a file: it carries no path to scope.
       attachments: event.attachments.map((file) => {
+        // A group the server's agent was handed by its bare ids (PRDCT-5032):
+        // the group and each of its tabs keyed back, as a tab is below.
+        if (isGroupAttachment(file))
+          return file.reachable === false
+            ? file
+            : {
+                ...file,
+                groupId: resourceKey('group', ref.serverId, file.groupId),
+                sessions: file.sessions.map((tab) => ({
+                  ...tab,
+                  sessionId: sessionKey({ serverId: ref.serverId, sessionId: tab.sessionId })
+                }))
+              }
         // A tab the server's agent was handed by its bare id: the key this
         // Mac names it by, the same rewrite the send boundary undid. One
         // marked out of reach was never the server's, and keeps its id.
@@ -1493,13 +1512,20 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         })
       return (await Promise.all([own, ...servers])).flat()
     },
-    hold: (id, holdId) =>
+    hold: (id, holdId, target) =>
       route(
         id,
-        (wireId) => local.artefacts.hold(wireId, holdId),
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.hold(wireId, holdId)
+            : local.artefacts.hold(wireId, holdId, target),
         async (b, wireId) => {
           const serverId = parseSessionKey(id).serverId
-          const preview = await b.api.artefacts.hold(wireId, holdId)
+          // One of the session's artefacts (PRDCT-5022), named only when it is asked.
+          const preview =
+            target === undefined
+              ? await b.api.artefacts.hold(wireId, holdId)
+              : await b.api.artefacts.hold(wireId, holdId, target)
           const known = holdId === undefined ? undefined : remoteHolds.get(holdId)
           if (known && known.serverId === serverId && known.lease === preview.lease) {
             if (preview.holdId !== holdId) {
@@ -1537,23 +1563,41 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         if (known) releaseForward(known.forward)
       }
     },
-    saveVersion: (id) =>
+    saveVersion: (id, target) =>
       route(
         id,
-        (wireId) => local.artefacts.saveVersion(wireId),
-        (b, wireId) => b.api.artefacts.saveVersion(wireId)
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.saveVersion(wireId)
+            : local.artefacts.saveVersion(wireId, target),
+        (b, wireId) =>
+          target === undefined
+            ? b.api.artefacts.saveVersion(wireId)
+            : b.api.artefacts.saveVersion(wireId, target)
       ),
-    versions: (id) =>
+    versions: (id, target) =>
       route(
         id,
-        (wireId) => local.artefacts.versions(wireId),
-        (b, wireId) => b.api.artefacts.versions(wireId)
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.versions(wireId)
+            : local.artefacts.versions(wireId, target),
+        (b, wireId) =>
+          target === undefined
+            ? b.api.artefacts.versions(wireId)
+            : b.api.artefacts.versions(wireId, target)
       ),
-    close: (id) =>
+    close: (id, target) =>
       route(
         id,
-        (wireId) => local.artefacts.close(wireId),
-        (b, wireId) => b.api.artefacts.close(wireId)
+        (wireId) =>
+          target === undefined
+            ? local.artefacts.close(wireId)
+            : local.artefacts.close(wireId, target),
+        (b, wireId) =>
+          target === undefined
+            ? b.api.artefacts.close(wireId)
+            : b.api.artefacts.close(wireId, target)
       ),
     onChanged: (cb) =>
       both(
@@ -1561,7 +1605,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         eventListener('artefact.changed', (event, owner) =>
           cb({
             sessionId: key(owner, event.sessionId),
-            artefact: event.artefact ? keyedArtefact(owner, event.artefact) : null
+            artefact: event.artefact ? keyedArtefact(owner, event.artefact) : null,
+            ...(event.artefacts && {
+              artefacts: event.artefacts.map((a) => keyedArtefact(owner, a))
+            })
           })
         )
       ),
@@ -1569,6 +1616,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       both(
         local.artefacts.onPreviewExited(cb),
         eventListener('artefact.preview_exited', (event, owner) => cb(key(owner, event.sessionId)))
+      ),
+    onPresentRequested: (cb) =>
+      both(
+        local.artefacts.onPresentRequested(cb),
+        eventListener('artefact.present_requested', (event, owner) =>
+          cb(key(owner, event.sessionId))
+        )
       ),
     slidelessState: async (serverId) =>
       serverId === undefined || serverId === LOCAL_SERVER_ID
@@ -1767,6 +1821,39 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         (b, wireId) =>
           b.api.sessions.keepOnRecord(wireId, { name: { displayName: name, userRenamed: renamed } })
       ),
+    // PRDCT-4997: a tab is nested under a tab of its own machine, so both ends
+    // go to the one server that owns them, each by its wire id; a pair split
+    // across machines is refused before any server is asked.
+    sessionsNest: (id, under) => {
+      const owner = parseSessionKey(id).serverId
+      const parent = under === null ? null : parseSessionKey(under)
+      if (parent && parent.serverId !== owner)
+        return Promise.reject(
+          new Error(
+            nestRefusalMessage(
+              'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+            )
+          )
+        )
+      const underWireId = parent ? parent.sessionId : null
+      return route(
+        id,
+        (wireId) => local.sessionsNest(wireId, underWireId),
+        async (b, wireId) => {
+          // The server's no as a plain Error marked as a refusal, as this
+          // Mac's road gives it.
+          const result = await b.api.sessions.nest(wireId, underWireId).catch((error: unknown) => {
+            throw nestAnswerError(error)
+          })
+          refresh(owner)
+          return {
+            id: key(owner, result.id),
+            under: result.under === null ? null : key(owner, result.under),
+            changed: result.changed
+          }
+        }
+      )
+    },
     setSessionViewRecord: (id, view) =>
       route(
         id,
@@ -1934,6 +2021,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         local.onSessionRenamed(cb),
         eventListener('session.renamed', (event, owner) =>
           cb({ id: key(owner, event.id), name: event.name })
+        )
+      ),
+    // PRDCT-4997: a server's nesting, both ends keyed by the server that told it.
+    onSessionNested: (cb) =>
+      both(
+        local.onSessionNested(cb),
+        eventListener('session.nested', (event, owner) =>
+          cb({ id: key(owner, event.id), under: event.under ? key(owner, event.under) : null })
         )
       ),
     onSessionTyped: (cb) =>
@@ -2444,6 +2539,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       input = {
         ...input,
         attachments: input.attachments.map((file) => {
+          if (isGroupAttachment(file)) {
+            // A dropped group goes as a dropped tab does (PRDCT-5032): as it
+            // is to this Mac's agent; to a server's, by bare ids, the group
+            // and its tabs, and marked out of reach unless it is the server's.
+            if (!remote(id)) return file
+            const group = parseResourceKey('group', file.groupId)
+            return {
+              ...file,
+              groupId: group.id,
+              sessions: file.sessions.map((tab) => ({
+                ...tab,
+                sessionId: parseSessionKey(tab.sessionId).sessionId
+              })),
+              ...(group.serverId === owner ? {} : { reachable: false as const })
+            }
+          }
           if (!isFileAttachment(file)) {
             // A dropped tab. A tab of this Mac goes as it is, and so does a
             // server's tab dropped on a tab of this Mac: the agent here

@@ -524,6 +524,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...launchModeFields({
           claudeMode,
           codexMode,
+          antigravityMode,
           dangerousMode,
           permissionMode: p.permissionMode,
           effort: p.effort,
@@ -817,6 +818,8 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       color: pin.color ?? null,
       prompt: defaults.prompt,
       rootSession: defaults.rootSession,
+      // The pin the group came from, as the renderer's own launch stamps it.
+      templateId: pin.id,
       terminals,
       ...(declaredView
         ? {

@@ -13,8 +13,9 @@
  * `--shell-data-dir <dir>` names the app's own data folder, for a child the
  * app started: the windows' sidebars stay in the app's process, and this
  * server reads their files there (never writes them) for the overview a
- * paired phone reads (`GET /sidebar/overview`). A daemon owns its sidebar
- * and ignores it.
+ * paired phone reads (`GET /sidebar/overview`), and the app's Antigravity
+ * permission setting at each spawn (`antigravity-setting.ts`). A daemon owns
+ * both and ignores it.
  *
  * `--app-version <semver>` is the version this server reports (issue #266):
  * the release's own, since a beta's package.json carries the stable version
@@ -106,6 +107,7 @@ import { claudeAccountsManager } from './claude-accounts'
 import { codexAccountsManager } from './codex-accounts'
 import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
+import { readAntigravitySettingFrom } from './antigravity-setting'
 import { preferencesManager, type Preferences } from './preferences-manager'
 import { fileStorage } from './ports/storage'
 import { lazyTerminalPorts, resourcesDirOfEntry } from './ports/terminals'
@@ -113,6 +115,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import {
   observeSessionWrites,
+  publishOrSend,
   publishSessionStates,
   sessionLimitCleared,
   sessionLimitReported,
@@ -358,6 +361,8 @@ async function main(): Promise<void> {
   // The phone's overview of the sidebar: a daemon's own layouts, else the
   // app's layout files when the app named its folder, else nothing to show.
   const shellDataDir = config.daemon ? undefined : arg('shell-data-dir')
+  // Settings → Harnesses lives in the app's folder: Antigravity's rung is read there.
+  readAntigravitySettingFrom(shellDataDir)
   const sidebarOverview = shellDataDir ? shellFilesOverviewSource(shellDataDir) : undefined
   // PRDCT-4321: the daemon's own History, the conversations its tabs ran,
   // kept after a tab is deleted and served to every connected client.
@@ -480,6 +485,7 @@ async function main(): Promise<void> {
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
     preferences: (key) => preferencesManager.get(key as keyof Preferences),
     codexModels: (cwd) => providerModels('codex-chat', cwd),
+    antigravityModels: (cwd) => providerModels('antigravity-chat', cwd),
     homeDir: os.homedir(),
     defaultProfile: (family) => launchProfileManager.resolve(family),
     catalog: (providerIds) => modelsCatalog.view({ providerIds }),
@@ -677,6 +683,9 @@ async function main(): Promise<void> {
           chatDefaultFor(launchProfileManager.getPreferences(), family, null),
         // PRDCT-4485: the launcher's choices, for clave_launch_options and the open.
         launch: agentLaunchFacts,
+        // PRDCT-4997: a nesting the tools made past the command bus, told to
+        // every attached client as the bus would tell it.
+        publish: (event) => publishOrSend(event, () => {}),
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,

@@ -65,6 +65,9 @@ import {
   setWorkChange,
   workToolAnswer
 } from '../../../shared/work-tools'
+import { ATTACH_SESSION_NEEDS_TAB, attachAnswer, attachRequest } from '../../../shared/nest-tools'
+import { nestedUnder } from '@clave/contract/nest-rules'
+import { nestErrorOf } from './nest-api'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import { accountArgumentRefusal, launchOptions } from '../../../shared/launch-options'
 import type { CodexModels } from './launch-options-input'
@@ -76,6 +79,8 @@ import {
   buildCheckpointProvenance,
   buildProvenanceHeader
 } from '../../../shared/exchange-provenance'
+import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../../shared/within-budget'
+import { antigravitySettingField } from './antigravity-setting-field'
 
 /**
  * Renderer-side executor for the in-app MCP server. The sidebar state (groups,
@@ -272,6 +277,9 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       agentState: s.agentState ?? null,
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
       work: s.work ?? null,
+      // The tab it is shown under in the sidebar (PRDCT-4997); parentId
+      // above is who opened it.
+      nestedUnder: s.spawnedBy ?? null,
       // The account the tab runs on (Claude or Codex), in its OWNER's list: a
       // server tab names the server's account (PRDCT-4328); the Default when
       // the tab predates accounts or was launched without naming one.
@@ -627,9 +635,11 @@ export async function openSessionProgrammatically(payload: {
     ...accountFields,
     ...(payload.resumeSessionId ? { resumeSessionId: payload.resumeSessionId } : {}),
     // The mode and the effort to start at (PRDCT-4236). Bypass is the flag.
+    ...antigravitySettingField(antigravityMode),
     ...launchModeFields({
       claudeMode,
       codexMode,
+      antigravityMode,
       dangerousMode,
       permissionMode: payload.permissionMode,
       effort: payload.effort,
@@ -1310,6 +1320,51 @@ async function handleHandOver(payload: Record<string, unknown>): Promise<unknown
 }
 
 /**
+ * `clave_attach_session` on the window's road (PRDCT-4997), for a call the
+ * server does not serve (a tab of another Clave server): the same arguments
+ * read the same way (`shared/nest-tools`), both tabs of one machine, and the
+ * server's NestSession through the preload, which routes the pair to the
+ * machine that owns it. The store learns the link from `session.nested`, as
+ * every window does; this only places the tab, with the tabs nested under
+ * it, right after its parent. A placement that fails leaves the answer as
+ * it is.
+ */
+async function handleAttachSession(payload: Record<string, unknown>): Promise<unknown> {
+  const caller = typeof payload.callerSessionId === 'string' ? payload.callerSessionId : undefined
+  if (!caller) throw new Error(ATTACH_SESSION_NEEDS_TAB)
+  const request = attachRequest(payload)
+  const subject = resolveTargetSession(ownSessionRef(request.subject, caller), caller)
+  const parent =
+    request.type === 'nest' ? resolveTargetSession(ownSessionRef(request.to, caller), caller) : null
+  if (parent && ownerOf(parent.id) !== ownerOf(subject.id))
+    throw new Error(
+      'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+    )
+  // A refusal crosses the bridge marked (`nest-api.ts`): the agent reads the
+  // server's sentence, as on the other roads.
+  const result = await window.electronAPI
+    .sessionsNest(subject.id, parent ? parent.id : null)
+    .catch((err: unknown) => {
+      throw nestErrorOf(err)
+    })
+  if (parent) {
+    try {
+      const state = useSessionStore.getState()
+      const nested = nestedUnder(
+        state.sessions.map((s) => ({ id: s.id, under: s.spawnedBy ?? null })),
+        subject.id
+      )
+      // No undo step: the person did not make this move, and their Undo
+      // must reach their own last step, not an agent's placement.
+      state.moveItems([subject.id, ...nested], parent.id, 'after', { undo: false })
+    } catch {
+      // The link is written; where the row sits is left as it was.
+    }
+  }
+  return attachAnswer(result)
+}
+
+/**
  * Strip control bytes that would break the bracketed-paste envelope or be
  * interpreted as keystrokes/escape sequences by the receiving TUI. Newlines
  * and tabs are safe *inside* a paste and kept; everything else below 0x20
@@ -1809,9 +1864,19 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
   // The launcher's own read (SessionLauncher.tsx): the active workspace's root, else '/'.
   const cwd = getWorkspaceById(useWorkspaceStore.getState().activeWorkspaceId)?.rootDir ?? '/'
   const read = window.electronAPI?.adaptersModels?.('codex-chat', cwd)
+  // Beside Codex's, never after it, and on a budget: this tool has ten seconds.
+  const antigravityRead = window.electronAPI?.adaptersModels?.('antigravity-chat', cwd)
+  const antigravityListing: Promise<CodexModels> = antigravityRead
+    ? withinBudget(
+        antigravityRead.then((models) => models as CodexModels),
+        ANTIGRAVITY_LISTING_BUDGET_MS,
+        'unavailable' as const
+      )
+    : Promise.resolve('unavailable' as const)
   const codexModels: CodexModels = read
     ? await read.then((models) => models as CodexModels).catch(() => 'unavailable' as const)
     : 'unavailable'
+  const antigravityModels = await antigravityListing
   const { harnesses, interactionMode } = useLaunchSettingsStore.getState()
   // What each connection's Pi and OpenCode tabs used today (PRDCT-4551), on
   // the machine that runs them, as the launcher's rows say it.
@@ -1825,6 +1890,7 @@ async function handleLaunchOptions(payload: { server?: string }): Promise<unknow
     harnessSettings: harnesses,
     interactionMode,
     codexModels,
+    antigravityModels,
     harnessUsage: harnessUsage ?? null,
     now: Date.now()
   }
@@ -1928,6 +1994,8 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return handleSetWork(payload as Record<string, unknown>)
     case 'handOver':
       return handleHandOver(payload as Record<string, unknown>)
+    case 'attachSession':
+      return handleAttachSession(payload as Record<string, unknown>)
     case 'flushLinkedDocument': {
       const p = payload as { sessionId: string; allowConflict?: boolean }
       await flushLinkedDocument(p.sessionId, p.allowConflict)

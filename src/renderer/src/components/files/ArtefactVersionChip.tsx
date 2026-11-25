@@ -3,16 +3,7 @@ import * as DropdownMenu from '@clave/ui/primitives/dropdown-menu'
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { ArtefactVersions } from '@clave/contract/artefacts/model'
 import { useArtefactStore } from '../../store/artefact-store'
-import { shownFor, versionLabel } from '../../lib/artefact-version'
-
-/** A version's time, short enough to sit on its row: 13 Nov 11:58. */
-const when = (iso: string): string => {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  const day = date.toLocaleDateString([], { day: 'numeric', month: 'short' })
-  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-  return `${day} ${time}`
-}
+import { shortTime as when, shownFor, versionLabel } from '../../lib/artefact-version'
 
 /**
  * The version an artefact's panel shows, in its bar (PRDCT-4494): the live
@@ -22,9 +13,12 @@ const when = (iso: string): string => {
  */
 export function ArtefactVersionChip({
   sessionId,
+  target,
   openedAt
 }: {
   sessionId: string
+  /** Which of the session's artefacts (PRDCT-5022). */
+  target: string
   /** The open the choice belongs to: a new open starts on the live folder. */
   openedAt: string
 }): React.JSX.Element {
@@ -35,11 +29,11 @@ export function ArtefactVersionChip({
   const [listed, setListed] = useState<ArtefactVersions | null>(null)
   const read = useCallback(() => {
     window.electronAPI.artefacts
-      .versions(sessionId)
+      .versions(sessionId, target)
       .then(setListed, (error: unknown) =>
         setListed({ versions: [], error: error instanceof Error ? error.message : String(error) })
       )
-  }, [sessionId])
+  }, [sessionId, target])
   useEffect(() => read(), [read, saved])
   const versions = listed?.versions ?? []
   const latest = versions.at(-1)?.version

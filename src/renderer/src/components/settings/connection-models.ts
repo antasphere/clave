@@ -27,6 +27,17 @@ export function useCodexModels(enabled: boolean): {
   models: ModelOption[] | null
   failed: boolean
 } {
+  return useCliModels('codex-chat', enabled)
+}
+
+/** A harness's models, asked of its CLI once when `enabled` first holds. */
+export function useCliModels(
+  adapterId: 'codex-chat' | 'antigravity-chat',
+  enabled: boolean
+): {
+  models: ModelOption[] | null
+  failed: boolean
+} {
   const [models, setModels] = useState<ModelOption[] | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -34,7 +45,7 @@ export function useCodexModels(enabled: boolean): {
     let cancelled = false
     void (async () => {
       try {
-        const list = await window.electronAPI.adaptersModels('codex-chat', await modelsFolder())
+        const list = await window.electronAPI.adaptersModels(adapterId, await modelsFolder())
         if (cancelled) return
         if (Array.isArray(list) && list.length > 0) setModels(list)
         else setFailed(true)
@@ -45,7 +56,7 @@ export function useCodexModels(enabled: boolean): {
     return () => {
       cancelled = true
     }
-  }, [enabled])
+  }, [adapterId, enabled])
   return { models, failed }
 }
 

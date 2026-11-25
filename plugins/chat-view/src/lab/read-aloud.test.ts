@@ -501,3 +501,79 @@ describe('the player on the system voice (PRDCT-4430)', () => {
     expect(spoken).toEqual(['Old rendering.', 'Old rendering.'])
   })
 })
+
+describe('say: one short line, never over a reading (PRDCT-4832)', () => {
+  it('says the line in the system voice when the server has no ElevenLabs', async () => {
+    const voice = usePane()
+    const said = voice.say('I have an update for you on Atlas.')
+    await flush()
+    expect(await said).toBe('said')
+    expect(spoken).toEqual(['I have an update for you on Atlas.'])
+    // A say is never a reading.
+    expect(h.holders[0].value).toBeNull()
+  })
+
+  it('is busy while any pane holds the voice for a reading', async () => {
+    window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
+    const reader = usePane()
+    reader.read('p', 'Page one.')
+    const other = useReadAloud({ sessionId: 's2', launch: {} as never })
+    expect(await other.say('I have an update for you on Harbor.')).toBe('busy')
+    expect(await reader.say('Same pane.')).toBe('busy')
+    expect(spoken).toEqual([])
+  })
+
+  it('a reading started while a line is said cuts the line: the say resolves cut', async () => {
+    // The voice never ends an utterance by itself: only the reading can end the say.
+    window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
+    const announcer = usePane()
+    const said = announcer.say('I have an update for you on Atlas.')
+    await flush()
+    expect(spoken).toEqual(['I have an update for you on Atlas.'])
+    const reader = useReadAloud({ sessionId: 's2', launch: {} as never })
+    reader.read('p', 'Page one.')
+    expect(await said).toBe('cut')
+    // The voice is the reading's now: another line is refused.
+    expect(await announcer.say('Again.')).toBe('busy')
+  })
+
+  it('a reading of the same pane cuts its own line too', async () => {
+    window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
+    const voice = usePane()
+    const said = voice.say('I have an update for you on Atlas.')
+    await flush()
+    voice.read('p', 'Page one.')
+    expect(await said).toBe('cut')
+  })
+
+  it('fails when nothing can speak', async () => {
+    vi.stubGlobal('window', { electronAPI: {} })
+    vi.stubGlobal('Audio', undefined)
+    const voice = usePane()
+    expect(await voice.say('Nobody hears this.')).toBe('failed')
+  })
+})
+
+describe('a reading tells how it ended (PRDCT-4832)', () => {
+  it('heard when read to its end, stopped on Stop', async () => {
+    const ends: string[] = []
+    const voice = useReadAloud({
+      sessionId: 's1',
+      launch: {} as never,
+      onEnd: (key, how) => ends.push(`${key}:${how}`)
+    })
+    voice.read('p1', 'One.')
+    h.asked[0].answer({ ok: true, text: 'One.' })
+    await flush()
+    expect(ends).toEqual(['p1:heard'])
+    window.speechSynthesis.speak = (u: FakeUtterance) => void spoken.push(u.text)
+    voice.read('p2', 'Two.')
+    h.asked[1].answer({ ok: true, text: 'Two.' })
+    await flush()
+    voice.stop()
+    expect(ends).toEqual(['p1:heard', 'p2:stopped'])
+    // A stop with nothing read tells nothing.
+    voice.stop()
+    expect(ends).toHaveLength(2)
+  })
+})

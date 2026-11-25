@@ -200,6 +200,68 @@ test('markers key every line the provider reads, sessions included', async () =>
   ).rejects.toThrow()
 })
 
+test('a dropped group is one line: its id for the group tools, its name, its tabs (PRDCT-5032)', async () => {
+  const prompt = await preparePrompt(
+    'check every tab of [Group #1]',
+    [
+      {
+        id: 'g',
+        label: 'Group #1',
+        delivery: 'group',
+        groupId: 'group-1732460000000-3',
+        name: 'Release',
+        sessions: [
+          { sessionId: 'lane-a', name: 'Lane A', agent: 'Claude Code' },
+          { sessionId: 'verifier', name: 'Verifier', agent: 'Codex' }
+        ]
+      }
+    ],
+    true
+  )
+  const lines = prompt.text.split('\n')
+  expect(lines[0]).toBe('check every tab of [Group #1]')
+  expect(lines).toContain(
+    '[Group #1] ' +
+      JSON.stringify({
+        group: 'group-1732460000000-3',
+        name: 'Release',
+        sessions: [
+          { session: 'lane-a', name: 'Lane A', agent: 'Claude Code' },
+          { session: 'verifier', name: 'Verifier', agent: 'Codex' }
+        ]
+      })
+  )
+  // The legend names the tools that take the group id; no session line is
+  // written for a tab of the group: the group is one record.
+  const legend = lines.find((l) => l.startsWith('- a Clave group'))
+  expect(legend).toContain('groupId')
+  expect(legend).toContain('clave_move_session')
+  expect(lines.some((l) => l.startsWith('- a Clave session'))).toBe(false)
+  expect(lines.some((l) => l.startsWith('[Session'))).toBe(false)
+  // Out of reach, it says so and the legend tells the agent not to call it.
+  const far = await preparePrompt(
+    'see [Group #1]',
+    [
+      {
+        id: 'g',
+        label: 'Group #1',
+        delivery: 'group',
+        groupId: 'group-1',
+        name: 'Release',
+        sessions: [],
+        machine: 'the Mac this message was sent from',
+        reachable: false
+      }
+    ],
+    true
+  )
+  const farLines = far.text.split('\n')
+  expect(farLines.find((l) => l.startsWith('[Group #1]'))).toContain('"reachable":false')
+  expect(farLines.some((l) => l.includes('"reachable": false') && l.includes('never call'))).toBe(
+    true
+  )
+})
+
 test('a tab of another machine names it, and one out of reach tells the agent not to call it', async () => {
   const serverTab =
     'clave-owner:session:server-00a75630-6a0d-4f07-badf-09f49446a8cc:d6dd98af-92b1-4788-b206-88e4f20a5670'

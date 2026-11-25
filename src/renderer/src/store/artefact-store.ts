@@ -11,6 +11,11 @@ import type { Artefact, SlidelessState } from '@clave/contract/artefacts/model'
  * how it shows them: an artefact hidden by the person (until the agent opens
  * one again) and the split of the pane, both kept in `localStorage`.
  *
+ * A session keeps several artefacts (PRDCT-5022): `lists` mirrors them as
+ * the servers say, oldest first, the front last, and `artefacts` is the one
+ * the window shows for each session: the one picked in the panel's bar, for
+ * as long as the agent opens nothing newer, else the front one.
+ *
  * The Slideless copy is read per machine, `'local'` for this Mac's own
  * server, else the server's id: the owner of a session id is its fleet key's
  * server (`parseSessionKey`).
@@ -35,6 +40,44 @@ export const ownerOfSession = (sessionId: string): string => parseSessionKey(ses
 /** An artefact shows unless the person hid THIS open of it; a new open by the agent shows again. */
 export const isShown = (artefact: Artefact, hidden: Record<string, string>): boolean =>
   hidden[artefact.sessionId] !== artefact.openedAt
+
+/** A pick in the panel's bar: an artefact of the session, for the front it was made on. */
+export interface ArtefactPick {
+  target: string
+  /** The `openedAt` of the session's front when it was picked: a newer open drops the pick. */
+  front: string
+}
+
+/** The artefact a session shows: the one picked for its current front, else the front. */
+export function shownOf(
+  list: readonly Artefact[] | undefined,
+  pick: ArtefactPick | undefined
+): Artefact | undefined {
+  const front = list?.at(-1)
+  if (!list || !front) return undefined
+  if (!pick || pick.front !== front.openedAt) return front
+  return list.find((a) => a.target === pick.target) ?? front
+}
+
+/** What each session shows, from the lists and the picks. */
+export function shownAll(
+  lists: Record<string, readonly Artefact[]>,
+  picks: Record<string, ArtefactPick>
+): Record<string, Artefact> {
+  const shown: Record<string, Artefact> = {}
+  for (const [sessionId, list] of Object.entries(lists)) {
+    const artefact = shownOf(list, picks[sessionId])
+    if (artefact) shown[sessionId] = artefact
+  }
+  return shown
+}
+
+/** The servers' list, grouped by session in its order: oldest first, the front last. */
+export function groupBySession(listed: readonly Artefact[]): Record<string, Artefact[]> {
+  const lists: Record<string, Artefact[]> = {}
+  for (const artefact of listed) (lists[artefact.sessionId] ??= []).push(artefact)
+  return lists
+}
 
 export const clampSplit = (value: number): number =>
   Number.isFinite(value) ? Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, value)) : SPLIT_DEFAULT
@@ -79,7 +122,16 @@ function writeView(view: ArtefactView): void {
 }
 
 interface ArtefactState extends ArtefactView {
+  /** Each session's artefacts, oldest first, the front last (PRDCT-5022). */
+  lists: Record<string, Artefact[]>
+  /** The artefact each session shows in this window: the pick, else the front. */
   artefacts: Record<string, Artefact>
+  /** What the person picked in each session's bar, kept in memory. */
+  picks: Record<string, ArtefactPick>
+  /** Show this artefact of the session (the bar's dropdown). */
+  pick: (sessionId: string, target: string) => void
+  /** Set one session's list (an event), or every list (a read), and what follows from it. */
+  setLists: (lists: Record<string, Artefact[]>, only?: string) => void
   slideless: Record<string, SlidelessState>
   /** Hide the artefact the session shows now (its `openedAt`), or show it again (null). */
   setHidden: (sessionId: string, openedAt: string | null) => void
@@ -111,7 +163,28 @@ export const useArtefactStore = create<ArtefactState>((set, get) => {
   }
   const asked = new Set<string>()
   return {
+    lists: {},
     artefacts: {},
+    picks: {},
+    pick: (sessionId, target) =>
+      set((s) => {
+        const front = s.lists[sessionId]?.at(-1)
+        if (!front) return s
+        const picks = { ...s.picks, [sessionId]: { target, front: front.openedAt } }
+        return { picks, artefacts: shownAll(s.lists, picks) }
+      }),
+    setLists: (next, only) =>
+      set((s) => {
+        let lists: Record<string, Artefact[]>
+        if (only === undefined) lists = next
+        else {
+          lists = { ...s.lists }
+          const own = next[only]
+          if (own && own.length > 0) lists[only] = own
+          else delete lists[only]
+        }
+        return { lists, artefacts: shownAll(lists, s.picks) }
+      }),
     slideless: {},
     hidden: view.hidden,
     split: view.split,
@@ -169,8 +242,8 @@ export async function refreshArtefacts(): Promise<void> {
   const read = ++reads
   const listed = await window.electronAPI.artefacts.list()
   if (read !== reads) return
-  const artefacts = Object.fromEntries(listed.map((a) => [a.sessionId, a]))
-  useArtefactStore.setState({ artefacts })
+  useArtefactStore.getState().setLists(groupBySession(listed))
+  const { artefacts } = useArtefactStore.getState()
   const owners = new Set(['local', ...listed.map((a) => ownerOfSession(a.sessionId))])
   for (const owner of pruned) owners.delete(owner)
   if (owners.size === 0) return
@@ -189,13 +262,12 @@ export function initArtefacts(): void {
   const refresh = (): void => {
     void refreshArtefacts().catch(() => undefined)
   }
-  api.artefacts.onChanged(({ sessionId, artefact }) =>
-    useArtefactStore.setState((s) => {
-      const artefacts = { ...s.artefacts }
-      if (artefact) artefacts[sessionId] = artefact
-      else delete artefacts[sessionId]
-      return { artefacts }
-    })
+  // The session's whole list from a server that keeps several; from an older
+  // one, its one artefact (or none).
+  api.artefacts.onChanged(({ sessionId, artefact, artefacts }) =>
+    useArtefactStore
+      .getState()
+      .setLists({ [sessionId]: artefacts ? [...artefacts] : artefact ? [artefact] : [] }, sessionId)
   )
   api.artefacts.onSlidelessState(({ serverId, state }) =>
     useArtefactStore.setState((s) => ({

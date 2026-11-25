@@ -31,6 +31,7 @@ import {
   rememberAgentSetup,
   type AgentSetup
 } from '../store/launch-prefs'
+import { antigravitySettingField } from './antigravity-setting-field'
 
 /** Where a new session starts.
  *
@@ -155,17 +156,41 @@ export async function withoutGoneConnection(
 export function setupSpawnFlags(
   setup: AgentSetup | null,
   launchProfileId?: string,
-  workspaceId: string | null = null
-): Pick<SpawnOptions, 'model' | 'permissionMode'> {
+  workspaceId: string | null = null,
+  toServer = false
+): Pick<
+  SpawnOptions,
+  'model' | 'permissionMode' | 'permissionDefault' | 'permissionModeFromSetting'
+> {
   if (!setup || setup.kind === 'claude-agents') return {}
+  // Antigravity's goes as what it is, a setting: the machine that spawns
+  // weighs it below the profile, which this one may not even see.
+  if (setup.kind === 'antigravity') {
+    const setting = antigravitySettingField(true)
+    return {
+      ...(setup.model ? { model: setup.model } : {}),
+      ...setting,
+      // A server upgrades on its own: one older than `permissionDefault`
+      // drops it and would run a saved Plan in Auto, so it gets the mode too,
+      // marked for a newer one as the setting it is.
+      ...(toServer && setting.permissionDefault
+        ? {
+            permissionMode: setting.permissionDefault as SpawnOptions['permissionMode'],
+            permissionModeFromSetting: true
+          }
+        : {})
+    }
+  }
   // A profile that sets its own permissions keeps them: no default rung
   // travels with it (verifier, round 2). The profile is the one named, else
   // the family's selected one.
   const profile =
     (launchProfileId && profilesFor(setup.kind).find((p) => p.id === launchProfileId)) ||
     selectedLaunchProfile(setup.kind, workspaceId)
+  // A server applies its own default and its own profile's permissions
+  // (#423): this Mac's rung, judged against this Mac's profile, never travels.
   const rung =
-    setup.dangerousMode || (profile && profileSetsPermissions(profile))
+    toServer || setup.dangerousMode || (profile && profileSetsPermissions(profile))
       ? undefined
       : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
   return {
@@ -311,12 +336,7 @@ async function launchOnServer(serverId: string, req: LaunchRequest): Promise<str
     const info = await window.electronAPI.fleetStart(serverId, cwd, {
       ...modes,
       dangerousMode,
-      // The model picked, never this Mac's permission rung (#423): the server
-      // applies its own default and keeps a profile of its own that sets its
-      // permissions, as it does for a launch from the phone.
-      ...(req.setup && req.setup.kind !== 'claude-agents' && req.setup.model
-        ? { model: req.setup.model }
-        : {}),
+      ...setupSpawnFlags(req.setup, launchProfileId, workspaceId, true),
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(launchProfileId ? { launchProfileId } : {}),
       ...(serverProfile ? { launchProfile: serverProfile } : {}),

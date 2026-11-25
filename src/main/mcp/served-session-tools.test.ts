@@ -1398,6 +1398,9 @@ describe('opening a session', () => {
       permissionMode: 'bypassPermissions'
     })
     expect(options(2)).not.toHaveProperty('permissionMode')
+    // Antigravity left with none would run in Auto: what is named is never dropped.
+    await run(h, 'openSession', { cwd: '/proj', mode: 'antigravity', permissionMode: 'plan' })
+    expect(options(3)).toMatchObject({ permissionMode: 'plan' })
   })
   it('with no window to mount a pane, kicks the process at a plain size', async () => {
     const h = setup({ ...world(), windows: [] })
@@ -1554,6 +1557,8 @@ describe('launching a pinned group', () => {
       cwd: '/root/proj',
       prompt: 'The project at @project_path under @root_path',
       rootSession: true,
+      // The pin the group came from, so pinning it later shows that pin.
+      templateId: 'Clave',
       workspaceId: 'ws1',
       view: { url: 'http://x', title: 'Clave' }
     })

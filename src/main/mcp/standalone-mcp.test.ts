@@ -17,6 +17,7 @@ import { SessionWrites } from '../../../packages/server/src/sessions/writes'
 import type { Session, SessionRecord } from '@clave/contract/sessions'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
+import { applyNest } from '@clave/contract/nest-rules'
 import {
   SidebarLayouts,
   layoutsOverviewSource,
@@ -1730,8 +1731,8 @@ describe('standalone MCP and the server’s own History (PRDCT-4321)', () => {
 describe('clave_open_artefact on the server (PRDCT-4472)', () => {
   const artefactsFor = (opened: unknown[]): ArtefactsService => ({
     ...ArtefactsPort.none,
-    open: async (sessionId, path) => {
-      opened.push([sessionId, path])
+    open: async (sessionId, path, present) => {
+      opened.push(present === undefined ? [sessionId, path] : [sessionId, path, present])
       if (path.endsWith('.txt'))
         throw new ArtefactRefusal(
           'An artefact is a folder holding an HTML page, or one .html file.'
@@ -1764,6 +1765,34 @@ describe('clave_open_artefact on the server (PRDCT-4472)', () => {
     )
     expect(answer).toEqual({ opened: true, title: 'deck', page: '/work/deck/index.html' })
     expect(opened).toEqual([['caller', '/work/deck']])
+  })
+
+  it('passes present on to the server only when it is asked, and says it was requested (PRDCT-4980)', async () => {
+    const opened: unknown[] = []
+    const { client } = await fixture({ artefacts: artefactsFor(opened) })
+    const asked = payload(
+      await client.callTool({
+        name: 'clave_open_artefact',
+        arguments: { path: '/work/talk', present: true }
+      })
+    )
+    expect(asked).toEqual({
+      opened: true,
+      title: 'deck',
+      page: '/work/talk/index.html',
+      present: 'requested'
+    })
+    const plain = payload(
+      await client.callTool({
+        name: 'clave_open_artefact',
+        arguments: { path: '/work/notes', present: false }
+      })
+    )
+    expect(plain).toEqual({ opened: true, title: 'deck', page: '/work/notes/index.html' })
+    expect(opened).toEqual([
+      ['caller', '/work/talk', true],
+      ['caller', '/work/notes']
+    ])
   })
 
   it('answers a refusal as an error carrying its sentence', async () => {
@@ -2402,4 +2431,129 @@ describe('clave_switch_account on a harness whose first pool is a provider pool 
       claude.connectionPools = pools
     }
   }, 15_000)
+})
+
+describe('clave_attach_session on the server (PRDCT-4997)', () => {
+  /** Three tabs beside the caller, the helper nested under the old tab, and
+   *  a tab in another window; the host keeps the links on its records and
+   *  applies the real rule. */
+  async function nestFixture(): Promise<{
+    client: Client
+    links: Map<string, string>
+    published: unknown[]
+    sidebar: SidebarLayouts
+  }> {
+    const links = new Map<string, string>([['helper', 'old']])
+    const published: unknown[] = []
+    let all: () => Session[] = () => []
+    const recordsNow = (): SessionRecord[] =>
+      all().map((s) => record(s.id, links.has(s.id) ? { spawnedBy: links.get(s.id) } : {}))
+    const f = await sessionFixture({
+      options: { publish: (event) => published.push(event) },
+      host: {
+        listAdoptableRecords: (ids?: ReadonlyArray<string>) =>
+          recordsNow().filter((r) => !ids || ids.includes(r.id)),
+        nest: (id, under) => {
+          const result = applyNest(
+            all().map((s) => ({
+              id: s.id,
+              under: links.get(s.id) ?? null,
+              windowKey: s.windowKey
+            })),
+            id,
+            under
+          )
+          if (result.changed) {
+            if (result.under) links.set(id, result.under)
+            else links.delete(id)
+          }
+          return result
+        }
+      }
+    })
+    all = () => [...f.sessions.values()]
+    for (const id of ['lead', 'old', 'helper']) {
+      f.sessions.set(id, tab(id))
+      f.sidebar.placeSession(SERVER_LAYOUT_KEY, id, null)
+    }
+    f.sessions.set('far', tab('far', { windowKey: 'elsewhere' }))
+    return { client: f.client, links, published, sidebar: f.sidebar }
+  }
+
+  it('nests a tab, tells the windows, and places it with its nested tabs after the parent', async () => {
+    const { client, links, published, sidebar } = await nestFixture()
+    expect(
+      payload(
+        await client.callTool({
+          name: 'clave_attach_session',
+          arguments: { sessionId: 'old', to: 'lead' }
+        })
+      )
+    ).toEqual({ sessionId: 'old', nestedUnder: 'lead', changed: true })
+    expect(links.get('old')).toBe('lead')
+    expect(published).toEqual([{ _tag: 'session.nested', id: 'old', under: 'lead' }])
+    const order = sidebar.get(SERVER_LAYOUT_KEY).displayOrder
+    expect(order.indexOf('old')).toBe(order.indexOf('lead') + 1)
+    expect(order.indexOf('helper')).toBe(order.indexOf('lead') + 2)
+    // The same nesting again changes nothing and tells nothing.
+    expect(
+      payload(
+        await client.callTool({
+          name: 'clave_attach_session',
+          arguments: { sessionId: 'old', to: 'lead' }
+        })
+      ).changed
+    ).toBe(false)
+    expect(published).toHaveLength(1)
+  })
+
+  it('takes a tab out with detach, tells the windows, and moves nothing', async () => {
+    const { client, links, published, sidebar } = await nestFixture()
+    const before = [...sidebar.get(SERVER_LAYOUT_KEY).displayOrder]
+    expect(
+      payload(
+        await client.callTool({
+          name: 'clave_attach_session',
+          arguments: { sessionId: 'helper', detach: true }
+        })
+      )
+    ).toEqual({ sessionId: 'helper', nestedUnder: null, changed: true })
+    expect(links.has('helper')).toBe(false)
+    expect(published).toEqual([{ _tag: 'session.nested', id: 'helper', under: null }])
+    expect(sidebar.get(SERVER_LAYOUT_KEY).displayOrder).toEqual(before)
+  })
+
+  it('answers the rule’s refusal and a bad pair of arguments as the tool’s error', async () => {
+    const { client, links, published } = await nestFixture()
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_attach_session',
+          arguments: { sessionId: 'old', to: 'far' }
+        })
+      )
+    ).toContain('The two tabs are in different windows')
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_attach_session',
+          arguments: { to: 'lead', detach: true }
+        })
+      )
+    ).toContain('Pass exactly one of: to (the tab it goes under) or detach: true (take it out)')
+    expect(
+      errorText(await client.callTool({ name: 'clave_attach_session', arguments: { to: 'ghost' } }))
+    ).toContain('Unknown session "ghost".')
+    expect(links.has('old')).toBe(false)
+    expect(published).toEqual([])
+  })
+
+  it('lists where each tab is nested, apart from who opened it', async () => {
+    const { client } = await nestFixture()
+    const { sessions } = payload(await client.callTool({ name: 'clave_list', arguments: {} })) as {
+      sessions: Array<{ id: string; nestedUnder: string | null }>
+    }
+    expect(sessions.find((s) => s.id === 'helper')?.nestedUnder).toBe('old')
+    expect(sessions.find((s) => s.id === 'old')?.nestedUnder).toBeNull()
+  })
 })

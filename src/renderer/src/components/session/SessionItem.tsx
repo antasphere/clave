@@ -11,7 +11,7 @@ import {
   WindowIcon
 } from '@heroicons/react/24/outline'
 import { ClaudeVariantGlyph } from '../icons/cli-logos'
-import { SidebarTabItem } from './SidebarTabItem'
+import { SidebarTabItem, type RowMenuEvent } from './SidebarTabItem'
 import { claudeUsageForModel, capOutLabel, capStatus } from '../../store/usage-store'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
 import { useSessionAccountSummary } from '../../lib/session-accounts'
@@ -19,7 +19,11 @@ import { tabStatusPresentation, type TabGlyph } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 import { useMarkPack } from '../plugins/native-marks'
 import { tokenColor } from '../../lib/marks'
-import { SubagentMenu, type SessionMenuEvent } from './SubagentMenu'
+import { NestToggle } from './NestToggle'
+
+/** The event a session row's menu opens from: the row's own (a right-click,
+ *  or the keyboard's menu key turned into the same three fields). */
+export type SessionMenuEvent = RowMenuEvent
 
 /** A warning on a row whose account is about to stop it (ADR 0002), before
  *  the next turn fails. Hovering shows the account card the tab's context menu
@@ -204,7 +208,7 @@ interface SessionItemProps {
   session: Session
   isSelected: boolean
   onClick: (modifiers: { metaKey: boolean; shiftKey: boolean }) => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onContextMenu: (e: SessionMenuEvent) => void
   grouped?: boolean
   groupSelected?: boolean
   groupColorHex?: string
@@ -214,11 +218,15 @@ interface SessionItemProps {
   onPointerDown?: (e: React.PointerEvent) => void
   isDragging?: boolean
   onDelete?: () => void
-  subagents?: Session[]
-  selectedIds?: string[]
-  focusedId?: string | null
-  onSelectSubagent?: (id: string) => void
-  onSubagentContextMenu?: (event: SessionMenuEvent, id: string) => void
+  /** The tabs drawn under this one (PRDCT-4998): a count before the status
+   *  folds and unfolds them. */
+  nested?: Session[]
+  nestOpen?: boolean
+  onToggleNest?: () => void
+  /** The tab this row is drawn under, for a nested row. */
+  nestedRoot?: string
+  /** A dragged tab would be nested under this row. */
+  dropOnto?: boolean
 }
 
 function SessionItemImpl({
@@ -235,11 +243,11 @@ function SessionItemImpl({
   onPointerDown,
   isDragging,
   onDelete,
-  subagents,
-  selectedIds,
-  focusedId,
-  onSelectSubagent,
-  onSubagentContextMenu
+  nested,
+  nestOpen = false,
+  onToggleNest,
+  nestedRoot,
+  dropOnto
 }: SessionItemProps): React.JSX.Element {
   const renameSession = useSessionStore((s) => s.renameSession)
 
@@ -253,18 +261,6 @@ function SessionItemImpl({
       onContextMenu={onContextMenu}
       onRename={renameSession}
       onDelete={onDelete}
-      rowControl={
-        subagents?.length && onSelectSubagent ? (
-          <SubagentMenu
-            parent={session}
-            descendants={subagents}
-            selectedIds={selectedIds ?? []}
-            focusedId={focusedId ?? null}
-            onSelect={onSelectSubagent}
-            onContextMenu={onSubagentContextMenu}
-          />
-        ) : undefined
-      }
       extraContent={
         <>
           <AccountLimitBadge session={session} />
@@ -272,6 +268,9 @@ function SessionItemImpl({
             <LocationBadge locationId={session.locationId} />
           ) : getClaudeVariant(session) ? (
             <ClaudeVariantGlyph variant={getClaudeVariant(session)!} />
+          ) : null}
+          {nested?.length && onToggleNest ? (
+            <NestToggle parent={session} nested={nested} open={nestOpen} onToggle={onToggleNest} />
           ) : null}
           <FleetBadge sessionId={session.id} />
           <SessionViewButton session={session} />
@@ -286,6 +285,8 @@ function SessionItemImpl({
       onEditingDone={onEditingDone}
       onPointerDown={onPointerDown}
       isDragging={isDragging}
+      nestedRoot={nestedRoot}
+      dropOnto={dropOnto}
     />
   )
 }
@@ -304,8 +305,9 @@ export const SessionItem = memo(SessionItemImpl, (prev, next) => {
     prev.dimmed === next.dimmed &&
     prev.forceEditing === next.forceEditing &&
     prev.isDragging === next.isDragging &&
-    prev.subagents === next.subagents &&
-    prev.selectedIds === next.selectedIds &&
-    prev.focusedId === next.focusedId
+    prev.nested === next.nested &&
+    prev.nestOpen === next.nestOpen &&
+    prev.nestedRoot === next.nestedRoot &&
+    prev.dropOnto === next.dropOnto
   )
 })

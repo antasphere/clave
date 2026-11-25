@@ -527,6 +527,12 @@ export interface SessionGroup {
    *  opened an hour later lands where the group's own tabs did. `cwd` still
    *  names the project dir the prompt's @-tokens resolve against. */
   rootSession?: boolean
+  /** The pin this group was launched from (its id), whether or not the pin
+   *  stays linked to it: the group picker launches without a link, so this is
+   *  the only trace of where the group came from. Pinning the group then shows
+   *  that pin instead of saving a copy of it (PRDCT-4830). Absent on a group
+   *  made by hand, by an agent, or launched before the field existed. */
+  templateId?: string
   color?: GroupTerminalColor | null
   /** Attached web view — persists with the group (serialized whole). */
   view?: GroupViewConfig | null

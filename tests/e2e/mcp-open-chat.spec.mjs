@@ -146,11 +146,12 @@ export async function run(t) {
       plainRecord
     )
 
-    // Antigravity is the one harness left without a chat view since OpenCode
-    // and Pi gained theirs (PRDCT-4427); the refusal comes before any spawn.
+    // Every harness has a chat view since Antigravity gained its own (#427): a
+    // plain terminal is the mode left without one. The refusal comes before
+    // any spawn.
     const refused = await client.call('clave_open_session', {
       cwd: ROOT,
-      mode: 'antigravity',
+      mode: 'terminal',
       chat: true
     })
     t.check(

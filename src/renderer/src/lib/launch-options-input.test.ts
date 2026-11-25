@@ -165,7 +165,8 @@ describe('serverLaunchOptionsInput', () => {
       { id: 'kimi-k3', label: 'kimi-k3', family: 'kimi-k3' }
     ])
     expect(input.models('codex')).toEqual([{ id: 'gpt-5.5', label: 'GPT-5.5', family: 'GPT-5.5' }])
-    expect(input.models('antigravity')).toEqual([])
+    // Not read here: the listing falls back to the Default row.
+    expect(input.models('antigravity')).toBe('unavailable')
   })
 
   it("names the server's default profile, and leaves the pick to the server's pool", () => {

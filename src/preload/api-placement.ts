@@ -132,6 +132,8 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   sessionsChangeWork: wrongForServerTab(
     "a server tab's work assignment is written to this Mac's records (PRDCT-4334; the server client has sessions.changeWork)"
   ),
+  // PRDCT-4997: both ends on the server that owns them, a split pair refused.
+  sessionsNest: routed,
   setSessionWorkspace: routed,
   tmuxAvailable: local,
   listSessionRecords: localBecause("this Mac's records; a server's come in fleetSnapshot"),
@@ -148,6 +150,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onGroupRemovedForMove: localBecause("a move between this Mac's windows"),
   ackRehomed: localBecause("a move between this Mac's windows"),
   onSessionRenamed: routed,
+  onSessionNested: routed,
   onSessionWorkChanged: wrongForServerTab(
     "only this Mac's server's work changes are heard: a server tab's are not relayed (PRDCT-4334)"
   ),
@@ -213,6 +216,12 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   'artefacts.close': routed,
   'artefacts.onChanged': routed,
   'artefacts.onPreviewExited': routed,
+  'artefacts.onPresentRequested': routed,
+  'presentation.show': localBecause(
+    "the window is this Mac's: a server tab's preview reaches it through the forward its hold opened"
+  ),
+  'presentation.close': localBecause("the presentation window is this Mac's"),
+  'presentation.onClosed': localBecause("the presentation window is this Mac's"),
   'artefacts.slidelessState': routed,
   'artefacts.installSlideless': routed,
   'artefacts.onSlidelessState': routed,
@@ -450,6 +459,9 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   getCodexUsageLimits: localBecause(
     "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
+  getAntigravityUsageLimits: localBecause(
+    "this Mac's Antigravity sign-in and usage, on purpose, as Codex's: no server tab's foot reads it (PRDCT-4328)"
+  ),
   getCodexUsageSnapshot: localBecause(
     "this Mac's accounts and usage, on purpose; a server tab's are its server's, read by the seam (session-accounts.ts: fleetAccounts, fleetUsage; PRDCT-4328)"
   ),
@@ -562,6 +574,13 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   keymapsImport: local,
   keymapsExport: local,
   onKeymapsChanged: local,
+  updatesReport: local,
+  updatesToggle: local,
+  onUpdatesToggle: local,
+  onUpdatesElsewhere: local,
+  onUpdatesYield: local,
+  'updatesKeyEverywhere.get': local,
+  'updatesKeyEverywhere.set': local,
   trustWorkspaceRoot: routed,
   untrustWorkspaceRoot: routed,
   listTrustedRoots: routed,

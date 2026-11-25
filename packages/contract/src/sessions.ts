@@ -87,7 +87,27 @@ export const SessionAttachment = Schema.Struct({
   reachable: Schema.optional(Schema.Literal(false))
 })
 export type SessionAttachment = typeof SessionAttachment.Type
-export const Attachment = Schema.Union(FileAttachment, SessionAttachment)
+export const MAX_GROUP_SESSIONS = 100
+/** A sidebar group dragged onto the composer (PRDCT-5032): its id, the
+ *  `groupId` the Clave tools take, its name and its tabs as they stood. */
+export const GroupAttachment = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  label: AttachmentLabel,
+  delivery: Schema.Literal('group'),
+  groupId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+  sessions: Schema.Array(
+    Schema.Struct({
+      sessionId: Schema.String.pipe(Schema.pattern(/^[a-zA-Z0-9_-]{1,128}$/)),
+      name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+      agent: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))
+    })
+  ).pipe(Schema.maxItems(MAX_GROUP_SESSIONS)),
+  machine: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))),
+  reachable: Schema.optional(Schema.Literal(false))
+})
+export type GroupAttachment = typeof GroupAttachment.Type
+export const Attachment = Schema.Union(FileAttachment, SessionAttachment, GroupAttachment)
 export type Attachment = typeof Attachment.Type
 export const Attachments = Schema.Array(Attachment).pipe(Schema.maxItems(MAX_ATTACHMENTS))
 
@@ -580,7 +600,14 @@ export const SpawnOptions = Schema.Struct({
   allowDangerous: Schema.optional(Schema.Boolean),
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId: Schema.optional(Schema.String),
-  connectionLabel: Schema.optional(Schema.String)
+  connectionLabel: Schema.optional(Schema.String),
+  /** Antigravity's permission setting in the app that asked (Settings →
+   *  Harnesses): a default below the profile, never a pick, for a server that
+   *  cannot read that app's. */
+  permissionDefault: Schema.optional(Schema.String.pipe(Schema.maxLength(64))),
+  /** `permissionMode` repeats that setting, for a server older than
+   *  `permissionDefault`, which reads the mode alone: not a pick. */
+  permissionModeFromSetting: Schema.optional(Schema.Boolean)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -853,6 +880,8 @@ export const SessionRecord = Schema.Struct({
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId: Schema.optional(Schema.String),
   connectionLabel: Schema.optional(Schema.String),
+  /** The Antigravity setting the tab was launched with, a default. */
+  permissionDefault: Schema.optional(Schema.String),
   /** PRDCT-4540: the provider the tab's process last sent a request to when
    *  that request was not on its connection (Clave's Pi extension reports
    *  it); absent while it is on it. `connectionId` stays the one its next
@@ -1122,6 +1151,32 @@ export const ChangeSessionWork = Command.define('ChangeSessionWork', {
   payload: Schema.Struct({ id: Schema.String, change: WorkChange }),
   success: Schema.Struct({ changed: Schema.Array(WorkUpdate), renamed: Schema.Array(WorkRename) }),
   failure: Schema.Union(SessionNotFound, WorkChangeRefused, CapabilityUnavailable)
+})
+
+// ── PRDCT-4997: which tab a tab is nested under ──
+
+/** The records refused the nesting: the rule's own words (`nest-rules.ts`). */
+export class NestRefused extends Schema.TaggedError<NestRefused>()('NestRefused', {
+  id: Schema.String,
+  message: Schema.String
+}) {}
+
+/**
+ * Nest a session under another tab, or take it out with `under: null`: the
+ * record's `spawnedBy` is rewritten, and nothing else (the tab keeps running,
+ * `openedBy` stays who opened it). The rule is `nest-rules.ts`'s, applied
+ * over every record the host keeps; `changed` is false when the record
+ * already said so. The windows follow through `session.nested`, published
+ * only when the record changed.
+ */
+export const NestSession = Command.define('NestSession', {
+  payload: Schema.Struct({ id: Schema.String, under: Schema.NullOr(Schema.String) }),
+  success: Schema.Struct({
+    id: Schema.String,
+    under: Schema.NullOr(Schema.String),
+    changed: Schema.Boolean
+  }),
+  failure: Schema.Union(SessionNotFound, NestRefused, CapabilityUnavailable)
 })
 
 // ── The mobile wave, lane B: nothing is sent twice (decision 10 of the spec,

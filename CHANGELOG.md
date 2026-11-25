@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+- **Tabs picked together are dragged together** — after selecting tabs with Cmd-click or Shift-click, dragging one of them moved only the row under the cursor. A drag of a picked row now carries every tab of the selection, in the order they appear, the dragged row showing how many; one Cmd+Z puts them all back. A group selected by clicking its header is only being shown, so dragging one of its rows still moves that row alone, and nesting a tab under another stays a one-tab drag. Dropped on a chat, the picked tabs are added to the message together (PRDCT-5094).
+- **A selected tab shows in a group without a colour** — in a group with no colour, which is how a new group starts, the selected tab had no background: only its text turned a little darker. It now takes the same fill as a selected tab outside a group (PRDCT-5095).
+- **Pinning a group keeps the group, not the tabs that were open** — « Pin group », and a group dropped onto the pins, used to save every open tab with its name, so the pin brought the same throwaway tabs back at every launch, and it showed in every workspace. A pin now holds the group (its name, folder, colour, prompt and terminals) and one chat tab named after it, and it belongs to the workspace it was made in. A group launched from a pin remembers that pin: pinning it again opens the group picker on the pin it came from (« Show pin ») instead of saving a copy beside it. The saved copies that double a `.clave` file's group, same name and same folder, are removed once; saved pins with no file behind them are kept. « Re-sync pin » follows the same rule and no longer writes the open tabs into the pin.
+
 ## [3.0.0] — 2026-11-19
 
 - **Popovers, menus and tooltips keep a gap from the window's edges** — a menu that ran out of room, like the model list beside the composer's model chip, was slid until it lay flush against the edge of the window. Every popover, menu, submenu and tooltip now stops 8px short of each edge, and the agent picker under the launcher does too.

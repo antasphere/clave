@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSessionStore, type SessionGroup } from '../store/session-store'
 import {
   dropSessionsOn,
   enterSessionDropTarget,
   leaveSessionDropTarget,
-  sessionDropTargetAt
+  sessionDropTargetAt,
+  type SessionsDropDetail
 } from '../lib/session-drag'
+import { rowZone, ZONE_BAND, type RowZone } from '../lib/sidebar-drop-zones'
+
+/** Where a drop lands: beside a row, into a group, or `onto` a tab, which
+ *  nests the dragged tab under it (PRDCT-4997). */
+export type DropPosition = 'before' | 'after' | 'inside' | 'onto'
 
 export interface DropIndicatorState {
   targetId: string
-  position: 'before' | 'after' | 'inside'
+  position: DropPosition
 }
 
 interface DndRenderState {
@@ -39,16 +45,24 @@ const AUTO_SCROLL_ZONE = 40
 const AUTO_SCROLL_SPEED = 10
 const SETTLE_DURATION = 150 // ms for drop settle animation
 const INDICATOR_DEBOUNCE = 32 // ms — absorbs layout-induced oscillation
-// Fraction of a row's height the cursor must travel past a zone boundary
-// before the indicator flips — a cursor resting on a midline stays put.
-const ZONE_BAND = 0.08
 // Pixels past a group card's bottom edge the cursor must travel, once the line
 // is at the card's last position, before the target becomes "after the group".
 const CARD_EXIT_BAND = 14
 
 export function useSidebarDnd(opts: {
   containerRef: React.RefObject<HTMLElement | null>
-  moveItems: (ids: string[], targetId: string, position: 'before' | 'after' | 'inside') => void
+  /** Commit a drop: a move beside a row or into a group, or a nesting
+   *  (`onto`). The caller decides what each means for a nested tab. */
+  onDrop: (ids: string[], targetId: string, position: DropPosition) => void
+  /** Whether the dragged tab may be nested under the target tab: the rows
+   *  offering an `onto` zone. Read through a ref, so the hit-test's identity
+   *  does not change with it. */
+  canNest: (draggedId: string, targetId: string) => boolean
+  /** The rows a drag of the row `itemId` carries, in the order they land:
+   *  the row alone by default, or the selection it belongs to when the
+   *  caller says so (PRDCT-5094, the Sidebar's `dragIdsFor`). Asked at the
+   *  press, through a ref; a group always moves alone. */
+  dragIds?: (itemId: string) => string[]
   pinnedZoneRef?: React.RefObject<HTMLElement | null>
   onPinnedDrop?: (groupId: string) => void
 }): {
@@ -58,7 +72,13 @@ export function useSidebarDnd(opts: {
   isOverPinnedZone: boolean
   handlePointerDown: (e: React.PointerEvent, itemId: string, isGroup: boolean) => void
 } {
-  const { containerRef, moveItems, pinnedZoneRef, onPinnedDrop } = opts
+  const { containerRef, onDrop, pinnedZoneRef, onPinnedDrop } = opts
+  const canNestRef = useRef(opts.canNest)
+  const dragIdsRef = useRef(opts.dragIds)
+  useLayoutEffect(() => {
+    canNestRef.current = opts.canNest
+    dragIdsRef.current = opts.dragIds
+  })
 
   const [dndState, setDndState] = useState<DndRenderState>({
     isDragging: false,
@@ -71,8 +91,10 @@ export function useSidebarDnd(opts: {
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Create/destroy overlay element
-  const createOverlay = useCallback((sourceEl: HTMLElement) => {
+  // Create/destroy overlay element. The ghost is the grabbed row; a drag of
+  // several rows (PRDCT-5094) says how many ride with it in a count on its
+  // corner, as Finder badges a drag of several files.
+  const createOverlay = useCallback((sourceEl: HTMLElement, count: number) => {
     const overlay = document.createElement('div')
     overlay.className = 'sidebar-drag-overlay'
 
@@ -87,6 +109,12 @@ export function useSidebarDnd(opts: {
       clone.style.opacity = '1'
       // Match the source width
       overlay.style.width = `${button.getBoundingClientRect().width}px`
+    }
+    if (count > 1) {
+      const badge = document.createElement('span')
+      badge.className = 'sidebar-drag-count'
+      badge.textContent = String(count)
+      overlay.appendChild(badge)
     }
 
     // Try to pick up the group's background color from the parent container
@@ -131,6 +159,10 @@ export function useSidebarDnd(opts: {
   // row was redirected to "inside" (which appends at the END) and the last row
   // was cut into three 10px bands, so neither edge could be aimed at.
   //
+  // A tab the dragged tab may be nested under adds a third zone in its middle,
+  // `onto` (PRDCT-4997, `lib/sidebar-drop-zones.ts`), and a nested row stands
+  // for the tab it is drawn under, so no line is ever drawn among its rows.
+  //
   // Group headers keep their own zones (before / inside), and the group's
   // "New session" row is an explicit "after the last row" zone (30px tall, a
   // full row's worth of "last position"). Leaving a group is aimed at what
@@ -151,11 +183,22 @@ export function useSidebarDnd(opts: {
       // rects still extend over whatever is rendered below the group — so an
       // unfiltered walk in DOM order matched an invisible row first, and a
       // drop aimed at the group underneath landed inside the collapsed one.
-      const visible = (el: Element): boolean => !el.closest('[data-group-collapsed="true"]')
+      // A folded nest (PRDCT-4997) keeps its rows in the DOM the same way.
+      const visible = (el: Element): boolean =>
+        !el.closest('[data-group-collapsed="true"]') && !el.closest('[data-nest-collapsed="true"]')
       const items = [...container.querySelectorAll<HTMLElement>('[data-sidebar-item-id]')].filter(
         visible
       )
       if (items.length === 0) return
+      // A nested row stands for the tab it is drawn under: every fallback
+      // that names a row by its element names that tab instead.
+      const rowIdOf = (el: HTMLElement): string =>
+        el.dataset.sidebarNestedRoot ?? el.dataset.sidebarItemId!
+      // The tab the dragged row is drawn under, when it is a nested row.
+      const draggedRoot = drag.sourceEl?.dataset.sidebarNestedRoot ?? null
+      // Whether a tab's nested rows are unfolded under it right now.
+      const nestOpen = (rootId: string): boolean =>
+        items.some((el) => el.dataset.sidebarNestedRoot === rootId)
 
       const state = useSessionStore.getState()
       const groupOf = (rowId: string): SessionGroup | undefined =>
@@ -221,8 +264,32 @@ export function useSidebarDnd(opts: {
           break
         }
 
+        // A nested row (PRDCT-4997) is never a target of its own: it stands
+        // for the tab it is drawn under. A line among nested rows would place
+        // a tab between a parent and its own nested tabs, so over one the
+        // drop means "onto that tab", or "stay", or nothing.
+        const nestedRoot = itemEl.dataset.sidebarNestedRoot
+        if (!isGroup && nestedRoot) {
+          resolved = true
+          if (drag.isGroup) {
+            // As over the root's row, below it: beside the root, or beside
+            // the group the root sits in.
+            const parent = groupOf(nestedRoot)
+            newIndicator = { targetId: parent ? parent.id : nestedRoot, position: 'after' }
+            break
+          }
+          // The dragged tab is the root itself (these are its own rows) or
+          // one of the rows drawn under that root: it stays where it is.
+          if (drag.ids.includes(nestedRoot) || draggedRoot === nestedRoot) break
+          // Nesting is a one-tab gesture: several rows dragged together
+          // (PRDCT-5094) only ever land beside a row.
+          if (drag.ids.length === 1 && canNestRef.current(drag.ids[0], nestedRoot))
+            newIndicator = { targetId: nestedRoot, position: 'onto' }
+          break
+        }
+
         const frac = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height))
-        let position: 'before' | 'after' | 'inside'
+        let position: DropPosition
         let targetId = itemId
 
         if (isGroup) {
@@ -262,15 +329,19 @@ export function useSidebarDnd(opts: {
           }
           if (position === 'inside' && drag.isGroup) position = frac < 0.5 ? 'before' : 'after'
         } else {
-          const held =
-            cur?.targetId === itemId
-              ? cur.position === 'before'
-                ? 'lo'
-                : cur.position === 'after'
-                  ? 'hi'
-                  : null
-              : null
-          position = side(frac, 0.5, held) === 'lo' ? 'before' : 'after'
+          const held: RowZone | null =
+            cur?.targetId === itemId && cur.position !== 'inside' ? cur.position : null
+          // A tab offers a middle zone, `onto`, when the dragged tab may be
+          // nested under it (`lib/sidebar-drop-zones.ts`); a group never
+          // nests, and neither do several rows dragged together.
+          const nestable =
+            !drag.isGroup && drag.ids.length === 1 && canNestRef.current(drag.ids[0], itemId)
+          position = rowZone({ frac, held, nestable, nestOpen: nestable && nestOpen(itemId) })
+          // Onto the tab the dragged row is already drawn under: it stays.
+          if (position === 'onto' && draggedRoot === itemId) {
+            resolved = true
+            break
+          }
           if (drag.isGroup) {
             // A group dropped on a row inside another group lands beside that
             // group, never within it.
@@ -371,13 +442,13 @@ export function useSidebarDnd(opts: {
           }
 
           if (clientY < first.top) {
-            const firstId = items[0].dataset.sidebarItemId!
+            const firstId = rowIdOf(items[0])
             if (!drag.ids.includes(firstId))
               newIndicator = { targetId: firstId, position: 'before' }
           } else if (clientY > last.bottom) {
-            newIndicator = resolveAfter(lastItem.dataset.sidebarItemId!)
+            newIndicator = resolveAfter(rowIdOf(lastItem))
             if (!newIndicator && items.length > 1) {
-              newIndicator = resolveAfter(items[items.length - 2].dataset.sidebarItemId!)
+              newIndicator = resolveAfter(rowIdOf(items[items.length - 2]))
             }
           } else {
             let closestAbove: HTMLElement | null = null
@@ -389,7 +460,7 @@ export function useSidebarDnd(opts: {
                 closestAboveBottom = bottom
               }
             }
-            if (closestAbove) newIndicator = resolveAfter(closestAbove.dataset.sidebarItemId!)
+            if (closestAbove) newIndicator = resolveAfter(rowIdOf(closestAbove))
           }
         }
       }
@@ -437,7 +508,13 @@ export function useSidebarDnd(opts: {
     }
     let key: string | null = null
     const gap = container.querySelector<HTMLElement>('.sidebar-drop-gap-active')
-    if (gap) {
+    // The row a dragged tab would be nested under (PRDCT-4997): its outline
+    // is the third thing a tick can mark.
+    const onto = container.querySelector<HTMLElement>('[data-drop-onto="true"]')
+    if (onto) {
+      const ontoId = onto.closest<HTMLElement>('[data-sidebar-item-id]')?.dataset.sidebarItemId
+      key = `onto:${ontoId ?? '?'}`
+    } else if (gap) {
       const itemId =
         gap.parentElement?.querySelector<HTMLElement>('[data-sidebar-item-id]')?.dataset
           .sidebarItemId
@@ -493,15 +570,17 @@ export function useSidebarDnd(opts: {
       if (e.button !== 0) return
       if ((e.target as HTMLElement).tagName === 'INPUT') return
 
-      // A drag carries the row under the cursor and nothing else. The
-      // selection is a VIEW (which terminals tile the main pane — clicking a
-      // group header selects every one of its rows), not an edit selection:
-      // reading it as the drag payload meant that dragging any single row of
-      // the group you were looking at emptied the whole group into the drop
-      // target. Several sessions move together by grouping them (Cmd+G) and
-      // dragging the group.
+      // A drag carries the row under the cursor, or the rows the caller
+      // says travel with it (`dragIds`): a selection picked by hand, with
+      // Cmd or Shift clicks on rows, moves whole (PRDCT-5094). The selection
+      // as such is never the payload: it is also a VIEW (which terminals
+      // tile the main pane — clicking a group header selects every one of
+      // its rows), and reading it as the payload meant that dragging any
+      // single row of the group you were looking at emptied the whole group
+      // into the drop target.
+      const picked = isGroup ? null : dragIdsRef.current?.(itemId)
       dragRef.current = {
-        ids: [itemId],
+        ids: picked && picked.length > 0 && picked.includes(itemId) ? picked : [itemId],
         isGroup,
         startX: e.clientX,
         startY: e.clientY,
@@ -518,6 +597,20 @@ export function useSidebarDnd(opts: {
   )
 
   useEffect(() => {
+    // Over the middle of a tab it would be nested under (PRDCT-4998), the
+    // ghost steps down and in: centred on the cursor it covered that tab's
+    // name, the one thing to read at that moment, and stepped aside it sits
+    // where the row will land, under the tab and indented. Anywhere else it
+    // rides the cursor as before.
+    const poseOverlay = (drag: DragRef): void => {
+      const overlay = overlayRef.current
+      if (!overlay) return
+      const onto = drag.currentIndicator?.position === 'onto'
+      if ((overlay.dataset.onto === 'true') === onto) return
+      overlay.dataset.onto = onto ? 'true' : 'false'
+      overlay.style.transform = onto ? 'translate(20px, 30px) scale(0.96)' : 'scale(1.02)'
+    }
+
     const handlePointerMove = (e: PointerEvent): void => {
       const drag = dragRef.current
       if (!drag) return
@@ -530,7 +623,7 @@ export function useSidebarDnd(opts: {
         // Start dragging
         drag.started = true
         if (drag.sourceEl) {
-          createOverlay(drag.sourceEl)
+          createOverlay(drag.sourceEl, drag.ids.length)
           drag.overlayWidth = overlayRef.current?.getBoundingClientRect().width ?? 0
         }
         setDndState({
@@ -566,7 +659,11 @@ export function useSidebarDnd(opts: {
       const target = sessionDropTargetAt(e.clientX, e.clientY)
       if (target !== drag.dropTarget) {
         if (drag.dropTarget) leaveSessionDropTarget(drag.dropTarget)
-        if (target) enterSessionDropTarget(target)
+        if (target)
+          enterSessionDropTarget(
+            target,
+            drag.isGroup ? 'group' : drag.ids.length > 1 ? 'sessions' : 'session'
+          )
         drag.dropTarget = target
       }
       if (target) {
@@ -578,6 +675,7 @@ export function useSidebarDnd(opts: {
           }
           setDndState((prev) => ({ ...prev, dropIndicator: null }))
         }
+        poseOverlay(drag)
         return
       }
 
@@ -603,12 +701,14 @@ export function useSidebarDnd(opts: {
             }
             setDndState((prev) => ({ ...prev, dropIndicator: null }))
           }
+          poseOverlay(drag)
           return // skip normal hit-test and auto-scroll
         }
       }
 
       // Hit test
       hitTest(e.clientX, e.clientY, drag)
+      poseOverlay(drag)
 
       // Auto-scroll
       autoScroll(e.clientY, drag)
@@ -632,12 +732,12 @@ export function useSidebarDnd(opts: {
       }
 
       // Dropped on a pane that takes sessions: it gets the ids, the sidebar
-      // keeps its order. A group hands over every session it holds.
+      // keeps its order. A group goes as itself, by its id (PRDCT-5032).
       if (drag.started && drag.dropTarget) {
         const target = drag.dropTarget
-        const ids = drag.isGroup
-          ? (useSessionStore.getState().groups.find((g) => g.id === drag.ids[0])?.sessionIds ?? [])
-          : drag.ids
+        const detail: SessionsDropDetail = drag.isGroup
+          ? { kind: 'group', groupId: drag.ids[0] }
+          : { kind: 'session', sessionIds: [...drag.ids] }
         dragRef.current = null
         destroyOverlay()
         setDndState({
@@ -646,7 +746,7 @@ export function useSidebarDnd(opts: {
           dropIndicator: null,
           isOverPinnedZone: false
         })
-        dropSessionsOn(target, [...ids])
+        dropSessionsOn(target, detail)
         return
       }
 
@@ -668,9 +768,19 @@ export function useSidebarDnd(opts: {
         const indicator = drag.currentIndicator
         const overlay = overlayRef.current
 
-        // Find the gap element to animate toward
+        // Find the gap element to animate toward. A nesting has no line to
+        // settle into: the ghost sinks into the row it is nested under
+        // (PRDCT-4997), a touch smaller and fading out.
         const container = containerRef.current
-        const gapEl = container?.querySelector<HTMLElement>('.sidebar-drop-line')
+        const ontoEl =
+          indicator.position === 'onto'
+            ? [
+                ...(container?.querySelectorAll<HTMLElement>(
+                  `[data-sidebar-item-id="${CSS.escape(indicator.targetId)}"]`
+                ) ?? [])
+              ].find((el) => !el.dataset.sidebarNestedRoot)
+            : undefined
+        const gapEl = ontoEl ?? container?.querySelector<HTMLElement>('.sidebar-drop-line')
         const gapRect = gapEl?.getBoundingClientRect()
 
         if (overlay && gapRect && gapRect.height > 0) {
@@ -679,14 +789,14 @@ export function useSidebarDnd(opts: {
             transition: `left ${SETTLE_DURATION}ms ease-out, top ${SETTLE_DURATION}ms ease-out, transform ${SETTLE_DURATION}ms ease-out, opacity ${SETTLE_DURATION}ms ease-out`,
             left: `${gapRect.left}px`,
             top: `${gapRect.top}px`,
-            transform: 'scale(1)',
-            opacity: '0.6'
+            transform: ontoEl ? 'scale(0.96)' : 'scale(1)',
+            opacity: ontoEl ? '0' : '0.6'
           })
 
           // Commit after animation completes
           dragRef.current = null
           setTimeout(() => {
-            moveItems(drag.ids, indicator.targetId, indicator.position)
+            onDrop(drag.ids, indicator.targetId, indicator.position)
             destroyOverlay()
             setDndState({
               isDragging: false,
@@ -698,7 +808,7 @@ export function useSidebarDnd(opts: {
         } else {
           // No gap visible (e.g. "inside" drop) — commit immediately
           dragRef.current = null
-          moveItems(drag.ids, indicator.targetId, indicator.position)
+          onDrop(drag.ids, indicator.targetId, indicator.position)
           destroyOverlay()
           setDndState({
             isDragging: false,
@@ -757,7 +867,7 @@ export function useSidebarDnd(opts: {
     destroyOverlay,
     hitTest,
     autoScroll,
-    moveItems,
+    onDrop,
     containerRef,
     pinnedZoneRef,
     onPinnedDrop

@@ -6,6 +6,7 @@ import { emptyConversation, reduceConversation, type Action, type Conversation }
 import { emptyStatus, reduceStatus, type TerminalStatus } from '../terminal-status'
 import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from '../subagents'
 import { pastStep, type PastState } from '../past'
+import { NO_TURN, trackTurn, type TurnTrack } from './turn-end'
 
 type SubagentAction = { event: SessionEvent } | { items: HistoryItem[] } | { sync: HistoryItem[] }
 const subagentsReducer = (logs: SubagentLogs, action: SubagentAction): SubagentLogs =>
@@ -40,6 +41,9 @@ export function useConversation(
   imagesSupported: boolean
   history: HistorySource | undefined
   truncated: boolean
+  /** How many turns of the LIVE stream came to rest since the view mounted
+   *  (PRDCT-4832): never the past read, nor a reconnect's replace. */
+  turnEnds: number
 } {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
@@ -56,8 +60,11 @@ export function useConversation(
   const [past, setPast] = useState<PastState>('reading')
   const [imagesSupported, setImagesSupported] = useState(false)
   const pastReader = useRef<ConversationReader | null>(null)
+  const [turnEnds, setTurnEnds] = useState(0)
+  const turn = useRef<TurnTrack>(NO_TURN)
   useEffect(() => {
     let live = true
+    turn.current = NO_TURN
     const reader = bindConversation(sessionId, {
       page: (page, replace, incomplete, preserve) => {
         dispatch(replace ? { snapshot: page.items, preserve } : { prepend: page.items })
@@ -69,6 +76,10 @@ export function useConversation(
         setPast('read')
       },
       event: ({ event, at, current }) => {
+        // The live stream: the past comes through `page`, never here.
+        const next = trackTurn(turn.current, event)
+        turn.current = next.track
+        if (next.ended) setTurnEnds((n) => n + 1)
         dispatch({ event, at, current })
         dispatchStatus(event)
         dispatchSubagents({ event })
@@ -136,6 +147,7 @@ export function useConversation(
     earlier: before === null ? null : earlier,
     imagesSupported,
     history: pastReader.current?.source(),
-    truncated
+    truncated,
+    turnEnds
   }
 }

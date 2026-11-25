@@ -8,13 +8,15 @@
  * message does; a tab about to restart on another account is marked so its
  * exit is not announced, and the restart remounts its pane on the new
  * process; a pinned group the server launched is linked to its pin; a tab's
- * work assignment (PRDCT-4123) lands as its record now keeps it.
+ * work assignment (PRDCT-4123) lands as its record now keeps it, and so
+ * does the tab it is nested under (PRDCT-4997).
  */
 import { useSessionStore } from '../store/session-store'
 import { usePinnedStore } from '../store/pinned-store'
 import { useWorkspaceStore } from '../store/workspace-store'
 import { adoptServerStartedTerminals } from './adopt-record'
 import { servedRestartApplies } from './restart-ownership'
+import { nestApi } from './nest-api'
 
 let started = false
 
@@ -27,6 +29,10 @@ export function initServedToolsEvents(): void {
     useSessionStore.getState().applyServedRename(id, name)
   })
   api.onSessionWorkChanged?.(({ id, work }) => useSessionStore.getState().applyServedWork(id, work))
+  // PRDCT-4997: a tab nested under another, or taken out, by anyone (this
+  // window, another one, an agent's tool): the link lands as the record keeps
+  // it, the rows stay where they are and the nest stays folded.
+  nestApi.onNested(({ id, under }) => useSessionStore.getState().applyServedNest(id, under))
   api.onSessionPageChanged?.(({ id, page, servingSessionId }) => {
     const store = useSessionStore.getState()
     if (!store.sessions.some((s) => s.id === id)) return

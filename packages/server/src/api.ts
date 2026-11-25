@@ -43,6 +43,8 @@ import {
   TypeIntoSession,
   // ── PRDCT-4123: which work a session does ──
   ChangeSessionWork,
+  // ── PRDCT-4997: which tab a tab is nested under ──
+  NestSession,
   // ── The mobile wave, lane B: whether a client's message landed ──
   GetSessionWriteStatus
 } from '@clave/contract/sessions'
@@ -153,6 +155,8 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('restart', HttpCqrs.command(RestartSession))
     // ── PRDCT-4123: which work a session does ──
     .handle('changeWork', HttpCqrs.command(ChangeSessionWork))
+    // ── PRDCT-4997: which tab a tab is nested under ──
+    .handle('nest', HttpCqrs.command(NestSession))
     // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
     .handle('writeStatus', HttpCqrs.query(GetSessionWriteStatus))
     .handle('timeline', HttpCqrs.query(GetSessionTimeline))

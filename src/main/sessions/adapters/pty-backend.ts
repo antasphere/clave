@@ -39,6 +39,7 @@ import { lineageOf } from '../lineage'
 import { newOpencodeSessionId } from '../../opencode-session-id'
 import { recordHarnessStart } from '../../usage-ledger'
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import type { NestRecord } from '@clave/contract/nest-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
   buildAgentArgv,
@@ -46,6 +47,7 @@ import {
   type LaunchProfile,
   type PiThinkingLevel
 } from '../../../shared/agent-launch'
+import { antigravityWindowsArgs } from '../../../shared/agent-launch'
 
 const isWindows = process.platform === 'win32'
 
@@ -673,6 +675,9 @@ export interface SessionRecord {
    *  `permission_mode` event so a Resume brings the mode back and not the
    *  launch's (PRDCT-4191). Absent until the provider has said. */
   permissionMode?: string
+  /** The Antigravity setting the tab was launched with, for a server that
+   *  cannot read the app's (`antigravity-setting.ts`): a default, not a mode. */
+  permissionDefault?: string
   /** The reasoning effort the chat was last running at, the same way. */
   effort?: string
   /** Which wave or lane this session works on, its role and its standing
@@ -897,7 +902,7 @@ export interface PtySpawnOptions {
   viewId?: string
   dangerousMode?: boolean
   /** Model the agent CLI starts on (alias like "opus" or a full model id).
-   *  claude → `--model`, codex → `-m`; ignored for antigravity/terminal.
+   *  claude and antigravity → `--model`, codex → `-m`; ignored for a plain terminal.
    *  Undefined = the CLI's own default. */
   model?: string
   claudeMode?: boolean
@@ -933,6 +938,19 @@ export interface PtySpawnOptions {
   /** The mode a Claude session without `dangerousMode` asks under
    *  (`--permission-mode`); the skip flag wins when both are set. */
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+  /** The mode an Antigravity spawn resolved to (`shared/antigravity-mode.ts`),
+   *  main's alone and set at every spawn: `permissionMode` stays what was
+   *  said, which is all the record keeps. */
+  antigravityLaunchMode?: string
+  /** The profile's settings file as a terminal in Ask is handed it, main's
+   *  alone (`settingsFileThatAsks`). */
+  antigravityAskSettings?: string
+  /** The Antigravity setting of the app that asked for the spawn (Settings →
+   *  Harnesses): a default below the profile, never a pick. */
+  permissionDefault?: string
+  /** `permissionMode` repeats that setting, for a server older than
+   *  `permissionDefault`: read as the setting, never a pick. */
+  permissionModeFromSetting?: boolean
   /** Bypass kept reachable to a Claude chat resumed in another mode when its
    *  launch had it (`--allow-dangerously-skip-permissions`, PRDCT-4191). */
   allowDangerous?: boolean
@@ -1261,9 +1279,12 @@ export class PtyBackend {
         // against the safe alphabet before it reaches cmd.exe.
         if (options?.resumeSessionId && !isValidClaudeSessionId(options.resumeSessionId))
           throw new Error('Invalid resume session id')
-        shellArgs = options?.resumeSessionId
-          ? ['/c', 'agy', '--conversation', options.resumeSessionId]
-          : ['/c', 'agy']
+        shellArgs = antigravityWindowsArgs({
+          mode: options?.antigravityLaunchMode ?? options?.permissionMode,
+          model,
+          effort: options?.effort,
+          resumeSessionId: options?.resumeSessionId
+        })
       } else if (useCodexMode) {
         const parts = ['codex']
         if (options?.resumeSessionId) {
@@ -1387,7 +1408,11 @@ export class PtyBackend {
           piStateExtensionPath: piExtensionPath,
           // ── ADR 0004: a routine run's own flags (Claude only) ──
           effort: options?.effort,
-          permissionMode: options?.permissionMode,
+          permissionMode:
+            kind === 'antigravity'
+              ? (options?.antigravityLaunchMode ?? options?.permissionMode)
+              : options?.permissionMode,
+          antigravityAskSettings: options?.antigravityAskSettings,
           pluginDir: options?.pluginDir,
           appendSystemPrompt: options?.appendSystemPrompt,
           opencodeStandalone: options?.opencodeStandalone
@@ -1502,6 +1527,15 @@ export class PtyBackend {
       claudeAgentsMode: useAgentsMode,
       dangerousMode: options?.dangerousMode === true,
       model,
+      // An Antigravity terminal comes back in the mode that was said, and at
+      // its level; a live one taken back keeps what its record held.
+      ...(useAntigravityMode
+        ? {
+            permissionMode: options?.permissionMode ?? previous?.permissionMode,
+            permissionDefault: options?.permissionDefault ?? previous?.permissionDefault,
+            effort: options?.effort ?? previous?.effort
+          }
+        : {}),
       launchProfileId: launchProfile?.id,
       launchProfile: options?.launchProfile,
       piProvider,
@@ -1883,6 +1917,47 @@ export class PtyBackend {
     return writeSessionRecord({ ...meta, work: work ?? undefined })
   }
 
+  /** Every record as the nesting rule reads it (PRDCT-4997), read without
+   *  touching anything, as `listWorkAssignments` is: no tmux call, no
+   *  pruning. The tab it is nested under is its `spawnedBy` when that is a
+   *  session id; a record carrying a `link` is no tab of the sidebar; an
+   *  assignment `sanitizeWork` keeps is the entry that shows the tab. */
+  listNestRecords(): NestRecord[] {
+    sessionRecordsDir()
+    const storage = lazyTerminalPorts.storage
+    const out: NestRecord[] = []
+    for (const file of storage.list(SESSION_RECORDS_FOLDER).filter((f) => f.endsWith('.json'))) {
+      const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
+      if (!raw || typeof raw !== 'object') continue
+      const meta = raw as Partial<Record<keyof SessionRecord, unknown>>
+      const id = meta.id
+      if (typeof id !== 'string' || !id) continue
+      const work = sanitizeWork(meta.work)
+      out.push({
+        id,
+        under: lineageOf(id, meta.spawnedBy, undefined) ?? null,
+        workspaceId:
+          typeof meta.workspaceId === 'string' && meta.workspaceId ? meta.workspaceId : null,
+        windowKey: typeof meta.windowKey === 'string' && meta.windowKey ? meta.windowKey : null,
+        ...(meta.link ? { hidden: true } : {}),
+        ...(work ? { work: { label: work.label, kind: work.kind } } : {})
+      })
+    }
+    return out
+  }
+
+  /** Persist (or clear, with null) the tab a session is nested under, its
+   *  record's `spawnedBy` (PRDCT-4997): the one write behind the server's
+   *  NestSession. Mirrors setSessionWork, and answers whether a record was
+   *  written: false for a session that keeps none. */
+  setSessionSpawnedBy(id: string, under: string | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta) return false
+    return writeSessionRecord({ ...meta, spawnedBy: under ?? undefined })
+  }
+
   /**
    * Re-stamp a session's workspace in its persisted record (workspace removal
    * reassigns sessions; a future "move to workspace" uses the same primitive).
@@ -1974,7 +2049,7 @@ export class PtyBackend {
    *  when nothing changes. */
   setSessionRuntime(
     id: string,
-    patch: { model?: string; permissionMode?: string; effort?: string | null }
+    patch: { model?: string; permissionMode?: string | null; effort?: string | null }
   ): void {
     const key = this.recordKeyForSession(id)
     if (!key) return
@@ -1984,7 +2059,11 @@ export class PtyBackend {
     // The shape a launch accepts (`isValidModelName`): OpenCode and Pi report
     // `provider/model`, and a Resume relaunches on it (PRDCT-4427).
     if (patch.model !== undefined && isValidModelName(patch.model)) next.model = patch.model
-    if (patch.permissionMode !== undefined && /^[a-zA-Z]{1,32}$/.test(patch.permissionMode))
+    if (patch.permissionMode === null) delete next.permissionMode
+    else if (
+      patch.permissionMode !== undefined &&
+      /^(?:[a-zA-Z]{1,32}|accept-edits)$/.test(patch.permissionMode)
+    )
       next.permissionMode = patch.permissionMode
     if (patch.effort === null) delete next.effort
     else if (patch.effort !== undefined && /^[a-z][a-z0-9_-]{0,31}$/.test(patch.effort))

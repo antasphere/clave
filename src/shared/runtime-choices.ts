@@ -17,6 +17,10 @@
  *  `dangerousMode` (`@clave/contract/sessions` `SpawnOptions.permissionMode`). */
 export const SPAWN_PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'] as const
 const SPAWN_MODES: ReadonlySet<string> = new Set(SPAWN_PERMISSION_MODES)
+/** The modes a record brings back: a spawn's, and Antigravity's one rung
+ *  spelled its own way (the others share Claude's words). Never one
+ *  `launchModeFields` takes: that road names a mode for Claude alone. */
+const RECORDED_MODES: ReadonlySet<string> = new Set([...SPAWN_PERMISSION_MODES, 'accept-edits'])
 /** A level as a provider spells it (`src/shared/effort.ts`). */
 export const EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/
 const EFFORT = EFFORT_PATTERN
@@ -62,7 +66,7 @@ export function runtimeChoices(record: RuntimeRecord): RuntimeChoices {
   const out: RuntimeChoices = { dangerousMode: record.dangerousMode === true }
   if (record.model) out.model = record.model
   if (mode === 'bypassPermissions') out.dangerousMode = true
-  else if (mode && SPAWN_MODES.has(mode)) {
+  else if (mode && RECORDED_MODES.has(mode)) {
     out.dangerousMode = false
     out.permissionMode = mode as RuntimeChoices['permissionMode']
     // The person left bypass for this mode: the way back stays open.
@@ -90,6 +94,10 @@ export const LAUNCH_KEYS = [
 export function launchModeFields(input: {
   claudeMode: boolean
   codexMode: boolean
+  /** An Antigravity tab takes a mode too: its spawn maps the words it does
+   *  not share to Ask (`shared/antigravity-mode.ts`), so none is dropped
+   *  into its Auto default. */
+  antigravityMode?: boolean
   dangerousMode: boolean
   permissionMode: unknown
   effort: unknown
@@ -102,6 +110,10 @@ export function launchModeFields(input: {
     out.permissionMode = permissionMode
     if (input.allowDangerous === true) out.allowDangerous = true
   }
+  if (input.antigravityMode && typeof input.permissionMode === 'string')
+    out.permissionMode = (
+      input.permissionMode === 'acceptEdits' ? 'accept-edits' : input.permissionMode
+    ) as SpawnPermissionMode
   if ((input.claudeMode || input.codexMode) && effort) out.effort = effort
   return out
 }

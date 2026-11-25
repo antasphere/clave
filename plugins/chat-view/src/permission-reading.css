@@ -84,11 +84,6 @@
   font-size: var(--text-xs);
   white-space: nowrap;
 }
-/* No level earned: the model's reading, said to be one, in the quiet ink;
-   never a tone that reads as "safe". */
-.chat-permission-sentence[data-verified='false'] {
-  color: var(--text-secondary);
-}
 .chat-permission-sentence[data-loading='true'] {
   color: var(--text-tertiary);
   animation: chat-permission-reading 1.6s ease-in-out infinite;

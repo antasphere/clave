@@ -354,6 +354,10 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     // can change too: no requireLive. Its Resume carries the work on, the
     // spawn reading the record by the id `resumeOptions` adopts.
     changeWork: (id, change) => base.changeWork(id, change),
+    // Where a tab is nested is its record's too (PRDCT-4997): no requireLive,
+    // so a stopped tab can be tucked away or taken out, and its Resume reads
+    // the record's link (`restartSpawn`).
+    nest: (id, under) => base.nest(id, under),
     // Releasing a client window is not a server lifecycle operation.
     release: () => ({ released: [], refused: [] }),
     restart: (id, account, resendRejected, onlyIfStopped, provider) => {

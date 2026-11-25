@@ -28,6 +28,7 @@ export const SettingsLive = HttpApiBuilder.group(ClaveApi, 'settings', (handlers
     .handle('listAccountLogins', HttpCqrs.query(S.ListAccountLogins))
     .handle('readClaudeUsage', HttpCqrs.query(S.ReadClaudeUsage))
     .handle('readClaudeUsageSnapshot', HttpCqrs.query(S.ReadClaudeUsageSnapshot))
+    .handle('readAntigravityUsage', HttpCqrs.query(S.ReadAntigravityUsage))
     .handle('readCodexUsage', HttpCqrs.query(S.ReadCodexUsage))
     .handle('readCodexUsageSnapshot', HttpCqrs.query(S.ReadCodexUsageSnapshot))
     .handle('readPiUsage', HttpCqrs.query(S.ReadPiUsage))

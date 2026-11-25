@@ -8,6 +8,7 @@ vi.mock('../store/session-store', () => ({
 }))
 import { assertServerConnected, openFleetSession } from './mcp-fleet-session'
 import { useFleetStore } from '../store/fleet-store'
+import { useLaunchSettingsStore } from '../store/launch-settings-store'
 import { useProviderConnectionsStore } from '../store/provider-connections-store'
 import { resourceKey } from '@clave/contract/fleet'
 const profile = {
@@ -44,6 +45,20 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 describe('MCP fleet session launch', () => {
+  it("sends an Antigravity open this Mac's setting as a setting, a named mode as a pick", async () => {
+    const api = setup()
+    useLaunchSettingsStore.setState({ harnesses: { antigravity: { permissionDefault: 'auto' } } })
+    await openFleetSession('server', 'ws', undefined, { cwd: '/srv/repo', mode: 'antigravity' })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({ permissionDefault: 'auto' })
+    // As a pick it would beat the server profile's own --mode plan.
+    expect(api.fleetStart.mock.calls.at(-1)![2]).not.toHaveProperty('permissionMode')
+    await openFleetSession('server', 'ws', undefined, {
+      cwd: '/srv/repo',
+      mode: 'antigravity',
+      permissionMode: 'plan'
+    })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({ permissionMode: 'plan' })
+  })
   it('uses the destination profile, account and flags and awaits visible inventory', async () => {
     const api = setup()
     expect(

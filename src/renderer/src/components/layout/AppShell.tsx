@@ -83,6 +83,9 @@ import { initCopyOfferStore } from '../../store/copy-offer-store'
 // ── ADR 0004: the routines in the toolbar ──
 import { initRoutinesStore } from '../../store/routines-store'
 import { RoutineToolbar } from '../routines/RoutineToolbar'
+import { UpdateChip } from '../updates/UpdateChip'
+import { useUpdatesStore } from '../../store/updates-store'
+import { startUpdatesVoice } from '../../lib/updates-voice'
 import { ToolbarSecretPopover } from './ToolbarSecretPopover'
 import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
@@ -95,6 +98,7 @@ import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store
 import { ConfirmDialog } from '@clave/ui/components'
 import { requestArchiveAndKill } from '../../lib/archive-session'
 import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-keymap-manager'
+import type { KeymapActionId } from '../../../../shared/keymaps'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
 import { connectKeymapStore, useShortcutLabel } from '../../store/keymap-store'
 
@@ -594,10 +598,16 @@ export function AppShell(): React.JSX.Element {
       const state = useSessionStore.getState()
       // The sidebar's narrowing is view-local. Read its rendered rows at the
       // keypress instead of persisting search/group-filter state for shortcuts.
+      // A folded nest keeps its rows in the DOM, as a collapsed group does
+      // (PRDCT-4998): they are out of sight, so they are not counted.
       const sidebar = state.sidebarOpen ? document.querySelector('[data-sidebar-shell]') : null
       const rowIds = sidebar
         ? [...sidebar.querySelectorAll<HTMLElement>('[data-sidebar-item-type="session"]')]
-            .filter((row) => !row.closest('[data-group-collapsed="true"]'))
+            .filter(
+              (row) =>
+                !row.closest('[data-group-collapsed="true"]') &&
+                !row.closest('[data-nest-collapsed="true"]')
+            )
             .map((row) => row.dataset.sidebarItemId!)
         : undefined
       const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId, rowIds)
@@ -729,13 +739,44 @@ export function AppShell(): React.JSX.Element {
         const state = useSessionStore.getState()
         if (state.sidebarUndoStack.length > 0) state.undoSidebar()
       },
-      newWindow: () => void window.electronAPI.windowOpen()
+      newWindow: () => void window.electronAPI.windowOpen(),
+      // Folio's update key (PRDCT-4832): main routes it to the window it
+      // concerns, which may be another one.
+      playUpdate: () => {
+        if (window.electronAPI?.updatesToggle) void window.electronAPI.updatesToggle()
+        else useUpdatesStore.getState().toggle()
+      }
     } satisfies KeymapActionHandlers
     return actions
   }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
-  const commandHud = useKeymapManager(keymapActions)
+  // Folio's update key has something to do only while an update waits or a
+  // reading plays (PRDCT-4832); otherwise the chord reaches what is under it.
+  const keymapAvailable = useCallback((actionId: KeymapActionId): boolean => {
+    if (actionId !== 'playUpdate') return true
+    const { updates, current } = useUpdatesStore.getState()
+    return updates.length > 0 || current !== null
+  }, [])
+  const commandHud = useKeymapManager(keymapActions, keymapAvailable)
 
   useEffect(() => initializeSkins(), [])
+
+  // Folio's updates (PRDCT-4832): the announcer, and the key main routes here.
+  useEffect(() => startUpdatesVoice(), [])
+  useEffect(
+    () => window.electronAPI?.onUpdatesToggle?.(() => void useUpdatesStore.getState().toggle()),
+    []
+  )
+  // One voice at a time across windows: main says whether another window is
+  // speaking, and asks this one to yield when the person starts a reading
+  // in another.
+  useEffect(
+    () =>
+      window.electronAPI?.onUpdatesElsewhere?.((speaking) =>
+        useUpdatesStore.getState().setElsewhere(speaking)
+      ),
+    []
+  )
+  useEffect(() => window.electronAPI?.onUpdatesYield?.(() => useUpdatesStore.getState().stop()), [])
 
   // The weight of every tree's row rules, as a multiplier on the theme's own
   // --rule-alpha. One property on the root element is the whole mechanism: the
@@ -1020,6 +1061,12 @@ export function AppShell(): React.JSX.Element {
               className="flex items-center gap-0.5 min-w-0"
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
+              {/* Folio's updates (PRDCT-4832): present only while an update
+                  waits or a reading plays off screen. FIRST in the cluster,
+                  which is laid out from the right: the chip arrives, grows
+                  and leaves at the cluster's left end, so no other control
+                  of the toolbar moves under the pointer. */}
+              <UpdateChip />
               <ToolbarQuickActions />
               {/* The routines of the active workspace (ADR 0004): one button per
                   routine with its badge, the floating report panel on a click. */}

@@ -42,6 +42,7 @@ vi.mock('../claude-accounts', () => ({ claudeAccountsManager: { get: () => undef
 vi.mock('../codex-accounts', () => ({ codexAccountsManager: {} }))
 vi.mock('../usage-manager', () => ({ usageManager: {} }))
 vi.mock('../codex-usage', () => ({ codexUsageManager: {} }))
+vi.mock('../antigravity-cli', () => ({ antigravityUsageManager: {} }))
 vi.mock('../pi-usage', () => ({ piUsageManager: {} }))
 vi.mock('../preferences-manager', () => ({ preferencesManager: {} }))
 vi.mock('../workspace-manager', () => ({ workspaceManager: {} }))

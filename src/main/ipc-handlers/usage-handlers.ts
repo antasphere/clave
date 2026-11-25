@@ -37,6 +37,9 @@ export function registerUsageHandlers(): void {
       )
   )
   ipcMain.handle('usage:codex-snapshot', () => settings.usage.codexSnapshot())
+  ipcMain.handle('usage:get-antigravity-limits', (_event, options?: { force?: boolean }) =>
+    settings.usage.readAntigravity(options?.force === true)
+  )
   ipcMain.handle('usage:get-pi', (_event, range: unknown) =>
     settings.usage.readPi(PI_RANGES.includes(range as PiRange) ? (range as PiRange) : 'today')
   )

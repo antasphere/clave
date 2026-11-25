@@ -107,7 +107,7 @@ import {
   MAX_TOTAL_IMAGE_BYTES,
   type Attachment
 } from '../../../src/shared/attachments'
-import { useComposerAttachments } from './composer-attachments'
+import { dropCardCopy, useComposerAttachments } from './composer-attachments'
 import { WaitingStack } from './WaitingStack'
 import { sendsWhileWorking, takenBack, useWaitingReturns } from './waiting'
 import { DropDrawing } from './DropDrawing'
@@ -124,7 +124,7 @@ import {
   pathsFromDataTransfer
 } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
-import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import { PROVIDER_LOGOS } from './provider-logo'
 import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 
 export interface ChatViewProps {
@@ -190,14 +190,7 @@ function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
   // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
   // breathing logo. Same slot, same arrival and departure.
   const pack = useMarkPack()
-  const Logo =
-    provider === 'claude'
-      ? ClaudeLogo
-      : provider === 'codex'
-        ? CodexLogo
-        : provider === 'pi'
-          ? PiLogo
-          : null
+  const Logo = PROVIDER_LOGOS[provider]
   return (
     <div
       className="chat-provider-mark"
@@ -1116,15 +1109,9 @@ export function ChatView({
         <div className="chat-drop-overlay" role="status">
           <div className="chat-drop-card">
             <DropDrawing kind={sessionsOver ? 'sessions' : 'files'} />
-            <p className="chat-drop-eyebrow">{sessionsOver ? 'Session' : 'Files'}</p>
-            <strong>
-              {sessionsOver ? 'Add the session to the message' : 'Add files to the message'}
-            </strong>
-            <span>
-              {sessionsOver
-                ? 'The agent gets its id, to read it or message it.'
-                : 'Files and folders, reviewed in the composer before they go.'}
-            </span>
+            <p className="chat-drop-eyebrow">{dropCardCopy(sessionsOver).eyebrow}</p>
+            <strong>{dropCardCopy(sessionsOver).title}</strong>
+            <span>{dropCardCopy(sessionsOver).body}</span>
           </div>
         </div>
       )}

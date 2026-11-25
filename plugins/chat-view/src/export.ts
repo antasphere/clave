@@ -127,7 +127,11 @@ export function transcriptMarkdown(
         const words = (delivery ? delivery.body : entry.text).trim()
         if (words) block(words)
         const files = (entry.attachments ?? []).map((file) =>
-          file.delivery === 'session' ? `the session “${file.name}”` : code(file.name)
+          file.delivery === 'session'
+            ? `the session “${file.name}”`
+            : file.delivery === 'group'
+              ? `the group “${file.name}”`
+              : code(file.name)
         )
         if (files.length) block(`_Attached: ${files.join(', ')}_`)
         if (entry.interrupted) block('_Interrupted_')

@@ -32,11 +32,13 @@ const NEEDS: Record<string, ReadonlyArray<'records' | 'accounts' | 'profiles' | 
   launchGroup: ['records', 'accounts', 'pins'],
   // PRDCT-4123: the caller's own unit and the parents the name tie-break reads.
   setWork: ['records'],
-  handOver: ['records']
+  handOver: ['records'],
+  // PRDCT-4997: the links of the tabs that move with a nested tab.
+  attachSession: ['records']
 }
 
-/** The commands that take the attached road: the wave 4 seven and the two
- *  work tools (PRDCT-4123). The wave 3
+/** The commands that take the attached road: the wave 4 seven, the two
+ *  work tools (PRDCT-4123) and the nesting (PRDCT-4997). The wave 3
  *  tools keep the window attached, as their record says. */
 export const ATTACHED_COMMANDS: ReadonlySet<string> = new Set(Object.keys(NEEDS))
 

@@ -52,6 +52,17 @@ describe('resumeOptions carries the stored connection (PRDCT-4496)', () => {
     expect(options).toMatchObject({ connectionId: 'conn-8', connectionLabel: 'Team Kimi' })
   })
 
+  it('resumes an Antigravity tab with the setting it was launched with, as a setting', () => {
+    const options = resumeOptions({
+      ...record,
+      piMode: false,
+      antigravityMode: true,
+      permissionDefault: 'plan'
+    })
+    expect(options.permissionDefault).toBe('plan')
+    expect(options.permissionMode).toBeUndefined()
+  })
+
   it('names no connection for a tab that ran on none', () => {
     const options = resumeOptions(record)
     expect(options.connectionId).toBeUndefined()

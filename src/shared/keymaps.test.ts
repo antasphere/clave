@@ -4,6 +4,7 @@ import {
   KEYMAP_SEQUENCE_TIMEOUT_MS,
   KeymapMatcher,
   canonicalizeBinding,
+  chordToAccelerator,
   formatKeyBinding,
   isMouseChord,
   keyEventToChord,
@@ -34,7 +35,7 @@ describe('keymap defaults', () => {
     expect(config.bindings.newPiAtFolder).toEqual(['Mod+Alt+Shift+P'])
     expect(config.bindings.newOpencode).toEqual([])
     expect(config.bindings.newOpencodeAtFolder).toEqual([])
-    expect(KEYMAP_ACTIONS).toHaveLength(47)
+    expect(KEYMAP_ACTIONS).toHaveLength(48)
   })
 
   it('keeps the master key off the chords a terminal owns', () => {
@@ -319,5 +320,57 @@ describe('mouse bindings', () => {
   it('marks exactly the session actions as acting on the clicked row', () => {
     const targeted = KEYMAP_ACTIONS.filter((action) => action.targetsSession).map((a) => a.id)
     expect(targeted.sort()).toEqual(['archiveAndKillSession', 'killFocusedSession'])
+  })
+})
+
+describe('the update key (PRDCT-4832)', () => {
+  it('is Ctrl+Shift+Space by default and the defaults still parse', () => {
+    expect(resolveKeymapConfig().bindings.playUpdate).toEqual(['Ctrl+Shift+Space'])
+    expect(parseKeymapOverrides({ version: 1 }).ok).toBe(true)
+    expect(KEYMAP_ACTIONS.find((a) => a.id === 'playUpdate')?.label).toBe(
+      'Play or pause the update'
+    )
+  })
+})
+
+describe('chordToAccelerator', () => {
+  it('maps the modifiers per platform', () => {
+    expect(chordToAccelerator('Mod+K', 'darwin')).toBe('Command+K')
+    expect(chordToAccelerator('Mod+K', 'linux')).toBe('Super+K')
+    expect(chordToAccelerator('Ctrl+Shift+Space', 'darwin')).toBe('Control+Shift+Space')
+    expect(chordToAccelerator('Alt+1', 'win32')).toBe('Alt+1')
+  })
+  it('names the keys as Electron does', () => {
+    const cases: [string, string][] = [
+      ['Enter', 'Return'],
+      ['Escape', 'Esc'],
+      ['Backspace', 'Backspace'],
+      ['Delete', 'Delete'],
+      ['Tab', 'Tab'],
+      ['ArrowUp', 'Up'],
+      ['ArrowDown', 'Down'],
+      ['ArrowLeft', 'Left'],
+      ['ArrowRight', 'Right'],
+      ['Home', 'Home'],
+      ['End', 'End'],
+      ['PageUp', 'PageUp'],
+      ['PageDown', 'PageDown'],
+      ['F1', 'F1'],
+      ['F24', 'F24'],
+      ['a', 'A'],
+      ['7', '7'],
+      ['[', '['],
+      ['/', '/']
+    ]
+    for (const [key, name] of cases)
+      expect(chordToAccelerator(`Ctrl+${key}`, 'darwin')).toBe(`Control+${name}`)
+    expect(chordToAccelerator('Ctrl++', 'darwin')).toBe('Control+Plus')
+  })
+  it('refuses what the OS cannot hold', () => {
+    expect(chordToAccelerator('MouseMiddle', 'darwin')).toBeNull()
+    expect(chordToAccelerator('Mod+MouseBack', 'darwin')).toBeNull()
+    expect(chordToAccelerator('Master C', 'darwin')).toBeNull()
+    expect(chordToAccelerator('Mod+K Mod+J', 'darwin')).toBeNull()
+    expect(chordToAccelerator('', 'darwin')).toBeNull()
   })
 })

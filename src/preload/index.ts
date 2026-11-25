@@ -30,6 +30,7 @@ import {
   type HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
+import { NEST_SERVER_NOT_NAMED, nestAnswerError } from '../shared/nest-tools'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
@@ -58,6 +59,7 @@ import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { NestResult } from '@clave/contract/nest-rules'
 import type { ServerPairingChange, ServerPairings } from '@clave/contract/fleet'
 import {
   MIC_GET_ACCESS_CHANNEL,
@@ -246,6 +248,12 @@ const refusalOf = (error: unknown): ServerRefusal | null => {
 }
 const tellRefusal = (refusal: ServerRefusal | null): void => {
   for (const listener of refusalListeners) listener(refusal)
+}
+/** A nesting the server answered with a no (PRDCT-4997), as a plain Error
+ *  whose message is the sentence, marked as a refusal (`nestAnswerError`);
+ *  anything else is thrown as it came. */
+const plainNestRefusal = (error: unknown): never => {
+  throw nestAnswerError(error)
 }
 /** `serverRouter.route`, with the refusal relay around every routed call. */
 const viaServer = <A extends unknown[], R>(
@@ -1549,6 +1557,16 @@ const electronAPI = {
     server: ({ api }, id, change) => api.sessions.changeWork(id, change)
   }),
 
+  // ── PRDCT-4997: which tab a tab is nested under, on its record ──
+  // The server's command alone, as the work's. A refusal reaches the window
+  // as a plain Error carrying the server's sentence, marked as a refusal: a
+  // tagged error keeps only its message across the context bridge, and a
+  // plain one is sure to.
+  sessionsNest: viaServer<[string, string | null], NestResult>({
+    ipc: () => Promise.reject(new Error(NEST_SERVER_NOT_NAMED)),
+    server: ({ api }, id, under) => api.sessions.nest(id, under).catch(plainNestRefusal)
+  }),
+
   // Kept on the server's record once main names it, like the name (round 1
   // of wave 6 lane A's verifier): over IPC it reached main's copy only.
   setSessionWorkspace: viaServer<[string, string | null], void>({
@@ -1618,6 +1636,9 @@ const electronAPI = {
     onServerEventOf('session.work_changed', (event) =>
       callback({ id: event.id, work: event.work as WorkAssignment | null })
     ),
+  // PRDCT-4997: the tab a tab is nested under, as its record now keeps it.
+  onSessionNested: (callback: (payload: { id: string; under: string | null }) => void) =>
+    onServerEventOf('session.nested', (event) => callback({ id: event.id, under: event.under })),
   onSessionPageChanged: (
     callback: (payload: {
       id: string
@@ -1915,10 +1936,11 @@ const electronAPI = {
       server: async ({ api }) => [...(await api.artefacts.list())]
     }),
     // The preview runs on this machine's loopback: its own address is framed as it is.
-    hold: viaOwnServer<[string, string?], { url: string; holdId: string; ttlMs: number }>({
-      ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:hold', sessionId, holdId),
-      server: async ({ api }, sessionId, holdId) => {
-        const held = await api.artefacts.hold(sessionId, holdId)
+    hold: viaOwnServer<[string, string?, string?], { url: string; holdId: string; ttlMs: number }>({
+      ipc: (sessionId, holdId, target) =>
+        ipcRenderer.invoke('artefacts:hold', sessionId, holdId, target),
+      server: async ({ api }, sessionId, holdId, target) => {
+        const held = await api.artefacts.hold(sessionId, holdId, target)
         return { url: held.url, holdId: held.holdId, ttlMs: held.ttlMs }
       }
     }),
@@ -1926,29 +1948,35 @@ const electronAPI = {
       ipc: (sessionId, holdId) => ipcRenderer.invoke('artefacts:release', sessionId, holdId),
       server: ({ api }, sessionId, holdId) => api.artefacts.release(sessionId, holdId)
     }),
-    saveVersion: viaOwnServer<[string], { version: number; created: boolean }>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:saveVersion', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.saveVersion(sessionId)
+    saveVersion: viaOwnServer<[string, string?], { version: number; created: boolean }>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:saveVersion', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.saveVersion(sessionId, target)
     }),
-    versions: viaOwnServer<[string], ArtefactVersions>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:versions', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.versions(sessionId)
+    versions: viaOwnServer<[string, string?], ArtefactVersions>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:versions', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.versions(sessionId, target)
     }),
-    close: viaOwnServer<[string], void>({
-      ipc: (sessionId) => ipcRenderer.invoke('artefacts:close', sessionId),
-      server: ({ api }, sessionId) => api.artefacts.close(sessionId)
+    close: viaOwnServer<[string, string?], void>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:close', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.close(sessionId, target)
     }),
-    onChanged: viaServerEvent<'artefact.changed', { sessionId: string; artefact: Artefact | null }>(
-      'artefacts:changed',
+    onChanged: viaServerEvent<
       'artefact.changed',
-      (event) => ({
-        sessionId: event.sessionId,
-        artefact: event.artefact
-      })
-    ),
+      { sessionId: string; artefact: Artefact | null; artefacts?: readonly Artefact[] }
+    >('artefacts:changed', 'artefact.changed', (event) => ({
+      sessionId: event.sessionId,
+      artefact: event.artefact,
+      ...(event.artefacts && { artefacts: event.artefacts })
+    })),
     onPreviewExited: viaServerEvent<'artefact.preview_exited', string>(
       'artefacts:preview-exited',
       'artefact.preview_exited',
+      (event) => event.sessionId
+    ),
+    // PRDCT-4980: the agent asked to present the session's artefact.
+    onPresentRequested: viaServerEvent<'artefact.present_requested', string>(
+      'artefacts:present-requested',
+      'artefact.present_requested',
       (event) => event.sessionId
     ),
     // This Mac's own copy here; a server's id is the fleet wrapper's to route.
@@ -1967,6 +1995,18 @@ const electronAPI = {
       serverId: null,
       state: event.state
     }))
+  },
+  // PRDCT-4980: a session's deck alone, full screen, in a window of its own
+  // that main makes; this window holds the preview and hands main its address.
+  presentation: {
+    show: (sessionId: string, url: string, title: string, presentationId: string) =>
+      ipcRenderer.invoke('presentation:show', sessionId, url, title, presentationId),
+    close: (sessionId: string) => ipcRenderer.invoke('presentation:close', sessionId),
+    onClosed: (callback: (closed: { sessionId: string; presentationId: string }) => void) =>
+      createIpcListener<[{ sessionId: string; presentationId: string }]>(
+        'presentation:closed',
+        callback
+      )
   },
   linkedDocuments: {
     getDefaultSignature: () => ipcRenderer.invoke('linked-documents:get-default-signature'),
@@ -2651,6 +2691,10 @@ const electronAPI = {
     server: ({ api }, accountId, options) =>
       api.settings.usage.readCodex(accountId, options).then(loose<UsageRead>)
   }),
+  getAntigravityUsageLimits: viaServer<[{ force?: boolean }?], UsageRead>({
+    ipc: (options) => ipcRenderer.invoke('usage:get-antigravity-limits', options),
+    server: ({ api }, options) => api.settings.usage.readAntigravity(options).then(loose<UsageRead>)
+  }),
   getCodexUsageSnapshot: viaServer<[], Record<string, UsageRead>>({
     ipc: () => ipcRenderer.invoke('usage:codex-snapshot'),
     server: ({ api }) => api.settings.usage.codexSnapshot().then(loose<Record<string, UsageRead>>)
@@ -2992,6 +3036,23 @@ const electronAPI = {
   keymapsExport: (json: string) => ipcRenderer.invoke('keymaps:export', json) as Promise<boolean>,
   onKeymapsChanged: (callback: (value: unknown) => void) =>
     createIpcListener<[unknown]>('keymaps:changed', callback),
+  // Folio's updates (PRDCT-4832): this window's status, the key's routing.
+  updatesReport: (status: {
+    active: boolean
+    playing: boolean
+    speaking: boolean
+    oldestAt: number | null
+  }) => ipcRenderer.send('updates:status', status),
+  updatesToggle: () => ipcRenderer.invoke('updates:toggle') as Promise<boolean>,
+  onUpdatesToggle: (callback: () => void) => createIpcListener<[]>('updates:toggle', callback),
+  onUpdatesElsewhere: (callback: (speaking: boolean) => void) =>
+    createIpcListener<[boolean]>('updates:elsewhere', callback),
+  onUpdatesYield: (callback: () => void) => createIpcListener<[]>('updates:yield', callback),
+  updatesKeyEverywhere: {
+    get: () => ipcRenderer.invoke('updates:key-everywhere:get') as Promise<boolean>,
+    set: (value: boolean) =>
+      ipcRenderer.invoke('updates:key-everywhere:set', value) as Promise<boolean>
+  },
   trustWorkspaceRoot: viaServer<[string], void>({
     ipc: (root) => ipcRenderer.invoke('clave:trust-root', root),
     server: ({ api }, root) => api.workspaceFiles.trustRoot(root)

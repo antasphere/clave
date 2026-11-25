@@ -20,6 +20,7 @@ import type {
   ReviewEvent
 } from '../shared/github-pull'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { NestResult } from '@clave/contract/nest-rules'
 import type { TimelinePage } from '@clave/contract/timeline'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
@@ -536,6 +537,8 @@ export interface SessionRecord {
   // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
   connectionId?: string
   connectionLabel?: string
+  /** Antigravity's permission setting, a default and never a pick. */
+  permissionDefault?: string
   /** PRDCT-4540: the provider the process went to off its connection. */
   connectionLeftFor?: string
   /** The thread a Codex chat tab resumes on relaunch. */
@@ -839,25 +842,52 @@ export interface PluginSecretPrompt {
 export interface ArtefactsAPI {
   /** Every artefact this window can show: this Mac's own server's, and each connected server's, their session ids as the window keys them. */
   list(): Promise<Artefact[]>
-  /** Hold the preview of a session's artefact; call again with the holdId before ttlMs runs out. The url is one this window can frame. */
-  hold(sessionId: string, holdId?: string): Promise<{ url: string; holdId: string; ttlMs: number }>
+  /** Hold the preview of one of a session's artefacts (`target`, else its front one);
+   *  call again with the holdId before ttlMs runs out. The url is one this window can frame. */
+  hold(
+    sessionId: string,
+    holdId?: string,
+    target?: string
+  ): Promise<{ url: string; holdId: string; ttlMs: number }>
   release(sessionId: string, holdId: string): Promise<void>
-  saveVersion(sessionId: string): Promise<{ version: number; created: boolean }>
-  /** The versions the session's artefact keeps, from its running preview (PRDCT-4494). */
-  versions(sessionId: string): Promise<ArtefactVersions>
-  /** The session shows no artefact any more, for every window and every Mac. */
-  close(sessionId: string): Promise<void>
+  saveVersion(sessionId: string, target?: string): Promise<{ version: number; created: boolean }>
+  /** The versions one of the session's artefacts keeps, from its running preview (PRDCT-4494). */
+  versions(sessionId: string, target?: string): Promise<ArtefactVersions>
+  /** The session lets go of one of its artefacts (`target`), or of all, for every window and Mac. */
+  close(sessionId: string, target?: string): Promise<void>
+  /** A session's artefacts changed: its front one (null once none is left) and, from a
+   *  server that keeps several (PRDCT-5022), all of them, oldest first, the front last. */
   onChanged(
-    callback: (change: { sessionId: string; artefact: Artefact | null }) => void
+    callback: (change: {
+      sessionId: string
+      artefact: Artefact | null
+      artefacts?: readonly Artefact[]
+    }) => void
   ): () => void
   /** The preview died under its holders: hold again. */
   onPreviewExited(callback: (sessionId: string) => void): () => void
+  /** The agent asked to present the session's artefact full screen (PRDCT-4980). */
+  onPresentRequested(callback: (sessionId: string) => void): () => void
   /** The Slideless copy of a machine: this Mac when serverId is absent, else a connected server. */
   slidelessState(serverId?: string): Promise<SlidelessState>
   installSlideless(serverId?: string): Promise<SlidelessState>
   onSlidelessState(
     callback: (change: { serverId: string | null; state: SlidelessState }) => void
   ): () => void
+}
+
+/** A session's deck alone, full screen, in a window of its own (PRDCT-4980). */
+export interface PresentationAPI {
+  /** Show the preview at `url` (a loopback address this window holds) in the
+   *  session's presentation window, made full screen on another display when
+   *  one is connected; a second call moves it to `url` and brings it forward.
+   *  False: this window is not the one presenting it (another window of this
+   *  Mac is, or the person closed that presentation), and it should let go. */
+  show(sessionId: string, url: string, title: string, presentationId: string): Promise<boolean>
+  /** Close the session's presentation, if this window is the one presenting it. */
+  close(sessionId: string): Promise<void>
+  /** A presentation this window presents was closed (Escape, or by hand). */
+  onClosed(callback: (closed: { sessionId: string; presentationId: string }) => void): () => void
 }
 
 export interface ElectronAPI extends FleetDesktopAPI {
@@ -1056,6 +1086,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
       // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
       connectionId?: string
       connectionLabel?: string
+      /** Antigravity's permission setting, a default and never a pick. */
+      permissionDefault?: string
+      /** `permissionMode` repeats that setting, for an older server. */
+      permissionModeFromSetting?: boolean
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void
@@ -1076,6 +1110,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  server; answers every record rewritten, the tab's own first, and the
    *  names an accepted handover gave. */
   sessionsChangeWork: (id: string, change: WorkChange) => Promise<WorkChangeResult>
+  /** PRDCT-4997: nest the tab under another tab, or take it out with null,
+   *  through the server; a refusal rejects with the rule's sentence. */
+  sessionsNest: (id: string, under: string | null) => Promise<NestResult>
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
@@ -1106,6 +1143,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onSessionWorkChanged: (
     callback: (payload: { id: string; work: WorkAssignment | null }) => void
   ) => () => void
+  /** PRDCT-4997: the tab a tab is nested under changed on its record; null
+   *  when it was taken out. */
+  onSessionNested: (callback: (payload: { id: string; under: string | null }) => void) => () => void
   onSessionPageChanged: (
     callback: (payload: {
       id: string
@@ -1246,6 +1286,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
    * its sessions, their ids keyed as the window keys them.
    */
   artefacts: ArtefactsAPI
+  presentation: PresentationAPI
   linkedDocuments: LinkedDocumentsAPI
   // ── ADR 0004: the routines a server schedules, read and driven from the toolbar ──
   // ── Issue #407: the relay address and the relay client's state (Settings → Mobile) ──
@@ -1499,6 +1540,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
     accountId?: string,
     options?: { force?: boolean }
   ) => Promise<UsageLimits | UsageError>
+  getAntigravityUsageLimits: (options?: { force?: boolean }) => Promise<UsageLimits | UsageError>
   getCodexUsageSnapshot: () => Promise<Record<string, UsageLimits | UsageError>>
   onCodexAccountUsage: (
     callback: (update: { accountId: string; result: UsageLimits | UsageError }) => void
@@ -1682,6 +1724,26 @@ export interface ElectronAPI extends FleetDesktopAPI {
   keymapsImport: () => Promise<string | null>
   keymapsExport: (json: string) => Promise<boolean>
   onKeymapsChanged: (callback: (value: unknown) => void) => () => void
+  /** Folio's updates (PRDCT-4832): this window's status, told to main, which
+   *  holds the update key system-wide while any window is active. */
+  updatesReport: (status: {
+    active: boolean
+    playing: boolean
+    speaking: boolean
+    oldestAt: number | null
+  }) => void
+  /** Route the update key to the window it concerns; whether one was. */
+  updatesToggle: () => Promise<boolean>
+  onUpdatesToggle: (callback: () => void) => () => void
+  /** Whether ANOTHER window is speaking (a reading or a line): one voice at a
+   *  time across windows. */
+  onUpdatesElsewhere: (callback: (speaking: boolean) => void) => () => void
+  /** The person started a reading in another window: stop this one's. */
+  onUpdatesYield: (callback: () => void) => () => void
+  updatesKeyEverywhere: {
+    get: () => Promise<boolean>
+    set: (value: boolean) => Promise<boolean>
+  }
   trustWorkspaceRoot: (root: string) => Promise<void>
   untrustWorkspaceRoot: (root: string) => Promise<void>
   listTrustedRoots: () => Promise<string[]>

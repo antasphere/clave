@@ -11,6 +11,10 @@ import { create } from 'zustand'
 import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { GitRangeDirection } from '../../../shared/git-range'
 import type { WorkAssignment } from '@clave/contract/work-rules'
+import { nestedUnder, nestRefusal, type NestRecord } from '@clave/contract/nest-rules'
+import { nestApi } from '../lib/nest-api'
+import { NEST_SERVER_NOT_NAMED, NestRefused } from '../../../shared/nest-tools'
+import { SERVER_SILENT } from '../../../shared/helper-preferences'
 import type {
   Theme,
   AppIcon,
@@ -367,11 +371,15 @@ interface SessionState {
    *  launched from the group's own `+` start on. */
   setGroupPrompt: (groupId: string, prompt: string | null) => void
   /** Move rows or groups relative to `targetId`; `null` = the top level, at
-   *  the end (the explicit ungroup). Rules in @clave/contract/sidebar/ops. */
+   *  the end (the explicit ungroup). Rules in @clave/contract/sidebar/ops.
+   *  `undo: false` leaves no undo step: for a placement the person did not
+   *  make (an agent's nesting on the window's road, PRDCT-4997), whose undo
+   *  would sit before their own last step. */
   moveItems: (
     itemIds: string[],
     targetId: string | null,
-    position: 'before' | 'after' | 'inside'
+    position: 'before' | 'after' | 'inside',
+    options?: { undo?: boolean }
   ) => void
   undoSidebar: () => void
   toggleSidebar: () => void
@@ -451,6 +459,32 @@ interface SessionState {
    *  belongs to no wave or lane any more). The record already holds it,
    *  nothing is written back. */
   applyServedWork: (id: string, work: WorkAssignment | null) => void
+  // ── Nested tabs (PRDCT-4997) ──
+  /** The tabs whose nested rows are unfolded under them. In memory only:
+   *  every nest starts folded. */
+  expandedNests: Record<string, true>
+  toggleNest: (id: string) => void
+  setNestExpanded: (id: string, open: boolean) => void
+  /** Nest the tab `id` under `underId`: the rule is asked first, the row and
+   *  the tabs nested under it move right after the new parent, the parent's
+   *  nest opens, and the server is told. A refusal by the server puts it all
+   *  back and leaves no undo step. */
+  nestSession: (id: string, underId: string) => Promise<NestOutcome>
+  /** Take the tab out of the tab it is nested under, and with `move` place it
+   *  (and the tabs nested under it) there. Reverted the same way on a refusal. */
+  detachSession: (
+    id: string,
+    move?: { targetId: string; position: 'before' | 'after' | 'inside' }
+  ) => Promise<NestOutcome>
+  /** The server says a tab is nested under `under` now (null: it stands
+   *  alone), whoever asked. The link alone: no move, no undo step. */
+  applyServedNest: (id: string, under: string | null) => void
+  /** What the server answered when it would not nest a tab or take it out:
+   *  shown under that tab's row, which has just gone back to where it was,
+   *  until the sidebar clears it. The rule's own refusals never reach here:
+   *  the sidebar offers no such drop and no such menu entry. */
+  nestNotice: { id: string; message: string } | null
+  clearNestNotice: () => void
   renameSession: (id: string, name: string) => void
   autoRenameSession: (id: string, name: string) => void
   resetSessionName: (id: string) => void
@@ -522,8 +556,39 @@ interface SessionState {
   hideAgentSession: (sessionId: string) => void
 }
 
+/** What the server said about a tab this window has not taken in yet
+ *  (PRDCT-5000). A tab the server opened joins the store from a record read a
+ *  moment earlier (`adoptServerStartedSessions`). A fact published in between,
+ *  its work or the tab it is nested under, found no such tab in the store and
+ *  was dropped, so the tab joined as its older record described it and stayed
+ *  so until a restart. The fact is kept here instead, the newest of each kind,
+ *  and applied as the tab enters the store (`normalizeSession`). It is kept
+ *  for the time a tab takes to join and no longer: a word about a tab that
+ *  never comes here (another window's) is forgotten. */
+type EarlyFacts = { at: number; work?: WorkAssignment | null; under?: string | null }
+const EARLY_FACT_MS = 30_000
+const earlyFacts = new Map<string, EarlyFacts>()
+
+function keepEarlyFact(id: string, fact: Omit<EarlyFacts, 'at'>): void {
+  const now = Date.now()
+  for (const [key, kept] of earlyFacts) if (now - kept.at > EARLY_FACT_MS) earlyFacts.delete(key)
+  earlyFacts.set(id, { ...earlyFacts.get(id), ...fact, at: now })
+}
+
+function takeEarlyFacts(id: string): Pick<Session, 'work' | 'spawnedBy'> {
+  const kept = earlyFacts.get(id)
+  if (!kept) return {}
+  earlyFacts.delete(id)
+  if (Date.now() - kept.at > EARLY_FACT_MS) return {}
+  return {
+    ...('work' in kept ? { work: kept.work ?? undefined } : {}),
+    ...('under' in kept ? { spawnedBy: kept.under ?? undefined } : {})
+  }
+}
+
 /** The defaults every session entering the store gets; the workspace stamp
- *  falls back to this window's active workspace (mirrors pty:spawn). */
+ *  falls back to this window's active workspace (mirrors pty:spawn). What the
+ *  server said about the tab while it was on its way in is applied last. */
 function normalizeSession(session: Session): Session {
   const workspaceId =
     session.workspaceId ??
@@ -544,7 +609,8 @@ function normalizeSession(session: Session): Session {
     serverCommand: session.serverCommand ?? null,
     hasUnseenActivity: session.hasUnseenActivity ?? false,
     userRenamed: session.userRenamed ?? false,
-    planFilePath: session.planFilePath ?? null
+    planFilePath: session.planFilePath ?? null,
+    ...takeEarlyFacts(session.id)
   }
 }
 
@@ -1040,6 +1106,38 @@ type SidebarSnapshot = {
   displayOrder: string[]
   selectedSessionIds: string[]
   focusedSessionId: string | null
+  /** The link a nesting or a taking-out changed, as it was before that step
+   *  (PRDCT-4997): an undo of the step puts it back through the server.
+   *  Absent on every other step, which restores the layout alone: undoing a
+   *  plain move must never touch a nesting made since, by an agent's tool or
+   *  from another window. */
+  nests?: Array<[string, string | undefined]>
+}
+
+/** What a nesting answered: done, or refused with the sentence to show. */
+export type NestOutcome = { ok: true } | { ok: false; error: string }
+
+/** What a nesting that did not happen comes down to (PRDCT-4997). A refusal
+ *  (`NestRefused`, the server's answer) says the server's own sentence under
+ *  the row, as it is: nothing is guessed from its words, which quote names a
+ *  person chose. Anything else is a call that was never answered. The app's
+ *  own two sentences for a server that is silent or not named yet are kept;
+ *  whatever else came back (an address, a path, a system's code) is not a
+ *  row's business, and one plain sentence stands for it. Only a call that
+ *  was never answered is worth making again: `refused` is what an undo reads
+ *  to know whether its step is spent. */
+const NEST_NOT_ASKED = 'The server could not be asked: the tab stays where it was'
+export function nestFailureOf(err: unknown): { refused: boolean; message: string; says: string } {
+  const message = (err instanceof Error ? err.message : String(err)).trim()
+  if (err instanceof NestRefused) {
+    const says = message.length > 400 ? `${message.slice(0, 399)}…` : message
+    return { refused: true, message, says: says || NEST_NOT_ASKED }
+  }
+  return {
+    refused: false,
+    message,
+    says: message === SERVER_SILENT || message === NEST_SERVER_NOT_NAMED ? message : NEST_NOT_ASKED
+  }
 }
 
 const MAX_SIDEBAR_UNDO = 50
@@ -1052,18 +1150,24 @@ function cloneGroupsForSnapshot(groups: SessionGroup[]): SessionGroup[] {
   }))
 }
 
-function snapshotSidebar(state: {
-  groups: SessionGroup[]
-  sessions: Session[]
-  displayOrder: string[]
-  selectedSessionIds: string[]
-  focusedSessionId: string | null
-}): SidebarSnapshot {
+function snapshotSidebar(
+  state: {
+    groups: SessionGroup[]
+    sessions: Session[]
+    displayOrder: string[]
+    selectedSessionIds: string[]
+    focusedSessionId: string | null
+  },
+  /** The links the step is about to change, as they are now: given by a
+   *  nesting and a taking-out, by nothing else. */
+  nests?: Array<[string, string | undefined]>
+): SidebarSnapshot {
   return {
     groups: cloneGroupsForSnapshot(state.groups),
     displayOrder: [...getDisplayOrder(state)],
     selectedSessionIds: [...state.selectedSessionIds],
-    focusedSessionId: state.focusedSessionId
+    focusedSessionId: state.focusedSessionId,
+    ...(nests ? { nests } : {})
   }
 }
 
@@ -1095,13 +1199,13 @@ export function getSessionCycleOrder(
   return flatIds
 }
 
-/** Digit shortcuts count represented rows. A mounted sidebar supplies its
- * temporary search/filter order; a closed sidebar derives the default view. */
-export function getVisibleFlatOrder(
-  state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
-  activeId: string | null,
-  sidebarRowIds?: readonly string[]
-): string[] {
+/** The sessions the sidebar never draws as a tab: a group terminal's session
+ *  and the server behind a tab's page. One set for the digit shortcuts and
+ *  for the nesting rule, which refuses to nest such a session (PRDCT-4997). */
+export function sidebarHiddenIds(state: {
+  sessions: Session[]
+  groups: SessionGroup[]
+}): Set<string> {
   const hiddenIds = new Set<string>()
   for (const group of state.groups) {
     for (const terminal of group.terminals)
@@ -1110,6 +1214,100 @@ export function getVisibleFlatOrder(
   for (const session of state.sessions) {
     if (session.view?.serverSessionId) hiddenIds.add(session.view.serverSessionId)
   }
+  return hiddenIds
+}
+
+/** The store's local sessions as the nesting rule reads them (PRDCT-4997):
+ *  the store and the sidebar's drag ask `nestRefusal` with these same
+ *  records, so a row the drag offers is a nesting the store accepts. */
+export function nestRecordsOf(state: {
+  sessions: Session[]
+  groups: SessionGroup[]
+}): NestRecord[] {
+  const hidden = sidebarHiddenIds(state)
+  return state.sessions
+    .filter((s) => s.sessionType === 'local')
+    .map((s) => ({
+      id: s.id,
+      under: s.spawnedBy,
+      workspaceId: s.workspaceId,
+      hidden: hidden.has(s.id),
+      work: s.work ? { label: s.work.label, kind: s.work.kind } : null
+    }))
+}
+
+/** The tab a nested tab is drawn under: climb the links from `id` the way
+ *  `subagentPresentation` does, stopping at a tab with a work assignment, a
+ *  remote one, a link to nothing, another workspace or a loop. */
+function presentedRootOf(sessions: Session[], id: string): string {
+  const byId = new Map(sessions.map((s) => [s.id, s]))
+  let current = byId.get(id)
+  if (!current) return id
+  const seen = new Set([current.id])
+  while (!current.work && current.sessionType === 'local' && current.spawnedBy) {
+    const parent: Session | undefined = byId.get(current.spawnedBy)
+    if (
+      !parent ||
+      parent.sessionType !== 'local' ||
+      parent.workspaceId !== current.workspaceId ||
+      seen.has(parent.id)
+    )
+      break
+    seen.add(parent.id)
+    current = parent
+  }
+  return current.id
+}
+
+/** The rows of a layout, in order: what a refusal compares to know whether
+ *  the person moved anything while the server was answering. */
+type NestLayout = { groups: SessionGroup[]; displayOrder: string[] }
+function sameRows(a: NestLayout, b: NestLayout): boolean {
+  if (a.groups === b.groups && a.displayOrder === b.displayOrder) return true
+  const rows = (l: NestLayout): string =>
+    JSON.stringify([l.displayOrder, l.groups.map((g) => [g.id, g.sessionIds])])
+  return rows(a) === rows(b)
+}
+
+/** What a refusal puts back (PRDCT-4997). The link, always: the server still
+ *  holds the old one, and the window never says what the server does not. The
+ *  layout too (`before`), but only while it still is as the refused step left
+ *  it (`after`): a row the person moved while the server was answering stays
+ *  where they put it. The refused step's own undo snapshot, when it left one,
+ *  goes with it. */
+function revertNest(
+  id: string,
+  previous: string | undefined,
+  before: NestLayout & { selectedSessionIds?: string[]; focusedSessionId?: string | null },
+  after: NestLayout,
+  snapshot: SidebarSnapshot | null
+): void {
+  useSessionStore.setState((state) => ({
+    ...(sameRows(state, after)
+      ? {
+          groups: before.groups,
+          displayOrder: before.displayOrder,
+          ...(before.selectedSessionIds ? { selectedSessionIds: before.selectedSessionIds } : {}),
+          ...(before.focusedSessionId !== undefined
+            ? { focusedSessionId: before.focusedSessionId }
+            : {})
+        }
+      : {}),
+    sessions: state.sessions.map((s) => (s.id === id ? { ...s, spawnedBy: previous } : s)),
+    sidebarUndoStack: snapshot
+      ? state.sidebarUndoStack.filter((snap) => snap !== snapshot)
+      : state.sidebarUndoStack
+  }))
+}
+
+/** Digit shortcuts count represented rows. A mounted sidebar supplies its
+ * temporary search/filter order; a closed sidebar derives the default view. */
+export function getVisibleFlatOrder(
+  state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
+  activeId: string | null,
+  sidebarRowIds?: readonly string[]
+): string[] {
+  const hiddenIds = sidebarHiddenIds(state)
   const sessions = state.sessions.filter(
     (s) => inActiveWorkspace(s, activeId) && !hiddenIds.has(s.id)
   )
@@ -1899,7 +2097,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
     }),
 
-  moveItems: (itemIds, targetId, position) =>
+  moveItems: (itemIds, targetId, position, options) =>
     set((state) => {
       const owner = ownerOf(itemIds[0])
       if (itemIds.some((id) => ownerOf(id) !== owner) || (targetId && ownerOf(targetId) !== owner))
@@ -1907,18 +2105,63 @@ export const useSessionStore = create<SessionState>((set) => ({
       // The structural rules live in moveLayoutItems (pure, unit-tested):
       // one place per id, no group inside a group, only a group emptied by
       // this move is dropped. A no-op drop records no undo step.
+      // A tab moves with the tabs nested under it (PRDCT-4997), so they stay
+      // right behind it wherever it lands; groups and file tabs move alone.
+      const records = nestRecordsOf(state)
+      const sessionIds = new Set(state.sessions.map((s) => s.id))
+      const ids: string[] = []
+      for (const itemId of itemIds) {
+        if (!ids.includes(itemId)) ids.push(itemId)
+        if (!sessionIds.has(itemId)) continue
+        for (const nested of nestedUnder(records, itemId))
+          if (!ids.includes(nested)) ids.push(nested)
+      }
       const next = moveLayoutItems(
         { groups: state.groups, displayOrder: getDisplayOrder(state) },
-        itemIds,
+        ids,
         targetId,
         position
       )
       if (!next) return {}
-      const sidebarUndoStack = pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
+      const sidebarUndoStack =
+        options?.undo === false
+          ? state.sidebarUndoStack
+          : pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
       return { displayOrder: next.displayOrder, groups: next.groups, sidebarUndoStack }
     }),
 
-  undoSidebar: () =>
+  undoSidebar: () => {
+    const now = useSessionStore.getState()
+    const top = now.sidebarUndoStack[now.sidebarUndoStack.length - 1]
+    if (!top) return
+    // A link an undo would put back (PRDCT-4997) is checked against the tabs
+    // as they stand, by the rule the server applies: an agent may have nested
+    // or closed a tab since the step was made. A step that cannot be put back
+    // is spent, nothing moves, and the row says why.
+    const records = nestRecordsOf(now)
+    for (const [id, link] of top.nests ?? []) {
+      const subject = now.sessions.find((s) => s.id === id)
+      if (!subject || link === undefined || subject.spawnedBy === link) continue
+      const refusal = now.sessions.some((s) => s.id === link)
+        ? nestRefusal(records, id, link)
+        : 'The tab it was nested under is gone'
+      if (!refusal) continue
+      set({
+        sidebarUndoStack: now.sidebarUndoStack.slice(0, -1),
+        nestNotice: { id, message: refusal }
+      })
+      return
+    }
+    // The links the undo puts back are told to the server once the layout is
+    // restored. Each is kept with the link the tab had: a refusal puts that
+    // one back, and the layout with it (`revertNest`).
+    const before = {
+      groups: now.groups,
+      displayOrder: now.displayOrder,
+      selectedSessionIds: now.selectedSessionIds,
+      focusedSessionId: now.focusedSessionId
+    }
+    const relinked: Array<[id: string, link: string | undefined, had: string | undefined]> = []
     set((state) => {
       if (state.sidebarUndoStack.length === 0) return {}
       const snap = state.sidebarUndoStack[state.sidebarUndoStack.length - 1]
@@ -1944,15 +2187,45 @@ export const useSessionStore = create<SessionState>((set) => ({
           ? snap.focusedSessionId
           : state.focusedSessionId
       const selectedSessionIds = snap.selectedSessionIds.filter((sid) => validSessionIds.has(sid))
+      const nests = new Map(snap.nests ?? [])
+      const sessions = snap.nests
+        ? state.sessions.map((s) => {
+            if (!nests.has(s.id)) return s
+            const link = nests.get(s.id)
+            if (s.spawnedBy === link) return s
+            relinked.push([s.id, link, s.spawnedBy])
+            return { ...s, spawnedBy: link }
+          })
+        : state.sessions
       return {
         groups: restoredGroups,
         displayOrder,
         focusedSessionId,
         selectedSessionIds:
           selectedSessionIds.length > 0 ? selectedSessionIds : state.selectedSessionIds,
-        sidebarUndoStack
+        sidebarUndoStack,
+        ...(relinked.length ? { sessions, nestNotice: null } : {})
       }
-    }),
+    })
+    const after = useSessionStore.getState()
+    for (const [id, link, had] of relinked) {
+      nestApi.nest(id, link ?? null).catch((err: unknown) => {
+        const failure = nestFailureOf(err)
+        revertNest(id, had, before, after, null)
+        console.error('[clave] nesting refused:', failure.message)
+        set((state) => ({
+          nestNotice: { id, message: failure.says },
+          // Refused, the step is spent: asking again would be refused again.
+          // Not answered at all, it is the person's to try again, so their
+          // next Undo takes this step and never the older one behind it,
+          // unless they did something else meanwhile, which then comes first.
+          ...(!failure.refused && state.sidebarUndoStack === after.sidebarUndoStack
+            ? { sidebarUndoStack: [...state.sidebarUndoStack, top] }
+            : {})
+        }))
+      })
+    }
+  },
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
@@ -2275,9 +2548,148 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   applyServedWork: (id, work) =>
     set((state) => {
-      if (!state.sessions.some((s) => s.id === id)) return state
+      if (!state.sessions.some((s) => s.id === id)) {
+        // Not in this window yet: kept for the moment it joins (PRDCT-5000).
+        keepEarlyFact(id, { work })
+        return state
+      }
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, work: work ?? undefined } : s))
+      }
+    }),
+
+  expandedNests: {},
+
+  toggleNest: (id) =>
+    set((state) => {
+      const expandedNests = { ...state.expandedNests }
+      if (expandedNests[id]) delete expandedNests[id]
+      else expandedNests[id] = true
+      return { expandedNests }
+    }),
+
+  setNestExpanded: (id, open) =>
+    set((state) => {
+      if (!!state.expandedNests[id] === open) return state
+      const expandedNests = { ...state.expandedNests }
+      if (open) expandedNests[id] = true
+      else delete expandedNests[id]
+      return { expandedNests }
+    }),
+
+  nestSession: async (id, underId) => {
+    const state = useSessionStore.getState()
+    const subject = state.sessions.find((s) => s.id === id)
+    const target = state.sessions.find((s) => s.id === underId)
+    if (!subject || !target) return { ok: false, error: 'That tab is gone' }
+    if (subject.sessionType !== 'local' || target.sessionType !== 'local')
+      return { ok: false, error: 'Only a tab of a Clave machine can be nested, under another' }
+    if (ownerOf(id) !== ownerOf(underId))
+      return {
+        ok: false,
+        error:
+          'The two tabs are on different machines: a tab is nested under a tab of its own machine'
+      }
+    const records = nestRecordsOf(state)
+    const refusal = nestRefusal(records, id, underId)
+    if (refusal) return { ok: false, error: refusal }
+
+    const previous = subject.spawnedBy
+    // Already nested under that tab: nothing to move, to undo or to tell.
+    if (previous === underId) return { ok: true }
+    const before = { groups: state.groups, displayOrder: state.displayOrder }
+    let snapshot: SidebarSnapshot | null = null
+    set((current) => {
+      snapshot = snapshotSidebar(current, [[id, previous]])
+      // The row and every tab nested under it land right after the new
+      // parent, inside the parent's group when it has one. A null answer
+      // means the layout already is so.
+      const moved = moveLayoutItems(
+        { groups: current.groups, displayOrder: getDisplayOrder(current) },
+        [id, ...nestedUnder(records, id)],
+        underId,
+        'after'
+      )
+      const sessions = current.sessions.map((s) => (s.id === id ? { ...s, spawnedBy: underId } : s))
+      const root = presentedRootOf(sessions, underId)
+      return {
+        ...(moved ? { groups: moved.groups, displayOrder: moved.displayOrder } : {}),
+        sessions,
+        expandedNests: { ...current.expandedNests, [root]: true },
+        sidebarUndoStack: pushSidebarSnapshot(current.sidebarUndoStack, snapshot),
+        nestNotice: null
+      }
+    })
+    const after = useSessionStore.getState()
+    try {
+      await nestApi.nest(id, underId)
+      return { ok: true }
+    } catch (err) {
+      const failure = nestFailureOf(err)
+      revertNest(id, previous, before, after, snapshot)
+      console.error('[clave] nesting refused:', failure.message)
+      set({ nestNotice: { id, message: failure.says } })
+      return { ok: false, error: failure.message }
+    }
+  },
+
+  detachSession: async (id, move) => {
+    const state = useSessionStore.getState()
+    const subject = state.sessions.find((s) => s.id === id)
+    if (!subject) return { ok: false, error: 'That tab is gone' }
+    const previous = subject.spawnedBy
+    // A tab that stands alone, with nowhere to go: nothing to do.
+    if (previous === undefined && !move) return { ok: true }
+    const records = nestRecordsOf(state)
+    const before = { groups: state.groups, displayOrder: state.displayOrder }
+    let snapshot: SidebarSnapshot | null = null
+    set((current) => {
+      snapshot = snapshotSidebar(current, [[id, previous]])
+      const moved = move
+        ? moveLayoutItems(
+            { groups: current.groups, displayOrder: getDisplayOrder(current) },
+            [id, ...nestedUnder(records, id)],
+            move.targetId,
+            move.position
+          )
+        : null
+      return {
+        ...(moved ? { groups: moved.groups, displayOrder: moved.displayOrder } : {}),
+        sessions: current.sessions.map((s) => (s.id === id ? { ...s, spawnedBy: undefined } : s)),
+        sidebarUndoStack: pushSidebarSnapshot(current.sidebarUndoStack, snapshot),
+        nestNotice: null
+      }
+    })
+    const after = useSessionStore.getState()
+    try {
+      await nestApi.nest(id, null)
+      return { ok: true }
+    } catch (err) {
+      const failure = nestFailureOf(err)
+      revertNest(id, previous, before, after, snapshot)
+      console.error('[clave] nesting refused:', failure.message)
+      set({ nestNotice: { id, message: failure.says } })
+      return { ok: false, error: failure.message }
+    }
+  },
+
+  nestNotice: null,
+
+  clearNestNotice: () => set((state) => (state.nestNotice ? { nestNotice: null } : state)),
+
+  applyServedNest: (id, under) =>
+    set((state) => {
+      const session = state.sessions.find((s) => s.id === id)
+      if (!session) {
+        // Not in this window yet: kept for the moment it joins (PRDCT-5000).
+        keepEarlyFact(id, { under })
+        return state
+      }
+      if ((session.spawnedBy ?? null) === under) return state
+      return {
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, spawnedBy: under ?? undefined } : s
+        )
       }
     }),
 

@@ -256,6 +256,28 @@ html[data-ui-font='synonym'] {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
 }
+/* How many rows a drag carries when it carries several (PRDCT-5094): a pill
+   on the ghost's top-right corner, the way Finder badges a drag of several
+   files. The ghost is the grabbed row; this says the rest ride with it. */
+.sidebar-drag-count {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-action-foreground);
+  background-color: var(--color-action);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 /* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
    switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
    just inside the edge of the row it lands beside, so a scrolling list never
@@ -2802,6 +2824,25 @@ body.reorder-dragging * {
   color: var(--color-accent);
 }
 
+/* The artefact panel's title as the picker of the session's artefacts (PRDCT-5022):
+   the title's own type, a chevron, and the chip's hover. */
+.artefact-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  height: 1.375rem;
+  padding: 0 0.375rem;
+  margin-left: -0.375rem;
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition: background-color 150ms;
+}
+.artefact-picker:hover,
+.artefact-picker[data-state='open'] {
+  background-color: var(--surface-100);
+}
+
 /* Why a menu row is as it is (FileMenu's hint): an orange icon on the row's
    right, hoverable even when the row is disabled and lets no pointer through. */
 .file-menu-hint {
@@ -3478,8 +3519,9 @@ body.reorder-dragging * {
   }
 }
 
-/* A live subagent selector shares the model picker's chip and menu material.
-   Its button is a sibling of the parent row's button for keyboard access. */
+/* A wave or lane entry's selector shares the model picker's chip and menu
+   material. Its button is a sibling of the entry row's button for keyboard
+   access. */
 .subagent-session-row {
   display: flex;
   align-items: center;
@@ -3489,21 +3531,143 @@ body.reorder-dragging * {
   flex: 1;
   min-width: 0;
 }
-.subagent-trigger,
 .work-trigger {
   --chat-glyph: var(--framed-control-icon);
   flex-shrink: 0;
   max-width: 45%;
   cursor: pointer;
 }
-.subagent-trigger .tab-status,
 .work-trigger .tab-status {
   flex-shrink: 0;
 }
-.subagent-trigger[data-active='true'],
 .work-trigger[data-active='true'] {
   color: var(--text-primary);
   background-color: var(--surface-200);
+}
+
+/* A tab's nested tabs (PRDCT-4998): a quiet count at the head of the row's
+   trailing items, and the tabs themselves as rows under it, indented behind a
+   hairline. Its pill gives back 6px of the row's 8px gap on each side, so the
+   chevron and the number sit about 6px from what is beside them (PRDCT-5033);
+   2px of padding before the chevron, whose glyph sits inside its box, and 4px
+   after the number keep the pill even under the pointer. */
+.sidebar-nest-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 4px 0 2px;
+  margin: 0 -6px;
+  border-radius: 9999px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.sidebar-nest-toggle > svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 2.5;
+  transition: transform 180ms var(--ease-out-expo);
+}
+.sidebar-nest-toggle[data-open='true'] > svg {
+  transform: rotate(90deg);
+}
+/* The pill is 18px tall in a row of 28 or 32: the press lands on the whole
+   height of the row, and to each side up to what is beside it. */
+.sidebar-nest-toggle::after {
+  content: '';
+  position: absolute;
+  inset: -7px -2px;
+}
+/* Before the page button, which grows on hover over a hit area larger than
+   itself, the count keeps the row's whole gap on that side, so a press on
+   the number unfolds the nest and never opens the page. A server workspace's
+   rows carry a hidden span between the two. */
+.sidebar-nest-toggle:has(+ .sidebar-tab-view, + [hidden] + .sidebar-tab-view) {
+  margin-right: 0;
+}
+.sidebar-nest-toggle > .sidebar-tab-spinner {
+  width: 10px;
+  height: 10px;
+  margin: 0 2px 0 1px;
+}
+.sidebar-nest-toggle:hover,
+.sidebar-nest-toggle:focus-visible {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+  outline: none;
+}
+/* Colour is for a folded nest, which says what goes on out of sight: amber
+   for a tab waiting on the person, blue for one with news. Unfolded, each
+   row says it for itself and the count is only a control again. */
+.sidebar-nest-toggle:not([data-open='true'])[data-status='needs-you'] {
+  color: var(--color-status-waiting);
+}
+.sidebar-nest-toggle:not([data-open='true'])[data-status='unread'] {
+  color: var(--color-status-working);
+}
+.sidebar-nest {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms var(--ease-out-expo);
+}
+.sidebar-nest[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+.sidebar-nest-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+.sidebar-nest-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: calc(var(--sidebar-row-px) + 2px);
+  padding: 2px 0 0 5px;
+  border-left: 1px solid var(--group-border, var(--color-border-subtle));
+}
+/* The row a dragged tab would be nested under. */
+.sidebar-item[data-drop-onto='true'] {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+/* The pointer is over that row, which would slide its close button in and
+   cut the name the person is reading to aim: it stays away for the drop. */
+.sidebar-item[data-drop-onto='true'] .sidebar-item-close,
+.sidebar-item[data-drop-onto='true']:hover .sidebar-item-close {
+  width: 0;
+  margin-right: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+/* What the server answered when it would not nest a tab or take it out, under
+   that tab's row for a few seconds: the row has just gone back to where it
+   was, and this says why. Amber, the tone that asks the person to look. */
+.sidebar-row-note {
+  padding: 1px var(--sidebar-row-px) 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-status-waiting);
+  text-wrap: pretty;
+  animation: overlay-in 150ms var(--ease-out-expo);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-nest,
+  .sidebar-nest-toggle > svg {
+    transition: none;
+  }
+  .sidebar-row-note {
+    animation: none;
+  }
 }
 .subagent-menu {
   max-height: var(--radix-dropdown-menu-content-available-height);

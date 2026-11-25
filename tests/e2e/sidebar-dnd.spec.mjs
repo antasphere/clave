@@ -1,13 +1,15 @@
 /**
- * Sidebar drag-and-drop moves exactly the row you dragged, and lands it
- * exactly where the indicator said.
+ * Sidebar drag-and-drop moves exactly the rows you meant, and lands them
+ * exactly where the indicator said: the row you dragged, or the rows you
+ * picked by hand with it (Cmd or Shift clicks, case 10, PRDCT-5094).
  *
  * Two ways the old code moved things the user never touched:
  *
  *   1. Dragging a row that was part of the current selection carried EVERY
  *      selected session. Clicking a group header selects all its sessions (that
  *      is how you view a group's mosaic), so the next drag of any one of its
- *      rows emptied the whole group into the drop target.
+ *      rows emptied the whole group into the drop target. A header's
+ *      selection is a view and never travels; only a pick does.
  *
  *   2. A collapsed group keeps its child rows in the DOM (height-0 grid track,
  *      overflow hidden), and those rows' bounding rects still extend over the
@@ -178,7 +180,7 @@ export async function run(t) {
     t.equal('Beta has one session', beta.ids.length, 1)
     t.equal('Gamma has one session', gamma.ids.length, 1)
 
-    // ── 1. A drag moves the row under the cursor, not the whole selection ──
+    // ── 1. A drag moves the row under the cursor, not a header's selection ──
     // Click Alpha's header: selects all three of its sessions (the mosaic view).
     await win.locator(`${rowSel(alpha.id)} span.truncate`).click()
     await win.waitForTimeout(500)
@@ -291,12 +293,15 @@ export async function run(t) {
     )
     t.check('the group emptied by that move is gone', !after.some((g) => g.id === beta.id), after)
 
-    // ── 6. The line holds still on a row's midline (hysteresis) ──
+    // ── 6. The line holds still on a row's zone boundary (hysteresis) ──
+    // A session row's middle means "nest under it" since PRDCT-4997, and its
+    // zones flip at 30% and 70% of its height: the upper boundary is where a
+    // line ("before it") meets no line, the place a jitter would show.
     const rows = after.find((g) => g.id === alpha.id).ids
     await dragTo(win, await centerOf(win, rowSel(rows[0])), () =>
-      centerOf(win, rowSel(rows[2]), { yFraction: 0.5 })
+      centerOf(win, rowSel(rows[2]), { yFraction: 0.3 })
     )
-    const mid = await centerOf(win, rowSel(rows[2]), { yFraction: 0.5 })
+    const mid = await centerOf(win, rowSel(rows[2]), { yFraction: 0.3 })
     const seen = new Set()
     for (let i = 0; i < 12; i++) {
       await win.mouse.move(mid.x, mid.y + (i % 2 === 0 ? 1 : -1))
@@ -414,6 +419,74 @@ export async function run(t) {
       'and releasing there leaves the group as it was',
       after.find((g) => g.id === alpha.id)?.ids.join(','),
       aIds.join(',')
+    )
+
+    // ── 10. A selection picked by hand travels together (PRDCT-5094) ──
+    // Click Alpha's first row, Cmd+click its third: dragging the first into
+    // Solo carries both, in the order they are drawn, the ghost saying 2.
+    before = after
+    const picks = before.find((g) => g.id === alpha.id).ids
+    const soloRows = before.find((g) => g.id === solo.groupId).ids
+    const nameOf = (id) => `${rowSel(id)} [data-testid="session-tab-name"]`
+    await win.locator(nameOf(picks[0])).click()
+    await win.locator(nameOf(picks[2])).click({ modifiers: ['Meta'] })
+    await win.waitForTimeout(300)
+    await dragTo(win, await centerOf(win, rowSel(picks[0])), () =>
+      centerOf(win, rowSel(solo.groupId), { yFraction: 0.75 })
+    )
+    t.equal(
+      'the ghost counts the two picked rows',
+      await win.evaluate(() => document.querySelector('.sidebar-drag-count')?.textContent ?? null),
+      '2'
+    )
+    await release(win)
+    after = await layout(win)
+    t.equal(
+      'both picked rows left Alpha',
+      after.find((g) => g.id === alpha.id)?.ids.join(','),
+      [picks[1], picks[3]].join(',')
+    )
+    t.equal(
+      'and landed together at the end of Solo, in their order',
+      after.find((g) => g.id === solo.groupId)?.ids.join(','),
+      [...soloRows, picks[0], picks[2]].join(',')
+    )
+
+    // A header's click forgets the pick: it selects the group's rows to show
+    // them, and a drag of one of those rows moves that row alone (case 1).
+    before = after
+    const soloNow = before.find((g) => g.id === solo.groupId).ids
+    await win.locator(`${rowSel(solo.groupId)} span.truncate`).click()
+    await win.waitForTimeout(500)
+    await drag(win, await centerOf(win, rowSel(soloNow[1])), () =>
+      centerOf(win, rowSel(alpha.id), { yFraction: 0.75 })
+    )
+    after = await layout(win)
+    t.equal(
+      'after a header click, only the dragged row leaves',
+      after.find((g) => g.id === solo.groupId)?.ids.join(','),
+      soloNow.filter((id) => id !== soloNow[1]).join(',')
+    )
+
+    // ── 11. A selected row of a group without a colour has a fill (PRDCT-5095) ──
+    // Solo was made by an agent's tool with no colour, the way a new group
+    // starts. Its selected row once showed darker text and nothing under it.
+    await win.locator(nameOf(soloNow[0])).click()
+    // Off the row: a hovered row has a fill of its own, selected or not.
+    await win.mouse.move(1, 1)
+    await win.waitForTimeout(400)
+    const fill = await win.evaluate((id) => {
+      const button = document.querySelector(`[data-sidebar-item-id="${id}"] > .sidebar-item`)
+      return {
+        selected: button?.getAttribute('data-selected') ?? null,
+        background: button ? getComputedStyle(button).backgroundColor : null
+      }
+    }, soloNow[0])
+    t.equal('the selected row of a colourless group is marked selected', fill.selected, 'true')
+    t.check(
+      'and has a fill under it',
+      !!fill.background && !['rgba(0, 0, 0, 0)', 'transparent'].includes(fill.background),
+      fill
     )
   } finally {
     await app.close()

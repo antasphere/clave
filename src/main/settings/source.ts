@@ -134,6 +134,8 @@ export interface SettingsManagers {
   codexAccounts: CodexAccountsManager
   claudeUsage: AccountUsageManager
   codexUsage: AccountUsageManager
+  /** The Antigravity CLI's own sign-in (`../antigravity-cli.ts`); absent, refused. */
+  antigravityUsage?: Pick<AccountUsageManager, 'getLimits'>
   piUsage: PiUsageManager
   launchProfiles: LaunchProfileManager
   preferences: PreferencesManager
@@ -415,6 +417,10 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       readCodex: (accountId, force) =>
         m.codexUsage.getLimits(accountId || DEFAULT_ACCOUNT_ID, { force }),
       codexSnapshot: () => m.codexUsage.snapshot(),
+      readAntigravity: (force) =>
+        m.antigravityUsage
+          ? m.antigravityUsage.getLimits(undefined, { force })
+          : refuse('usage', 'This server reads no Antigravity usage.'),
       readPi: (range) => m.piUsage.get(range)
     },
     launchProfiles: {

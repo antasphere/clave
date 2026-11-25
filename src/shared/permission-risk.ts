@@ -102,7 +102,7 @@ export function shownLevel(rule: RuleLevel, model?: unknown, atLeast?: Floor): R
   if (!atLeast) return given
   // A floor from the parts the rules could read: the model's reading may
   // raise it and never go under it ("reads" or no level gives the floor).
-  // No reading at all (`undefined`): no level, the card says it is unchecked.
+  // No reading at all (`undefined`): no level ("Not verified" on the card).
   if (model === undefined) return null
   return raiseLevel(atLeast, given)
 }

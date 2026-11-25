@@ -15,13 +15,16 @@ import type {
   PinnedGroupSession,
   PinnedGroupTerminal,
   GroupTerminalColor,
-  GroupTerminalConfig
+  GroupTerminalConfig,
+  Session,
+  SessionGroup
 } from './session-types'
-import { resolveGroupDefaults } from './group-defaults'
+import { resolveGroupDefaults, resolveGroupLaunchCwd } from './group-defaults'
 import { resolveDeclaredGroupView } from '../../../shared/group-view'
 import { useSessionStore } from './session-store'
-import { getActiveWorkspaceId, workspaceServer } from './workspace-store'
+import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from './workspace-store'
 import type { ClaveFileWriteData } from '../../../preload/index.d'
+import { antigravitySettingField } from '../lib/antigravity-setting-field'
 
 /** One group as `serializePin` writes it into a `.clave` file. */
 type SerializedPin = NonNullable<ClaveFileWriteData['groups']>[number]
@@ -92,6 +95,33 @@ function resolvePinnedAccount(
 }
 
 export type { PinnedGroup }
+
+/** A pin taking its group's new name, and its folder when the group has one.
+ *  The session a saved pin holds was made from the group, named after it and
+ *  in its folder (blueprintFromGroup), so it follows: a pin renamed "Clave app"
+ *  that still opened a tab called "Clave" would no longer be the group's tab.
+ *  A file pin's sessions are what its `.clave` says, and stay.
+ *
+ *  A group with no folder says nothing about where its pin lives: the pin
+ *  keeps the folder it has, and its tab the one it opens in. A pin made from
+ *  such a group was given the workspace root, and a tab left with no folder
+ *  could not open at all. */
+function pinFollowingGroup(pin: PinnedGroup, name: string, folder?: string | null): PinnedGroup {
+  const cwd = folder ?? pin.cwd
+  if (pin.name === name && pin.cwd === cwd) return pin
+  return {
+    ...pin,
+    name,
+    cwd,
+    sessions: pin.filePath
+      ? pin.sessions
+      : pin.sessions.map((s) => ({
+          ...s,
+          ...(s.name === pin.name ? { name } : {}),
+          ...(folder && s.cwd === pin.cwd ? { cwd: folder } : {})
+        }))
+  }
+}
 
 type PinnedState = 'idle' | 'active-visible' | 'active-hidden'
 
@@ -235,7 +265,7 @@ export const usePinnedStore = create<PinnedStoreState>((set) => ({
 
   renamePinnedGroup: (id, name) =>
     set((s) => {
-      const next = s.pinnedGroups.map((pg) => (pg.id === id ? { ...pg, name } : pg))
+      const next = s.pinnedGroups.map((pg) => (pg.id === id ? pinFollowingGroup(pg, name) : pg))
       const renamed = next.find((pg) => pg.id === id)
       if (renamed) syncToClaveFile(renamed)
       return { pinnedGroups: next }
@@ -637,6 +667,78 @@ export async function refreshWorkspacePins(ws: {
   for (const pg of stale) {
     usePinnedStore.getState().removePinnedGroup(pg.id)
   }
+
+  // The workspace's file pins are now what its files say: the one moment the
+  // saved copies of them can be told apart from the rest. Only after a real
+  // read, so a workspace with no file yet keeps its one run for later.
+  if (keep.size > 0) clearFilePinTwinsOnce(ws.id)
+}
+
+// ── The saved copies of a file pin, cleared once (PRDCT-4830) ──
+
+/** The workspaces whose saved copies were cleared, kept beside the pins'
+ *  other local flag: the clearing runs once per workspace on this Mac. */
+const TWINS_CLEARED_KEY = 'clave-pin-twins-cleared'
+/** The blueprints the clearing removed, so a removal that was wrong for
+ *  someone can be put back by hand. */
+const TWINS_REMOVED_KEY = 'clave-pin-twins-removed'
+
+function readStoredList(key: string): unknown[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+/** The saved pins (no file) that double a file pin in `workspaceId`'s view:
+ *  the same name and the same folder as a file-backed pin shown there. Until
+ *  PRDCT-4830 pinning a group launched from a file pin saved a copy beside it,
+ *  a photograph of the tabs open that day, unstamped, so it showed in every
+ *  workspace: typing "clave" in the picker offered three "Clave". A saved pin
+ *  with no file pin of its name and folder is someone's own, and is kept.
+ *  Pure, so the rule is decidable without a window. */
+export function filePinTwins(pins: PinnedGroup[], workspaceId: string): PinnedGroup[] {
+  const shown = pins.filter((p) => pinShownIn(p, workspaceId))
+  // Only a file pin the picker lists can be doubled: a toolbar's file pin is a
+  // row of buttons, never a card, and removing the saved pin of its name and
+  // folder would leave the picker with no card for that group at all.
+  const filePins = shown.filter((p) => p.filePath && pinInPicker(p, workspaceId))
+  return shown.filter(
+    (p) => !p.filePath && filePins.some((f) => f.name === p.name && sameFolder(f.cwd, p.cwd))
+  )
+}
+
+/** Remove the saved copies of `workspaceId`'s file pins, once per workspace on
+ *  this Mac. Once, not at every read: after it, a saved pin that shares a file
+ *  pin's name and folder is one someone made on purpose (a file added later
+ *  for a group they had pinned), and deleting it at some later boot would be
+ *  a loss nobody asked for. Removing a pin never closes the tabs of a group it
+ *  launched. The store's change is what writes the state file. */
+function clearFilePinTwinsOnce(workspaceId: string): void {
+  const cleared = readStoredList(TWINS_CLEARED_KEY)
+  if (cleared.includes(workspaceId)) return
+  const twins = filePinTwins(usePinnedStore.getState().pinnedGroups, workspaceId)
+  try {
+    // Recorded before anything is removed: a run that cannot be recorded as
+    // done would run again at every boot, so it does not run at all.
+    if (twins.length > 0) {
+      localStorage.setItem(
+        TWINS_REMOVED_KEY,
+        JSON.stringify([...readStoredList(TWINS_REMOVED_KEY), ...serializePinnedGroups(twins)])
+      )
+    }
+    localStorage.setItem(TWINS_CLEARED_KEY, JSON.stringify([...cleared, workspaceId]))
+  } catch {
+    return
+  }
+  for (const twin of twins) usePinnedStore.getState().removePinnedGroup(twin.id)
+  if (twins.length > 0) {
+    console.info(
+      `[pinned] Removed ${twins.length} saved cop${twins.length === 1 ? 'y' : 'ies'} of a file pin (${[...new Set(twins.map((t) => t.name))].join(', ')}); kept under "${TWINS_REMOVED_KEY}".`
+    )
+  }
 }
 
 /** Get the default file name for a pinned group export */
@@ -829,69 +931,221 @@ export function initClaveFileWatchers(): () => void {
   return cleanup ?? (() => {})
 }
 
-// ── Original functions (unchanged) ──
+// ── Pinning a live group ──
 
-/** Capture a live group as a pinned blueprint */
-export function pinGroupFromCurrent(groupId: string): void {
-  if (isRemoteKey(groupId)) return
-  const { groups, sessions } = useSessionStore.getState()
-  const group = groups.find((g) => g.id === groupId)
-  if (!group) return
-
-  // Exclude sessions that are linked to a group terminal — those are restored via terminal configs
+/** The live tabs of a group that are its own, not the sessions its group
+ *  terminals run (those come back through the terminal configs). */
+function groupTabs(group: SessionGroup, sessions: Session[]): Session[] {
   const terminalSessionIds = new Set(
     group.terminals.map((t) => t.sessionId).filter((id): id is string => id !== null)
   )
-
-  const groupSessions: PinnedGroupSession[] = group.sessionIds
+  return group.sessionIds
     .filter((sid) => !terminalSessionIds.has(sid))
     .map((sid) => sessions.find((s) => s.id === sid))
-    .filter((s): s is NonNullable<typeof s> => s !== undefined)
-    .map((s) => ({
-      cwd: s.cwd,
-      name: s.name,
-      claudeMode: s.claudeMode,
-      antigravityMode: s.antigravityMode,
-      codexMode: s.codexMode,
-      piMode: s.piMode,
-      opencodeMode: s.opencodeMode,
-      claudeAgentsMode: s.claudeAgentsMode,
-      dangerousMode: s.dangerousMode,
-      // A root-anchored group keeps its anchor through the pin. The session is
-      // recorded at its absolute cwd (already the root, so the respawn lands
-      // there either way); the flag is what tells the `+` of the group this pin
-      // stamps out later to land there too, instead of in the group's cwd.
-      ...(group.rootSession ? { rootSession: true } : {}),
-      // The account by label (ADR 0002): what the file names, never an id.
-      ...pinnedAccountField(s)
-    }))
+    .filter((s): s is Session => s !== undefined)
+}
 
-  const groupTerminals: PinnedGroupTerminal[] = group.terminals.map((t) => ({
-    command: t.command,
-    commandMode: t.commandMode,
-    color: t.color,
-    icon: t.icon,
-    serverUrl: t.serverUrl
-  }))
+function isAgentTab(s: Session): boolean {
+  return !!(
+    s.claudeMode ||
+    s.claudeAgentsMode ||
+    s.codexMode ||
+    s.antigravityMode ||
+    s.piMode ||
+    s.opencodeMode
+  )
+}
 
-  const pinned: PinnedGroup = {
-    id: crypto.randomUUID(),
+/** The blueprint of a live group as a pin records it (PRDCT-4830).
+ *
+ *  A pin keeps the GROUP: its name, folder, colour, prompt, root anchor and
+ *  group terminals, the parts someone configured. It never photographs the tabs
+ *  that happened to be open: those were throwaway names ("explore group
+ *  placement", "Hackathon (resumed)") that came back on every launch of the pin
+ *  and made it read as a list of old sessions. The pin holds ONE session, the
+ *  group's default agent session: named after the group, opening where the
+ *  group's `+` opens, on the harness and the permission mode of the group's
+ *  first agent tab, the account by label (ADR 0002), starting on the group's
+ *  prompt. A group with no agent tab gets a Claude tab.
+ *
+ *  Pure apart from its inputs, so the rule is decidable in a unit test.
+ *  `null` when the group has no folder to open its tab in. */
+export function blueprintFromGroup(
+  group: SessionGroup,
+  sessions: Session[],
+  pins: PinnedGroup[],
+  workspaceRoot: string | null
+): Pick<
+  PinnedGroup,
+  'name' | 'cwd' | 'color' | 'prompt' | 'sessions' | 'terminals' | 'workspaceRoot'
+> | null {
+  const tabs = groupTabs(group, sessions)
+  const agent = tabs.find(isAgentTab)
+  // Where the group's `+` lands decides where the pin's tab opens; the rule
+  // (and its fallback for groups stamped before the anchor was carried) is
+  // resolveGroupLaunchCwd's.
+  const atRoot = resolveGroupLaunchCwd(group, pins).kind === 'workspace-root'
+  const cwd = group.cwd ?? workspaceRoot ?? agent?.cwd ?? tabs[0]?.cwd ?? null
+  if (!cwd) return null
+  const session: PinnedGroupSession = {
     name: group.name,
-    cwd: group.cwd,
+    cwd,
+    claudeMode: agent ? agent.claudeMode : true,
+    antigravityMode: agent?.antigravityMode ?? false,
+    codexMode: agent?.codexMode ?? false,
+    piMode: agent?.piMode ?? false,
+    opencodeMode: agent?.opencodeMode ?? false,
+    claudeAgentsMode: agent?.claudeAgentsMode ?? false,
+    dangerousMode: agent?.dangerousMode ?? false,
+    // The brief the tab starts on. A group-level prompt alone would reach only
+    // the `+` of the stamped group, never the tab the stamp opens.
+    ...(group.prompt ? { prompt: group.prompt } : {}),
+    ...(atRoot ? { rootSession: true } : {}),
+    ...(agent ? pinnedAccountField(agent) : {})
+  }
+  return {
+    name: group.name,
+    cwd: group.cwd ?? cwd,
     color: group.color ?? null,
     // Round-trips the group's default prompt the same way createPinnedFromGroup
     // does. Without it the trip is one-way: .clave → pin → group keeps the
     // prompt, group → pin → .clave silently loses it.
     prompt: group.prompt ?? null,
-    sessions: groupSessions,
-    terminals: groupTerminals,
+    sessions: [session],
+    // Every authored field of each group terminal (the live config carries no
+    // `persistent`, so there is nothing more to keep).
+    terminals: group.terminals.map((t) => ({
+      command: t.command,
+      commandMode: t.commandMode,
+      color: t.color,
+      icon: t.icon,
+      cwd: t.cwd,
+      autoLaunchLocalhost: t.autoLaunchLocalhost,
+      serverUrl: t.serverUrl,
+      groupView: t.groupView
+    })),
+    // What a root-anchored tab opens in at launch (spawnPinnedGroup): without
+    // it the anchor would be recorded and never honoured.
+    workspaceRoot
+  }
+}
+
+/** Whether a pin shows in `workspaceId`'s view. A pin carries a local id, so
+ *  the rule every sidebar item obeys (`inActiveWorkspace`) comes down to this:
+ *  a stamped pin shows in its own workspace, an unstamped one everywhere. */
+function pinShownIn(pin: { workspaceId?: string | null }, workspaceId: string | null): boolean {
+  return workspaceId === null || pin.workspaceId == null || pin.workspaceId === workspaceId
+}
+
+/** Whether the group picker lists this pin for `workspaceId`: the pins that
+ *  are a toolbar's are its buttons, never a card. */
+export function pinInPicker(pin: PinnedGroup, workspaceId: string | null): boolean {
+  return !pin.toolbar && pinShownIn(pin, workspaceId)
+}
+
+const sameFolder = (a: string | null | undefined, b: string | null | undefined): boolean =>
+  (a ?? null) === (b ?? null)
+
+/** The pin a live group already has among the ones the picker lists for
+ *  `workspaceId` (PRDCT-4830), so pinning the group shows that pin instead of
+ *  saving a copy beside it:
+ *
+ *  1. the pin it was launched from (`templateId`, stamped at launch whether or
+ *     not the pin stays linked: the picker launches without a link, which is
+ *     how a group dropped back onto the pins used to make a second "Clave");
+ *  2. failing that, a pin of the same name and the same folder. That is what a
+ *     copy would be, and it is the only trace left for a group launched before
+ *     the stamp existed, or one whose stamp names a pin since read again from
+ *     its file under a new id.
+ *
+ *  A pin the picker does not list here (another workspace's, a toolbar's)
+ *  cannot be shown, so it does not count: pinning makes one for this view. */
+export function findTemplateOfGroup(
+  group: Pick<SessionGroup, 'name' | 'cwd' | 'templateId'>,
+  pins: PinnedGroup[],
+  workspaceId: string | null
+): PinnedGroup | null {
+  const listed = pins.filter((p) => pinInPicker(p, workspaceId))
+  return (
+    (group.templateId ? listed.find((p) => p.id === group.templateId) : undefined) ??
+    listed.find((p) => p.name === group.name && sameFolder(p.cwd, group.cwd)) ??
+    null
+  )
+}
+
+/** The pin a live group already has: the one linked to it (it was pinned or
+ *  toggled on in this run), else the one it came from (findTemplateOfGroup).
+ *  null when pinning it would make a new pin. */
+export function findPinOfGroup(groupId: string): PinnedGroup | null {
+  const pins = usePinnedStore.getState().pinnedGroups
+  const linked = pins.find((p) => p.activeGroupId === groupId)
+  if (linked) return linked
+  const group = useSessionStore.getState().groups.find((g) => g.id === groupId)
+  return group ? findTemplateOfGroup(group, pins, getActiveWorkspaceId()) : null
+}
+
+/** What dropping `groupId` onto the pins does, so the drop zone says it and
+ *  never promises a gesture that does nothing: `pin` saves a pin, `show` opens
+ *  the picker on the pin the group has, null is no gesture at all. A server's
+ *  group is never pinned from here (pinGroupFromCurrent refuses it), whatever
+ *  pin shares its name; a pin the picker does not list has no card to show. */
+export function pinDropAction(groupId: string): 'pin' | 'show' | null {
+  if (isRemoteKey(groupId)) return null
+  const existing = findPinOfGroup(groupId)
+  if (!existing) return 'pin'
+  return pinInPicker(existing, getActiveWorkspaceId()) ? 'show' : null
+}
+
+/** Pin a live group: the group and one chat tab, never a photograph of its
+ *  tabs (blueprintFromGroup). A group that already has a pin gets no second
+ *  one: the answer names the pin it has (`created: false`), for the caller to
+ *  show. null when there is nothing to pin (a server's group, an unknown one,
+ *  a group with no folder). */
+export function pinGroupFromCurrent(
+  groupId: string
+): { pinnedId: string; created: boolean } | null {
+  if (isRemoteKey(groupId)) return null
+  const { groups, sessions } = useSessionStore.getState()
+  const group = groups.find((g) => g.id === groupId)
+  if (!group) return null
+  const existing = findPinOfGroup(groupId)
+  if (existing) return { pinnedId: existing.id, created: false }
+
+  // The pin belongs to the workspace its group lives in, never to all of them:
+  // an unstamped pin lands in the state file's null partition and shows in
+  // every workspace. Only a workspace of this Mac can be stamped. A saved pin
+  // stamped with a server's workspace is never written to the state file (its
+  // partitions hold the server's own file pins, read again at every boot), so
+  // it would be gone at the next restart: on a server's workspace the pin
+  // stays unstamped, as before, until saved pins have a place there.
+  const workspaceId = group.workspaceId ?? getActiveWorkspaceId()
+  const workspace = workspaceServer(workspaceId) ? undefined : getWorkspaceById(workspaceId)
+  const blueprint = blueprintFromGroup(
+    group,
+    sessions,
+    usePinnedStore.getState().pinnedGroups,
+    workspace?.rootDir ?? null
+  )
+  if (!blueprint) return null
+
+  const pinned: PinnedGroup = {
+    id: crypto.randomUUID(),
+    ...blueprint,
     createdAt: Date.now(),
+    workspaceId: workspace?.id ?? null,
     // Link to the live group immediately — clicking won't respawn
     activeGroupId: groupId,
     visible: true
   }
 
   usePinnedStore.getState().addPinnedGroup(pinned)
+  // The group remembers the pin made from it, as a group remembers the pin it
+  // was launched from: the link above dies with the window, and after a
+  // restart nothing else would say this group is pinned already.
+  useSessionStore.setState((s) => ({
+    groups: s.groups.map((g) => (g.id === groupId ? { ...g, templateId: pinned.id } : g))
+  }))
+  return { pinnedId: pinned.id, created: true }
 }
 
 /** Spawn a fresh group from a template, every time, without linking the pin to
@@ -1026,6 +1280,7 @@ async function spawnPinnedGroup(
         dangerousMode: session.dangerousMode,
         initialPrompt,
         ...accountFields,
+        ...antigravitySettingField(session.antigravityMode),
         // The pin's workspace wins over the active one — an MCP launch of a
         // hidden workspace's pin must not leak its sessions into the active view.
         workspaceId: pg.workspaceId ?? undefined
@@ -1118,6 +1373,10 @@ async function spawnPinnedGroup(
             // or not. See resolveGroupDefaults.
             prompt: defaults.prompt,
             rootSession: defaults.rootSession,
+            // Where the group came from, linked or not (the picker's stamp is
+            // unlinked): what lets pinning it show this pin instead of saving
+            // a copy of it.
+            templateId: pinnedId,
             terminals: liveTerminals,
             ...(declaredView ? { view: declaredView } : {})
           }
@@ -1189,36 +1448,19 @@ export function removePinnedGroupWithCleanup(pinnedId: string): void {
   usePinnedStore.getState().removePinnedGroup(pinnedId)
 }
 
-/** Re-sync a pinned group's blueprint from the current live group state */
+/** Re-sync a pinned group's blueprint from the current live group state: the
+ *  group (name, folder, colour, view) and its terminals. Never its tabs, for
+ *  the reason pinning never copies them (blueprintFromGroup): the pin keeps
+ *  the session it declares, and for a file pin that is what its `.clave`
+ *  says, which a photograph of the open tabs used to overwrite. */
 export function resyncPinnedGroup(groupId: string): void {
-  const { groups, sessions } = useSessionStore.getState()
+  const { groups } = useSessionStore.getState()
   const group = groups.find((g) => g.id === groupId)
   if (!group) return
 
   const pinnedGroups = usePinnedStore.getState().pinnedGroups
   const pg = pinnedGroups.find((p) => p.activeGroupId === groupId)
   if (!pg) return
-
-  const terminalSessionIds = new Set(
-    group.terminals.map((t) => t.sessionId).filter((id): id is string => id !== null)
-  )
-
-  const updatedSessions: PinnedGroupSession[] = group.sessionIds
-    .filter((sid) => !terminalSessionIds.has(sid))
-    .map((sid) => sessions.find((s) => s.id === sid))
-    .filter((s): s is NonNullable<typeof s> => s !== undefined)
-    .map((s) => ({
-      cwd: s.cwd,
-      name: s.name,
-      claudeMode: s.claudeMode,
-      antigravityMode: s.antigravityMode,
-      codexMode: s.codexMode,
-      piMode: s.piMode,
-      opencodeMode: s.opencodeMode,
-      claudeAgentsMode: s.claudeAgentsMode,
-      dangerousMode: s.dangerousMode,
-      ...pinnedAccountField(s)
-    }))
 
   // Carry every live-config field; `persistent` lives only on the pin (not on
   // the live GroupTerminalConfig), so preserve it from the prior blueprint by
@@ -1245,12 +1487,9 @@ export function resyncPinnedGroup(groupId: string): void {
     const next = s.pinnedGroups.map((p) =>
       p.id === pg.id
         ? {
-            ...p,
-            name: group.name,
-            cwd: group.cwd,
+            ...pinFollowingGroup(p, group.name, group.cwd),
             color: group.color ?? null,
             view: liveView,
-            sessions: updatedSessions,
             terminals: updatedTerminals
           }
         : p
@@ -1267,47 +1506,16 @@ export function findPinnedByGroupId(groupId: string): PinnedGroup | undefined {
   return usePinnedStore.getState().pinnedGroups.find((p) => p.activeGroupId === groupId)
 }
 
-/** Check if a pinned group's blueprint is out of sync with the live group */
+/** Check if a pinned group's blueprint is out of sync with the live group.
+ *  The tabs never count: a pin does not record them (blueprintFromGroup), so a
+ *  group that opened a second tab is not a group that left its pin behind. */
 export function isPinnedOutOfSync(groupId: string): boolean {
   const pg = findPinnedByGroupId(groupId)
   if (!pg) return false
 
-  const { groups, sessions } = useSessionStore.getState()
+  const { groups } = useSessionStore.getState()
   const group = groups.find((g) => g.id === groupId)
   if (!group) return false
-
-  // Compare session count (excluding terminal-linked sessions)
-  const terminalSessionIds = new Set(
-    group.terminals.map((t) => t.sessionId).filter((id): id is string => id !== null)
-  )
-  const liveSessions = group.sessionIds.filter((sid) => !terminalSessionIds.has(sid))
-  if (liveSessions.length !== pg.sessions.length) return true
-
-  // Compare session configs
-  for (let i = 0; i < liveSessions.length; i++) {
-    const s = sessions.find((sess) => sess.id === liveSessions[i])
-    const ps = pg.sessions[i]
-    if (!s || !ps) return true
-    if (
-      s.cwd !== ps.cwd ||
-      s.claudeMode !== ps.claudeMode ||
-      s.antigravityMode !== ps.antigravityMode ||
-      s.codexMode !== ps.codexMode ||
-      !!s.piMode !== !!ps.piMode ||
-      !!s.opencodeMode !== !!ps.opencodeMode ||
-      !!s.claudeAgentsMode !== !!ps.claudeAgentsMode ||
-      s.dangerousMode !== ps.dangerousMode
-    )
-      return true
-    // An account named by the file that the tab is not on: drift (a tab
-    // switched by hand, or the file's name changed). `any` matches every account.
-    if (
-      ps.account &&
-      ps.account !== 'any' &&
-      (pinnedAccountField(s).account ?? 'Default') !== ps.account
-    )
-      return true
-  }
 
   // Compare terminal count and configs
   if (group.terminals.length !== pg.terminals.length) return true
@@ -1340,7 +1548,7 @@ useSessionStore.subscribe((state, prevState) => {
     const newColor = group.color ?? null
     if (group.name !== pg.name || newColor !== pg.color) {
       changed = true
-      return { ...pg, name: group.name, color: newColor }
+      return { ...pinFollowingGroup(pg, group.name), color: newColor }
     }
     return pg
   })

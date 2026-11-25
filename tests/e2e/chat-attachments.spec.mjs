@@ -462,6 +462,84 @@ export async function run(t) {
       'the overlay must leave with the drop'
     )
     t.check('a sidebar row dragged with the pointer and released on the pane attaches it', true)
+
+    // 10. A whole group dragged by its header onto the pane is ONE record,
+    //     `[Group #1]`: the group's id (the `groupId` the group tools take),
+    //     its name and its tabs. It used to arrive as one session record per
+    //     tab, the group itself never named (PRDCT-5032).
+    await input.fill('')
+    assert.ok(
+      await until(async () => (await composerChips.count()) === 0),
+      'emptying the text must empty the chips'
+    )
+    const groupId = await win.evaluate((sid) => {
+      const store = window.__claveSessionStoreForTests
+      store.getState().createGroup([sid], 'Release lane')
+      return store.getState().groups.find((g) => g.sessionIds.includes(sid))?.id
+    }, record.id)
+    assert.ok(groupId, 'the tab must now sit in a group')
+    const header = win
+      .locator(`[data-sidebar-item-type="group"][data-sidebar-item-id="${groupId}"]`)
+      .getByText('Release lane', { exact: true })
+    await header.waitFor()
+    const headerBox = await header.boundingBox()
+    const groupPaneBox = await win.locator(pane).boundingBox()
+    assert.ok(headerBox && groupPaneBox, 'the group header and the pane are on screen')
+    await win.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + headerBox.height / 2)
+    await win.mouse.down()
+    await win.mouse.move(
+      headerBox.x + headerBox.width / 2 + 12,
+      headerBox.y + headerBox.height / 2 + 12,
+      { steps: 4 }
+    )
+    await win.mouse.move(
+      groupPaneBox.x + groupPaneBox.width / 2,
+      groupPaneBox.y + groupPaneBox.height / 2,
+      { steps: 8 }
+    )
+    await win.locator('.chat-drop-overlay').waitFor()
+    assert.match(await win.locator('.chat-drop-overlay').innerText(), /Add the group/)
+    await win.mouse.up()
+    const groupChip = composerChips.filter({ hasText: /Group #\d+/i })
+    await groupChip.waitFor()
+    assert.equal(await composerChips.count(), 1, 'a group is one chip')
+    assert.match(await groupChip.innerText(), /1 tab/)
+    assert.equal(await input.inputValue(), '[Group #1] ')
+    await waitForAttachmentCaret(win)
+    await input.press('End')
+    await input.pressSequentially('check on it')
+    await input.press('Enter')
+    assert.ok(
+      await until(async () => (await userMessages()).length === 5),
+      'the group message must cross the write IPC'
+    )
+    const groupWrite = (await userMessages())[4]
+    assert.equal(groupWrite.text, '[Group #1] check on it')
+    assert.deepEqual(
+      groupWrite.attachments.map((a) => [
+        a.delivery,
+        a.groupId,
+        a.name,
+        a.sessions.map((s) => s.sessionId),
+        a.label
+      ]),
+      [['group', groupId, 'Release lane', [record.id], 'Group #1']]
+    )
+    const groupReply = win
+      .locator('.chat-turn[data-role="assistant"]')
+      .filter({ hasText: 'check on it' })
+    await groupReply.waitFor()
+    const groupReplyText = await groupReply.innerText()
+    assert.match(groupReplyText, /a Clave group/)
+    assert.match(
+      groupReplyText,
+      new RegExp(
+        `\\[Group #1\\] \\{"group":"${groupId}","name":"Release lane","sessions":\\[\\{"session":"${record.id}"`
+      ),
+      'the provider gets the group id and its tabs under the group marker'
+    )
+    assert.doesNotMatch(groupReplyText, /\[Session #/, 'no session record per tab')
+    t.check('a sidebar group dropped on the pane is one group record the agent can act on', true)
     assert.ok(record.id)
   } finally {
     await close()

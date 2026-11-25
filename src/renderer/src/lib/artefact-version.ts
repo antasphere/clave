@@ -38,3 +38,12 @@ export const shownFor = (choice: VersionChoice | undefined, openedAt: string): s
 /** What the bar's chip says for what the panel shows. */
 export const versionLabel = (shown: string): string =>
   shown === 'live' ? 'Live' : shown === 'latest' ? 'Latest' : `v${shown}`
+
+/** A time short enough to sit on a menu row: 13 Nov 11:58. */
+export const shortTime = (iso: string): string => {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const day = date.toLocaleDateString([], { day: 'numeric', month: 'short' })
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  return `${day} ${time}`
+}

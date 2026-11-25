@@ -16,6 +16,7 @@ import {
   ListClaudeAccounts,
   ListCodexAccounts,
   ListMigratedClaudeAccounts,
+  ReadAntigravityUsage,
   ReadClaudeUsage,
   ReadClaudeUsageSnapshot,
   ReadCodexUsage,
@@ -210,6 +211,7 @@ export const settingsGroup = ApiGroup.make('settings')
       ReadCodexUsageSnapshot
     )
   )
+  .add(HttpCqrs.queryEndpoint('readAntigravityUsage', '/usage/antigravity', ReadAntigravityUsage))
   .add(HttpCqrs.queryEndpoint('readPiUsage', '/usage/pi', ReadPiUsage))
   // Launch profiles
   .add(HttpCqrs.queryEndpoint('listLaunchProfiles', '/launch-profiles', ListLaunchProfiles))

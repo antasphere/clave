@@ -484,20 +484,22 @@ export async function run(t) {
     assert.equal(await remoteRow.locator('.sidebar-tab-icon').count(), 0)
     assert.equal(await remoteRow.locator('.sidebar-tab-status').count(), 1)
     assert.equal(await remoteRow.locator('.sidebar-tab-status svg').count(), 0)
+    // Inside the server's own workspace the switcher names the server once,
+    // and the rows draw no server mark (PRDCT-5033): a row still says whose
+    // it is, as data drawn nowhere.
     const ownerBadge = remoteRow.locator(`[data-fleet-owner="${savedA.id}"]`)
+    const switcherTag = win.locator(
+      `[aria-label="Switch workspace"] [data-workspace-server="${savedA.id}"]`
+    )
     const assertOwnerBadge = async () => {
-      assert.equal(await ownerBadge.getAttribute('title'), 'VPS A')
-      const nameBox = await remoteRow.getByTestId('session-tab-name').boundingBox()
-      const badgeBox = await ownerBadge.boundingBox()
-      assert.ok(
-        nameBox && badgeBox && badgeBox.x >= nameBox.x + nameBox.width - 1,
-        'the owner badge remains a separate accessory to the right of the name'
-      )
+      assert.equal(await ownerBadge.count(), 1, 'the row still says whose it is')
+      assert.equal(await ownerBadge.isVisible(), false, 'the row draws no server mark')
+      assert.equal((await switcherTag.innerText()).trim(), 'VPS A')
       assert.equal(await remoteRow.locator('[data-account-limit]').count(), 0)
     }
     await assertOwnerBadge()
     t.check(
-      'remote default-account row keeps its owner mark, no logo and no exhausted Mac quota',
+      'a server row in its own workspace draws no server mark, the switcher names the server, no logo and no exhausted Mac quota',
       true
     )
 
@@ -525,7 +527,7 @@ export async function run(t) {
     await remoteOrb.waitFor()
     await assertOwnerBadge()
     t.check(
-      'remote mark pack and disabled-plugin logo fallback preserve the separate far-right owner badge',
+      'remote mark pack and disabled-plugin logo fallback leave the row without a server mark, the switcher naming the server',
       true
     )
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')

@@ -33,6 +33,7 @@ import {
   WorkChangeRefusal,
   type WorkAssignment
 } from '@clave/contract/work-rules'
+import { applyNest, NestRefusal, type NestRecord } from '@clave/contract/nest-rules'
 import type { PtySpawnOptions } from '../pty-manager'
 import { type SessionManager, sessionManager } from './session-manager'
 import { preparePrompt } from './attachments'
@@ -371,6 +372,30 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       )
       for (const r of renamed) ptyManager.setSessionDisplayName(r.id, r.name, true)
       return { changed: updates, renamed }
+    },
+    // ── PRDCT-4997: which tab a tab is nested under, on the records ──
+    // The rule (`nest-rules.ts`) reads every record this host keeps, as the
+    // work change does, plus each live session whose record is not on disk
+    // yet. Only the subject's record is written, and only when the link
+    // changed; a session with no record cannot keep it, said in words.
+    nest: (id, under) => {
+      const all = new Map<string, NestRecord>()
+      for (const r of ptyManager.listNestRecords()) all.set(r.id, r)
+      // A windowless session's key is empty, a record's is absent: both read
+      // as none, or the rule would say two such tabs sit in different windows.
+      for (const s of manager.list())
+        if (!all.has(s.id))
+          all.set(s.id, {
+            id: s.id,
+            windowKey: s.windowKey || null,
+            workspaceId: s.workspaceId || null
+          })
+      // A session neither listed nor running is unknown: the rule says so
+      // (`NestSessionUnknown`), and the server answers its declared not-found.
+      const result = applyNest([...all.values()], id, under)
+      if (result.changed && !ptyManager.setSessionSpawnedBy(id, result.under))
+        throw new NestRefusal('This session keeps no record, so where it is nested cannot be kept')
+      return result
     },
     setPage: (id, page) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)

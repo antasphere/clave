@@ -86,6 +86,7 @@ import { useFleetStore } from '../../store/fleet-store'
 import { pairedServerWorkspaces, usePairingStore } from '../../store/pairing-store'
 import { getWorkspaceById, workspaceServer } from '../../store/workspace-store'
 import { ServerIcon } from '@heroicons/react/24/outline'
+import { antigravityLaunchModels } from '../../../../shared/antigravity'
 
 /** What the caret's remote entries hand back to the sidebar, which owns the
  *  remote directory picker (remote launches never touch the local cwd rules). */
@@ -195,6 +196,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
    *  no static list): undefined until the answer, `failed` when it could not
    *  be read (the row then offers its default alone). */
   const [codexModels, setCodexModels] = useState<ModelOption[] | 'failed' | undefined>(undefined)
+  /** Antigravity's models, asked of its CLI the same way (`agy models`). */
+  const [antigravityModels, setAntigravityModels] = useState<ModelOption[] | 'failed' | undefined>(
+    undefined
+  )
   /** Claude's models, asked of its CLI when the menu first opens, so a
    *  version that ships shows without a Clave release; the table stands in
    *  until the answer, and when it could not be read. */
@@ -394,6 +399,19 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
             .then((models) => setCodexModels(models.length > 0 ? models : 'failed'))
             .catch(() => setCodexModels('failed'))
       }
+      // At every opening: main keeps the list five minutes, the rows on
+      // screen stay until the new ones land.
+      if (open) {
+        const cwd = getWorkspaceById(activeWorkspaceId)?.rootDir ?? '/'
+        const read = window.electronAPI?.adaptersModels?.('antigravity-chat', cwd)
+        const keep = (current: ModelOption[] | 'failed' | undefined): ModelOption[] | 'failed' =>
+          Array.isArray(current) ? current : 'failed'
+        if (!read) setAntigravityModels(keep)
+        else
+          void read
+            .then((models) => setAntigravityModels(models.length > 0 ? models : keep))
+            .catch(() => setAntigravityModels(keep))
+      }
       setMenuOpen(open)
     },
     [serversKey, serverSettings, codexModels, claudeModels, activeWorkspaceId]
@@ -486,8 +504,8 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     void run({ setup: next, cwd, remember: true })
   }
 
-  /** The models a harness's row offers on hover, or null for a harness with
-   *  no model level (Antigravity takes no model on its command line). */
+  /** The models a harness's row offers on hover, or null for a harness that
+   *  takes none on its command line. */
   const modelsFor = (
     source: LaunchSource,
     harness: Harness
@@ -499,6 +517,12 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       if (codexModels === undefined) return 'loading'
       if (codexModels === 'failed' || codexModels.length === 0) return [DEFAULT_MODEL]
       return codexModels.map((model) => ({ id: model.id, label: model.label, family: model.label }))
+    }
+    if (harness.id === 'antigravity') {
+      if (antigravityModels === undefined) return 'loading'
+      return antigravityModels === 'failed'
+        ? [DEFAULT_MODEL]
+        : antigravityLaunchModels(antigravityModels).map((m) => ({ ...m, id: m.id ?? undefined }))
     }
     if (harness.id !== 'pi' && harness.id !== 'opencode') return [DEFAULT_MODEL]
     // Pi and OpenCode (PRDCT-4496): the default, the harness's own login;
