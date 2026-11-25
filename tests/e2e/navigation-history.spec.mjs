@@ -21,9 +21,10 @@
  * pages; a group's page and a tab's page, each left by Back for the mosaic
  * under it; the Analytics page; a tab an agent opens; a closed tab skipped;
  * a second workspace switched back to; the list behind the button, nearest
- * first; the mouse's side buttons; and the code editor, which keeps ⌘[ and
- * ⌘] for its own outdent and indent. The cards beside a tab (an artefact, a
- * document) are walked in navigation-history-beside.spec.mjs.
+ * first; the mouse's side buttons; the code editor, which keeps ⌘[ and ⌘]
+ * for its own outdent and indent; and a page over the tabs, under which a tab
+ * an agent opens or a tab closed is no move. The cards beside a tab (an
+ * artefact, a document) are walked in navigation-history-beside.spec.mjs.
  *
  * Where the keyboard focus lands after a move is checked by typing: what is
  * typed after Back must reach the restored tab's terminal (the terminal
@@ -746,6 +747,79 @@ async function walk(t) {
       'and ⌘] indents it again without going forward',
       reindented !== null && s?.index === fileAt,
       { reindented, trail: trail(s) }
+    )
+
+    // ── 13. A page over the tabs: what changes under it is no move ────────
+    // The group's page over the file tab, and a tab the agent road opens under it (the road
+    // of step 7): nothing on screen changes, so no place is added and Back leaves the page.
+    await win.click(`[data-sidebar-item-id="${groupId}"] > button`)
+    s = await snapshotUntil(win, (x) => x.index === fileAt + 1 && current(x)?.groupView === groupId)
+    seen = await screenUntil(win, (x) => x.title === 'Board page')
+    t.check(
+      'the group’s page over the file tab is a place',
+      current(s)?.groupView === groupId && seen.title === 'Board page',
+      { trail: trail(s), seen }
+    )
+    const boardAt = s?.index
+    const F = await openTerminal(app, 'Tab F')
+    await sleep(QUIET_MS)
+    s = await snapshot(win)
+    seen = await screen(win)
+    t.check(
+      'a tab an agent opens under the group’s page adds no place',
+      s?.places.length === boardAt + 1 && s.index === boardAt && current(s)?.groupView === groupId,
+      trail(s)
+    )
+    t.equal('and the group’s page stays on screen', seen.title, 'Board page')
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === fileAt)
+    seen = await screenUntil(win, (x) => x.title === null)
+    t.check(
+      'Back then shows the place before the page: the file tab',
+      s?.index === fileAt && same(current(s)?.tabs, [fileTab]) && seen.title === null,
+      { trail: trail(s), seen }
+    )
+
+    // Settings over a mosaic, and a tab of the mosaic closed under it: the same. (Its indices
+    // are counted from its own first place, so it stands on its own.)
+    await win.click(rowOf(C))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [C]))
+    const cAt = s?.index
+    await win.click(rowOf(F), { modifiers: ['Meta'] })
+    s = await snapshotUntil(
+      win,
+      (x) => x.index === cAt + 1 && same(sorted(current(x)?.tabs ?? []), sorted([C, F]))
+    )
+    const underAt = s?.index
+    await win.keyboard.press('Meta+,')
+    s = await snapshotUntil(win, (x) => x.index === cAt + 2 && current(x)?.view === 'settings')
+    const settingsAt = s?.index
+    const settingsPage = (await screenUntil(win, (x) => x.settings !== null)).settings
+    t.check(
+      'Settings over the mosaic of C and F is a place',
+      underAt === cAt + 1 && settingsAt === cAt + 2 && settingsPage !== null,
+      trail(s)
+    )
+    await callMcp(app, 'closeSession', { sessionId: F })
+    await until(async () => ((await win.locator(rowOf(F)).count()) === 0 ? true : null))
+    await sleep(QUIET_MS)
+    s = await snapshot(win)
+    seen = await screen(win)
+    t.check(
+      'a tab closed under Settings adds no place',
+      s?.places.length === settingsAt + 1 &&
+        s.index === settingsAt &&
+        current(s)?.view === 'settings',
+      trail(s)
+    )
+    t.equal('and Settings stays on screen, on its page', seen.settings, settingsPage)
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === underAt)
+    seen = await screenUntil(win, (x) => x.settings === null && same(x.tiles, [C]))
+    t.check(
+      'Back then shows the place before Settings: the mosaic, the closed tab left out',
+      s?.index === underAt && seen.settings === null && same(seen.tiles, [C]),
+      { trail: trail(s), seen }
     )
   } finally {
     await app.close()

@@ -123,10 +123,27 @@ export function samePlace(a: Place, b: Place): boolean {
   return sameSurroundings(a, b) && sameList(a.tabs, b.tabs) && a.focused === b.focused
 }
 
-/** The same mosaic, whichever of its tiles has the focus and in whatever order its tabs
- *  were picked: the person clicked another tile of the same mosaic. */
+/** A page fills the content column: Settings, Extensions, Ongoing, a plugin's page or panel,
+ *  a group's or a tab's own page. The tabs under it are hidden. (The Agents view is no such
+ *  page: it shows the selected agent's tab.) */
+export function isCovered(p: Place): boolean {
+  return (
+    p.view === 'settings' ||
+    p.view === 'extensions' ||
+    p.view === 'ongoing' ||
+    p.plugin !== null ||
+    p.groupView !== null ||
+    p.tabView !== null
+  )
+}
+
+/** What the person sees is the same: the same mosaic, whichever of its tiles has the focus
+ *  and in whatever order its tabs were picked (another tile of it was clicked), or the same
+ *  page over the tabs, whatever tabs are hidden under it (an agent opened a tab under a
+ *  group's page, a tab was closed under Settings). */
 export function sameSpot(a: Place, b: Place): boolean {
-  return sameSurroundings(a, b) && sameIds(a.tabs, b.tabs)
+  // The same surroundings: covered both, or neither.
+  return sameSurroundings(a, b) && (isCovered(a) || sameIds(a.tabs, b.tabs))
 }
 
 /** Nothing on screen: the bare mosaic with no tab in it. Never recorded. */
@@ -142,10 +159,11 @@ export function isEmptyPlace(p: Place): boolean {
 
 /**
  * The history once `place` is on screen. The same place changes nothing (the
- * same object comes back, so nothing subscribed renders again); another tile
- * of the same mosaic takes the current entry's slot; anything else drops the
- * places ahead (as a browser does after going back) and is appended, the
- * oldest falling off past `HISTORY_LIMIT`.
+ * same object comes back, so nothing subscribed renders again); the same spot
+ * (another tile of the same mosaic, other tabs under the same page) takes the
+ * current entry's slot; anything else drops the places ahead (as a browser
+ * does after going back) and is appended, the oldest falling off past
+ * `HISTORY_LIMIT`.
  */
 export function recordPlace(h: NavigationHistory, place: Place): NavigationHistory {
   if (isEmptyPlace(place)) return h

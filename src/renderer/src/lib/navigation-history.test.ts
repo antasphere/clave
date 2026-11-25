@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EMPTY_HISTORY,
   HISTORY_LIMIT,
+  isCovered,
   isEmptyPlace,
   moveTo,
   placesToward,
@@ -222,6 +223,82 @@ describe('samePlace and sameSpot', () => {
       expect(samePlace(a, b)).toBe(false)
       expect(sameSpot(a, b)).toBe(false)
     }
+  })
+})
+
+describe('a page over the tabs (PRDCT-5155)', () => {
+  /** What the column shows over tabs `tabs`, `focused` the one in focus. */
+  const over = (tabs: string[], focused: string | null, cover: Partial<Place>): Place => ({
+    ...tab('unused'),
+    tabs,
+    focused,
+    beside: null,
+    ...cover
+  })
+  const covers: Array<[string, Partial<Place>]> = [
+    ['Settings', { view: 'settings', section: 'general' }],
+    ['Extensions', { view: 'extensions', section: 'installed' }],
+    ['Ongoing', { view: 'ongoing' }],
+    ['a plugin’s page', { plugin: page() }],
+    ['a plugin’s panel', { plugin: { kind: 'panel', pluginId: 'plugin.one', panelId: 'home' } }],
+    ['a group’s page', { groupView: 'group-1' }],
+    ['a tab’s page', { tabView: 'tab-1' }]
+  ]
+
+  it('is a page filling the column; the Agents view and the bare mosaic are not', () => {
+    for (const [name, cover] of covers)
+      expect([name, isCovered(over([], null, cover))]).toEqual([name, true])
+    expect(isCovered(over(['agent-1'], 'agent-1', { view: 'agents' }))).toBe(false)
+    expect(isCovered(tab('tab-1'))).toBe(false)
+    expect(isCovered(mosaic(['tab-1', 'tab-2'], 'tab-1'))).toBe(false)
+  })
+
+  it('is the same spot whatever tabs are hidden under it and whichever has the focus', () => {
+    for (const [name, cover] of covers) {
+      const before = over(['tab-1', 'tab-2'], 'tab-1', cover)
+      for (const hidden of [over([], null, cover), over(['tab-9'], 'tab-9', cover)]) {
+        expect([name, sameSpot(before, hidden), sameSpot(hidden, before)]).toEqual([
+          name,
+          true,
+          true
+        ])
+        // Still another place by the letter: the tabs a restore puts back under the page.
+        expect([name, samePlace(before, hidden)]).toEqual([name, false])
+      }
+    }
+  })
+
+  it('never makes two pages, or a page and the mosaic, the same spot', () => {
+    const board = over(['tab-1'], 'tab-1', { groupView: 'group-1' })
+    expect(sameSpot(board, over(['tab-1'], 'tab-1', { groupView: 'group-2' }))).toBe(false)
+    expect(sameSpot(board, over(['tab-1'], 'tab-1', { tabView: 'tab-1' }))).toBe(false)
+    expect(sameSpot(board, tab('tab-1'))).toBe(false)
+    const general = over(['tab-1'], 'tab-1', { view: 'settings', section: 'general' })
+    expect(
+      sameSpot(general, over(['tab-1'], 'tab-1', { view: 'settings', section: 'keymaps' }))
+    ).toBe(false)
+    expect(sameSpot(general, { ...general, workspaceId: 'ws-b' })).toBe(false)
+    // The Agents view shows the selected agent's tab: another agent is another place.
+    const agents = over(['agent-1'], 'agent-1', { view: 'agents' })
+    expect(sameSpot(agents, over(['agent-2'], 'agent-2', { view: 'agents' }))).toBe(false)
+  })
+
+  it('takes the slot of the page when an agent opens a tab under it, and Back leaves the page', () => {
+    const before = tab('tab-a')
+    const board = over(['tab-a'], 'tab-a', { groupView: 'group-1' })
+    const h = walk(before, board)
+    const opened = over(['tab-new'], 'tab-new', { groupView: 'group-1' })
+    const after = recordPlace(h, opened)
+    expect(after.entries).toHaveLength(2)
+    expect(after.entries[1]).toBe(opened)
+    expect(after.index).toBe(1)
+    expect(stepTarget(after, -1, () => true)).toBe(0)
+    // A tab closed under Settings: the same.
+    const settings = over(['tab-a', 'tab-b'], 'tab-a', { view: 'settings', section: 'general' })
+    const closed = over(['tab-a'], 'tab-a', { view: 'settings', section: 'general' })
+    const s = recordPlace(walk(before, settings), closed)
+    expect(s.entries).toEqual([before, closed])
+    expect(s.index).toBe(1)
   })
 })
 
