@@ -33,7 +33,7 @@ export const STATUS_CARD_RULE = [
   'next: the one thing the person must do now, or "nothing"',
   '```',
   '',
-  'Write `decide` once per decision, at most three times, and leave it out when nothing waits on the person. Write each line as plain prose for someone who just walked in. Put the block only in the message that ends your turn, never in a note between tool calls. Do not end your answer with its own summary or next step: the card is the ending.'
+  'Write `decide` once per decision, at most three times, and leave it out when nothing waits on the person. Write each line as plain prose for someone who just walked in. Put the block only in the message that ends your turn, never in a note between tool calls. Do not end your answer with its own summary or next step: the card is the ending. The block is not part of your answer: write it every time, whatever length or format the person asked the answer to have.'
 ].join('\n')
 
 /** A status as the agent wrote it. */

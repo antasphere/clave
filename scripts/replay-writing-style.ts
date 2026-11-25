@@ -7,6 +7,7 @@
  *
  *   npx vite-node scripts/replay-writing-style.ts [--harness claude,pi,opencode,codex]
  *                                                 [--style brief] [--model <m>] [--runs 1]
+ *                                                 [--question "<the person's message>"]
  *
  * A manual probe that spends real calls on each CLI's own login (Claude's on
  * the machine's `claude` login: pass a cheap `--model`, `haiku` by default):
@@ -45,7 +46,8 @@ if (!style || style === 'none') {
   process.exit(2)
 }
 const text = composeStyleText(style)
-const QUESTION = "I want to rename my repository's main branch to trunk. Should I?"
+const QUESTION =
+  option('question') ?? "I want to rename my repository's main branch to trunk. Should I?"
 
 // A folder with nothing in it: no project instructions take part, and the
 // calls stay small.
