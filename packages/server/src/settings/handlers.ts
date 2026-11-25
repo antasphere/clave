@@ -72,6 +72,14 @@ import {
   RenameProviderConnection,
   SetProviderConnectionKey
 } from '@clave/contract/settings'
+// PRDCT-5166: the writing styles of a machine
+import {
+  DeleteWritingStyle,
+  ImportClaudeOutputStyle,
+  ListWritingStyles,
+  SaveWritingStyle,
+  SetDefaultWritingStyle
+} from '@clave/contract/settings'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import { ReadModelsCatalog } from '@clave/contract/settings'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
@@ -214,6 +222,25 @@ export const settingsHandlers = [
       })
     }))
   ),
+  // The writing styles (PRDCT-5166): the host's store, the whole view each
+  // way; the store's refusal is the person's sentence.
+  QueryHandler.make(ListWritingStyles, () => ask((s) => s.writingStyles.list())),
+  CommandHandler.make(SaveWritingStyle, (p) =>
+    must((s) =>
+      s.writingStyles.save({
+        ...(p.id !== undefined && { id: p.id }),
+        name: p.name,
+        description: p.description,
+        text: p.text,
+        statusCard: p.statusCard
+      })
+    )
+  ),
+  CommandHandler.make(DeleteWritingStyle, (p) => must((s) => s.writingStyles.remove(p.id))),
+  CommandHandler.make(SetDefaultWritingStyle, (p) =>
+    must((s) => s.writingStyles.setDefault(p.id))
+  ),
+  CommandHandler.make(ImportClaudeOutputStyle, () => must((s) => s.writingStyles.importClaude())),
   // The integrations (PRDCT-4410): the host's ElevenLabs key, sealed there.
   // Every one may be refused (a host with no integrations, a key refused by
   // the service); the key goes in redacted and comes back in no answer.

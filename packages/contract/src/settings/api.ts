@@ -50,6 +50,13 @@ import {
 } from './launch-profiles'
 import { ListHelperPreferences, SetHelperPreference } from './helpers'
 import {
+  DeleteWritingStyle,
+  ImportClaudeOutputStyle,
+  ListWritingStyles,
+  SaveWritingStyle,
+  SetDefaultWritingStyle
+} from './writing-styles'
+import {
   CheckElevenLabs,
   ListElevenLabsVoices,
   ReadIntegrations,
@@ -236,6 +243,26 @@ export const settingsGroup = ApiGroup.make('settings')
   // The helpers (PRDCT-4330)
   .add(HttpCqrs.queryEndpoint('listHelperPreferences', '/helpers', ListHelperPreferences))
   .add(HttpCqrs.commandEndpoint('setHelperPreference', '/helpers', SetHelperPreference))
+  // The writing styles (PRDCT-5166): the machine's styles and its default
+  .add(HttpCqrs.queryEndpoint('listWritingStyles', '/writing-styles', ListWritingStyles))
+  .add(HttpCqrs.commandEndpoint('saveWritingStyle', '/writing-styles', SaveWritingStyle))
+  .add(
+    HttpCqrs.commandEndpoint('deleteWritingStyle', '/writing-styles/delete', DeleteWritingStyle)
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'setDefaultWritingStyle',
+      '/writing-styles/default',
+      SetDefaultWritingStyle
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'importClaudeOutputStyle',
+      '/writing-styles/import-claude',
+      ImportClaudeOutputStyle
+    )
+  )
   // The integrations (PRDCT-4410): the ElevenLabs key sealed on the machine
   .add(HttpCqrs.queryEndpoint('readIntegrations', '/integrations', ReadIntegrations))
   .add(

@@ -31,6 +31,7 @@ import { launchProfileManager } from '../launch-profile-manager'
 import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { installWritingStyles, writingStylesStore } from '../writing-styles/store'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
@@ -69,6 +70,8 @@ export function standaloneSettingsSource(
   })
   // The helpers run here read this server's preference at each call (PRDCT-4330).
   installHelperPreferences(helperPreferences)
+  // The tabs this server spawns read its writing styles (PRDCT-5166).
+  installWritingStyles(writingStylesStore)
   // The ports are installed: the stored session is read back now. A state,
   // never a rejection; a login is never what stops the server from starting.
   void antasphere.restore()
@@ -83,6 +86,7 @@ export function standaloneSettingsSource(
     preferences: preferencesManager,
     workspaces: workspaceManager,
     helpers: helperPreferences,
+    writingStyles: writingStylesStore,
     integrations: elevenLabsIntegration,
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog,
