@@ -929,15 +929,25 @@ describe('launchOptions, served: what this machine can launch', () => {
     }
   })
 
-  // PRDCT-5166: the machine's writing styles, from the source the spawn reads.
-  it("lists this machine's writing styles and its default, from the styles' source", async () => {
-    const h = setup()
-    const before = (await serveCommand('launchOptions', {}, h.ctx())) as LaunchOptions
-    // No source installed: the built-in styles, no default.
-    expect(before.styles.map((style) => style.id)).toEqual(['brief', 'quiet'])
-    expect(before.defaultStyle).toBeNull()
-    setWritingStylesSource({
-      view: () => ({
+  // PRDCT-5166: the machine's writing styles, asked of the server that
+  // launches the tab, never of main's own process (a packaged app's server is
+  // a process apart, and main then holds no store).
+  describe("the machine's writing styles, from the server's API", () => {
+    const withStyles = (
+      h: ReturnType<typeof setup>,
+      list: () => Promise<unknown>
+    ): ReturnType<ReturnType<typeof setup>['ctx']> => {
+      const base = h.ctx()
+      const api = {
+        ...base.api,
+        settings: { writingStyles: { list } }
+      } as unknown as ClaveApiClient
+      return h.ctx({ api })
+    }
+
+    it('lists the styles and the default the server answers', async () => {
+      const h = setup()
+      const list = vi.fn(async () => ({
         styles: [
           ...BUILT_IN_STYLES,
           {
@@ -951,21 +961,50 @@ describe('launchOptions, served: what this machine can launch', () => {
         ],
         defaultStyleId: 'terse',
         claudeOutputStyle: null
+      }))
+      // A source in main's own process that disagrees: the listing must not
+      // read it.
+      setWritingStylesSource({
+        view: () => ({
+          styles: [...BUILT_IN_STYLES],
+          defaultStyleId: 'quiet',
+          claudeOutputStyle: null
+        })
       })
+      try {
+        const answer = (await serveCommand(
+          'launchOptions',
+          {},
+          withStyles(h, list)
+        )) as LaunchOptions
+        expect(list).toHaveBeenCalledTimes(1)
+        expect(answer.styles.map((style) => style.id)).toEqual(['brief', 'quiet', 'terse'])
+        expect(answer.defaultStyle).toBe('terse')
+        expect(answer.styles.at(-1)).toEqual({
+          id: 'terse',
+          name: 'Terse',
+          description: 'One line.',
+          statusCard: false,
+          default: true
+        })
+      } finally {
+        setWritingStylesSource(null)
+      }
     })
-    try {
-      const answer = (await serveCommand('launchOptions', {}, h.ctx())) as LaunchOptions
-      expect(answer.defaultStyle).toBe('terse')
-      expect(answer.styles.at(-1)).toEqual({
-        id: 'terse',
-        name: 'Terse',
-        description: 'One line.',
-        statusCard: false,
-        default: true
-      })
-    } finally {
-      setWritingStylesSource(null)
-    }
+
+    it('offers no style when the server cannot answer, rather than failing', async () => {
+      const h = setup()
+      const answer = (await serveCommand(
+        'launchOptions',
+        {},
+        withStyles(h, async () => {
+          throw new Error('no such query')
+        })
+      )) as LaunchOptions
+      expect(answer.styles).toEqual([])
+      expect(answer.defaultStyle).toBeNull()
+      expect(answer.harnesses.length).toBeGreaterThan(0)
+    })
   })
 
   it('still answers on a shell with none of the lane A facts: installed unknown, models unavailable', async () => {

@@ -83,7 +83,6 @@ export {
   modeOf,
   resolveGroupRef
 } from './served-core'
-import { writingStylesView } from '../writing-styles/source'
 import { listedStyle } from '../../shared/open-session-modes'
 
 // ── The tools ──
@@ -513,6 +512,14 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
   ).catch(() => new Map<string, PiStartModel>())
   // What each connection's tabs used today (PRDCT-4551), as a person reads it.
   const harnessUsage = shell.harnessUsage ? await shell.harnessUsage().catch(() => null) : null
+  // The machine's writing styles (PRDCT-5166), asked of the server that
+  // launches the tab: in a packaged app it is a process apart and main holds
+  // no store of its own. A failure, or an older server that has no such
+  // call, lists no style rather than failing the whole listing.
+  const writingStyles = await Promise.resolve()
+    .then(() => ctx.api.settings.writingStyles.list())
+    .then((view) => ({ styles: [...view.styles], defaultStyleId: view.defaultStyleId }))
+    .catch(() => null)
   return launchOptionsOf({
     harnessUsage,
     machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
@@ -557,9 +564,7 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
         : undefined,
     providerStartModel: (id, connectionId) =>
       id === 'pi' ? piStarts.get(connectionId) : undefined,
-    // The machine's writing styles (PRDCT-5166), from the source the spawn
-    // reads too, so the list and the launch never disagree.
-    writingStyles: writingStylesView(),
+    writingStyles,
     now: Date.now()
   })
 }
