@@ -40,6 +40,11 @@ interface Entry {
    *  said it (OpenCode and Pi say it once, at the handshake) still names the
    *  model. */
   meta: Extract<SessionEvent, { type: 'session_meta' }> | null
+  /** The provider's last word on the effort and on the permission mode, held
+   *  as `meta` is (#423): a view that opens on a long chat reads its last
+   *  page, which no longer holds the events that said them. */
+  effort: Extract<SessionEvent, { type: 'effort' }> | null
+  mode: Extract<SessionEvent, { type: 'permission_mode' }> | null
   /** The messages the agent has not taken yet, as the adapter last listed
    *  them (PRDCT-4566), without what it handed back: held the way
    *  `background` is, so a view that opens while one waits shows it. */
@@ -161,6 +166,8 @@ export class SessionManager {
       background: [],
       timeline: this.timelineOf(parsed, () => adapter.history?.(handle) ?? []),
       meta: null,
+      effort: null,
+      mode: null,
       waiting: null
     }
     this.entries.set(parsed.id, entry)
@@ -186,6 +193,9 @@ export class SessionManager {
             entry.background = stream.event.tasks
           if (stream.kind === 'event' && stream.event.type === 'session_meta')
             entry.meta = stream.event
+          if (stream.kind === 'event' && stream.event.type === 'effort') entry.effort = stream.event
+          if (stream.kind === 'event' && stream.event.type === 'permission_mode')
+            entry.mode = stream.event
           if (stream.kind === 'event' && stream.event.type === 'waiting_messages')
             entry.waiting = stream.event.messages.length
               ? {
@@ -483,6 +493,17 @@ export class SessionManager {
   meta(id: string): Extract<SessionEvent, { type: 'session_meta' }> | null {
     const meta = this.entries.get(id)?.meta
     return meta ? { ...meta } : null
+  }
+
+  /** The provider's last word on the effort and on the permission mode, for
+   *  a view that subscribes after it was said (#423); none until said. */
+  runtime(id: string): Array<Extract<SessionEvent, { type: 'effort' | 'permission_mode' }>> {
+    const entry = this.entries.get(id)
+    if (!entry) return []
+    return [
+      ...(entry.effort ? [{ ...entry.effort }] : []),
+      ...(entry.mode ? [{ ...entry.mode, modes: [...entry.mode.modes] }] : [])
+    ]
   }
 
   /** The messages the agent has not taken yet, for a view that subscribes

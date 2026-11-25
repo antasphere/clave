@@ -212,7 +212,7 @@ export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
   'src/main/sessions/adapters/echo-adapter.ts':
     '5761c7077f7667ba7efa45675ec173af416e8502c576d45c3316f893fa97cb8b',
   'src/main/sessions/session-manager.ts':
-    '0e6b2b4da8155b936ed510a1de21019df5a9e86524381faa68beebb91f0b2a24',
+    'dc7decc577dddbf74adc2484d531e25143458d2c0cb0f26d657a7e04b450430b',
   'src/main/server-child.ts': 'a52bcbe2fbac42a3a145b6eb7481eade568346dd71b8bbf3f4628f7de1f5a246',
   'src/main/server-entry.ts': 'f37813072f13c546fefac61c17befeb26d7b09e3485ab4468a3f280e89508b2a',
   'src/main/terminal-process/supervisor.ts':

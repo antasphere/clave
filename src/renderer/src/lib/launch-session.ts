@@ -187,8 +187,10 @@ export function setupSpawnFlags(
   const profile =
     (launchProfileId && profilesFor(setup.kind).find((p) => p.id === launchProfileId)) ||
     selectedLaunchProfile(setup.kind, workspaceId)
+  // A server applies its own default and its own profile's permissions
+  // (#423): this Mac's rung, judged against this Mac's profile, never travels.
   const rung =
-    setup.dangerousMode || (profile && profileSetsPermissions(profile))
+    toServer || setup.dangerousMode || (profile && profileSetsPermissions(profile))
       ? undefined
       : permissionRungFor(useLaunchSettingsStore.getState().harnesses, setup.kind)
   return {

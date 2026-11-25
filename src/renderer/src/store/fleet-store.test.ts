@@ -441,6 +441,17 @@ describe('who opened a server tab, named as this window names it (PRDCT-4193)', 
     expect(session?.openedBy).toBe(resourceKey('session', owner, 'opener-raw'))
     expect(session?.spawnedBy).toBe(resourceKey('session', owner, 'nester-raw'))
   })
+  // Issue #423: the preload hands the store records whose `spawnedBy` it has
+  // already scoped to the server (`scopeRecord`); the store wrapped it again,
+  // so a server tab's nester named no tab at all.
+  it('keeps a spawnedBy the preload already scoped as it is', () => {
+    const owner = `s-${serial}`
+    const nester = resourceKey('session', owner, 'nester-raw')
+    const a = withRecord(owner, { spawnedBy: nester })
+    fleet.applyFleetSnapshot(a)
+    const session = store.useSessionStore.getState().sessions.find((s) => s.id === a.sessions[0].id)
+    expect(session?.spawnedBy).toBe(nester)
+  })
   it('leaves both undefined when the record names nobody', () => {
     const a = withRecord(`s-${serial}`, {})
     fleet.applyFleetSnapshot(a)

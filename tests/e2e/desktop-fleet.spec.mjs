@@ -348,6 +348,41 @@ export async function run(t) {
       await win.locator(`[data-sidebar-item-id="${ka}"] [data-fleet-owner="${savedA.id}"]`).count(),
       1
     )
+    // Issue #423: what another client (the phone) does on a server reaches
+    // this desktop by itself, with no snapshot asked for: a session started
+    // there appears, its new name follows, and it goes once stopped there.
+    const live = '22222222-2222-4222-8222-222222222222'
+    const kl = owned('session', savedA.id, live)
+    await post(a, '/sessions/start', {
+      cwd: a.cwd,
+      options: { claudeMode: true, launchProfileId: 'dev-echo-adapter', adoptSessionId: live }
+    })
+    await win.locator(`[data-sidebar-item-id="${kl}"]`).waitFor({ timeout: 15_000 })
+    await post(a, '/sessions/rename', { id: live, name: 'Renamed on the phone' })
+    await check(
+      () =>
+        until(async () =>
+          (await win.locator(`[data-sidebar-item-id="${kl}"]`).innerText()).includes(
+            'Renamed on the phone'
+          )
+        ),
+      'a rename made on the server by another client reaches the desktop by itself'
+    )
+    // A Void command answers 204, which `post` (200 and a body) does not take.
+    const stopped = await fetch(`${a.url}/sessions/stop`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${a.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: live })
+    })
+    assert.ok(stopped.ok, `owning endpoint /sessions/stop: ${stopped.status}`)
+    await check(
+      () => until(async () => (await win.locator(`[data-sidebar-item-id="${kl}"]`).count()) === 0),
+      'a session stopped on the server by another client leaves the desktop by itself'
+    )
+    t.check(
+      'a session another client starts, renames and stops on a server reaches the desktop by itself (#423)',
+      true
+    )
     // Echo deliberately has no persisted provider/account record. Use an
     // actual Claude adapter with a recording offline CLI for account identity.
     const quotaCli = path.join(a.dir, 'quota-cli.cjs')

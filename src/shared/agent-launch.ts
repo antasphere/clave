@@ -1,6 +1,7 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
 import { HARNESS_BY_ID } from './harness'
 import { isValidEffort } from './effort'
+import { isValidModelName } from './model-name'
 import { antigravityModeArgv, antigravityProfileFlags } from './antigravity-mode'
 
 export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi' | 'opencode'
@@ -318,7 +319,14 @@ export function buildAgentArgv(input: {
   ) {
     throw new Error('Launch profile contains a Clave-managed flag')
   }
-  const argv = [...input.profile.command, ...input.profile.additionalArgs]
+  // Claude prefers CLAUDE_CODE_EFFORT_LEVEL to --effort (verifier V12): an
+  // effort Clave passes, already the explicit one, else the profile's own,
+  // else the last pick, replaces a variable the profile's wrapper sets.
+  const command =
+    input.kind === 'claude' && input.effort
+      ? withoutCommandVariable(input.profile.command, 'CLAUDE_CODE_EFFORT_LEVEL')
+      : input.profile.command
+  const argv = [...command, ...input.profile.additionalArgs]
   if (input.kind === 'claude-agents') return [...argv, 'agents']
   // Bypass is the skip flag, never a mode passed as such: a rung of
   // `bypassPermissions` launches as `dangerousMode` does.
@@ -485,6 +493,103 @@ export function codexProfilePolicy(profile: LaunchProfile): CodexThreadPolicy {
       policy.approvalPolicy = approval as CodexApprovalPolicy
   })
   return policy
+}
+
+/** A Codex `-c key=value` (or `--config`) override of one key, the later
+ *  winning, its value unquoted; undefined when the profile sets none. */
+function codexConfigValue(tokens: readonly string[], key: string): string | undefined {
+  let value: string | undefined
+  const pattern = new RegExp(`^${key}\\s*=\\s*(.*)$`)
+  tokens.forEach((token, index) => {
+    // Every spelling the CLI takes (verifier V7): `-c k=v`, `--config k=v`,
+    // `--config=k=v`, and the attached `-ck=v` and `-c=k=v`.
+    const setting =
+      token === '-c' || token === '--config'
+        ? tokens[index + 1]
+        : token.startsWith('--config=')
+          ? token.slice('--config='.length)
+          : token.startsWith('-c=')
+            ? token.slice('-c='.length)
+            : token.startsWith('-c') && !token.startsWith('--')
+              ? token.slice('-c'.length)
+              : undefined
+    const match = setting?.match(pattern)
+    if (match) value = match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
+  })
+  return value
+}
+
+/** A variable a wrapper in the profile's command sets for the program it
+ *  runs (`env NAME=value claude`), the later winning; the program itself is
+ *  the command's last word, and what follows it are its arguments. */
+function commandVariable(profile: LaunchProfile, name: string): string | undefined {
+  let value: string | undefined
+  for (const token of profile.command.slice(0, -1))
+    if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1)
+  return value
+}
+
+/** The command without a variable its wrapper sets (`NAME=value` before the
+ *  program, its last word). */
+function withoutCommandVariable(command: readonly string[], name: string): string[] {
+  return command.filter(
+    (token, index) => index === command.length - 1 || !token.startsWith(`${name}=`)
+  )
+}
+
+/**
+ * The model a profile's own settings start the agent on (#423, verifier V3):
+ * Codex's config override `-c model=<name>`, a Pi profile's own model. A
+ * Claude or Codex profile cannot carry `--model` (a Clave-managed flag). A
+ * saved profile is a deliberate choice: an explicit pick overrides it, the
+ * model last picked does not. A value that is not a model name is none.
+ */
+export function profileModel(profile: LaunchProfile | undefined): string | undefined {
+  if (!profile) return undefined
+  // Claude reads ANTHROPIC_MODEL from the environment a wrapper in the
+  // command sets (verifier V7); its `--model` is a Clave-managed flag.
+  const value =
+    profile.family === 'codex'
+      ? codexConfigValue([...profile.command, ...profile.additionalArgs], 'model')
+      : profile.family === 'pi'
+        ? profile.pi?.model
+        : profile.family === 'claude'
+          ? commandVariable(profile, 'ANTHROPIC_MODEL')
+          : undefined
+  return value && isValidModelName(value) ? value : undefined
+}
+
+/**
+ * The reasoning effort a profile's own flags start the agent on (#423):
+ * Claude's `--effort <level>` (or `--effort=<level>`), Codex's config
+ * override `-c model_reasoning_effort=<level>` (or `--config`, the value
+ * quoted or not). The later one wins, as on the command line; a value that
+ * is not a level is no effort at all. A saved profile is a deliberate
+ * choice: an explicit pick overrides it, the effort last picked does not.
+ */
+export function profileEffort(profile: LaunchProfile | undefined): string | undefined {
+  if (!profile) return undefined
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  let effort: string | undefined
+  tokens.forEach((token, index) => {
+    let value: string | undefined
+    if (profile.family === 'claude') {
+      if (token === '--effort') value = tokens[index + 1]
+      else if (token.startsWith('--effort=')) value = token.slice('--effort='.length)
+    }
+    if (value !== undefined) effort = isValidEffort(value) ? value : undefined
+  })
+  if (profile.family === 'codex') {
+    const value = codexConfigValue(tokens, 'model_reasoning_effort')
+    return value !== undefined && isValidEffort(value) ? value : undefined
+  }
+  // Claude's CLAUDE_CODE_EFFORT_LEVEL, set by a wrapper in the command, wins
+  // over its --effort (verifier V7), as the CLI reads them.
+  if (profile.family === 'claude') {
+    const variable = commandVariable(profile, 'CLAUDE_CODE_EFFORT_LEVEL')
+    if (variable !== undefined) return isValidEffort(variable) ? variable : undefined
+  }
+  return effort
 }
 
 /**

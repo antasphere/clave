@@ -26,7 +26,7 @@ import type {
   SessionStream,
   SessionWrite
 } from '@clave/contract/sessions'
-import type { SessionInput } from '../../shared/session-model'
+import type { SessionEvent, SessionInput } from '../../shared/session-model'
 import {
   applyWorkChange,
   takeoverRenames,
@@ -110,6 +110,10 @@ const asInfo = (result: SessionInfoResult): SessionInfo => ({
 
 const bytesDecoder = new TextDecoder()
 
+/** How long a model or effort pick waits for the provider's word before it
+ *  is let go unremembered (#423). Claude answers a switch once it is done. */
+const PICK_CONFIRM_MS = 60_000
+
 export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   const { manager } = deps
   const records = deps.records ?? noRecords
@@ -124,6 +128,52 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   /** The key of the window the session's record names, for the per-window
    *  arm of its news when no server publishes them. */
   const windowOf = (id: string): string | null => manager.get(id)?.windowKey ?? null
+  // A pick is written, then remembered on the provider's own word that it
+  // runs on it (`session_meta` for a model, `effort` for an effort), the
+  // first word of either kind after the write. An error first is a refusal;
+  // no word within the wait leaves the default as it was.
+  const awaitingPick = new Map<string, () => void>()
+  const writeThenRemember = async (
+    id: string,
+    value: SessionInput,
+    confirmedBy: 'session_meta' | 'effort',
+    remember: (() => void) | undefined,
+    confirms: (event: SessionEvent) => boolean = () => true
+  ): Promise<void> => {
+    // A newer pick of the same kind on the same chat replaces one still
+    // waiting: the provider's next word answers the newer.
+    const key = `${confirmedBy}:${id}`
+    awaitingPick.get(key)?.()
+    if (!remember) return manager.write(id, value)
+    let settled = false
+    let off: () => void = () => {}
+    const settle = (): void => {
+      settled = true
+      clearTimeout(timer)
+      off()
+      if (awaitingPick.get(key) === settle) awaitingPick.delete(key)
+    }
+    awaitingPick.set(key, settle)
+    const timer = setTimeout(settle, PICK_CONFIRM_MS)
+    timer.unref?.()
+    off = manager.subscribe(id, (stream) => {
+      if (settled || stream.kind !== 'event') return
+      // The provider's word on THIS pick (verifier V1): the value it names
+      // is the one picked. Another word of the kind (the settings read after
+      // a turn, an older pick's answer) waits on; an error first refuses it.
+      if (stream.event.type === confirmedBy) {
+        if (!confirms(stream.event)) return
+        settle()
+        remember()
+      } else if (stream.event.type === 'error') settle()
+    })
+    try {
+      await manager.write(id, value)
+    } catch (error) {
+      settle()
+      throw error
+    }
+  }
   const host: SessionHostService = {
     list: (windowKey) => manager.list(windowKey).map(project),
     get: (id) => {
@@ -143,6 +193,9 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       // handshake, to the first pane alone.
       const meta = manager.meta(id)
       if (meta) listener({ kind: 'event', event: meta })
+      // Nor the effort and the mode it runs at (#423): a long chat's last
+      // page no longer holds the events that said them.
+      for (const event of manager.runtime(id)) listener({ kind: 'event', event })
       // Nor show a message that waits for the agent (PRDCT-4566).
       const waiting = manager.waiting(id)
       if (waiting) listener({ kind: 'event', event: waiting })
@@ -164,23 +217,39 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       }
       const value = input as SessionInput
       if (value.type === 'set_model') {
-        // The composer's pick is the next chat's default too. Remembered only
-        // once the session took the switch: a refused name throws before this.
+        // The composer's pick is the next chat's default too, remembered only
+        // once the session took the switch (#423): a name the adapter refuses
+        // throws from the write, one the provider refuses afterwards (Claude's
+        // `control_response` error) says so on the stream before any word of
+        // the model.
         // A move the policy makes at a cap says `remember: false` (PRDCT-4302):
         // Opus at the Fable cap is this tab's way on, not the person's pick.
-        manager.write(id, value)
         const { adapterId, provider } = manager.get(id) ?? {}
         // An OpenCode or Pi pick stays the tab's (PRDCT-4427): its models are
         // its connection's provider's, which the next chat may not run on.
         const own = provider === 'opencode' || provider === 'pi'
-        if (adapterId && !own && value.remember !== false) rememberChatModel(adapterId, value.model)
-        return
+        const model = value.model
+        return writeThenRemember(
+          id,
+          value,
+          'session_meta',
+          adapterId && !own && value.remember !== false
+            ? () => rememberChatModel(adapterId, model)
+            : undefined,
+          // A pick of the CLI's default names no model to compare.
+          (event) => model === null || (event.type === 'session_meta' && event.model === model)
+        )
       }
       if (value.type === 'set_effort') {
-        manager.write(id, value)
         const adapterId = manager.get(id)?.adapterId
-        if (adapterId) rememberChatEffort(adapterId, value.effort)
-        return
+        const effort = value.effort
+        return writeThenRemember(
+          id,
+          value,
+          'effort',
+          adapterId ? () => rememberChatEffort(adapterId, effort) : undefined,
+          (event) => event.type === 'effort' && event.effort === effort
+        )
       }
       if (value.type !== 'user_message') return manager.write(id, value)
       // A chat tab is named by its first message, and this is where that

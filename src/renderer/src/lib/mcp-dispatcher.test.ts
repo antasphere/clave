@@ -1807,3 +1807,71 @@ describe("clave_launch_options and clave_open_session agree on a server's stored
     expect(fleetProviderConnections).toHaveBeenCalledTimes(1)
   })
 })
+
+// Issue #423: a server's session is listed under its server's workspace by
+// name, as a tab of this Mac is; the name was looked up among this Mac's
+// workspaces alone, so every server tab answered `workspaceName: null`.
+describe('clave_list names a server workspace (#423)', () => {
+  it('answers the server workspace name of a server tab and group', async () => {
+    const serverWs = resourceKey('workspace', 'server-n', 'ws-ubuntu')
+    const tab = resourceKey('session', 'server-n', 'codex-1')
+    const group = resourceKey('group', 'server-n', 'g-1')
+    useWorkspaceStore.setState({
+      workspaces: [
+        { id: 'home', name: 'Home', rootDir: '/home-project', profileFile: null, createdAt: 1 }
+      ],
+      serverWorkspaces: {
+        'server-n': [
+          { id: serverWs, name: 'Ubuntu', rootDir: '/home/ubuntu', profileFile: null, createdAt: 1 }
+        ]
+      }
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: tab,
+          cwd: '/home/ubuntu',
+          sessionType: 'local',
+          codexMode: true,
+          workspaceId: serverWs
+        } as never,
+        {
+          id: 'local-1',
+          cwd: '/home-project',
+          sessionType: 'local',
+          claudeMode: true,
+          workspaceId: 'home'
+        } as never
+      ],
+      groups: [
+        {
+          id: group,
+          name: 'Lane',
+          sessionIds: [tab],
+          workspaceId: serverWs,
+          terminals: []
+        } as never
+      ]
+    })
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ result?: unknown; ok: boolean }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'list', command: 'list', payload: {} })
+    const answer = (await response) as {
+      result: {
+        sessions: Array<{ id: string; workspaceName: string | null }>
+        groups: Array<{ id: string; workspaceName: string | null }>
+      }
+    }
+    unsubscribe()
+    expect(answer.result.sessions.find((s) => s.id === tab)?.workspaceName).toBe('Ubuntu')
+    expect(answer.result.sessions.find((s) => s.id === 'local-1')?.workspaceName).toBe('Home')
+    expect(answer.result.groups.find((g) => g.id === group)?.workspaceName).toBe('Ubuntu')
+  })
+})

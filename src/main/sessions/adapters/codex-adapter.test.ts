@@ -1083,7 +1083,8 @@ describe('Codex reasoning effort', () => {
   /** The lifecycle fake, with a model list and a thread reply of the case's choosing. */
   function effortFake(
     thread: Record<string, unknown> = {},
-    list: () => Promise<unknown> = async () => ({ data: LISTING })
+    list: () => Promise<unknown> = async () => ({ data: LISTING }),
+    turnStart?: () => Promise<unknown>
   ): {
     adapter: CodexAdapter
     turns: () => Record<string, unknown>[]
@@ -1095,6 +1096,7 @@ describe('Codex reasoning effort', () => {
       if (method === 'thread/start' || method === 'thread/resume')
         return { thread: { id: 'thread' }, model: 'gpt-a', ...thread }
       if (method === 'model/list') return list()
+      if (method === 'turn/start' && turnStart) return turnStart()
       if (method === 'turn/start') {
         callbacks.notification({ method: 'turn/started', params: { turn: { id: 'turn' } } })
         return { turn: { id: 'turn', status: 'inProgress' } }
@@ -1171,9 +1173,12 @@ describe('Codex reasoning effort', () => {
     await adapter.kill(handle)
   })
 
-  it('announces a switch at once and carries it on the next turn its model takes it', async () => {
+  it('announces a switch its model list vouches for at once and carries it on the next turn its model takes it', async () => {
     const { adapter, turns, complete } = effortFake()
     const handle = await adapter.spawn(spec)
+    // The composer reads the list to offer the levels (#423, verifier V6).
+    await adapter.models(handle)
+    await settle()
     const seen: unknown[] = []
     adapter.on(handle, 'stream', (s) => seen.push(s))
     adapter.write(handle, { type: 'set_effort', effort: 'high' })
@@ -1211,7 +1216,9 @@ describe('Codex reasoning effort', () => {
       input: [{ type: 'text', text: 'one', text_elements: [] }],
       model: 'gpt-b'
     })
-    expect(effortsOf(seen)).toEqual(['ultra', 'medium'])
+    // A level no list vouched for is never said to run (#423, verifier V6):
+    // the turn's check says what the chat runs at.
+    expect(effortsOf(seen)).toEqual(['medium'])
     // The choice is forgotten: back on a model that lists it, no turn carries it.
     complete()
     adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
@@ -1225,7 +1232,121 @@ describe('Codex reasoning effort', () => {
     adapter.write(handle, { type: 'user_message', text: 'three' })
     await settle()
     expect(turns()[2]).not.toHaveProperty('effort')
-    expect(effortsOf(seen)).toEqual(['ultra', 'medium', 'high', null])
+    // The list is read by now: a level gpt-c does not take is never announced
+    // as if it ran (#423, verifier V2); the view is told none at once.
+    expect(effortsOf(seen)).toEqual(['medium', null])
+    await adapter.kill(handle)
+  })
+
+  // Issue #423, verifiers V2, V6, V8, V9: the app-server says nothing back
+  // to a pick, so a pick is said to run only once something vouches for it:
+  // the chat's own model list, or a turn the app-server accepts with it.
+  it('refuses a level the listed model does not take and keeps the one it runs at', async () => {
+    const { adapter, turns, complete } = effortFake({ reasoningEffort: 'high' })
+    const handle = await adapter.spawn(spec)
+    await adapter.models(handle)
+    await settle()
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    adapter.write(handle, { type: 'set_effort', effort: 'max' })
+    expect(announced(seen)).toEqual(['high'])
+    const errors = seen.flatMap((s) => {
+      const event = (s as { event?: SessionEvent }).event
+      return event?.type === 'error' ? [event] : []
+    })
+    expect(errors).toEqual([
+      { type: 'error', message: 'gpt-a does not take the Max effort', fatal: false }
+    ])
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).toMatchObject({ effort: 'high' })
+    complete()
+    await adapter.kill(handle)
+  })
+
+  it('says nothing of a level no list vouches for until the turn checks it', async () => {
+    const { adapter, turns } = effortFake()
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'set_model', model: 'gpt-b' })
+    adapter.write(handle, { type: 'set_effort', effort: 'ultra' })
+    expect(announced(seen)).toEqual([])
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    // The turn's check: gpt-b does not take it, and runs at its own.
+    expect(turns()[0]).not.toHaveProperty('effort')
+    expect(announced(seen)).toEqual(['medium'])
+    await adapter.kill(handle)
+  })
+
+  it('forwards a model the list does not name, and says it runs once a turn took it', async () => {
+    const { adapter, turns } = effortFake()
+    const handle = await adapter.spawn(spec)
+    await adapter.models(handle)
+    await settle()
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    const models = (): (string | null)[] =>
+      seen.flatMap((s) => {
+        const event = (s as { event?: SessionEvent }).event
+        return event?.type === 'session_meta' ? [event.model] : []
+      })
+    // A listed model is vouched for by the list, at once.
+    adapter.write(handle, { type: 'set_model', model: 'gpt-b' })
+    expect(models()).toEqual(['gpt-b'])
+    // One the list does not hold (a hidden model, a later page) is not
+    // refused: it goes out with the next turn, and is said once it did.
+    adapter.write(handle, { type: 'set_model', model: 'gpt-hidden-elsewhere' })
+    expect(models()).toEqual(['gpt-b'])
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).toMatchObject({ model: 'gpt-hidden-elsewhere' })
+    expect(models()).toEqual(['gpt-b', 'gpt-hidden-elsewhere'])
+    await adapter.kill(handle)
+  })
+
+  // Verifier round 3, V11: a turn's acceptance vouches for the model that
+  // turn carried, never for one picked while its reply was on the way.
+  it('says the model a turn carried once accepted, not one picked since', async () => {
+    let awaitingReply = false
+    let accept!: (value: unknown) => void
+    const accepted = new Promise<unknown>((resolve) => {
+      accept = resolve
+    })
+    let held = true
+    const { adapter, turns, complete } = effortFake({}, undefined, () => {
+      if (!held) return Promise.resolve({ turn: { id: 'turn-2', status: 'inProgress' } })
+      awaitingReply = true
+      return accepted
+    })
+    const handle = await adapter.spawn(spec)
+    await adapter.models(handle)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    const models = (): (string | null)[] =>
+      seen.flatMap((s) => {
+        const event = (s as { event?: SessionEvent }).event
+        return event?.type === 'session_meta' ? [event.model] : []
+      })
+    adapter.write(handle, { type: 'set_model', model: 'gpt-hidden-a' })
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(awaitingReply).toBe(true)
+    expect(turns()[0]).toMatchObject({ model: 'gpt-hidden-a' })
+    adapter.write(handle, { type: 'set_model', model: 'gpt-hidden-b' })
+    accept({ turn: { id: 'turn', status: 'inProgress' } })
+    await settle()
+    expect(models()).toEqual(['gpt-hidden-a'])
+    // The newer pick still waits for its own turn, and is said once that
+    // turn is accepted (verifier V13).
+    held = false
+    complete()
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).toMatchObject({ model: 'gpt-hidden-b' })
+    expect(models()).toEqual(['gpt-hidden-a', 'gpt-hidden-b'])
     await adapter.kill(handle)
   })
 
@@ -1349,6 +1470,8 @@ describe('Codex reasoning effort', () => {
     const { adapter } = effortFake({ reasoningEffort: 'low' })
     const handle = await adapter.spawn(spec)
     adapter.ready(handle)
+    await settle()
+    await adapter.models(handle)
     await settle()
     adapter.write(handle, { type: 'set_effort', effort: 'high' })
     const late: unknown[] = []
