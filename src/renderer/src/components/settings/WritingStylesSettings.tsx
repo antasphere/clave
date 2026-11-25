@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { ChevronRightIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
 import {
@@ -75,6 +75,12 @@ export function WritingStyleEditor({
   const [refusal, setRefusal] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [ruleOpen, setRuleOpen] = useState(false)
+  // The editor opens under the list: brought into view, so a click on a row
+  // far up the page is answered where the person can see it.
+  const card = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    card.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
   const change = (patch: Partial<WritingStyleDraft>): void => {
     setDraft((current) => ({ ...current, ...patch }))
     setRefusal(null)
@@ -87,148 +93,155 @@ export function WritingStyleEditor({
   }
   const counted = draft.text.length >= WRITING_STYLE_LIMITS.text * COUNT_FROM
   return (
-    <SettingsCard data-writing-style-editor={draft.id ?? 'new'}>
-      <SettingsRow label="Name">
-        <input
-          className="input-compact w-72"
-          value={draft.name}
-          onChange={(event) => change({ name: event.target.value })}
-          maxLength={WRITING_STYLE_LIMITS.name}
-          readOnly={readOnly}
-          aria-label="Name"
-          data-testid="writing-style-name"
-        />
-      </SettingsRow>
-      <SettingsRow
-        label="When to use it"
-        description="Agents read this when they choose a style for a tab they open."
-      >
-        <input
-          className="input-compact w-72"
-          value={draft.description}
-          onChange={(event) => change({ description: event.target.value })}
-          maxLength={WRITING_STYLE_LIMITS.description}
-          readOnly={readOnly}
-          aria-label="When to use it"
-          data-testid="writing-style-description"
-        />
-      </SettingsRow>
-      <div className="settings-card-inset">
-        <label className="field-label" htmlFor="writing-style-text">
-          Instructions
-        </label>
-        <textarea
-          id="writing-style-text"
-          className="textarea-field"
-          rows={12}
-          value={draft.text}
-          onChange={(event) => change({ text: event.target.value })}
-          readOnly={readOnly}
-          spellCheck={!readOnly}
-          data-testid="writing-style-text"
-        />
-        {counted && (
-          <p className="settings-row-description" data-writing-style-count>
-            {draft.text.length} of {WRITING_STYLE_LIMITS.text} characters
-          </p>
-        )}
-      </div>
-      <div className="settings-row">
-        <div className="min-w-0">
-          <p className="settings-row-title">End each answer with a status card</p>
-          <p className="settings-row-description">
-            The agent ends its turn with what it is doing, where it stands, what is to decide and
-            what you must do next. Clave draws it as a card under the answer.
-          </p>
-        </div>
-        <div className="settings-row-controls" data-testid="writing-style-card">
-          <Toggle
-            checked={draft.statusCard}
-            onChange={(statusCard) => change({ statusCard })}
-            disabled={readOnly}
-            ariaLabel="End each answer with a status card"
+    <div ref={card}>
+      <SettingsCard data-writing-style-editor={draft.id ?? 'new'}>
+        <SettingsRow label="Name">
+          <input
+            className="input-compact w-72"
+            value={draft.name}
+            onChange={(event) => change({ name: event.target.value })}
+            maxLength={WRITING_STYLE_LIMITS.name}
+            readOnly={readOnly}
+            aria-label="Name"
+            data-testid="writing-style-name"
           />
+        </SettingsRow>
+        {/* The whole width: a description runs to a sentence or two, and a
+          field that cuts it at four words hides what an agent will read. */}
+        <div className="settings-card-inset">
+          <label className="field-label" htmlFor="writing-style-description">
+            When to use it
+          </label>
+          <input
+            id="writing-style-description"
+            className="input-field"
+            value={draft.description}
+            onChange={(event) => change({ description: event.target.value })}
+            maxLength={WRITING_STYLE_LIMITS.description}
+            readOnly={readOnly}
+            data-testid="writing-style-description"
+          />
+          <p className="settings-row-description">
+            Agents read this when they choose a style for a tab they open.
+          </p>
         </div>
-      </div>
-      {draft.statusCard && (
-        <>
-          <button
-            className="settings-row-action"
-            onClick={() => setRuleOpen((open) => !open)}
-            aria-expanded={ruleOpen}
-            data-writing-style-rule-fold
-          >
-            <ChevronRightIcon
-              className={`w-4 h-4 transition-transform ${ruleOpen ? 'rotate-90' : ''}`}
-              aria-hidden
-            />
-            What Clave adds to the instructions
-          </button>
-          <AnimatePresence initial={false}>
-            {ruleOpen && (
-              <motion.div
-                key="rule"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={FOLD}
-                style={{ overflow: 'hidden' }}
-              >
-                <div className="settings-card-inset">
-                  <textarea
-                    className="textarea-field"
-                    rows={12}
-                    value={STATUS_CARD_RULE}
-                    readOnly
-                    aria-label="What Clave adds to the instructions"
-                    data-testid="writing-style-rule"
-                  />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </>
-      )}
-      <div className="settings-row">
-        <div className="min-w-0">
-          {refusal && (
-            <p className="status-text" data-status="error" data-testid="writing-style-refusal">
-              {refusal}
+        <div className="settings-card-inset">
+          <label className="field-label" htmlFor="writing-style-text">
+            Instructions
+          </label>
+          <textarea
+            id="writing-style-text"
+            className="textarea-field"
+            rows={12}
+            value={draft.text}
+            onChange={(event) => change({ text: event.target.value })}
+            readOnly={readOnly}
+            spellCheck={!readOnly}
+            data-testid="writing-style-text"
+          />
+          {counted && (
+            <p className="settings-row-description" data-writing-style-count>
+              {draft.text.length} of {WRITING_STYLE_LIMITS.text} characters
             </p>
           )}
         </div>
-        <div className="settings-row-controls">
-          <button className="btn-secondary" onClick={onCancel} data-testid="writing-style-cancel">
-            Cancel
-          </button>
-          {readOnly ? (
-            <button
-              className="btn-primary"
-              onClick={() =>
-                onDuplicate({
-                  name: `${draft.name} copy`,
-                  description: draft.description,
-                  text: draft.text,
-                  statusCard: draft.statusCard
-                })
-              }
-              data-testid="writing-style-duplicate"
-            >
-              Duplicate
-            </button>
-          ) : (
-            <button
-              className="btn-primary"
-              onClick={() => void save()}
-              disabled={saving}
-              data-testid="writing-style-save"
-            >
-              Save
-            </button>
-          )}
+        <div className="settings-row">
+          <div className="min-w-0">
+            <p className="settings-row-title">End each answer with a status card</p>
+            <p className="settings-row-description">
+              The agent ends its turn with what it is doing, where it stands, what is to decide and
+              what you must do next. Clave draws it as a card under the answer.
+            </p>
+          </div>
+          <div className="settings-row-controls" data-testid="writing-style-card">
+            <Toggle
+              checked={draft.statusCard}
+              onChange={(statusCard) => change({ statusCard })}
+              disabled={readOnly}
+              ariaLabel="End each answer with a status card"
+            />
+          </div>
         </div>
-      </div>
-    </SettingsCard>
+        {draft.statusCard && (
+          <>
+            <button
+              className="settings-row-action"
+              onClick={() => setRuleOpen((open) => !open)}
+              aria-expanded={ruleOpen}
+              data-writing-style-rule-fold
+            >
+              <ChevronRightIcon
+                className={`w-4 h-4 transition-transform ${ruleOpen ? 'rotate-90' : ''}`}
+                aria-hidden
+              />
+              What Clave adds to the instructions
+            </button>
+            <AnimatePresence initial={false}>
+              {ruleOpen && (
+                <motion.div
+                  key="rule"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={FOLD}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <div className="settings-card-inset">
+                    <textarea
+                      className="textarea-field"
+                      rows={12}
+                      value={STATUS_CARD_RULE}
+                      readOnly
+                      aria-label="What Clave adds to the instructions"
+                      data-testid="writing-style-rule"
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+        <div className="settings-row">
+          <div className="min-w-0">
+            {refusal && (
+              <p className="status-text" data-status="error" data-testid="writing-style-refusal">
+                {refusal}
+              </p>
+            )}
+          </div>
+          <div className="settings-row-controls">
+            <button className="btn-secondary" onClick={onCancel} data-testid="writing-style-cancel">
+              Cancel
+            </button>
+            {readOnly ? (
+              <button
+                className="btn-primary"
+                onClick={() =>
+                  onDuplicate({
+                    name: `${draft.name} copy`,
+                    description: draft.description,
+                    text: draft.text,
+                    statusCard: draft.statusCard
+                  })
+                }
+                data-testid="writing-style-duplicate"
+              >
+                Duplicate
+              </button>
+            ) : (
+              <button
+                className="btn-primary"
+                onClick={() => void save()}
+                disabled={saving}
+                data-testid="writing-style-save"
+              >
+                Save
+              </button>
+            )}
+          </div>
+        </div>
+      </SettingsCard>
+    </div>
   )
 }
 
