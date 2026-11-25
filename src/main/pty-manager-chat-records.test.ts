@@ -1090,6 +1090,24 @@ describe('a chat tab starts with its writing style, and keeps it (PRDCT-5166)', 
     expect(recorded()).not.toHaveProperty('writingStyle')
   })
 
+  it("a restart reads the style off the record, not off the spawn's own options", async () => {
+    // Its first launch named a style, and the spawn's options carry it; its
+    // record names none (its harness could not take it there).
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'quiet'
+    })
+    expect(configured().writingStyle).toBe('quiet')
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'other' })!
+    expect(plan.options.writingStyle).toBeUndefined()
+    mocks.backend.getSessionRecord.mockImplementation(() => null)
+    await ptyManager.spawn(plan.cwd, plan.options)
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
   it('a style named for an Antigravity terminal refuses the spawn before anything is configured', async () => {
     mocks.resolvedProfile = { id: 'builtin-antigravity', command: ['agy'], additionalArgs: [] }
     try {
