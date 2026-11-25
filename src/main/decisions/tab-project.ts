@@ -68,13 +68,16 @@ function folderKey(folder: string): string {
 }
 
 /**
- * The folders the tab's tools touched, as the state names them. Pure. Every
- * touched path is counted under the deepest option folder that holds it, the
- * key being that folder cut at four components; a path under no option's
- * folder adds up under `elsewhere`. An option whose folder is the root names
- * no key (it holds every path, so it would say nothing), and a path it alone
- * holds counts as `elsewhere`. The six largest keys are kept, `elsewhere`
- * among them when it is not zero; the largest first, equals by name.
+ * The folders the tab's tools touched, as the state names them. Pure. A path
+ * a project's folder holds is counted under the folder the path itself sits
+ * in, cut at four components (`suite/tools/ledger`, not `suite` alone): that
+ * is the state the floors were measured on, and the part of a project a tab
+ * touched is what tells two projects of one tree apart. A path under no
+ * project's folder adds up under `elsewhere`, so no folder outside the
+ * projects is ever named. An option whose folder is the root names no key
+ * (it holds every path, so it would say nothing), and a path it alone holds
+ * counts as `elsewhere`. The six largest keys are kept, `elsewhere` among
+ * them when it ranks; the largest first, equals by name.
  */
 export function touchedFolders(
   touched: Readonly<Record<string, number>>,
@@ -94,7 +97,13 @@ export function touchedFolders(
     const holder = folders.find(
       (folder) => relative === folder || relative.startsWith(`${folder}/`)
     )
-    const key = holder === undefined ? ELSEWHERE : folderKey(holder)
+    let key = ELSEWHERE
+    if (holder !== undefined) {
+      // The folder the path sits in, when that is inside the project's; the
+      // project's own folder when the path IS it or sits right in it.
+      const own = relative.split('/').slice(0, -1).join('/')
+      key = folderKey(own === holder || own.startsWith(`${holder}/`) ? own : holder)
+    }
     counts.set(key, (counts.get(key) ?? 0) + times)
   }
   const kept = [...counts.entries()]
@@ -175,7 +184,9 @@ export function buildTabProjectRequest(input: TabProjectInput): JevRequest | nul
 }
 
 /** The answers read into a decision; null when either is missing or not
- *  the asked type. The shares are mapped back to the options by name. Pure. */
+ *  the asked type, or when a share names a project that was not an option:
+ *  a reading is kept whole or not at all. The shares are mapped back to the
+ *  options by name. Pure. */
 export function readTabProjectAnswers(
   answers: JevAnswers,
   input: Pick<TabProjectInput, 'options'>
@@ -188,7 +199,8 @@ export function readTabProjectAnswers(
   const picks: ProjectPick[] = []
   for (const share of reading.shares) {
     const option = byName.get(share.name)
-    if (option) picks.push({ file: option.file, name: option.name, p: share.p })
+    if (!option) return null
+    picks.push({ file: option.file, name: option.name, p: share.p })
   }
   return { status: reading.status, picks, fits: fits.noul }
 }

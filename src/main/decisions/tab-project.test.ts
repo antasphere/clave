@@ -72,8 +72,9 @@ describe('the tab-project request', () => {
               'Fix the toolbar in labs/products/quill/quill-web/src/bar.tsx, see https://quill.example/…',
             latest_messages: ['Now the tests.', 'Open ~/Desktop/shot.png'],
             folders_its_tools_touched: {
-              'labs/products/quill': 7,
+              'labs/products/quill/quill-web': 5,
               [ELSEWHERE]: 3,
+              'labs/products/quill/quill-api': 2,
               'labs/products/atlas': 1
             }
           }
@@ -127,7 +128,7 @@ describe('the tab-project request', () => {
     })
   })
 
-  it('counts a path under the deepest folder, cut at four components', () => {
+  it('counts a path under the folder it sits in, cut at four components', () => {
     const deep: ProjectOption = {
       ...quill,
       name: 'Quill web',
@@ -136,8 +137,16 @@ describe('the tab-project request', () => {
     expect(touchedFolders(input().tab.touched, [quill, deep], W)).toEqual({
       'labs/products/quill/quill-web': 5,
       [ELSEWHERE]: 4,
-      'labs/products/quill': 2
+      'labs/products/quill/quill-api': 2
     })
+    // The project's folder itself, and a file right in it, count under it.
+    expect(
+      touchedFolders(
+        { [`${W}/labs/products/quill`]: 2, [`${W}/labs/products/quill/README.md`]: 1 },
+        [quill],
+        W
+      )
+    ).toEqual({ 'labs/products/quill': 3 })
   })
 
   it('keeps the six largest keys, elsewhere among them', () => {
@@ -248,6 +257,23 @@ describe('reading the answers', () => {
       picks: [],
       fits: 0.1
     })
+  })
+
+  it('a share naming a project that was not an option: null, never half a reading', () => {
+    expect(
+      readTabProjectAnswers(
+        {
+          project: {
+            type: 'choice',
+            choice: 'Nowhere',
+            confidence: 0.9,
+            probabilities: { Nowhere: 0.95, Quill: 0.05 }
+          },
+          fits: { type: 'noul', noul: 0.9 }
+        },
+        { options }
+      )
+    ).toBeNull()
   })
 
   it('a missing or wrong-shaped answer: null', () => {
