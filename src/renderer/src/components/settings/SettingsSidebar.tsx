@@ -13,6 +13,7 @@ import {
   ServerIcon,
   DevicePhoneMobileIcon,
   SparklesIcon,
+  PencilSquareIcon,
   SquaresPlusIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
@@ -44,6 +45,7 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     rows: [
       { id: 'agents', icon: CpuChipIcon },
       { id: 'helpers', icon: SparklesIcon },
+      { id: 'styles', icon: PencilSquareIcon },
       { id: 'integrations', icon: SquaresPlusIcon },
       { id: 'accounts', icon: UserCircleIcon },
       { id: 'usage', icon: ChartBarIcon },

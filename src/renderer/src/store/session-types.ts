@@ -373,6 +373,10 @@ export interface Session {
    *  record keeps it (PRDCT-4123). Absent means an ordinary tab. Set by the
    *  agent tools and the entry's menu through the server, never by a title. */
   work?: WorkAssignment
+  /** The id of the writing style the tab's agent was given (PRDCT-5166),
+   *  from the spawn's answer or the record; absent for a tab on none. A
+   *  tab's runtime fact, never a `.clave` field. */
+  writingStyle?: string
   claudeSessionId: string | null
   piSessionId?: string | null
   launchProfileId?: string
@@ -572,6 +576,7 @@ export type SettingsSection =
   | 'accounts'
   | 'agents'
   | 'helpers'
+  | 'styles'
   | 'integrations'
   | 'appearance'
   | 'keymaps'

@@ -10,6 +10,7 @@ import {
   type ChatEvent
 } from '../../../../plugins/chat-view/src/reducer'
 import { visibleEntries } from '../../../../plugins/chat-view/src/tools'
+import { reduceSubagents } from '../../../../plugins/chat-view/src/subagents'
 const run = (events: ChatEvent[]): Conversation =>
   events.reduce((state, event) => reduceConversation(state, { event, at: 1 }), emptyConversation)
 const elsewhere = (entry: Conversation['entries'][number]): boolean | undefined =>
@@ -1134,5 +1135,152 @@ describe('a model picked from the chip (PRDCT-4273)', () => {
     expect(refused.state).toBe(onOpus.state)
     // A session that ends mid-switch shows no pick either.
     expect(reduceConversation(picked, { exit: 0 }).pendingModel).toBeNull()
+  })
+})
+
+describe('the status card (PRDCT-5166)', () => {
+  const BLOCK = [
+    '```clave-status',
+    'doing: the export',
+    'where: the writer is done, its tests are left',
+    'decide: keep the old format? I would, for the readers who parse it',
+    'next: answer the question above',
+    '```'
+  ].join('\n')
+  const WORDS = 'The writer now puts `main` first.'
+  const MESSAGE = `${WORDS}\n\n${BLOCK}\n`
+  type Answer = Extract<Conversation['entries'][number], { kind: 'assistant' }>
+  const answers = (state: Conversation): Answer[] =>
+    state.entries.flatMap((e) => (e.kind === 'assistant' ? [e] : []))
+  /** Every state a message goes through when it arrives one character at a
+   *  time, and the conversation it ends in. */
+  const stream = (
+    text: string,
+    close: ChatEvent[] = [{ type: 'assistant_text', delta: '', final: true }]
+  ): { state: Conversation; seen: string[] } => {
+    let state = reduceConversation(emptyConversation, {
+      event: { type: 'user_message', text: 'go' },
+      at: 1
+    })
+    const seen: string[] = []
+    for (const char of text) {
+      state = reduceConversation(state, {
+        event: { type: 'assistant_text', delta: char, final: false },
+        at: 1
+      })
+      seen.push(answers(state).at(-1)?.text ?? '')
+    }
+    for (const event of close) state = reduceConversation(state, { event, at: 1 })
+    return { state, seen }
+  }
+
+  it('never shows a backtick of the block while it streams, and ends with its card', () => {
+    const { state, seen } = stream(MESSAGE)
+    expect(seen.length).toBe(MESSAGE.length)
+    for (const text of seen) {
+      expect(text).not.toContain('```')
+      expect(text).not.toContain('clave-status')
+    }
+    const [answer] = answers(state)
+    expect(answer.text).toBe(WORDS)
+    expect(answer.held).toBeUndefined()
+    expect(answer.final).toBe(true)
+    expect(answer.card).toEqual({
+      doing: 'the export',
+      where: 'the writer is done, its tests are left',
+      decide: ['keep the old format? I would, for the readers who parse it'],
+      next: 'answer the question above'
+    })
+  })
+
+  it('streams an ordinary fenced code block as it always did', () => {
+    const code = 'Run this:\n\n```sh\nnpm test\n```\n\nThen look.'
+    const { state, seen } = stream(code)
+    // Each frame is the text so far, but for at most the fence line being
+    // written, held while it may still become the status block's.
+    seen.forEach((text, i) => {
+      const so = code.slice(0, i + 1)
+      expect(so.startsWith(text)).toBe(true)
+      expect(so.slice(text.length)).not.toContain('\n')
+    })
+    expect(seen.at(-1)).toBe(code)
+    expect(answers(state)[0]).toMatchObject({ text: code, final: true })
+    expect(answers(state)[0].card).toBeUndefined()
+  })
+
+  it('leaves a block followed by words as text', () => {
+    const text = `${WORDS}\n\n${BLOCK}\n\nOne more thing.`
+    const { state, seen } = stream(text)
+    expect(seen.at(-1)).toBe(text)
+    expect(answers(state)[0]).toMatchObject({ text, final: true })
+    expect(answers(state)[0].card).toBeUndefined()
+  })
+
+  it('reads a message that arrives whole in one final delta', () => {
+    const state = run([{ type: 'assistant_text', delta: MESSAGE, final: true }])
+    expect(answers(state)[0]).toMatchObject({ text: WORDS, final: true })
+    expect(answers(state)[0].card?.doing).toBe('the export')
+  })
+
+  it('draws a message that is a card alone and closes the turn on it', () => {
+    const state = run([
+      { type: 'user_message', text: 'go' },
+      { type: 'state_change', state: 'working' },
+      { type: 'tool_call', id: 't', name: 'Read', input: 'a' },
+      { type: 'tool_result', id: 't', output: 'b' },
+      { type: 'assistant_text', delta: BLOCK, final: true },
+      { type: 'state_change', state: 'idle' }
+    ])
+    const [answer] = answers(state)
+    expect(answer.text).toBe('')
+    expect(answer.card?.next).toBe('answer the question above')
+    expect(answer.closes).toBe(true)
+    expect(visibleEntries(state.entries).map((e) => e.kind)).toEqual(['user', 'tool', 'assistant'])
+    expect(answeredSince(state.entries)).toBe(true)
+  })
+
+  it('gives back what was held when the turn is stopped mid-block', () => {
+    const cut = `${WORDS}\n\n\`\`\`clave-status\ndoing: the exp`
+    const { state, seen } = stream(cut, [{ type: 'turn_interrupted' }])
+    expect(seen.at(-1)).toBe(`${WORDS}\n\n`)
+    expect(answers(state)[0]).toMatchObject({ text: cut, final: true })
+    expect(answers(state)[0].held).toBeUndefined()
+    expect(answers(state)[0].card).toBeUndefined()
+  })
+
+  it('reads a held tail when the turn ends without the final frame', () => {
+    const { state } = stream(MESSAGE, [{ type: 'state_change', state: 'idle' }])
+    expect(answers(state)[0]).toMatchObject({ text: WORDS, closes: true, final: true })
+    expect(answers(state)[0].card?.doing).toBe('the export')
+    const cut = `${WORDS}\n\`\`\`clave`
+    const gone = stream(cut, []).state
+    const ended = reduceConversation(gone, { exit: 1 })
+    expect(answers(ended)[0]).toMatchObject({ text: cut, final: true })
+  })
+
+  it('reads a replayed page of the past the same way', () => {
+    const items = [
+      { event: { type: 'user_message' as const, text: 'go' }, at: 1 },
+      { event: { type: 'assistant_text' as const, delta: MESSAGE, final: true }, at: 2 },
+      { event: { type: 'user_message' as const, text: 'yes' }, at: 3 }
+    ]
+    for (const state of [
+      reduceConversation(emptyConversation, { sync: items }),
+      reduceConversation(emptyConversation, { prepend: items })
+    ]) {
+      expect(answers(state)[0]).toMatchObject({ text: WORDS })
+      expect(answers(state)[0].card?.decide).toHaveLength(1)
+    }
+  })
+
+  it("reads a sub-agent's message the same way", () => {
+    const logs = reduceSubagents(
+      {},
+      { type: 'assistant_text', delta: MESSAGE, final: true, parent: 'call' },
+      1
+    )
+    const [answer] = answers(logs.call)
+    expect(answer).toMatchObject({ text: WORDS })
+    expect(answer.card?.doing).toBe('the export')
   })
 })

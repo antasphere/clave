@@ -6,7 +6,7 @@ import {
   transcriptFileName,
   transcriptMarkdown
 } from './export'
-import type { Entry } from './reducer'
+import { emptyConversation, reduceConversation, type Entry } from './reducer'
 
 const at = (h: number, m: number): number => new Date(2026, 10, 8, h, m).getTime()
 const meta = {
@@ -401,5 +401,50 @@ describe('round 2 of the verifier: the title survives a head cut, the tail has a
     expect(md).not.toContain('/work/file-100.ts')
     expect(md).toContain('… and 150 more, in the full conversation')
     expect(md).toContain('more characters)')
+  })
+})
+
+describe('an answer that ended on a status card (PRDCT-5166)', () => {
+  const BLOCK = [
+    '```clave-status',
+    'doing: the export',
+    'where: the writer is done',
+    'decide: keep the old format?',
+    'next: nothing',
+    '```'
+  ].join('\n')
+  const entries = [
+    { type: 'user_message' as const, text: 'Ship it' },
+    { type: 'assistant_text' as const, delta: `Shipped.\n\n${BLOCK}`, final: true },
+    { type: 'user_message' as const, text: 'And the docs?' },
+    { type: 'assistant_text' as const, delta: BLOCK, final: true }
+  ].reduce(
+    (state, event) => reduceConversation(state, { event, at: at(10, 0) }),
+    emptyConversation
+  ).entries
+  const quote = [
+    '> Doing: the export',
+    '> Where: the writer is done',
+    '> To decide: keep the old format?',
+    '> Next: nothing'
+  ].join('\n')
+  it('writes the words, then the card as a quote of its lines, never the block', () => {
+    const md = transcriptMarkdown(entries, meta)
+    expect(md).not.toContain('clave-status')
+    expect(md).not.toContain('```')
+    expect(md).toContain(`Shipped.\n\n${quote}`)
+    // A card alone is the agent's turn too.
+    expect(md).toContain(`And the docs?\n\n## Claude · 10:00\n\n${quote}`)
+  })
+  it('hands the same to the next agent', () => {
+    const md = handoffMessage(entries, meta, {
+      from: 'Claude',
+      files: [],
+      diffStat: '',
+      tapePath: '/tmp/s1.md',
+      budgetChars: 100_000
+    })
+    expect(md).not.toContain('clave-status')
+    expect(md.split(quote)).toHaveLength(3)
   })
 })

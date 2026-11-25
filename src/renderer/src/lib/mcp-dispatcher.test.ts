@@ -151,6 +151,48 @@ describe('clave_open_session on the window road', () => {
     }
   })
 
+  // PRDCT-5166: the writing style an open names, handed to the spawn.
+  it('hands the style to the spawn untouched, refuses it on a terminal, and says a refused start', async () => {
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'brief' })
+    expect(spawned()).toMatchObject({ writingStyle: 'brief' })
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude' })
+    expect(spawned()).not.toHaveProperty('writingStyle')
+    const before = spawnSession.mock.calls.length
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'terminal', style: 'brief' })
+    ).rejects.toThrow('The style argument applies to agent modes only (got mode "terminal")')
+    expect(spawnSession.mock.calls.length).toBe(before)
+    const reason = 'Unknown writing style "loud". This machine has: none, brief, quiet.'
+    spawnSession.mockRejectedValueOnce({ _tag: 'SessionStartFailed', message: reason })
+    await expect(
+      openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'loud' })
+    ).rejects.toThrow(new Error(reason))
+  })
+
+  // PRDCT-5166: the tab carries the style its spawn says it applied, which
+  // is what this window's clave_list reads.
+  it('puts the style the spawn applied on the tab, and none when it applied none', async () => {
+    spawnSession.mockImplementationOnce(async (cwd: string) => ({
+      id: 'styled',
+      cwd,
+      folderName: 'repo',
+      alive: true,
+      writingStyle: 'quiet'
+    }))
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'Quiet' })
+    const tab = (id: string): Record<string, unknown> | undefined =>
+      useSessionStore.getState().sessions.find((s) => s.id === id) as never
+    expect(tab('styled')?.writingStyle).toBe('quiet')
+    spawnSession.mockImplementationOnce(async (cwd: string) => ({
+      id: 'plain',
+      cwd,
+      folderName: 'repo',
+      alive: true
+    }))
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'none' })
+    expect(tab('plain')?.writingStyle).toBeUndefined()
+  })
+
   it("opens a chat on the global default's chat form, the one the launcher would open", async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),
@@ -625,6 +667,22 @@ describe('clave_attach_session on the window road (PRDCT-4997)', () => {
     expect(rows.find((s) => s.id === helper)?.nestedUnder).toBe(old)
     expect(rows.find((s) => s.id === old)?.nestedUnder).toBeNull()
   })
+
+  // PRDCT-5166: the style a tab was opened with, as the store carries its record's field.
+  it('lists the writing style each tab was opened with, and no style key for a tab on none', async () => {
+    useSessionStore.setState({
+      sessions: [
+        { id: lead, name: 'Lead', sessionType: 'local', writingStyle: 'quiet' } as never,
+        { id: old, name: 'Old', sessionType: 'local' } as never
+      ]
+    })
+    const answer = (await dispatch('list', { callerSessionId: lead })) as {
+      result: { sessions: Record<string, unknown>[] }
+    }
+    const rows = answer.result.sessions
+    expect(rows.find((s) => s.id === lead)?.style).toBe('quiet')
+    expect(rows.find((s) => s.id === old)).not.toHaveProperty('style')
+  })
 })
 
 /* A stopped tab, on the window's road (PRDCT-4193): clave_resume_session and
@@ -1011,7 +1069,17 @@ describe('round 1: the window road refuses before resuming, and places by the pa
         { event: { type: 'user_message', text: 'hello server' }, at: 1 },
         // A streamed answer, one event per delta (PRDCT-4666).
         { event: { type: 'assistant_text', delta: 'stub heard: ', final: false }, at: 2 },
-        { event: { type: 'assistant_text', delta: 'hello server', final: true }, at: 3 }
+        { event: { type: 'assistant_text', delta: 'hello server', final: true }, at: 3 },
+        // PRDCT-5166: a later answer that ends on a status card, then the person's reply.
+        {
+          event: {
+            type: 'assistant_text',
+            delta: 'Done.\n\n```clave-status\ndoing: the greeting\nnext: nothing\n```',
+            final: true
+          },
+          at: 4
+        },
+        { event: { type: 'user_message', text: 'thanks' }, at: 5 }
       ],
       before: null
     }))
@@ -1034,8 +1102,16 @@ describe('round 1: the window road refuses before resuming, and places by the pa
       mode: 'claude',
       alive: true,
       agentState: 'idle',
-      lines: 2,
-      text: 'You: hello server\nAgent: stub heard: hello server'
+      lines: 6,
+      text: 'You: hello server\nAgent: stub heard: hello server\nAgent: Done.\n  Doing: the greeting\n  Next: nothing\nYou: thanks',
+      status: {
+        doing: 'the greeting',
+        where: null,
+        decide: [],
+        next: null,
+        needsYou: false,
+        answered: true
+      }
     })
     // The raw events stay out of an agent's context (PRDCT-4666).
     expect(answer.result).not.toHaveProperty('history')
@@ -1599,6 +1675,7 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
     selectedConnectionId: () => 'default',
     preferRecommended: true,
     launchModel: (pool) => (pool === 'claude' ? 'opus' : undefined),
+    writingStyles: null,
     now: 1
   }
   beforeEach(() => {
@@ -1689,6 +1766,117 @@ describe('clave_launch_options on the window road (PRDCT-4485)', () => {
   })
 })
 
+// PRDCT-5166: the window's listing carries the machine's writing styles, read
+// from the machine that keeps them: this Mac's settings, or the server's.
+describe('clave_launch_options on the window road lists the writing styles', () => {
+  const view = {
+    styles: [
+      {
+        id: 'quiet',
+        name: 'Quiet',
+        description: 'For work nobody watches.',
+        text: 'Write nothing until the end.',
+        statusCard: true,
+        builtIn: true
+      }
+    ],
+    defaultStyleId: 'quiet',
+    claudeOutputStyle: null
+  }
+  /** A machine's input carrying the styles its facts were given. */
+  const machineInput = (id: string, name: string, writingStyles: unknown): LaunchOptionsInput => ({
+    machine: { id, name },
+    harnesses: [],
+    presence: () => undefined,
+    profiles: () => [],
+    defaultProfileId: () => undefined,
+    openProfileId: () => undefined,
+    models: () => 'unavailable',
+    harnessSettings: {},
+    interactionMode: 'chat',
+    connections: () => [],
+    selectedConnectionId: () => undefined,
+    preferRecommended: false,
+    launchModel: () => undefined,
+    writingStyles: (writingStyles ?? null) as LaunchOptionsInput['writingStyles'],
+    now: 1
+  })
+  const ask = async (server: string | undefined): Promise<unknown> => {
+    let receive: (msg: { requestId: string; command: string; payload: unknown }) => void = () => {}
+    const response = new Promise<{ ok: boolean; result?: unknown }>((resolve) => {
+      globals.window.electronAPI.onMcpCommand = (handler: typeof receive) => {
+        receive = handler
+        return () => {}
+      }
+      globals.window.electronAPI.mcpRespond = resolve
+    })
+    const unsubscribe = initMcpDispatcher()
+    receive({ requestId: 'options', command: 'launchOptions', payload: { server } })
+    try {
+      return await response
+    } finally {
+      unsubscribe()
+    }
+  }
+  afterEach(() => {
+    delete globals.window.electronAPI.writingStylesList
+    delete globals.window.electronAPI.fleetWritingStyles
+    launchInput.local.mockReset()
+    launchInput.server.mockReset()
+    useFleetStore.setState({ connections: [], statuses: {} } as never)
+  })
+
+  it("hands this Mac's styles to the input, and the answer lists them with the default", async () => {
+    const writingStylesList = vi.fn(async () => view)
+    const fleetWritingStyles = vi.fn(async () => view)
+    Object.assign(globals.window.electronAPI, { writingStylesList, fleetWritingStyles })
+    // The real input builder loads the usage store, which cannot load here:
+    // this one passes the facts' styles on, as it does.
+    launchInput.local.mockImplementation(
+      (facts: { writingStyles?: unknown }): LaunchOptionsInput =>
+        machineInput('local', 'This Mac', facts.writingStyles)
+    )
+    const answer = (await ask(undefined)) as { ok: boolean; result: Record<string, unknown> }
+    expect(answer.ok).toBe(true)
+    expect(writingStylesList).toHaveBeenCalledTimes(1)
+    expect(fleetWritingStyles).not.toHaveBeenCalled()
+    expect(launchInput.local).toHaveBeenCalledWith(expect.objectContaining({ writingStyles: view }))
+    expect(answer.result.styles).toEqual([
+      {
+        id: 'quiet',
+        name: 'Quiet',
+        description: 'For work nobody watches.',
+        statusCard: true,
+        default: true
+      }
+    ])
+    expect(answer.result.defaultStyle).toBe('quiet')
+  })
+
+  it("reads a server's styles from that server, and none when it cannot answer", async () => {
+    const fleetWritingStyles = vi.fn(async (serverId: string) => {
+      void serverId
+      throw new Error('This server needs an update to show its writing styles.')
+    })
+    Object.assign(globals.window.electronAPI, { fleetWritingStyles })
+    useFleetStore.setState({
+      connections: [{ id: 'srv', name: 'Studio box', url: 'http://srv', enabled: true }] as never,
+      statuses: { srv: { serverId: 'srv', state: 'connected' } } as never
+    })
+    launchInput.server.mockImplementation(
+      (serverId: string, name: string, settings: unknown, facts: { writingStyles?: unknown }) => {
+        void settings
+        return machineInput(serverId, name, facts.writingStyles)
+      }
+    )
+    const answer = (await ask('srv')) as { ok: boolean; result: Record<string, unknown> }
+    expect(answer.ok).toBe(true)
+    expect(fleetWritingStyles).toHaveBeenCalledWith('srv')
+    expect(launchInput.server.mock.calls[0][3]).toMatchObject({ writingStyles: null })
+    expect(answer.result).toMatchObject({ styles: [], defaultStyle: null })
+  })
+})
+
 // Lane C of the harness wave (PRDCT-4496), verifier's F1: the window's listing
 // and its open read the same list of a server's stored connections.
 describe("clave_launch_options and clave_open_session agree on a server's stored connection", () => {
@@ -1767,6 +1955,7 @@ describe("clave_launch_options and clave_open_session agree on a server's stored
         selectedConnectionId: () => undefined,
         preferRecommended: false,
         launchModel: () => undefined,
+        writingStyles: null,
         now: 1
       })
     )

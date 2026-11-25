@@ -3,7 +3,7 @@ import { Schema } from 'effect'
 import { SessionRecord as WireRecord } from '@clave/contract/sessions'
 import { ServerEvent } from '@clave/contract/events'
 import type { SessionRecord as ShellRecord } from './adapters/pty-backend'
-import type { ElectronAPI } from '../../preload/index.d'
+import type { ElectronAPI, SessionRecord as PreloadRecord } from '../../preload/index.d'
 
 /**
  * The wire `SessionRecord` (contract) and the shell's `SessionRecord`
@@ -68,6 +68,8 @@ const full = {
     since: 200,
     from: '0b7d4c1e-5f6a-4b3c-8d2e-1f0a9b8c7d6e'
   },
+  // PRDCT-5166: the writing style the tab was opened with.
+  writingStyle: 'brief',
   live: true,
   running: true
 }
@@ -100,6 +102,17 @@ describe('the SessionRecord mirror holds', () => {
     const shell = full as unknown as ShellRecord
     const onWire: typeof WireRecord.Type = shell
     expect(onWire.id).toBe('s1')
+  })
+})
+
+describe('the writing style crosses every copy of the record (PRDCT-5166)', () => {
+  it('reaches the window: the preload record names the field the shell and the wire carry', () => {
+    const decoded = Schema.decodeUnknownSync(WireRecord)({ ...full, writingStyle: 'quiet' })
+    expect(decoded.writingStyle).toBe('quiet')
+    // Compile-time: the preload's copy has the field, typed as the wire's.
+    const inWindow: PreloadRecord['writingStyle'] = decoded.writingStyle
+    const fromShell: ShellRecord['writingStyle'] = inWindow
+    expect(fromShell).toBe('quiet')
   })
 })
 

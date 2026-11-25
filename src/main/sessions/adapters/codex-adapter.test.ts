@@ -899,6 +899,51 @@ describe('Codex tool failure', () => {
   })
 })
 
+describe('a Codex chat with a writing style (PRDCT-5166)', () => {
+  const profile: LaunchProfile = {
+    id: 'p',
+    name: 'P',
+    family: 'codex',
+    command: ['codex'],
+    additionalArgs: []
+  }
+  const STYLE = 'Answer first.\nSay "done" when `npm test` passes.'
+  const threadCall = async (
+    options: Record<string, unknown>,
+    style?: string
+  ): Promise<[string, Record<string, unknown>] | undefined> => {
+    const { adapter, connection } = fake()
+    adapter.configure(spec.id, profile, undefined, undefined, style)
+    const handle = await adapter.spawn({ ...spec, options })
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    const call = vi
+      .mocked(connection.request)
+      .mock.calls.find(([method]) => method === 'thread/start' || method === 'thread/resume')
+    await adapter.kill(handle)
+    return call as [string, Record<string, unknown>] | undefined
+  }
+
+  it('starts a thread with the style as its developer instructions', async () => {
+    const [method, params] = (await threadCall({}, STYLE))!
+    expect(method).toBe('thread/start')
+    expect(params.developerInstructions).toBe(STYLE)
+  })
+
+  it('resumes a thread with the same instructions', async () => {
+    const [method, params] = (await threadCall({ resume: 'saved' }, STYLE))!
+    expect(method).toBe('thread/resume')
+    expect(params).toMatchObject({ threadId: 'saved', developerInstructions: STYLE })
+  })
+
+  it('names no developer instructions without a style', async () => {
+    const [, started] = (await threadCall({}))!
+    expect(started).not.toHaveProperty('developerInstructions')
+    const [, resumed] = (await threadCall({ resume: 'saved' }))!
+    expect(resumed).not.toHaveProperty('developerInstructions')
+  })
+})
+
 describe('Codex chat permissions', () => {
   const profile = (...flags: string[]): LaunchProfile => ({
     id: 'p',

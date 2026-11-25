@@ -1,4 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BUILT_IN_STYLES, composeStyleText } from '../shared/writing-styles'
+import { setWritingStylesSource } from './writing-styles/source'
+import fs from 'node:fs'
+import { installTerminalPorts, resetTerminalPorts } from './ports/terminals'
+import { fileStorage } from './ports/storage'
+import { tempDataDir } from './ports/testing'
 
 // A chat tab has no PTY, so nothing wrote it a session record and it was gone
 // at the next launch. These pin the facade's half of the fix: the record is
@@ -39,6 +45,30 @@ const mocks = vi.hoisted(() => {
       kill: vi.fn(async () => undefined)
     },
     codexConfigure: vi.fn(),
+    /** The chats that run over the Agent Client Protocol and Pi's rpc mode,
+     *  stood in for: what the spawn configures them with is what is held. */
+    antigravity: {
+      id: 'antigravity-chat',
+      provider: 'antigravity',
+      configure: vi.fn(),
+      chosenMode: vi.fn(() => undefined),
+      spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+      kill: vi.fn(async () => undefined)
+    },
+    opencode: {
+      id: 'opencode-chat',
+      provider: 'opencode',
+      configure: vi.fn(),
+      spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+      kill: vi.fn(async () => undefined)
+    },
+    pi: {
+      id: 'pi-chat',
+      provider: 'pi',
+      configure: vi.fn(),
+      spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+      kill: vi.fn(async () => undefined)
+    },
     hasCodexRollout: vi.fn<(threadId: string, root: string) => boolean>(() => true),
     streams: new Map<string, (stream: unknown) => void>(),
     remembered: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
@@ -88,12 +118,33 @@ vi.mock('./sessions/adapters/codex-adapter', () => ({
     configure = mocks.codexConfigure
   }
 }))
+vi.mock('./sessions/adapters/acp-adapter', () => ({
+  AcpAdapter: class {
+    constructor(spec: { id: string }) {
+      return spec.id === 'antigravity-chat' ? mocks.antigravity : mocks.opencode
+    }
+  }
+}))
+vi.mock('./sessions/adapters/pi-rpc-adapter', () => ({
+  PiRpcAdapter: class {
+    constructor() {
+      return mocks.pi
+    }
+  }
+}))
 vi.mock('./sessions/adapters/echo-adapter', () => ({
   EchoAdapter: class {
     id = 'echo'
     provider = 'echo'
   }
 }))
+// The Antigravity CLI's own settings file, never read off this machine.
+vi.mock('./antigravity-cli', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./antigravity-cli')>()),
+  readAntigravityStartMode: () => 'auto'
+}))
+// PRDCT-4551: the ledger of starts a Pi chat writes, kept off the disk.
+vi.mock('./usage-ledger', () => ({ recordHarnessStart: vi.fn() }))
 vi.mock('./sessions/chat-model-default', () => ({
   rememberedChatModel: mocks.remembered,
   rememberedChatEffort: mocks.rememberedEffort
@@ -112,12 +163,19 @@ vi.mock('./title-generator', () => mocks.title)
 vi.mock('./launch-profile-manager', () => ({
   defaultViewFor: () => 'clave.chat-view/chat',
   eventsProfile: (id?: string) =>
-    id === 'claude-chat' || id === 'codex-chat' ? { id, adapterId: id } : undefined,
+    id === 'claude-chat' ||
+    id === 'codex-chat' ||
+    id === 'antigravity-chat' ||
+    id === 'opencode-chat' ||
+    id === 'pi-chat'
+      ? { id, adapterId: id }
+      : undefined,
   isEchoLaunchProfile: () => false,
   launchProfileManager: { resolve: () => mocks.resolvedProfile ?? { id: 'claude-chat' } }
 }))
 
 import { ptyManager } from './pty-manager'
+import { ptyAdapter } from './sessions/adapters/pty-adapter'
 
 const TAB = '11111111-1111-4111-8111-111111111111'
 const CONVERSATION = '33333333-3333-4333-8333-333333333333'
@@ -911,5 +969,263 @@ describe('bypass kept reachable on the spawn and the record (PRDCT-4191, round 3
     expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
       expect.objectContaining({ dangerousMode: false })
     )
+  })
+})
+
+describe('a chat tab starts with its writing style, and keeps it (PRDCT-5166)', () => {
+  const dense = {
+    id: 'dense',
+    name: 'Dense',
+    description: 'Short.',
+    text: 'Be short.',
+    statusCard: false,
+    builtIn: false
+  }
+  const quietText = composeStyleText(BUILT_IN_STYLES.find((style) => style.id === 'quiet')!)
+  let defaultStyleId: string | null = 'dense'
+  beforeEach(() => {
+    defaultStyleId = 'dense'
+    setWritingStylesSource({
+      view: () => ({
+        styles: [...BUILT_IN_STYLES, dense],
+        defaultStyleId,
+        claudeOutputStyle: null
+      })
+    })
+  })
+  afterEach(() => setWritingStylesSource(null))
+  const configured = (): { writingStyle?: string; writingStyleText?: string } =>
+    mocks.claude.configure.mock.calls.at(-1)![1] as never
+  const recorded = (): { writingStyle?: string } =>
+    (mocks.backend.writeEventSessionRecord.mock.calls.at(-1) as unknown[])[0] as never
+
+  it("a fresh chat runs on the machine's default and its record names it", async () => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(configured()).toMatchObject({ writingStyle: 'dense', writingStyleText: 'Be short.' })
+    expect(recorded().writingStyle).toBe('dense')
+    // The spawn's answer says the style applied, as the record does.
+    expect(session.writingStyle).toBe('dense')
+  })
+
+  it('a launch that names a style gets it; one that says none gets none, recorded as none', async () => {
+    const named = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'Quiet'
+    })
+    expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
+    // The answer names the style by its id, never by the name the launch gave.
+    expect(named.writingStyle).toBe('quiet')
+    const none = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'none'
+    })
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+    expect(none).not.toHaveProperty('writingStyle')
+  })
+
+  it('a style the machine does not have refuses the spawn before any process', async () => {
+    await expect(
+      ptyManager.spawn('/project', { launchProfileId: 'claude-chat', writingStyle: 'verbose' })
+    ).rejects.toThrow(/Unknown writing style "verbose"/)
+    expect(mocks.claude.spawn).not.toHaveBeenCalled()
+    expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
+  })
+
+  it("a routine's run that names none runs on none", async () => {
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      link: { kind: 'routine', routineKey: 'r', runId: 'run' }
+    })
+    expect(configured().writingStyleText).toBeUndefined()
+  })
+
+  it("a restored tab runs on its record's style, never the default", async () => {
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, writingStyle: 'quiet' } : null) as never)
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
+    expect(recorded().writingStyle).toBe('quiet')
+    // A tab from before the styles comes back on none, whatever the default.
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB } : null) as never)
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', adoptSessionId: TAB })
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it('a restart keeps the style, read off the record before the kill takes it', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'quiet'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id, writingStyle: 'quiet' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'other' })!
+    expect(plan.options.writingStyle).toBe('quiet')
+    // The kill took the record, and the machine's default changed since.
+    mocks.backend.getSessionRecord.mockImplementation(() => null)
+    defaultStyleId = 'dense'
+    await ptyManager.spawn(plan.cwd, plan.options)
+    expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
+    expect(recorded()).toMatchObject({ id: session.id, writingStyle: 'quiet' })
+  })
+
+  it('a restart of a tab on no style stays on none, never taking the default', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'none'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'other' })!
+    expect(plan.options.writingStyle).toBeUndefined()
+    mocks.backend.getSessionRecord.mockImplementation(() => null)
+    await ptyManager.spawn(plan.cwd, plan.options)
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it("a restart reads the style off the record, not off the spawn's own options", async () => {
+    // Its first launch named a style, and the spawn's options carry it; its
+    // record names none (its harness could not take it there).
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'quiet'
+    })
+    expect(configured().writingStyle).toBe('quiet')
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'other' })!
+    expect(plan.options.writingStyle).toBeUndefined()
+    mocks.backend.getSessionRecord.mockImplementation(() => null)
+    await ptyManager.spawn(plan.cwd, plan.options)
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it('a style named for an Antigravity terminal refuses the spawn before anything is configured', async () => {
+    mocks.resolvedProfile = { id: 'builtin-antigravity', command: ['agy'], additionalArgs: [] }
+    try {
+      await expect(
+        ptyManager.spawn('/project', {
+          claudeMode: false,
+          antigravityMode: true,
+          writingStyle: 'quiet'
+        })
+      ).rejects.toThrow(
+        'Antigravity takes no writing style in a terminal tab: open it as a chat, or name no style.'
+      )
+    } finally {
+      mocks.resolvedProfile = null
+    }
+    expect(ptyAdapter.prepare).not.toHaveBeenCalled()
+    expect(mocks.antigravity.configure).not.toHaveBeenCalled()
+    expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
+  })
+
+  it('a Codex chat is handed the style as its developer instructions', async () => {
+    const codex = {
+      id: 'codex-chat',
+      provider: 'codex',
+      spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+      kill: vi.fn(async () => undefined)
+    }
+    mocks.manager.getAdapter.mockImplementation(((id: string) =>
+      id === 'codex-chat' ? codex : mocks.claude) as never)
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat' })
+    expect(mocks.codexConfigure.mock.calls.at(-1)?.[4]).toBe('Be short.')
+    expect(recorded().writingStyle).toBe('dense')
+  })
+
+  describe('the chats over the Agent Client Protocol and Pi’s rpc mode', () => {
+    let dir: string
+    beforeEach(() => {
+      dir = tempDataDir('clave-chat-style-')
+      installTerminalPorts({ storage: fileStorage(dir) })
+      mocks.manager.getAdapter.mockImplementation(((id: string) =>
+        id === 'antigravity-chat'
+          ? mocks.antigravity
+          : id === 'opencode-chat'
+            ? mocks.opencode
+            : id === 'pi-chat'
+              ? mocks.pi
+              : mocks.claude) as never)
+    })
+    afterEach(() => {
+      resetTerminalPorts()
+      mocks.resolvedProfile = null
+    })
+
+    it('an Antigravity chat hands its adapter the style it records, and none when it has none', async () => {
+      mocks.resolvedProfile = { id: 'builtin-antigravity', command: ['agy'], additionalArgs: [] }
+      await ptyManager.spawn('/project', {
+        launchProfileId: 'antigravity-chat',
+        claudeMode: false,
+        antigravityMode: true,
+        writingStyle: 'quiet'
+      })
+      const styled = mocks.antigravity.configure.mock.calls.at(-1)![1] as { styleText?: string }
+      expect(styled.styleText).toBe(quietText)
+      expect(recorded().writingStyle).toBe('quiet')
+      await ptyManager.spawn('/project', {
+        launchProfileId: 'antigravity-chat',
+        claudeMode: false,
+        antigravityMode: true,
+        writingStyle: 'none'
+      })
+      const plain = mocks.antigravity.configure.mock.calls.at(-1)![1] as Record<string, unknown>
+      expect(plain).not.toHaveProperty('styleText')
+      expect(recorded()).not.toHaveProperty('writingStyle')
+    })
+
+    it('an OpenCode chat names the style’s file in its inline configuration, and nothing without one', async () => {
+      mocks.resolvedProfile = { id: 'builtin-opencode', command: ['opencode'], additionalArgs: [] }
+      await ptyManager.spawn('/project', {
+        launchProfileId: 'opencode-chat',
+        writingStyle: 'quiet'
+      })
+      const styled = mocks.opencode.configure.mock.calls.at(-1)![1] as {
+        env: Record<string, string>
+        connectionVariables?: string[]
+      }
+      const config = JSON.parse(styled.env.OPENCODE_CONFIG_CONTENT) as { instructions: string[] }
+      expect(config.instructions).toHaveLength(1)
+      expect(config.instructions[0].startsWith(dir)).toBe(true)
+      expect(fs.readFileSync(config.instructions[0], 'utf8')).toBe(quietText)
+      expect(styled.connectionVariables).toEqual(['OPENCODE_CONFIG_CONTENT'])
+      expect(recorded().writingStyle).toBe('quiet')
+      await ptyManager.spawn('/project', { launchProfileId: 'opencode-chat', writingStyle: 'none' })
+      const plain = mocks.opencode.configure.mock.calls.at(-1)![1] as {
+        env: Record<string, string>
+        connectionVariables?: string[]
+      }
+      expect(plain.env).not.toHaveProperty('OPENCODE_CONFIG_CONTENT')
+      expect(plain).not.toHaveProperty('connectionVariables')
+      expect(recorded()).not.toHaveProperty('writingStyle')
+    })
+
+    it('a Pi chat carries the style on its command line, and nothing without one', async () => {
+      mocks.resolvedProfile = {
+        id: 'builtin-pi',
+        family: 'pi',
+        command: ['pi'],
+        additionalArgs: []
+      }
+      await ptyManager.spawn('/project', { launchProfileId: 'pi-chat', writingStyle: 'quiet' })
+      const styled = (mocks.pi.configure.mock.calls.at(-1)![1] as { command: string[] }).command
+      const at = styled.indexOf('--append-system-prompt')
+      expect(at).toBeGreaterThan(-1)
+      expect(styled[at + 1]).toBe(quietText)
+      expect(recorded().writingStyle).toBe('quiet')
+      await ptyManager.spawn('/project', { launchProfileId: 'pi-chat', writingStyle: 'none' })
+      const plain = (mocks.pi.configure.mock.calls.at(-1)![1] as { command: string[] }).command
+      expect(plain).not.toContain('--append-system-prompt')
+      expect(recorded()).not.toHaveProperty('writingStyle')
+    })
   })
 })

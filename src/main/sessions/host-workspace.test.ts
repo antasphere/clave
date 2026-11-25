@@ -123,6 +123,28 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("a start's answer (PRDCT-5166)", () => {
+  const started = {
+    id: 'started',
+    cwd: '/work/app',
+    folderName: 'app',
+    alive: true,
+    claudeSessionId: null,
+    piSessionId: null
+  }
+  it('carries the writing style the spawn applied, and no key for a tab on none', async () => {
+    const spawn = vi.fn()
+    const host = createSessionHost({
+      manager: new SessionManager(),
+      lifecycle: { ...lifecycle(), spawn }
+    })
+    spawn.mockResolvedValueOnce({ ...started, writingStyle: 'quiet' })
+    expect(await host.start({ cwd: '/work/app' })).toMatchObject({ writingStyle: 'quiet' })
+    spawn.mockResolvedValueOnce(started)
+    expect(await host.start({ cwd: '/work/app' })).not.toHaveProperty('writingStyle')
+  })
+})
+
 describe('a discarded chat record (PRDCT-4666)', () => {
   it('takes its run file with it', () => {
     const f = fixture()

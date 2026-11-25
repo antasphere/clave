@@ -242,6 +242,18 @@ describe('a session is spawned for a window named by its key', () => {
       configDir: undefined
     })
   })
+  it('answers the writing style the spawn applied, and no key for a tab on none (PRDCT-5166)', async () => {
+    windows()
+    const styled = `life-${++sequence}`
+    spawned(styled, { writingStyle: 'quiet' } as Partial<PtySpawnOptions>)
+    expect(await spawnSession('w1', '/work/app', {})).toMatchObject({
+      id: styled,
+      writingStyle: 'quiet'
+    })
+    const bare = `life-${++sequence}`
+    spawned(bare)
+    expect(await spawnSession('w1', '/work/app', {})).not.toHaveProperty('writingStyle')
+  })
   it('a resumed Claude session keeps its name', async () => {
     const id = `life-${++sequence}`
     windows()

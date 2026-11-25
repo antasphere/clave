@@ -1,6 +1,6 @@
 import type { AgentState } from '../../../../src/shared/session-model'
 import { parseDelivery, type ProvenanceSender } from '../../../../src/shared/exchange-provenance'
-import type { Entry } from '../reducer'
+import { hasContent, type Entry } from '../reducer'
 import { visibleEntries, type ToolEntry } from '../tools'
 import type { PermissionEntry } from '../approvals'
 import { clipText } from '../../../../src/shared/helper-prompt'
@@ -218,8 +218,10 @@ export function buildPages(
     const notes = draft.rows.flatMap((row) => row.notes)
     const tools = notes.filter((note): note is ToolEntry => note.kind === 'tool')
     const lastPage = i === drafts.length - 1
+    // The words alone: a status card is never part of what is copied, read
+    // aloud or filed (PRDCT-5166), and a card with no words adds nothing.
     const answer = draft.rows
-      .flatMap((row) => (row.prose ? [row.prose.text.trim()] : []))
+      .flatMap((row) => (row.prose?.text.trim() ? [row.prose.text.trim()] : []))
       .join('\n\n')
     const spoken = joinBlocks(blocksOf(draft.rows).map((block) => block.markdown))
     return {
@@ -242,6 +244,13 @@ export function buildPages(
       failed: tools.filter((tool) => tool.failed === true).length
     }
   })
+}
+
+/** Whether the agent answered on the page: words, or a status card alone
+ *  (`hasContent`, PRDCT-5166). A page that holds one is finished once the
+ *  turn is over, even when it has nothing to copy or read aloud. */
+export function pageAnswered(page: Pick<Page, 'rows'>): boolean {
+  return page.rows.some((row) => row.prose !== null && hasContent(row.prose))
 }
 
 /** One block of a page (PRDCT-4430): its number across the page's prose

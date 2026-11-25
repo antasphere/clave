@@ -64,6 +64,7 @@ import { HarnessesSettings } from './HarnessesSettings'
 import { useLaunchSettingsStore } from '../../store/launch-settings-store'
 import { INTERACTION_MODES, type InteractionMode } from '../../../../shared/harness'
 import { HelpersSettings } from './HelpersSettings'
+import { WritingStylesSettings } from './WritingStylesSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
@@ -79,6 +80,7 @@ import {
   ServerActivitySettings,
   ServerAgentsSettings,
   ServerHelpersSettings,
+  ServerWritingStylesSettings,
   ServerIntegrationsSettings,
   ServerUsageSettings
 } from './ServerPages'
@@ -243,6 +245,8 @@ export function SettingsPanel(): React.JSX.Element {
           (server ? <ServerAgentsSettings serverId={server} /> : <HarnessesSettings />)}
         {settingsSection === 'helpers' &&
           (server ? <ServerHelpersSettings serverId={server} /> : <HelpersSettings />)}
+        {settingsSection === 'styles' &&
+          (server ? <ServerWritingStylesSettings serverId={server} /> : <WritingStylesSettings />)}
         {settingsSection === 'integrations' &&
           (server ? <ServerIntegrationsSettings serverId={server} /> : <IntegrationsSettings />)}
         {settingsSection === 'appearance' && <AppearanceSettings />}

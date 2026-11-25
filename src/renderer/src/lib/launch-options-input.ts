@@ -50,6 +50,7 @@ import {
   type AccountSources
 } from './session-accounts'
 import { antigravityLaunchModels } from '../../../shared/antigravity'
+import type { WritingStylesView } from '../../../shared/writing-styles'
 
 /** The launcher's DEFAULT_MODEL: the harness's own default, no flag passed. */
 const DEFAULT_MODEL: LaunchModel = { id: null, label: 'Default', family: 'Default' }
@@ -69,6 +70,9 @@ export interface WindowLaunchFacts {
   /** What the machine's Pi and OpenCode tabs used today, per connection
    *  (PRDCT-4551); absent when it could not be read. */
   readonly harnessUsage?: Pick<HarnessUsageView, 'rows'> | null
+  /** The machine's writing styles (PRDCT-5166); absent or null when they
+   *  could not be read (a server released before them). */
+  readonly writingStyles?: WritingStylesView | null
   readonly now: number
 }
 
@@ -211,6 +215,7 @@ export function serverLaunchOptionsInput(
     // starts on with no model named (PRDCT-4496): said, never guessed.
     providerStartNote: (harness) => (harness === 'pi' ? serverPiStartNote(name) : undefined),
     ...(facts.harnessUsage ? { harnessUsage: facts.harnessUsage } : {}),
+    writingStyles: facts.writingStyles ?? null,
     now: facts.now
   }
 }
@@ -268,6 +273,7 @@ export function localLaunchOptionsInput(
         }
       : {}),
     ...(facts.harnessUsage ? { harnessUsage: facts.harnessUsage } : {}),
+    writingStyles: facts.writingStyles ?? null,
     now: facts.now
   }
 }

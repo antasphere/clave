@@ -1482,7 +1482,14 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
               { event: { type: 'user_message', text: 'hi' } },
               // A streamed answer, one event per delta (PRDCT-4666).
               { event: { type: 'assistant_text', delta: 'he', final: false } },
-              { event: { type: 'assistant_text', delta: 'llo', final: true } }
+              // Ending on a status card (PRDCT-5166).
+              {
+                event: {
+                  type: 'assistant_text',
+                  delta: 'llo\n\n```clave-status\nwhere: greeted\nnext: say yes\n```',
+                  final: true
+                }
+              }
             ],
             before: null
           }
@@ -1497,8 +1504,16 @@ describe('standalone MCP: a read of any tab, and a stopped terminal asked to res
     expect(answer.isError).not.toBe(true)
     expect(payload(answer)).toMatchObject({
       sessionId: 'stranger',
-      lines: 2,
-      text: 'You: hi\nAgent: hello'
+      lines: 4,
+      text: 'You: hi\nAgent: hello\n  Where: greeted\n  Next: say yes',
+      status: {
+        doing: null,
+        where: 'greeted',
+        decide: [],
+        next: 'say yes',
+        needsYou: true,
+        answered: false
+      }
     })
     // The raw events stay out of an agent's context (PRDCT-4666).
     expect(payload(answer)).not.toHaveProperty('history')
@@ -1863,6 +1878,12 @@ describe('standalone MCP: the launcher’s choices (PRDCT-4485)', () => {
     expect(harnesses.map((h) => h.id)).toEqual(['claude', 'codex', 'pi', 'opencode'])
     expect(options.notInstalled).toEqual(['Antigravity'])
     expect(options).not.toHaveProperty('warnings')
+    // PRDCT-5166: this server's writing styles; no source installed, the built-in ones.
+    expect((options.styles as Array<{ id: string }>).map((style) => style.id)).toEqual([
+      'brief',
+      'quiet'
+    ])
+    expect(options.defaultStyle).toBeNull()
     const [claude, codex, pi, opencode] = harnesses
     expect(claude).toMatchObject({
       installed: true,
@@ -2556,4 +2577,67 @@ describe('clave_attach_session on the server (PRDCT-4997)', () => {
     expect(sessions.find((s) => s.id === 'helper')?.nestedUnder).toBe('old')
     expect(sessions.find((s) => s.id === 'old')?.nestedUnder).toBeNull()
   })
+})
+
+// PRDCT-5166: an open names the writing style its tab starts with; the
+// server's spawn resolves it, and a tab says the style it was opened with.
+describe('standalone MCP: writing styles on the open and the listing', () => {
+  it('hands the style to the start untouched, and nothing when none is named', async () => {
+    const { client, started, directory } = await sessionFixture()
+    payload(
+      await client.callTool({
+        name: 'clave_open_session',
+        arguments: { cwd: directory, mode: 'codex', style: 'quiet' }
+      })
+    )
+    payload(await client.callTool({ name: 'clave_open_session', arguments: { cwd: directory } }))
+    expect(started[0].options?.writingStyle).toBe('quiet')
+    expect(started[1].options).not.toHaveProperty('writingStyle')
+  }, 15_000)
+
+  it('refuses a style on a terminal before anything starts', async () => {
+    const { client, started, directory } = await sessionFixture()
+    const answer = await client.callTool({
+      name: 'clave_open_session',
+      arguments: { cwd: directory, mode: 'terminal', style: 'brief' }
+    })
+    expect(errorText(answer)).toContain(
+      'The style argument applies to agent modes only (got mode "terminal")'
+    )
+    expect(started).toEqual([])
+  }, 15_000)
+
+  it("says the spawn's refusal of an unknown style in its own words", async () => {
+    const reason = 'Unknown writing style "loud". This machine has: none, brief, quiet.'
+    const { client, directory } = await sessionFixture({
+      host: {
+        start: async () => {
+          throw new Error(reason)
+        }
+      }
+    })
+    const answer = await client.callTool({
+      name: 'clave_open_session',
+      arguments: { cwd: directory, style: 'loud' }
+    })
+    expect(errorText(answer)).toContain(reason)
+  }, 15_000)
+
+  it('lists the style each tab was opened with, and no style key for a tab on none', async () => {
+    const { client } = await sessionFixture({
+      records: [record('caller', { writingStyle: 'brief' })]
+    })
+    const listed = payload(await client.callTool({ name: 'clave_list', arguments: {} }))
+    const rows = listed.sessions as Array<Record<string, unknown>>
+    expect(rows.find((s) => s.id === 'caller')?.style).toBe('brief')
+    const plain = payload(
+      await (
+        await sessionFixture({ records: [record('caller', {})] })
+      ).client.callTool({
+        name: 'clave_list',
+        arguments: {}
+      })
+    )
+    expect((plain.sessions as Array<Record<string, unknown>>)[0]).not.toHaveProperty('style')
+  }, 15_000)
 })

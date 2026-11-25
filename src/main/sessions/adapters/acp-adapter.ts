@@ -36,6 +36,12 @@ import { connectionHandover } from '../../connection-handover'
 import { lazyTerminalPorts } from '../../ports/terminals'
 import { readClaveMcpEndpoint, withOpencodeClaveTools } from '../../clave-tools-launch'
 import { OPENCODE_CONFIG_ENV } from '../../provider-injection'
+import {
+  STYLE_SUPPORT,
+  messageWithoutStyle,
+  styleAsFirstMessage
+} from '../../../shared/writing-styles'
+import type { LauncherFamily } from '../../../shared/agent-launch'
 
 /**
  * A chat over the Agent Client Protocol (version 1): one agent process per
@@ -65,6 +71,11 @@ export interface AcpLaunch {
   /** A stored connection's own variables in `env`, carried past a login
    *  profile when the agent is started through the shell (PRDCT-4496). */
   connectionVariables?: readonly string[]
+  /** A writing style's text (PRDCT-5166) for an agent that takes no
+   *  instructions at launch (`STYLE_SUPPORT`'s `first-message`, Antigravity):
+   *  sent with the first message of a conversation this spawn opens. An
+   *  agent on another road (OpenCode's instruction file) never reads it. */
+  styleText?: string
 }
 export interface AcpSpawnOptions {
   resume?: string
@@ -90,6 +101,17 @@ export interface AcpSessionSummary {
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+/** A prompt with the writing style before the person's text: its first text
+ *  block carries `styleAsFirstMessage`, or one is put first when there is
+ *  none. The other blocks (an attachment's link) are kept as they are. */
+function withStyleFirst(prompt: unknown[], style: string): unknown[] {
+  const at = prompt.findIndex((block) => object(block).type === 'text')
+  if (at < 0) return [{ type: 'text', text: styleAsFirstMessage(style, '') }, ...prompt]
+  const block = object(prompt[at])
+  return prompt.map((entry, index) =>
+    index === at ? { ...block, text: styleAsFirstMessage(style, text(block.text)) } : entry
+  )
+}
 const array = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 
 interface ConfigChoice {
@@ -207,6 +229,14 @@ interface HandleState {
   toolInputs: Map<string, { name: string; json: string }>
   permissions: Map<string, PendingPermission>
   initialPrompt?: string
+  /** The writing style still owed to the agent (PRDCT-5166): set when the
+   *  handshake opened a new conversation (`session/new`), taken by the first
+   *  `session/prompt`. Never set on a conversation loaded back. */
+  styleOwed?: string
+  /** The replayed user message in progress as the agent kept it, its chunks
+   *  joined: the history shows it without the style it was sent with
+   *  (PRDCT-5166), which can only be read off the whole opening. */
+  replayedUserText?: string
   /** The exit code to report, when the adapter ended the session itself. */
   exitCode?: number
   /** PRDCT-4507: the tab's credential for Clave's tools was issued at this
@@ -402,6 +432,16 @@ export class AcpAdapter implements SessionAdapter {
    *  spawn; main-only, never part of the Session record or the wire. */
   configure(sessionId: string, launch: AcpLaunch): void {
     this.launches.set(sessionId, launch)
+  }
+
+  /** Whether this agent takes a writing style with its first message
+   *  (`STYLE_SUPPORT`, PRDCT-5166): Antigravity's chat, never OpenCode's,
+   *  which shares this adapter and reads its style from a file. */
+  private styleByFirstMessage(): boolean {
+    const support = STYLE_SUPPORT[this.provider as LauncherFamily] as
+      | (typeof STYLE_SUPPORT)[LauncherFamily]
+      | undefined
+    return support?.chat === 'first-message'
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -734,6 +774,10 @@ export class AcpAdapter implements SessionAdapter {
           this.refuse(state, new Error(`${this.label} returned no session id`))
           return
         }
+        // A new conversation, the launch's style owed to its first message
+        // (PRDCT-5166); a loaded one already had it at its own start.
+        if (state.launch.styleText && this.styleByFirstMessage())
+          state.styleOwed = state.launch.styleText
       }
       this.emitMeta(state)
       // The model asked for against the one the session opened on. OpenCode
@@ -1042,16 +1086,25 @@ export class AcpAdapter implements SessionAdapter {
     }
     state.turnRunning = true
     let stopReason = ''
+    // The style goes with the conversation's first prompt, once, in the text
+    // the agent is sent; the message the views were streamed stays the one
+    // the person wrote (PRDCT-5166).
+    const style = state.styleOwed
+    state.styleOwed = undefined
+    const prompt = style ? withStyleFirst(message.prompt, style) : message.prompt
     try {
       const result = object(
         await state.connection.request(
           'session/prompt',
-          { sessionId: state.sessionId, prompt: message.prompt },
+          { sessionId: state.sessionId, prompt },
           { timeout: null }
         )
       )
       stopReason = text(result.stopReason)
     } catch (error) {
+      // A prompt the agent refused never took the style: still owed, so the
+      // next prompt carries it, once.
+      if (style && state.styleOwed === undefined) state.styleOwed = style
       if (state.ended || state.closing) return
       this.notice(state, `${this.label} turn failed: ${errorMessage(error)}`)
     } finally {
@@ -1335,9 +1388,16 @@ export class AcpAdapter implements SessionAdapter {
     if (kind === 'user_message_chunk') {
       const chunk = blockText(update.content)
       this.closeLoadedText(state)
+      // The agent kept what was SENT: on the first-message road, the style
+      // and then the message. The views show what the person wrote
+      // (PRDCT-5166); OpenCode's chat, never sent a style, is left as it is.
+      const sent =
+        last?.type === 'user_message' ? (state.replayedUserText ?? last.text) + chunk : chunk
+      state.replayedUserText = sent
+      const shown = this.styleByFirstMessage() ? messageWithoutStyle(sent) : sent
       if (last?.type === 'user_message')
-        history[history.length - 1].event = { ...last, text: last.text + chunk }
-      else history.push({ event: { type: 'user_message', text: chunk } })
+        history[history.length - 1].event = { ...last, text: shown }
+      else history.push({ event: { type: 'user_message', text: shown } })
       return
     }
     if (kind === 'agent_message_chunk') {

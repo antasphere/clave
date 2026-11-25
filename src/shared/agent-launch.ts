@@ -282,6 +282,31 @@ export function resolveLaunchProfile(
   )
 }
 
+/** What a launch adds to the agent's system prompt (PRDCT-5166): the
+ *  launch's own line (a routine's) first, then the writing style's text,
+ *  joined by a blank line; either alone as it is; undefined for neither. */
+export function withStyleText(
+  own: string | undefined,
+  style: string | undefined
+): string | undefined {
+  if (own && style) return `${own}\n\n${style}`
+  return own || style || undefined
+}
+
+/** A text as a TOML basic string (PRDCT-5166), for a `-c key=value` Codex
+ *  reads as TOML. A JSON string is one, its newlines and control characters
+ *  escaped, but for two characters: JSON leaves U+007F raw, which TOML
+ *  forbids in a basic string, and writes a lone surrogate as `\udXXX`, which
+ *  is not a Unicode scalar value TOML takes. A lone surrogate becomes U+FFFD
+ *  (it stands for no character anyway), U+007F its escape. */
+export function tomlBasicString(text: string): string {
+  const wellFormed = text.replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    '\uFFFD'
+  )
+  return JSON.stringify(wellFormed).replace(/\u007F/g, '\\u007F')
+}
+
 export function buildAgentArgv(input: {
   kind: AgentKind
   profile: LaunchProfile
@@ -302,7 +327,13 @@ export function buildAgentArgv(input: {
    *  `--mode`; Pi has none. `dangerousMode` wins over it. */
   permissionMode?: string
   pluginDir?: string
+  /** Added to the agent's system prompt (`--append-system-prompt`): Claude's
+   *  and Pi's. A routine's line and a writing style's text arrive here
+   *  joined (`withStyleText`). */
   appendSystemPrompt?: string
+  /** Codex only (PRDCT-5166): a writing style's text as the session's
+   *  `developer_instructions`, in the place of the person's own. */
+  developerInstructions?: string
   /** OpenCode only (PRDCT-4496): run the TUI on its own server, so the
    *  tab's environment (its connection, its model) is the one read. */
   opencodeStandalone?: boolean
@@ -371,6 +402,12 @@ export function buildAgentArgv(input: {
     }
     if (input.model) argv.push('-m', input.model)
     argv.push('-c', CODEX_TITLE_CONFIG)
+    // A writing style (PRDCT-5166). The value is read as TOML: a value that
+    // is not valid TOML makes Codex take the whole of it as a plain string,
+    // silently (`tomlBasicString`).
+    if (input.developerInstructions)
+      argv.push('-c', `developer_instructions=${tomlBasicString(input.developerInstructions)}`)
+    // The thread id stays last, as the `resume` subcommand takes it.
     if (input.resumeSessionId) argv.push(input.resumeSessionId)
   } else if (input.kind === 'antigravity') {
     // The stricter of the tab's mode and the profile's, in the words agy
@@ -418,6 +455,8 @@ export function buildAgentArgv(input: {
     if (input.resumeSessionId) argv.push('--session', input.resumeSessionId)
     else if (input.sessionId) argv.push('--session-id', input.sessionId)
     if (input.piStateExtensionPath) argv.push('--extension', input.piStateExtensionPath)
+    // A writing style (PRDCT-5166), in its rpc mode as in its TUI (Pi 1.6.1).
+    if (input.appendSystemPrompt) argv.push('--append-system-prompt', input.appendSystemPrompt)
   }
   if (input.initialPrompt) argv.push('--', input.initialPrompt)
   return argv

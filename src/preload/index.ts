@@ -30,6 +30,7 @@ import {
   type HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
+import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 import { NEST_SERVER_NOT_NAMED, nestAnswerError } from '../shared/nest-tools'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
@@ -1381,6 +1382,31 @@ const electronAPI = {
     server: async ({ api }, helperId, patch) =>
       loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
   }),
+  // ── Settings: the writing styles of this Mac (PRDCT-5166), with a server arm ──
+  writingStylesList: viaServer<[], WritingStylesView>({
+    ipc: () => ipcRenderer.invoke('writing-styles:list'),
+    server: async ({ api }) => loose<WritingStylesView>(await api.settings.writingStyles.list())
+  }),
+  writingStyleSave: viaServer<[WritingStyleDraft], WritingStylesView>({
+    ipc: (draft) => ipcRenderer.invoke('writing-styles:save', draft),
+    server: async ({ api }, draft) =>
+      loose<WritingStylesView>(await api.settings.writingStyles.save(draft))
+  }),
+  writingStyleDelete: viaServer<[string], WritingStylesView>({
+    ipc: (id) => ipcRenderer.invoke('writing-styles:delete', id),
+    server: async ({ api }, id) =>
+      loose<WritingStylesView>(await api.settings.writingStyles.remove(id))
+  }),
+  writingStyleSetDefault: viaServer<[string | null], WritingStylesView>({
+    ipc: (id) => ipcRenderer.invoke('writing-styles:set-default', id),
+    server: async ({ api }, id) =>
+      loose<WritingStylesView>(await api.settings.writingStyles.setDefault(id))
+  }),
+  writingStyleImportClaude: viaServer<[], WritingStylesView>({
+    ipc: () => ipcRenderer.invoke('writing-styles:import-claude'),
+    server: async ({ api }) =>
+      loose<WritingStylesView>(await api.settings.writingStyles.importClaude())
+  }),
   // ── Settings: the integrations of this Mac (PRDCT-4410), with a server arm ──
   // The key goes in once and comes back in no answer, on either road.
   integrationsRead: viaServer<[], IntegrationsStatus>({
@@ -1464,6 +1490,8 @@ const electronAPI = {
         // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on; never its value.
         connectionId?: string
         connectionLabel?: string
+        // The writing style the tab starts with (PRDCT-5166): a style's id or exact name, or `none`.
+        writingStyle?: string
       }?
     ],
     SessionInfo

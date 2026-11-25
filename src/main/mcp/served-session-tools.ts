@@ -17,7 +17,7 @@
 import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { pickAccount } from '../../shared/account-pool'
 import { launchModeFields } from '../../shared/runtime-choices'
-import { readHistoryLines } from '../../shared/history-read'
+import { readChatHistory } from '../../shared/history-read'
 import { ownSessionRef } from '../../shared/own-session-ref'
 import { afterSpawn, withWarnings } from '../../shared/open-after-spawn'
 import {
@@ -36,7 +36,11 @@ import {
   spawnFieldsOf,
   usageOf
 } from './served-accounts'
-import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
+import {
+  openStyleField,
+  resolveProfileRef,
+  resolveSpawnModes
+} from '../../shared/open-session-modes'
 import { HARNESSES, HARNESS_BY_ID } from '../../shared/harness'
 import { capturesExchange, exchangeCaptureRefusal } from '../../shared/agent-launch'
 import { accountArgumentRefusal, accountPoolsOf } from '../../shared/launch-options'
@@ -222,11 +226,12 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown |
   if (target.transport === 'events') {
     // Counted in lines, not events; the raw events stay out of an agent's
     // context (PRDCT-4666).
-    const text = await readHistoryLines(
+    // The status its agent ended on comes from the same pages (PRDCT-5166).
+    const read = await readChatHistory(
       (before, limit) => ctx.api.sessions.history(target.id, before, limit),
       requested
     )
-    return readAnswer(host, target, text)
+    return readAnswer(host, target, read.lines, read.status)
   }
   let screen: { lines: readonly string[] }
   try {
@@ -495,6 +500,8 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   const accountFields = pooled
     ? spawnFieldsOf(pooled, resolveAccountRef(ctx, pooled, accountRef, judgedModel))
     : {}
+  // The writing style, passed untouched: the spawn resolves it (PRDCT-5166).
+  const styleField = openStyleField(mode, str(p.style))
   const cwd = str(p.cwd) ?? ''
   const command = str(p.command)
   const prompt = str(p.prompt)
@@ -535,6 +542,7 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
+        ...styleField,
         ...(workspaceId !== undefined ? { workspaceId } : {}),
         // Persisted lineage folds the tab under its caller. Separate tabs
         // keep the in-memory messaging link below without sidebar nesting.
