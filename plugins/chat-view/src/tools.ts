@@ -1,4 +1,4 @@
-import type { Entry } from './reducer'
+import { hasContent, type Entry } from './reducer'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { settledApproval, type PermissionEntry } from './approvals'
 
@@ -44,15 +44,15 @@ export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | ApprovalGroup
  *  turns is one step, and the approval the agent needed mid-run is part of it
  *  rather than a border. (The view before this one broke the run on any
  *  non-tool entry, so one permission split a single step into two rows.) */
-/** An assistant turn that opened and said nothing renders nowhere, so it may
- *  not end a run either — otherwise the run breaks in a place the reader cannot
- *  see. Every view filters through THIS, so all break a run in the same place;
+/** An assistant turn that opened and said nothing (no words and no status
+ *  card, `hasContent`) renders nowhere, so it may not end a run either —
+ *  otherwise the run breaks in a place the reader cannot see. Every view filters through THIS, so all break a run in the same place;
  *  one view used to filter before grouping and another not at all, which split
  *  a run in one view and not the other. */
 export function visibleEntries(entries: Entry[]): Entry[] {
   return entries.filter(
     (e) =>
-      (e.kind !== 'assistant' || e.text.trim() !== '') &&
+      (e.kind !== 'assistant' || hasContent(e)) &&
       !(e.kind === 'user' && e.withdrawn) &&
       !(e.kind === 'permission' && e.relocated)
   )
