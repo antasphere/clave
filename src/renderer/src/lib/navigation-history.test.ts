@@ -151,11 +151,16 @@ describe('samePlace and sameSpot', () => {
     expect(sameSpot(m, mosaic(['tab-1', 'tab-2', 'tab-4'], 'tab-1'))).toBe(false)
   })
 
-  it('compare the card beside a tab by kind, id and the open that showed it', () => {
+  it('compare the card beside a tab by kind and id, not by when it was opened', () => {
     const card = { kind: 'artefact' as const, id: '/work/deck', openedAt: '2026-01-01T10:00:00Z' }
     const shown = tab('tab-1', { beside: { 'tab-1': card } })
+    // An agent opening the same artefact again shows the same page: the same place.
+    const reopened = tab('tab-1', {
+      beside: { 'tab-1': { ...card, openedAt: '2026-01-01T11:00:00Z' } }
+    })
+    expect(samePlace(shown, reopened)).toBe(true)
+    expect(recordPlace(recordPlace(EMPTY_HISTORY, shown), reopened).entries).toHaveLength(1)
     const variants: Place[] = [
-      tab('tab-1', { beside: { 'tab-1': { ...card, openedAt: '2026-01-01T11:00:00Z' } } }),
       tab('tab-1', { beside: { 'tab-1': { ...card, id: '/work/other' } } }),
       tab('tab-1', { beside: { 'tab-1': { kind: 'document', id: '/work/deck' } } }),
       tab('tab-1', { beside: { 'tab-1': null } }),

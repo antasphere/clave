@@ -93,7 +93,9 @@ function samePlugin(a: PlacePlugin | null, b: PlacePlugin | null): boolean {
 
 function sameCard(a: BesideCard | null, b: BesideCard | null): boolean {
   if (a === null || b === null) return a === b
-  return a.kind === b.kind && a.id === b.id && a.openedAt === b.openedAt
+  // Not `openedAt`: an agent opening the same artefact again shows the same page, and a
+  // place that differed only by it would make one Back step look like it did nothing.
+  return a.kind === b.kind && a.id === b.id
 }
 
 function sameBeside(a: Place['beside'], b: Place['beside']): boolean {
