@@ -158,43 +158,49 @@ function PermissionPrompt({
         }
       }}
     >
-      <div className="chat-prompt-head">
-        <div className="chat-prompt-title">{title}</div>
-        {/* The queue stands level with the question rather than on a line
-            of its own above it. */}
-        {waiting > 1 && <span className="chat-prompt-queue">1 of {waiting} waiting</span>}
+      {/* What is asked scrolls inside the card; the buttons below it never do.
+          A request the agent wrote at length (a whole report in its
+          description) would otherwise push them out of the pane, with no way
+          to answer it but the keys. */}
+      <div className="chat-prompt-scroll">
+        <div className="chat-prompt-head">
+          <div className="chat-prompt-title">{title}</div>
+          {/* The queue stands level with the question rather than on a line
+              of its own above it. */}
+          {waiting > 1 && <span className="chat-prompt-queue">1 of {waiting} waiting</span>}
+        </div>
+        {target && <div className="chat-prompt-target">{target}</div>}
+        {/* PRDCT-4331: the level at once, then what the request does in plain words. */}
+        <PermissionReading request={request} />
+        {/* The agent's own word on the request, said to be its own: the reading
+            above is Clave's and a model's, which never take the agent's word
+            (PRDCT-4489). */}
+        {request.detail && (
+          <p className="chat-prompt-detail">
+            <span className="chat-prompt-detail-who">
+              {agent.charAt(0).toUpperCase() + agent.slice(1)} says:
+            </span>{' '}
+            {request.detail}
+          </p>
+        )}
+        {code && (
+          <pre className="chat-prompt-code">
+            {code.language === 'bash' && <span className="chat-tool-prompt">$ </span>}
+            <ChatCode className={code.language ? `language-${code.language}` : undefined}>
+              {code.text}
+            </ChatCode>
+          </pre>
+        )}
+        {!code && request.input !== undefined && (
+          <details className="chat-permission-input">
+            <summary>
+              <ChevronRightIcon className="chat-tool-chevron" />
+              Input
+            </summary>
+            <pre>{stringify(request.input)}</pre>
+          </details>
+        )}
       </div>
-      {target && <div className="chat-prompt-target">{target}</div>}
-      {/* PRDCT-4331: the level at once, then what the request does in plain words. */}
-      <PermissionReading request={request} />
-      {/* The agent's own word on the request, said to be its own: the reading
-          above is Clave's and a model's, which never take the agent's word
-          (PRDCT-4489). */}
-      {request.detail && (
-        <p className="chat-prompt-detail">
-          <span className="chat-prompt-detail-who">
-            {agent.charAt(0).toUpperCase() + agent.slice(1)} says:
-          </span>{' '}
-          {request.detail}
-        </p>
-      )}
-      {code && (
-        <pre className="chat-prompt-code">
-          {code.language === 'bash' && <span className="chat-tool-prompt">$ </span>}
-          <ChatCode className={code.language ? `language-${code.language}` : undefined}>
-            {code.text}
-          </ChatCode>
-        </pre>
-      )}
-      {!code && request.input !== undefined && (
-        <details className="chat-permission-input">
-          <summary>
-            <ChevronRightIcon className="chat-tool-chevron" />
-            Input
-          </summary>
-          <pre>{stringify(request.input)}</pre>
-        </details>
-      )}
       <div className="chat-prompt-actions">
         {denies.map(button)}
         <span className="chat-prompt-spacer" />

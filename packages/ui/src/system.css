@@ -4983,6 +4983,33 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   gap: calc(var(--spacing) * 2);
   padding-top: var(--spacing);
 }
+/* A docked card never grows past the pane: it stops at most of the window's
+   height, what it asks scrolls inside it (.chat-prompt-scroll) and its
+   buttons stay in sight under it. A request written at length, a whole
+   report as its description, otherwise pushed Allow and Deny off the pane. */
+.chat-prompt:not([data-inline='true']) {
+  max-height: 60vh;
+}
+.chat-prompt[data-kind='permission']:not([data-inline='true']) .chat-prompt-body {
+  min-height: 0;
+}
+.chat-prompt[data-kind='permission']:not([data-inline='true']) .chat-prompt-actions {
+  flex-shrink: 0;
+}
+.chat-prompt-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+/* A docked question (the views that keep their dock) scrolls as a whole. */
+.chat-prompt[data-kind='question']:not([data-inline='true']) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 /* ── The question card, inline (PRDCT-4157) ──
    A question the agent asks is answered where it asked it: in the agent's own
    column, under its words, with no box around it. At its head a drawing in
