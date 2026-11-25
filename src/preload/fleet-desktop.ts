@@ -33,6 +33,7 @@ import { orderByIds } from '../shared/workspace-order'
 import { nestAnswerError, nestRefusalMessage } from '../shared/nest-tools'
 import type { HelperPreference } from '../shared/helper-preferences'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { DecisionPreference } from '../shared/decision-preferences'
 import type { SpeakResult } from '../shared/speech'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type {
@@ -1170,6 +1171,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const { api } = await backing(serverId)
       return [...(await api.settings.helpers.set(helperId, patch))] as HelperPreference[]
     },
+    // The decisions' switches too (PRDCT-5179): on the machine that asks Jev.
+    fleetDecisions: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.decisionsList()
+      const { api } = await backing(serverId)
+      return [...(await api.settings.decisions.list())] as DecisionPreference[]
+    },
+    fleetDecisionSet: async (serverId, decisionId, patch) => {
+      if (serverId === LOCAL_SERVER_ID) return local.decisionSet(decisionId, patch)
+      const { api } = await backing(serverId)
+      return [...(await api.settings.decisions.set(decisionId, patch))] as DecisionPreference[]
+    },
     // The integrations too (PRDCT-4410): a server's key is sealed on that
     // server, this Mac's over its own route; neither lands on the other.
     fleetIntegrations: async (serverId) => {
@@ -1211,6 +1223,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (serverId === LOCAL_SERVER_ID) return local.elevenLabsPreview(voiceId)
       const { api } = await backing(serverId)
       return (await api.speech.preview({ voiceId })) as SpeakResult
+    },
+    // The Jev key (PRDCT-5179): sealed on the server beside its ElevenLabs key.
+    fleetJevSetKey: async (serverId, apiKey) => {
+      if (serverId === LOCAL_SERVER_ID) return local.jevSetKey(apiKey)
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.setJevKey(apiKey)) as IntegrationsStatus
+    },
+    fleetJevCheck: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.jevCheck()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.checkJev()) as IntegrationsStatus
+    },
+    fleetJevRemove: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.jevRemove()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.removeJevKey()) as IntegrationsStatus
     },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)
@@ -1441,6 +1469,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   type PageTitleAnswer = Awaited<ReturnType<ElectronAPI['pageTitle']>>
   // ── PRDCT-4411: the speech's answer ──
   type SpeakAnswer = Awaited<ReturnType<ElectronAPI['speakText']>>
+  // ── PRDCT-5179: the decisions' answer ──
+  type TabProjectsAnswer = Awaited<ReturnType<ElectronAPI['readTabProjects']>>
   type PageTitlesFiled = Awaited<ReturnType<ElectronAPI['pageTitlesOf']>>
   // ── PRDCT-4474: a session's artefact, on the server the session runs on ──
   // A server's preview is on THAT server's loopback: the window frames it
@@ -1727,6 +1757,25 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         async (b, wireId) =>
           (await b.api.speech.speak({ sessionId: wireId, text: request.text })) as SpeakAnswer
       ),
+    // Which projects tabs work on (PRDCT-5179): read by the server that owns
+    // them, with its key. One call, one owner: the first id's; a list that
+    // mixes machines is refused in words, never split behind the caller.
+    readTabProjects: async (sessionIds) => {
+      if (sessionIds.length === 0) return { tabs: [] }
+      const refs = sessionIds.map(parseSessionKey)
+      const owner = refs[0].serverId
+      if (refs.some((ref) => ref.serverId !== owner))
+        throw new Error('These tabs run on different machines: read each machine’s tabs apart.')
+      if (owner === LOCAL_SERVER_ID) return local.readTabProjects(sessionIds)
+      const b = await backing(owner)
+      const { tabs } = await b.api.decisions.readTabProjects(refs.map((ref) => ref.sessionId))
+      return {
+        tabs: tabs.map((tab) => ({
+          ...(tab as TabProjectsAnswer['tabs'][number]),
+          sessionId: key(owner, tab.sessionId)
+        }))
+      }
+    },
     pageTitle: (request) =>
       route(
         request.sessionId,

@@ -262,6 +262,8 @@ function sessionFromRecord(
     openedBy: s.openedBy,
     // Which wave or lane it works on, as its record keeps it (PRDCT-4123).
     work: s.work,
+    // Which projects it works on, as Jev last read it (PRDCT-5179).
+    projects: s.projects,
     // A chat that is not running comes back without starting its agent:
     // its pane mounts, and the agent starts, when the tab is first shown.
     ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
@@ -536,6 +538,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     spawnedBy: s.spawnedBy,
     openedBy: s.openedBy,
     work: s.work,
+    projects: s.projects,
     detectedUrl: null,
     serverStatus: null,
     serverCommand: null,

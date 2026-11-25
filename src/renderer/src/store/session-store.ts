@@ -11,6 +11,7 @@ import { create } from 'zustand'
 import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import type { GitRangeDirection } from '../../../shared/git-range'
 import type { WorkAssignment } from '@clave/contract/work-rules'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
 import { nestedUnder, nestRefusal, type NestRecord } from '@clave/contract/nest-rules'
 import { nestApi } from '../lib/nest-api'
 import { NEST_SERVER_NOT_NAMED, NestRefused } from '../../../shared/nest-tools'
@@ -459,6 +460,9 @@ interface SessionState {
    *  belongs to no wave or lane any more). The record already holds it,
    *  nothing is written back. */
   applyServedWork: (id: string, work: WorkAssignment | null) => void
+  /** Which projects a tab works on, as its record now keeps it (PRDCT-5179):
+   *  from `session.projects_read`, or a `readTabProjects` answer. */
+  applyServedProjects: (id: string, projects: TabProjects | null) => void
   // ── Nested tabs (PRDCT-4997) ──
   /** The tabs whose nested rows are unfolded under them. In memory only:
    *  every nest starts folded. */
@@ -565,7 +569,12 @@ interface SessionState {
  *  and applied as the tab enters the store (`normalizeSession`). It is kept
  *  for the time a tab takes to join and no longer: a word about a tab that
  *  never comes here (another window's) is forgotten. */
-type EarlyFacts = { at: number; work?: WorkAssignment | null; under?: string | null }
+type EarlyFacts = {
+  at: number
+  work?: WorkAssignment | null
+  under?: string | null
+  projects?: TabProjects | null
+}
 const EARLY_FACT_MS = 30_000
 const earlyFacts = new Map<string, EarlyFacts>()
 
@@ -575,14 +584,15 @@ function keepEarlyFact(id: string, fact: Omit<EarlyFacts, 'at'>): void {
   earlyFacts.set(id, { ...earlyFacts.get(id), ...fact, at: now })
 }
 
-function takeEarlyFacts(id: string): Pick<Session, 'work' | 'spawnedBy'> {
+function takeEarlyFacts(id: string): Pick<Session, 'work' | 'spawnedBy' | 'projects'> {
   const kept = earlyFacts.get(id)
   if (!kept) return {}
   earlyFacts.delete(id)
   if (Date.now() - kept.at > EARLY_FACT_MS) return {}
   return {
     ...('work' in kept ? { work: kept.work ?? undefined } : {}),
-    ...('under' in kept ? { spawnedBy: kept.under ?? undefined } : {})
+    ...('under' in kept ? { spawnedBy: kept.under ?? undefined } : {}),
+    ...('projects' in kept ? { projects: kept.projects ?? undefined } : {})
   }
 }
 
@@ -2555,6 +2565,20 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, work: work ?? undefined } : s))
+      }
+    }),
+
+  applyServedProjects: (id, projects) =>
+    set((state) => {
+      if (!state.sessions.some((s) => s.id === id)) {
+        // Not in this window yet: kept for the moment it joins, as work is.
+        keepEarlyFact(id, { projects })
+        return state
+      }
+      return {
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, projects: projects ?? undefined } : s
+        )
       }
     }),
 

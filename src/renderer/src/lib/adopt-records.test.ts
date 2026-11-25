@@ -10,6 +10,7 @@
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkAssignment } from '@clave/contract/work-rules'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
 import type { ElectronAPI, SessionRecord } from '../../../preload/index.d'
 import type { Session, SessionGroup } from '../store/session-types'
 
@@ -850,6 +851,38 @@ describe('the work a record carries', () => {
     await adoptServerStartedSessions(['opened'])
     expect(spawned).toEqual([])
     expect(workOf('opened')).toEqual(work)
+  })
+})
+
+/** Which projects a tab works on (PRDCT-5179) makes the same trip as its
+ *  work: both copies of a tab built from its record carry it. */
+describe('the projects a record carries', () => {
+  const projects: TabProjects = {
+    status: 'decided',
+    picks: [{ file: '/w/atlas.clave', name: 'Atlas', p: 0.95 }],
+    fits: 0.9,
+    readAt: 10,
+    model: 'jev-test',
+    basis: 'basis-1'
+  }
+  const projectsOf = (id: string): Session['projects'] =>
+    useSessionStore.getState().sessions.find((s) => s.id === id)?.projects
+
+  it('a record the restore spawns keeps it', async () => {
+    const { attached } = placeRecords([{ ...record('read'), projects }], null)
+    expect(projectsOf('read')).toEqual(projects)
+    await flush()
+    pending.get('read')!(true)
+    expect(await attached).toEqual(['read'])
+    expect(projectsOf('read')).toEqual(projects)
+  })
+
+  it('a tab the server opened keeps it on the layout path', async () => {
+    byIdRecords = [
+      { ...record('opened-read'), live: true, running: true, projects } as SessionRecord
+    ]
+    await adoptServerStartedSessions(['opened-read'])
+    expect(projectsOf('opened-read')).toEqual(projects)
   })
 })
 

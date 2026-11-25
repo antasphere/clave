@@ -9,7 +9,8 @@
  * exit is not announced, and the restart remounts its pane on the new
  * process; a pinned group the server launched is linked to its pin; a tab's
  * work assignment (PRDCT-4123) lands as its record now keeps it, and so
- * does the tab it is nested under (PRDCT-4997).
+ * does the tab it is nested under (PRDCT-4997), and which projects it works
+ * on (PRDCT-5179).
  */
 import { useSessionStore } from '../store/session-store'
 import { usePinnedStore } from '../store/pinned-store'
@@ -29,6 +30,10 @@ export function initServedToolsEvents(): void {
     useSessionStore.getState().applyServedRename(id, name)
   })
   api.onSessionWorkChanged?.(({ id, work }) => useSessionStore.getState().applyServedWork(id, work))
+  // PRDCT-5179: which projects a tab works on, as its record now keeps it.
+  api.onSessionProjectsRead?.(({ id, projects }) =>
+    useSessionStore.getState().applyServedProjects(id, projects)
+  )
   // PRDCT-4997: a tab nested under another, or taken out, by anyone (this
   // window, another one, an agent's tool): the link lands as the record keeps
   // it, the rows stay where they are and the nest stays folded.

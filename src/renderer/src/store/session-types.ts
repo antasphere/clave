@@ -1,5 +1,6 @@
 import type { LimitReport } from '../../../shared/limit-report'
 import type { WorkAssignment } from '@clave/contract/work-rules'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
 
 /**
  * Every skin the app ships, as a runtime list — the union is derived from it
@@ -373,6 +374,10 @@ export interface Session {
    *  record keeps it (PRDCT-4123). Absent means an ordinary tab. Set by the
    *  agent tools and the entry's menu through the server, never by a title. */
   work?: WorkAssignment
+  /** Which projects this tab works on, as Jev last read it and its record
+   *  keeps it (PRDCT-5179). Absent means never read. Set by the server's
+   *  reading only (`readTabProjects`, `session.projects_read`). */
+  projects?: TabProjects
   claudeSessionId: string | null
   piSessionId?: string | null
   launchProfileId?: string

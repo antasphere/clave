@@ -28,4 +28,11 @@ export function registerIntegrationsHandlers(): void {
   ipcMain.handle('integrations:elevenlabs-voices', () =>
     settings.integrations.listElevenLabsVoices()
   )
+  // The Jev key (PRDCT-5179), on the same road.
+  ipcMain.handle('integrations:jev-set-key', (_event, apiKey: unknown) => {
+    if (typeof apiKey !== 'string') throw new Error('Paste the API key first.')
+    return settings.integrations.setJevKey(apiKey)
+  })
+  ipcMain.handle('integrations:jev-check', () => settings.integrations.checkJev())
+  ipcMain.handle('integrations:jev-remove', () => settings.integrations.removeJevKey())
 }

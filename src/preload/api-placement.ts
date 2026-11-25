@@ -114,6 +114,8 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   launchProfileSetWorkspace: local,
   helpersList: localBecause("this Mac's helpers; a server's are fleetHelpers"),
   helperSet: localBecause("this Mac's helpers; a server's are fleetHelperSet"),
+  decisionsList: localBecause("this Mac's decisions; a server's are fleetDecisions"),
+  decisionSet: localBecause("this Mac's decisions; a server's are fleetDecisionSet"),
   integrationsRead: localBecause("this Mac's integrations; a server's are fleetIntegrations"),
   elevenLabsSetKey: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsSetKey"),
   elevenLabsCheck: localBecause("this Mac's ElevenLabs key; a server's is fleetElevenLabsCheck"),
@@ -121,6 +123,9 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   elevenLabsSetVoice: localBecause("this Mac's voice; a server's is fleetElevenLabsSetVoice"),
   elevenLabsVoices: localBecause("this Mac's voices; a server's are fleetElevenLabsVoices"),
   elevenLabsPreview: localBecause("this Mac's voice preview; a server's is fleetElevenLabsPreview"),
+  jevSetKey: localBecause("this Mac's Jev key; a server's is fleetJevSetKey"),
+  jevCheck: localBecause("this Mac's Jev key; a server's is fleetJevCheck"),
+  jevRemove: localBecause("this Mac's Jev key; a server's is fleetJevRemove"),
   spawnSession: routed,
   writeSession: routed,
   startSession: routed,
@@ -153,6 +158,9 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   onSessionNested: routed,
   onSessionWorkChanged: wrongForServerTab(
     "only this Mac's server's work changes are heard: a server tab's are not relayed (PRDCT-4334)"
+  ),
+  onSessionProjectsRead: wrongForServerTab(
+    "only this Mac's server's readings are heard: a server tab's arrive in readTabProjects' answer (PRDCT-4334)"
   ),
   onSessionPageChanged: wrongForServerTab(
     "only this Mac's server's page changes are heard: a server tab's are not relayed (PRDCT-4334)"
@@ -273,6 +281,7 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   spokenRendering: routed,
   spokenRenderingsOf: routed,
   speakText: routed,
+  readTabProjects: routed,
   pageTitle: routed,
   pageTitlesOf: routed,
   githubPull: local,
@@ -617,6 +626,8 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetLaunchProfileSetGlobal: routed,
   fleetHelpers: routed,
   fleetHelperSet: routed,
+  fleetDecisions: routed,
+  fleetDecisionSet: routed,
   fleetIntegrations: routed,
   fleetElevenLabsSetKey: routed,
   fleetElevenLabsCheck: routed,
@@ -624,6 +635,9 @@ export const API_PLACEMENT: Readonly<Record<string, Declaration>> = {
   fleetElevenLabsSetVoice: routed,
   fleetElevenLabsVoices: routed,
   fleetElevenLabsPreview: routed,
+  fleetJevSetKey: routed,
+  fleetJevCheck: routed,
+  fleetJevRemove: routed,
   fleetSaveLayout: routed,
   fleetWorkspaces: routed,
   fleetAddWorkspace: routed,
