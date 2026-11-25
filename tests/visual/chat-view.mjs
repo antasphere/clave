@@ -12,6 +12,12 @@ assert.doesNotMatch(
   /#[\da-f]{3,8}\b|rgba?\(|hsla?\(|\b\d+(?:\.\d+)?(?:px|rem|ms)\b/i,
   'chat styles must use tokens, never literal color/size/duration'
 )
+// The status card's own stylesheet (PRDCT-5166), held to the same rule.
+assert.doesNotMatch(
+  readFileSync(new URL('../../plugins/chat-view/src/status-card.css', import.meta.url), 'utf8'),
+  /#[\da-f]{3,8}\b|rgba?\(|hsla?\(|\b\d+(?:\.\d+)?(?:px|rem|ms)\b/i,
+  'the status card must use tokens, never literal color/size/duration'
+)
 const fixture = await openChat('chat-visual')
 try {
   const { app, win, record } = fixture
