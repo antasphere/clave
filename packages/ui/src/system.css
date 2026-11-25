@@ -2352,6 +2352,30 @@ canvas[data-orb-state] {
 
 /* ── Badges ── */
 
+/* A group's suggested projects after its name (PRDCT-5179,
+   SessionGroupItem.tsx): two quiet badges, the first thing to shrink away in
+   a narrow sidebar (the name keeps its room), taking the free space after
+   them so the group's own controls stay at the edge. */
+.group-suggestions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 1000 auto;
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.group-suggestions > .badge {
+  flex-shrink: 0;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.group-suggestions > .badge:hover {
+  background-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

@@ -338,10 +338,21 @@ interface SessionState {
   selectSession: (id: string, addToSelection: boolean) => void
   selectSessions: (ids: string[]) => void
   setFocusedSession: (id: string) => void
-  createGroup: (sessionIds: string[], name?: string, workspaceId?: string) => void
+  /** A new group of these tabs, answered by its id (none when refused).
+   *  `autoNamed` is a person's grouping (PRDCT-5179): the group starts as
+   *  « Group N » and Clave may name it from its tabs' projects. */
+  createGroup: (
+    sessionIds: string[],
+    name?: string,
+    workspaceId?: string,
+    options?: { autoNamed?: boolean }
+  ) => string | undefined
   ungroupSessions: (groupId: string) => void
   deleteGroup: (groupId: string) => void
-  renameGroup: (groupId: string, name: string) => void
+  /** A rename by anyone but Clave clears `autoNamed`: the name is theirs for
+   *  good. `auto` is Clave's own naming (PRDCT-5179): the flag stays, and no
+   *  undo step is taken, so Cmd+Z after grouping still undoes the grouping. */
+  renameGroup: (groupId: string, name: string, options?: { auto?: boolean }) => void
   toggleGroupCollapsed: (groupId: string) => void
   /** Attach (or clear, with null) a group's web view. */
   setGroupView: (groupId: string, view: GroupViewConfig | null) => void
@@ -1849,7 +1860,8 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   setFocusedSession: (id) => set(() => ({ focusedSessionId: id })),
 
-  createGroup: (sessionIds, name?, workspaceId?) =>
+  createGroup: (sessionIds, name?, workspaceId?, options?) => {
+    let created: string | undefined
     set((state) => {
       const sidebarUndoStack = pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
       groupCounter++
@@ -1869,8 +1881,10 @@ export const useSessionStore = create<SessionState>((set) => ({
           : (workspaceId ??
             firstSession?.workspaceId ??
             useWorkspaceStore.getState().activeWorkspaceId ??
-            undefined)
+            undefined),
+        ...(options?.autoNamed && !name ? { autoNamed: true } : {})
       }
+      created = newGroup.id
       // Remove these sessions from any existing groups
       const groups = state.groups.map((g) => ({
         ...g,
@@ -1894,7 +1908,9 @@ export const useSessionStore = create<SessionState>((set) => ({
       if (!inserted) displayOrder.push(newGroup.id)
 
       return { groups: [...groups, newGroup], displayOrder, sidebarUndoStack }
-    }),
+    })
+    return created
+  },
 
   ungroupSessions: (groupId) =>
     set((state) => {
@@ -1972,14 +1988,26 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { sessions, selectedSessionIds, focusedSessionId, groups, displayOrder }
     }),
 
-  renameGroup: (groupId, name) =>
+  renameGroup: (groupId, name, options?) =>
     set((state) => {
       const target = state.groups.find((g) => g.id === groupId)
       const nextName = name.trim() || 'Group'
       if (!target || target.name === nextName) return {}
+      // Clave names only a group still waiting for its name.
+      if (options?.auto) {
+        if (!target.autoNamed) return {}
+        return {
+          groups: state.groups.map((g) => (g.id === groupId ? { ...g, name: nextName } : g))
+        }
+      }
       const sidebarUndoStack = pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
       return {
-        groups: state.groups.map((g) => (g.id === groupId ? { ...g, name: nextName } : g)),
+        groups: state.groups.map((g) => {
+          if (g.id !== groupId) return g
+          const { autoNamed: _given, ...named } = g
+          void _given
+          return { ...named, name: nextName }
+        }),
         sidebarUndoStack
       }
     }),

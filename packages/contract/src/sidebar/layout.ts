@@ -66,6 +66,9 @@ export const SidebarGroup = Schema.Struct({
   rootSession: Schema.optional(Schema.Boolean),
   /** The pin the group was launched from, by its id (PRDCT-4830). */
   templateId: Schema.optional(Schema.NonEmptyString),
+  /** The group carries a name Clave gave it from its tabs' projects, or is
+   *  waiting for one (PRDCT-5179). A live group's fact: never in a `.clave`. */
+  autoNamed: Schema.optional(Schema.Boolean),
   color: Schema.optional(Schema.NullOr(Schema.String)),
   view: Schema.optional(Schema.NullOr(GroupView)),
   workspaceId: Schema.optional(Schema.String)

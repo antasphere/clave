@@ -538,6 +538,14 @@ export interface SessionGroup {
    *  that pin instead of saving a copy of it (PRDCT-4830). Absent on a group
    *  made by hand, by an agent, or launched before the field existed. */
   templateId?: string
+  /** True while the group carries a name Clave gave it, or is still waiting
+   *  for one (PRDCT-5179): set only when a PERSON groups tabs, cleared the
+   *  moment anyone else names it (a person's rename, an agent's, a pin's).
+   *  Read by `lib/group-projects.ts`, which names the group from its tabs'
+   *  projects while it holds. It describes a live group, not a declared one:
+   *  it rides the sidebar layout and is never written to a `.clave` file nor
+   *  to a pin. */
+  autoNamed?: boolean
   color?: GroupTerminalColor | null
   /** Attached web view — persists with the group (serialized whole). */
   view?: GroupViewConfig | null

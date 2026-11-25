@@ -125,6 +125,7 @@ describe('normalizeLayout', () => {
       prompt: null,
       rootSession: true,
       templateId: 'pin-1',
+      autoNamed: true,
       color: 'teal',
       view: { url: 'u', title: 't', terminalId: null },
       workspaceId: 'ws'
@@ -166,6 +167,41 @@ describe('normalizeLayout', () => {
       displayOrder: ['g1']
     })
     expect(snapshot.groups[0].templateId).toBe('pin-1')
+  })
+
+  it('carries the flag of a group Clave names through a save and the layout answered (PRDCT-5179)', () => {
+    const group = {
+      id: 'g1',
+      name: 'Atlas',
+      sessionIds: ['s1'],
+      collapsed: false,
+      cwd: '/w',
+      terminals: [],
+      autoNamed: true
+    }
+    const saved = Schema.decodeUnknownSync(SaveWindowLayout.payload)({
+      windowKey: 'w1',
+      baseRevision: 3,
+      groups: [group],
+      displayOrder: ['g1']
+    })
+    expect(saved.groups[0].autoNamed).toBe(true)
+    expect(normalizeLayout(saved).groups[0].autoNamed).toBe(true)
+    const snapshot = Schema.decodeUnknownSync(LayoutSnapshot)({
+      windowKey: 'w1',
+      revision: 4,
+      groups: [group],
+      displayOrder: ['g1']
+    })
+    expect(snapshot.groups[0].autoNamed).toBe(true)
+    // Anything but true is no flag.
+    for (const autoNamed of [false, 'yes', 1]) {
+      const [read] = normalizeLayout({
+        groups: [{ id: 'g', name: 'N', autoNamed }],
+        displayOrder: []
+      }).groups
+      expect(read).not.toHaveProperty('autoNamed')
+    }
   })
 
   it('carries the pin stamp of a group an agent launches, in the command and in its answer', () => {
