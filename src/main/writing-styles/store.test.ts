@@ -324,6 +324,16 @@ describe("Claude Code's output style", () => {
     )
   })
 
+  it("is none for Claude Code's default, even beside a file of the person's named default", () => {
+    styleFile('default.md', 'Write my own way.\n')
+    setting('default')
+    expect(store.view().claudeOutputStyle).toBeNull()
+    expect(() => store.importClaudeOutputStyle()).toThrow(
+      'Claude Code has no output style of yours to import.'
+    )
+    expect(fs.existsSync(path.join(dir, WRITING_STYLES_FILE))).toBe(false)
+  })
+
   it('refuses a body over the limit, and clips a long description', () => {
     styleFile(
       'long.md',
