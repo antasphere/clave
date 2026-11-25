@@ -30,6 +30,9 @@ import { setWritingStylesSource, type WritingStylesSource } from './source'
 
 export const WRITING_STYLES_FILE = 'writing-styles.json'
 
+/** Where a document that does not parse is kept before a write over it. */
+export const damagedStylesFile = (n: number): string => `writing-styles.damaged-${n}.json`
+
 /** A machine's own style as it is stored: never a built-in. */
 interface StoredStyle {
   id: string
@@ -133,8 +136,32 @@ export class WritingStylesStore implements WritingStylesSource {
   }
 
   private write(document: StoredDocument): WritingStylesView {
+    this.setAsideDamaged()
     writeJson(this.ports.storage, WRITING_STYLES_FILE, document)
     return this.view()
+  }
+
+  /** A document that is there and does not parse (a hand edit that left a
+   *  syntax error) reads as no style of the machine's own, and the next write
+   *  would put a new document over every style the person made. Its exact
+   *  text is kept beside it first, as `writing-styles.damaged-<n>.json`, the
+   *  first number not taken. A missing document is not a damaged one. */
+  private setAsideDamaged(): void {
+    const storage = this.ports.storage
+    const text = storage.read(WRITING_STYLES_FILE)
+    if (text === null) return
+    try {
+      JSON.parse(text)
+      return
+    } catch {
+      // Damaged: kept below before the write over it.
+    }
+    for (let n = 1; ; n++) {
+      const name = damagedStylesFile(n)
+      if (storage.read(name) !== null) continue
+      storage.write(name, text)
+      return
+    }
   }
 
   private allStyles(document: StoredDocument): WritingStyle[] {

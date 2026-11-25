@@ -15,7 +15,12 @@ import { tempDataDir } from '../ports/testing'
 import type { SettingsPorts } from '../ports/registry'
 import { BUILT_IN_STYLES, WRITING_STYLE_LIMITS } from '../../shared/writing-styles'
 import { setWritingStylesSource, writingStylesView } from './source'
-import { WRITING_STYLES_FILE, WritingStylesStore, installWritingStyles } from './store'
+import {
+  WRITING_STYLES_FILE,
+  WritingStylesStore,
+  damagedStylesFile,
+  installWritingStyles
+} from './store'
 
 let dir: string
 let home: string
@@ -188,6 +193,63 @@ describe('WritingStylesStore', () => {
     fs.writeFileSync(path.join(dir, WRITING_STYLES_FILE), '{"version": 1, "styl')
     expect(store.view().styles).toEqual([...BUILT_IN_STYLES])
     expect(store.save(draft('Plain')).styles.at(-1)?.id).toBe('plain')
+  })
+
+  describe('a document that does not parse', () => {
+    const own = (): string => path.join(dir, WRITING_STYLES_FILE)
+    const aside = (n: number): string => path.join(dir, damagedStylesFile(n))
+    const files = (): string[] => fs.readdirSync(dir).sort()
+    const mine = JSON.stringify({
+      version: 1,
+      defaultStyleId: 'mine',
+      styles: [{ id: 'mine', name: 'Mine', description: '', text: 'Be mine.', statusCard: false }]
+    })
+    // A hand edit that left a trailing comma.
+    const damaged = mine.replace(/}]}$/, '},]}')
+
+    it('is set aside, its text intact, before a save writes over it', () => {
+      fs.writeFileSync(own(), damaged)
+      expect(() => JSON.parse(damaged)).toThrow()
+      const view = store.save(draft('Plain'))
+      expect(fs.readFileSync(aside(1), 'utf-8')).toBe(damaged)
+      expect(view.styles.at(-1)?.id).toBe('plain')
+      expect((written().styles as Array<{ id: string }>).map((style) => style.id)).toEqual([
+        'plain'
+      ])
+    })
+
+    it('takes the next number when one is set aside already; a refused write sets none aside', () => {
+      fs.writeFileSync(own(), damaged)
+      store.setDefault('quiet')
+      const second = `${damaged}\n`
+      fs.writeFileSync(own(), second)
+      store.save(draft('Plain'))
+      // Read as no style of its own, the remove is refused before any write.
+      fs.writeFileSync(own(), `${damaged}\n\n`)
+      expect(() => store.remove('plain')).toThrow('This style no longer exists.')
+      expect(fs.readFileSync(aside(1), 'utf-8')).toBe(damaged)
+      expect(fs.readFileSync(aside(2), 'utf-8')).toBe(second)
+      expect(fs.existsSync(aside(3))).toBe(false)
+    })
+
+    it('is shown as the built-in styles and no default, and a read writes nothing', () => {
+      fs.writeFileSync(own(), damaged)
+      expect(store.view()).toEqual({
+        styles: [...BUILT_IN_STYLES],
+        defaultStyleId: null,
+        claudeOutputStyle: null
+      })
+      expect(files()).toEqual([WRITING_STYLES_FILE])
+      expect(fs.readFileSync(own(), 'utf-8')).toBe(damaged)
+    })
+
+    it('is not a missing document, nor one that parses with a bad entry', () => {
+      store.save(draft('Plain'))
+      expect(files()).toEqual([WRITING_STYLES_FILE])
+      fs.writeFileSync(own(), JSON.stringify({ version: 1, styles: [{ id: 'NO' }, 'x'] }))
+      store.save(draft('Other'))
+      expect(files()).toEqual([WRITING_STYLES_FILE])
+    })
   })
 
   it('is what a spawn reads once installed', () => {
