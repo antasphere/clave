@@ -1149,14 +1149,15 @@ describe('the status card (PRDCT-5166)', () => {
   ].join('\n')
   const WORDS = 'The writer now puts `main` first.'
   const MESSAGE = `${WORDS}\n\n${BLOCK}\n`
-  const answers = (state: Conversation) =>
+  type Answer = Extract<Conversation['entries'][number], { kind: 'assistant' }>
+  const answers = (state: Conversation): Answer[] =>
     state.entries.flatMap((e) => (e.kind === 'assistant' ? [e] : []))
   /** Every state a message goes through when it arrives one character at a
    *  time, and the conversation it ends in. */
   const stream = (
     text: string,
     close: ChatEvent[] = [{ type: 'assistant_text', delta: '', final: true }]
-  ) => {
+  ): { state: Conversation; seen: string[] } => {
     let state = reduceConversation(emptyConversation, {
       event: { type: 'user_message', text: 'go' },
       at: 1

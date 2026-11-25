@@ -92,6 +92,7 @@ import { WorkCards } from './WorkCards'
 import { foldSubagents, noSubagents, reduceSubagents, type SubagentLogs } from './subagents'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { Attachments } from './Attachments'
+import { EntryStatusCard } from './StatusCard'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
@@ -100,6 +101,7 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { useTranscriptSearch } from './search'
+import { CurrentCardContext, currentCard } from './status-current'
 import { EarlierLoading, JumpPill, PastFailed, PastTruncated } from './EarlierLoading'
 import { pastHead, pastStep, type PastState } from './past'
 import {
@@ -380,14 +382,20 @@ export const EntryRow = memo(function EntryRow({
     )
   }
   if (entry.kind === 'assistant')
+    // The status the answer ended on (PRDCT-5166) is drawn under its words,
+    // and a message that is a card alone draws the card alone: the copy is
+    // of the words, so it is offered only where there are some.
     return (
       <div className="chat-turn-wrap" data-side="start">
-        <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
-            {entry.text}
-          </ReactMarkdown>
-        </article>
-        <TurnMeta at={entry.at} text={entry.text} />
+        {entry.text.trim() !== '' && (
+          <article className="chat-turn chat-prose" data-role="assistant">
+            <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
+              {entry.text}
+            </ReactMarkdown>
+          </article>
+        )}
+        {entry.card && <EntryStatusCard entry={entry} card={entry.card} />}
+        {entry.text.trim() !== '' && <TurnMeta at={entry.at} text={entry.text} />}
       </div>
     )
   if (entry.kind === 'permission')
@@ -968,6 +976,9 @@ export function ChatView({
       tail: floating
     }
   }, [presentation.entries, presentation.first, remotePending, session.id, foldNotes, turnOver])
+  // The one status card that is still current (PRDCT-5166): the others read
+  // as answered. Read from the end, on every change of the entries.
+  const current = useMemo(() => currentCard(presentation.entries), [presentation.entries])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // What the reader typed into a question card, kept across the rows' unmounts.
@@ -1165,23 +1176,25 @@ export function ChatView({
               >
                 <ExchangeContext.Provider value={exchanges}>
                   <StretchContext.Provider value={stretchContext}>
-                    <TranscriptRows
-                      rows={blocks}
-                      settled={pastRead}
-                      scroll={transcript.scroll}
-                      reveal={reveal}
-                    >
-                      {({ block, key }, index, arriving) => (
-                        <TranscriptRow
-                          rowKey={key}
-                          key={key}
-                          block={block}
-                          first={index === 0}
-                          arriving={arriving}
-                          onError={report}
-                        />
-                      )}
-                    </TranscriptRows>
+                    <CurrentCardContext.Provider value={current}>
+                      <TranscriptRows
+                        rows={blocks}
+                        settled={pastRead}
+                        scroll={transcript.scroll}
+                        reveal={reveal}
+                      >
+                        {({ block, key }, index, arriving) => (
+                          <TranscriptRow
+                            rowKey={key}
+                            key={key}
+                            block={block}
+                            first={index === 0}
+                            arriving={arriving}
+                            onError={report}
+                          />
+                        )}
+                      </TranscriptRows>
+                    </CurrentCardContext.Provider>
                   </StretchContext.Provider>
                 </ExchangeContext.Provider>
                 {tail.length > 0 && (
